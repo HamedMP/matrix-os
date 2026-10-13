@@ -5,20 +5,25 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
 import {
+  AccessError,
+  FailClosed,
   MAX_RECEIPTS,
   RECEIPT_MARKER,
-  addReceipt,
   contextDiffId,
   decideCarryOver,
+  fetchPull,
   forkPoint,
   gitRunner,
+  introducesReview,
   parseGreptileSummary,
-  pullTrees,
+  pullContexts,
   readReceipts,
   receiptFor,
   renderReceipts,
+  replayPull,
   replayTree,
   treeOf,
+  upsertReceipt,
 } from '../../scripts/review/review-carryover.mjs';
 
 const roots: string[] = [];
@@ -121,6 +126,8 @@ describe('replaying the reviewed change', () => {
     writeFileSync(join(r.root, 'app.ts'), 'one\ntwo\nthree\nfour\nfive\nfive-and-a-half\nsix\n');
     r.run('add', 'app.ts');
     r.git(['-c', 'core.editor=true', 'rebase', '--continue']);
+    // Attributes in the checkout under review must not turn the conflict into a union merge.
+    writeFileSync(join(r.root, '.gitattributes'), '* merge=union\n');
     expect(replayTree(r.git, r.reviewed, r.parent, amended)).toBeNull();
     expect(r.carries(r.reviewed, r.parent, r.run('rev-parse', 'HEAD'), amended)).toBe(false);
   });
@@ -208,7 +215,8 @@ describe('fork point selection', () => {
     r.run('checkout', '-q', 'a');
     r.run('merge', '-q', '--no-edit', b1);
     const a2 = r.run('rev-parse', 'HEAD');
-    expect(() => forkPoint(r.git, a2, [b2])).toThrow('No usable base');
+    expect(() => forkPoint(r.git, a2, [b2])).toThrow('Ambiguous base');
+    expect(() => forkPoint(r.git, a2, [a1, b2])).toThrow(FailClosed);
   });
 });
 
@@ -231,6 +239,13 @@ function remoteStack() {
   return { ...r, publish, clone, view };
 }
 
+const replayOk = (git: ReturnType<typeof gitRunner>, pr: number, view: { headRefOid: string; baseRefName: string; baseRefOid: string }, receipt: { reviewed: string; base: string; recordedAt: string }) => {
+  const trees = replayPull(git, pr, view, receipt);
+  if (trees.replayed === null || trees.replayed !== trees.head) return false;
+  const ids = pullContexts(git, view, receipt, trees);
+  return ids.reviewed === ids.head;
+};
+
 describe('receipts against a remote', () => {
   it('records at review time and carries across a force-pushed restack of the stack', () => {
     const r = remoteStack();
@@ -241,9 +256,7 @@ describe('receipts against a remote', () => {
     r.amend('p.ts', 'parent v2 after review fixes\n');
     r.run('rebase', '-q', '--onto', 'parent', r.parent, 'child');
     r.publish(2);
-    const trees = pullTrees(r.clone().git, 2, r.view(), receipt);
-    expect(trees.replayed).toBe(trees.head);
-    expect(trees.headContext).toBe(trees.reviewedContext);
+    expect(replayOk(r.clone().git, 2, r.view(), receipt)).toBe(true);
   });
 
   it('fetches the reported head by SHA when the pull ref lags behind it', () => {
@@ -252,8 +265,7 @@ describe('receipts against a remote', () => {
     const receipt = receiptFor(r.clone().git, 5, r.view(), r.reviewed);
     r.run('commit', '-q', '--amend', '-m', 'child, reworded');
     r.run('push', '-q', '--force', 'origin', 'child');
-    const trees = pullTrees(r.clone().git, 5, r.view(), receipt);
-    expect(trees.replayed).toBe(trees.head);
+    expect(replayOk(r.clone().git, 5, r.view(), receipt)).toBe(true);
   });
 
   it('detects new work pushed after the review', () => {
@@ -262,8 +274,16 @@ describe('receipts against a remote', () => {
     const receipt = receiptFor(r.clone().git, 3, r.view(), r.reviewed);
     r.commit('app.ts', 'one\ntwo\nthree\nfour\nfive\nsix\nseven\n', 'new work');
     r.publish(3);
-    const trees = pullTrees(r.clone().git, 3, r.view(), receipt);
-    expect(trees.replayed).not.toBe(trees.head);
+    expect(replayOk(r.clone().git, 3, r.view(), receipt)).toBe(false);
+  });
+
+  it('rejects an unchanged head retargeted so parent commits join the PR diff', () => {
+    const r = remoteStack();
+    r.publish(6);
+    const receipt = receiptFor(r.clone().git, 6, r.view(), r.reviewed);
+    const retargeted = { ...r.view(), baseRefName: 'main', baseRefOid: r.run('rev-parse', 'main') };
+    expect(retargeted.headRefOid).toBe(r.reviewed);
+    expect(replayOk(r.clone().git, 6, retargeted, receipt)).toBe(false);
   });
 
   it('refuses a recorded base that is not behind the reviewed commit', () => {
@@ -271,23 +291,58 @@ describe('receipts against a remote', () => {
     r.commit('app.ts', 'later\n', 'later');
     r.publish(4);
     const forged = { reviewed: r.reviewed, base: r.run('rev-parse', 'child'), recordedAt: 'x' };
-    expect(() => pullTrees(r.clone().git, 4, r.view(), forged)).toThrow('not an ancestor');
+    expect(() => replayPull(r.clone().git, 4, r.view(), forged)).toThrow('not an ancestor');
+  });
+
+  it('fails closed, not as an access error, for a commit the remote no longer serves', () => {
+    const r = remoteStack();
+    r.publish(7);
+    expect(() => fetchPull(r.clone().git, 7, 'parent', [sha('e')])).toThrow(FailClosed);
+  });
+
+  it('resolves the remote-tracking base even when a local branch shadows its short name', () => {
+    const r = remoteStack();
+    r.publish(9);
+    const c = r.clone();
+    const unrelated = c.commit('unrelated.ts', 'x\n', 'unrelated');
+    c.run('branch', 'origin/parent');
+    expect(receiptFor(c.git, 9, r.view(), r.reviewed).base).toBe(r.parent);
+    expect(c.run('rev-parse', 'refs/heads/origin/parent')).toBe(unrelated);
+  });
+
+  it('keeps working after the base branch is deleted', () => {
+    const r = remoteStack();
+    r.publish(8);
+    const view = r.view();
+    r.run('push', '-q', 'origin', '--delete', 'parent');
+    expect(receiptFor(r.clone().git, 8, view, r.reviewed).base).toBe(r.parent);
+  });
+
+  it('reports an unreachable remote as an access error', () => {
+    const c = repo();
+    c.run('remote', 'add', 'origin', join(tmpdir(), 'review-carryover-missing-remote'));
+    expect(() => fetchPull(c.git, 1, 'main')).toThrow(AccessError);
   });
 });
 
-const footer = (reviewed: string, title = 'Merge...', repoPath = 'hamedmp/matrix-os') =>
-  `<sub>Reviews (2) · Last reviewed commit: ["${title}"](https://github.com/${repoPath}/commit/${reviewed}) · [Reviewed by Greptile](https://www.greptile.com/)</sub>`;
-const greptileBody = (score: number, reviewed: string, extra = '') => [
+const footer = (reviewed: string, title = 'Merge...', repoPath = 'hamedmp/matrix-os', reviews = 2, trailer = true) =>
+  `<sub>Reviews (${reviews}) · Last reviewed commit: ["${title}"](https://github.com/${repoPath}/commit/${reviewed})${trailer ? ' · [Reviewed by Greptile](https://www.greptile.com/)' : ''}</sub>`;
+const greptileBody = (score: number, reviewed: string, extra = '', reviews = 2) => [
   `<h2><a href="https://app.greptile.com/api/retrigger?id=1">Retrigger</a>Confidence Score: ${score}/5</h2>`,
   `See [this commit](https://github.com/hamedmp/matrix-os/commit/${sha('9')}) for context.`,
   extra,
-  footer(reviewed),
+  footer(reviewed, 'Merge...', 'hamedmp/matrix-os', reviews),
 ].join('\n');
 const greptile = (body: string, id = 7) => [{ id, user: { login: 'greptile-apps[bot]' }, body }];
 
 describe('Greptile summary parsing', () => {
   it('reads the score heading and the footer link target, not other commit links', () => {
-    expect(parseGreptileSummary(greptile(greptileBody(5, sha('a'))), 'HamedMP/matrix-os')).toEqual({ commentId: 7, score: 5, reviewed: sha('a') });
+    expect(parseGreptileSummary(greptile(greptileBody(5, sha('a'))), 'HamedMP/matrix-os')).toEqual({ commentId: 7, score: 5, reviewed: sha('a'), reviews: 2 });
+  });
+
+  it('accepts the footer without the Reviewed by Greptile trailer', () => {
+    const body = `<h2><a href="x"></a>Confidence Score: 5/5</h2>\n${footer(sha('a'), 'fix(chat): x', 'hamedmp/matrix-os', 13, false)}`;
+    expect(parseGreptileSummary(greptile(body), 'HamedMP/matrix-os')).toMatchObject({ reviewed: sha('a'), reviews: 13 });
   });
 
   it('ignores a commit link spoofed inside the reviewed commit title', () => {
@@ -319,6 +374,29 @@ describe('Greptile summary parsing', () => {
   });
 });
 
+describe('review-introducing summary edits', () => {
+  const event = (action: string, body: string, from?: string) => ({
+    action,
+    comment: { id: 7, user: { login: 'greptile-apps[bot]' }, body },
+    ...(from === undefined ? {} : { changes: { body: { from } } }),
+  });
+
+  it('records a newly created summary and an edit that replaces a placeholder', () => {
+    expect(introducesReview(event('created', greptileBody(5, sha('a'))))).toMatchObject({ reviewed: sha('a') });
+    expect(introducesReview(event('edited', greptileBody(5, sha('a')), 'Reviewing...'))).toMatchObject({ reviewed: sha('a') });
+  });
+
+  it('records a review of another commit or a re-review of the same commit', () => {
+    expect(introducesReview(event('edited', greptileBody(5, sha('b'), '', 3), greptileBody(4, sha('a'), '', 2)))).toMatchObject({ reviewed: sha('b') });
+    expect(introducesReview(event('edited', greptileBody(5, sha('a'), '', 3), greptileBody(4, sha('a'), '', 2)))).toMatchObject({ reviewed: sha('a'), reviews: 3 });
+  });
+
+  it('ignores re-renders that keep the commit and the review count', () => {
+    expect(introducesReview(event('edited', greptileBody(5, sha('a'), 'more text', 2), greptileBody(5, sha('a'), '', 2)))).toBeNull();
+    expect(introducesReview(event('edited', 'Reviewing...', greptileBody(5, sha('a'))))).toBeNull();
+  });
+});
+
 describe('base receipts', () => {
   const receipt = (fill: string) => ({ reviewed: sha(fill), base: sha('0'), recordedAt: '2026-10-13T00:00:00.000Z' });
 
@@ -340,13 +418,13 @@ describe('base receipts', () => {
     expect(readReceipts([{ id: 5, user: { login: 'github-actions[bot]' }, body: broken }])).toEqual({ commentId: 5, receipts: [] });
   });
 
-  it('keeps the first receipt for a reviewed commit and stays bounded', () => {
+  it('lets the latest review of a commit define its base and stays bounded', () => {
     const id = (i: number) => i.toString(16).padStart(40, '0');
     let receipts: ReturnType<typeof receipt>[] = [];
-    for (let i = 0; i < MAX_RECEIPTS + 5; i += 1) receipts = addReceipt(receipts, { ...receipt('a'), reviewed: id(i) });
+    for (let i = 0; i < MAX_RECEIPTS + 5; i += 1) receipts = upsertReceipt(receipts, { ...receipt('a'), reviewed: id(i) });
     expect(receipts).toHaveLength(MAX_RECEIPTS);
     expect(receipts.at(-1)?.reviewed).toBe(id(MAX_RECEIPTS + 4));
-    expect(addReceipt([receipt('a'), receipt('b')], { ...receipt('a'), base: sha('1') })).toEqual([receipt('a'), receipt('b')]);
+    expect(upsertReceipt([receipt('a'), receipt('b')], { ...receipt('a'), base: sha('1') })).toEqual([receipt('b'), { ...receipt('a'), base: sha('1') }]);
   });
 
   it('reads at most the newest receipts from an oversized comment', () => {
@@ -360,52 +438,64 @@ describe('base receipts', () => {
 
 describe('carry-over decision', () => {
   const receipts = [{ reviewed: sha('a'), base: sha('0'), recordedAt: 'x' }];
-  const matching = () => ({ replayed: sha('d'), head: sha('d'), reviewedContext: 'c', headContext: 'c' });
+  const matchingTrees = () => ({ replayed: sha('d'), head: sha('d') });
+  const matchingContexts = () => ({ reviewed: 'c', head: 'c' });
+  const decide = (summary: { score: number; reviewed: string } | null, head: string, overrides: Record<string, unknown> = {}) => {
+    const replay = vi.fn(matchingTrees);
+    const contexts = vi.fn(matchingContexts);
+    const result = decideCarryOver({ summary, head, receipts, replay, contexts, ...overrides });
+    return { result, replay, contexts };
+  };
 
-  it('accepts a 5/5 review of the current head without replaying', () => {
-    const trees = vi.fn(matching);
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('a'), receipts: [], trees }))
-      .toEqual({ ok: true, reason: 'review names the current head' });
-    expect(trees).not.toHaveBeenCalled();
+  it('accepts a 5/5 review of the current head without a receipt, without git work', () => {
+    const { result, replay } = decide({ score: 5, reviewed: sha('c') }, sha('c'));
+    expect(result).toEqual({ ok: true, reason: 'review names the current head' });
+    expect(replay).not.toHaveBeenCalled();
   });
 
-  it('carries a 5/5 review whose replay equals the head tree', () => {
-    const trees = vi.fn(matching);
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('b'), receipts, trees })).toMatchObject({ ok: true });
-    expect(trees).toHaveBeenCalledWith(receipts[0]);
+  it('verifies the base of a reviewed current head when a receipt exists', () => {
+    const { result, replay } = decide({ score: 5, reviewed: sha('a') }, sha('a'));
+    expect(result).toEqual({ ok: true, reason: 'review names the current head and its base' });
+    expect(replay).toHaveBeenCalledWith(receipts[0]);
+    const moved = decide({ score: 5, reviewed: sha('a') }, sha('a'), { replay: () => ({ replayed: sha('d'), head: sha('f') }) });
+    expect(moved.result).toMatchObject({ ok: false });
   });
 
-  it('requires a fresh review when the head differs from the replay', () => {
-    const trees = () => ({ ...matching(), head: sha('f') });
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('b'), receipts, trees }))
-      .toEqual({ ok: false, reason: 'head differs from the reviewed change replayed onto its base' });
+  it('carries a 5/5 review whose replay and context match the head', () => {
+    const { result, contexts } = decide({ score: 5, reviewed: sha('a') }, sha('b'));
+    expect(result).toEqual({ ok: true, reason: 'head is the reviewed change replayed onto its new base' });
+    expect(contexts).toHaveBeenCalledWith(receipts[0], matchingTrees());
+  });
+
+  it('requires a fresh review when the head differs from the replay, without diffing context', () => {
+    const { result, contexts } = decide({ score: 5, reviewed: sha('a') }, sha('b'), { replay: () => ({ replayed: sha('d'), head: sha('f') }) });
+    expect(result).toEqual({ ok: false, reason: 'head differs from the reviewed change replayed onto its base' });
+    expect(contexts).not.toHaveBeenCalled();
   });
 
   it('requires a fresh review when the replay conflicts', () => {
-    const trees = () => ({ ...matching(), replayed: null });
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('b'), receipts, trees }))
-      .toEqual({ ok: false, reason: 'reviewed change no longer replays cleanly onto the new base' });
+    const { result, contexts } = decide({ score: 5, reviewed: sha('a') }, sha('b'), { replay: () => ({ replayed: null, head: sha('f') }) });
+    expect(result).toEqual({ ok: false, reason: 'reviewed change no longer replays cleanly onto the new base' });
+    expect(contexts).not.toHaveBeenCalled();
   });
 
   it('requires a fresh review when the base changed code next to the reviewed change', () => {
-    const trees = () => ({ ...matching(), headContext: 'other' });
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('b'), receipts, trees }))
-      .toEqual({ ok: false, reason: 'base changed code next to the reviewed change' });
+    const { result } = decide({ score: 5, reviewed: sha('a') }, sha('b'), { contexts: () => ({ reviewed: 'c', head: 'other' }) });
+    expect(result).toEqual({ ok: false, reason: 'base changed code next to the reviewed change' });
   });
 
-  it('fails closed without a receipt for the reviewed commit, before any git work', () => {
-    const trees = vi.fn(matching);
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('c') }, head: sha('b'), receipts, trees }))
-      .toEqual({ ok: false, reason: 'no base recorded for the reviewed commit' });
-    expect(trees).not.toHaveBeenCalled();
+  it('fails closed without a receipt for an older reviewed commit, before any git work', () => {
+    const { result, replay } = decide({ score: 5, reviewed: sha('c') }, sha('b'));
+    expect(result).toEqual({ ok: false, reason: 'no base recorded for the reviewed commit' });
+    expect(replay).not.toHaveBeenCalled();
   });
 
   it('never passes a review below 5/5 or a missing summary, before any git work', () => {
-    const trees = vi.fn(matching);
-    expect(decideCarryOver({ summary: { score: 4, reviewed: sha('a') }, head: sha('b'), receipts, trees })).toMatchObject({ ok: false });
-    expect(decideCarryOver({ summary: { score: 4, reviewed: sha('a') }, head: sha('a'), receipts, trees })).toMatchObject({ ok: false });
-    expect(decideCarryOver({ summary: null, head: sha('a'), receipts, trees })).toMatchObject({ ok: false });
-    expect(trees).not.toHaveBeenCalled();
+    for (const [summary, head] of [[{ score: 4, reviewed: sha('a') }, sha('b')], [{ score: 4, reviewed: sha('c') }, sha('c')], [null, sha('a')]] as const) {
+      const { result, replay } = decide(summary, head);
+      expect(result).toMatchObject({ ok: false });
+      expect(replay).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -422,6 +512,19 @@ describe('command line', () => {
   it('exits 2 on bad usage', () => {
     expect(cli(['bogus', '1']).status).toBe(2);
     expect(cli(['check', '0']).status).toBe(2);
+  });
+
+  it('refuses to record outside the workflow event', () => {
+    expect(cli(['record', '1'], { GITHUB_EVENT_PATH: '' }).status).toBe(2);
+  });
+
+  it('exits 3, not 1, when the tool hits an unexpected error', () => {
+    const bin = mkdtempSync(join(tmpdir(), 'review-carryover-gh-'));
+    roots.push(bin);
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\necho not-json\n', { mode: 0o755 });
+    const result = cli(['check', '1'], { PATH: `${bin}:${process.env.PATH}` });
+    expect(result.status).toBe(3);
+    expect(result.out).toContain('could not decide');
   });
 
   it('exits 3, not 1, when GitHub cannot be reached', () => {

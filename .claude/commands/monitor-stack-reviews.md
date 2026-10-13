@@ -36,7 +36,8 @@ final human review.
   PR is `5/5`. There is no command-level override for this gate.
 - In this command, a *current-head* `5/5` also includes a `5/5` on an earlier
   head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0;
-  exit 1 needs a fresh review, exit 3 means fix `gh`/git access and rerun). Restacks, retargets, and
+  exit 1 needs a fresh review, exit 3 means the check could not decide: fix
+  `gh`/git access and rerun). Restacks, retargets, and
   base merges keep the PR's own diff, so they keep the review; do not request a
   re-review for them. New PR work or conflict resolutions fail the check and
   need a fresh review.

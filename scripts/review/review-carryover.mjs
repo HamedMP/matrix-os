@@ -1,29 +1,35 @@
 #!/usr/bin/env node
 // Decide whether a PR's Greptile review still covers its current head.
 //
-// `record <pr>` runs from .github/workflows/review-receipt.yml whenever
-// Greptile edits its summary. It stores the base each reviewed commit forked
-// from in a PR comment. The base has to be captured then: a stack restack
-// force-pushes the parent, after which the reviewed commit's old base is no
-// longer on any branch.
+// `record <pr>` runs from .github/workflows/review-receipt.yml on Greptile
+// summary edits that introduce a review (the review count rises or the
+// reviewed commit changes) while that commit is still the PR head. It stores
+// the base the reviewed commit forked from in a PR comment. The base has to be
+// captured then: a stack restack force-pushes the parent, after which the
+// reviewed commit's old base is no longer on any branch.
 //
-// `check <pr>` passes a 5/5 review when it names the head, or when both hold:
-// the head's tree is exactly git's clean replay of the reviewed change onto
-// the head's current base (a three-way merge from the recorded base), and the
-// PR's own diff with three context lines is unchanged. Restacks, retargets
-// after a parent lands, base merges, and message-only amends pass. New work,
-// moved edits, conflict resolutions, and base edits within three lines of the
-// PR's changes fail and need a fresh review. A receipt only names commits;
-// check recomputes everything from git objects.
+// `check <pr>` passes a 5/5 review when both hold: the head's tree is exactly
+// git's clean replay of the reviewed change onto the head's current base (a
+// three-way merge from the recorded base), and the PR's own diff with three
+// context lines is unchanged. Restacks, retargets after a parent lands, base
+// merges, and message-only amends pass. New work, moved edits, conflict
+// resolutions, base edits within three lines of the PR's changes, and a
+// retarget that pulls parent commits into the PR fail and need a fresh review.
+// A receipt only names commits; check recomputes everything from git objects.
+// Without a receipt, a review that names the head passes as before.
 //
 // Exit codes: 0 the review carries over, 1 a fresh review is needed,
-// 2 usage, 3 could not decide (GitHub or git access failed; fix and rerun).
+// 2 usage, 3 could not decide (GitHub, git, or the tool failed; fix and rerun).
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 
 const SHA = /^[0-9a-f]{40}$/;
 const MAX_BUFFER = 256 * 1024 * 1024;
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+// Attributes from the repository under review must not steer merges or diffs.
+const NO_ATTRIBUTES = [`--attr-source=${EMPTY_TREE}`, '-c', 'core.attributesFile=/dev/null'];
 export const GREPTILE_LOGIN = 'greptile-apps[bot]';
 export const RECEIPT_LOGIN = 'github-actions[bot]';
 export const RECEIPT_MARKER = '<!-- matrix-review-receipt v1 -->';
@@ -31,6 +37,8 @@ export const MAX_RECEIPTS = 30;
 
 // GitHub or git transport failed, so the answer is unknown rather than "no".
 export class AccessError extends Error {}
+// The data cannot support a carry-over: request a fresh review.
+export class FailClosed extends Error {}
 
 export function gitRunner(cwd) {
   return args => execFileSync('git', args, {cwd, encoding: 'utf8', maxBuffer: MAX_BUFFER, timeout: 120_000});
@@ -56,27 +64,31 @@ function resolveCommit(git, name) {
   }
 }
 
-// merge-base exits 1 for unrelated histories. A criss-cross history has
-// several best bases, so no single fork point exists.
-function uniqueMergeBase(git, a, b) {
+// merge-base exits 1 for unrelated histories.
+function mergeBases(git, a, b) {
   try {
-    const bases = git(['merge-base', '--all', a, b]).trim().split('\n').filter(Boolean);
-    return bases.length === 1 ? bases[0] : null;
+    return git(['merge-base', '--all', a, b]).trim().split('\n').filter(Boolean);
   } catch (error) {
-    if (error?.status === 1) return null;
+    if (error?.status === 1) return [];
     throw error;
   }
 }
 
 // The PR head forked from whichever base candidate sits closest to it: the
-// recorded PR base SHA can lag the live branch, and either may be missing.
-// Candidates that disagree without one containing the other fail closed.
+// recorded PR base SHA can lag the live branch, and either may be missing
+// locally. A present candidate that is unrelated, criss-cross, or disagrees
+// with the others without one containing the other fails closed.
 export function forkPoint(git, sha, candidates) {
   const tips = [...new Set(candidates.map(candidate => resolveCommit(git, candidate)).filter(Boolean))];
-  const bases = [...new Set(tips.map(tip => uniqueMergeBase(git, tip, sha)).filter(Boolean))];
-  if (bases.length === 0) throw new Error('No usable base for the PR head');
+  if (tips.length === 0) throw new FailClosed('No usable base for the PR head');
+  const bases = [];
+  for (const tip of tips) {
+    const found = mergeBases(git, tip, sha);
+    if (found.length !== 1) throw new FailClosed('Ambiguous base for the PR head');
+    if (!bases.includes(found[0])) bases.push(found[0]);
+  }
   const closest = bases.length === 1 ? bases[0] : bases.find(base => bases.every(other => isAncestor(git, other, base)));
-  if (!closest) throw new Error('Ambiguous base for the PR head');
+  if (!closest) throw new FailClosed('Ambiguous base for the PR head');
   return closest;
 }
 
@@ -88,7 +100,7 @@ export function treeOf(git, sha) {
 // that replay conflicts. merge-tree exits 1 for conflicts and >1 for errors.
 export function replayTree(git, reviewed, base, newBase) {
   try {
-    return git(['merge-tree', '--write-tree', '--no-messages', `--merge-base=${base}`, newBase, reviewed]).split('\n')[0].trim();
+    return git([...NO_ATTRIBUTES, 'merge-tree', '--write-tree', '--no-messages', `--merge-base=${base}`, newBase, reviewed]).split('\n')[0].trim();
   } catch (error) {
     if (error?.status === 1) return null;
     throw error;
@@ -101,7 +113,7 @@ export function replayTree(git, reviewed, base, newBase) {
 // git would merge it cleanly. Every setting that changes diff output is pinned.
 export function contextDiffId(git, sha, base) {
   const diff = git([
-    '-c', 'core.quotePath=true', '-c', 'diff.suppressBlankEmpty=false',
+    ...NO_ATTRIBUTES, '-c', 'core.quotePath=true', '-c', 'diff.suppressBlankEmpty=false',
     'diff', '--binary', '--full-index', '--unified=3', '--inter-hunk-context=0', '--indent-heuristic',
     '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--diff-algorithm=myers',
     '--src-prefix=a/', '--dst-prefix=b/', '--no-relative', '-O/dev/null',
@@ -116,17 +128,30 @@ const singleMatch = (body, pattern) => {
   return values.length === 1 ? values[0] : null;
 };
 
-// Read only Greptile's own score heading and its footer link target. Prose or
+// Read only Greptile's own score heading and footer link target. Prose or
 // commit titles quoting either produce a second match, which fails closed.
+// The greedy title match takes the last commit link on the footer line.
 export function parseGreptileSummary(comments, repo) {
   const summary = comments.filter(comment => comment.user?.login === GREPTILE_LOGIN && /Confidence Score:/.test(comment.body || '')).at(-1);
   if (!summary) return null;
   const score = singleMatch(summary.body, /Confidence Score: ([0-5])\/5<\/h[1-6]>/g);
-  const footer = singleMatch(summary.body, /^<sub>.*Last reviewed commit: \[.*\]\(https:\/\/github\.com\/([^/\s()]+\/[^/\s()]+)\/commit\/([0-9a-f]{40})\) · \[Reviewed by Greptile\].*$/gm);
+  const footer = singleMatch(summary.body, /^<sub>(?:Reviews \((\d+)\) · )?Last reviewed commit: \[.*\]\(https:\/\/github\.com\/([^/\s()]+\/[^/\s()]+)\/commit\/([0-9a-f]{40})\)(?: · \[Reviewed by Greptile\]\([^()\s]*\))?<\/sub>\s*$/gm);
   if (score === null || footer === null || (summary.body.match(/Last reviewed commit:/g) || []).length !== 1) return null;
-  const [linkedRepo, reviewed] = footer.split('\n');
+  const [reviews, linkedRepo, reviewed] = footer.split('\n');
   if (repo && linkedRepo.toLowerCase() !== repo.toLowerCase()) return null;
-  return {commentId: summary.id, score: Number(score), reviewed};
+  return {commentId: summary.id, score: Number(score), reviewed, reviews: reviews ? Number(reviews) : null};
+}
+
+// A summary edit introduces a review when Greptile reviewed again (the review
+// count rises) or reviewed another commit; footer re-renders do not.
+export function introducesReview(event, repo) {
+  const current = parseGreptileSummary([event.comment ?? {}], repo);
+  if (!current) return null;
+  // A created comment has no previous body, so it always introduces a review.
+  const previous = parseGreptileSummary([{...event.comment, body: event.changes?.body?.from ?? ''}], repo);
+  if (!previous || previous.reviewed !== current.reviewed) return current;
+  if (current.reviews !== null && previous.reviews !== null && current.reviews > previous.reviews) return current;
+  return null;
 }
 
 const validReceipt = value => value && SHA.test(value.reviewed) && SHA.test(value.base) && typeof value.recordedAt === 'string';
@@ -157,27 +182,29 @@ export function renderReceipts(receipts) {
   ].join('\n');
 }
 
-// The first receipt for a reviewed commit wins: it was taken closest to the
-// review, before a later restack could move the base out from under it.
-export function addReceipt(receipts, receipt) {
-  if (receipts.some(entry => entry.reviewed === receipt.reviewed)) return receipts;
-  return [...receipts, receipt].slice(-MAX_RECEIPTS);
+// Receipts are only written when a review happens, so the latest review of a
+// commit (for example a re-review after a retarget) defines its base.
+export function upsertReceipt(receipts, receipt) {
+  return [...receipts.filter(entry => entry.reviewed !== receipt.reviewed), receipt].slice(-MAX_RECEIPTS);
 }
 
-// `trees(receipt)` is only called once score and receipt allow a carry. It
-// returns the replayed tree (null on conflict), the head tree, and the
-// reviewed and head context diff ids.
-export function decideCarryOver({summary, head, receipts, trees}) {
+// `replay(receipt)` returns {replayed, head} trees (replayed is null on
+// conflict); `contexts(receipt, replayResult)` returns the reviewed and head
+// context ids. Each runs only when the earlier checks allow a carry.
+export function decideCarryOver({summary, head, receipts, replay, contexts}) {
   if (!summary) return {ok: false, reason: 'no trusted Greptile summary'};
   if (summary.score !== 5) return {ok: false, reason: `Greptile score is ${summary.score}/5`};
-  if (summary.reviewed === head) return {ok: true, reason: 'review names the current head'};
   const receipt = receipts.find(entry => entry.reviewed === summary.reviewed);
-  if (!receipt) return {ok: false, reason: 'no base recorded for the reviewed commit'};
-  const {replayed, head: headTree, reviewedContext, headContext} = trees(receipt);
-  if (replayed === null) return {ok: false, reason: 'reviewed change no longer replays cleanly onto the new base'};
-  if (replayed !== headTree) return {ok: false, reason: 'head differs from the reviewed change replayed onto its base'};
-  if (reviewedContext !== headContext) return {ok: false, reason: 'base changed code next to the reviewed change'};
-  return {ok: true, reason: 'head is the reviewed change replayed onto its new base'};
+  if (!receipt) {
+    if (summary.reviewed === head) return {ok: true, reason: 'review names the current head'};
+    return {ok: false, reason: 'no base recorded for the reviewed commit'};
+  }
+  const trees = replay(receipt);
+  if (trees.replayed === null) return {ok: false, reason: 'reviewed change no longer replays cleanly onto the new base'};
+  if (trees.replayed !== trees.head) return {ok: false, reason: 'head differs from the reviewed change replayed onto its base'};
+  const ids = contexts(receipt, trees);
+  if (ids.reviewed !== ids.head) return {ok: false, reason: 'base changed code next to the reviewed change'};
+  return {ok: true, reason: summary.reviewed === head ? 'review names the current head and its base' : 'head is the reviewed change replayed onto its new base'};
 }
 
 function access(run, what) {
@@ -199,56 +226,72 @@ function loadPull(repo, pr) {
   return {view, comments};
 }
 
+const baseRef = name => `refs/remotes/origin/${name}`;
+
+// One fetch per ref or commit, so a deleted branch or an unserved commit only
+// removes that candidate; ls-remote first tells access failures apart.
 // Commits are fetched by SHA so a lagging refs/pull/<n>/head or a force-pushed
 // commit still resolves; GitHub serves unreachable PR commits by SHA.
-function fetchRefs(git, pr, baseRefName, shas = []) {
-  access(() => git(['fetch', '--quiet', '--no-tags', 'origin',
-    `+refs/heads/${baseRefName}:refs/remotes/origin/${baseRefName}`,
-    `+refs/pull/${pr}/head:refs/remotes/origin/pr/${pr}`,
-    ...new Set(shas)]), 'git fetch');
+export function fetchPull(git, pr, baseRefName, shas = []) {
+  access(() => git(['ls-remote', '--exit-code', 'origin', `refs/pull/${pr}/head`]), 'git ls-remote');
+  const attempt = refspec => {
+    try {
+      git(['fetch', '--quiet', '--no-tags', 'origin', refspec]);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      console.warn(`review-carryover: could not fetch ${refspec}: ${error.message.split('\n')[0]}`);
+    }
+  };
+  attempt(`+refs/heads/${baseRefName}:${baseRef(baseRefName)}`);
+  attempt(`+refs/pull/${pr}/head:refs/remotes/origin/pr/${pr}`);
+  for (const sha of new Set(shas)) if (!resolveCommit(git, sha)) attempt(sha);
+  for (const sha of new Set(shas)) if (!resolveCommit(git, sha)) throw new FailClosed(`Commit ${sha} is not available`);
 }
 
 // `view` is the PR's headRefOid/baseRefName/baseRefOid as GitHub reports them.
 export function receiptFor(git, pr, view, reviewed, now = new Date()) {
-  fetchRefs(git, pr, view.baseRefName, [reviewed]);
-  const base = forkPoint(git, reviewed, [view.baseRefOid, `origin/${view.baseRefName}`]);
+  fetchPull(git, pr, view.baseRefName, [reviewed]);
+  const base = forkPoint(git, reviewed, [view.baseRefOid, baseRef(view.baseRefName)]);
   return {reviewed, base, recordedAt: now.toISOString()};
 }
 
-export function pullTrees(git, pr, view, receipt) {
-  fetchRefs(git, pr, view.baseRefName, [receipt.reviewed, receipt.base, view.headRefOid]);
-  if (!isAncestor(git, receipt.base, receipt.reviewed)) throw new Error('Recorded base is not an ancestor of the reviewed commit');
-  const newBase = forkPoint(git, view.headRefOid, [view.baseRefOid, `origin/${view.baseRefName}`]);
-  return {
-    replayed: replayTree(git, receipt.reviewed, receipt.base, newBase),
-    head: treeOf(git, view.headRefOid),
-    reviewedContext: contextDiffId(git, receipt.reviewed, receipt.base),
-    headContext: contextDiffId(git, view.headRefOid, newBase),
-  };
+export function replayPull(git, pr, view, receipt) {
+  fetchPull(git, pr, view.baseRefName, [receipt.reviewed, receipt.base, view.headRefOid]);
+  if (!isAncestor(git, receipt.base, receipt.reviewed)) throw new FailClosed('Recorded base is not an ancestor of the reviewed commit');
+  const newBase = forkPoint(git, view.headRefOid, [view.baseRefOid, baseRef(view.baseRefName)]);
+  return {replayed: replayTree(git, receipt.reviewed, receipt.base, newBase), head: treeOf(git, view.headRefOid), newBase};
+}
+
+export function pullContexts(git, view, receipt, trees) {
+  return {reviewed: contextDiffId(git, receipt.reviewed, receipt.base), head: contextDiffId(git, view.headRefOid, trees.newBase)};
 }
 
 function record(repo, pr, git) {
+  if (!process.env.GITHUB_EVENT_PATH) {
+    console.error('review-carryover: record runs only from the Review Receipt workflow event');
+    return 2;
+  }
+  const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+  const summary = introducesReview(event, repo);
+  const skip = reason => {
+    console.log(JSON.stringify({pr: Number(pr), recorded: false, reason, reviewed: summary?.reviewed ?? null}));
+    return 0;
+  };
+  if (!summary) return skip('summary edit does not introduce a review');
   const {view, comments} = loadPull(repo, pr);
-  const summary = parseGreptileSummary(comments, repo);
-  if (!summary) {
-    console.log(JSON.stringify({pr: Number(pr), recorded: false, reason: 'no trusted Greptile summary'}));
-    return 0;
-  }
-  const existing = readReceipts(comments);
-  if (existing.receipts.some(entry => entry.reviewed === summary.reviewed)) {
-    console.log(JSON.stringify({pr: Number(pr), recorded: false, reason: 'base already recorded', reviewed: summary.reviewed}));
-    return 0;
-  }
+  // Recording after a push or restack would pin the wrong base.
+  if (view.headRefOid !== summary.reviewed) return skip('PR head moved since the review');
   let receipt;
   try {
     receipt = receiptFor(git, pr, view, summary.reviewed);
   } catch (error) {
-    if (error instanceof AccessError || !(error instanceof Error)) throw error;
+    if (!(error instanceof FailClosed)) throw error;
     // No single base: carry-over fails closed for this review, which is safe.
-    console.warn(`review-carryover: not recording PR ${pr} @ ${summary.reviewed}: ${error.message.split('\n')[0]}`);
-    return 0;
+    console.warn(`review-carryover: not recording PR ${pr} @ ${summary.reviewed}: ${error.message}`);
+    return skip('no single base');
   }
-  const body = JSON.stringify({body: renderReceipts(addReceipt(existing.receipts, receipt))});
+  const existing = readReceipts(comments);
+  const body = JSON.stringify({body: renderReceipts(upsertReceipt(existing.receipts, receipt))});
   const endpoint = existing.commentId ? `repos/${repo}/issues/comments/${existing.commentId}` : `repos/${repo}/issues/${pr}/comments`;
   gh(['api', '--method', existing.commentId ? 'PATCH' : 'POST', endpoint, '--input', '-'], body);
   console.log(JSON.stringify({pr: Number(pr), recorded: true, score: summary.score, ...receipt}));
@@ -261,11 +304,14 @@ function check(repo, pr, git) {
   const {receipts} = readReceipts(comments);
   let result;
   try {
-    result = decideCarryOver({summary, head: view.headRefOid, receipts, trees: receipt => pullTrees(git, pr, view, receipt)});
+    result = decideCarryOver({
+      summary, head: view.headRefOid, receipts,
+      replay: receipt => replayPull(git, pr, view, receipt),
+      contexts: (receipt, trees) => pullContexts(git, view, receipt, trees),
+    });
   } catch (error) {
-    if (error instanceof AccessError || !(error instanceof Error)) throw error;
-    console.error(`review-carryover: cannot replay PR ${pr}: ${error.message.split('\n')[0]}`);
-    result = {ok: false, reason: 'reviewed change cannot be replayed onto the head base'};
+    if (!(error instanceof FailClosed)) throw error;
+    result = {ok: false, reason: error.message};
   }
   console.log(JSON.stringify({pr: Number(pr), score: summary ? `${summary.score}/5` : null, reviewed: summary?.reviewed ?? null, head: view.headRefOid, ...result}));
   return result.ok ? 0 : 1;
@@ -282,8 +328,8 @@ function main() {
   try {
     return command === 'record' ? record(repo, pr, git) : check(repo, pr, git);
   } catch (error) {
-    if (!(error instanceof AccessError)) throw error;
-    console.error(`review-carryover: could not decide: ${error.message}`);
+    if (!(error instanceof Error)) throw error;
+    console.error(`review-carryover: could not decide: ${error instanceof AccessError ? error.message : error.stack}`);
     return 3;
   }
 }
