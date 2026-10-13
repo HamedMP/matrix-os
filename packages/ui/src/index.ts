@@ -250,3 +250,5 @@ export * from "./chat-navigation/metrics.js";
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
 
 export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./chat/attachment-input.js";
+
+export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
