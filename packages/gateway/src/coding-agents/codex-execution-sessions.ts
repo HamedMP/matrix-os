@@ -77,10 +77,31 @@ export function createCodexExecutionSessions(homePath: string, stopSession?: (id
     };
   }
   async function evictExpired() {
-    if ([...sessions.values()].some(value => value.expiresAt <= Date.now())) {
-      // Drain all tracked processes before discarding stale references; never lose a live session.
-      const release = await prepareRevocationInternal();
-      await release();
+    const expired = [...sessions].filter(([, value]) => value.expiresAt <= Date.now());
+    if (!expired.length) return;
+    // Serialized maintenance stops only stale sessions. A global fence here would
+    // interrupt unrelated children performing their final execution proof check.
+    const pending = expired.map(([id]) => id);
+    try {
+      const outcomes = await Promise.allSettled(Array.from({ length: Math.min(4, pending.length) }, async () => {
+        while (pending.length) {
+          const id = pending.shift()!;
+          if (!stopSession) throw unavailable();
+          await boundedOperation(() => stopSession(id), 5000);
+        }
+      }));
+      if (outcomes.some(result => result.status === "rejected")) throw unavailable();
+      for (const [id] of expired) sessions.delete(id);
+      await persist();
+    } catch (error: unknown) {
+      console.warn("[native-codex] Expired session cleanup unavailable:", error instanceof Error ? error.name : "UnknownError");
+      // Preserve every reference on uncertain stop/persistence, including across
+      // restart. Only failure escalates routine maintenance to a global fence.
+      for (const [id, value] of expired) sessions.set(id, value);
+      blocked = true;
+      await mkdir(dirname(marker), { recursive: true });
+      await writeFile(marker, JSON.stringify({ version: 1, state: "draining" }), { flag: "wx", mode: 0o600 });
+      throw unavailable();
     }
   }
   return {
