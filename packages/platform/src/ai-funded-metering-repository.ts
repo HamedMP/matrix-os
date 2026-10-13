@@ -33,6 +33,7 @@ import {
   FundedAiSettlementResponseSchema,
   FundedAiStartRequestSchema,
   FundedAiStartResponseSchema,
+  FundedAiUpstreamProvenanceSchema,
   IsoTimestampSchema,
   JEV_MODEL_ID,
   FundedAiChatAvailabilitySchema,
@@ -66,6 +67,33 @@ const IdentitySchema = z.object({
   runtimeSlot: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/),
 }).strict();
 const MoneySchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+type StoredUpstreamProvenance = z.infer<typeof FundedAiUpstreamProvenanceSchema>;
+
+function provenanceColumns(
+  provenance: StoredUpstreamProvenance | z.infer<typeof JevProvenanceSchema> | undefined,
+) {
+  return {
+    upstream: provenance && "upstream" in provenance ? provenance.upstream : null,
+    route_id: provenance && "routeId" in provenance ? provenance.routeId : null,
+    resolved_model: provenance?.resolvedModel ?? null,
+    inference_profile: provenance && "inferenceProfile" in provenance ? provenance.inferenceProfile ?? null : null,
+    region: provenance && "region" in provenance ? provenance.region ?? null : null,
+    pricing_version: provenance?.pricingVersion ?? null,
+    provider_request_id: provenance && "providerRequestId" in provenance ? provenance.providerRequestId ?? null : null,
+  };
+}
+
+function storedProvenanceMatches(
+  row: {
+    upstream: string | null; route_id: string | null; resolved_model: string | null;
+    inference_profile: string | null; region: string | null; pricing_version: string | null;
+    provider_request_id: string | null;
+  },
+  provenance: StoredUpstreamProvenance | z.infer<typeof JevProvenanceSchema> | undefined,
+): boolean {
+  const expected = provenanceColumns(provenance);
+  return Object.entries(expected).every(([key, value]) => row[key as keyof typeof expected] === value);
+}
 const ManualJevReviewSchema = z.object({
   reservationId: ReferenceSchema,
   tokenId: ReferenceSchema,
@@ -590,6 +618,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     tokenId: string;
     actualCostMicrousd: number | null;
     jevProvenance?: z.infer<typeof JevProvenanceSchema>;
+    upstreamProvenance?: StoredUpstreamProvenance;
     manualReview?: { expectedRequestId: string; evidenceRef: string; reviewer: string };
     notDispatched?: JevNoDispatchAttestation;
   }, finalizationMode: "exact" | "conservative"): Promise<{
@@ -629,6 +658,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       if (reservation.model_id !== JEV_MODEL_ID && request.jevProvenance !== undefined) {
         throw new AiFundedPolicyError("idempotency_conflict");
       }
+      if (reservation.model_id === JEV_MODEL_ID && request.upstreamProvenance !== undefined) {
+        throw new AiFundedPolicyError("idempotency_conflict");
+      }
       if (reservation.model_id === JEV_MODEL_ID) {
         if (request.jevProvenance !== undefined
           && (storedJevPricingVersion === undefined
@@ -658,15 +690,15 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const actualCostMicrousd = request.actualCostMicrousd ?? reserved;
       if (reservation.charge_waiver !== null) {
         const response = await settleWaivedUsage(trx.executor, reservation, actualCostMicrousd,
-          exactInteger(runtime.monthly_budget_microusd), checkedAt, request.jevProvenance, request.manualReview);
+          exactInteger(runtime.monthly_budget_microusd), checkedAt,
+          request.jevProvenance ?? request.upstreamProvenance, request.manualReview);
         return { response, finalizationMode: "exact" } as const;
       }
       if (reservation.status === "settled") {
         if (exactInteger(reservation.actual_microusd) !== actualCostMicrousd) {
           throw new AiFundedPolicyError("idempotency_conflict");
         }
-        if (reservation.resolved_model !== (request.jevProvenance?.resolvedModel ?? null)
-          || reservation.pricing_version !== (request.jevProvenance?.pricingVersion ?? null)) {
+        if (!storedProvenanceMatches(reservation, request.jevProvenance ?? request.upstreamProvenance)) {
           throw new AiFundedPolicyError("idempotency_conflict");
         }
         if (request.manualReview && (reservation.manual_review_evidence_ref !== request.manualReview.evidenceRef
@@ -708,8 +740,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           .where("reservation_id", "=", reservation.reservation_id).executeTakeFirstOrThrow();
         if (latest.status === "settled" && exactInteger(latest.actual_microusd) === actualCostMicrousd
           && latest.settlement_response !== null
-          && latest.resolved_model === (request.jevProvenance?.resolvedModel ?? null)
-          && latest.pricing_version === (request.jevProvenance?.pricingVersion ?? null)
+          && storedProvenanceMatches(latest, request.jevProvenance ?? request.upstreamProvenance)
           && (!request.manualReview || (latest.manual_review_evidence_ref === request.manualReview.evidenceRef
             && latest.manual_review_actor === request.manualReview.reviewer))) {
           return {
@@ -770,8 +801,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const updated = await trx.executor.updateTable("ai_funded_usage_reservations").set({
         status: "settled",
         actual_microusd: actualCostMicrousd,
-        resolved_model: request.jevProvenance?.resolvedModel ?? null,
-        pricing_version: request.jevProvenance?.pricingVersion ?? null,
+        ...provenanceColumns(request.jevProvenance ?? request.upstreamProvenance),
         settled_at: checkedAt,
         finalization_mode: finalizationMode,
         ...(request.manualReview ? {
@@ -827,6 +857,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       } } : {}),
       ...(request.mode === "exact" && request.jevProvenance
         ? { jevProvenance: request.jevProvenance } : {}),
+      ...(request.mode === "exact" && request.upstreamProvenance
+        ? { upstreamProvenance: request.upstreamProvenance } : {}),
     }, request.mode === "not_dispatched" ? "exact" : request.mode);
     return FundedAiFinalizationResponseSchema.parse({
       ...settlement.response,
