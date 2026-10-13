@@ -6,12 +6,14 @@ import type {
   CanonicalChatRun,
 } from "@matrix-os/contracts";
 
+// By relative path: the repository's own tests load this module too, and
+// there "@/" is the web shell, not this app.
 import {
   chatAttachmentUploadPath,
   type ComposerAttachment,
   type SentAttachmentUris,
   type TranscriptAttachment,
-} from "@/lib/chat-attachments";
+} from "./chat-attachments";
 
 export type TranscriptActivityState = CanonicalToolActivity["state"];
 export type TranscriptActivity = CanonicalToolActivity;
