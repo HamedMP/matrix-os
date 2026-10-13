@@ -9,6 +9,7 @@ import "@matrix-os/ui/agents-providers.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
+import { CreditDiagnosticDisclosure } from "./CreditDiagnosticDisclosure";
 import { createDesktopProviderWorkflowClient, createDesktopMatrixAnthropicClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "./provider-workflow-transport";
 import { createDesktopChatgptPlanClient } from "./local-chatgpt-plan-client";
 import {
@@ -80,10 +81,7 @@ function ConnectedAgentsProvidersAdapter({
   runtimeSlot: string;
 }) {
   const runtimeApi = useMemo(() => api.forRuntime(runtimeSlot), [api, runtimeSlot]);
-  const transport = useMemo(
-    () => createDesktopProviderSettingsTransport(runtimeApi),
-    [runtimeApi],
-  );
+  const transport = useMemo(() => createDesktopProviderSettingsTransport(runtimeApi), [runtimeApi]);
   const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot) => {
     invalidateDesktopProviderCatalog(identityKey, intent, snapshot);
   }, [identityKey]);
@@ -156,15 +154,18 @@ function ConnectedAgentsProvidersAdapter({
 
   if (controller.snapshot === null) {
     return (
+      <>
       <ProviderSettingsUnavailable
         signedOut={false}
         failed={controller.error !== null}
         onRetry={() => void controller.refresh()}
       />
+      </>
     );
   }
 
   return (
+    <>
     <AgentsProvidersView
       snapshot={controller.snapshot}
       selectedHarnessId={controller.selectedHarnessId}
@@ -207,6 +208,9 @@ function ConnectedAgentsProvidersAdapter({
       onLoadUsageHistory={loadUsageHistory}
       onAddCredit={addCredit}
     />
+    <CreditDiagnosticDisclosure api={runtimeApi} snapshot={controller.snapshot}
+      selectedHarnessId={controller.selectedHarnessId} identityKey={identityKey} />
+    </>
   );
 }
 
