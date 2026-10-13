@@ -831,6 +831,10 @@ Photos, Files, and the selected model's skills and commands. Spec:
 - A photo that is larger than 2048 pixels on its longer side, larger than 5 MB,
   or not JPEG, PNG, WebP or GIF is scaled and saved as JPEG with
   `expo-image-manipulator` before it is attached (`lib/chat-attachment-picker.ts`).
+- A picture is attached under a name that ends like its type (`attachmentName`).
+  Some photo libraries name a photo without an ending, and the computer and the
+  app both tell a picture by the ending of its name, so without it the photo
+  would be shown as a file once the phone's copy is gone.
 - What can be attached follows `supports.attachments` of the selected model's
   engine (`supportedAttachmentKinds`). Matrix AI's own route lists none today,
   so pick Claude Code or Codex to try a send. After a change to a model that
@@ -848,7 +852,15 @@ Photos, Files, and the selected model's skills and commands. Spec:
 Focused checks:
 
 ```bash
-pnpm --dir apps/mobile exec jest --runInBand __tests__/chat-attachments.test.ts __tests__/chat-attachment-picker.test.ts __tests__/requests-chat-attachments.test.ts __tests__/use-chat-composer-attachments.test.tsx __tests__/composer-add-control.test.tsx __tests__/message-attachments.test.tsx
+pnpm --dir apps/mobile exec jest --runInBand __tests__/chat-attachments.test.ts __tests__/chat-attachment-picker.test.ts __tests__/requests-chat-attachments.test.ts __tests__/use-chat-composer-attachments.test.tsx __tests__/composer-add-control.test.tsx __tests__/message-attachments.test.tsx __tests__/chat-photo-after-restart.test.tsx
+```
+
+`lib/canonical-chat-transcript.ts` is also loaded by the repository's own
+tests, where `@/` is the web shell and not this app. Import what it needs by
+relative path, and run these after changing it or `lib/chat-attachments.ts`:
+
+```bash
+pnpm exec vitest run tests/desktop/chat-subagent-parity.test.ts tests/desktop/chat-tool-output-parity.test.ts tests/shell/canonical-chat-approval-details.test.tsx tests/shell/canonical-chat-approval-parity.test.ts tests/shell/canonical-chat-input-parity.test.ts tests/shell/canonical-chat-terminal-parity.test.ts
 ```
 
 On a simulator, `xcrun simctl addmedia <udid> <image>` adds a photo to the

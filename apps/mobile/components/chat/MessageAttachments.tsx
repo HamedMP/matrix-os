@@ -68,6 +68,8 @@ function Photo({ attachment, alone, renderComputerPhoto }: PhotoProps) {
       />
     );
   }
+  // By the ending of its name, as the computer serves it and the preview reads
+  // it. A picture sent from this app always has one (`attachmentName`).
   if (renderComputerPhoto && attachment.path && isImagePath(attachment.path)) {
     return renderComputerPhoto({ path: attachment.path, label: attachment.label, style });
   }
