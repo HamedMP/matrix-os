@@ -1,12 +1,15 @@
 import type { ReactNode } from "react";
 import { Image, Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-// The same artwork, at the same size and position, as the native splash screen
-// (see the expo-splash-screen plugin in app.json), so the rabbit stays put
-// when the splash hands over to this screen.
-const splashArtwork = require("../assets/splash-icon.png");
-const SPLASH_LOGO_SIZE = 100;
+// The same artwork, at the same size and position and on the same ground, as
+// the native splash screen (see the expo-splash-screen plugin in app.json), so
+// nothing moves or changes colour when the splash hands over to this screen.
+const SPLASH_LOGO_SIZE = 160;
+const splashByMode = {
+  light: { artwork: require("../assets/splash-icon.png"), backgroundColor: "#FAFAFA" },
+  dark: { artwork: require("../assets/splash-icon-dark.png"), backgroundColor: "#0E3422" },
+} as const;
 
 interface StartupScreenProps {
   /**
@@ -21,11 +24,14 @@ interface StartupScreenProps {
 
 /** The launch screen shown while the app boots: the rabbit, the Matrix OS title, and a status. */
 export function StartupScreen({ showTitle = true, children }: StartupScreenProps) {
+  const { theme } = useUnistyles();
+  const splash = splashByMode[theme.v2.mode];
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: splash.backgroundColor }]} testID="startup-screen">
       <View style={styles.logoRow}>
         <Image
-          source={splashArtwork}
+          source={splash.artwork}
           style={styles.logo}
           resizeMode="contain"
           accessibilityLabel="Matrix OS logo"
@@ -44,7 +50,6 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     justifyContent: "center",
-    backgroundColor: theme.colors.background,
   },
   logoRow: {
     height: SPLASH_LOGO_SIZE,
