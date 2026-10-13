@@ -61,6 +61,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
             node scripts/ci/docker-relevance.mjs \
+              --scope pr \
               --base "origin/$GITHUB_BASE_REF" \
               --head "$GITHUB_SHA" \
               --format github >> "$GITHUB_OUTPUT"
