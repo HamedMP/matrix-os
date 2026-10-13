@@ -58,6 +58,20 @@ describe('executable delegation and aggregate admission',()=>{
     }finally{rmSync(dir,{recursive:true,force:true});}
   });
   it.each([
+    ['push','true','','false','shadow'],['push','true','true','true','delegated'],['push','false','true','false','shadow'],
+    ['pull_request','true','','true','delegated'],['pull_request','false','','false','shadow'],
+  ])('scopes delegation for %s enabled=%s main=%s',(event,enabled,main,eligible,mode)=>{
+    const dir=mkdtempSync(resolve(tmpdir(),'matrix-linux-scope-'));
+    try{
+      writeFileSync(resolve(dir,'event.json'),JSON.stringify(event==='push'?{}:{pull_request:{base:{ref:'main',repo:{full_name:'HamedMP/matrix-os'}},head:{repo:{full_name:'HamedMP/matrix-os'}},state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}]}}));
+      const body=ci.jobs.changes.steps.find((step:{id?:string})=>step.id==='route').run.match(/^node --input-type=module <<'NODE'\n([\s\S]*)\nNODE\s*$/)![1];
+      const env={...process.env,MATRIX_CI_DEDICATED_ENABLED:enabled,MATRIX_CI_DEDICATED_MAIN:main,MATRIX_CI_DEDICATED_SHADOW:'true',SHOULD_RUN:'true',GITHUB_EVENT_NAME:event,GITHUB_REF:event==='push'?'refs/heads/main':'refs/pull/1/merge',REFRESH_SNAPSHOT:'',GITHUB_REPOSITORY:'HamedMP/matrix-os',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')};
+      const execution=spawnSync(process.execPath,['--input-type=module','-e',body],{env,encoding:'utf8',timeout:10000});
+      expect(execution.status,execution.stderr).toBe(0);
+      expect(readFileSync(resolve(dir,'output'),'utf8').trim().split('\n')).toEqual([`eligible=${eligible}`,'required=true',`mode=${mode}`]);
+    }finally{rmSync(dir,{recursive:true,force:true});}
+  });
+  it.each([
     ['reopened','false','true',true],['reopened','false','false',false],
     ['edited','true','true',true],['edited','false','true',false],['edited','true','false',false],
     ['synchronize','false','true',true],['ready_for_review','false','false',true],
@@ -94,9 +108,9 @@ it('observes shadow qualification without letting it block the aggregate',()=>{
  expect(ci.jobs.changes.outputs.dedicated_required).toContain('steps.route.outputs.required');
  expect(ci.jobs['dedicated-linux'].if).toContain("dedicated_required == 'true'");
  // Shadow never makes CI Results wait on the Linux verifier.
- expect(ci.jobs['dedicated-linux'].if).toContain("vars.MATRIX_CI_DEDICATED_ENABLED == 'true'");
+ expect(ci.jobs['dedicated-linux'].if).toContain("needs.changes.outputs.dedicated_mode == 'delegated'");
  const step=ci.jobs['ci-results'].steps[0];expect(step.env.DEDICATED_REQUIRED).toContain('needs.changes.outputs.dedicated_required');
- expect(step.env.DEDICATED_MODE).toBe("${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}");
+ expect(step.env.DEDICATED_MODE).toBe("${{ needs.changes.outputs.dedicated_mode == 'delegated' && 'delegated' || 'shadow' }}");
  expect(step.run).toContain('"$DEDICATED_REQUIRED" = "true"');
 });
 it.each([['shadow','failure',0],['shadow','skipped',0],['delegated','failure',1],['delegated','skipped',1],['delegated','success',0]])('aggregate with required Linux in %s mode and Linux %s exits %i',(mode,linux,code)=>{
@@ -124,7 +138,7 @@ it.each([['shadow',false],['delegated',true]])('verifier in %s mode %s on missin
 it.each(['true','false'])('runs all hosted lanes and no Linux waiter for hosted-only rollback with routing=%s',enabled=>{
  const dir=mkdtempSync(resolve(tmpdir(),'matrix-hosted-recovery-route-'));
  try{writeFileSync(resolve(dir,'event.json'),'{}');const body=ci.jobs.changes.steps.find((step:{id?:string})=>step.id==='route').run.match(/^node --input-type=module <<'NODE'\n([\s\S]*)\nNODE\s*$/)![1];
- const result=spawnSync(process.execPath,['--input-type=module','-e',body],{env:{...process.env,REFRESH_SNAPSHOT:JSON.stringify({executionMode:'hosted-only'}),MATRIX_CI_DEDICATED_ENABLED:enabled,MATRIX_CI_DEDICATED_SHADOW:'true',SHOULD_RUN:'true',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')},encoding:'utf8',timeout:10000});expect(result.status,result.stderr).toBe(0);expect(readFileSync(resolve(dir,'output'),'utf8')).toBe('eligible=false\nrequired=false\n');
+ const result=spawnSync(process.execPath,['--input-type=module','-e',body],{env:{...process.env,REFRESH_SNAPSHOT:JSON.stringify({executionMode:'hosted-only'}),MATRIX_CI_DEDICATED_ENABLED:enabled,MATRIX_CI_DEDICATED_SHADOW:'true',SHOULD_RUN:'true',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')},encoding:'utf8',timeout:10000});expect(result.status,result.stderr).toBe(0);expect(readFileSync(resolve(dir,'output'),'utf8')).toBe('eligible=false\nrequired=false\nmode=shadow\n');
  const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')},step=ci.jobs['ci-results'].steps[0];for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_LINUX_RESULT:'skipped',DOCS_CONTRACT_RESULT:'skipped'});expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(0);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
@@ -138,7 +152,7 @@ it.each(['success','skipped','failure','cancelled'])('hosted infrastructure reco
 
 describe('shadow Linux failures outside the verifier script',()=>{
  it('keeps job-level failures non-blocking only in shadow mode',()=>{
-  expect(ci.jobs['dedicated-linux']['continue-on-error']).toBe("${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' }}");
+  expect(ci.jobs['dedicated-linux']['continue-on-error']).toBe("${{ needs.changes.outputs.dedicated_mode != 'delegated' }}");
  });
  const release=parse(readFileSync('.github/workflows/host-bundle-release.yml','utf8'));
  const gate=Object.values(release.jobs as Record<string,{steps?:{name:string,env?:Record<string,string>,run?:string}[]}>).flatMap(job=>job.steps??[]).find(step=>step.name==='Wait for CI on this commit')!;
@@ -148,7 +162,7 @@ describe('shadow Linux failures outside the verifier script',()=>{
   expect(result.status,result.stderr).toBe(0);return result.stdout;
  };
  it('aligns the host bundle release gate with the shadow policy',()=>{
-  expect(gate.env!.DEDICATED_SHADOW_ONLY).toBe("${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' }}");
+  expect(gate.env!.DEDICATED_SHADOW_ONLY).toBe("${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' || vars.MATRIX_CI_DEDICATED_MAIN != 'true' }}");
   const linux={name:'Verified Dedicated Linux Qualification',conclusion:'failure'},unit={name:'Unit Tests (1/4)',conclusion:'success'};
   expect(failedJob('true',[linux,unit])).toBe('');
   expect(failedJob('false',[linux,unit])).toBe('Verified Dedicated Linux Qualification (failure)');

@@ -140,7 +140,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = tr
     <p className="mt-1 text-xs">{!allowNewGrants
       ? "This legacy share cannot be extended to new people. You can adjust or revoke access that already exists."
       : beforeShare
-      ? "Current organization members only. Access starts when you share the whole project; if you choose no one, everyone in your organization gets contributor access."
+      ? "Current organization members only. Access starts when you share the whole project; if you choose no one, everyone in your organization gets Editor access."
       : "Current organization members only. Access starts when the recipient opens the share."}</p>
     {loading ? <p role="status" className="mt-2 text-sm">{allowNewGrants ? "Loading organization members…" : "Loading access…"}</p> : null}
     {error ? <div role="alert" className="mt-2 text-sm">Organization access is unavailable. Refresh and try again.
@@ -155,7 +155,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = tr
       </label>
       <label className="grid gap-1 text-sm">Access preset
         <select value={preset} disabled={loading || pending || error} onChange={(event) => setPreset(event.target.value as "viewer" | "contributor")} className="rounded-lg border bg-transparent px-3 py-2">
-          <option value="viewer">Viewer</option><option value="contributor">Contributor</option>
+          <option value="viewer">Viewer</option><option value="contributor">Editor</option>
         </select>
       </label>
       <button type="button" className={`${buttonClass} self-end`} disabled={loading || pending || error} onClick={() => void create()}>Grant access</button>
@@ -171,7 +171,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = tr
         value={grant.preset} disabled={pending || loading || error || !api.patch}
         onChange={(event) => void mutateGrant(grant, event.target.value as "viewer" | "contributor")}
         className="rounded-lg border bg-transparent px-2 py-1">
-        <option value="viewer">Viewer</option><option value="contributor">Contributor</option>
+        <option value="viewer">Viewer</option><option value="contributor">Editor</option>
       </select>
       <button type="button" className={buttonClass} disabled={pending || loading || error} onClick={() => void mutateGrant(grant)}>Revoke</button>
     </li>)}</ul> : null}

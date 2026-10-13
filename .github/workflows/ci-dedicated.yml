@@ -82,6 +82,7 @@ jobs:
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
           MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
+          MATRIX_CI_DEDICATED_MAIN: ${{ vars.MATRIX_CI_DEDICATED_MAIN }}
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
           HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
         with:
@@ -112,7 +113,7 @@ jobs:
             }
             if (!admission) { core.setOutput('admitted','false'); return; }
             const {sourceSha:sha,headSha,baseSha,baseRef,prNumber}=admission;
-            const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow';
+            const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'&&(admission.sourceKind!=='main'||process.env.MATRIX_CI_DEDICATED_MAIN==='true')?'delegated':'shadow';
             const requesting=prNumber>0||admission.sourceKind==='main'?await newestRequestingCiRun(github,context.repo,admission,mode):null;
             const summary={schemaVersion:3,suite:context.payload.inputs?.suite || 'qualification',
               ...(requesting?{requestingRunId:requesting.runId,requestingRunAttempt:requesting.runAttempt}:{}),

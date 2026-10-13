@@ -75,8 +75,8 @@ type CollaborationTransaction = Transaction<OwnerCollaborationDatabase>;
  * The share default: everyone in the project's organization may contribute. Runs inside the
  * activation transaction, which already moves the scope revision and auth epoch, so it adds no
  * revision of its own. An audience the owner chose before sharing wins: an organization grant
- * they made is kept as it is, and if they chose specific members only, the project is shared
- * with exactly those members and no organization default is added.
+ * they made is kept as it is, an explicitly revoked organization grant records Restricted,
+ * and if they chose specific members only, the project is shared with exactly those members.
  */
 async function ensureDefaultOrganizationGrant(trx: CollaborationTransaction, input: {
   scopeId: string;
@@ -97,6 +97,14 @@ async function ensureDefaultOrganizationGrant(trx: CollaborationTransaction, inp
     .where("expires_at", "is not", null)
     .where("expires_at", "<=", now)
     .execute();
+  // Revoking General access is the persisted Restricted choice. Publication must not replace
+  // that explicit owner decision with the first-share organization default.
+  const explicitlyRestricted = await trx.selectFrom("collaboration_grants").select("id")
+    .where("scope_id", "=", input.scopeId)
+    .where("audience_kind", "=", "organization")
+    .where("state", "=", "revoked")
+    .limit(1).executeTakeFirst();
+  if (explicitlyRestricted) return;
   const chosenMember = await trx.selectFrom("collaboration_grants").select("id")
     .where("scope_id", "=", input.scopeId)
     .where("audience_kind", "=", "member")

@@ -54,6 +54,7 @@ jobs:
       docs_contract_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests }}
       os_view_parity_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.os_view_parity_tests }}
       dedicated_eligible: ${{ steps.route.outputs.eligible }}
+      dedicated_mode: ${{ steps.route.outputs.mode }}
       dedicated_required: ${{ steps.route.outputs.required }}
     steps:
       - name: Checkout trusted main refresh helpers
@@ -148,6 +149,7 @@ jobs:
         id: route
         env:
           MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
+          MATRIX_CI_DEDICATED_MAIN: ${{ vars.MATRIX_CI_DEDICATED_MAIN }}
           MATRIX_CI_DEDICATED_SHADOW: ${{ vars.MATRIX_CI_DEDICATED_SHADOW }}
           SHOULD_RUN: ${{ steps.changed.outputs.should_run }}
           REFRESH_SNAPSHOT: ${{ steps.refresh.outputs.snapshot }}
@@ -157,14 +159,17 @@ jobs:
           const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
           const {selectDedicatedRoute}=await import('./scripts/ci/dedicated-admission.mjs');
           const refresh=process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null;
-          if(refresh){const hosted=refresh.executionMode==='hosted-only';appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${!hosted&&process.env.MATRIX_CI_DEDICATED_ENABLED==='true'}\nrequired=${!hosted}\n`);process.exit(0);}
+          const enabled=process.env.MATRIX_CI_DEDICATED_ENABLED==='true';
+          if(refresh){const hosted=refresh.executionMode==='hosted-only';appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${!hosted&&enabled}\nrequired=${!hosted}\nmode=${!hosted&&enabled?'delegated':'shadow'}\n`);process.exit(0);}
+          // Main pushes delegate behind their own flag, so PR routing can ship before main controllers do.
+          const scoped=enabled&&(process.env.GITHUB_EVENT_NAME!=='push'||process.env.MATRIX_CI_DEDICATED_MAIN==='true');
           const eligible=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
-            eventName:process.env.GITHUB_EVENT_NAME, enabled:process.env.MATRIX_CI_DEDICATED_ENABLED,
+            eventName:process.env.GITHUB_EVENT_NAME, enabled:scoped?'true':'false',
             shouldRun:process.env.SHOULD_RUN, ref:process.env.GITHUB_REF, pull:event.pull_request});
           const required=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
             eventName:process.env.GITHUB_EVENT_NAME, enabled:(process.env.MATRIX_CI_DEDICATED_ENABLED==='true'||process.env.MATRIX_CI_DEDICATED_SHADOW==='true')?'true':'false',
             shouldRun:process.env.SHOULD_RUN,ref:process.env.GITHUB_REF,pull:event.pull_request});
-          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\nmode=${scoped?'delegated':'shadow'}\n`);
           NODE
 
 
@@ -966,10 +971,10 @@ jobs:
     needs: changes
     # Only delegated routing waits on Linux here. In shadow mode CI Results would otherwise wait up to
     # 70 minutes for a non-blocking result; the controller check and source gates record shadow outcomes.
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && vars.MATRIX_CI_DEDICATED_ENABLED == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && needs.changes.outputs.dedicated_mode == 'delegated'
     runs-on: ubuntu-latest
     # Shadow observes Linux qualification; checkout failures and timeouts must not fail the run either.
-    continue-on-error: ${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' }}
+    continue-on-error: ${{ needs.changes.outputs.dedicated_mode != 'delegated' }}
     timeout-minutes: 70
     permissions:
       actions: read
@@ -985,7 +990,7 @@ jobs:
         env:
           REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
           REQUESTING_ATTEMPT: ${{ github.run_attempt }}
-          MODE: ${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}
+          MODE: ${{ needs.changes.outputs.dedicated_mode == 'delegated' && 'delegated' || 'shadow' }}
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
           HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
         with:
@@ -1028,7 +1033,7 @@ jobs:
           CI_BACKEND_PROVIDER: ${{ needs.ci-backend.outputs.provider }}
           INFRASTRUCTURE_FALLBACK: ${{ needs.ci-backend.outputs.infrastructure_fallback }}
           DEDICATED_LINUX_RESULT: ${{ needs.dedicated-linux.result }}
-          DEDICATED_MODE: ${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}
+          DEDICATED_MODE: ${{ needs.changes.outputs.dedicated_mode == 'delegated' && 'delegated' || 'shadow' }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           SHELL_PRODUCTION_BUILD_RESULT: ${{ needs.shell-production-build.result }}
