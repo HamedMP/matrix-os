@@ -3,6 +3,8 @@ import type { useDirectBotBinding } from "@matrix-os/ui";
 
 export interface SurfaceChromeSpec {
   title?: ReactNode;
+  /** A rich identity row needs the compact window width rather than a fixed pane offset. */
+  titleLayout?: "identity";
   hideTitle?: boolean;
   /** A content view may opt into the shared toolbar even when its app owns sidebar chrome. */
   showTitle?: boolean;

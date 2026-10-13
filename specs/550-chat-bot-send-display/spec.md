@@ -221,5 +221,24 @@ of this recovery.
 ## Approved Bot layout correction (2026-10-13)
 Bot and ordinary Chat must share responsive compact picker behavior so long Bot, connection and model labels do not displace attachment, microphone or folder controls at narrow widths. Phase/current-model Working status follows plain process-row styling while retaining spinner and lifecycle semantics. Final responses use the standard spacing below Worked for receipts; receipt expansion/collapse and Markdown paragraph/code spacing remain intact. Production-component offline browser coverage must include narrow/wide long labels, running/completed status and expanded/collapsed receipts, with no provider traffic. Existing real conversations supply screenshot verification.
 
+## Approved Bot header correction (2026-10-13)
+
+A reduced floating Chat window must show one visible Bot identity/title layer.
+The host toolbar and Bot content header must not overlap during their handoff.
+Reserve usable space for leading navigation/window controls and Details;
+the avatar, name and description must fit or truncate within the actual window
+container. Ordinary Chat keeps its existing title and navigation behavior.
+Long text must retain accessible identity and Details must remain operable.
+
+Failing-first browser tests mount the production host toolbar and Bot panel,
+including hosted and standalone paths, in320/480/900px containers inside a wide
+viewport. Verify no title/avatar/control intersections or horizontal overflow,
+long name/description, resizing, navigation and Details open/close, and ordinary
+Chat regression. Record which actual host mode reproduces the failure rather
+than inferring the route from a cropped screenshot. Fresh local production-DOM
+screenshots qualify local rendering only; they do not qualify an installed
+Electron Desktop, Web host, Preview identity or native/provider execution.
+This change adds no model request, source selection, permission or host action.
+
 ## Same-session credit diagnostic acceptance
 A minimum Desktop QA disclosure may read only the provider snapshot accepted by the existing controller, corroborated through the same existing runtime-pinned ApiClient's ordinary System response. Require the reviewed Computer/runtime/backend source and unchanged auth/runtime generation around asynchronous reads and hashing; abort, drop superseded snapshots and clear output on context changes. HTTP200 and raw positive credit are insufficient: preserve current state, equal asOf, age/future and budget guards. Report selected gateway source as unknown unless using the authoritative UI resolver. Whitelist fixed usage/readiness reasons, presence/empty distinctions and boolean/count projections with pseudonymous source IDs; omit financial amounts, credentials, rawDTO/body/headers, model/user text and arbitrary errors. Expose only normal readonly text, with no new endpoint, IPC, auth/grant, debug port or funded/model call. Same-client System corroboration does not cryptographically attest the ledger identity. Test hostile fields, foreign/stale identity, superseded/unmounted operations and projection freshness before collecting actual same-session evidence.
