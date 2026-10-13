@@ -1,4 +1,4 @@
-import { markSessionStartClean } from "./session-start-cleanup-proof.js";
+import type { SessionStartScope } from "../session-start-guard.js";
 import type { CodexExecutionAdmission } from "./codex-execution-admission.js";
 import { join } from "node:path";
 import { boundedOperation } from "../bounded-operation.js";
@@ -26,7 +26,7 @@ import type { CodexControlClient } from "./codex-control-client.js";
 import { recoverCodexWorkspace } from "./codex-workspace-recovery.js";
 
 type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession"> &
-  Partial<Pick<WorkspaceSessionOrchestrator, "sendInput" | "getSession">>;
+  Partial<Pick<WorkspaceSessionOrchestrator, "sendInput" | "getSession" | "withSessionStart">>;
 type SetupAgent = Extract<SupportedAgent, "claude" | "codex">;
 
 const SETUP_AGENTS: Record<SetupAgent, { installPackage: string; connectCommand: string }> = {
@@ -251,82 +251,83 @@ export function createWorkspaceCodingAgentProvider(
         throw new Error("Workspace provider execution unavailable");
       }
       const sessionId = sessionIdForThread(thread.id);
-      const nativeAccountBinding = agent === "codex" ? await options.codexAdmission?.start(principal.userId, sessionId) : undefined;
-      let result;
-      let runtimeInvoked = false;
-      try {
-        if (agent === "codex" && options.codexEvents) {
-          await options.codexEvents.watch({
-            principal,
-            threadId: thread.id,
-            sessionId,
-            ...(options.codexControl ? { checkpoint: true } : {}),
-          });
-        }
-        if (agent === "codex") await options.codexAdmission?.validate(principal.userId, nativeAccountBinding, sessionId);
-        runtimeInvoked = true;
-        result = await options.runtime.startSession({
-          ownerScope: { type: "user", id: principal.userId },
-          request: {
-            sessionId,
-            kind: "agent",
-            agent,
-            prompt: request.prompt,
-            attachments: request.attachments,
-            model: request.model,
-            modelOptions: request.modelOptions,
-            projectSlug: request.projectId,
-            taskId: request.taskId,
-            worktreeId: request.worktreeId,
-            mode: request.mode,
-            approvalPolicy: agent === "codex" && !options.codexControl
-              ? "never"
-              : request.approvalPolicy,
-            sandboxMode: request.sandboxMode,
-            runtimePreference: agent === "codex" && options.codexEvents && options.codexControl ? "background" : "zellij",
-          },
-        });
-      } catch (error: unknown) {
-        options.codexEvents?.unwatch(sessionId);
-        // Thread-store admits one initial invocation per unique thread/session ID.
-        // Absence is proof only before this invocation has dispatched any startup.
-        if (!runtimeInvoked && nativeAccountBinding && options.runtime.getSession) {
-          try {
-            const existing = await options.runtime.getSession(sessionId);
-            if (!existing.ok && existing.status === 404 && existing.error.code === "not_found") {
-              await options.codexAdmission?.releaseFailedStart(principal.userId, sessionId, nativeAccountBinding,
-                markSessionStartClean({}, principal.userId, sessionId));
-            }
-          } catch (cleanupError: unknown) {
-            console.warn("[coding-agents] Native startup cleanup unconfirmed", safeRecoveryErrorName(cleanupError));
+      const start = async (scope?: SessionStartScope<Parameters<WorkspaceRuntime["startSession"]>[0], Awaited<ReturnType<WorkspaceRuntime["startSession"]>>>) => {
+        const nativeAccountBinding = agent === "codex" ? await options.codexAdmission?.start(principal.userId, sessionId) : undefined;
+        let result;
+        let runtimeInvoked = false;
+        try {
+          if (agent === "codex" && options.codexEvents) {
+            await options.codexEvents.watch({
+              principal,
+              threadId: thread.id,
+              sessionId,
+              ...(options.codexControl ? { checkpoint: true } : {}),
+            });
           }
+          if (agent === "codex") await options.codexAdmission?.validate(principal.userId, nativeAccountBinding, sessionId);
+          runtimeInvoked = true;
+          result = await (scope?.startSession ?? options.runtime.startSession)({
+            ownerScope: { type: "user", id: principal.userId },
+            request: {
+              sessionId,
+              kind: "agent",
+              agent,
+              prompt: request.prompt,
+              attachments: request.attachments,
+              model: request.model,
+              modelOptions: request.modelOptions,
+              projectSlug: request.projectId,
+              taskId: request.taskId,
+              worktreeId: request.worktreeId,
+              mode: request.mode,
+              approvalPolicy: agent === "codex" && !options.codexControl
+                ? "never"
+                : request.approvalPolicy,
+              sandboxMode: request.sandboxMode,
+              runtimePreference: agent === "codex" && options.codexEvents && options.codexControl ? "background" : "zellij",
+            },
+          });
+        } catch (error: unknown) {
+          options.codexEvents?.unwatch(sessionId);
+          // Only the manager-owned reservation can prove a settled predispatch
+          // failure clean; HTTP-style not-found is not filesystem absence.
+          if (!runtimeInvoked && nativeAccountBinding && scope) {
+            try {
+              const proof = await scope.cleanFailure({});
+              await options.codexAdmission?.releaseFailedStart(principal.userId, sessionId, nativeAccountBinding, proof);
+            } catch (cleanupError: unknown) {
+              console.warn("[coding-agents] Native startup cleanup unconfirmed", safeRecoveryErrorName(cleanupError));
+            }
+          }
+          throw error;
         }
-        throw error;
-      }
-      if (!result.ok) {
-        options.codexEvents?.unwatch(sessionId);
-        if (agent === "codex") await options.codexAdmission?.releaseFailedStart(principal.userId, sessionId, nativeAccountBinding, result);
-        throw new Error("Workspace provider start failed");
-      }
+        if (!result.ok) {
+          options.codexEvents?.unwatch(sessionId);
+          if (agent === "codex") await options.codexAdmission?.releaseFailedStart(principal.userId, sessionId, nativeAccountBinding, result);
+          throw new Error("Workspace provider start failed");
+        }
 
-      const terminalRef = terminalRefFor(result.session);
-      return {
-        events: [statusEvent({
-          threadId: thread.id,
-          status: runningStatusFor(result.session),
-          now,
-          nextEventId,
-        }),
-        ...(terminalRef ? [AgentThreadEventSchema.parse({
-          type: "terminal.bound",
-          eventId: nextEventId(),
-          threadId: thread.id,
-          occurredAt: now().toISOString(),
-          terminalRef,
-          terminalSessionId: `${terminalRef.workspaceId}:${terminalRef.tabId}`,
-        })] : [])],
-        resumeState: { conversationId: sessionId, ...(nativeAccountBinding ? { nativeAccountBinding } : {}), ...(result.session.backgroundRef ? { backgroundRef: result.session.backgroundRef } : {}) },
+        const terminalRef = terminalRefFor(result.session);
+        return {
+          events: [statusEvent({
+            threadId: thread.id,
+            status: runningStatusFor(result.session),
+            now,
+            nextEventId,
+          }),
+          ...(terminalRef ? [AgentThreadEventSchema.parse({
+            type: "terminal.bound",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: now().toISOString(),
+            terminalRef,
+            terminalSessionId: `${terminalRef.workspaceId}:${terminalRef.tabId}`,
+          })] : [])],
+          resumeState: { conversationId: sessionId, ...(nativeAccountBinding ? { nativeAccountBinding } : {}), ...(result.session.backgroundRef ? { backgroundRef: result.session.backgroundRef } : {}) },
+        };
       };
+      return options.runtime.withSessionStart
+        ? options.runtime.withSessionStart(principal.userId, sessionId, start) : start();
     },
     async resumeTurn(context) {
       const { principal, thread, turn, resumeState, signal, now, nextEventId } = context;
