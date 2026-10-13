@@ -18,6 +18,9 @@ concurrency:
   group: macos-086-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-test:
     name: swift build + test

@@ -114,6 +114,7 @@ OTA payloads.
 | Workflow | Owner | When it runs | Required? |
 | --- | --- | --- | --- |
 | `ci.yml` | Core code validation | `ready-for-ci`, ready PRs, merge queue, `main`, manual | Yes, via `CI Results` |
+| `codeql.yml` | CodeQL code scanning (TypeScript and workflow definitions) | Weekly (Sunday 03:17 UTC), manual | No; findings land in Security → Code scanning |
 | `ci-pr-supersede.yml` | Safe PR-CI supersession | New heads on admitted PRs; trusted base workflow only | No; optimization only |
 | `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on `ready-for-ci`, ready PRs, and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |

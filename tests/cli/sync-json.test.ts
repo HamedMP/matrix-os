@@ -210,6 +210,26 @@ describe("sync CLI JSON output", () => {
       });
     });
 
+    it("keeps --json status output and stderr clean", async () => {
+      const home = await tempHome();
+      const result = await runCli(home, ["sync", "status", "--json"], bin, offlineTelemetry);
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toEqual({ v: 1, ok: true, data: { running: false } });
+    });
+
+    it("keeps --json stderr clean through the root matrixos wrapper", async () => {
+      const home = await tempHome();
+      const result = await runCli(home, ["sync", "pause", "--json"], rootBin, offlineTelemetry);
+
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stderr)).toEqual({
+        v: 1,
+        error: { code: "daemon_unavailable", message: "Sync daemon is not running." },
+      });
+    });
+
     it("still reports telemetry failures for human output", async () => {
       const home = await tempHome();
       const result = await runCli(home, ["sync", "pause"], bin, offlineTelemetry);
