@@ -38,6 +38,7 @@ export function sealFundedConfigRepair(request, helperSource, authToken, now = D
 
 /** Isolated bootstrap; production command calls only fixed defaults.
  * Path/UID overrides are for unprivileged process tests, never envelope fields.
+ * Production fds come from the trusted stdlib launcher; never reopen host.env through writable ancestors.
  * Redact complete installed credentials; malformed legacy values can match ordinary receipt text. */
 export function executeFundedConfigRepairBridge(transport, options = {}) {
   const fs = nodeRequire('node:fs');
@@ -70,8 +71,6 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
     }
   };
   verifyPath();
-  // Production fds are inherited from the trusted stdlib launcher. Never reopen
-  // host.env through writable ancestors after validation.
   const fd = anchored ? descriptors.host : fs.openSync(envPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   let bytes;
   try {
@@ -97,7 +96,7 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
     const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
     if (!match || !watched.has(match[1])) continue;
     requireCondition(!(match[1] in values) && line.startsWith(match[1] + '=')
-      && (match[1] === 'MATRIX_FUNDED_AI_RUNTIME_TOKEN' ? /^[A-Za-z0-9_-]*$/ : /^[A-Za-z0-9_-]+$/)
+      && (match[1] === 'MATRIX_FUNDED_AI_RUNTIME_TOKEN' ? /^[A-Za-z0-9_./:@%+~-]*$/ : /^[A-Za-z0-9_-]+$/)
         .test(line.slice(match[1].length + 1)));
     values[match[1]] = line.slice(match[1].length + 1);
   }

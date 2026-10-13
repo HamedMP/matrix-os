@@ -141,7 +141,7 @@ describe('authenticated stdin funding repair transport', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ action: 'apply', changed: false });
   });
 
-  it.each(['a', 'apply', 'true'])('returns the actual successful apply receipt after replacing malformed token %s', installed => {
+  it.each(['a', 'apply', 'true', 'old.token', 'abc+def', 'legacy._/:@%+~-TOKEN'])('returns the actual successful apply receipt after replacing malformed token %s', installed => {
     const { root, path, contents } = supportedFixture();
     writeFileSync(path, contents + `PLATFORM_INTERNAL_URL=https://platform.example.com\nMATRIX_FUNDED_AI_RUNTIME_TOKEN=${installed}\n`);
     const stat = lstatSync(path);
@@ -156,6 +156,14 @@ describe('authenticated stdin funding repair transport', () => {
       afterSha256: createHash('sha256').update(readFileSync(path)).digest('hex'), backup: 'host.env.funded-example.json' });
     expect(result.stdout + result.stderr).not.toContain(runtimeToken);
     expect(result.stdout + result.stderr).not.toContain(authToken);
+  });
+
+  it.each(['bad token', 'bad;token', 'bad$token', '"quoted"'])('rejects non-literal installed token %s without changing the file', installed => {
+    const { path, contents } = supportedFixture();
+    const original = contents + `MATRIX_FUNDED_AI_RUNTIME_TOKEN=${installed}\n`;
+    writeFileSync(path, original);
+    expect(bridge(sealFundedConfigRepair(request, source, authToken), path, true).status).toBe(1);
+    expect(readFileSync(path, 'utf8')).toBe(original);
   });
 
   it.each(['ciphertext', 'tag', 'salt', 'iv'])('rejects tampered %s before executing', field => {
