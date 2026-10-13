@@ -74,3 +74,11 @@ export async function createNativeCodexExecutionProof(expected, environment, raw
 export function assertNativeCodexThreadProvider(started) {
   if (started?.modelProvider !== "openai") throw new Error("native_subscription_unavailable");
 }
+
+/** Human responses resume an existing provider turn just like steer. Recheck at
+ * delivery, while stop/interrupt/hibernate remain available after revocation. */
+export async function verifyNativeCodexHumanControl(control, verifyNativeSubscription, request) {
+  if (control.type === "approval" || control.type === "input" || control.type === "defer_input") {
+    await verifyNativeSubscription?.(request);
+  }
+}
