@@ -1,7 +1,7 @@
 ---
 name: matrix-product-demo-video
 description: Record cinematic product demo videos with a scripted mouse, caption strip, time-warp, and dissolve chapter cards. Use when the user asks for a product demo, click-through video, demo recording, team demo, or a video like the onboarding-widget complete cut.
-version: 1.0.0
+version: 1.1.0
 author: Matrix OS
 license: MIT
 platforms: [macos]
@@ -76,7 +76,28 @@ Launch helpers:
 - **Web:** Chrome `channel: "chrome"`, `headless: true`, `--window-size=1440,897 --force-device-scale-factor=2`, `viewport: null`. Confirm the first screencast frame is 1440×810.
 - **Electron:** `_electron.launch` with `OPERATOR_USER_DATA_DIR` set to an isolated profile. Size the window to 1440×810. Dismiss "Update Matrix OS" with Escape. Confirm `auth:status` only as a boolean, never print tokens.
 
-Motion that does nothing on screen is a bug. Drag past center if "snap back" should return to the starting corner. Minimize leftover Chat windows before an Electron tour.
+Motion that does nothing on screen is a bug.
+
+## Helpers the finished cut used
+
+`encode-demo.swift` and `stitch-complete.swift` are the same files that rendered `onboarding-widget-complete.mp4`. `record-lib.cjs` is the capture, time-warp, and stitch caller from that cut, plus the launch helpers that were inline in the recorders. Use these. Do not invent a slower mouse, overlay captions on the Dock, or letterbox 16:9 into 16:10.
+
+| Helper | What the video did |
+| --- | --- |
+| `launchWeb(chromium, session)` | Headless Chrome, window `1440×897`, DPR 2, `viewport: null`, cursor init script |
+| `launchElectron(electron, { repo, profile, rendererUrl })` | Isolated profile, content size 1440×810, always-on-top, background throttling off |
+| `dismissUpdate(page)` | Escape the "Update Matrix OS" dialog before and after reload |
+| `hideOpenChat(page)` | Minimize a leftover Chat window before an Electron tour |
+| `assertCssSize(page, css)` | Abort unless the page is 1440×810 at DPR 2 |
+| `dragHandle(session, page, handle, toX, toY)` | Grab, 620ms drag. Drag to about x=900 so snap-back returns to the right corner |
+| `snapshotFrame(session)` | One JPEG per poll while a run is in progress |
+| `wheelScroll(page, deltaY, steps, ms)` | Scroll the finished transcript into view |
+| `trimTail(timeline, seconds, 2.2)` | Cut a splash or reload out of the tail and hold the last good frame |
+| `releaseElectron(app)` | Clear always-on-top before close |
+
+Waiting stretches: `segment.fastForward = 8` for a web-search wait, `caption.maxSpeed = 3.5` while an answer streams. Chapter cards on that cut were 2.0s, then 1.5s, 1.5s, 1.6s, 1.6s, and a 2.2s outro, with a 0.45s dissolve.
+
+The onboarding click script stays out of git. It is one feature's story. The look and the tools above are the reusable part.
 
 ## Time-warp
 

@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
+const { createRequire } = require("node:module");
 const { execFileSync } = require("node:child_process");
 
 const SKILL = path.resolve(__dirname, "..");
@@ -302,6 +303,102 @@ function encodeTimeline(timeline, css, output, segmentIndex = null) {
   return output;
 }
 
+async function dragHandle(session, page, handle, toX, toY) {
+  const box = await boxOf(handle);
+  await glide(session, page, box.x + box.width / 2, box.y + box.height / 2, 320);
+  await hold(page, 80);
+  await page.mouse.down();
+  await glide(session, page, toX, toY, 620);
+  await page.mouse.up();
+}
+
+async function dismissUpdate(page) {
+  const update = page.getByRole("dialog", { name: "Update Matrix OS" });
+  await update.waitFor({ timeout: 8_000 }).catch((error) => console.log("no update notice:", error.name));
+  if (await update.isVisible().catch(() => false)) {
+    await page.keyboard.press("Escape");
+    await update.waitFor({ state: "hidden", timeout: 5_000 });
+  }
+}
+
+async function assertCssSize(page, css) {
+  const inner = await page.evaluate(() => ({ w: innerWidth, h: innerHeight, dpr: devicePixelRatio }));
+  if (inner.w !== css.w || inner.h !== css.h || inner.dpr !== 2) {
+    throw new Error(`page is ${JSON.stringify(inner)}, expected ${css.w}x${css.h} at DPR 2`);
+  }
+  return inner;
+}
+
+async function launchWeb(chromium, session) {
+  const browser = await chromium.launch({
+    channel: "chrome",
+    headless: true,
+    args: [`--window-size=${session.css.w},${session.css.h + 87}`, "--force-device-scale-factor=2"],
+  });
+  const context = await browser.newContext({ viewport: null });
+  await context.addInitScript(cursorOverlay, { x: session.mouse.x, y: session.mouse.y });
+  const page = await context.newPage();
+  page.on("pageerror", (error) => console.error("pageerror", error.message));
+  return { browser, context, page };
+}
+
+async function launchElectron(electron, { repo, profile, rendererUrl = "http://127.0.0.1:5173/", size = EL }) {
+  const executablePath = createRequire(path.join(repo, "desktop/package.json"))("electron");
+  const app = await electron.launch({
+    executablePath,
+    args: ["."],
+    cwd: path.join(repo, "desktop"),
+    bypassCSP: true,
+    env: { ...process.env, OPERATOR_USER_DATA_DIR: profile, ELECTRON_RENDERER_URL: rendererUrl },
+    timeout: 60_000,
+  });
+  const page = await app.firstWindow();
+  page.on("pageerror", (error) => console.error("pageerror", error.message));
+  await app.evaluate(({ BrowserWindow, screen }, next) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    const area = screen.getPrimaryDisplay().workArea;
+    win.setContentSize(next.w, next.h);
+    win.setPosition(area.x, area.y);
+    win.setAlwaysOnTop(true, "floating");
+    win.webContents.setBackgroundThrottling(false);
+  }, size);
+  return { app, page };
+}
+
+async function releaseElectron(app) {
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setAlwaysOnTop(false));
+}
+
+async function hideOpenChat(page) {
+  const chat = page.locator('[aria-label="Chat window"]');
+  if (await chat.isVisible().catch(() => false)) {
+    await chat.getByRole("button", { name: "Minimize" }).first().dispatchEvent("click");
+    await chat.waitFor({ state: "hidden", timeout: 10_000 });
+  }
+}
+
+async function snapshotFrame(session) {
+  const { data } = await session.cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 85 });
+  const file = path.join(session.timeline.framesDir, `${String(session.timeline.frames.length).padStart(6, "0")}.jpg`);
+  session.timeline.frames.push({ t: now(), file, w: session.css.w, h: session.css.h });
+  session.writes.push(fsp.writeFile(file, Buffer.from(data, "base64")));
+}
+
+async function wheelScroll(page, deltaY, steps, ms) {
+  for (let i = 0; i < steps; i += 1) {
+    await page.mouse.wheel(0, deltaY / steps);
+    await hold(page, ms / steps);
+  }
+}
+
+function trimTail(timeline, cutSeconds, holdSeconds = 2.2) {
+  const result = timeline.segments.at(-1);
+  const cutAt = result.start + cutSeconds;
+  timeline.frames = timeline.frames.filter((frame) => frame.t <= cutAt);
+  result.end = cutAt + holdSeconds;
+  return timeline;
+}
+
 function stitch(recipe) {
   compileStitcher();
   const recipePath = recipe.recipePath ?? path.join(path.dirname(recipe.output), "recipe.json");
@@ -324,6 +421,8 @@ function stitch(recipe) {
 module.exports = {
   SKILL, WEB, EL, OUT, FPS, BAND, WARP,
   ease, hold, now, cursorOverlay, makeSession, glide, boxOf, hover, click,
-  focusFor, camera, caption, startCapture, stopCapture,
+  focusFor, camera, caption, startCapture, stopCapture, dragHandle,
+  dismissUpdate, assertCssSize, launchWeb, launchElectron, releaseElectron, hideOpenChat,
+  snapshotFrame, wheelScroll, trimTail,
   compileEncoder, compileStitcher, encodeTimeline, stitch,
 };

@@ -56,7 +56,7 @@ A chapter with no `src` is a card-only outro. The stitcher must trim the previou
 const lib = require("./scripts/record-lib.cjs");
 ```
 
-Exports: `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `hold`, `now`, `ease`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `encodeTimeline`, `stitch`, `compileEncoder`, `compileStitcher`.
+Exports: `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `hold`, `now`, `ease`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `dragHandle`, `dismissUpdate`, `assertCssSize`, `launchWeb`, `launchElectron`, `releaseElectron`, `hideOpenChat`, `snapshotFrame`, `wheelScroll`, `trimTail`, `encodeTimeline`, `stitch`, `compileEncoder`, `compileStitcher`.
 
 `encodeTimeline(timeline, css, output, segmentIndex?)` writes `<output>.manifest.json` and the MP4. Optional `segment.fastForward` and `caption.maxSpeed` control squeeze.
 
