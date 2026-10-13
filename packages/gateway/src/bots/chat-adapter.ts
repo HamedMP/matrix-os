@@ -10,6 +10,7 @@
  * found afterwards is failed, its runtime stopped, and nothing is replayed.
  */
 import { createHash } from "node:crypto";
+import { assertTextOnlySteering } from "../chat/steer-delivery-error.js";
 import type { BotEvent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
@@ -159,6 +160,7 @@ export function createMatrixBotChatProviderAdapter(options: {
       yield CanonicalProviderRunEventSchema.parse(completion(result));
     },
     async steer(input) {
+      assertTextOnlySteering(input.parts);
       const text = messageText(input.parts) || input.prompt;
       if (!await options.orchestrator.steer(input.runId, text)) throw new Error("Bot run is not accepting messages");
     },

@@ -23,7 +23,7 @@ const invalid = () => new BotBrokerActionError("invalid_arguments");
 const stale = () => new BotBrokerActionError("stale_generation");
 
 /** Pin both directory identities and the opened descriptor; fail closed on replacements. */
-async function capture(homePath: string, part: Attachment, signal: AbortSignal): Promise<Buffer> {
+async function captureUpload(homePath: string, part: Attachment, signal: AbortSignal): Promise<Buffer> {
   if (!part.ownerReference || !/^temporary\/desktop-chat\/[^/\\\u0000-\u001f\u007f]{1,255}$/.test(part.ownerReference)
     || [".", ".."].includes(part.ownerReference.split("/").at(-1)!)) throw invalid();
   const root = await realpath(homePath);
@@ -31,12 +31,7 @@ async function capture(homePath: string, part: Attachment, signal: AbortSignal):
   const identities = await Promise.all(directories.map(path => lstat(path)));
   if (identities.some(info => !info.isDirectory() || info.isSymbolicLink())) throw invalid();
   const target = join(root, part.ownerReference);
-  let file;
-  try { file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
-  catch (error: unknown) {
-    if (error instanceof Error && "code" in error && ["ENOENT", "ELOOP", "ENOTDIR", "EISDIR", "EACCES", "EPERM"].includes(String(error.code))) throw invalid();
-    throw error;
-  }
+  const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await file.stat();
     const maximum = part.kind === "image" ? IMAGE_BYTES : BOT_ARTIFACT_BINARY_MAX_BYTES;
@@ -58,6 +53,15 @@ async function capture(homePath: string, part: Attachment, signal: AbortSignal):
       || current.some((entry, i) => entry.isSymbolicLink() || !entry.isDirectory() || entry.dev !== identities[i]!.dev || entry.ino !== identities[i]!.ino)) throw invalid();
     return bytes.subarray(0, length);
   } finally { await file.close(); }
+}
+
+/** Cleanup can race any filesystem stage, before open or during final checks. */
+async function capture(homePath: string, part: Attachment, signal: AbortSignal): Promise<Buffer> {
+  try { return await captureUpload(homePath, part, signal); }
+  catch (error: unknown) {
+    if (error instanceof Error && "code" in error && ["ENOENT", "ELOOP", "ENOTDIR", "EISDIR", "EACCES", "EPERM"].includes(String(error.code))) throw invalid();
+    throw error;
+  }
 }
 
 export async function prepareBotInputs(input: {
@@ -103,8 +107,8 @@ export async function prepareBotInputs(input: {
       if (historical && ((part.kind === "file" && input.historyFileRead === false)
         || botAttachmentInputError([...selected, part], input.route.input.includes("image"), input.imageTotalMaximum))) { unavailable(); continue; }
       let bytes: Buffer;
+      await assertCurrent?.(); assertLive();
       try {
-        await assertCurrent?.(); assertLive();
         bytes = await capture(input.homePath!, part, input.signal);
       } catch (error: unknown) {
         if (historical && error instanceof BotBrokerActionError && error.code === "invalid_arguments") { unavailable(); continue; }

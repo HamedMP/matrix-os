@@ -1,10 +1,25 @@
-import { chmod, mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, writeFile, rm, symlink, realpath, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { prepareBotInputs } from "../../../packages/gateway/src/bots/admitted-input.js";
 import { BotBrokerActionError } from "../../../packages/gateway/src/bots/broker-actions.js";
 import type { HistoricalInput } from "../../../packages/gateway/src/bots/historical-input.js";
+const captureHooks = vi.hoisted(() => ({
+  opened: undefined as ((file: FileHandle) => void) | undefined,
+  lstat: undefined as ((path: string) => Promise<void>) | undefined,
+}));
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const file = await actual.open(...args); captureHooks.opened?.(file); return file;
+    },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      await captureHooks.lstat?.(String(args[0])); return actual.lstat(...args);
+    },
+  };
+});
 let home: string;
 const authority = { ownerId: "owner_1", chatId: "chat_1", runId: "run_1" };
 const binding = { ...authority, runtimeHandle: `runtime_${"a".repeat(32)}`, executionGeneration: "1" } as never;
@@ -17,8 +32,8 @@ function prepare(references: HistoricalInput[], overrides: Partial<Parameters<ty
   return prepareBotInputs({ homePath: home, expectedOwnerId: authority.ownerId, ...authority, parts: [{ type: "text", text: "Read again" }], route,
     signal: new AbortController().signal, assertActive: () => undefined, history: async () => ({ references, assertCurrent: async () => undefined }), ...overrides });
 }
-beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "history-input-")); await mkdir(join(home, "temporary/desktop-chat"), { recursive: true }); });
-afterEach(async () => { await rm(home, { recursive: true, force: true }); });
+beforeEach(async () => { captureHooks.opened = undefined; captureHooks.lstat = undefined; home = await realpath(await mkdtemp(join(tmpdir(), "history-input-"))); await mkdir(join(home, "temporary/desktop-chat"), { recursive: true }); });
+afterEach(async () => { captureHooks.opened = undefined; captureHooks.lstat = undefined; vi.restoreAllMocks(); await rm(home, { recursive: true, force: true }); });
 it("captures independently changed same-size file bytes with new aliases; denies stale alias and generation", async () => {
   const path = join(home, "temporary/desktop-chat/marker"); await writeFile(path, "NEW_UNSEEN_MARKER");
   const first = await prepare([ref("marker")]); first.bind(binding); const old = first.fileAliases[0]!; first.dispose();
@@ -110,4 +125,71 @@ it.skipIf(process.getuid?.() === 0)("omits an unreadable historical file while c
     expect(prepared.prompt("Normal text")).toContain("unavailable for this request"); prepared.dispose();
     await expect(prepare([], { parts: [ref("unreadable").part] })).rejects.toMatchObject({ code: "invalid_arguments" });
   } finally { await chmod(path, 0o600); }
+});
+it.each(["home", "temporary", "desktop-chat"])("keeps text usable when the %s upload directory disappears before open, while current input fails safely", async directory => {
+  const path = directory === "home" ? home : join(home, directory === "temporary" ? "temporary" : "temporary/desktop-chat");
+  await rm(path, { recursive: true });
+  const prepared = await prepare([ref("expired")]);
+  expect(prepared.fileAliases).toEqual([]); expect(prepared.prompt("Unrelated text")).toContain("Unrelated text");
+  expect(prepared.prompt("Unrelated text")).toContain("unavailable for this request");
+  expect(prepared.prompt("Unrelated text")).not.toContain(home); prepared.dispose();
+  await expect(prepare([], { parts: [ref("expired").part] })).rejects.toMatchObject({ code: "invalid_arguments" });
+});
+it.each([true, false])("closes the pinned descriptor after cleanup unlinks the upload during capture (historical=%s)", async historical => {
+  const path = join(home, "temporary/desktop-chat/racing"); await writeFile(path, "RETAINED_BYTES");
+  let descriptor: FileHandle | undefined, closed: ReturnType<typeof vi.spyOn> | undefined;
+  captureHooks.opened = file => {
+    descriptor = file; closed = vi.spyOn(file, "close"); const stat = file.stat.bind(file);
+    vi.spyOn(file, "stat").mockImplementationOnce(async () => { const info = await stat(); await rm(path); return info; });
+  };
+  try {
+    if (historical) {
+      const prepared = await prepare([ref("racing")]);
+      expect(prepared.fileAliases).toEqual([]); expect(prepared.prompt("Continue text")).toContain("unavailable for this request"); prepared.dispose();
+    } else await expect(prepare([], { parts: [ref("racing").part] })).rejects.toMatchObject({ code: "invalid_arguments" });
+  } finally { expect(closed).toHaveBeenCalledOnce(); expect(descriptor?.fd).toBe(-1); }
+});
+it("keeps historical fallback safe when cleanup removes the directory during final identity checks", async () => {
+  const directory = join(home, "temporary/desktop-chat"), path = join(directory, "late"); await writeFile(path, "LATE_BYTES");
+  let targetChecked = false, removed: Promise<void> | undefined, closed: ReturnType<typeof vi.spyOn> | undefined;
+  captureHooks.opened = file => { closed = vi.spyOn(file, "close"); };
+  captureHooks.lstat = async current => {
+    if (current === path) targetChecked = true;
+    else if (targetChecked) { removed ??= rm(directory, { recursive: true }); await removed; }
+  };
+  const prepared = await prepare([ref("late")]);
+  expect(prepared.fileAliases).toEqual([]); expect(prepared.prompt("Continue text")).toContain("unavailable for this request"); prepared.dispose();
+  expect(closed).toHaveBeenCalledOnce();
+});
+it.each(["EIO", "ENOMEM"])("propagates unexpected %s during final path verification and closes the descriptor", async code => {
+  const path = join(home, "temporary/desktop-chat/error"); await writeFile(path, "ERROR_BYTES");
+  const failure = Object.assign(new Error("Synthetic filesystem failure"), { code }); let closed: ReturnType<typeof vi.spyOn> | undefined;
+  captureHooks.opened = file => { closed = vi.spyOn(file, "close"); };
+  captureHooks.lstat = async current => { if (current === path) throw failure; };
+  await expect(prepare([ref("error")])).rejects.toBe(failure); expect(closed).toHaveBeenCalledOnce();
+});
+it.each(["not_granted", "denied", "stale_generation"] as const)("does not treat a current authority failure %s as missing history", async code => {
+  await writeFile(join(home, "temporary/desktop-chat/authority"), "AUTHORITY_BYTES");
+  const failure = new BotBrokerActionError(code); let checks = 0;
+  await expect(prepare([ref("authority")], { history: async () => ({ references: [ref("authority")], assertCurrent: async () => { if (++checks === 3) throw failure; } }) })).rejects.toBe(failure);
+});
+it("does not normalize a filesystem-shaped error from the source authority recheck", async () => {
+  const failure = Object.assign(new Error("Synthetic source authority failure"), { code: "ENOENT" }); let checks = 0;
+  await expect(prepare([ref("source")], { history: async () => ({ references: [ref("source")], assertCurrent: async () => { if (++checks === 2) throw failure; } }) })).rejects.toBe(failure);
+});
+it("does not skip a typed invalid-arguments failure from the authority fence as absent history", async () => {
+  const failure = new BotBrokerActionError("invalid_arguments"); let checks = 0;
+  const opened = vi.fn(); captureHooks.opened = opened;
+  await expect(prepare([ref("source")], { history: async () => ({ references: [ref("source")], assertCurrent: async () => { if (++checks === 2) throw failure; } }) })).rejects.toBe(failure);
+  expect(opened).not.toHaveBeenCalled();
+});
+it("propagates cancellation when cleanup also unlinks the captured historical upload", async () => {
+  const path = join(home, "temporary/desktop-chat/cancel"); await writeFile(path, "CANCEL_BYTES");
+  const controller = new AbortController(); let closed: ReturnType<typeof vi.spyOn> | undefined;
+  captureHooks.opened = file => {
+    closed = vi.spyOn(file, "close"); const stat = file.stat.bind(file);
+    vi.spyOn(file, "stat").mockImplementationOnce(async () => { const info = await stat(); controller.abort(); await rm(path); return info; });
+  };
+  await expect(prepare([ref("cancel")], { signal: controller.signal })).rejects.toMatchObject({ code: "stale_generation" });
+  expect(closed).toHaveBeenCalledOnce();
 });
