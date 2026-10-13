@@ -38,7 +38,7 @@ it('independently verifies exact main infrastructure recovery even with no open 
  expect(f.github.rest.actions.listJobsForWorkflowRun).toHaveBeenCalledWith(expect.objectContaining({run_id:321,filter:'latest',request:expect.objectContaining({timeout:10000})}));
  expect(f.github.rest.checks.create).not.toHaveBeenCalled();expect(f.github.rest.checks.update).not.toHaveBeenCalled();expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
 });
-it.each(['missing','skipped','failed','attempt','head','run','duplicate','truncated','fake-app','aggregate-run','inventory-denied','requester-pending','requester-attempt','receipt-missing','main-moved','newer-attempt'])('fails the independent main App gate for %s despite a green Actions aggregate',async kind=>{
+it.each(['missing','skipped','failed','attempt','head','run','duplicate','truncated','fake-app','aggregate-run','inventory-denied','requester-attempt','receipt-missing','main-moved','newer-attempt'])('fails the independent main App gate for %s despite a green Actions aggregate',async kind=>{
  const f=fixture();
  if(kind==='missing')f.jobs.splice(0,1);if(kind==='skipped')f.jobs[0].conclusion='skipped';if(kind==='failed')f.jobs[0].conclusion='failure';if(kind==='attempt')f.jobs[0].run_attempt=2;if(kind==='head')f.jobs[0].head_sha=base;if(kind==='run')f.jobs[0].run_id=999;if(kind==='duplicate')f.jobs.push({...f.jobs[0],id:999});
  if(kind==='truncated')f.github.rest.actions.listJobsForWorkflowRun.mockImplementation(async({run_id}:any)=>({data:run_id===124?{jobs:[{name:'benchmark',status:'completed',conclusion:'success'}]}:{total_count:101,jobs:f.jobs}}));
@@ -186,7 +186,25 @@ it('never substitutes the cached detector decision for an expired private Linux 
  const f=fixture(),history=retainAppHistory(f);await reconcile(f);expect(history.current().conclusion).toBe('success');
  const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{const value:any=await original(args);for(const artifact of value.data.artifacts)artifact.expired=true;return value;});
+ f.jobs[0].conclusion='skipped';
  await reconcile(f);expect(history.current().conclusion).toBe('failure');
+});
+it('qualifies delegated main through full hosted fallback coverage when Linux evidence is missing',async()=>{
+ const f=fixture(),history=retainAppHistory(f);
+ const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
+ f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async(args:any)=>args.run_id===321?original(args):{data:{total_count:0,artifacts:[]}} as any);
+ await reconcile(f);expect(history.current()).toMatchObject({conclusion:'success',output:{title:'Current exact-main full hosted fallback coverage passed'}});
+ expect(JSON.parse(history.current().output.summary)).toMatchObject({linuxFallback:true,qualificationMode:'delegated'});
+});
+it('waits neutrally when the push reconcile runs before CI is visible',async()=>{
+ const f=fixture();f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{total_count:0,workflow_runs:[]}} as any);
+ await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral',output:{title:'Waiting for exact-main CI to finish'}});
+});
+it.each(['delegated','shadow'])('waits neutrally instead of failing while exact-main CI is still running (%s)',async mode=>{
+ const f=fixture();f.ci.status='in_progress';
+ if(mode==='shadow'){const configuration=(await f.github.rest.actions.listRepoVariables()).data;configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_ENABLED')!.value='false';configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_SHADOW')!.value='true';f.github.rest.actions.listRepoVariables.mockResolvedValue({data:configuration});}
+ await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral',output:{title:'Waiting for exact-main CI to finish'}});
+ expect(JSON.parse(written(f).output.summary)).toMatchObject({waitingForRequester:true,requestingRunId:321});
 });
 
 it('retains exact authenticated docs coverage after routing is switched off and its artifact expires',async()=>{
@@ -263,7 +281,7 @@ describe('shadow mode observes without blocking main',()=>{
   f.github.rest.actions.listWorkflowRuns.mockImplementation(async(args:any)=>args.workflow_id===98&&++requesterLookups>1?{data:{workflow_runs:[{...f.ci,run_attempt:2,status:'queued'}]}}:original(args));
   await reconcile(f);expect(requesterLookups).toBeGreaterThan(1);expect(written(f)).toMatchObject({conclusion:'failure'});
  });
- it.each(['requester-pending','main-moved'])('still fails in shadow mode when %s',async kind=>{
+ it.each(['main-moved'])('still fails in shadow mode when %s',async kind=>{
   const f=fixture();await shadow(f);dropLinuxReceipt(f);
   if(kind==='requester-pending')f.ci.status='in_progress';
   if(kind==='main-moved'){const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{f.github.rest.repos.getBranch.mockImplementation(async(a:any)=>({data:{name:a.branch,commit:{sha:base}}}));return original(args);});}

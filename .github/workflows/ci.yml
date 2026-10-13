@@ -235,11 +235,11 @@ jobs:
           script: |
             if(process.env.DEDICATED_ELIGIBLE!=='true'){core.setOutput('provider','hosted');core.setOutput('infrastructure_fallback','false');return;}
             const {pathToFileURL}=require('node:url');const {resolve}=require('node:path');
-            const {requestingSnapshot,decideCiBackend}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
-            const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
-            const result=await decideCiBackend(github,{...context.repo,...snapshot,requestingRunId:context.runId,
+            const {decideRequestingBackend}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
+            const result=await decideRequestingBackend(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null,{requestingRunId:context.runId,
               requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:'delegated',imageDigest:process.env.IMAGE_DIGEST,
               harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl});
+            if(result.fallbackReason)core.warning(`Main Linux qualification fell back to full hosted CI: ${result.fallbackReason}`);
             core.setOutput('provider',result.provider);core.setOutput('infrastructure_fallback',String(result.infrastructureFallback));
 
   typecheck:

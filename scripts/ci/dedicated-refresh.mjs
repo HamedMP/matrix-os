@@ -38,6 +38,8 @@ export async function resolveRequestingSource(github,repo,context,inputs){
 // attempt therefore executes only on requested; in_progress is used only for reruns, which emit no
 // requested event. Duplicate controllers would otherwise supersede each other under runner backlog.
 export function refreshExecutionRequested(action,run){
+ // A main push's coverage title is fixed by its SHA, so its requested event qualifies before GitHub renders the title.
+ if(action==='requested'&&run?.run_attempt===1&&run?.event==='push'&&run?.head_branch==='main')return true;
  const title=run?.display_title;
  if(typeof title!=='string')return false;
  const executes=title.startsWith('CI refresh-v1 ')||title.startsWith('CI coverage-v1 · ');
@@ -49,13 +51,21 @@ export function authenticatedControllerRun(run,repo,value,workflow,headRef){
  if(run.event==='workflow_run')return ((run.head_branch==='main'&&sha.test(run.head_sha||''))||(run.head_branch===headRef&&run.head_sha===value.headSha))&&[refreshMarker(value),`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`].some(title=>run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=${title}`);
  return run.event==='pull_request_target'&&run.head_sha===value.headSha&&run.head_branch===headRef&&run.display_title===`dedicated-ci-v2 pr=${value.prNumber} head=${value.headSha} base=${value.baseSha} requested=true`;
 }
-export async function admitRefreshController(github,repo,event){
+const TITLE_POLLS=12;
+const titleDelay=()=>new Promise(resolve=>setTimeout(resolve,10_000));
+export async function admitRefreshController(github,repo,event,options={}){
  const candidate=event.workflow_run;
  if(candidate?.display_title?.startsWith('CI hosted-refresh-v1 '))return null;
  if(!refreshExecutionRequested(event.action,candidate)||!id(candidate?.id))return null;
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refreshing workflow definition');
- const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request});
+ let {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request});
+ // Requested can arrive before CI's run-name is rendered; a main run that never shows its coverage title stands down.
+ for(let poll=0;run.event==='push'&&run.head_branch==='main'&&run.display_title!==`CI coverage-v1 · ${run.head_sha}`;poll++){
+  if(poll>=TITLE_POLLS)return null;
+  await (options.delay??titleDelay)();
+  ({data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request}));
+ }
  let snapshot=run.event==='push'&&run.head_branch==='main'?await resolveMainSource(github,repo,run.head_sha):parseRefreshMarker(run.display_title);
  if(!snapshot){
   const source=typeof run.display_title==='string'&&run.display_title.match(/^CI coverage-v1 · ([a-f0-9]{40})$/);
