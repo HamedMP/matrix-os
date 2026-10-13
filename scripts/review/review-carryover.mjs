@@ -21,7 +21,7 @@
 // Exit codes: 0 the review carries over, 1 a fresh review is needed,
 // 2 usage, 3 could not decide (GitHub, git, or the tool failed; fix and rerun).
 import {execFileSync} from 'node:child_process';
-import {createHash} from 'node:crypto';
+import {createHash, randomBytes} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 
@@ -36,8 +36,6 @@ export const RECEIPT_MARKER = '<!-- matrix-review-receipt v1 -->';
 export const MAX_RECEIPTS = 30;
 // A review plus the record job's queue fit well inside this window.
 export const BASE_CHANGE_WINDOW_MS = 30 * 60_000;
-// Fetched fresh on every run; a failed fetch leaves it absent, never stale.
-const FETCHED_BASE = 'refs/review-carryover/base';
 
 // GitHub or git transport failed, so the answer is unknown rather than "no".
 export class AccessError extends Error {}
@@ -168,7 +166,7 @@ export function recentBaseChange(events, now = Date.now(), windowMs = BASE_CHANG
   });
 }
 
-const validReceipt = value => value && SHA.test(value.reviewed) && SHA.test(value.base) && typeof value.recordedAt === 'string';
+const validReceipt = value => value && SHA.test(value.reviewed) && SHA.test(value.base) && Number.isSafeInteger(value.reviews) && value.reviews > 0 && typeof value.recordedAt === 'string';
 
 // Fork PRs cannot post as the workflow token. Repository writers can, but they
 // can also merge without Greptile, and check recomputes every tree anyway.
@@ -196,8 +194,8 @@ export function renderReceipts(receipts) {
   ].join('\n');
 }
 
-// Receipts are only written when a review happens, so the latest review of a
-// commit (for example a re-review after a retarget) defines its base.
+// Receipts are only written when a review happens, so the latest recorded
+// review of a commit (for example a re-review after a retarget) defines it.
 export function upsertReceipt(receipts, receipt) {
   return [...receipts.filter(entry => entry.reviewed !== receipt.reviewed), receipt].slice(-MAX_RECEIPTS);
 }
@@ -208,7 +206,10 @@ export function upsertReceipt(receipts, receipt) {
 export function decideCarryOver({summary, head, receipts, replay, contexts}) {
   if (!summary) return {ok: false, reason: 'no trusted Greptile summary'};
   if (summary.score !== 5) return {ok: false, reason: `Greptile score is ${summary.score}/5`};
-  const receipt = receipts.find(entry => entry.reviewed === summary.reviewed);
+  // A receipt only speaks for the review that produced it. When the latest
+  // review went unrecorded (for example during a retarget), the head it names
+  // still passes as before, and older heads need a fresh review.
+  const receipt = receipts.find(entry => entry.reviewed === summary.reviewed && entry.reviews === summary.reviews);
   if (!receipt) {
     if (summary.reviewed === head) return {ok: true, reason: 'review names the current head'};
     return {ok: false, reason: 'no base recorded for the reviewed commit'};
@@ -242,8 +243,9 @@ function loadPull(repo, pr) {
 
 // One fetch per ref or commit, so a deleted branch or an unserved commit only
 // removes that candidate; ls-remote first tells access failures apart. The
-// live base lands in a private ref that is cleared first, so a failed fetch
-// can never leave an older tip in play, and the caller's refs stay untouched.
+// live base lands in a ref unique to this run (refs are shared by every
+// worktree and concurrent check), is resolved to a SHA, and is deleted, so a
+// failed fetch can never leave another run's or an older tip in play.
 // Commits are fetched by SHA so a lagging refs/pull/<n>/head or a force-pushed
 // commit still resolves; GitHub serves unreachable PR commits by SHA.
 // `optional` commits (GitHub's reported base) are used only when available.
@@ -257,25 +259,33 @@ export function fetchPull(git, pr, baseRefName, shas = [], optional = []) {
       console.warn(`review-carryover: could not fetch ${refspec}: ${error.message.split('\n')[0]}`);
     }
   };
-  git(['update-ref', '-d', FETCHED_BASE]);
-  attempt(`+refs/heads/${baseRefName}:${FETCHED_BASE}`);
+  const ref = `refs/review-carryover/base-${process.pid}-${randomBytes(8).toString('hex')}`;
+  let base = null;
+  try {
+    attempt(`+refs/heads/${baseRefName}:${ref}`);
+    base = resolveCommit(git, ref);
+  } finally {
+    git(['update-ref', '-d', ref]);
+  }
   for (const sha of new Set([...shas, ...optional])) if (SHA.test(sha) && !resolveCommit(git, sha)) attempt(sha);
   for (const sha of new Set(shas)) if (!resolveCommit(git, sha)) throw new FailClosed(`Commit ${sha} is not available`);
+  return {base};
 }
 
-const baseCandidates = view => [view.baseRefOid, FETCHED_BASE];
+const baseCandidates = (view, fetched) => [view.baseRefOid, fetched.base].filter(Boolean);
 
-// `view` is the PR's headRefOid/baseRefName/baseRefOid as GitHub reports them.
-export function receiptFor(git, pr, view, reviewed, now = new Date()) {
-  fetchPull(git, pr, view.baseRefName, [reviewed], [view.baseRefOid]);
-  const base = forkPoint(git, reviewed, baseCandidates(view));
-  return {reviewed, base, recordedAt: now.toISOString()};
+// `view` is the PR's headRefOid/baseRefName/baseRefOid as GitHub reports them;
+// `reviews` is the Greptile review count the receipt belongs to.
+export function receiptFor(git, pr, view, reviewed, reviews, now = new Date()) {
+  const fetched = fetchPull(git, pr, view.baseRefName, [reviewed], [view.baseRefOid]);
+  const base = forkPoint(git, reviewed, baseCandidates(view, fetched));
+  return {reviewed, base, reviews, recordedAt: now.toISOString()};
 }
 
 export function replayPull(git, pr, view, receipt) {
-  fetchPull(git, pr, view.baseRefName, [receipt.reviewed, receipt.base, view.headRefOid], [view.baseRefOid]);
+  const fetched = fetchPull(git, pr, view.baseRefName, [receipt.reviewed, receipt.base, view.headRefOid], [view.baseRefOid]);
   if (!isAncestor(git, receipt.base, receipt.reviewed)) throw new FailClosed('Recorded base is not an ancestor of the reviewed commit');
-  const newBase = forkPoint(git, view.headRefOid, baseCandidates(view));
+  const newBase = forkPoint(git, view.headRefOid, baseCandidates(view, fetched));
   return {replayed: replayTree(git, receipt.reviewed, receipt.base, newBase), head: treeOf(git, view.headRefOid), newBase};
 }
 
@@ -295,6 +305,7 @@ function record(repo, pr, git) {
     return 0;
   };
   if (!summary) return skip('summary edit does not introduce a review');
+  if (summary.reviews === null) return skip('summary has no review count');
   const {view, comments} = loadPull(repo, pr);
   // Recording after a push, restack, or retarget would pin the wrong base.
   if (view.headRefOid !== summary.reviewed) return skip('PR head moved since the review');
@@ -302,7 +313,7 @@ function record(repo, pr, git) {
   if (recentBaseChange(timeline)) return skip('PR base changed during the review window');
   let receipt;
   try {
-    receipt = receiptFor(git, pr, view, summary.reviewed);
+    receipt = receiptFor(git, pr, view, summary.reviewed, summary.reviews);
   } catch (error) {
     if (!(error instanceof FailClosed)) throw error;
     // No single base: carry-over fails closed for this review, which is safe.

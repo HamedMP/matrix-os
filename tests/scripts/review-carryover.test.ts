@@ -240,7 +240,7 @@ function remoteStack() {
   return { ...r, publish, clone, view };
 }
 
-const replayOk = (git: ReturnType<typeof gitRunner>, pr: number, view: { headRefOid: string; baseRefName: string; baseRefOid: string }, receipt: { reviewed: string; base: string; recordedAt: string }) => {
+const replayOk = (git: ReturnType<typeof gitRunner>, pr: number, view: { headRefOid: string; baseRefName: string; baseRefOid: string }, receipt: { reviewed: string; base: string; reviews: number; recordedAt: string }) => {
   const trees = replayPull(git, pr, view, receipt);
   if (trees.replayed === null || trees.replayed !== trees.head) return false;
   const ids = pullContexts(git, view, receipt, trees);
@@ -251,8 +251,8 @@ describe('receipts against a remote', () => {
   it('records at review time and carries across a force-pushed restack of the stack', () => {
     const r = remoteStack();
     r.publish(2);
-    const receipt = receiptFor(r.clone().git, 2, r.view(), r.reviewed, new Date(0));
-    expect(receipt).toEqual({ reviewed: r.reviewed, base: r.parent, recordedAt: '1970-01-01T00:00:00.000Z' });
+    const receipt = receiptFor(r.clone().git, 2, r.view(), r.reviewed, 1, new Date(0));
+    expect(receipt).toEqual({ reviewed: r.reviewed, base: r.parent, reviews: 1, recordedAt: '1970-01-01T00:00:00.000Z' });
     r.run('checkout', '-q', 'parent');
     r.amend('p.ts', 'parent v2 after review fixes\n');
     r.run('rebase', '-q', '--onto', 'parent', r.parent, 'child');
@@ -263,7 +263,7 @@ describe('receipts against a remote', () => {
   it('fetches the reported head by SHA when the pull ref lags behind it', () => {
     const r = remoteStack();
     r.publish(5);
-    const receipt = receiptFor(r.clone().git, 5, r.view(), r.reviewed);
+    const receipt = receiptFor(r.clone().git, 5, r.view(), r.reviewed, 1);
     r.run('commit', '-q', '--amend', '-m', 'child, reworded');
     r.run('push', '-q', '--force', 'origin', 'child');
     expect(replayOk(r.clone().git, 5, r.view(), receipt)).toBe(true);
@@ -272,7 +272,7 @@ describe('receipts against a remote', () => {
   it('detects new work pushed after the review', () => {
     const r = remoteStack();
     r.publish(3);
-    const receipt = receiptFor(r.clone().git, 3, r.view(), r.reviewed);
+    const receipt = receiptFor(r.clone().git, 3, r.view(), r.reviewed, 1);
     r.commit('app.ts', 'one\ntwo\nthree\nfour\nfive\nsix\nseven\n', 'new work');
     r.publish(3);
     expect(replayOk(r.clone().git, 3, r.view(), receipt)).toBe(false);
@@ -281,7 +281,7 @@ describe('receipts against a remote', () => {
   it('rejects an unchanged head retargeted so parent commits join the PR diff', () => {
     const r = remoteStack();
     r.publish(6);
-    const receipt = receiptFor(r.clone().git, 6, r.view(), r.reviewed);
+    const receipt = receiptFor(r.clone().git, 6, r.view(), r.reviewed, 1);
     const retargeted = { ...r.view(), baseRefName: 'main', baseRefOid: r.run('rev-parse', 'main') };
     expect(retargeted.headRefOid).toBe(r.reviewed);
     expect(replayOk(r.clone().git, 6, retargeted, receipt)).toBe(false);
@@ -291,7 +291,7 @@ describe('receipts against a remote', () => {
     const r = remoteStack();
     r.commit('app.ts', 'later\n', 'later');
     r.publish(4);
-    const forged = { reviewed: r.reviewed, base: r.run('rev-parse', 'child'), recordedAt: 'x' };
+    const forged = { reviewed: r.reviewed, base: r.run('rev-parse', 'child'), reviews: 1, recordedAt: 'x' };
     expect(() => replayPull(r.clone().git, 4, r.view(), forged)).toThrow('not an ancestor');
   });
 
@@ -307,7 +307,7 @@ describe('receipts against a remote', () => {
     const c = r.clone();
     const unrelated = c.commit('unrelated.ts', 'x\n', 'unrelated');
     c.run('branch', 'origin/parent');
-    expect(receiptFor(c.git, 9, r.view(), r.reviewed).base).toBe(r.parent);
+    expect(receiptFor(c.git, 9, r.view(), r.reviewed, 1).base).toBe(r.parent);
     expect(c.run('rev-parse', 'refs/heads/origin/parent')).toBe(unrelated);
   });
 
@@ -315,12 +315,23 @@ describe('receipts against a remote', () => {
     const r = remoteStack();
     r.publish(10);
     const c = r.clone();
-    const receipt = receiptFor(c.git, 10, r.view(), r.reviewed);
+    const receipt = receiptFor(c.git, 10, r.view(), r.reviewed, 1);
     // The parent is reset to main, then deleted, so the next base fetch fails.
     r.run('push', '-q', '--force', 'origin', 'main:parent');
     r.run('push', '-q', 'origin', '--delete', 'parent');
     const reported = { ...r.view(), baseRefOid: r.run('rev-parse', 'main') };
     expect(replayOk(c.git, 10, reported, receipt)).toBe(false);
+    // Another check in a sibling worktree left its own base behind; it must not leak in.
+    c.run('update-ref', 'refs/review-carryover/base', r.parent);
+    expect(replayOk(c.git, 10, reported, receipt)).toBe(false);
+  });
+
+  it('cleans up its per-run base ref and reports the fetched base', () => {
+    const r = remoteStack();
+    r.publish(12);
+    const c = r.clone();
+    expect(fetchPull(c.git, 12, 'parent', [r.reviewed]).base).toBe(r.parent);
+    expect(c.run('for-each-ref', 'refs/review-carryover/')).toBe('');
   });
 
   it('fetches the GitHub-reported base by SHA when its branch is gone', () => {
@@ -330,7 +341,7 @@ describe('receipts against a remote', () => {
     r.publish(11);
     const view = { ...r.view(), baseRefOid: advanced };
     r.run('push', '-q', 'origin', '--delete', 'parent');
-    expect(receiptFor(r.clone().git, 11, view, r.reviewed).base).toBe(r.parent);
+    expect(receiptFor(r.clone().git, 11, view, r.reviewed, 1).base).toBe(r.parent);
   });
 
   it('keeps working after the base branch is deleted', () => {
@@ -338,7 +349,7 @@ describe('receipts against a remote', () => {
     r.publish(8);
     const view = r.view();
     r.run('push', '-q', 'origin', '--delete', 'parent');
-    expect(receiptFor(r.clone().git, 8, view, r.reviewed).base).toBe(r.parent);
+    expect(receiptFor(r.clone().git, 8, view, r.reviewed, 1).base).toBe(r.parent);
   });
 
   it('reports an unreachable remote as an access error', () => {
@@ -440,7 +451,7 @@ describe('review-introducing summary edits', () => {
 });
 
 describe('base receipts', () => {
-  const receipt = (fill: string) => ({ reviewed: sha(fill), base: sha('0'), recordedAt: '2026-10-13T00:00:00.000Z' });
+  const receipt = (fill: string) => ({ reviewed: sha(fill), base: sha('0'), reviews: 2, recordedAt: '2026-10-13T00:00:00.000Z' });
 
   it('round-trips through the receipt comment', () => {
     const body = renderReceipts([receipt('a')]);
@@ -456,6 +467,8 @@ describe('base receipts', () => {
   it('drops malformed receipt entries', () => {
     const body = renderReceipts([receipt('a')]).replace(sha('a'), 'not-a-sha');
     expect(readReceipts([{ id: 4, user: { login: 'github-actions[bot]' }, body }]).receipts).toEqual([]);
+    const uncounted = renderReceipts([{ ...receipt('a'), reviews: null } as unknown as ReturnType<typeof receipt>]);
+    expect(readReceipts([{ id: 4, user: { login: 'github-actions[bot]' }, body: uncounted }]).receipts).toEqual([]);
     const broken = `${RECEIPT_MARKER}\n<!-- receipts {not json -->`;
     expect(readReceipts([{ id: 5, user: { login: 'github-actions[bot]' }, body: broken }])).toEqual({ commentId: 5, receipts: [] });
   });
@@ -479,10 +492,10 @@ describe('base receipts', () => {
 });
 
 describe('carry-over decision', () => {
-  const receipts = [{ reviewed: sha('a'), base: sha('0'), recordedAt: 'x' }];
+  const receipts = [{ reviewed: sha('a'), base: sha('0'), reviews: 2, recordedAt: 'x' }];
   const matchingTrees = () => ({ replayed: sha('d'), head: sha('d') });
   const matchingContexts = () => ({ reviewed: 'c', head: 'c' });
-  const decide = (summary: { score: number; reviewed: string } | null, head: string, overrides: Record<string, unknown> = {}) => {
+  const decide = (summary: { score: number; reviewed: string; reviews: number | null } | null, head: string, overrides: Record<string, unknown> = {}) => {
     const replay = vi.fn(matchingTrees);
     const contexts = vi.fn(matchingContexts);
     const result = decideCarryOver({ summary, head, receipts, replay, contexts, ...overrides });
@@ -490,50 +503,62 @@ describe('carry-over decision', () => {
   };
 
   it('accepts a 5/5 review of the current head without a receipt, without git work', () => {
-    const { result, replay } = decide({ score: 5, reviewed: sha('c') }, sha('c'));
+    const { result, replay } = decide({ score: 5, reviewed: sha('c'), reviews: 2 }, sha('c'));
     expect(result).toEqual({ ok: true, reason: 'review names the current head' });
     expect(replay).not.toHaveBeenCalled();
   });
 
   it('verifies the base of a reviewed current head when a receipt exists', () => {
-    const { result, replay } = decide({ score: 5, reviewed: sha('a') }, sha('a'));
+    const { result, replay } = decide({ score: 5, reviewed: sha('a'), reviews: 2 }, sha('a'));
     expect(result).toEqual({ ok: true, reason: 'review names the current head and its base' });
     expect(replay).toHaveBeenCalledWith(receipts[0]);
-    const moved = decide({ score: 5, reviewed: sha('a') }, sha('a'), { replay: () => ({ replayed: sha('d'), head: sha('f') }) });
+    const moved = decide({ score: 5, reviewed: sha('a'), reviews: 2 }, sha('a'), { replay: () => ({ replayed: sha('d'), head: sha('f') }) });
     expect(moved.result).toMatchObject({ ok: false });
   });
 
   it('carries a 5/5 review whose replay and context match the head', () => {
-    const { result, contexts } = decide({ score: 5, reviewed: sha('a') }, sha('b'));
+    const { result, contexts } = decide({ score: 5, reviewed: sha('a'), reviews: 2 }, sha('b'));
     expect(result).toEqual({ ok: true, reason: 'head is the reviewed change replayed onto its new base' });
     expect(contexts).toHaveBeenCalledWith(receipts[0], matchingTrees());
   });
 
   it('requires a fresh review when the head differs from the replay, without diffing context', () => {
-    const { result, contexts } = decide({ score: 5, reviewed: sha('a') }, sha('b'), { replay: () => ({ replayed: sha('d'), head: sha('f') }) });
+    const { result, contexts } = decide({ score: 5, reviewed: sha('a'), reviews: 2 }, sha('b'), { replay: () => ({ replayed: sha('d'), head: sha('f') }) });
     expect(result).toEqual({ ok: false, reason: 'head differs from the reviewed change replayed onto its base' });
     expect(contexts).not.toHaveBeenCalled();
   });
 
   it('requires a fresh review when the replay conflicts', () => {
-    const { result, contexts } = decide({ score: 5, reviewed: sha('a') }, sha('b'), { replay: () => ({ replayed: null, head: sha('f') }) });
+    const { result, contexts } = decide({ score: 5, reviewed: sha('a'), reviews: 2 }, sha('b'), { replay: () => ({ replayed: null, head: sha('f') }) });
     expect(result).toEqual({ ok: false, reason: 'reviewed change no longer replays cleanly onto the new base' });
     expect(contexts).not.toHaveBeenCalled();
   });
 
   it('requires a fresh review when the base changed code next to the reviewed change', () => {
-    const { result } = decide({ score: 5, reviewed: sha('a') }, sha('b'), { contexts: () => ({ reviewed: 'c', head: 'other' }) });
+    const { result } = decide({ score: 5, reviewed: sha('a'), reviews: 2 }, sha('b'), { contexts: () => ({ reviewed: 'c', head: 'other' }) });
     expect(result).toEqual({ ok: false, reason: 'base changed code next to the reviewed change' });
   });
 
+  it('ignores a receipt from an earlier review of the same commit', () => {
+    // A re-review after a retarget was not recorded: its 5/5 still counts for the head it names.
+    const current = decide({ score: 5, reviewed: sha('a'), reviews: 3 }, sha('a'));
+    expect(current.result).toEqual({ ok: true, reason: 'review names the current head' });
+    expect(current.replay).not.toHaveBeenCalled();
+    const older = decide({ score: 5, reviewed: sha('a'), reviews: 3 }, sha('b'));
+    expect(older.result).toEqual({ ok: false, reason: 'no base recorded for the reviewed commit' });
+    const uncounted = decide({ score: 5, reviewed: sha('a'), reviews: null }, sha('b'));
+    expect(uncounted.result).toMatchObject({ ok: false });
+    expect(uncounted.replay).not.toHaveBeenCalled();
+  });
+
   it('fails closed without a receipt for an older reviewed commit, before any git work', () => {
-    const { result, replay } = decide({ score: 5, reviewed: sha('c') }, sha('b'));
+    const { result, replay } = decide({ score: 5, reviewed: sha('c'), reviews: 2 }, sha('b'));
     expect(result).toEqual({ ok: false, reason: 'no base recorded for the reviewed commit' });
     expect(replay).not.toHaveBeenCalled();
   });
 
   it('never passes a review below 5/5 or a missing summary, before any git work', () => {
-    for (const [summary, head] of [[{ score: 4, reviewed: sha('a') }, sha('b')], [{ score: 4, reviewed: sha('c') }, sha('c')], [null, sha('a')]] as const) {
+    for (const [summary, head] of [[{ score: 4, reviewed: sha('a'), reviews: 2 }, sha('b')], [{ score: 4, reviewed: sha('c'), reviews: 2 }, sha('c')], [null, sha('a')]] as const) {
       const { result, replay } = decide(summary, head);
       expect(result).toMatchObject({ ok: false });
       expect(replay).not.toHaveBeenCalled();

@@ -261,13 +261,14 @@ How it decides:
    event's previous body), the reviewed commit is still the PR head, and the
    PR base was not retargeted or force-pushed in the last 30 minutes, so the
    recorded base is the one Greptile reviewed against. Receipts live in a
-   single `github-actions[bot]` PR comment (newest 30); the latest review of a
-   commit, for example a re-review after a retarget, defines its base. The base
+   single `github-actions[bot]` PR comment (newest 30) and carry the review
+   count they belong to; a receipt only counts for that exact review, so an
+   unrecorded later review never inherits an older base. The base
    must be captured at review time: a restack force-pushes the parent, so the
    old fork point is no longer on any branch afterwards.
 2. `check` reads Greptile's score heading and `Last reviewed commit` footer
    (anything ambiguous fails closed) and stops early unless the score is `5/5`.
-   With a receipt for the reviewed commit, it requires both:
+   With a receipt for the latest review, it requires both:
    - the head tree is exactly `git merge-tree --merge-base=<recorded base>
      <head's base> <reviewed>`, the clean replay of the reviewed change onto
      the head's current base; and
@@ -284,9 +285,10 @@ PR change, and a retarget that pulls parent commits into an unchanged head
 fail. The context check exists because git merges a base edit one line away
 from a PR change cleanly, such as a removed guard above an inserted call.
 Merge and diff run with an empty attribute source, so a PR's `.gitattributes`
-cannot change the outcome. The live base is fetched into a private ref that is
-cleared first, so a failed fetch falls back to GitHub's reported base, never to
-an older cached tip.
+cannot change the outcome. The live base is fetched into a ref unique to each run
+(refs are shared across worktrees and concurrent checks), resolved, and
+deleted, so a failed fetch falls back to GitHub's reported base, never to an
+older or another run's tip.
 
 Limits:
 
