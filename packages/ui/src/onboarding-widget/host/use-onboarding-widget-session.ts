@@ -1,5 +1,6 @@
 import {
   initialOnboardingWidgetState,
+  onboardingPendingRun,
   reduceOnboardingWidget,
   type AvailableIntegration,
   type CanonicalProviderCatalog,
@@ -11,7 +12,7 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { OnboardingWidgetActions, OnboardingWidgetPrefs, OnboardingWidgetProps, OnboardingWidgetRepo } from "../types.js";
 import { onboardingActiveAi, onboardingApps, onboardingConnectedProviders, onboardingCreditsExhausted, onboardingSelection } from "./catalog.js";
 import type { OnboardingChatPort } from "./chat-port.js";
-import { onboardingLoginPresentation, writeOnboardingPrefs, type OnboardingStoredPrefs } from "./prefs.js";
+import { onboardingSessionInit, writeOnboardingPrefs, type OnboardingStoredPrefs } from "./prefs.js";
 import { loadOnboardingRepos, type OnboardingRepoSource } from "./repos.js";
 import { useOnboardingAiConnect, type OnboardingAiConnectPort } from "./use-onboarding-ai-connect.js";
 import { useOnboardingChatHandoff } from "./use-onboarding-chat-handoff.js";
@@ -27,12 +28,7 @@ export interface OnboardingAppConnect {
 export type OnboardingSettingsSection = "agents-providers" | "billing";
 
 function initialState(prefs: OnboardingStoredPrefs): OnboardingWidgetState {
-  return initialOnboardingWidgetState({
-    size: onboardingLoginPresentation(prefs) === "corner" ? "corner" : "bubble",
-    firstTaskCompleted: prefs.firstTaskCompleted,
-    aiChoice: prefs.aiChoice,
-    chatId: prefs.chatId,
-  });
+  return initialOnboardingWidgetState(onboardingSessionInit(prefs));
 }
 
 export function useOnboardingWidgetState(initialPrefs: OnboardingStoredPrefs) {
@@ -75,6 +71,11 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
 
   const runView = useOnboardingRun(state, dispatch, { port: input.chatPort, selection, selectionPending: loading });
   const ai = useOnboardingAiConnect(input.aiPort, dispatch);
+  const connectPanelOpen = state.ai?.step === "waiting" || state.ai?.step === "key";
+  const abandonSignIn = ai.abandonSignIn;
+  useEffect(() => {
+    if (!connectPanelOpen) abandonSignIn();
+  }, [abandonSignIn, connectPanelOpen]);
   const apps = useMemo(() => onboardingApps(available, connections, appConnect.connectingService), [appConnect.connectingService, available, connections]);
 
   const github = connections.find((connection) => connection.service === "github" && connection.status === "active")
@@ -102,8 +103,9 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
       firstTaskCompleted: state.firstTaskCompleted,
       aiChoice: state.aiChoice,
       chatId: state.chatId,
+      pendingRun: onboardingPendingRun(state),
     });
-  }, [prefs, prefsKey, state.aiChoice, state.chatId, state.firstTaskCompleted]);
+  }, [prefs, prefsKey, state]);
 
   const showChat = useCallback(() => {
     openChat(state.chatId);

@@ -41,7 +41,9 @@ export const catalog = {
     id: "matrix_pi_default", driverKind: "matrix_pi", displayName: "Pi", connectionLabel: "Matrix AI",
     availability: "available",
     models: [{ id: "sonnet", displayName: "Claude Sonnet 5", availability: "available" }],
-    supports: { interactionModes: ["default"], permissionModes: ["supervised"] },
+    supports: { interactionModes: ["default"], permissionModes: ["supervised"], attachments: [] },
+    skills: [],
+    commands: [],
   }],
 };
 

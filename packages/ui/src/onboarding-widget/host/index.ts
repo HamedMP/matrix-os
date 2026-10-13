@@ -10,13 +10,16 @@ export {
 } from "./catalog.js";
 export {
   admitOnboardingTurn,
+  onboardingAdmissionRequestIds,
   onboardingRequestId,
+  type OnboardingAdmissionRequestIds,
   type OnboardingChatPort,
 } from "./chat-port.js";
 export {
   DEFAULT_ONBOARDING_PREFS,
   onboardingLoginPresentation,
   onboardingPrefsKey,
+  onboardingSessionInit,
   readOnboardingPrefs,
   writeOnboardingPrefs,
   type OnboardingStoredPrefs,

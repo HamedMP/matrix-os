@@ -52,7 +52,7 @@ app/(drawer)/(tabs)/(chats)/projects/[projectId].tsx
 app/(drawer)/(tabs)/agents/index.tsx            /agents
 app/(drawer)/(tabs)/agents/new.tsx              /agents/new
 app/(drawer)/(tabs)/agents/[agentId].tsx        /agents/<agentId>   the agent's own chat
-app/(drawer)/(tabs)/(apps)/apps.tsx             /apps          Files and Connect Apps are entries here
+app/(drawer)/(tabs)/(apps)/apps.tsx             /apps          default apps first, then installed apps
 app/(drawer)/(tabs)/(apps)/files.tsx            /files
 app/(drawer)/(tabs)/(apps)/integrations.tsx     /integrations
 app/(drawer)/(tabs)/terminal.tsx                /terminal
@@ -78,9 +78,27 @@ app/(drawer)/(tabs)/settings.tsx                /settings
 - **Moving between tabs from code** goes through the helpers in
   `lib/shell-routes.ts`. They build new params on every call because the
   navigator ignores params it has already used.
+- **A tab switch asked for in the same step as a change inside the current tab
+  is dropped.** The navigator ignores the params that carry the switch when its
+  own state, which holds the stacks of its tabs, changes in the same render. A
+  screen that closes itself and then shows another tab closes first, and the
+  tab is asked for from the tabs' next `state` event by something that outlives
+  the screen: `components/agents/chat-handoff.tsx` in the Agents tab's layout,
+  used by `agents/new.tsx`. The tab hides the closing screen at once, so that
+  screen also closes without a slide (`animation: "none"`); a slide cut short
+  plays when the tab is next opened.
 - **The Agents tab badge** counts agents waiting on the person
   (`components/agents/use-agents-waiting-count.ts`). The status of an agent is
   derived in the app from its chat and tasks; the server has no status field.
+- **The new-agent gallery is the web's.** It lists the computer's templates
+  (`/api/chat-agents/bot-recipes`), which create an agent, and then the
+  inspirations the app ships with, which are built in chat from the web's
+  prompt. `components/agents/agent-gallery.ts` mirrors the web's
+  `AgentRecipesPanel`, and `tests/ui/agent-gallery-mobile-parity.test.ts` holds
+  the two to the same list, categories, search and prompt. The inspirations are
+  generated: run `node scripts/generate-chat-agent-inspirations.mjs` after the
+  inventory changes, which writes the web's file and
+  `components/agents/agent-inspirations.generated.ts`.
 
 ### Tokens and shared components
 
@@ -110,6 +128,11 @@ The gallery and its sample content live in `apps/mobile/dev/design-preview/`
 and are required only under `__DEV__`, so a production bundle drops them. Use
 the gallery for screenshot evidence: it shows the screen without account
 details or real chat titles.
+
+The composer's "+" is live in the chat, project and agent frames: it opens the
+real sheet and the real system pickers, over a sample model that reads photos
+and files and has three sample skills. A frame sends nothing, so what is
+attached there never leaves the phone.
 
 ### Left out on purpose
 
@@ -793,6 +816,66 @@ another App's link, and `target="_blank"`/`window.open`. Confirm no browser or
 native app opens implicitly, blocked-link copy contains no raw URL, and both
 Continue in app and reopening another App recover normally. Record iOS and
 Android results separately; unit tests do not replace that evidence.
+
+## Native Mobile Chat Attachments
+
+The composer's "+" opens the "Add to message" sheet (`ComposerAddControl`):
+Photos, Files, and the selected model's skills and commands. Spec:
+`specs/555-mobile-chat-attachments/spec.md`.
+
+- Photos come from `expo-image-picker` (the system picker, which needs no
+  library permission). Files come from `File.pickFileAsync` in
+  `expo-file-system`. Both are opened over the sheet, which closes once
+  something has been chosen: a second sheet cannot be opened safely while the
+  first is on its way out.
+- A photo that is larger than 2048 pixels on its longer side, larger than 5 MB,
+  or not JPEG, PNG, WebP or GIF is scaled and saved as JPEG with
+  `expo-image-manipulator` before it is attached (`lib/chat-attachment-picker.ts`).
+- A picture is attached under a name that ends like its type (`attachmentName`).
+  Some photo libraries name a photo without an ending, and the computer and the
+  app both tell a picture by the ending of its name, so without it the photo
+  would be shown as a file once the phone's copy is gone.
+- What can be attached follows `supports.attachments` of the selected model's
+  engine (`supportedAttachmentKinds`). Matrix AI's own route lists none today,
+  so pick Claude Code or Codex to try a send. After a change to a model that
+  does not read a waiting attachment, Send is off and the composer says why.
+- A project's "+" is off while its first message is on its way
+  (`canAddAttachments`). The project screen is left for the new chat once the
+  message is in, so what a library opened meanwhile handed back would have no
+  composer to go to. The Chats tab stays on screen through the same moment, so
+  there such attachments go to the chat the message creates.
+- Sending uploads each attachment with `PUT /api/files/blob` into
+  `temporary/desktop-chat/` on the computer and names it in the turn with an
+  `attachment_reference` part, the same contract the web composer uses. The
+  computer clears that folder by itself.
+- An attachment always has the same place there and is never written over. One
+  found already in place (`409 file_exists`) came from an earlier try at the
+  same message, which the computer may have admitted, so it is used as it is
+  and never removed. Only uploads the current send created are removed when it
+  fails before asking for a turn.
+
+Focused checks:
+
+```bash
+pnpm --dir apps/mobile exec jest --runInBand __tests__/chat-attachments.test.ts __tests__/chat-attachment-picker.test.ts __tests__/requests-chat-attachments.test.ts __tests__/use-chat-composer-attachments.test.tsx __tests__/composer-add-control.test.tsx __tests__/message-attachments.test.tsx __tests__/chat-photo-after-restart.test.tsx
+```
+
+`lib/canonical-chat-transcript.ts` is also loaded by the repository's own
+tests, where `@/` is the web shell and not this app. Import what it needs by
+relative path, and run these after changing it or `lib/chat-attachments.ts`:
+
+```bash
+pnpm exec vitest run tests/desktop/chat-subagent-parity.test.ts tests/desktop/chat-tool-output-parity.test.ts tests/shell/canonical-chat-approval-details.test.tsx tests/shell/canonical-chat-approval-parity.test.ts tests/shell/canonical-chat-input-parity.test.ts tests/shell/canonical-chat-terminal-parity.test.ts
+```
+
+On a simulator, `xcrun simctl addmedia <udid> <image>` adds a photo to the
+library, and a file copied into the simulator's
+`group.com.apple.FileProvider.LocalStorage` app group, under
+`File Provider Storage/`, shows in the file browser under On My iPhone. The
+simulator has no camera. On a device, check a photo straight from the camera
+roll (HEIC, 24 megapixels or more), a PDF from iCloud Drive, a send on mobile
+data, and the same on Android, whose file browser hands over `content://`
+addresses.
 
 ## Full Mobile Readiness Gates
 

@@ -70,7 +70,7 @@ if (shouldRunStandaloneDaemon(rawArgs)) {
   // MATRIX_NO_TELEMETRY). Only the resolved command name and an argument count
   // are captured -- never argument values or paths. Unknown first tokens are
   // reported as "unknown" so typos cannot leak file names.
-  const telemetry = getCliTelemetry();
+  const telemetry = getCliTelemetry({ machineOutput: rawArgs.includes("--json") });
   const firstPositional = rawArgs.find((arg) => !arg.startsWith("-"));
   const commandName = firstPositional
     ? Object.hasOwn(subCommands, firstPositional)

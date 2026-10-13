@@ -3,6 +3,7 @@ import {
   admitOnboardingTurn as admitSharedOnboardingTurn,
   loadOnboardingRepos as loadSharedOnboardingRepos,
   type CanonicalComposerSelection,
+  type OnboardingAdmissionRequestIds,
   type OnboardingChatPort,
   type OnboardingRepoSource,
   type OnboardingWidgetRepo,
@@ -14,6 +15,7 @@ import { createCanonicalChatEventSource, type CanonicalChatClient } from "../../
 export {
   ONBOARDING_MAX_APPS,
   ONBOARDING_MAX_REPOS,
+  onboardingAdmissionRequestIds,
   onboardingApps,
   onboardingConnectedProviders,
   onboardingCreditsExhausted,
@@ -82,12 +84,13 @@ export function createDesktopOnboardingChatPort(api: ApiClient, client: Canonica
   };
 }
 
-export function admitOnboardingTurn({ client, chatId, title, prompt, selection }: {
+export function admitOnboardingTurn({ client, chatId, title, prompt, selection, requestIds }: {
   client: DesktopChatClient;
   chatId: string | null;
   title: string;
   prompt: string;
   selection: CanonicalComposerSelection;
+  requestIds: OnboardingAdmissionRequestIds;
 }): Promise<{ chatId: string; runId: string }> {
-  return admitSharedOnboardingTurn({ port: desktopChatTurns(client), chatId, title, prompt, selection });
+  return admitSharedOnboardingTurn({ port: desktopChatTurns(client), chatId, title, prompt, selection, requestIds });
 }

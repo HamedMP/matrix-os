@@ -23,13 +23,26 @@ export function onboardingRequestId(): string {
   return `req_${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
-/** Sends the turn into `chatId`, or into a new chat named `title` when there is none yet or it was deleted. */
-export async function admitOnboardingTurn({ port, chatId, title, prompt, selection }: {
+export interface OnboardingAdmissionRequestIds {
+  create: string;
+  turn: string;
+}
+
+export function onboardingAdmissionRequestIds(): OnboardingAdmissionRequestIds {
+  return { create: onboardingRequestId(), turn: onboardingRequestId() };
+}
+
+/**
+ * Sends the turn into `chatId`, or into a new chat named `title` when there is none yet or it was deleted.
+ * Retrying with the same `requestIds` replays an admission whose response was lost instead of starting it again.
+ */
+export async function admitOnboardingTurn({ port, chatId, title, prompt, selection, requestIds }: {
   port: Pick<OnboardingChatPort, "create" | "detail" | "admitTurn" | "isNotFound">;
   chatId: string | null;
   title: string;
   prompt: string;
   selection: CanonicalComposerSelection;
+  requestIds: OnboardingAdmissionRequestIds;
 }): Promise<{ chatId: string; runId: string }> {
   const modelSelection = {
     instanceId: selection.instanceId,
@@ -47,12 +60,12 @@ export async function admitOnboardingTurn({ port, chatId, title, prompt, selecti
     }
   }
   if (!targetId) {
-    const created = await port.create({ clientRequestId: onboardingRequestId(), title, currentSelection: modelSelection });
+    const created = await port.create({ clientRequestId: requestIds.create, title, currentSelection: modelSelection });
     targetId = created.chat.id;
     baseRevision = created.chat.revision;
   }
   const admitted = await port.admitTurn(targetId, {
-    clientRequestId: onboardingRequestId(),
+    clientRequestId: requestIds.turn,
     baseRevision,
     parts: [{ type: "text", text: prompt }],
     selection: modelSelection,

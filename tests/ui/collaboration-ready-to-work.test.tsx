@@ -115,7 +115,7 @@ describe("organization ready-to-work presentation", () => {
     expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/policy/preflight`, {});
   });
 
-  it("requires explicit owner consent before contributors may send AI prompts", async () => {
+  it("requires explicit owner consent before Editors may send AI prompts", async () => {
     const readyForContributors: CollaborationReadiness = {
       ...projectReady,
       effectiveSubmitMode: "members",
@@ -155,7 +155,7 @@ describe("organization ready-to-work presentation", () => {
     render(<ChatCollaboratorsDialog api={api} scope={scope} members={[]}
       onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
 
-    const enable = await screen.findByRole("button", { name: "Use this AI source for contributors" });
+    const enable = await screen.findByRole("button", { name: "Use this AI source for Editors" });
     expect(screen.getByText(/Chats already bound to another agent remain unavailable/i)).toBeVisible();
     expect(enable).toBeDisabled();
     fireEvent.click(screen.getByRole("checkbox", { name: /may incur charges/i }));
@@ -172,15 +172,15 @@ describe("organization ready-to-work presentation", () => {
         allowedModelIds: ["claude-sonnet-5"],
       }),
     ));
-    expect(await screen.findByText(/Contributors can now send prompts/i)).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Disable contributor AI" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Editors can now send prompts/i)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Disable Editor AI" })).not.toBeInTheDocument();
     expect(screen.getByText(/change their access to Viewer/i)).toBeVisible();
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText(/Contributors may submit AI requests/i)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Update AI source for contributors" })).toBeVisible();
+    expect(await screen.findByText(/Editors may submit AI requests/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Update AI source for Editors" })).toBeVisible();
   });
 
-  it("keeps an existing contributor AI policy editable", async () => {
+  it("keeps an existing Editor AI policy editable", async () => {
     const configuredPolicy = {
       scope: { kind: "project" as const, scopeId: scope.id, projectId: scope.resourceId },
       ownerId: scope.ownerId,
@@ -225,7 +225,7 @@ describe("organization ready-to-work presentation", () => {
     expect(screen.getByLabelText("Allowed model")).toHaveValue("claude-sonnet-5");
     fireEvent.change(screen.getByLabelText("Allowed model"), { target: { value: "claude-opus-5" } });
     fireEvent.click(screen.getByRole("checkbox", { name: /may incur charges/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Update AI source for contributors" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update AI source for Editors" }));
     await waitFor(() => expect(api.put).toHaveBeenCalledWith(
       `/api/collaboration/scopes/${scope.id}/execution-policy`,
       expect.objectContaining({ expectedRevision: "3", allowedModelIds: ["claude-opus-5"] }),
@@ -249,7 +249,7 @@ describe("organization ready-to-work presentation", () => {
     }
   });
 
-  it("creates only Viewer or Contributor grants for a current organization member or the organization", async () => {
+  it("creates only Viewer or Editor grants for a current organization member or the organization", async () => {
     let revision = "4";
     const api = {
       baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members")

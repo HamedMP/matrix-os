@@ -6,17 +6,20 @@ import {
   type ConnectedIntegration,
   type OnboardingWidgetEvent,
 } from "@matrix-os/contracts";
-import { startConnectPoll, type OnboardingAppConnect } from "@matrix-os/ui";
+import { activeConnectionIds, hasNewActiveConnection, startConnectPoll, type OnboardingAppConnect } from "@matrix-os/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const LIST_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
 
 interface Options {
   gatewayUrl?: string;
   fetchFn?: typeof fetch;
   /** Overrides the connect poll backoff; tests only. */
   pollIntervals?: number[];
+  /** Overrides the delays before re-reading lists that failed to load; tests only. */
+  listRetryDelays?: number[];
 }
 
 export interface ShellOnboardingIntegrations extends OnboardingAppConnect {
@@ -46,6 +49,53 @@ function errorName(error: unknown): string {
   return error instanceof IntegrationsRequestError ? `${error.name}:${error.status}` : error instanceof Error ? error.name : typeof error;
 }
 
+/** Reads the app and connection lists, re-reading whichever failed after each delay. Returns a cancel function. */
+function loadIntegrationLists({ gatewayUrl, fetchFn, retryDelays, connectionsRevision, onAvailable, onConnections, onServiceMissing }: {
+  gatewayUrl: string;
+  fetchFn: typeof fetch;
+  retryDelays: readonly number[];
+  /** Changes whenever a connection list is applied, so a read that started earlier cannot overwrite a newer sync. */
+  connectionsRevision: () => number;
+  onAvailable: (available: AvailableIntegration[]) => void;
+  onConnections: (connections: ConnectedIntegration[]) => void;
+  onServiceMissing: () => void;
+}): () => void {
+  let cancelled = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  const skipped = Promise.resolve(null);
+  const load = (attempt: number, needAvailable: boolean, needConnections: boolean) => {
+    const startedAt = connectionsRevision();
+    void Promise.allSettled([
+      needAvailable ? readJson(fetchFn, `${gatewayUrl}/api/integrations/available`) : skipped,
+      needConnections ? readJson(fetchFn, `${gatewayUrl}/api/integrations`) : skipped,
+    ]).then(([availableResult, connectionsResult]) => {
+      if (cancelled) return;
+      if (needAvailable) {
+        if (availableResult.status === "fulfilled") onAvailable(parseAvailableIntegrations(availableResult.value));
+        else console.warn("[onboarding-widget] apps unavailable:", errorName(availableResult.reason));
+      }
+      if (needConnections) {
+        if (connectionsResult.status === "fulfilled") {
+          if (connectionsRevision() === startedAt) onConnections(parseConnectedIntegrations(connectionsResult.value));
+        } else console.warn("[onboarding-widget] connections unavailable:", errorName(connectionsResult.reason));
+      }
+      if (needAvailable && availableResult.status === "rejected" && isIntegrationServiceMissing(availableResult.reason)) {
+        onServiceMissing();
+        return;
+      }
+      const retryAvailable = needAvailable && availableResult.status === "rejected";
+      const retryConnections = needConnections && connectionsResult.status === "rejected" && !isIntegrationServiceMissing(connectionsResult.reason);
+      if ((!retryAvailable && !retryConnections) || attempt >= retryDelays.length) return;
+      retryTimer = setTimeout(() => load(attempt + 1, retryAvailable, retryConnections), retryDelays[attempt]);
+    });
+  };
+  load(0, true, true);
+  return () => {
+    cancelled = true;
+    if (retryTimer) clearTimeout(retryTimer);
+  };
+}
+
 /** Lists the owner's apps and runs the popup consent flow behind the widget's Connect buttons. */
 export function useShellOnboardingIntegrations(
   dispatch: (event: OnboardingWidgetEvent) => void,
@@ -58,6 +108,7 @@ export function useShellOnboardingIntegrations(
   const appsUnavailableRef = useRef(false);
   const optionsRef = useRef(options);
   const connectionsRef = useRef(connections);
+  const connectionsRevisionRef = useRef(0);
   const attemptRef = useRef(0);
   const cancelPollRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -70,6 +121,7 @@ export function useShellOnboardingIntegrations(
   }), []);
 
   const applyConnections = useCallback((next: ConnectedIntegration[]) => {
+    connectionsRevisionRef.current += 1;
     connectionsRef.current = next;
     setConnections(next);
   }, []);
@@ -80,20 +132,16 @@ export function useShellOnboardingIntegrations(
   }, []);
 
   useEffect(() => {
-    let disposed = false;
     const { gatewayUrl, fetchFn } = transport();
-    void Promise.allSettled([
-      readJson(fetchFn, `${gatewayUrl}/api/integrations/available`),
-      readJson(fetchFn, `${gatewayUrl}/api/integrations`),
-    ]).then(([availableResult, connectionsResult]) => {
-      if (disposed) return;
-      if (availableResult.status === "fulfilled") setAvailable(parseAvailableIntegrations(availableResult.value));
-      else console.warn("[onboarding-widget] apps unavailable:", errorName(availableResult.reason));
-      if (connectionsResult.status === "fulfilled") applyConnections(parseConnectedIntegrations(connectionsResult.value));
-      else console.warn("[onboarding-widget] connections unavailable:", errorName(connectionsResult.reason));
-      if (availableResult.status === "rejected" && isIntegrationServiceMissing(availableResult.reason)) markAppsUnavailable();
+    return loadIntegrationLists({
+      gatewayUrl,
+      fetchFn,
+      retryDelays: optionsRef.current.listRetryDelays ?? LIST_RETRY_DELAYS_MS,
+      connectionsRevision: () => connectionsRevisionRef.current,
+      onAvailable: setAvailable,
+      onConnections: applyConnections,
+      onServiceMissing: markAppsUnavailable,
     });
-    return () => { disposed = true; };
   }, [applyConnections, markAppsUnavailable, transport]);
 
   useEffect(() => () => {
@@ -108,7 +156,7 @@ export function useShellOnboardingIntegrations(
     const isCurrent = () => attemptRef.current === attempt;
     if (appsUnavailableRef.current) {
       setConnectingService(null);
-      dispatch({ type: "connect.unavailable" });
+      dispatch({ type: "connect.unavailable", service: serviceId });
       return;
     }
     // Opened synchronously inside the click so popup blockers allow it; the consent URL arrives later.
@@ -116,7 +164,7 @@ export function useShellOnboardingIntegrations(
     const fail = () => {
       if (!isCurrent()) return;
       setConnectingService(null);
-      dispatch({ type: "connect.failed" });
+      dispatch({ type: "connect.failed", service: serviceId });
     };
     if (!popup) {
       console.warn("[onboarding-widget] consent window blocked");
@@ -125,7 +173,7 @@ export function useShellOnboardingIntegrations(
     }
     setConnectingService(serviceId);
     dispatch({ type: "connect.started" });
-    const previousIds = new Set(connectionsRef.current.map((connection) => connection.id));
+    const previouslyActive = activeConnectionIds(connectionsRef.current, serviceId);
     const { gatewayUrl, fetchFn } = transport();
     void (async () => {
       const url = parseConnectUrl(await readJson(fetchFn, `${gatewayUrl}/api/integrations/connect`, {
@@ -144,13 +192,13 @@ export function useShellOnboardingIntegrations(
           const synced = parseConnectedIntegrations(await readJson(fetchFn, `${gatewayUrl}/api/integrations/sync`, { method: "POST" }));
           if (isCurrent()) applyConnections(synced);
         },
-        isDone: () => connectionsRef.current.some((connection) => connection.service === serviceId && !previousIds.has(connection.id)),
+        isDone: () => hasNewActiveConnection(connectionsRef.current, serviceId, previouslyActive),
         onSettled: (found) => {
           if (!isCurrent()) return;
           cancelPollRef.current = null;
           if (!found) { fail(); return; }
           setConnectingService(null);
-          dispatch({ type: "connect.succeeded" });
+          dispatch({ type: "connect.succeeded", service: serviceId });
         },
       });
     })().catch((error: unknown) => {
@@ -160,7 +208,7 @@ export function useShellOnboardingIntegrations(
       markAppsUnavailable();
       if (!isCurrent()) return;
       setConnectingService(null);
-      dispatch({ type: "connect.unavailable" });
+      dispatch({ type: "connect.unavailable", service: serviceId });
     });
   }, [applyConnections, dispatch, markAppsUnavailable, transport]);
 

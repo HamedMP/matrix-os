@@ -51,6 +51,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["PATCH", "/api/collaboration/scopes/:scopeId/members/:actorId"],
   ["DELETE", "/api/collaboration/scopes/:scopeId/members/:actorId"],
   // S15 organization grants, whole-project preset preflight and owner catalog resolution.
+  ["GET", "/api/collaboration/scopes/:scopeId/project/access"],
   ["POST", "/api/collaboration/scopes/:scopeId/grants/:grantId/accept"],
   ["GET", "/api/collaboration/scopes/:scopeId/grants"],
   ["POST", "/api/collaboration/scopes/:scopeId/grants"],

@@ -68,6 +68,7 @@ const TaskSchema = z.object({
 });
 const MetadataSchema = z.object({
   baseRevision: z.number().int().positive(),
+  roleSlug: z.string().trim().min(1).max(200).optional(),
   ownerId: z.string().trim().min(1).max(200).nullable(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).transform((tags) => [...new Set(tags)]),
   nextActionAt: z.iso.datetime().nullable(),
@@ -295,6 +296,9 @@ export function createAtsRoutes(options: {
     const id = z.uuid().safeParse(c.req.param('id'));
     const body = await readJson(c, MetadataSchema);
     if (!id.success || !body) return c.json({ error: 'Invalid candidate update' }, 422);
+    if (body.roleSlug && !options.allowedRoleSlugs.includes(body.roleSlug)) {
+      return c.json({ error: 'Invalid candidate update' }, 422);
+    }
     try {
       const application = await updateAtsApplicationMetadata(options.db, {
         applicationId: id.data,

@@ -1,7 +1,20 @@
+import { ONBOARDING_FREEFORM_MAX_CHARS, ONBOARDING_TASK_IDS, type OnboardingWidgetInit } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { DEFAULT_ONBOARDING_POSITION, ONBOARDING_POSITION_MAX, onboardingCornerPosition } from "../position.js";
 
 const STORAGE_PREFIX = "matrix:onboarding-widget:v1";
+const MAX_STORED_CHARS = 8_192;
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
+
+const PendingRunSchema = z.strictObject({
+  taskId: z.enum([...ONBOARDING_TASK_IDS, "custom"]),
+  answer: z.string().max(ONBOARDING_FREEFORM_MAX_CHARS),
+  appConnected: z.boolean(),
+  simpler: z.boolean(),
+  context: z.string().max(400).optional(),
+  title: z.string().max(200).optional(),
+  runId: z.string().min(1).max(128).regex(SAFE_ID),
+});
 
 const PositionOffsetSchema = z.number().int().min(0).max(ONBOARDING_POSITION_MAX);
 
@@ -23,7 +36,8 @@ const StoredPrefsSchema = z.preprocess(withLegacySide, z.strictObject({
   showOnLogin: z.boolean(),
   firstTaskCompleted: z.boolean(),
   aiChoice: z.enum(["matrix", "claude", "codex"]),
-  chatId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).nullable(),
+  chatId: z.string().min(1).max(128).regex(SAFE_ID).nullable(),
+  pendingRun: PendingRunSchema.nullable().default(null),
 }));
 
 export type OnboardingStoredPrefs = z.infer<typeof StoredPrefsSchema>;
@@ -35,6 +49,7 @@ export const DEFAULT_ONBOARDING_PREFS: OnboardingStoredPrefs = {
   firstTaskCompleted: false,
   aiChoice: "matrix",
   chatId: null,
+  pendingRun: null,
 };
 
 export function onboardingPrefsKey(handle: string, runtimeSlot: string): string {
@@ -50,7 +65,7 @@ export function readOnboardingPrefs(key: string, storage: Pick<Storage, "getItem
     console.warn("[onboarding-widget] prefs unavailable:", error instanceof Error ? error.name : typeof error);
     return null;
   }
-  if (!raw || raw.length > 2_048) return null;
+  if (!raw || raw.length > MAX_STORED_CHARS) return null;
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -70,9 +85,18 @@ export function writeOnboardingPrefs(key: string, prefs: OnboardingStoredPrefs, 
   }
 }
 
-/** Auto-open until the first task finishes; afterwards the user's menu choices decide. */
-export function onboardingLoginPresentation(prefs: OnboardingStoredPrefs): "corner" | "bubble" | "hidden" {
+/** Auto-open until the first task finishes; afterwards "Show on every login" decides. */
+export function onboardingLoginPresentation(prefs: OnboardingStoredPrefs): "corner" | "bubble" {
   if (!prefs.firstTaskCompleted) return "corner";
-  if (!prefs.showOnLogin) return "hidden";
-  return prefs.keepInCorner ? "corner" : "bubble";
+  return prefs.showOnLogin ? "corner" : "bubble";
+}
+
+export function onboardingSessionInit(prefs: OnboardingStoredPrefs): OnboardingWidgetInit {
+  return {
+    size: onboardingLoginPresentation(prefs),
+    firstTaskCompleted: prefs.firstTaskCompleted,
+    aiChoice: prefs.aiChoice,
+    chatId: prefs.chatId,
+    pendingRun: prefs.pendingRun,
+  };
 }

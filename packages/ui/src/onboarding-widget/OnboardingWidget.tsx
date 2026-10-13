@@ -14,6 +14,8 @@ import { AiMenu } from "./ai-panel.js";
 import { providerWaitingLabel } from "./helpers.js";
 import { Icon } from "./parts.js";
 import type { OnboardingWidgetProps } from "./types.js";
+import { useAppsVisit } from "./use-apps-visit.js";
+import { useMenuFocus } from "./use-menu-focus.js";
 import { useWidgetDrag, useWidgetPlacement } from "./use-widget-position.js";
 import { ModelLine, OnboardingBubble, WidgetBody, WidgetHeader } from "./widget-chrome.js";
 
@@ -51,23 +53,13 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
   const focusBubbleRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
-  const [appQuery, setAppQuery] = useState("");
+  const isApps = state.screen.kind === "apps";
+  const appsVisit = useAppsVisit(isApps, props.apps);
   const isBubble = state.size === "bubble";
   const keepInCorner = prefs.keepInCorner;
   const runInFlight = onboardingRunInFlight(state);
   const placement = useWidgetPlacement(rootRef, prefs.position);
   const drag = useWidgetDrag(rootRef, (position) => actions.changePrefs({ ...prefs, position }));
-
-  useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key.toLowerCase() === "k" && event.shiftKey && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        actions.openFullChat();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [actions]);
 
   useEffect(() => {
     if (isBubble || keepInCorner) return;
@@ -79,6 +71,21 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     document.addEventListener("pointerdown", onPointer);
     return () => document.removeEventListener("pointerdown", onPointer);
   }, [actions, isBubble, keepInCorner]);
+
+  const aiMenuOpen = state.ai?.step === "menu";
+  useEffect(() => {
+    if (!moreOpen && !aiMenuOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const inside = (menu: string) => Boolean(target?.closest(`[data-mxo-menu="${menu}"], [data-mxo-menu-toggle="${menu}"]`));
+      if (moreOpen && !inside("more")) setMoreOpen(false);
+      if (aiMenuOpen && !inside("ai")) actions.dispatch({ type: "ai.cancelled" });
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [actions, aiMenuOpen, moreOpen]);
+  useMenuFocus(rootRef, "more", moreOpen);
+  useMenuFocus(rootRef, "ai", aiMenuOpen);
 
   useEffect(() => {
     if (!isBubble || !focusBubbleRef.current) return;
@@ -104,7 +111,6 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     else minimize();
   };
 
-  const isApps = state.screen.kind === "apps";
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const text = draft.trim().slice(0, ONBOARDING_FREEFORM_MAX_CHARS);
@@ -141,15 +147,15 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
           onMinimize={minimize}
         />
 
-        <WidgetBody props={props} appQuery={appQuery} onAppQuery={setAppQuery} runInFlight={runInFlight} />
+        <WidgetBody props={props} apps={appsVisit} runInFlight={runInFlight} />
 
         <footer className="mxo-footer">
           {state.ai?.step === "menu" ? <AiMenu choice={props.activeAi} matrixAvailable={props.matrixAvailable} connected={props.connectedProviders} actions={actions} /> : null}
           <form className="mxo-composer" onSubmit={submit}>
             <input
               ref={inputRef}
-              value={isApps ? appQuery : draft}
-              onChange={(event) => (isApps ? setAppQuery(event.target.value) : setDraft(event.target.value))}
+              value={isApps ? appsVisit.appQuery : draft}
+              onChange={(event) => (isApps ? appsVisit.onAppQuery(event.target.value) : setDraft(event.target.value))}
               placeholder={placeholderFor(state)}
               aria-label="Message Matrix"
               maxLength={ONBOARDING_FREEFORM_MAX_CHARS}

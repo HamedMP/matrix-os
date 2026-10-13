@@ -23,7 +23,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { useMemo, useState } from "react";
-import { connectedServices } from "./helpers.js";
+import { connectedServices, newlyConnectedNames } from "./helpers.js";
 import { AppLogo, ButtonRow, Chips, Icon, ResultCard, WorkLog } from "./parts.js";
 import type { OnboardingAppCategory, OnboardingWidgetProps } from "./types.js";
 
@@ -86,13 +86,18 @@ const APP_FILTERS: { id: OnboardingAppCategory | "all"; label: string }[] = [
   { id: "dev", label: "Dev" },
 ];
 
-export function AppsScreen({ apps, actions, query, onQuery }: Pick<OnboardingWidgetProps, "apps" | "actions"> & { query: string; onQuery(query: string): void }) {
+export function AppsScreen({ apps, actions, query, onQuery, connectedBefore }: Pick<OnboardingWidgetProps, "apps" | "actions"> & {
+  query: string;
+  onQuery(query: string): void;
+  /** Apps already connected when this visit started, so Done names only new connections. */
+  connectedBefore: readonly string[];
+}) {
   const [filter, setFilter] = useState<OnboardingAppCategory | "all">("all");
   const visible = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return apps.filter((app) => (filter === "all" || app.category === filter) && (!needle || app.name.toLocaleLowerCase().includes(needle)));
   }, [apps, filter, query]);
-  const connectedNames = apps.filter((app) => app.status === "connected").map((app) => app.name);
+  const connectedNames = newlyConnectedNames(apps, connectedBefore);
   return (
     <>
       <p className="mxo-text">Connect the apps you use.</p>
@@ -122,7 +127,14 @@ export function AppsScreen({ apps, actions, query, onQuery }: Pick<OnboardingWid
               )}
             </li>
           ))}
-          {visible.length === 0 ? <li className="mxo-muted mxo-app-empty">No apps match.</li> : null}
+          {visible.length === 0 ? (
+            <li className="mxo-app-empty">
+              <span className="mxo-tile mxo-tile--neutral"><Icon icon={Search01Icon} size={16} /></span>
+              <span className="mxo-result__title">No apps match</span>
+              <span className="mxo-muted">Try another name or filter.</span>
+              <button type="button" className="mxo-link" onClick={() => { onQuery(""); setFilter("all"); }}>Clear search</button>
+            </li>
+          ) : null}
         </ul>
       </div>
       <ButtonRow>
@@ -183,7 +195,13 @@ export function RepoScreen({ repos, actions }: Pick<OnboardingWidgetProps, "repo
     <>
       <p className="mxo-text">{ONBOARDING_REPO_QUESTION.text}</p>
       {repos === null ? <p className="mxo-muted">Loading repos…</p> : null}
-      {repos?.length === 0 ? <p className="mxo-muted">No repos found. Paste a repo link below.</p> : null}
+      {repos?.length === 0 ? (
+        <div className="mxo-card mxo-empty">
+          <span className="mxo-tile mxo-tile--neutral"><Icon icon={GithubIcon} size={16} /></span>
+          <span className="mxo-result__title">No repos found</span>
+          <span className="mxo-muted">Paste a repo link below to work on it.</span>
+        </div>
+      ) : null}
       {repos && repos.length > 0 ? (
         <div className="mxo-card mxo-tasks">
           {repos.map((repo) => (
@@ -244,7 +262,7 @@ function CreditsOffer({ actions }: { actions: RunActions }) {
       <p className="mxo-text">You've used your free credits.</p>
       <div className="mxo-stack">
         <button type="button" className="mxo-btn mxo-btn--dark mxo-btn--block" onClick={actions.addCredits}>Add credits</button>
-        <button type="button" className="mxo-btn mxo-btn--outline mxo-btn--block" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Use my Claude or ChatGPT</button>
+        <button type="button" className="mxo-btn mxo-btn--outline mxo-btn--block" data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Use my Claude or ChatGPT</button>
       </div>
     </>
   );
@@ -265,7 +283,7 @@ function FollowUpOffer({ run, followUp, aiChoice, actions }: {
       />
       {run.taskId === "work-on-code" ? (
         <p className="mxo-model-line">
-          Using {CODE_AGENT_LABELS[aiChoice]} · <button type="button" className="mxo-inline-link" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
+          Using {CODE_AGENT_LABELS[aiChoice]} · <button type="button" className="mxo-inline-link" data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
         </p>
       ) : null}
     </>

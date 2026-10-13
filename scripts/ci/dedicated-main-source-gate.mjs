@@ -1,13 +1,13 @@
 // Independently qualify the exact current main push through the checks-only App.
 // Never dispatch a replacement push or modify the Actions-owned CI aggregate.
+import {readCurrentBranchSha} from './dedicated-branch.mjs';
 import {resolveMainSource,verifyMainSource} from './dedicated-main.mjs';
 import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {verifyFullHostedCoverage} from './dedicated-hosted.mjs';
 import {verifyMainCiDecision,authenticatedMainDecisionProof} from './main-ci-decision.mjs';
-const request={timeout:10000},sha=/^[a-f0-9]{40}$/;
+const request={timeout:10000};
 export async function reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester}){
- const {data:ref}=await github.rest.git.getRef({...repo,ref:'heads/main',request});
- const source=ref?.object?.sha;if(!sha.test(source||''))throw new Error('Invalid main source gate ref');
+ const source=await readCurrentBranchSha(github,repo,'main',request);
  const pull={number:0,head:{sha:source,ref:'main'}};
  const {prior,history}=await ownedGate(github,repo,pull,workflow,options.gateAppId);
  if(!config.admitted&&!history&&!prior)return 0;
@@ -31,21 +31,42 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   if(!authenticatedMainDecisionProof(prior,repo,oldRun,snapshot,controller,config,mode))delete evidence.coverageProof;
   const requester=await currentRequester(github,repo,snapshot);
   if(!requester||!authenticatedMainDecisionProof(prior,repo,requester,snapshot,controller,config,mode))delete evidence.coverageProof;
-  if(!requester||requester.status!=='completed'||requester.conclusion!=='success'){
-   await write('failure','Current exact-main requesting CI is pending or failed',requester?{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt}:{});return 1;
+  if(!requester||requester.status!=='completed'){
+   // Running or not-yet-visible CI is not a failure; the completed-CI reconcile settles this check.
+   await write('neutral','Waiting for exact-main CI to finish',requester?{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,waitingForRequester:true}:{waitingForRequester:true});return 1;
+  }
+  if(requester.conclusion!=='success'){
+   await write('failure','Current exact-main requesting CI failed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});return 1;
   }
   const decision=await verifyMainCiDecision(github,repo,requester,{prior,snapshot,controller,config,mode});
-  const result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};
+  let result;
+  try{result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};}
+  catch(error){
+   if(!(error instanceof Error))throw error;
+   // Delegated main runs full hosted CI whenever Linux does not verify; that hosted coverage qualifies main.
+   if(mode==='delegated')result={linuxFallback:true};
+   else if(mode!=='shadow')throw error;
+  }
+  if(!result){
+   // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block main.
+   await verifyMainSource(github,repo,snapshot);
+   const latest=await currentRequester(github,repo,snapshot);
+   if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.status!=='completed'||latest.conclusion!=='success')throw new Error('New main requesting attempt superseded coverage');
+   // Keep the verified hosted decision so an expired decision artifact cannot flip unchanged main to failure.
+   Object.assign(evidence,{coverageProof:decision.coverageProof});
+   await write('neutral','Shadow Linux qualification not verified; hosted CI passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,shadowUnverified:true});
+   return 1;
+  }
   if(result.docsOnly)Object.assign(evidence,{docsOnly:true,selectedHostedLaneCount:decision.selectedHostedLaneCount});
-  if(result.infrastructure){
+  if(result.infrastructure||result.linuxFallback){
    const coverage=await verifyFullHostedCoverage(github,repo,requester);
-   Object.assign(evidence,{infrastructureFallback:true,infrastructure:result.infrastructure,...coverage});
+   Object.assign(evidence,result.infrastructure?{infrastructureFallback:true,infrastructure:result.infrastructure,...coverage}:{linuxFallback:true,...coverage});
   }
   await verifyMainSource(github,repo,snapshot);
   const latest=await currentRequester(github,repo,snapshot);
   if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.status!=='completed'||latest.conclusion!=='success')throw new Error('New main requesting attempt superseded coverage');
   Object.assign(evidence,{coverageProof:decision.coverageProof});
-  await write('success',result.docsOnly?'Current exact-main selected documentation coverage passed':result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
+  await write('success',result.docsOnly?'Current exact-main selected documentation coverage passed':result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':result.linuxFallback?'Current exact-main full hosted fallback coverage passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
  }catch(error){
   if(!(error instanceof Error))throw error;
   await write('failure','Fresh exact-main qualification evidence is missing or stale');

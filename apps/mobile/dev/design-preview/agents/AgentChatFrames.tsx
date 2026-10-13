@@ -6,6 +6,8 @@ import { ApprovalCard } from "@/components/agents/interactions/ApprovalCard";
 import { ResultCard } from "@/components/chat/ResultCard";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 
+import { useSampleComposerAdd } from "../chat/sample-composer-add";
+
 import {
   SAMPLE_AGENT,
   SAMPLE_AGENT_AUTHORITY,
@@ -51,6 +53,7 @@ function AgentChatSample({ messages, footer, detailsOpen = false }: {
 }) {
   const [draft, setDraft] = useState("");
   const [details, setDetails] = useState(detailsOpen);
+  const { composerAdd } = useSampleComposerAdd(draft, setDraft);
 
   return (
     <>
@@ -64,7 +67,7 @@ function AgentChatSample({ messages, footer, detailsOpen = false }: {
         chatId="sample-agent-chat"
         renderResults={renderSampleResult}
         footer={footer}
-        composer={{ draft, onChangeDraft: setDraft, canSend: draft.trim().length > 0, onSend: noop }}
+        composer={{ draft, onChangeDraft: setDraft, canSend: draft.trim().length > 0, onSend: noop, ...composerAdd }}
       />
       <AgentDetailsSheet
         visible={details}

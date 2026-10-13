@@ -3,7 +3,19 @@ import { act, cleanup, fireEvent, screen } from "@testing-library/react-native";
 import { ScrollView } from "react-native";
 
 import { OPUS, engines, modelNames, models, openSheet, renderPicker, trigger, triggerValue } from "./model-picker-test-utils";
-import { GLM, GPT, SONNET, catalogOf, codexInstance, engineInstance, matrixInstance } from "./model-test-catalog";
+import {
+  GLM,
+  GPT,
+  PLAN,
+  SONNET,
+  catalogOf,
+  codexInstance,
+  engineInstance,
+  matrixInstance,
+  planAgentInstance,
+  planBinding,
+  planInstance,
+} from "./model-test-catalog";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
@@ -77,6 +89,31 @@ describe("the model sheet", () => {
     fireEvent.press(models().getByRole("button", { name: "Sonnet 5, Matrix AI" }));
 
     expect(change).not.toHaveBeenCalled();
+    expect(mockSheet.isPresented).toBe(false);
+  });
+
+  it("binds a model run through the person's own subscription to their account, and offers it once", () => {
+    const change = renderPicker(catalogOf(matrixInstance(), planAgentInstance(), planInstance()), SONNET);
+    openSheet();
+
+    expect(modelNames()).toEqual(["Sonnet 5, Matrix AI", "GPT-5.6-Sol, Matrix AI · ChatGPT subscription"]);
+    fireEvent.press(models().getByRole("button", { name: "GPT-5.6-Sol, Matrix AI · ChatGPT subscription" }));
+
+    expect(change).toHaveBeenCalledWith({ ...PLAN, options: planBinding() });
+    expect(mockSheet.isPresented).toBe(false);
+  });
+
+  it("binds the current model again when it is chosen while bound to an account since replaced", () => {
+    const change = renderPicker(catalogOf(planInstance(undefined, planBinding("acct_first", "2"))), { ...PLAN, options: planBinding() });
+
+    expect(triggerValue()).toBe("Matrix AI · ChatGPT subscription · GPT-5.6-Sol · unavailable");
+    expect(screen.getByText("Connection changed. Choose the model again or check Agents & providers.").props.accessibilityRole)
+      .toBe("alert");
+    openSheet();
+    fireEvent.press(models().getByRole("button", { name: "GPT-5.6-Sol, Matrix AI · ChatGPT subscription" }));
+
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(change).toHaveBeenCalledWith({ ...PLAN, options: planBinding("acct_first", "2") });
     expect(mockSheet.isPresented).toBe(false);
   });
 

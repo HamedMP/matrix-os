@@ -7,9 +7,10 @@ import { AnalyticsMask } from "@/lib/analytics";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 
 import { AssistantMessage } from "./AssistantMessage";
+import type { MessageAttachmentsProps } from "./MessageAttachments";
 import { UserMessage } from "./UserMessage";
 
-export interface MessageListProps {
+export interface MessageListProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
   /** Newest first: the list is drawn from the bottom up. */
   messages: TranscriptMessage[];
   /** The chat the long-press menu acts on. None for a chat that does not exist yet. */
@@ -25,16 +26,25 @@ export interface MessageListProps {
 const keyExtractor = (message: TranscriptMessage) => message.id;
 
 /** A chat's messages, newest at the bottom. */
-export function MessageList({ messages, chatId, renderRequest, renderResults, footer }: MessageListProps) {
+export function MessageList({
+  messages,
+  chatId,
+  renderRequest,
+  renderResults,
+  renderComputerPhoto,
+  footer,
+}: MessageListProps) {
   const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
     <ChatContextMenu chatId={chatId}>
       <Pressable accessible={false}>
         <AnalyticsMask>
-          {renderRequest?.(item) ?? <Message message={item} renderResults={renderResults} />}
+          {renderRequest?.(item) ?? (
+            <Message message={item} renderResults={renderResults} renderComputerPhoto={renderComputerPhoto} />
+          )}
         </AnalyticsMask>
       </Pressable>
     </ChatContextMenu>
-  ), [chatId, renderRequest, renderResults]);
+  ), [chatId, renderRequest, renderResults, renderComputerPhoto]);
 
   return (
     <FlatList
@@ -54,8 +64,14 @@ export function MessageList({ messages, chatId, renderRequest, renderResults, fo
   );
 }
 
-function Message({ message, renderResults }: Pick<MessageListProps, "renderResults"> & { message: TranscriptMessage }) {
-  if (message.role === "user") return <UserMessage text={message.text} />;
+function Message({
+  message,
+  renderResults,
+  renderComputerPhoto,
+}: Pick<MessageListProps, "renderResults" | "renderComputerPhoto"> & { message: TranscriptMessage }) {
+  if (message.role === "user") {
+    return <UserMessage text={message.text} attachments={message.attachments} renderComputerPhoto={renderComputerPhoto} />;
+  }
   if (message.role === "assistant") {
     return <AssistantMessage message={message} results={renderResults?.(message)} />;
   }
