@@ -10,6 +10,11 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, setDisconnectOpen, uninstall, setUninstall, connectionPanel, pendingStart: pendingStartRef, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
   const codexTerminal = harness.harness === "codex" && capability.connectionOptions?.some(isCodexTerminalOption);
   const codexTerminalOperation = codexTerminal && isCodexTerminalOption(operation?.connectionOption);
+  const claudeTerminalOperation = harness.harness === "claude" && operation?.connectionOption?.method === "terminal"
+    && capability.connectionOptions?.some(option => option.id === operation.connectionOption?.id
+      && option.method === "terminal" && option.authKind === "subscription" && option.availability === "available"
+      && option.providerId === operation.connectionOption.providerId
+      && option.billingKind === operation.connectionOption.billingKind && option.executionKind === operation.connectionOption.executionKind);
   const terminalOnly = !capability.connectionOptions && capability.loginMethods.includes("terminal") && !inlineLogin;
   const canChangeAccount = capability.connectionOptions
     ? capability.connectionOptions.some(option => option.availability === "available" && (option.authKind === "api_key" ? Boolean(client.submitConnectionKey) : Boolean(client.startConnection)))
@@ -51,7 +56,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
         <div className="matrix-ap-workflow-actions">
             <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting || reconciling}
               onClick={() => void start("login", true)}>Log in in Terminal</button>
-          {connecting && !failure && operation?.kind === "login" && operation.terminalSessionId ? (
+          {state.canContinueInTerminal && operation?.kind === "login" && operation.terminalSessionId ? (
             <button type="button" className="matrix-ap-button" disabled={disabled || pending}
               onClick={() => void run(async () => { onOpenTerminal(operation.terminalSessionId!); })}>
               Continue in Terminal
@@ -211,7 +216,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                     else onRefresh();
                   }
                 }
-              })
+              }, "status")
             }
           >
             Check connection
@@ -245,7 +250,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
             Cancel
           </button>
         ) : null}
-        {operation?.terminalSessionId && (operation.kind !== "login" || (active(operation) && !failure && ((harness.harness === "claude" && operation.connectionOption?.method === "terminal") || codexTerminalOperation))) ? (
+        {operation?.terminalSessionId && (operation.kind !== "login" || (state.canContinueInTerminal && (claudeTerminalOperation || codexTerminalOperation))) ? (
           <button
             type="button"
             className="matrix-ap-link-button"

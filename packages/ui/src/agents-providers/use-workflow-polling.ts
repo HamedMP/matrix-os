@@ -9,7 +9,7 @@ const active = (operation: ProviderWorkflow | null) =>
 /** Read-only recovery is bounded by the server receipt's expiry and UI scope. */
 export function useWorkflowPolling(input: {
   operation: ProviderWorkflowUIOperation | null; client: ProviderWorkflowClient; harnessId: string;
-  onUpdate: (operation: ProviderWorkflowUIOperation) => void; onFailure: () => void;
+  onUpdate: (operation: ProviderWorkflowUIOperation) => void; onFailure: (retryable?: boolean) => void;
 }) {
   const [generation, setGeneration] = useState(0);
   const callbacks = useRef(input);
@@ -52,8 +52,9 @@ export function useWorkflowPolling(input: {
         else cleanup();
       } catch (error) {
         if (controller.signal.aborted) return;
-        callbacks.current.onFailure();
-        if (error instanceof ProviderWorkflowClientError && error.reason === "unavailable") {
+        const retryable = error instanceof ProviderWorkflowClientError && error.reason === "unavailable";
+        callbacks.current.onFailure(retryable);
+        if (retryable) {
           failures += 1;
           schedule();
         } else cleanup();

@@ -79,6 +79,7 @@ export function useHarnessWorkflowController({
   const [startingLogin, setStartingLogin] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [terminalReadBlocked, setTerminalReadBlocked] = useState(false);
   const connected = hasConfiguredConnection(harness, source);
   const connectionPresent = connected || hasStaleHermesConnection(harness, source);
   const previousConnection = useRef(connected);
@@ -166,6 +167,7 @@ export function useHarnessWorkflowController({
     setStartingLogin(false);
     setReconciling(false);
     setFailure(null);
+    setTerminalReadBlocked(false);
     previousConnection.current = connected;
     setDisconnectOpen(false);
     setUninstall(false);
@@ -222,7 +224,7 @@ export function useHarnessWorkflowController({
   }, [operation?.state]);
   const live = (controller: AbortController) =>
     !controller.signal.aborted && scope.current === controller;
-  const run = async (action: (signal: AbortSignal) => Promise<void>, context: "start" | "other" = "other") => {
+  const run = async (action: (signal: AbortSignal) => Promise<void>, context: "start" | "status" | "other" = "other") => {
     const controller = scope.current;
     if (!controller || pending || disabled) return;
     completionRefresh.current = null;
@@ -231,8 +233,10 @@ export function useHarnessWorkflowController({
     setFailure(null);
     try {
       await action(controller.signal);
+      if (live(controller) && (context === "status" || context === "start")) setTerminalReadBlocked(false);
     } catch (caught) {
       if (live(controller)) {
+        if (context === "status" && !(caught instanceof ProviderWorkflowClientError && caught.reason === "unavailable")) setTerminalReadBlocked(true);
         console.warn(
           "[provider-settings] Workflow action failed:",
           caught instanceof Error ? caught.name : typeof caught,
@@ -355,8 +359,12 @@ export function useHarnessWorkflowController({
     );
   }, [pending, reconciling, operation, failure, disconnectOpen]);
   const { stop: stopPolling, restart: restartPolling } = useWorkflowPolling({ operation, client, harnessId: harness.id,
-    onFailure: () => setFailure("Connection status is unavailable. Check again."),
+    onFailure: retryable => {
+      setFailure("Connection status is unavailable. Check again.");
+      if (!retryable) setTerminalReadBlocked(true);
+    },
     onUpdate: next => {
+      setTerminalReadBlocked(false);
       setOperation(next);
       setFailure(null);
       setNow(Date.now());
@@ -379,6 +387,7 @@ export function useHarnessWorkflowController({
   const seconds = operation
     ? Math.max(0, Math.ceil((Date.parse(operation.expiresAt) - now) / 1000))
     : 0;
+  const canContinueInTerminal = active(operation) && seconds > 0 && !terminalReadBlocked;
   const connecting = active(operation);
   const reuseCodex = capability.loginMethods.includes("existing_codex");
   const browserLogin = harness.harness === "claude" && (operation?.connectionOption ? operation.connectionOption.method === "browser" : capability.loginMethods.includes("browser")) && !!client.submitCode;
@@ -406,6 +415,6 @@ export function useHarnessWorkflowController({
     setOperation(null);
   };
 
-  return { selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
+  return { canContinueInTerminal, selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
 }
 export type HarnessWorkflowController = ReturnType<typeof useHarnessWorkflowController>;
