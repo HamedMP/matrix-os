@@ -587,7 +587,9 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16
+        # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
+        # and a service container cannot fall back; Google's Docker Hub mirror is not pull-limited.
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: matrix_test
           POSTGRES_PASSWORD: matrix_test
