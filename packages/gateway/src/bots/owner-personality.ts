@@ -2,7 +2,8 @@ import { constants, type Stats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
-export const OWNER_SOUL_MAX_BYTES = 16 * 1024;
+import { OWNER_SOUL_MAX_BYTES } from "@matrix-os/contracts/bots";
+export { OWNER_SOUL_MAX_BYTES } from "@matrix-os/contracts/bots";
 
 export interface OwnerPersonalityConfig {
   homePath: string;

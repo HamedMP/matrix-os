@@ -13,6 +13,7 @@ import {
   resolveWithinHome,
   resolveWritableFileApiPath,
 } from "../path-security.js";
+import { OwnerPersonalityError } from "../bots/owner-personality.js";
 import { writeOwnerSoulAtomic } from "../bots/owner-personality-write.js";
 import { listDirectory } from "../files-tree.js";
 import { getMissingFileFallback } from "../file-fallbacks.js";
@@ -307,6 +308,9 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
       if (fullPath === resolveWithinHome(homePath, "system/soul.md")) {
         try { await writeOwnerSoulAtomic(homePath, content); }
         catch (error: unknown) {
+          if (error instanceof OwnerPersonalityError && error.code === "too_large") {
+            return c.json({ error: "Personality exceeds the 16 KiB UTF-8 limit" }, 413);
+          }
           console.warn("[files] SOUL save failed:", error instanceof Error ? error.name : "UnknownError");
           return c.json({ error: "Unable to save personality" }, 500);
         }

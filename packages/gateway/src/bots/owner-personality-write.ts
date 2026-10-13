@@ -2,7 +2,7 @@ import { constants, type Stats } from "node:fs";
 import { lstat, mkdir, open, realpath, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { writeUtf8FileAtomic } from "../shell/atomic-write.js";
-import { OwnerPersonalityError } from "./owner-personality.js";
+import { OWNER_SOUL_MAX_BYTES, OwnerPersonalityError } from "./owner-personality.js";
 
 function sameFile(a: Stats, b: Stats): boolean { return a.dev === b.dev && a.ino === b.ino; }
 function isMissing(error: unknown): boolean {
@@ -33,6 +33,7 @@ async function writableSoulSnapshot(path: string): Promise<Stats | undefined> {
 
 /** Canonical Settings producer only. Never truncate a published SOUL inode. */
 export async function writeOwnerSoulAtomic(homePath: string, text: string): Promise<void> {
+  if (Buffer.byteLength(text, "utf8") > OWNER_SOUL_MAX_BYTES) throw new OwnerPersonalityError("too_large");
   let directory: FileHandle | undefined;
   try {
     const home = await realpath(homePath);

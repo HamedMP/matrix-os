@@ -38,6 +38,30 @@ beforeEach(async () => {
 });
 afterEach(async () => { vi.restoreAllMocks(); await fs.rm(home, { recursive: true, force: true }); });
 
+
+it.each(["x".repeat(16 * 1024 + 1), "界".repeat(5462), "🙌".repeat(4096) + "x"])("rejects an oversized UTF-8 SOUL before replacing the working identity", async content => {
+  const soul = join(home, "system", "soul.md");
+  await actual.writeFile(soul, "Complete old Rick identity", { mode: 0o640 });
+  const before = await fs.stat(soul);
+  const response = await app.request("/files/system/soul.md", { method: "PUT", body: content });
+  expect(response.status).toBe(413);
+  expect(await response.json()).toEqual({ error: "Personality exceeds the 16 KiB UTF-8 limit" });
+  expect(await readOwnerSoul(home)).toBe("Complete old Rick identity");
+  expect((await fs.stat(soul)).ino).toBe(before.ino);
+  expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
+  await expect(writeOwnerSoulAtomic(home, content)).rejects.toMatchObject({ code: "too_large" });
+  expect(await readOwnerSoul(home)).toBe("Complete old Rick identity");
+});
+
+it.each(["x".repeat(16 * 1024), "界".repeat(5461) + "x", "🙌".repeat(4096)])("accepts the UTF-8 byte boundary and keeps other file saves independent", async content => {
+  expect(Buffer.byteLength(content)).toBe(16 * 1024);
+  expect((await app.request("/files/system/soul.md", { method: "PUT", body: content })).status).toBe(200);
+  expect(await readOwnerSoul(home)).toBe(content);
+  const other = "x".repeat(16 * 1024 + 1);
+  expect((await app.request("/files/notes.md", { method: "PUT", body: other })).status).toBe(200);
+  expect(await fs.readFile(join(home, "notes.md"), "utf8")).toBe(other);
+});
+
 it("File API queues same-home SOUL saves while readers retain complete committed identity", async () => {
   const soul = join(home, "system", "soul.md");
   await actual.writeFile(soul, "Complete original identity", { mode: 0o640 });

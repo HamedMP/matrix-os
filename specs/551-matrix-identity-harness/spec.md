@@ -110,6 +110,16 @@ data. The original exact runtime remains the rollback baseline until a reviewed
 replacement is selected. Real reply screenshots remain a separate acceptance gate.
 
 
+## SOUL save byte admission
+
+The reader, atomic writer and Settings editor share the 16 KiB UTF-8 byte limit.
+Reject overflow before opening or staging a file; return safe HTTP413 and leave
+an existing valid profile inode and bytes intact. Other file writes retain their
+existing body limit. Settings explains the limit, disables overflow saves, and
+keeps the draft with a safe retry error when a save fails. ASCII and multibyte
+boundary tests must prove saved profiles remain readable, including direct
+writer callers, and that shortened drafts can be saved successfully.
+
 ## Atomic Settings SOUL publication
 
 The existing authenticated/fenced `PUT /files/system/soul.md` producer publishes
