@@ -109,7 +109,7 @@ jobs:
           # the same-SHA CI run enough time to finish under queue pressure.
           CI_GATE_TIMEOUT_SECONDS: "5400"
           # Shadow Linux qualification is non-blocking; only delegated routing makes it required.
-          DEDICATED_SHADOW_ONLY: ${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' }}
+          DEDICATED_SHADOW_ONLY: ${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' || vars.MATRIX_CI_DEDICATED_MAIN != 'true' }}
         run: |
           set -euo pipefail
 

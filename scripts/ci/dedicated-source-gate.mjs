@@ -71,7 +71,7 @@ async function verifyHostedReplacement(github,repo,run){
 }
 async function settings(github,repo){
  const values=await readReviewedConfiguration(github,repo);
- return{controllerSha:values.MATRIX_CI_CONTROLLER_SHA,admitted:values.MATRIX_CI_DEDICATED_ENABLED==='true'||values.MATRIX_CI_DEDICATED_SHADOW==='true',mode:values.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow',imageDigest:values.MATRIX_CI_RUNNER_IMAGE_DIGEST,harnessDigest:values.MATRIX_CI_RUNNER_HARNESS_DIGEST};
+ return{controllerSha:values.MATRIX_CI_CONTROLLER_SHA,admitted:values.MATRIX_CI_DEDICATED_ENABLED==='true'||values.MATRIX_CI_DEDICATED_SHADOW==='true',mode:values.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow',mainMode:values.MATRIX_CI_DEDICATED_ENABLED==='true'&&values.MATRIX_CI_DEDICATED_MAIN==='true'?'delegated':'shadow',imageDigest:values.MATRIX_CI_RUNNER_IMAGE_DIGEST,harnessDigest:values.MATRIX_CI_RUNNER_HARNESS_DIGEST};
 }
 export async function reconcileSourceQualification(github,repo,controller,options){
  assertDefaultController(repo,controller);
@@ -160,6 +160,6 @@ export async function reconcileSourceQualification(github,repo,controller,option
    await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
   }catch(error){await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
  }
- if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester});
+ if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,{...config,mode:config.mainMode},workflow,{ownedGate,currentRequester});
  return{examined,dispatched};
 }
