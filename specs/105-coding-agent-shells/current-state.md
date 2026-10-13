@@ -563,7 +563,7 @@ Current behavior:
 Focused gateway/contracts:
 
 ```bash
-pnpm exec vitest run tests/gateway/coding-agents-provider-registry.test.ts tests/gateway/coding-agents-workspace-provider-config.test.ts tests/gateway/coding-agents-workspace-provider.test.ts tests/gateway/coding-agents-threads.test.ts tests/gateway/coding-agents-thread-stream.test.ts tests/gateway/coding-agents-summary.test.ts tests/gateway/coding-agents-file-read.test.ts tests/contracts/coding-agents.test.ts tests/gateway/agent-launcher.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/workspace-session-orchestrator.test.ts tests/observability/process-error-entrypoints.test.ts
+pnpm exec vitest run tests/gateway/coding-agents-provider-registry.test.ts tests/gateway/coding-agents-workspace-provider-config.test.ts tests/gateway/coding-agents-workspace-provider.test.ts tests/gateway/coding-agents-threads.test.ts tests/gateway/coding-agents-thread-stream.test.ts tests/gateway/coding-agents-summary.test.ts tests/gateway/coding-agents-file-read.test.ts tests/contracts/coding-agents.test.ts tests/gateway/agent-launcher.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/workspace-session-orchestrator.test.ts tests/observability/deployment-source-contracts.test.ts
 ```
 
 Gateway diagnostics:

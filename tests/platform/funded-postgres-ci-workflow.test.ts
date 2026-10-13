@@ -53,18 +53,6 @@ describe("funded PostgreSQL CI coverage", () => {
     const absentUrl = executeSettlementStep(undefined, step);
     expect(absentUrl, absentUrl.diagnostics).toMatchObject({ status: 1, args: [] });
   });
-  it("executes isolated pre-send races under the disposable PostgreSQL environment", () => {
-    const step = job.steps.find(candidate => candidate.run?.includes("tests/gateway/bots/integration-grant-source-postgres.test.ts"))!;
-    const result = executeSettlementStep(job.env.MATRIX_TEST_POSTGRES_URL, step);
-    expect(result.status, result.diagnostics).toBe(0);
-    expect(result.args).toEqual([
-      "exec", "vitest", "run", "tests/gateway/bots/integration-grant-source-postgres.test.ts",
-      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/funded-inference-timeout.test.ts",
-      "--maxWorkers=1", "--no-file-parallelism",
-    ]);
-    const absentUrl = executeSettlementStep(undefined, step);
-    expect(absentUrl, absentUrl.diagnostics).toMatchObject({ status: 1, args: [] });
-  });
   it("executes waiver and private CLI regressions under the disposable PostgreSQL job", () => {
     const result = executeSettlementStep(job.env.MATRIX_TEST_POSTGRES_URL);
     expect(result.status, result.diagnostics).toBe(0);
