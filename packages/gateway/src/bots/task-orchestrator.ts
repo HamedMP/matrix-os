@@ -18,7 +18,6 @@ import { recipeCoordinatorSelection } from "./coordinator-selection.js";
  * a runtime. Active runs are bounded by the runtime registry's capacity.
  */
 import {
-  BotRunLimitsSchema,
   BotRunOutcomeSchema,
   BotRunSpecSchema,
   type BotEvent,
@@ -30,6 +29,7 @@ import type { ChatAgentStore } from "../chat/agent-store.js";
 import { createCanonicalCliEventQueue, type CanonicalCliEventQueue } from "../chat/cli-process.js";
 import type { ScopeRuntimeHostClient } from "../scope-runtime-host/index.js";
 import { BotAdmissionError, type PrivateBotAdmission } from "./admission.js";
+import { readTrustedBotRunLimits } from "./trusted-inference-limits.js";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "./broker-actions.js";
 import { BotRecipeCatalogError, type BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotBindingsRepository } from "./repositories/bindings.js";
@@ -45,7 +45,6 @@ import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
 const ACTIVE_DEADLINE_MS = 10 * 60_000;
 /** How long a worker that took the cancel has to end its run before its runtime is stopped. */
 const CANCEL_GRACE_MS = 10_000;
-const MAX_TOOL_ACTIONS = 60;
 const MAX_QUEUED_EVENTS = 1_000;
 /** Tools the broker serves today; the rest of a recipe's set arrives with later layers. */
 const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
@@ -113,12 +112,7 @@ export function createBotTaskOrchestrator(deps: {
   /** Test hook; 10 seconds, and never longer. */
   cancelGraceMs?: number;
 }) {
-  // Host-controlled only: canonical Chat/recipe input cannot expand this allowance.
-  // Invalid configuration must not silently fall back to the larger default.
-  const configuredCalls = process.env.MATRIX_BOT_MAX_INFERENCE_CALLS;
-  if (configuredCalls !== undefined && !/^[1-9]\d?$/.test(configuredCalls)) throw new Error("Invalid Bot inference limit");
-  const limits = BotRunLimitsSchema.parse({ maxToolActions: MAX_TOOL_ACTIONS,
-    ...(configuredCalls !== undefined ? { maxInferenceCalls: Number(configuredCalls) } : {}) });
+  const limits = readTrustedBotRunLimits();
   const now = () => (deps.now?.() ?? new Date()).toISOString();
   const activeDeadlineMs = Math.max(1, Math.min(Math.trunc(deps.activeDeadlineMs ?? ACTIVE_DEADLINE_MS), ACTIVE_DEADLINE_MS));
   const cancelGraceMs = Math.max(1, Math.min(Math.trunc(deps.cancelGraceMs ?? CANCEL_GRACE_MS), CANCEL_GRACE_MS));
