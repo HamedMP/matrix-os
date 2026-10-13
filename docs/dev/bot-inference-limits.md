@@ -9,9 +9,8 @@ executors retain their separate controls.
 
 When omitted, the existing tool budget remains 60 and the worker generation
 ceiling remains 63. An empty, fractional, negative, space-padded or oversized value
-fails service construction; it never falls back silently to 63. A final line
-terminator retains the existing parser compatibility and resolves to the same
-bounded integer. Changing the
+fails service construction; it never falls back silently to 63. Values with a
+final line terminator are also rejected. Changing the
 value requires the normal reviewed configuration/deployment procedure. This
 code change does not enable it on any machine. Tests lower the value only in
 their own process. Do not activate a low value on a shared Gateway for one
