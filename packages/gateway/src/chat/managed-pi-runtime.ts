@@ -14,6 +14,7 @@ import { CanonicalProviderRunEventSchema, parseCanonicalProviderRunInput, type C
 import type { ManagedPiAdmission } from "./managed-pi-admission.js";
 import { resolveManagedPiSelection } from "./managed-pi-route.js";
 import { fundedChatError, type FundedChatFailureReason } from "./funded-chat-error.js";
+import { assertTextOnlySteering } from "./steer-delivery-error.js";
 
 const StateSchema = z.object({ runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/), executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/) }).strict();
 // Match the supervisor's typed runtime.bot errors; never log its reply or error text.
@@ -200,6 +201,7 @@ export function createManagedPiRuntime(deps: {
     async steer(input) {
       const run = active.get(input.runId);
       if (!run?.binding || run.isolated || run.ownerId !== input.owner.ownerId || run.chatId !== input.chatId || run.stopping) throw new Error("Matrix AI run unavailable");
+      assertTextOnlySteering(input.parts);
       const reply = await deps.host.client.runBot({ runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration,
         command: { version: 1, kind: "bot.steer", runId: input.runId, text: input.prompt.slice(0, 8192) } });
       if (!reply.ok) throw new Error("Matrix AI steering unavailable");
