@@ -31,7 +31,10 @@ describe('authenticated default private main CI',()=>{
   for(const patch of [{event:'workflow_dispatch'},{head_branch:'other'},{head_sha:second},{head_repository:{full_name:'fork/repo'}}])expect(authenticatedRequestingRun({...f.ci,...patch},repo,scope,{id:98})).toBe(false);
  });
  it('admits main only through the exact authenticated current push workflow-run',async()=>{
-  const f=fixture();await expect(admitDedicatedSource(f.github,{repo,controller:{sha:controller,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'},eventName:'workflow_run',payload:{action:'in_progress',workflow_run:f.ci}})).resolves.toMatchObject(f.tuple);
+  const f=fixture(),admit=(action:string)=>admitDedicatedSource(f.github,{repo,controller:{sha:controller,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'},eventName:'workflow_run',payload:{action,workflow_run:f.ci}});
+  await expect(admit('requested')).resolves.toMatchObject(f.tuple);
+  // Repeated in_progress events of a first attempt never start another main controller.
+  await expect(admit('in_progress')).resolves.toBeNull();
  });
  it('requires explicit signed main kind and rejects pr0 legacy shape',()=>{
   const f=fixture(),value:any={repository:'HamedMP/matrix-os',sourceKind:'main',prNumber:0,headSha:source,baseSha:base,baseRef:'main',mergeSha:source,mergeParents:[base],requestingRunId:321,requestingRunAttempt:1,controllerRunId:123,controllerRunAttempt:1,controllerSha:controller,controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),mode:'delegated',suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};

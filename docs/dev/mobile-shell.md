@@ -129,6 +129,11 @@ and are required only under `__DEV__`, so a production bundle drops them. Use
 the gallery for screenshot evidence: it shows the screen without account
 details or real chat titles.
 
+The composer's "+" is live in the chat, project and agent frames: it opens the
+real sheet and the real system pickers, over a sample model that reads photos
+and files and has three sample skills. A frame sends nothing, so what is
+attached there never leaves the phone.
+
 ### Left out on purpose
 
 - The model sheet shows the Matrix credit balance and no control to buy
@@ -811,6 +816,66 @@ another App's link, and `target="_blank"`/`window.open`. Confirm no browser or
 native app opens implicitly, blocked-link copy contains no raw URL, and both
 Continue in app and reopening another App recover normally. Record iOS and
 Android results separately; unit tests do not replace that evidence.
+
+## Native Mobile Chat Attachments
+
+The composer's "+" opens the "Add to message" sheet (`ComposerAddControl`):
+Photos, Files, and the selected model's skills and commands. Spec:
+`specs/555-mobile-chat-attachments/spec.md`.
+
+- Photos come from `expo-image-picker` (the system picker, which needs no
+  library permission). Files come from `File.pickFileAsync` in
+  `expo-file-system`. Both are opened over the sheet, which closes once
+  something has been chosen: a second sheet cannot be opened safely while the
+  first is on its way out.
+- A photo that is larger than 2048 pixels on its longer side, larger than 5 MB,
+  or not JPEG, PNG, WebP or GIF is scaled and saved as JPEG with
+  `expo-image-manipulator` before it is attached (`lib/chat-attachment-picker.ts`).
+- A picture is attached under a name that ends like its type (`attachmentName`).
+  Some photo libraries name a photo without an ending, and the computer and the
+  app both tell a picture by the ending of its name, so without it the photo
+  would be shown as a file once the phone's copy is gone.
+- What can be attached follows `supports.attachments` of the selected model's
+  engine (`supportedAttachmentKinds`). Matrix AI's own route lists none today,
+  so pick Claude Code or Codex to try a send. After a change to a model that
+  does not read a waiting attachment, Send is off and the composer says why.
+- A project's "+" is off while its first message is on its way
+  (`canAddAttachments`). The project screen is left for the new chat once the
+  message is in, so what a library opened meanwhile handed back would have no
+  composer to go to. The Chats tab stays on screen through the same moment, so
+  there such attachments go to the chat the message creates.
+- Sending uploads each attachment with `PUT /api/files/blob` into
+  `temporary/desktop-chat/` on the computer and names it in the turn with an
+  `attachment_reference` part, the same contract the web composer uses. The
+  computer clears that folder by itself.
+- An attachment always has the same place there and is never written over. One
+  found already in place (`409 file_exists`) came from an earlier try at the
+  same message, which the computer may have admitted, so it is used as it is
+  and never removed. Only uploads the current send created are removed when it
+  fails before asking for a turn.
+
+Focused checks:
+
+```bash
+pnpm --dir apps/mobile exec jest --runInBand __tests__/chat-attachments.test.ts __tests__/chat-attachment-picker.test.ts __tests__/requests-chat-attachments.test.ts __tests__/use-chat-composer-attachments.test.tsx __tests__/composer-add-control.test.tsx __tests__/message-attachments.test.tsx __tests__/chat-photo-after-restart.test.tsx
+```
+
+`lib/canonical-chat-transcript.ts` is also loaded by the repository's own
+tests, where `@/` is the web shell and not this app. Import what it needs by
+relative path, and run these after changing it or `lib/chat-attachments.ts`:
+
+```bash
+pnpm exec vitest run tests/desktop/chat-subagent-parity.test.ts tests/desktop/chat-tool-output-parity.test.ts tests/shell/canonical-chat-approval-details.test.tsx tests/shell/canonical-chat-approval-parity.test.ts tests/shell/canonical-chat-input-parity.test.ts tests/shell/canonical-chat-terminal-parity.test.ts
+```
+
+On a simulator, `xcrun simctl addmedia <udid> <image>` adds a photo to the
+library, and a file copied into the simulator's
+`group.com.apple.FileProvider.LocalStorage` app group, under
+`File Provider Storage/`, shows in the file browser under On My iPhone. The
+simulator has no camera. On a device, check a photo straight from the camera
+roll (HEIC, 24 megapixels or more), a PDF from iCloud Drive, a send on mobile
+data, and the same on Android, whose file browser hands over `content://`
+addresses.
 
 ## Full Mobile Readiness Gates
 

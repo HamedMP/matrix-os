@@ -15,6 +15,9 @@ export { default as MoreIcon } from "@hugeicons/core-free-icons/MoreHorizontalIc
 export { default as CloseIcon } from "@hugeicons/core-free-icons/Cancel01Icon";
 
 export { default as AddIcon } from "@hugeicons/core-free-icons/Add01Icon";
+export { default as PhotoIcon } from "@hugeicons/core-free-icons/Image01Icon";
+export { default as SkillIcon } from "@hugeicons/core-free-icons/CubeIcon";
+export { default as CommandIcon } from "@hugeicons/core-free-icons/CommandLineIcon";
 export { default as MicIcon } from "@hugeicons/core-free-icons/Mic01Icon";
 export { default as SendIcon } from "@hugeicons/core-free-icons/ArrowUp02Icon";
 export { default as StopIcon } from "@hugeicons/core-free-icons/StopIcon";

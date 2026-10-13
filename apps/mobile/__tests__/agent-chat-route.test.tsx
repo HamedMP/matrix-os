@@ -144,6 +144,16 @@ describe("agent chat route", () => {
       expect(screen.queryByRole("button", { name: "Model" })).toBeNull();
     });
 
+    it("has the control that adds to a message, offering no attachment its fixed model does not read", () => {
+      render(<AgentChatRoute />);
+
+      fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+
+      for (const row of ["Photos, The selected model cannot read photos", "Files, The selected model cannot read files"]) {
+        expect(screen.getByRole("button", { name: row }).props.accessibilityState).toMatchObject({ disabled: true });
+      }
+    });
+
     it("sends to the agent's chat on the computer's agent route, in no project", () => {
       render(<AgentChatRoute />);
       fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Who is next?");

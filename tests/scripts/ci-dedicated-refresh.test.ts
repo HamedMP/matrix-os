@@ -46,7 +46,9 @@ it('admits a rerun through in_progress because GitHub requested events do not fi
  const f=fixture();const run={id:321,run_attempt:2,status:'in_progress',workflow_id:98,path:'.github/workflows/ci.yml',event:'pull_request',head_sha:head,head_branch:'child',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2454,head:{sha:head},base:{sha:base,ref:'stack/parent'}}]};
  const github={rest:{...f.github.rest,actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),getWorkflowRun:vi.fn(async()=>({data:run}))}}};
  await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).resolves.toMatchObject({prNumber:2454,headSha:head,baseSha:base,sourceSha:merge});
- run.run_attempt=1;await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).resolves.toMatchObject({prNumber:2454,baseRef:'stack/parent',sourceSha:merge});
+ // A first attempt starts exactly one controller from its single requested event; repeated in_progress events must not.
+ run.run_attempt=1;await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).resolves.toBeNull();
+ run.status='queued';await expect(helpers.admitRefreshController(github,repo,{action:'requested',workflow_run:run})).resolves.toMatchObject({prNumber:2454,baseRef:'stack/parent',sourceSha:merge});run.status='in_progress';
  run.run_attempt=2;run.display_title=`CI coverage-v1 · ${main}`;await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).rejects.toThrow(/stale|admission/);
 });
 it('resolves hosted-only rollback after label removal while Linux refresh remains label-gated',async()=>{
@@ -69,9 +71,10 @@ it.each(['pull_request','pull_request_target','push','schedule','repository_disp
 it('starts initial non-main CI through the default-main workflow_run bridge',async()=>{
  const {readFileSync}=await import('node:fs');const {parse}=await import('yaml');const w=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
  const condition=w.jobs.benchmark.if;expect(condition).toContain("startsWith(github.event.workflow_run.display_title, 'CI coverage-v1");
- expect(condition).not.toContain("github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1");
+ expect(condition).toContain("github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1");
+ expect(condition).toContain("github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1");
  const admits=Function('vars','github','startsWith',`return (${condition});`);
- const vars={MATRIX_CI_DEDICATED_ENABLED:'true'};const github={ref:'refs/heads/main',event_name:'workflow_run',event:{action:'in_progress',workflow_run:{run_attempt:1,display_title:`CI coverage-v1 · ${merge}`}}};
+ const vars={MATRIX_CI_DEDICATED_ENABLED:'true'};const github={ref:'refs/heads/main',event_name:'workflow_run',event:{action:'requested',workflow_run:{run_attempt:1,display_title:`CI coverage-v1 · ${merge}`}}};
  expect(admits(vars,github,(text:string,prefix:string)=>text.startsWith(prefix))).toBe(true);
  expect(admits(vars,{...github,ref:'refs/heads/stack/parent'},(text:string,prefix:string)=>text.startsWith(prefix))).toBe(false);
  expect(admits(vars,{...github,event:{...github.event,workflow_run:{run_attempt:1,display_title:`CI metadata-v1 · ${merge}`}}},(text:string,prefix:string)=>text.startsWith(prefix))).toBe(false);
@@ -83,7 +86,7 @@ it('refreshes actual native merge parents without replacing direct branch base',
  await expect(helpers.resolveRequestingSource(f.github,repo,context,{pr_number:String(f.pull.number),head_sha:f.snapshot.headSha,base_sha:f.snapshot.baseSha,source_sha:f.snapshot.sourceSha})).resolves.toMatchObject(f.snapshot);
 });
 
-it.each([['requested',1,'refresh',true],['in_progress',1,'refresh',false],['in_progress',2,'refresh',true],['completed',1,'refresh',false],['completed',2,'coverage',false],['in_progress',1,'coverage',true],['requested',1,'coverage',false]])('authenticates only execution requests %s attempt=%s title=%s',async(action,attempt,kind,expected)=>{
+it.each([['requested',1,'refresh',true],['in_progress',1,'refresh',false],['in_progress',2,'refresh',true],['completed',1,'refresh',false],['completed',2,'coverage',false],['requested',1,'coverage',true],['in_progress',1,'coverage',false],['in_progress',2,'coverage',true]])('authenticates only execution requests %s attempt=%s title=%s',async(action,attempt,kind,expected)=>{
  const {readFileSync}=await import('node:fs'),{parse}=await import('yaml');const w=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
  const scope={prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,requestingRunId:321};
  const source={id:321,run_attempt:attempt,display_title:kind==='refresh'?helpers.refreshMarker(scope):`CI coverage-v1 · ${merge}`};
