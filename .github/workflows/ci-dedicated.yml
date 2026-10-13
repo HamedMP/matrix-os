@@ -94,7 +94,10 @@ jobs:
             const requester=context.eventName==='workflow_run'?context.payload.workflow_run:null;
             const requesterInactive=async()=>{
               const {data:live}=await github.rest.actions.getWorkflowRun({...context.repo,run_id:requester.id,request:{timeout:10000}});
-              return live.status==='completed'||live.run_attempt!==requester.run_attempt;
+              // A push leaves the old head's CI run in flight until it is cancelled; that head has nothing left to qualify.
+              const pull=live.event==='pull_request'&&live.pull_requests?.length===1?live.pull_requests[0]:null;
+              const replacedHead=pull!==null&&/^[a-f0-9]{40}$/.test(pull.head?.sha||'')&&pull.head.sha!==live.head_sha;
+              return live.status==='completed'||live.run_attempt!==requester.run_attempt||replacedHead;
             };
             const standDownInactive=()=>{core.notice(`Standing down: Requesting CI run ${requester.id} attempt ${requester.run_attempt} is no longer active`);core.setOutput('admitted','false');};
             if(requester&&await requesterInactive()){standDownInactive();return;}
