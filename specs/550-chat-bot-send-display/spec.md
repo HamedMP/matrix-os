@@ -73,6 +73,15 @@ existing hashing/size checks and do not promise universal PDF/Office extraction.
 The internal model's observed `input` controls catalog `supportsVision`. Public
 connection model entries remain `id`/`displayName`; projection strips internal
 input metadata so old strict clients still parse snapshots and mutation replies.
+The native ChatGPT subscription catalog projects the authenticated model row's
+explicit `input_modalities` into that internal input. Only visible rows declaring
+`text` are usable; `image` is retained only when explicitly declared. Missing
+modality metadata keeps legacy text-only behavior, and malformed/oversized
+metadata invalidates catalog qualification. Audio is not advertised by this
+transport. Normalize order/duplicates, preserve existing model/response bounds,
+and never infer vision from a slug, display label or another account's catalog.
+Tests carry this parsed metadata through the strict peer snapshot and both Chat
+and recipe Bot capability projections, retaining account/grant/source fences.
 Funded Relay image input is conservatively capped at one MiB aggregate decoded
 bytes beneath its existing two MiB whole-body cap. Other remote source limits
 can be stricter; do not relax Relay globally to fix the subscription route.
