@@ -17,7 +17,6 @@ import {
 
 export const COMPUTER_RETRY_DELAYS_MS = [3_000, 5_000, 8_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000];
 const DETAIL_POLL_MS = 5_000;
-const DETAIL_TIMEOUT_MS = 15 * 60 * 1000;
 
 export interface OnboardingRunDeps {
   port: OnboardingChatPort | null;
@@ -109,7 +108,6 @@ export function useOnboardingRun(
     if (!runId || !chatId || !port) return;
     let disposed = false;
     let inFlight = false;
-    const startedAt = Date.now();
     const refresh = async () => {
       if (disposed || inFlight) return;
       inFlight = true;
@@ -133,9 +131,6 @@ export function useOnboardingRun(
         console.warn("[onboarding-widget] detail refresh failed:", error instanceof Error ? error.name : typeof error);
       } finally {
         inFlight = false;
-      }
-      if (!disposed && Date.now() - startedAt > DETAIL_TIMEOUT_MS) {
-        dispatch({ type: "run.settled", runId, outcome: "failed" });
       }
     };
     const stopWatching = port.watch(chatId, () => void refresh());
