@@ -12,7 +12,12 @@ import { useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { createCanonicalChatEventSource, type CanonicalChatClient } from "../../lib/canonical-chat-client";
 import type { CanonicalComposerSelection } from "../chat/canonical-composer-state";
-import { admitOnboardingTurn, isComputerStartingError } from "./onboarding-widget-runner";
+import {
+  admitOnboardingTurn,
+  isComputerStartingError,
+  onboardingAdmissionRequestIds,
+  type OnboardingAdmissionRequestIds,
+} from "./onboarding-widget-runner";
 
 export const COMPUTER_RETRY_DELAYS_MS = [3_000, 5_000, 8_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000];
 const DETAIL_POLL_MS = 5_000;
@@ -31,6 +36,8 @@ export function useOnboardingRun(state: OnboardingWidgetState, dispatch: (event:
   const [runView, setRunView] = useState<OnboardingRunView | null>(null);
   const handledRequest = useRef(0);
   const computerAttempts = useRef(0);
+  /** Held while admissions of one prompt keep timing out; cleared once the server answers. */
+  const pendingAdmission = useRef<{ prompt: string; requestIds: OnboardingAdmissionRequestIds } | null>(null);
   const depsRef = useRef(deps);
   const chatIdRef = useRef(state.chatId);
   useEffect(() => {
@@ -63,9 +70,14 @@ export function useOnboardingRun(state: OnboardingWidgetState, dispatch: (event:
       simpler: screen.simpler,
       ...(screen.context ? { context: screen.context } : {}),
     });
-    void admitOnboardingTurn({ client, chatId: chatIdRef.current, prompt, selection }).then(
+    const pending = pendingAdmission.current?.prompt === prompt
+      ? pendingAdmission.current
+      : { prompt, requestIds: onboardingAdmissionRequestIds() };
+    pendingAdmission.current = pending;
+    void admitOnboardingTurn({ client, chatId: chatIdRef.current, prompt, selection, requestIds: pending.requestIds }).then(
       (admitted) => {
         computerAttempts.current = 0;
+        pendingAdmission.current = null;
         dispatch({ type: "run.admitted", requestId, chatId: admitted.chatId, runId: admitted.runId });
       },
       (error: unknown) => {
@@ -75,6 +87,7 @@ export function useOnboardingRun(state: OnboardingWidgetState, dispatch: (event:
           return;
         }
         computerAttempts.current = 0;
+        pendingAdmission.current = null;
         dispatch({ type: "run.failedToStart" });
       },
     );
@@ -108,6 +121,9 @@ export function useOnboardingRun(state: OnboardingWidgetState, dispatch: (event:
         setRunView(view);
         if (view.status === "completed" || view.status === "failed") {
           dispatch({ type: "run.settled", runId, outcome: view.status });
+        } else if (!detail.runs.some((run) => run.id === runId)) {
+          // Admission returns only after the run is stored, so a missing run (e.g. one restored after a restart) is gone.
+          dispatch({ type: "run.settled", runId, outcome: "failed" });
         }
       } catch (error: unknown) {
         console.warn("[onboarding-widget] detail refresh failed:", error instanceof Error ? error.name : typeof error);

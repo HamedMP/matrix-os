@@ -1,5 +1,6 @@
 import {
   initialOnboardingWidgetState,
+  onboardingPendingRun,
   reduceOnboardingWidget,
   type OnboardingWidgetState,
 } from "@matrix-os/contracts";
@@ -21,8 +22,8 @@ import { useIntegrations } from "../integrations/integrations-store";
 import { closeDesktopSupport } from "../support/DesktopSupportWidget";
 import {
   DEFAULT_ONBOARDING_PREFS,
-  onboardingLoginPresentation,
   onboardingPrefsKey,
+  onboardingSessionInit,
   readOnboardingPrefs,
   writeOnboardingPrefs,
   type OnboardingStoredPrefs,
@@ -59,12 +60,7 @@ function OnboardingWidgetLoader({ api, prefsKey }: { api: ApiClient; prefsKey: s
 }
 
 function initialState(prefs: OnboardingStoredPrefs): OnboardingWidgetState {
-  return initialOnboardingWidgetState({
-    size: onboardingLoginPresentation(prefs) === "corner" ? "corner" : "bubble",
-    firstTaskCompleted: prefs.firstTaskCompleted,
-    aiChoice: prefs.aiChoice,
-    chatId: prefs.chatId,
-  });
+  return initialOnboardingWidgetState(onboardingSessionInit(prefs));
 }
 
 function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClient; prefsKey: string; initialPrefs: OnboardingStoredPrefs }) {
@@ -87,6 +83,11 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
   const chatMaximized = useChatMaximized();
   useOnboardingSupportDock({ size: state.size, side: prefs.side, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
   const ai = useOnboardingAiConnect(api, dispatch);
+  const signInPanelOpen = state.ai?.step === "waiting";
+  const abandonSignIn = ai.abandonSignIn;
+  useEffect(() => {
+    if (!signInPanelOpen) abandonSignIn();
+  }, [abandonSignIn, signInPanelOpen]);
   const appConnect = useOnboardingAppConnect(api, dispatch);
   const apps = useMemo(() => onboardingApps(available, connections, appConnect.connectingService), [appConnect.connectingService, available, connections]);
 
@@ -115,8 +116,9 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
       firstTaskCompleted: state.firstTaskCompleted,
       aiChoice: state.aiChoice,
       chatId: state.chatId,
+      pendingRun: onboardingPendingRun(state),
     });
-  }, [prefs, prefsKey, state.aiChoice, state.chatId, state.firstTaskCompleted]);
+  }, [prefs, prefsKey, state]);
 
   const openChat = useCallback(() => {
     showTab(state.chatId

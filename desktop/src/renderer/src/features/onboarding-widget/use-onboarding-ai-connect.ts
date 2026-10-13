@@ -24,6 +24,8 @@ export interface OnboardingAiConnect {
   startSignIn: (provider: OnboardingAiProvider) => void;
   reopenSignIn: () => void;
   cancelSignIn: () => void;
+  /** Stops a sign-in whose panel was closed some other way, without touching the widget. */
+  abandonSignIn: () => void;
   submitKey: (provider: OnboardingAiProvider, key: string) => void;
   submitCode: (code: string) => void;
 }
@@ -128,14 +130,18 @@ export function useOnboardingAiConnect(api: ApiClient | null, dispatch: (event: 
     if (url) void openDesktopProviderWorkflowAuthorization(url);
   }, []);
 
-  const cancelSignIn = useCallback(() => {
+  const abandonSignIn = useCallback(() => {
     const current = active.current;
-    clearSignIn();
-    dispatch({ type: "ai.cancelled" });
     if (!current) return;
+    clearSignIn();
     current.controller.abort();
     if (client && current.operationId) cancelOperation(client, current.operationId);
-  }, [clearSignIn, client, dispatch]);
+  }, [clearSignIn, client]);
+
+  const cancelSignIn = useCallback(() => {
+    abandonSignIn();
+    dispatch({ type: "ai.cancelled" });
+  }, [abandonSignIn, dispatch]);
 
   const submitKey = useCallback((provider: OnboardingAiProvider, key: string) => {
     if (!client) { dispatch({ type: "ai.failed" }); return; }
@@ -154,5 +160,5 @@ export function useOnboardingAiConnect(api: ApiClient | null, dispatch: (event: 
     });
   }, [client, dispatch, finish, isIdentityCurrent]);
 
-  return { signInCode, signInNeedsCode, startSignIn, reopenSignIn, cancelSignIn, submitKey, submitCode };
+  return { signInCode, signInNeedsCode, startSignIn, reopenSignIn, cancelSignIn, abandonSignIn, submitKey, submitCode };
 }

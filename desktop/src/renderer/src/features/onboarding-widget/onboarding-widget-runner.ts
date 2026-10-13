@@ -46,7 +46,7 @@ export function onboardingApps(
   connections: readonly ConnectedIntegration[],
   connectingService: string | null,
 ): OnboardingWidgetApp[] {
-  const connected = new Set(connections.map((connection) => connection.service));
+  const connected = new Set(connections.filter((connection) => connection.status === "active").map((connection) => connection.service));
   return available.slice(0, ONBOARDING_MAX_APPS).map((app) => ({
     id: app.id,
     name: app.name,
@@ -179,11 +179,22 @@ export function isComputerStartingError(error: unknown): boolean {
   return error instanceof AppError && (error.category === "offline" || error.category === "timeout");
 }
 
-export async function admitOnboardingTurn({ client, chatId, prompt, selection }: {
+export interface OnboardingAdmissionRequestIds {
+  create: string;
+  turn: string;
+}
+
+export function onboardingAdmissionRequestIds(): OnboardingAdmissionRequestIds {
+  return { create: canonicalChatRequestId(), turn: canonicalChatRequestId() };
+}
+
+/** Retrying with the same `requestIds` replays an admission whose response was lost instead of starting it again. */
+export async function admitOnboardingTurn({ client, chatId, prompt, selection, requestIds }: {
   client: Pick<CanonicalChatClient, "create" | "getDetail" | "admitTurn">;
   chatId: string | null;
   prompt: string;
   selection: CanonicalComposerSelection;
+  requestIds: OnboardingAdmissionRequestIds;
 }): Promise<{ chatId: string; runId: string }> {
   const modelSelection = {
     instanceId: selection.instanceId,
@@ -204,12 +215,12 @@ export async function admitOnboardingTurn({ client, chatId, prompt, selection }:
     baseRevision = 0;
   }
   if (!targetId) {
-    const created = await client.create({ clientRequestId: canonicalChatRequestId(), title: ONBOARDING_CHAT_TITLE, currentSelection: modelSelection });
+    const created = await client.create({ clientRequestId: requestIds.create, title: ONBOARDING_CHAT_TITLE, currentSelection: modelSelection });
     targetId = created.chat.id;
     baseRevision = created.chat.revision;
   }
   const admitted = await client.admitTurn(targetId, {
-    clientRequestId: canonicalChatRequestId(),
+    clientRequestId: requestIds.turn,
     baseRevision,
     parts: [{ type: "text", text: prompt }],
     selection: modelSelection,

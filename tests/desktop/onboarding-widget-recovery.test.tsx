@@ -1,0 +1,146 @@
+// @vitest-environment jsdom
+
+import { act, cleanup, renderHook } from "@testing-library/react";
+import { useReducer } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  initialOnboardingWidgetState,
+  reduceOnboardingWidget,
+  type OnboardingWidgetInit,
+} from "@matrix-os/contracts";
+import { AppError } from "@desktop/shared/app-error";
+import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { useOnboardingRun } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-run";
+import { useOnboardingAiConnect } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-ai-connect";
+
+const workflow = vi.hoisted(() => ({ client: null as Record<string, ReturnType<typeof vi.fn>> | null }));
+
+vi.mock("@desktop/renderer/src/lib/canonical-chat-client", async (original) => ({
+  ...(await original<object>()),
+  createCanonicalChatEventSource: () => ({
+    subscribe: () => ({ dispose: () => undefined }),
+    start: async () => undefined,
+    dispose: () => undefined,
+  }),
+}));
+
+vi.mock("@desktop/renderer/src/features/settings/provider-workflow-transport", () => ({
+  createDesktopProviderWorkflowClient: () => workflow.client,
+  openDesktopProviderWorkflowAuthorization: vi.fn(async () => undefined),
+}));
+
+const selection = { instanceId: "hermes_default", model: "default", options: [], interactionMode: "default", permissionMode: "default" } as never;
+const api = { openStream: vi.fn() } as unknown as ApiClient;
+
+function useHarness(init: OnboardingWidgetInit, client: unknown) {
+  const [state, dispatch] = useReducer(reduceOnboardingWidget, init, initialOnboardingWidgetState);
+  const runView = useOnboardingRun(state, dispatch, { api, client: client as never, selection, selectionPending: false });
+  return { state, dispatch, runView };
+}
+
+async function flush(ms = 0) {
+  await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  workflow.client = null;
+});
+
+describe("onboarding run recovery", () => {
+  it("retries a lost admission with the same request IDs, so the server replays it instead of starting it twice", async () => {
+    const client = {
+      create: vi.fn().mockResolvedValue({ chat: { id: "chat_1", revision: 1 } }),
+      admitTurn: vi.fn()
+        .mockRejectedValueOnce(new AppError("timeout"))
+        .mockResolvedValue({ record: { chat: { id: "chat_1" } }, run: { id: "run_1" } }),
+      getDetail: vi.fn().mockResolvedValue({ runs: [{ id: "run_1", status: "running" }], messages: [] }),
+    };
+    const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false }, client));
+    act(() => result.current.dispatch({ type: "freeform.submitted", text: "Summarize today" }));
+    await flush();
+    expect(result.current.state.screen).toMatchObject({ phase: "waiting_computer" });
+    await flush(3_000);
+    expect(result.current.state.screen).toMatchObject({ phase: "running", runId: "run_1" });
+
+    const [firstCreate, secondCreate] = client.create.mock.calls.map(([request]) => request.clientRequestId);
+    const [firstTurn, secondTurn] = client.admitTurn.mock.calls.map(([, request]) => request.clientRequestId);
+    expect(secondCreate).toBe(firstCreate);
+    expect(secondTurn).toBe(firstTurn);
+
+    act(() => result.current.dispatch({ type: "run.settled", runId: "run_1", outcome: "completed" }));
+    act(() => result.current.dispatch({ type: "freeform.submitted", text: "And tomorrow" }));
+    await flush();
+    expect(client.admitTurn.mock.calls[2]?.[1].clientRequestId).not.toBe(firstTurn);
+  });
+
+  const pendingRun = { taskId: "research", answer: "Trip ideas for Lisbon", appConnected: true, simpler: false, runId: "run_1" } as const;
+
+  it("settles a run restored after a restart from the remembered chat", async () => {
+    const client = {
+      create: vi.fn(),
+      admitTurn: vi.fn(),
+      getDetail: vi.fn().mockResolvedValue({
+        runs: [{ id: "run_1", status: "completed" }],
+        messages: [{ runId: "run_1", role: "assistant", parts: [{ type: "text", text: "Three Lisbon picks" }] }],
+      }),
+    };
+    const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client));
+    await flush();
+    expect(client.getDetail).toHaveBeenCalledWith("chat_1");
+    expect(result.current.state.screen).toMatchObject({ phase: "done" });
+    expect(result.current.state.firstTaskCompleted).toBe(true);
+    expect(client.admitTurn).not.toHaveBeenCalled();
+  });
+
+  it("fails a restored run that the chat no longer has", async () => {
+    const client = { create: vi.fn(), admitTurn: vi.fn(), getDetail: vi.fn().mockResolvedValue({ runs: [], messages: [] }) };
+    const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client));
+    await flush();
+    expect(result.current.state.screen).toMatchObject({ phase: "failed" });
+    expect(result.current.state.firstTaskCompleted).toBe(false);
+  });
+});
+
+describe("onboarding AI sign-in", () => {
+  function signInClient() {
+    return {
+      capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "h_claude", harness: "claude", connectionOptions: [
+        { id: "anthropic_device", providerId: "anthropic", authKind: "subscription", method: "device_code", availability: "available" },
+      ] }]),
+      startConnection: vi.fn().mockResolvedValue({ id: "op_1", state: "pending", authorizationUrl: null, deviceCode: "ABCD" }),
+      get: vi.fn().mockResolvedValue({ id: "op_1", state: "succeeded", authorizationUrl: null, deviceCode: null }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it("switches the AI when a sign-in the user is still waiting on succeeds", async () => {
+    workflow.client = signInClient();
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useOnboardingAiConnect(api, dispatch));
+    act(() => result.current.startSignIn("claude"));
+    await flush(2_000);
+    expect(dispatch).toHaveBeenCalledWith({ type: "ai.connected", provider: "claude" });
+  });
+
+  it("cancels a sign-in whose panel was dismissed, so finishing it later cannot take over", async () => {
+    const client = signInClient();
+    workflow.client = client;
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useOnboardingAiConnect(api, dispatch));
+    act(() => result.current.startSignIn("claude"));
+    await flush();
+    act(() => result.current.abandonSignIn());
+    await flush(2_000);
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "ai.connected", provider: "claude" });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "ai.cancelled" });
+    expect(client.cancel).toHaveBeenCalledWith("op_1", expect.any(AbortSignal));
+  });
+});
