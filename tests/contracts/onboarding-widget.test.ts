@@ -83,10 +83,10 @@ describe("reduceOnboardingWidget", () => {
       fresh(),
       { type: "task.selected", taskId: "plan-week", connectedServices: [] },
       { type: "connect.started" },
-      { type: "connect.failed" },
+      { type: "connect.failed", service: "google_calendar" },
     );
     expect(failed.screen).toEqual({ kind: "connect", taskId: "plan-week", status: "failed" });
-    const connected = run(failed, { type: "connect.started" }, { type: "connect.succeeded" });
+    const connected = run(failed, { type: "connect.started" }, { type: "connect.succeeded", service: "google_calendar" });
     expect(connected.notice).toBe("Google Calendar connected");
     expect(connected.screen).toMatchObject({ kind: "run", appConnected: true });
   });
@@ -96,7 +96,7 @@ describe("reduceOnboardingWidget", () => {
       fresh(),
       { type: "task.selected", taskId: "work-on-code", connectedServices: [] },
       { type: "connect.started" },
-      { type: "connect.succeeded" },
+      { type: "connect.succeeded", service: "github" },
     );
     expect(picked.screen).toEqual({ kind: "repo" });
     expect(picked.notice).toBe("GitHub connected");
@@ -147,6 +147,34 @@ describe("reduceOnboardingWidget", () => {
     const failed = run(restored, { type: "run.settled", runId: "run_1", outcome: "failed" });
     const retried = run(failed, { type: "run.retried", simpler: false });
     expect(retried.screen).toMatchObject({ kind: "run", phase: "starting", answer: "Trip ideas for Lisbon" });
+  });
+
+  it("ignores a connection result for an app the current task does not need", () => {
+    const calendar = run(
+      fresh(),
+      { type: "task.selected", taskId: "work-on-code", connectedServices: [] },
+      { type: "connect.started" },
+      { type: "tasks.requested" },
+      { type: "task.selected", taskId: "plan-week", connectedServices: [] },
+    );
+    expect(run(calendar, { type: "connect.succeeded", service: "github" })).toBe(calendar);
+    expect(run(calendar, { type: "connect.failed", service: "github" })).toBe(calendar);
+    expect(run(calendar, { type: "connect.succeeded", service: "google_calendar" }).screen).toMatchObject({ kind: "run", taskId: "plan-week", appConnected: true });
+  });
+
+  it("forgets a chat that no longer exists and leaves a run it was following for the task list", () => {
+    const pendingRun = { taskId: "research", answer: "Trip ideas for Lisbon", appConnected: true, simpler: false, runId: "run_1" } as const;
+    const restored = initialOnboardingWidgetState({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun });
+    expect(run(restored, { type: "chat.missing", chatId: "chat_other" })).toBe(restored);
+    const gone = run(restored, { type: "chat.missing", chatId: "chat_1" });
+    expect(gone.chatId).toBeNull();
+    expect(gone.screen).toEqual({ kind: "tasks" });
+    expect(onboardingPendingRun(gone)).toBeNull();
+
+    const done = run(restored, { type: "run.settled", runId: "run_1", outcome: "completed" });
+    const doneGone = run(done, { type: "chat.missing", chatId: "chat_1" });
+    expect(doneGone.chatId).toBeNull();
+    expect(doneGone.screen).toBe(done.screen);
   });
 
   it("ignores a pending run without its chat or with an unknown task", () => {

@@ -69,8 +69,8 @@ export type OnboardingWidgetEvent =
   | { type: "answer.submitted"; text: string; context?: string }
   | { type: "freeform.submitted"; text: string }
   | { type: "connect.started" }
-  | { type: "connect.succeeded" }
-  | { type: "connect.failed" }
+  | { type: "connect.succeeded"; service: string }
+  | { type: "connect.failed"; service: string }
   | { type: "connect.skipped" }
   | { type: "apps.opened" }
   | { type: "apps.closed"; connectedNames: readonly string[] }
@@ -81,6 +81,7 @@ export type OnboardingWidgetEvent =
   | { type: "run.failedToStart" }
   | { type: "run.settled"; runId: string; outcome: "completed" | "failed" }
   | { type: "run.retried"; simpler: boolean }
+  | { type: "chat.missing"; chatId: string }
   | { type: "followUp.chosen"; choice: string; prompt: string | null }
   | { type: "followUp.dismissed" }
   | { type: "ai.menuToggled" }
@@ -166,6 +167,10 @@ function startRun(
   };
 }
 
+function connectsService(taskId: OnboardingStarterTaskId, service: string): boolean {
+  return onboardingTask(taskId)?.needs?.service === service;
+}
+
 function afterConnect(state: OnboardingWidgetState, taskId: OnboardingStarterTaskId, connected: boolean): OnboardingWidgetState {
   const task = onboardingTask(taskId);
   const notice = connected && task?.needs ? `${task.needs.name} connected` : state.notice;
@@ -230,9 +235,9 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
     case "connect.started":
       return screen.kind === "connect" ? { ...state, screen: { ...screen, status: "connecting" } } : state;
     case "connect.failed":
-      return screen.kind === "connect" ? { ...state, screen: { ...screen, status: "failed" } } : state;
+      return screen.kind === "connect" && connectsService(screen.taskId, event.service) ? { ...state, screen: { ...screen, status: "failed" } } : state;
     case "connect.succeeded":
-      return screen.kind === "connect" ? afterConnect(state, screen.taskId, true) : state;
+      return screen.kind === "connect" && connectsService(screen.taskId, event.service) ? afterConnect(state, screen.taskId, true) : state;
     case "connect.skipped":
       return screen.kind === "connect" ? afterConnect({ ...state, echo: "Skip" }, screen.taskId, false) : state;
     case "apps.opened":
@@ -273,6 +278,11 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
     case "run.retried":
       if (screen.kind !== "run" || screen.phase !== "failed") return state;
       return startRun(state, { taskId: screen.taskId, answer: screen.answer, appConnected: screen.appConnected, simpler: event.simpler, ...(screen.context ? { context: screen.context } : {}), ...(screen.title ? { title: screen.title } : {}) });
+    case "chat.missing": {
+      if (state.chatId !== event.chatId) return state;
+      const following = screen.kind === "run" && screen.phase === "running";
+      return following ? { ...state, chatId: null, echo: null, screen: { kind: "tasks" } } : { ...state, chatId: null };
+    }
     case "followUp.chosen": {
       const prompt = event.prompt ? boundedText(event.prompt) : "";
       if (!prompt) return { ...state, followUpUsed: true };
