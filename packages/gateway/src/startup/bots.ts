@@ -170,13 +170,18 @@ export async function startBots(options: {
     console.warn("[bots] bot state unavailable:", error instanceof Error ? error.name : "UnknownError");
     return undefined;
   }
+  const recipes = createBotRecipeCatalog();
   const isolatedConfig = parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE);
   const isolatedChat = isolatedConfig ? createIsolatedChatAuthority({ config: isolatedConfig, db,
     identity: () => ({ ownerId: options.runtimeOwnerId ?? "", machineId: process.env.MATRIX_MACHINE_ID ?? "",
-      runtimeSlot: process.env.MATRIX_RUNTIME_SLOT ?? "",
+      runtimeSlot: process.env.MATRIX_RUNTIME_SLOT ?? "", runtimeTokenEpoch: Number(process.env.MATRIX_RUNTIME_TOKEN_EPOCH),
       credentialSha256: createHash("sha256").update(process.env.MATRIX_FUNDED_AI_RUNTIME_TOKEN ?? "").digest("hex"),
-      sourceSha: readReleaseInfo()?.gitCommit ?? process.env.MATRIX_BUILD_SHA ?? "" }), now }) : undefined;
-  const recipes = createBotRecipeCatalog();
+      sourceSha: readReleaseInfo()?.gitCommit ?? process.env.MATRIX_BUILD_SHA ?? "" }), now,
+    verifyCanonical: async binding => {
+      const agent = await options.agents.get({ type: "personal", ownerId: binding.ownerId }, binding.botId);
+      return Boolean(agent && !agent.archived && agent.recipeRef && agent.recipeRef.recipeId === binding.recipeRef?.recipeId
+        && agent.recipeRef.version === binding.recipeRef.version && recipes.resolve(agent.recipeRef).identitySource === "owner_soul");
+    } }) : undefined;
   const customRecipes = createChatAgentRecipeResolver({ homePath: options.homePath,
     skillsRoot: await discoverChatAgentRecipeSkillsRoot({}), services: listServices().map(({ id, name }) => ({ id, name })) });
   const procedures = createBotProcedureResolver({ db, agents: options.agents, recipes, customRecipes });
@@ -338,6 +343,8 @@ export async function startBots(options: {
   const orchestrator = createBotTaskOrchestrator({
     inputHistory,
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
+    ...(isolatedChat ? { isolatedChat } : {}),
+    personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId },
     bindings,
     transact,
     interactions,
@@ -367,7 +374,7 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
-  const managed = createManagedPiRuntime({ inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
     homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,

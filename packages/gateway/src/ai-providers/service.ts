@@ -54,6 +54,8 @@ export interface AiProviderSnapshotReader {
 }
 
 interface AiProviderServiceOptions {
+  /** Server phase validation runs before any observation; never renderer input. */
+  observationScope?: () => "canonical_matrix" | undefined;
   /** Registered native Claude profile uses a separate account from owner API keys. */
   exposeClaudeProfileAccount?: boolean;
   nativeHarnessCatalogReader?: GenericHarnessModelCatalogReader;
@@ -197,6 +199,7 @@ function readinessForDriver(
 }
 
 export class AiProviderService implements AiProviderSnapshotReader {
+  readonly #observationScope?: AiProviderServiceOptions["observationScope"];
   readonly #credentials: ProviderCredentialStore;
   readonly #exposeClaudeProfileAccount: boolean;
   readonly #now: () => Date;
@@ -219,6 +222,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       env: options.env,
       fundedCredentialProvider: options.fundedCredentialProvider,
     });
+    this.#observationScope = options.observationScope;
     this.#exposeClaudeProfileAccount = options.exposeClaudeProfileAccount === true;
     this.#now = options.now ?? (() => new Date());
     this.#healthProbe = options.healthProbe;
@@ -392,10 +396,16 @@ export class AiProviderService implements AiProviderSnapshotReader {
 
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
     options.signal?.throwIfAborted();
-    const managedMatrixOnly = options.admissionScope === "managed_matrix";
+    const canonicalOnly = this.#observationScope?.() === "canonical_matrix" || options.admissionScope === "canonical_matrix";
+    const managedMatrixOnly = canonicalOnly || options.admissionScope === "managed_matrix";
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
-    const nativeScope = { signal: options.signal, deadline: +snapshotTime + 13000, deferRenewal: true };
+    const nativeScope = {
+      signal: options.signal,
+      deadline: Math.min(+snapshotTime + 13000,
+        Number.isFinite(options.nativeObservationDeadline) ? options.nativeObservationDeadline! : Infinity),
+      deferRenewal: true,
+    };
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
@@ -620,7 +630,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         }
       : { providerInstanceId: null, accessSourceId: null, modelId: null };
 
-    const matrixAnthropicConnection = await this.#matrixAnthropicConnection?.();
+    const matrixAnthropicConnection = canonicalOnly ? undefined : await this.#matrixAnthropicConnection?.();
     options.signal?.throwIfAborted();
     const snapshot = AiProviderSnapshotV3Schema.parse({
       contractVersion: 3,
@@ -636,6 +646,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       active,
     });
     // Observe after other bounded discovery so those waits do not age peer truth.
+    this.#observationScope?.();
     if (managedMatrixOnly) return snapshot;
     const plan = await this.#readChatGptPlanObservation(options.signal);
     options.signal?.throwIfAborted();
