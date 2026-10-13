@@ -93,6 +93,8 @@ it('observes shadow qualification without letting it block the aggregate',()=>{
  const ci=parse(readFileSync('.github/workflows/ci.yml','utf8'));
  expect(ci.jobs.changes.outputs.dedicated_required).toContain('steps.route.outputs.required');
  expect(ci.jobs['dedicated-linux'].if).toContain("dedicated_required == 'true'");
+ // Shadow never makes CI Results wait on the Linux verifier.
+ expect(ci.jobs['dedicated-linux'].if).toContain("vars.MATRIX_CI_DEDICATED_ENABLED == 'true'");
  const step=ci.jobs['ci-results'].steps[0];expect(step.env.DEDICATED_REQUIRED).toContain('needs.changes.outputs.dedicated_required');
  expect(step.env.DEDICATED_MODE).toBe("${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}");
  expect(step.run).toContain('"$DEDICATED_REQUIRED" = "true"');

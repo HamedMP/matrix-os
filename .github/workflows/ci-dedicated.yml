@@ -314,7 +314,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
-      group: matrix-ci-stack-reconciliation
+      # One global queue serialized every PR's reconcile behind every other (40+ deep under load).
+      # Queue per scope instead: a PR, a pushed PR with its direct children, or the full scan.
+      group: matrix-ci-reconcile-${{ github.event.pull_request && format('{0}-{1}', github.event.action == 'synchronize' && 'push' || 'pr', github.event.pull_request.number) || (github.event.workflow_run.pull_requests[0] && !github.event.workflow_run.pull_requests[1] && github.event.workflow_run.pull_requests[0].head.repo.id == github.event.repository.id && github.event.workflow_run.pull_requests[0].base.repo.id == github.event.repository.id) && format('pr-{0}', github.event.workflow_run.pull_requests[0].number) || 'full' }}
       queue: max
       cancel-in-progress: false
     steps:

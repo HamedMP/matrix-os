@@ -942,7 +942,9 @@ jobs:
   dedicated-linux:
     name: Verified Dedicated Linux Qualification
     needs: changes
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    # Only delegated routing waits on Linux here. In shadow mode CI Results would otherwise wait up to
+    # 70 minutes for a non-blocking result; the controller check and source gates record shadow outcomes.
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && vars.MATRIX_CI_DEDICATED_ENABLED == 'true'
     runs-on: ubuntu-latest
     # Shadow observes Linux qualification; checkout failures and timeouts must not fail the run either.
     continue-on-error: ${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' }}

@@ -52,6 +52,15 @@ describe("SearchField", () => {
     });
   });
 
+  it("leaves correction to the keyboard unless it is turned off, as for a search over names", () => {
+    render(<SearchField placeholder="Search projects" />);
+    expect(screen.getByLabelText("Search projects").props.autoCorrect).toBeUndefined();
+    cleanup();
+
+    render(<SearchField placeholder="Search templates" autoCorrect={false} />);
+    expect(screen.getByLabelText("Search templates").props.autoCorrect).toBe(false);
+  });
+
   it("keeps its own text and clears it from the clear button", () => {
     const onChangeText = jest.fn();
     render(<SearchField placeholder="Search projects" onChangeText={onChangeText} />);

@@ -19,11 +19,12 @@ async function runCli(
   home: string,
   args: string[],
   commandBin = bin,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [commandBin, ...args], {
       cwd: process.cwd(),
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, ...extraEnv, HOME: home },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -170,6 +171,23 @@ describe("sync CLI JSON output", () => {
         },
       });
     }
+  });
+
+  it("keeps JSON stderr parseable when the environment carries a PostHog token but no network", async () => {
+    // The Linux qualification lane exports shell-build PostHog tokens for every lane and has no
+    // network; test-spawned CLIs must stay hermetic instead of logging failed telemetry captures.
+    const home = await tempHome();
+    const result = await runCli(home, ["sync", "pause", "--json"], bin, {
+      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "phc_ci_shell_build",
+      NEXT_PUBLIC_POSTHOG_KEY: "phc_ci_shell_build",
+      POSTHOG_HOST: "http://127.0.0.1:9",
+    });
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stderr)).toEqual({
+      v: 1,
+      error: { code: "daemon_unavailable", message: "Sync daemon is not running." },
+    });
   });
 
   it("emits safe JSON when status IPC fails after the daemon probe", async () => {

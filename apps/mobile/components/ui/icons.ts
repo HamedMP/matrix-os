@@ -15,6 +15,9 @@ export { default as MoreIcon } from "@hugeicons/core-free-icons/MoreHorizontalIc
 export { default as CloseIcon } from "@hugeicons/core-free-icons/Cancel01Icon";
 
 export { default as AddIcon } from "@hugeicons/core-free-icons/Add01Icon";
+export { default as PhotoIcon } from "@hugeicons/core-free-icons/Image01Icon";
+export { default as SkillIcon } from "@hugeicons/core-free-icons/CubeIcon";
+export { default as CommandIcon } from "@hugeicons/core-free-icons/CommandLineIcon";
 export { default as MicIcon } from "@hugeicons/core-free-icons/Mic01Icon";
 export { default as SendIcon } from "@hugeicons/core-free-icons/ArrowUp02Icon";
 export { default as StopIcon } from "@hugeicons/core-free-icons/StopIcon";
@@ -26,6 +29,7 @@ export { default as CheckIcon } from "@hugeicons/core-free-icons/Tick02Icon";
 export { default as LoadingIcon } from "@hugeicons/core-free-icons/Loading03Icon";
 export { default as ChatIcon } from "@hugeicons/core-free-icons/Message01Icon";
 export { default as FolderIcon } from "@hugeicons/core-free-icons/Folder01Icon";
+export { default as ConnectAppsIcon } from "@hugeicons/core-free-icons/BlocksIcon";
 export { default as SharedIcon } from "@hugeicons/core-free-icons/UserMultiple02Icon";
 export { default as DocumentIcon } from "@hugeicons/core-free-icons/File01Icon";
 export { default as LockIcon } from "@hugeicons/core-free-icons/SquareLock02Icon";

@@ -1,8 +1,11 @@
 const mockPush = jest.fn();
+const mockNavigate = jest.fn();
+const mockNavigation = { navigate: mockNavigate };
 const mockUseComputerApps = jest.fn();
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockPush }),
+  useNavigation: () => mockNavigation,
 }));
 
 jest.mock("@/lib/queries/use-computer-apps", () => ({
@@ -17,8 +20,21 @@ import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import AppsScreen from "../app/(drawer)/(tabs)/(apps)/apps";
 import { Icon } from "../components/ui/Icon";
-import { IconTile } from "../components/ui/IconTile";
-import { AddIcon, ChevronRightIcon, FolderIcon } from "../components/ui/icons";
+import { ItemRow } from "../components/ui/ItemRow";
+import {
+  ChatIcon,
+  ConnectAppsIcon,
+  FolderIcon,
+  SettingsTabIcon,
+  TerminalTabIcon,
+} from "../components/ui/icons";
+
+const DEFAULT_APPS = ["Chat", "Terminal", "Files", "Settings", "Connect Apps"];
+
+/** Tile labels in the order the grid draws them. */
+function tileNames(): string[] {
+  return screen.getAllByLabelText(/^Open /).map((tile) => String(tile.props.accessibilityLabel).slice("Open ".length));
+}
 
 describe("drawer apps screen", () => {
   beforeEach(() => {
@@ -66,29 +82,147 @@ describe("drawer apps screen", () => {
     });
   });
 
-  it("opens Files and Connect Apps from two rows above the search field", () => {
+  it("lists the default apps first, in the desktop launcher's order, then the installed apps", () => {
     render(<AppsScreen />);
 
-    const files = screen.getByRole("button", { name: "Files" });
-    const connectApps = screen.getByRole("button", { name: "Connect Apps" });
+    expect(tileNames()).toEqual([...DEFAULT_APPS, "Notes", "Chess"]);
+  });
+
+  it("draws the grid under the search field instead of rows above it", () => {
+    render(<AppsScreen />);
+
     const hosts = screen.root.findAll((node: { type: unknown }) => typeof node.type === "string");
-    expect(hosts.indexOf(files)).toBeGreaterThan(-1);
-    expect(hosts.indexOf(files)).toBeLessThan(hosts.indexOf(connectApps));
-    expect(hosts.indexOf(connectApps)).toBeLessThan(hosts.indexOf(screen.getByLabelText("Search apps")));
+    const search = hosts.indexOf(screen.getByLabelText("Search apps"));
+    for (const name of [...DEFAULT_APPS, "Notes", "Chess"]) {
+      expect(hosts.indexOf(screen.getByLabelText(`Open ${name}`))).toBeGreaterThan(search);
+    }
+    expect(screen.UNSAFE_queryAllByType(ItemRow)).toEqual([]);
+  });
 
-    const tiles = screen.UNSAFE_getAllByType(IconTile);
-    expect(tiles.map((tile) => tile.props)).toEqual([
-      { icon: FolderIcon, size: 40 },
-      { icon: AddIcon, size: 40 },
-    ]);
-    const chevrons = screen.UNSAFE_getAllByType(Icon).filter((icon) => icon.props.icon === ChevronRightIcon);
-    expect(chevrons).toHaveLength(2);
+  it("draws each default app as the desktop launcher does: a white icon on its own colour", () => {
+    render(<AppsScreen />);
 
-    fireEvent.press(files);
+    const artwork = (name: string) => {
+      const tile = screen.getByTestId(`default-app-icon-${name}`);
+      const icon = tile.findByType(Icon);
+      return {
+        backgroundColor: NativeStyleSheet.flatten(tile.props.style).backgroundColor,
+        icon: icon.props.icon,
+        color: icon.props.color,
+      };
+    };
+
+    expect(artwork("Chat")).toEqual({ backgroundColor: "#BA5236", icon: ChatIcon, color: "white" });
+    expect(artwork("Terminal")).toEqual({ backgroundColor: "#E0AA52", icon: TerminalTabIcon, color: "white" });
+    expect(artwork("Files")).toEqual({ backgroundColor: "#748E59", icon: FolderIcon, color: "white" });
+    expect(artwork("Settings")).toEqual({ backgroundColor: "#6B7280", icon: SettingsTabIcon, color: "white" });
+    expect(artwork("Connect Apps")).toEqual({ backgroundColor: "#7C6DB4", icon: ConnectAppsIcon, color: "white" });
+  });
+
+  it("gives default and installed artwork the same footprint, so labels line up across a row", () => {
+    render(<AppsScreen />);
+
+    const footprint = (name: string) => {
+      const { width, height } = NativeStyleSheet.flatten(screen.getByTestId(`app-logo-${name}`).props.style);
+      return { width, height };
+    };
+
+    expect(footprint("Chat")).toEqual({ width: 68, height: 68 });
+    expect(footprint("Connect Apps")).toEqual(footprint("Chess"));
+  });
+
+  it("opens Chat, Terminal and Settings on their own tabs", () => {
+    render(<AppsScreen />);
+
+    fireEvent.press(screen.getByLabelText("Open Chat"));
+    expect(mockNavigate).toHaveBeenLastCalledWith("(tabs)", {
+      screen: "(chats)",
+      params: { screen: "index", pop: true },
+    });
+
+    fireEvent.press(screen.getByLabelText("Open Terminal"));
+    expect(mockNavigate).toHaveBeenLastCalledWith("(tabs)", { screen: "terminal" });
+
+    fireEvent.press(screen.getByLabelText("Open Settings"));
+    expect(mockNavigate).toHaveBeenLastCalledWith("(tabs)", { screen: "settings" });
+
+    expect(mockNavigate).toHaveBeenCalledTimes(3);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("opens Files and Connect Apps on top of the Apps tab", () => {
+    render(<AppsScreen />);
+
+    fireEvent.press(screen.getByLabelText("Open Files"));
     expect(mockPush).toHaveBeenLastCalledWith("/files");
 
-    fireEvent.press(connectApps);
+    fireEvent.press(screen.getByLabelText("Open Connect Apps"));
     expect(mockPush).toHaveBeenLastCalledWith("/integrations");
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("opens a promoted default such as Notes as the installed app it is", () => {
+    render(<AppsScreen />);
+
+    fireEvent.press(screen.getByLabelText("Open Notes"));
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/app-preview/[app]",
+      params: { app: "notes", runtimeSlug: "notes", name: "Notes" },
+    });
+  });
+
+  it("leaves out installed web apps that a default app replaces", () => {
+    const state = mockUseComputerApps();
+    mockUseComputerApps.mockReturnValue({
+      ...state,
+      apps: [
+        { name: "Browser", slug: "browser", file: "browser/index.html", path: "/files/apps/browser/index.html" },
+        ...state.apps,
+        { name: "Terminal", slug: "terminal", file: "terminal/index.html", path: "/files/apps/terminal/index.html" },
+      ],
+    });
+
+    render(<AppsScreen />);
+
+    expect(tileNames()).toEqual([...DEFAULT_APPS, "Notes", "Chess"]);
+  });
+
+  it("keeps the default apps within reach while the installed apps load", () => {
+    mockUseComputerApps.mockReturnValue({
+      computer: undefined,
+      apps: [],
+      authorization: undefined,
+      gatewayUrl: null,
+      isPending: true,
+      isError: false,
+    });
+
+    render(<AppsScreen />);
+
+    expect(tileNames()).toEqual(DEFAULT_APPS);
+    expect(screen.getAllByTestId("app-tile-skeleton")).toHaveLength(3);
+    expect(screen.queryByText("No apps installed.")).toBeNull();
+  });
+
+  it("keeps the default apps within reach when the installed apps cannot be read", () => {
+    mockUseComputerApps.mockReturnValue({ ...mockUseComputerApps(), isError: true });
+
+    render(<AppsScreen />);
+
+    expect(tileNames()).toEqual(DEFAULT_APPS);
+    expect(screen.getByText("Apps unavailable. Try again.")).toBeTruthy();
+    expect(screen.queryByTestId("app-tile-skeleton")).toBeNull();
+  });
+
+  it("says so when the computer has no web apps, under the default apps", () => {
+    mockUseComputerApps.mockReturnValue({ ...mockUseComputerApps(), apps: [] });
+
+    render(<AppsScreen />);
+
+    expect(tileNames()).toEqual(DEFAULT_APPS);
+    expect(screen.getByText("No apps installed.")).toBeTruthy();
   });
 
   it("starts below the status bar now that no navigator draws a header above it", () => {
@@ -106,18 +240,41 @@ describe("drawer apps screen", () => {
     expect(screen.getByText("Apps that use workspace data or connected accounts may not work here yet. Open those apps on Web Canvas, Web Desktop or Electron Desktop.")).toBeTruthy();
   });
 
-  it("filters installed apps by name", () => {
+  it("filters default and installed apps by name", () => {
     render(<AppsScreen />);
 
     fireEvent.changeText(screen.getByLabelText("Search apps"), "note");
 
-    expect(screen.getByLabelText("Open Notes")).toBeTruthy();
-    expect(screen.queryByLabelText("Open Chess")).toBeNull();
+    expect(tileNames()).toEqual(["Notes"]);
+
+    fireEvent.changeText(screen.getByLabelText("Search apps"), "SET");
+
+    expect(tileNames()).toEqual(["Settings"]);
 
     fireEvent.press(screen.getByLabelText("Clear Search apps"));
 
-    expect(screen.getByLabelText("Open Chess")).toBeTruthy();
+    expect(tileNames()).toEqual([...DEFAULT_APPS, "Notes", "Chess"]);
     expect(screen.getByLabelText("Search apps").props.value).toBe("");
+  });
+
+  it("does not call the computer empty in the middle of a search", () => {
+    mockUseComputerApps.mockReturnValue({ ...mockUseComputerApps(), apps: [] });
+    render(<AppsScreen />);
+
+    fireEvent.changeText(screen.getByLabelText("Search apps"), "chat");
+
+    expect(tileNames()).toEqual(["Chat"]);
+    expect(screen.queryByText("No apps installed.")).toBeNull();
+  });
+
+  it("says so when no app matches the search", () => {
+    render(<AppsScreen />);
+
+    fireEvent.changeText(screen.getByLabelText("Search apps"), "zzz");
+
+    expect(screen.queryAllByLabelText(/^Open /)).toEqual([]);
+    expect(screen.getByText("No matching apps.")).toBeTruthy();
+    expect(screen.queryByText("No apps installed.")).toBeNull();
   });
 
   it("centers larger app artwork above the app name", () => {
