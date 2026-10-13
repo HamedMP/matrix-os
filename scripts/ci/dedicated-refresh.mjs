@@ -34,11 +34,14 @@ export async function resolveRequestingSource(github,repo,context,inputs){
 
 // Match the protected workflow's execution predicate; reconciliation events
 // may refresh the required gate but must not supersede an executing lease.
+// GitHub sends one requested event per run but repeated in_progress events as jobs start. A first
+// attempt therefore executes only on requested; in_progress is used only for reruns, which emit no
+// requested event. Duplicate controllers would otherwise supersede each other under runner backlog.
 export function refreshExecutionRequested(action,run){
  const title=run?.display_title;
  if(typeof title!=='string')return false;
- return (action==='requested'&&title.startsWith('CI refresh-v1 '))||
-  (action==='in_progress'&&(title.startsWith('CI coverage-v1 · ')||(id(run.run_attempt)&&run.run_attempt>1&&title.startsWith('CI refresh-v1 '))));
+ const executes=title.startsWith('CI refresh-v1 ')||title.startsWith('CI coverage-v1 · ');
+ return executes&&((action==='requested'&&run.run_attempt===1)||(action==='in_progress'&&id(run.run_attempt)&&run.run_attempt>1));
 }
 export function authenticatedControllerRun(run,repo,value,workflow,headRef){
  if(!id(run.id)||run.workflow_id!==workflow.id||!['.github/workflows/ci-dedicated.yml','.github/workflows/ci-dedicated.yml@main','.github/workflows/ci-dedicated.yml@refs/heads/main'].includes(run.path)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))return false;
@@ -53,8 +56,8 @@ export async function admitRefreshController(github,repo,event){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refreshing workflow definition');
  const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request});
- let snapshot=run.event==='push'&&run.head_branch==='main'&&event.action==='in_progress'?await resolveMainSource(github,repo,run.head_sha):parseRefreshMarker(run.display_title);
- if(!snapshot&&event.action==='in_progress'){
+ let snapshot=run.event==='push'&&run.head_branch==='main'?await resolveMainSource(github,repo,run.head_sha):parseRefreshMarker(run.display_title);
+ if(!snapshot){
   const source=typeof run.display_title==='string'&&run.display_title.match(/^CI coverage-v1 · ([a-f0-9]{40})$/);
   const row=run.pull_requests?.length===1?run.pull_requests[0]:null;
   if(!source||!row)return null;

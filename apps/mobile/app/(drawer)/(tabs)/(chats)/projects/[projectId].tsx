@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Alert } from "react-native";
 import { useLocalSearchParams, useNavigation } from "expo-router";
 
+import { composerAddProps } from "@/components/chat/composer-add";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectOptionsSheet, type ProjectOptionsPage } from "@/components/projects/ProjectOptionsSheet";
 import { ProjectScreen } from "@/components/projects/ProjectScreen";
@@ -13,6 +14,7 @@ import { useProjectComposer } from "@/components/projects/use-project-composer";
 import { useProjectList } from "@/components/projects/use-project-list";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { supportedAttachmentKinds } from "@/lib/chat-attachments";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useProjectChats } from "@/lib/queries/use-project-chats";
 import { useArchiveProject, useRenameProject } from "@/lib/queries/use-project-mutations";
@@ -47,10 +49,12 @@ export default function ProjectRoute() {
   const chatRows = useMemo(() => projectChatRows(chats.chats), [chats.chats]);
 
   const selection = chosenModel ?? defaultCatalogSelection(catalog);
+  const attachmentKinds = supportedAttachmentKinds(catalog, selection);
   const composer = useProjectComposer({
     projectId: project?.id ?? null,
     selection,
     turnModes: defaultTurnModes(catalog, selection),
+    attachmentKinds,
     // There is no model to send to until the provider catalog has loaded.
     disabled: catalogPending,
     onChatStarted: (_chatId, startedWith) => {
@@ -60,6 +64,11 @@ export default function ProjectRoute() {
       if (navigation.isFocused()) showChatScreen();
     },
   });
+
+  const changeDraft = (text: string) => {
+    composer.setDraft(text);
+    warmSessionToken();
+  };
 
   const reload = async () => {
     try {
@@ -124,14 +133,24 @@ export default function ProjectRoute() {
         }}
         composer={{
           draft: composer.draft,
-          onChangeDraft: (text) => {
-            composer.setDraft(text);
-            warmSessionToken();
-          },
+          onChangeDraft: changeDraft,
           onFocus: warmSessionToken,
           canSend: composer.canSend,
           onSend: composer.send,
           running: composer.isSending,
+          ...composerAddProps({
+            catalog,
+            selection,
+            kinds: attachmentKinds,
+            attachments: composer.attachments,
+            room: composer.attachmentRoom,
+            unreadable: composer.unreadableAttachments,
+            onAdd: composer.addAttachments,
+            onRemove: composer.removeAttachment,
+            draft: composer.draft,
+            onChangeDraft: changeDraft,
+            enabled: composer.canAddAttachments,
+          }),
           modelControl: (
             <ModelPicker
               catalog={catalog}

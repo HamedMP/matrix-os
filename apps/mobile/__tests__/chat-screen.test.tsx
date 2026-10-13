@@ -15,6 +15,7 @@ jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
 
 const mockSendMessage = jest.fn();
+const mockPickPhotos = jest.fn();
 const mockCancelRun = jest.fn();
 const mockStartDraftChat = jest.fn();
 const mockPush = jest.fn();
@@ -61,6 +62,19 @@ jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
 jest.mock("@/lib/queries/use-send-chat-message", () => ({
   useSendChatMessage: () => ({ mutate: mockSendMessage, isPending: mockSendPending }),
 }));
+// As the native sheet does while it slides away, this one keeps its content
+// when it is not presented.
+jest.mock("@expo/ui", () => {
+  const { View } = jest.requireActual("react-native") as typeof import("react-native");
+  return {
+    BottomSheet: ({ children }: { children: React.ReactNode }) => <View testID="expo-bottom-sheet">{children}</View>,
+    RNHostView: ({ children }: { children: React.ReactNode }) => children,
+  };
+});
+jest.mock("@/lib/chat-attachment-picker", () => ({
+  pickPhotos: (...args: unknown[]) => mockPickPhotos(...args),
+  pickFiles: jest.fn(),
+}));
 jest.mock("@/lib/queries/use-cancel-run", () => ({
   useCancelRun: () => ({ mutate: mockCancelRun, isPending: mockCancelPending }),
 }));
@@ -77,8 +91,14 @@ const mockCatalog = {
     models: [{ id: "sonnet", displayName: "Sonnet 5", availability: "available" }],
     options: [{ id: "effort", label: "Effort", kind: "enum", placement: "composer", defaultValue: "medium",
       values: [{ value: "low", label: "Low" }, { value: "medium", label: "Medium" }] }],
-    supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"] },
+    supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"], attachments: [] as string[] },
+    skills: [] as { id: string; displayName: string; description: string; invocation: string }[],
+    commands: [],
   }],
+};
+
+const flowers = {
+  id: "att_f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1", uri: "file:///cache/flowers.jpg", name: "flowers.jpg", mimeType: "image/jpeg", kind: "image", sizeBytes: 2_048,
 };
 
 function chatDetail(overrides: Record<string, unknown> = {}) {
@@ -126,6 +146,9 @@ afterEach(() => {
   mockCancelPending = false;
   mockKeyboardVisible = false;
   mockSendMessage.mockReset();
+  mockPickPhotos.mockReset();
+  mockCatalog.instances[0]!.supports.attachments = [];
+  mockCatalog.instances[0]!.skills = [];
   mockCancelRun.mockReset();
   mockStartDraftChat.mockReset();
   mockPush.mockReset();
@@ -206,7 +229,7 @@ describe("chat screen: new chat", () => {
     render(<ChatScreen />);
 
     expect(screen.getByText("Matrix AI · Sonnet 5")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Attach" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add to message" })).toBeTruthy();
   });
 
   it("sends a new chat with no project and the catalog's default modes", () => {
@@ -219,6 +242,100 @@ describe("chat screen: new chat", () => {
       selection: { instanceId: "matrix_pi_default", model: "sonnet" },
       interactionMode: "default", permissionMode: "supervised",
     }), expect.anything());
+  });
+
+  it("offers photos and files only when the selected model reads them", () => {
+    const view = render(<ChatScreen />);
+    fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+    expect(screen.getByRole("button", { name: "Photos, The selected model cannot read photos" })).toBeTruthy();
+
+    mockCatalog.instances[0]!.supports.attachments = ["file", "image"];
+    view.rerender(<ChatScreen />);
+    expect(screen.getByRole("button", { name: "Photos, Choose from your library" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Files, Browse the files on this phone" })).toBeTruthy();
+  });
+
+  it("shows a chosen photo in the composer and sends it, with or without text", async () => {
+    mockCatalog.instances[0]!.supports.attachments = ["file", "image"];
+    mockPickPhotos.mockResolvedValue({ attachments: [flowers], rejections: [] });
+    render(<ChatScreen />);
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toMatchObject({ disabled: true });
+
+    fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+    await act(async () => { fireEvent.press(screen.getByRole("button", { name: "Photos, Choose from your library" })); });
+
+    expect(screen.getByLabelText("flowers.jpg")).toBeTruthy();
+    // A photo is enough to send.
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+    expect(mockSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: null, text: "", attachments: [flowers] }),
+      expect.anything(),
+    );
+  });
+
+  it("turns Send off and says why once the model is changed to one that does not read a waiting photo", async () => {
+    mockCatalog.instances[0]!.supports.attachments = ["file", "image"];
+    mockPickPhotos.mockResolvedValue({ attachments: [flowers], rejections: [] });
+    const view = render(<ChatScreen />);
+    fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+    await act(async () => { fireEvent.press(screen.getByRole("button", { name: "Photos, Choose from your library" })); });
+    expect(screen.queryByTestId("composer-attachment-notice")).toBeNull();
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toMatchObject({ disabled: false });
+
+    mockCatalog.instances[0]!.supports.attachments = ["file"];
+    view.rerender(<ChatScreen />);
+
+    expect(screen.getByTestId("composer-attachment-notice").props.children)
+      .toBe("The selected model cannot read photos. Remove it or choose another model.");
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toMatchObject({ disabled: true });
+    // Neither the button nor the keyboard's send key gets it out.
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+    fireEvent(screen.getByLabelText("Message Matrix"), "submitEditing");
+    expect(mockSendMessage).not.toHaveBeenCalled();
+
+    fireEvent.press(screen.getByRole("button", { name: "Remove flowers.jpg" }));
+    expect(screen.queryByTestId("composer-attachment-notice")).toBeNull();
+  });
+
+  it("keeps a path at the start of the draft when a skill is chosen", () => {
+    mockCatalog.instances[0]!.skills = [
+      { id: "review", displayName: "Review", description: "Reviews the changes", invocation: "/review" },
+    ];
+    render(<ChatScreen />);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "/tmp contains the logs");
+
+    fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+    fireEvent.press(screen.getByRole("button", { name: "Skills and commands, 1 for the selected model" }));
+    fireEvent.press(screen.getByRole("button", { name: "/review, Reviews the changes" }));
+
+    expect(screen.getByLabelText("Message Matrix").props.value).toBe("/review /tmp contains the logs");
+  });
+
+  it("takes a waiting photo back out", async () => {
+    mockCatalog.instances[0]!.supports.attachments = ["image"];
+    mockPickPhotos.mockResolvedValue({ attachments: [flowers], rejections: [] });
+    render(<ChatScreen />);
+    fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+    await act(async () => { fireEvent.press(screen.getByRole("button", { name: "Photos, Choose from your library" })); });
+
+    fireEvent.press(screen.getByRole("button", { name: "Remove flowers.jpg" }));
+
+    expect(screen.queryByLabelText("flowers.jpg")).toBeNull();
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toMatchObject({ disabled: true });
+  });
+
+  it("puts a chosen skill at the start of what is being written", () => {
+    mockCatalog.instances[0]!.skills = [
+      { id: "review", displayName: "Review", description: "Reviews the changes", invocation: "/review" },
+    ];
+    render(<ChatScreen />);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "the login screen");
+
+    fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+    fireEvent.press(screen.getByRole("button", { name: "Skills and commands, 1 for the selected model" }));
+    fireEvent.press(screen.getByRole("button", { name: "/review, Reviews the changes" }));
+
+    expect(screen.getByLabelText("Message Matrix").props.value).toBe("/review the login screen");
   });
 
   it("leaves the bottom inset to the tab bar and sits 10pt above it, or 8pt above the keyboard", () => {

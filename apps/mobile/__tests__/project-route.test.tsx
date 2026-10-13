@@ -237,6 +237,15 @@ describe("project route", () => {
       expect(modelPickerProps()).toMatchObject({ catalog, catalogLoading: false, selection: sonnet });
     });
 
+    it("has the control that adds to a message, offering what the model chosen here reads", async () => {
+      await renderPortfolio();
+
+      fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+
+      expect(screen.getByRole("button", { name: "Photos, The selected model cannot read photos" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Files, The selected model cannot read files" })).toBeTruthy();
+    });
+
     it("tells the model picker that the models are still being checked, and holds sends until they are known", async () => {
       requests.fetchChatProviderCatalog.mockReturnValue(pendingRequest().promise);
       await renderProject();
@@ -302,6 +311,26 @@ describe("project route", () => {
       expect(shell.bindDraftChatId).toHaveBeenCalledWith("chat_new");
       expect(shell.setSelectionOverride).toHaveBeenCalledWith(sonnet);
       expect(input().props.value).toBe("");
+    });
+
+    it("takes nothing more while the message is on its way, and again once it could not be sent", async () => {
+      const creating = pendingRequest<typeof created>();
+      requests.createChat.mockReturnValue(creating.promise);
+      await renderPortfolio();
+      const add = () => screen.getByRole("button", { name: "Add to message" });
+      expect(add().props.accessibilityState).toMatchObject({ disabled: false });
+
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+
+      // This screen is left for the new chat once the message is in: what a
+      // library opened now handed back would have no composer to go to.
+      await waitFor(() => expect(requests.createChat).toHaveBeenCalledTimes(1));
+      expect(add().props.accessibilityState).toMatchObject({ disabled: true });
+
+      await act(async () => creating.reject(new Error("upstream said no")));
+
+      await waitFor(() => expect(add().props.accessibilityState).toMatchObject({ disabled: false }));
     });
 
     it("keeps the message in the box and stays on the project when the chat could not be started", async () => {

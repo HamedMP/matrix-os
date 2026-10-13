@@ -155,12 +155,20 @@ contract.
 ## Docker Relevance Router
 
 Use `scripts/ci/docker-relevance.mjs` as the source of truth for whether a PR or
-`main` push needs the legacy/local Docker validation. It includes the dev image,
-Compose and startup configuration, Docker scenario harness, root workspace
-metadata, gateway/kernel/shell dependencies, home templates, and the shared
-sync-client protocol and package export manifest imported by the gateway.
+`main` push needs the legacy/local Docker validation. It has two scopes:
+
+- `--scope full` (pushes to `main`): the dev image, Compose and startup
+  configuration, Docker scenario harness, root workspace metadata,
+  gateway/kernel/shell dependencies, home templates, and the shared sync-client
+  protocol and package export manifest imported by the gateway.
+- `--scope pr` (pull requests): Docker build inputs only — Dockerfiles, root
+  workspace/lock manifests, Compose files, the Docker scenario harness and
+  observability config. App source (gateway, kernel, shell, home, ui, skills)
+  is covered on `main` and nightly instead, because production is VPS-native and
+  the dev image is local-only.
+
 Platform-only, proxy-only, installable CLI, desktop/mobile, docs/specs, and
-unrelated workflow changes do not spend a Docker runner.
+unrelated workflow changes do not spend a Docker runner in either scope.
 
 The PR and `main` paths are relevance-filtered for cost and signal. The merge
 queue, nightly, and manual runs remain comprehensive so an incomplete path rule
