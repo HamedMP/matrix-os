@@ -103,3 +103,12 @@ it('keeps single-PR scope for other pull request events and the full scan for sc
   expect(await scopeOf('pull_request_target', { action: 'labeled', pull_request: { number: 2422, head: { ref: 'x' } } })).toEqual({ prNumber: 2422, childrenOf: undefined });
   expect(await scopeOf('schedule', {})).toEqual({ prNumber: undefined, childrenOf: undefined });
 });
+
+it('queues reconciliation per affected scope instead of one global line', () => {
+  const concurrency = workflow().jobs.reconcile.concurrency as { group: string; queue: string; 'cancel-in-progress': boolean };
+  expect(concurrency.group).not.toBe('matrix-ci-stack-reconciliation');
+  expect(concurrency.group).toBe("matrix-ci-reconcile-${{ github.event.pull_request && format('{0}-{1}', github.event.action == 'synchronize' && 'push' || 'pr', github.event.pull_request.number) || (github.event.workflow_run.pull_requests[0] && !github.event.workflow_run.pull_requests[1]) && format('pr-{0}', github.event.workflow_run.pull_requests[0].number) || 'full' }}");
+  // Queue (never cancel) within a scope so no reconcile result is dropped.
+  expect(concurrency.queue).toBe('max');
+  expect(concurrency['cancel-in-progress']).toBe(false);
+});
