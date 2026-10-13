@@ -12,6 +12,13 @@ import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { useOnboardingRun } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-run";
 import { useOnboardingAiConnect } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-ai-connect";
+import { useOnboardingAppConnect } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-app-connect";
+import { useIntegrations } from "@desktop/renderer/src/features/integrations/integrations-store";
+
+vi.mock("@desktop/renderer/src/lib/operator", async (original) => ({
+  ...(await original<object>()),
+  invoke: vi.fn(async () => undefined),
+}));
 
 const workflow = vi.hoisted(() => ({ client: null as Record<string, ReturnType<typeof vi.fn>> | null }));
 
@@ -107,6 +114,45 @@ describe("onboarding run recovery", () => {
     expect(result.current.state.screen).toMatchObject({ phase: "failed" });
     expect(result.current.state.firstTaskCompleted).toBe(false);
   });
+
+  it("forgets a remembered chat that was deleted and goes back to the task list", async () => {
+    const client = { create: vi.fn(), admitTurn: vi.fn(), getDetail: vi.fn().mockRejectedValue(new AppError("notFound")) };
+    const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client));
+    await flush();
+    expect(result.current.state.chatId).toBeNull();
+    expect(result.current.state.screen).toEqual({ kind: "tasks" });
+  });
+
+  it("keeps following the run when reading the chat only timed out", async () => {
+    const client = { create: vi.fn(), admitTurn: vi.fn(), getDetail: vi.fn().mockRejectedValue(new AppError("timeout")) };
+    const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client));
+    await flush();
+    expect(result.current.state.chatId).toBe("chat_1");
+    expect(result.current.state.screen).toMatchObject({ phase: "running", runId: "run_1" });
+  });
+});
+
+describe("onboarding app connect", () => {
+  it("reports which app a connection result belongs to", async () => {
+    const dispatch = vi.fn();
+    useIntegrations.setState({
+      connections: [],
+      refresh: vi.fn(async () => undefined),
+      startConnect: vi.fn(async () => "https://connect.example.test/github"),
+      syncNow: vi.fn(async () => {
+        useIntegrations.setState({ connections: [{ id: "conn_1", service: "github", status: "active" }] as never });
+        return "synced";
+      }),
+    } as never);
+    const { result } = renderHook(() => useOnboardingAppConnect(api, dispatch));
+    act(() => result.current.connectApp("github"));
+    await flush(2_000);
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "github" });
+
+    const offline = renderHook(() => useOnboardingAppConnect(null, dispatch));
+    act(() => offline.result.current.connectApp("google_calendar"));
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "google_calendar" });
+  });
 });
 
 describe("onboarding AI sign-in", () => {
@@ -142,5 +188,47 @@ describe("onboarding AI sign-in", () => {
     expect(dispatch).not.toHaveBeenCalledWith({ type: "ai.connected", provider: "claude" });
     expect(dispatch).not.toHaveBeenCalledWith({ type: "ai.cancelled" });
     expect(client.cancel).toHaveBeenCalledWith("op_1", expect.any(AbortSignal));
+  });
+
+  function keyClient() {
+    let save!: () => void;
+    const saved = new Promise<void>((resolve) => { save = resolve; });
+    return {
+      save: () => save(),
+      client: {
+        capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "h_claude", harness: "claude", connectionOptions: [
+          { id: "anthropic_key", providerId: "anthropic", authKind: "api_key", method: "api_key", availability: "available" },
+        ] }]),
+        submitConnectionKey: vi.fn(() => saved),
+        cancel: vi.fn().mockResolvedValue(undefined),
+      },
+    };
+  }
+
+  it("switches the AI when a key the user is still waiting on is saved", async () => {
+    const { client, save } = keyClient();
+    workflow.client = client;
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useOnboardingAiConnect(api, dispatch));
+    act(() => result.current.submitKey("claude", "sk-ant-test"));
+    await flush();
+    expect(client.submitConnectionKey).toHaveBeenCalledTimes(1);
+    save();
+    await flush();
+    expect(dispatch).toHaveBeenCalledWith({ type: "ai.connected", provider: "claude" });
+  });
+
+  it("does not switch the AI when a key save finishes after its panel was closed", async () => {
+    const { client, save } = keyClient();
+    workflow.client = client;
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useOnboardingAiConnect(api, dispatch));
+    act(() => result.current.submitKey("claude", "sk-ant-test"));
+    await flush();
+    act(() => result.current.abandonSignIn());
+    save();
+    await flush();
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "ai.connected", provider: "claude" });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "ai.failed" });
   });
 });

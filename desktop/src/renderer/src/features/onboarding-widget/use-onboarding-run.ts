@@ -9,6 +9,7 @@ import {
   type OnboardingWidgetState,
 } from "@matrix-os/contracts";
 import { useEffect, useRef, useState } from "react";
+import { AppError } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import { createCanonicalChatEventSource, type CanonicalChatClient } from "../../lib/canonical-chat-client";
 import type { CanonicalComposerSelection } from "../chat/canonical-composer-state";
@@ -126,6 +127,11 @@ export function useOnboardingRun(state: OnboardingWidgetState, dispatch: (event:
           dispatch({ type: "run.settled", runId, outcome: "failed" });
         }
       } catch (error: unknown) {
+        if (disposed) return;
+        if (error instanceof AppError && error.category === "notFound") {
+          dispatch({ type: "chat.missing", chatId });
+          return;
+        }
         console.warn("[onboarding-widget] detail refresh failed:", error instanceof Error ? error.name : typeof error);
       } finally {
         inFlight = false;

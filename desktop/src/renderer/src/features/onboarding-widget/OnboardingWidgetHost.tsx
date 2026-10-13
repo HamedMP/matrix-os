@@ -85,11 +85,11 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
   useOnboardingSupportDock({ size: state.size, side: prefs.side, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
   useOnboardingOverlayLease(state.size !== "bubble" && !chatMaximized);
   const ai = useOnboardingAiConnect(api, dispatch);
-  const signInPanelOpen = state.ai?.step === "waiting";
+  const connectPanelOpen = state.ai?.step === "waiting" || state.ai?.step === "key";
   const abandonSignIn = ai.abandonSignIn;
   useEffect(() => {
-    if (!signInPanelOpen) abandonSignIn();
-  }, [abandonSignIn, signInPanelOpen]);
+    if (!connectPanelOpen) abandonSignIn();
+  }, [abandonSignIn, connectPanelOpen]);
   const appConnect = useOnboardingAppConnect(api, dispatch);
   const apps = useMemo(() => onboardingApps(available, connections, appConnect.connectingService), [appConnect.connectingService, available, connections]);
 
