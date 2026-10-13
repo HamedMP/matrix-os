@@ -77,6 +77,19 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     return () => document.removeEventListener("pointerdown", onPointer);
   }, [actions, isBubble, keepInCorner]);
 
+  const aiMenuOpen = state.ai?.step === "menu";
+  useEffect(() => {
+    if (!moreOpen && !aiMenuOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const inside = (menu: string) => Boolean(target?.closest(`[data-mxo-menu="${menu}"], [data-mxo-menu-toggle="${menu}"]`));
+      if (moreOpen && !inside("more")) setMoreOpen(false);
+      if (aiMenuOpen && !inside("ai")) actions.dispatch({ type: "ai.cancelled" });
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [actions, aiMenuOpen, moreOpen]);
+
   useEffect(() => {
     if (!isBubble || !focusBubbleRef.current) return;
     focusBubbleRef.current = false;

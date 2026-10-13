@@ -151,6 +151,37 @@ describe("OnboardingWidget", () => {
     expect(input.value).toBe("And tomorrow");
   });
 
+  it("closes the More and Change AI menus on a click outside them while the widget stays pinned", () => {
+    render(<Harness actions={makeActions()} />);
+    const input = screen.getByPlaceholderText("Or type what you need…");
+    const more = screen.getByRole("button", { name: "More" });
+
+    fireEvent.click(more);
+    fireEvent.pointerDown(within(screen.getByRole("menu", { name: "Matrix options" })).getByText("Show on every login"));
+    expect(screen.getByRole("menu", { name: "Matrix options" })).toBeInTheDocument();
+    fireEvent.pointerDown(input);
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+
+    fireEvent.click(more);
+    fireEvent.pointerDown(more);
+    fireEvent.click(more);
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+
+    const change = screen.getByRole("button", { name: "Change" });
+    fireEvent.click(change);
+    fireEvent.click(more);
+    expect(screen.getByRole("menu", { name: "Matrix options" })).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu", { name: "Change AI" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Matrix" })).toBeInTheDocument();
+
+    fireEvent.click(change);
+    fireEvent.pointerDown(change);
+    fireEvent.click(change);
+    expect(screen.queryByRole("menu", { name: "Change AI" })).not.toBeInTheDocument();
+  });
+
   it("shows which AI is in use on the task list and hides it mid-task", () => {
     render(<Harness actions={makeActions()} />);
     expect(screen.getByText(/Matrix AI ·/)).toBeInTheDocument();
