@@ -272,7 +272,10 @@ export function fetchPull(git, pr, baseRefName, shas = [], optional = []) {
   return {base};
 }
 
-const baseCandidates = (view, fetched) => [view.baseRefOid, fetched.base].filter(Boolean);
+// A freshly fetched base is what GitHub merges against, so it wins outright;
+// GitHub's reported base SHA can lag a reset or force-pushed parent and is
+// only a fallback when the branch itself cannot be fetched (e.g. deleted).
+const baseCandidates = (view, fetched) => [fetched.base ?? view.baseRefOid].filter(Boolean);
 
 // `view` is the PR's headRefOid/baseRefName/baseRefOid as GitHub reports them;
 // `reviews` is the Greptile review count the receipt belongs to.

@@ -326,6 +326,16 @@ describe('receipts against a remote', () => {
     expect(replayOk(c.git, 10, reported, receipt)).toBe(false);
   });
 
+  it('trusts the fetched live base over a stale GitHub-reported base', () => {
+    const r = remoteStack();
+    r.publish(13);
+    const c = r.clone();
+    const receipt = receiptFor(c.git, 13, r.view(), r.reviewed, 1);
+    // The parent is reset to main on the remote while GitHub still reports the old parent tip.
+    r.run('push', '-q', '--force', 'origin', 'main:parent');
+    expect(replayOk(c.git, 13, r.view(), receipt)).toBe(false);
+  });
+
   it('cleans up its per-run base ref and reports the fetched base', () => {
     const r = remoteStack();
     r.publish(12);

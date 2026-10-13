@@ -287,8 +287,9 @@ from a PR change cleanly, such as a removed guard above an inserted call.
 Merge and diff run with an empty attribute source, so a PR's `.gitattributes`
 cannot change the outcome. The live base is fetched into a ref unique to each run
 (refs are shared across worktrees and concurrent checks), resolved, and
-deleted, so a failed fetch falls back to GitHub's reported base, never to an
-older or another run's tip.
+deleted. A fetched live base always wins over GitHub's reported base SHA,
+which can lag a reset parent; the reported SHA is used only when the base
+branch cannot be fetched, never an older or another run's tip.
 
 Limits:
 
