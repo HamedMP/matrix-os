@@ -686,12 +686,6 @@
 
 .mxo-menu__row--compact > span:not(.mxo-toggle) { flex: 1; }
 
-.mxo-menu__row kbd {
-  font-family: inherit;
-  font-size: 10px;
-  color: var(--mxo-placeholder);
-}
-
 .mxo-menu__action { font-size: 12px; font-weight: 500; }
 
 .mxo-menu__sep {

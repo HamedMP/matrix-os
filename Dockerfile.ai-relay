@@ -22,6 +22,7 @@ FROM deps AS builder
 COPY packages/contracts packages/contracts
 COPY packages/observability packages/observability
 COPY packages/proxy packages/proxy
+COPY scripts/build-typescript.mjs scripts/build-typescript.mjs
 RUN pnpm --filter '@matrix-os/proxy' build
 
 FROM base AS prod-deps

@@ -4,7 +4,7 @@ const head='a'.repeat(40),base='b'.repeat(40),merge='c'.repeat(40),controller='d
 const repo={owner:'HamedMP',repo:'matrix-os'};
 function fixture(baseRef='main') {
  const pull={number:2440,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}],base:{ref:baseRef,sha:base,repo:{full_name:'HamedMP/matrix-os'}},head:{sha:head,repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
- const github={rest:{git:{getRef:vi.fn(async()=>({data:{object:{sha:base}}}))},pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))}}};
+ const github={rest:{pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:base}}})),getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))}}};
  const input={repo,controller:{sha:controller,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'},eventName:'pull_request_target',payload:{action:'synchronize',pull_request:structuredClone(pull)},inputSha:''};
  return{pull,github,input};
 }
@@ -104,7 +104,7 @@ describe('explicit Linux label admission',()=>{
 });
 
 it('rejects a moved parent ref even before the pull API refreshes its snapshot',async()=>{
- const {github,input}=fixture('stack/parent');github.rest.git.getRef.mockResolvedValue({data:{object:{sha:moved}}});
+ const {github,input}=fixture('stack/parent');github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:moved}}}));
  await expect(admitDedicatedSource(github,input)).rejects.toThrow(/parent ref|base ref/);
  await expect(verifyCurrentDedicatedSource(github,repo,{prNumber:2440,headSha:head,baseSha:base,baseRef:'stack/parent',sourceSha:merge})).rejects.toThrow(/parent ref|base ref/);
 });

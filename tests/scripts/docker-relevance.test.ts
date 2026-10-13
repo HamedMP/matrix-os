@@ -201,3 +201,53 @@ describe("Docker CI relevance classifier", () => {
     expect(result.stderr).toContain("docker-relevance:");
   });
 });
+
+describe("pull request scope", () => {
+  it.each([
+    "packages/gateway/src/server.ts",
+    "packages/kernel/src/index.ts",
+    "shell/src/components/Desktop.tsx",
+    "home/apps/notes/src/App.tsx",
+    "packages/ui/src/button.tsx",
+    "skills/matrix/run/SKILL.md",
+  ])("skips app source %s on pull requests but keeps it in full scope", (path) => {
+    expect(classifyDockerChanges([path], { scope: "pr" }).shouldRun).toBe(false);
+    expect(classifyDockerChanges([path]).shouldRun).toBe(true);
+  });
+
+  it.each([
+    "Dockerfile.dev",
+    "docker-compose.dev.yml",
+    "distro/docker-compose.local.yml",
+    "pnpm-lock.yaml",
+    "package.json",
+    ".github/workflows/docker-test.yml",
+    "scripts/docker-test/fresh-install.sh",
+    "distro/observability/grafana.yml",
+    "distro/docker-dev-entrypoint.sh",
+  ])("still runs Docker input %s on pull requests", (path) => {
+    expect(classifyDockerChanges([path], { scope: "pr" }).shouldRun).toBe(true);
+  });
+
+  it("rejects an unknown scope", () => {
+    expect(() => classifyDockerChanges(["Dockerfile"], { scope: "everything" as never })).toThrow(/scope/);
+  });
+
+  it("applies --scope pr from the CLI", () => {
+    const cli = (scope: string[]) =>
+      spawnSync(process.execPath, [join(process.cwd(), "scripts/ci/docker-relevance.mjs"), ...scope, "--path", "shell/src/app.tsx", "--format", "github"], {
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+    expect(cli(["--scope", "pr"]).stdout).toBe("should_run=false\n");
+    expect(cli([]).stdout).toBe("should_run=true\n");
+  });
+});
+
+it("uses the narrow scope only for pull request classification in the workflow", async () => {
+  const { readFileSync } = await import("node:fs");
+  const workflow = readFileSync(".github/workflows/docker-test.yml", "utf8");
+  const pullRequestBranch = workflow.slice(workflow.indexOf('if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then\n            git fetch'), workflow.indexOf("          else\n            zero_sha="));
+  expect(pullRequestBranch).toContain("--scope pr");
+  expect(workflow.slice(workflow.indexOf("zero_sha="))).not.toContain("--scope pr");
+});

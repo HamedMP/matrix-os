@@ -15,7 +15,7 @@ export function nativeStackFixture(){
   [p.head]:{sha:p.head,parents:[{sha:p.base}],commit:{tree:{sha:p.headTree}}},
   [p.base]:{sha:p.base,parents:[{sha:p.trunk}],commit:{tree:{sha:p.baseTree}}},
  };
- const github:any={request:vi.fn(async()=>({data:structuredClone(stack)})),rest:{pulls:{get:vi.fn(async(args:any)=>({data:structuredClone(args.pull_number===2490?parent:pull)}))},git:{getRef:vi.fn(async(args:any)=>({data:{object:{sha:args.ref==='heads/main'?p.trunk:p.base}}}))},repos:{getCommit:vi.fn(async(args:any)=>({data:structuredClone(commits[args.ref])}))}}};
+ const github:any={request:vi.fn(async()=>({data:structuredClone(stack)})),rest:{pulls:{get:vi.fn(async(args:any)=>({data:structuredClone(args.pull_number===2490?parent:pull)}))},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:args.branch==='main'?p.trunk:p.base}}})),getCommit:vi.fn(async(args:any)=>({data:structuredClone(commits[args.ref])}))}}};
  const snapshot={prNumber:pull.number,sourceSha:p.merge,headSha:p.head,headRef:pull.head.ref,baseSha:p.base,baseRef:pull.base.ref,mergeParents:[p.parentMerge,p.head]};
  const controller={sha:'d'.repeat(40),ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'};
  const input={repo:{owner:'HamedMP',repo:'matrix-os'},controller,eventName:'pull_request_target',payload:{action:'synchronize',pull_request:structuredClone(pull)},inputSha:''};

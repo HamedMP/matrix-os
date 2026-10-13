@@ -1,20 +1,23 @@
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { PROJECT_SHARING_UNAVAILABLE_MESSAGE, useProjectSharing } from "./useProjectSharing.js";
-const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
+import { Users } from "lucide-react";
+const buttonClass = "inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
-export function ProjectSharingButton({ api, runtimeId, organizationId, projectId, projectName }: {
+export function ProjectSharingButton({ api, runtimeId, organizationId, organizationName, projectId, projectName, layers }: {
   api: CollaborationApi;
   runtimeId: string | null;
   /** The Clerk organization this share is scoped to; without one there is nothing to share with. */
   organizationId: string | null;
+  organizationName?: string | null;
   projectId: string;
   projectName: string;
+  layers?: { popover: number };
 }) {
-  const sharing = useProjectSharing({ api, runtimeId, organizationId, projectId, projectName });
+  const sharing = useProjectSharing({ api, runtimeId, organizationId, organizationName, projectId, projectName, layers });
   return <div className="relative inline-flex shrink-0 items-center">
     <button type="button" className={buttonClass} aria-label="Share project" disabled={sharing.pending || !runtimeId || !organizationId}
       aria-expanded={sharing.open} onClick={() => sharing.open ? sharing.close() : sharing.start()}>
-      {sharing.pending || !runtimeId || !organizationId ? "Loading share…" : "Share"}
+      {sharing.pending || !runtimeId || !organizationId ? "Loading share…" : <><Users aria-hidden size={13} />Share</>}
     </button>
     {sharing.error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">
       {PROJECT_SHARING_UNAVAILABLE_MESSAGE}

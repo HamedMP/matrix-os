@@ -5,6 +5,7 @@ import {
   isChatScreen,
   projectsScreenParams,
   sharedScreenParams,
+  tabScreenParams,
 } from "../lib/shell-routes";
 
 describe("isChatScreen", () => {
@@ -48,6 +49,13 @@ describe("navigation params", () => {
 
   it("opens Projects inside the Chats stack, by the name its route file gives the screen", () => {
     expect(projectsScreenParams()).toEqual({ screen: "(chats)", params: { screen: "projects/index" } });
+  });
+
+  it("shows a tab that is a single screen by naming it", () => {
+    expect(tabScreenParams("terminal")).toEqual({ screen: "terminal" });
+    expect(tabScreenParams("settings")).toEqual({ screen: "settings" });
+    expect(tabScreenParams("terminal")).not.toBe(tabScreenParams("terminal"));
+    expect(Object.isFrozen(tabScreenParams("settings"))).toBe(false);
   });
 
   it("builds new objects on every call, because a used params object is ignored", () => {

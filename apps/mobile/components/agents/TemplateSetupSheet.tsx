@@ -3,21 +3,11 @@ import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import {
-  AgentMascot,
-  Button,
-  CloseIcon,
-  IconButton,
-  SectionLabel,
-  Sheet,
-  SheetGrabber,
-  TextField,
-} from "@/components/ui";
+import { Button, SectionLabel, Sheet, SheetGrabber, TextField } from "@/components/ui";
 
 import type { AgentTemplate } from "./agent-templates";
+import { TemplateSheetHead } from "./TemplateSheetHead";
 
-const MASCOT_SIZE = 48;
-const CLOSE_ICON_SIZE = 20;
 // The longest name the server accepts for an agent.
 const MAX_NAME_LENGTH = 80;
 
@@ -65,24 +55,14 @@ function TemplateSetupForm({ template, creating, failed, onCreate, onSetUpInChat
   return (
     <View testID="template-setup" style={[styles.sheet, { paddingBottom: insets.bottom + theme.v2.space[10] }]}>
       <SheetGrabber testID="template-setup-grabber" />
-      <View testID="template-setup-head" style={styles.head}>
-        <AgentMascot id={template.recipeId} name={template.name} category={template.category} size={MASCOT_SIZE} />
-        <View style={styles.headText}>
-          <Text accessibilityRole="header" numberOfLines={1} style={styles.name}>{template.name}</Text>
-          {template.description ? (
-            <Text numberOfLines={3} style={styles.description}>{template.description}</Text>
-          ) : null}
-        </View>
-        <IconButton
-          accessibilityLabel="Close"
-          icon={CloseIcon}
-          iconSize={CLOSE_ICON_SIZE}
-          iconColor={theme.v2.colors.textSubtle}
-          buttonSize={theme.v2.size.tapTarget}
-          borderRadius={theme.v2.radius.full}
-          onPress={onClose}
-        />
-      </View>
+      <TemplateSheetHead
+        testID="template-setup-head"
+        id={template.recipeId}
+        name={template.name}
+        category={template.category}
+        caption={template.description}
+        onClose={onClose}
+      />
       <SectionLabel>Name</SectionLabel>
       <View testID="template-setup-field" style={styles.field}>
         <TextField
@@ -124,24 +104,6 @@ const styles = StyleSheet.create((theme) => ({
   sheet: {
     gap: theme.v2.space[14],
     paddingHorizontal: theme.v2.space[20],
-  },
-  head: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.v2.space[12],
-  },
-  headText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  name: {
-    ...theme.v2.text.subheading,
-    color: theme.v2.colors.textDefault,
-  },
-  description: {
-    ...theme.v2.text.caption,
-    marginTop: theme.v2.space[2],
-    color: theme.v2.colors.textSubtle,
   },
   field: {
     gap: theme.v2.space[8],

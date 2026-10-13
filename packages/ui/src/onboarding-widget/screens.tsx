@@ -230,7 +230,7 @@ function CreditsOffer({ actions }: { actions: RunActions }) {
       <p className="mxo-text">You've used your free credits.</p>
       <div className="mxo-stack">
         <button type="button" className="mxo-btn mxo-btn--dark mxo-btn--block" onClick={actions.addCredits}>Add credits</button>
-        <button type="button" className="mxo-btn mxo-btn--outline mxo-btn--block" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Use my Claude or ChatGPT</button>
+        <button type="button" className="mxo-btn mxo-btn--outline mxo-btn--block" data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Use my Claude or ChatGPT</button>
       </div>
     </>
   );
@@ -251,7 +251,7 @@ function FollowUpOffer({ run, followUp, aiChoice, actions }: {
       />
       {run.taskId === "work-on-code" ? (
         <p className="mxo-model-line">
-          Using {CODE_AGENT_LABELS[aiChoice]} · <button type="button" className="mxo-inline-link" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
+          Using {CODE_AGENT_LABELS[aiChoice]} · <button type="button" className="mxo-inline-link" data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
         </p>
       ) : null}
     </>

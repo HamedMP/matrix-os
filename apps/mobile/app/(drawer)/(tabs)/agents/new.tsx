@@ -1,13 +1,22 @@
 import { useMemo, useState } from "react";
 import { useAuth } from "@clerk/clerk-expo";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigation, useRouter } from "expo-router";
+import { Stack, useNavigation, useRouter } from "expo-router";
 
+import { InspirationSheet } from "@/components/agents/InspirationSheet";
 import { NewAgentScreen } from "@/components/agents/NewAgentScreen";
 import { TemplateSetupSheet } from "@/components/agents/TemplateSetupSheet";
+import {
+  ALL_CATEGORIES,
+  buildAgentGallery,
+  GALLERY_CATEGORIES,
+  inspirationSetupPrompt,
+} from "@/components/agents/agent-gallery";
+import type { AgentInspiration } from "@/components/agents/agent-inspirations.generated";
 import { agentChatRoute } from "@/components/agents/agent-routes";
-import { filterTemplates, templateSetupPrompt, type AgentTemplate } from "@/components/agents/agent-templates";
+import { templateSetupPrompt, type AgentTemplate } from "@/components/agents/agent-templates";
 import { requestChatDraft } from "@/components/agents/chat-draft-request";
+import { useShowChatAfterClosing } from "@/components/agents/chat-handoff";
 import { useCreateAgent } from "@/components/agents/use-create-agent";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useAgents } from "@/lib/queries/use-agents";
@@ -26,11 +35,17 @@ export default function NewAgentRoute() {
   const chats = useCanonicalChats();
   const agents = useAgents();
   const showChatScreen = useShowChatScreen();
+  const showChatAfterClosing = useShowChatAfterClosing();
   const gatewayUrl = chats.computer ? `${HOSTED_GATEWAY_URL}${chats.computer.gatewayPath}` : null;
   const recipes = useBotRecipes(gatewayUrl, true);
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState(ALL_CATEGORIES);
   const [template, setTemplate] = useState<AgentTemplate | null>(null);
-  const templates = useMemo(() => filterTemplates(recipes.recipes, query), [recipes.recipes, query]);
+  const [inspiration, setInspiration] = useState<AgentInspiration | null>(null);
+  const gallery = useMemo(
+    () => buildAgentGallery(recipes.recipes, { query, category }),
+    [recipes.recipes, query, category],
+  );
 
   const creation = useCreateAgent({
     create: recipes.create,
@@ -50,18 +65,34 @@ export default function NewAgentRoute() {
 
   const openSetup = (chosen: AgentTemplate) => {
     creation.clearFailure();
+    setInspiration(null);
     setTemplate(chosen);
   };
 
-  const setUpInChat = () => {
-    if (!template) return;
-    startDraftChat();
-    requestChatDraft(templateSetupPrompt(template));
+  const openInspiration = (chosen: AgentInspiration) => {
     setTemplate(null);
-    // The Agents tab is left on its list, so coming back to it does not show
-    // this screen again.
+    setInspiration(chosen);
+  };
+
+  /** Starts a new chat whose composer holds `prompt`, and shows it. */
+  const buildInChat = (prompt: string) => {
+    startDraftChat();
+    requestChatDraft(prompt);
+    setTemplate(null);
+    setInspiration(null);
     const screensInTab = navigation.getState()?.routes.length ?? 0;
-    if (navigation.isFocused() && screensInTab > 1) navigation.goBack();
+    if (!showChatAfterClosing || !navigation.isFocused() || screensInTab < 2) {
+      showChatScreen();
+      return;
+    }
+    // This screen closes first, so the Agents tab is on its list the next
+    // time it is opened. The tab's layout shows the chat once the tabs have
+    // taken that in: asked for in this same step, the switch is dropped.
+    const stopWaiting = showChatAfterClosing();
+    navigation.goBack();
+    if ((navigation.getState()?.routes.length ?? 0) < screensInTab) return;
+    // Nothing closed, so no change is coming for the layout to wait for.
+    stopWaiting();
     showChatScreen();
   };
 
@@ -79,14 +110,23 @@ export default function NewAgentRoute() {
 
   return (
     <>
+      {/* A sheet's button can leave this screen for the Chats tab. The tab
+          hides it within the same moment, which would cut a slide short and
+          leave the rest to play when the Agents tab is next opened. */}
+      <Stack.Screen options={{ animation: template || inspiration ? "none" : "default" }} />
       <NewAgentScreen
         state={failed ? "error" : recipes.isPending ? "loading" : "ready"}
-        templates={templates}
+        templates={gallery.templates}
+        inspirations={gallery.inspirations}
         query={query}
         onChangeQuery={setQuery}
+        categories={GALLERY_CATEGORIES}
+        category={category}
+        onChangeCategory={setCategory}
         onRetry={retry}
         onBack={() => navigation.goBack()}
         onSelectTemplate={openSetup}
+        onSelectInspiration={openInspiration}
       />
       <TemplateSetupSheet
         template={template}
@@ -95,8 +135,17 @@ export default function NewAgentRoute() {
         onCreate={(name) => {
           if (template) void creation.submit(template, name);
         }}
-        onSetUpInChat={setUpInChat}
+        onSetUpInChat={() => {
+          if (template) buildInChat(templateSetupPrompt(template));
+        }}
         onClose={() => setTemplate(null)}
+      />
+      <InspirationSheet
+        inspiration={inspiration}
+        onBuildInChat={() => {
+          if (inspiration) buildInChat(inspirationSetupPrompt(inspiration));
+        }}
+        onClose={() => setInspiration(null)}
       />
     </>
   );

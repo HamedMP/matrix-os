@@ -45,13 +45,13 @@ export function MoreMenu({ prefs, onPrefs, onFullChat, onShrink, onClose }: {
   onClose(): void;
 }) {
   return (
-    <div className="mxo-popover mxo-more" role="menu" aria-label="Matrix options">
+    <div className="mxo-popover mxo-more" role="menu" aria-label="Matrix options" data-mxo-menu="more">
       <button type="button" role="menuitemcheckbox" aria-checked={prefs.keepInCorner} className="mxo-menu__row mxo-menu__row--compact"
         onClick={() => onPrefs({ ...prefs, keepInCorner: !prefs.keepInCorner })}>
         <Icon icon={PinIcon} size={14} /><span>Keep in the corner</span><Toggle on={prefs.keepInCorner} />
       </button>
       <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--compact" onClick={() => { onClose(); onFullChat(); }}>
-        <Icon icon={ArrowExpand01Icon} size={14} /><span>Open as full chat</span><kbd>⌘⇧K</kbd>
+        <Icon icon={ArrowExpand01Icon} size={14} /><span>Open as full chat</span>
       </button>
       <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--compact" onClick={onShrink}>
         <Icon icon={ArrowShrink02Icon} size={14} /><span>Shrink to a bubble</span>
@@ -85,7 +85,7 @@ export function WidgetHeader({ status, prefs, actions, moreOpen, onMoreOpen, onM
         {status ? <span className="mxo-header__status"><StatusDot tone={status.tone} />{status.label}</span> : null}
       </span>
       <span className="mxo-header__actions">
-        <button type="button" className="mxo-icon-btn" aria-label="More" aria-expanded={moreOpen} aria-haspopup="menu" onClick={() => onMoreOpen(!moreOpen)}>
+        <button type="button" className="mxo-icon-btn" aria-label="More" aria-expanded={moreOpen} aria-haspopup="menu" data-mxo-menu-toggle="more" onClick={() => onMoreOpen(!moreOpen)}>
           <Icon icon={MoreHorizontalIcon} size={16} />
         </button>
         {prefs.keepInCorner ? <span className="mxo-icon-btn mxo-icon-btn--active" title="Kept in the corner"><Icon icon={PinIcon} size={14} /></span> : null}
@@ -106,7 +106,7 @@ export function WidgetHeader({ status, prefs, actions, moreOpen, onMoreOpen, onM
 export function ModelLine({ state, actions }: Pick<OnboardingWidgetProps, "state" | "actions">) {
   return (
     <p className="mxo-model-line">
-      {onboardingAiLabel(state.aiChoice)} · <button type="button" className="mxo-inline-link" aria-expanded={state.ai?.step === "menu"} onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
+      {onboardingAiLabel(state.aiChoice)} · <button type="button" className="mxo-inline-link" aria-expanded={state.ai?.step === "menu"} data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
     </p>
   );
 }

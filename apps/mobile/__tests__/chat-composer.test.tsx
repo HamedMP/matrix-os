@@ -1,10 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
 import { Text } from "react-native";
 
 import { Composer, type ComposerProps } from "../components/chat/Composer";
 import { Icon } from "../components/ui/Icon";
-import { IconButton } from "../components/ui/IconButton";
-import { AddIcon, MicIcon, SendIcon, StopIcon } from "../components/ui/icons";
+import { MicIcon, SendIcon, StopIcon } from "../components/ui/icons";
+import type { ComposerAttachment } from "../lib/chat-attachments";
 
 import { flat } from "./ui-test-utils";
 
@@ -115,22 +115,86 @@ describe("Composer", () => {
     expect(onBlur).toHaveBeenCalledTimes(1);
   });
 
-  it("has a round 44pt attach button on the card fill that does nothing yet", () => {
-    renderComposer();
-
-    const attach = screen.getByRole("button", { name: "Attach" });
-    expect(flat(attach)).toMatchObject({ width: 44, height: 44, borderRadius: 9999, backgroundColor: "#FAF9F7" });
-    expect(iconOf("Attach")).toMatchObject({ icon: AddIcon, size: 18 });
-    const attachButton = screen.UNSAFE_getAllByType(IconButton).find((button) => button.props.accessibilityLabel === "Attach");
-    expect(attachButton?.props.onPress).toBeUndefined();
-  });
-
-  it("puts the model control after the attach button", () => {
-    renderComposer({ modelControl: <Text>Matrix AI · Sonnet 5</Text> });
+  it("puts the control that adds to the message first in the toolbar, and the model control after it", () => {
+    renderComposer({ addControl: <Text>add</Text>, modelControl: <Text>Matrix AI · Sonnet 5</Text> });
 
     const leading = screen.getByTestId("composer-toolbar-leading");
-    expect(leading.findByProps({ accessibilityLabel: "Attach" })).toBeTruthy();
-    expect(screen.getByText("Matrix AI · Sonnet 5")).toBeTruthy();
+    expect(within(leading).getAllByText(/./).map((text) => text.props.children)).toEqual(["add", "Matrix AI · Sonnet 5"]);
+  });
+
+  it("has no button that does nothing where a screen gives it no control to add with", () => {
+    renderComposer();
+
+    expect(within(screen.getByTestId("composer-toolbar-leading")).queryAllByRole("button")).toEqual([]);
+  });
+
+  describe("attachments", () => {
+    const photo: ComposerAttachment = {
+      id: "att_f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0", uri: "file:///cache/flowers.jpg", name: "flowers.jpg", mimeType: "image/jpeg", kind: "image", sizeBytes: 2_048,
+    };
+    const notes: ComposerAttachment = {
+      id: "att_0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e", uri: "file:///tmp/notes.txt", name: "notes.txt", mimeType: "text/plain", kind: "file", sizeBytes: 92,
+    };
+
+    it("shows none of their row while nothing is waiting", () => {
+      renderComposer({ attachments: [], onRemoveAttachment: jest.fn() });
+
+      expect(screen.queryByTestId("composer-attachments")).toBeNull();
+    });
+
+    it("shows what is waiting in a row inside the card, above the input: photos as pictures, files by name", () => {
+      renderComposer({ attachments: [photo, notes], onRemoveAttachment: jest.fn() });
+
+      const card = screen.getByTestId("composer-card");
+      const row = within(card).getByTestId("composer-attachments");
+      expect(row.props.horizontal).toBe(true);
+      expect(within(row).getAllByTestId("composer-attachment")).toHaveLength(2);
+      expect(within(row).getByLabelText("flowers.jpg").props.source).toEqual({ uri: "file:///cache/flowers.jpg" });
+      expect(within(row).getByText("notes.txt")).toBeTruthy();
+      // The row comes before the input in the card.
+      const order = within(card).getAllByLabelText(/^(flowers\.jpg|Message Matrix)$/).map((node) => node.props.accessibilityLabel);
+      expect(order).toEqual(["flowers.jpg", "Message Matrix"]);
+    });
+
+    it("says under them why the message cannot be sent, when it is told so", () => {
+      renderComposer({
+        attachments: [photo],
+        onRemoveAttachment: jest.fn(),
+        attachmentNotice: "The selected model cannot read photos. Remove it or choose another model.",
+      });
+
+      const notice = screen.getByRole("alert");
+      expect(notice.props.children).toBe("The selected model cannot read photos. Remove it or choose another model.");
+      expect(flat(notice)).toMatchObject({ fontSize: 12, paddingHorizontal: 14 });
+      // Inside the card, after the attachments and before the input.
+      const card = screen.getByTestId("composer-card");
+      expect(within(card).getByTestId("composer-attachment-notice")).toBeTruthy();
+    });
+
+    it("says nothing under them otherwise", () => {
+      renderComposer({ attachments: [photo], onRemoveAttachment: jest.fn(), attachmentNotice: null });
+
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("removes the one whose remove button is pressed", () => {
+      const onRemoveAttachment = jest.fn();
+      renderComposer({ attachments: [photo, notes], onRemoveAttachment });
+
+      fireEvent.press(screen.getByRole("button", { name: "Remove notes.txt" }));
+
+      expect(onRemoveAttachment).toHaveBeenCalledTimes(1);
+      expect(onRemoveAttachment).toHaveBeenCalledWith("att_0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e");
+    });
+
+    it("answers a tap on a remove button over at least 44pt", () => {
+      renderComposer({ attachments: [photo], onRemoveAttachment: jest.fn() });
+
+      const remove = screen.getByRole("button", { name: "Remove flowers.jpg" });
+      const { width, height } = flat(remove);
+      expect(Number(width) + 2 * remove.props.hitSlop).toBeGreaterThanOrEqual(44);
+      expect(Number(height) + 2 * remove.props.hitSlop).toBeGreaterThanOrEqual(44);
+    });
   });
 
   it("has a round 44pt send button in the text colour that sends when it can", () => {
