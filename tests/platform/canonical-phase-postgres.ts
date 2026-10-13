@@ -15,10 +15,31 @@ export async function createCanonicalPlatformTestDb() {
   if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || !url.pathname.toLowerCase().includes("test")) throw new Error("Dedicated loopback test Postgres is required");
   const schema = `canonical_readiness_${randomUUID().replaceAll("-", "")}`;
   const admin = new Kysely<Record<string, never>>({ dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString, max: 1 }) }) });
-  await sql`create schema ${sql.id(schema)}`.execute(admin);
-  const db = createPlatformDb({ dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString, max: 4,
-    options: `-c search_path=${schema} -c statement_timeout=10000 -c lock_timeout=5000` }) }) });
-  const close = async () => { await db.destroy(); await sql`drop schema ${sql.id(schema)} cascade`.execute(admin); await admin.destroy(); };
-  try { await db.ready; } catch (error) { await close(); throw error; }
-  return { db, close };
+  let db: ReturnType<typeof createPlatformDb> | undefined;
+  let schemaCreated = false;
+  const close = async () => {
+    try { await db?.destroy(); }
+    finally {
+      try {
+        if (schemaCreated) {
+          await sql`drop schema ${sql.id(schema)} cascade`.execute(admin);
+          schemaCreated = false;
+        }
+      } finally { await admin.destroy(); }
+    }
+  };
+  try {
+    await sql`create schema ${sql.id(schema)}`.execute(admin);
+    schemaCreated = true;
+    db = createPlatformDb({ dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString, max: 4,
+      options: `-c search_path=${schema} -c statement_timeout=10000 -c lock_timeout=5000` }) }) });
+    await db.ready;
+    return { db, close };
+  } catch (error: unknown) {
+    try { await close(); }
+    catch (cleanupError: unknown) {
+      throw new AggregateError([error, cleanupError], "Canonical test database setup and cleanup failed");
+    }
+    throw error;
+  }
 }

@@ -213,6 +213,19 @@ weaken its assertions. Gateway producer-only corrections do not relabel an
 unchanged Electron component's earlier source/package metadata.
 
 
+## Catalog refresh composition regression
+
+Ordinary refresh observes the base Provider catalog exactly once and applies the existing Anthropic and ChatGPT account projections to that same result. It must not discard a successful refreshed receipt for a second funded read. Keep this result scoped to the single refresh call; it is not cached admission authority. `tests/gateway/phase-catalog-composition.test.ts` exercises the actual account decorators, unavailable second observations, separate refresh calls, failures, read options and unchanged canonical routing.
+
+## Disposable PostgreSQL fixture cleanup
+
+The canonical fixture closes its owned admin pool when schema creation, platform
+startup or schema teardown fails. Cleanup runs in finally; a simultaneous setup
+and cleanup failure retains both errors. The dedicated PostgreSQL CI step keeps
+all seven Bot/funding suites and also executes real permission-denied CREATE
+SCHEMA and DROP SCHEMA cleanup regressions. Tests use only a disposable loopback
+test database; temporary roles/triggers and pools are cleaned without owner data.
+
 ## Native Mobile launch recipe mirror
 
 The Native Mobile `LAUNCH_RECIPE_IDS` mirrors the shared Web
