@@ -10,6 +10,7 @@ import { AiFlow } from "./ai-panel.js";
 import { DoneLine, Icon, RabbitAvatar, StatusDot, UserEcho } from "./parts.js";
 import { AppsScreen, ConnectScreen, QuestionScreen, RepoScreen, RunScreen, TasksScreen } from "./screens.js";
 import type { OnboardingWidgetPrefs, OnboardingWidgetProps } from "./types.js";
+import type { AppsVisit } from "./use-apps-visit.js";
 
 function Toggle({ on }: { on: boolean }) {
   return <span className={`mxo-toggle${on ? " mxo-toggle--on" : ""}`} aria-hidden><span /></span>;
@@ -111,12 +112,12 @@ export function ModelLine({ state, actions }: Pick<OnboardingWidgetProps, "state
   );
 }
 
-function ScreenView({ props, appQuery, onAppQuery }: { props: OnboardingWidgetProps; appQuery: string; onAppQuery(query: string): void }) {
+function ScreenView({ props, apps }: { props: OnboardingWidgetProps; apps: AppsVisit }) {
   const { state, actions } = props;
   const screen = state.screen;
   switch (screen.kind) {
     case "tasks": return <TasksScreen state={state} apps={props.apps} userName={props.userName} actions={actions} />;
-    case "apps": return <AppsScreen apps={props.apps} actions={actions} query={appQuery} onQuery={onAppQuery} />;
+    case "apps": return <AppsScreen apps={props.apps} actions={actions} query={apps.appQuery} onQuery={apps.onAppQuery} connectedBefore={apps.appsConnectedBefore} />;
     case "question": return <QuestionScreen taskId={screen.taskId} actions={actions} />;
     case "connect": return <ConnectScreen taskId={screen.taskId} status={screen.status} apps={props.apps} actions={actions} />;
     case "repo": return <RepoScreen repos={props.repos} actions={actions} />;
@@ -124,10 +125,9 @@ function ScreenView({ props, appQuery, onAppQuery }: { props: OnboardingWidgetPr
   }
 }
 
-export function WidgetBody({ props, appQuery, onAppQuery, runInFlight }: {
+export function WidgetBody({ props, apps, runInFlight }: {
   props: OnboardingWidgetProps;
-  appQuery: string;
-  onAppQuery(query: string): void;
+  apps: AppsVisit;
   runInFlight: boolean;
 }) {
   const { state, actions } = props;
@@ -139,7 +139,7 @@ export function WidgetBody({ props, appQuery, onAppQuery, runInFlight }: {
       {state.notice ? <DoneLine text={state.notice} /> : null}
       {aiFlow ? <AiFlow panel={aiFlow} actions={actions} signInCode={props.aiSignInCode ?? null} needsCode={props.aiSignInNeedsCode ?? false} /> : (
         <>
-          <ScreenView props={props} appQuery={appQuery} onAppQuery={onAppQuery} />
+          <ScreenView props={props} apps={apps} />
           {showAllTasks ? (
             <button type="button" className="mxo-link mxo-link--quiet" onClick={() => actions.dispatch({ type: "tasks.requested" })}>All tasks</button>
           ) : null}

@@ -22,7 +22,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { useMemo, useState } from "react";
-import { connectedServices } from "./helpers.js";
+import { connectedServices, newlyConnectedNames } from "./helpers.js";
 import { AppLogo, ButtonRow, Chips, Icon, ResultCard, WorkLog } from "./parts.js";
 import type { OnboardingAppCategory, OnboardingWidgetProps } from "./types.js";
 
@@ -78,13 +78,18 @@ const APP_FILTERS: { id: OnboardingAppCategory | "all"; label: string }[] = [
   { id: "dev", label: "Dev" },
 ];
 
-export function AppsScreen({ apps, actions, query, onQuery }: Pick<OnboardingWidgetProps, "apps" | "actions"> & { query: string; onQuery(query: string): void }) {
+export function AppsScreen({ apps, actions, query, onQuery, connectedBefore }: Pick<OnboardingWidgetProps, "apps" | "actions"> & {
+  query: string;
+  onQuery(query: string): void;
+  /** Apps already connected when this visit started, so Done names only new connections. */
+  connectedBefore: readonly string[];
+}) {
   const [filter, setFilter] = useState<OnboardingAppCategory | "all">("all");
   const visible = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return apps.filter((app) => (filter === "all" || app.category === filter) && (!needle || app.name.toLocaleLowerCase().includes(needle)));
   }, [apps, filter, query]);
-  const connectedNames = apps.filter((app) => app.status === "connected").map((app) => app.name);
+  const connectedNames = newlyConnectedNames(apps, connectedBefore);
   return (
     <>
       <p className="mxo-text">Connect the apps you use.</p>
@@ -177,6 +182,13 @@ export function RepoScreen({ repos, actions }: Pick<OnboardingWidgetProps, "repo
     <>
       <p className="mxo-text">{ONBOARDING_REPO_QUESTION.text}</p>
       {repos === null ? <p className="mxo-muted">Loading repos…</p> : null}
+      {repos?.length === 0 ? (
+        <div className="mxo-card mxo-empty">
+          <span className="mxo-tile mxo-tile--neutral"><Icon icon={GithubIcon} size={16} /></span>
+          <span className="mxo-result__title">No repos found</span>
+          <span className="mxo-muted">Paste a repo link below to work on it.</span>
+        </div>
+      ) : null}
       {repos && repos.length > 0 ? (
         <div className="mxo-card mxo-tasks">
           {repos.map((repo) => (
