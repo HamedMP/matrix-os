@@ -1,6 +1,7 @@
 import { constants, type Stats } from "node:fs";
 import { lstat, mkdir, open, realpath, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
+import { ownerSoulHasInvalidControls } from "@matrix-os/contracts/bots";
 import { writeUtf8FileAtomic } from "../shell/atomic-write.js";
 import { OWNER_SOUL_MAX_BYTES, OwnerPersonalityError } from "./owner-personality.js";
 
@@ -34,6 +35,7 @@ async function writableSoulSnapshot(path: string): Promise<Stats | undefined> {
 /** Canonical Settings producer only. Never truncate a published SOUL inode. */
 export async function writeOwnerSoulAtomic(homePath: string, text: string): Promise<void> {
   if (Buffer.byteLength(text, "utf8") > OWNER_SOUL_MAX_BYTES) throw new OwnerPersonalityError("too_large");
+  if (ownerSoulHasInvalidControls(text)) throw new OwnerPersonalityError("invalid_text");
   let directory: FileHandle | undefined;
   try {
     const home = await realpath(homePath);

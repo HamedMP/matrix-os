@@ -2,7 +2,7 @@ import { constants, type Stats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
-import { OWNER_SOUL_MAX_BYTES } from "@matrix-os/contracts/bots";
+import { OWNER_SOUL_MAX_BYTES, ownerSoulHasInvalidControls } from "@matrix-os/contracts/bots";
 export { OWNER_SOUL_MAX_BYTES } from "@matrix-os/contracts/bots";
 
 export interface OwnerPersonalityConfig {
@@ -67,7 +67,7 @@ export async function readOwnerSoul(homePath: string): Promise<string> {
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytes)); }
     catch (error: unknown) { throw new OwnerPersonalityError("invalid_text"); }
-    if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text)) throw new OwnerPersonalityError("invalid_text");
+    if (ownerSoulHasInvalidControls(text)) throw new OwnerPersonalityError("invalid_text");
     return text.trim();
   } catch (error: unknown) {
     if (error instanceof OwnerPersonalityError) throw error;

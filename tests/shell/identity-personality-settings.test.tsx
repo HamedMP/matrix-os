@@ -7,6 +7,30 @@ import { IdentityPersonalitySection } from "../../shell/src/components/settings/
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+it.each([12, 0, 11, 27, 127])("retains an invalid control U+%i draft and allows corrected SOUL text", async code => {
+  const saved: string[] = [];
+  vi.stubGlobal("fetch", async (input: string, options?: RequestInit) => {
+    if (options?.method === "PUT") { saved.push(String(options.body)); return new Response("{}"); }
+    return String(input).endsWith("/api/identity") ? new Response("{}") : new Response("Original Rick profile");
+  });
+  render(<IdentityPersonalitySection />);
+  await screen.findByText("Original Rick profile");
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  const editor = screen.getByRole("textbox", { name: "Markdown editor" }) as HTMLTextAreaElement;
+  const draft = `Original Rick profile${String.fromCharCode(code)}New preference`;
+  fireEvent.change(editor, { target: { value: draft } });
+  expect(editor.value).toBe(draft);
+  expect(screen.getByTitle("Unsaved changes")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Save" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("alert").textContent).toMatch(/Remove unsupported control characters before saving/);
+  expect(saved).toEqual([]);
+  fireEvent.change(editor, { target: { value: "Original Rick profile\tNew preference\nKeep values\r\n" } });
+  const corrected = editor.value;
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(saved).toEqual([corrected]));
+  await waitFor(() => expect(screen.queryByTitle("Unsaved changes")).toBeNull());
+});
+
 it("keeps oversized UTF-8 drafts unsaved, then allows a corrected SOUL save", async () => {
   const saved: string[] = [];
   vi.stubGlobal("fetch", async (input: string, options?: RequestInit) => {

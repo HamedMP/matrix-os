@@ -120,6 +120,13 @@ keeps the draft with a safe retry error when a save fails. ASCII and multibyte
 boundary tests must prove saved profiles remain readable, including direct
 writer callers, and that shortened drafts can be saved successfully.
 
+The reader, atomic writer and both Settings editors share the same rejection
+predicate for C0 controls and DEL, allowing tab, LF and CR. Invalid text is
+rejected before any writer filesystem access or staging; the File API returns
+a coarse HTTP400 and preserves the last valid SOUL bytes and inode. Editors
+retain the invalid draft, explain how to correct it, and allow a corrected save.
+Other generic file writes keep their existing text semantics.
+
 ## Atomic Settings SOUL publication
 
 The existing authenticated/fenced `PUT /files/system/soul.md` producer publishes

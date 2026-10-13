@@ -311,6 +311,9 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
           if (error instanceof OwnerPersonalityError && error.code === "too_large") {
             return c.json({ error: "Personality exceeds the 16 KiB UTF-8 limit" }, 413);
           }
+          if (error instanceof OwnerPersonalityError && error.code === "invalid_text") {
+            return c.json({ error: "Personality contains unsupported control characters" }, 400);
+          }
           console.warn("[files] SOUL save failed:", error instanceof Error ? error.name : "UnknownError");
           return c.json({ error: "Unable to save personality" }, 500);
         }

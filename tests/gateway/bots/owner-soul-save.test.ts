@@ -38,6 +38,55 @@ beforeEach(async () => {
 });
 afterEach(async () => { vi.restoreAllMocks(); await fs.rm(home, { recursive: true, force: true }); });
 
+const invalidControlCodes = [...Array.from({ length: 32 }, (_, code) => code)
+  .filter(code => ![9, 10, 13].includes(code)), 127];
+
+it.each(invalidControlCodes)("direct SOUL writer rejects control U+%i before opening or staging", async code => {
+  const soul = join(home, "system", "soul.md");
+  await actual.writeFile(soul, "Complete old Rick identity");
+  const before = await fs.stat(soul);
+  vi.mocked(fs.open).mockClear();
+  await expect(writeOwnerSoulAtomic(home, `Rick${String.fromCharCode(code)}profile`))
+    .rejects.toMatchObject({ code: "invalid_text" });
+  expect(fs.open).not.toHaveBeenCalled();
+  expect((await fs.stat(soul)).ino).toBe(before.ino);
+  expect(await fs.readFile(soul, "utf8")).toBe("Complete old Rick identity");
+  expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
+  expect(await readOwnerSoul(home)).toBe("Complete old Rick identity");
+  await expect(writeOwnerSoulAtomic(join(home, "absent"), String.fromCharCode(code)))
+    .rejects.toMatchObject({ code: "invalid_text" });
+});
+
+it.each(invalidControlCodes)("File PUT rejects control U+%i without corrupting the saved identity", async code => {
+  const soul = join(home, "system", "soul.md");
+  await actual.writeFile(soul, "Complete old Rick identity");
+  const before = await fs.stat(soul);
+  vi.mocked(fs.open).mockClear();
+  const response = await app.request("/files/system/soul.md", {
+    method: "PUT", body: `Rick${String.fromCharCode(code)}profile`,
+  });
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({ error: "Personality contains unsupported control characters" });
+  expect(fs.open).not.toHaveBeenCalled();
+  expect((await fs.stat(soul)).ino).toBe(before.ino);
+  expect(await fs.readFile(soul, "utf8")).toBe("Complete old Rick identity");
+  expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
+  expect(await readOwnerSoul(home)).toBe("Complete old Rick identity");
+});
+
+it("allows tab, LF and CR after rejecting invalid text and leaves other file saves independent", async () => {
+  await writeOwnerSoulAtomic(home, "Original Rick profile");
+  const denied = await app.request("/files/system/soul.md", { method: "PUT", body: "Rick\fprofile" });
+  expect(denied.status).toBe(400);
+  const corrected = "Rick\tprofile\nKeep original values\r\n";
+  await writeOwnerSoulAtomic(home, corrected);
+  expect(await readOwnerSoul(home)).toBe(corrected.trim());
+  expect((await app.request("/files/system/soul.md", { method: "PUT", body: corrected })).status).toBe(200);
+  expect(await readOwnerSoul(home)).toBe(corrected.trim());
+  expect((await app.request("/files/notes.md", { method: "PUT", body: "Notes\fcontent" })).status).toBe(200);
+  expect(await fs.readFile(join(home, "notes.md"), "utf8")).toBe("Notes\fcontent");
+});
+
 
 it.each(["x".repeat(16 * 1024 + 1), "界".repeat(5462), "🙌".repeat(4096) + "x"])("rejects an oversized UTF-8 SOUL before replacing the working identity", async content => {
   const soul = join(home, "system", "soul.md");

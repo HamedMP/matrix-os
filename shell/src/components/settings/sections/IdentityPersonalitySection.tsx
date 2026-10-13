@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { OWNER_SOUL_MAX_BYTES, ownerSoulExceedsLimit } from "@matrix-os/contracts/bots";
+import { OWNER_SOUL_MAX_BYTES, ownerSoulExceedsLimit, ownerSoulHasInvalidControls } from "@matrix-os/contracts/bots";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -11,7 +11,8 @@ import { MarkdownEditor } from "../MarkdownEditor";
 const GATEWAY = getGatewayUrl();
 const IDENTITY_FETCH_TIMEOUT_MS = 10_000;
 const validateSoul = (content: string): string | null => ownerSoulExceedsLimit(content)
-  ? `Content exceeds the ${OWNER_SOUL_MAX_BYTES / 1024} KiB UTF-8 limit. Shorten it before saving.` : null;
+  ? `Content exceeds the ${OWNER_SOUL_MAX_BYTES / 1024} KiB UTF-8 limit. Shorten it before saving.`
+  : ownerSoulHasInvalidControls(content) ? "Remove unsupported control characters before saving." : null;
 
 interface Identity {
   handle?: string;

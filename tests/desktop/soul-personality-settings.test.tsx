@@ -7,6 +7,28 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 
 afterEach(() => { cleanup(); useConnection.setState({ api: null }); });
 
+it.each([12, 0, 11, 27, 127])("retains an invalid Electron control U+%i draft and saves corrected text", async code => {
+  const saved: string[] = [];
+  useConnection.setState({ api: {
+    getText: async () => "Original Rick profile",
+    putText: async (_path: string, text: string) => { saved.push(text); },
+  } as never });
+  render(<IdentityPersonalitySection />);
+  const editor = await screen.findByRole("textbox", { name: "SOUL system instructions" }) as HTMLTextAreaElement;
+  await waitFor(() => expect(editor.value).toBe("Original Rick profile"));
+  const draft = `Original Rick profile${String.fromCharCode(code)}New preference`;
+  fireEvent.change(editor, { target: { value: draft } });
+  expect(editor.value).toBe(draft);
+  expect(screen.getByRole("button", { name: "Save" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("alert").textContent).toMatch(/Remove unsupported control characters before saving/);
+  expect(saved).toEqual([]);
+  fireEvent.change(editor, { target: { value: "Original Rick profile\tNew preference\nKeep values\r\n" } });
+  const corrected = editor.value;
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Saved");
+  expect(saved).toEqual([corrected]);
+});
+
 it("prevents oversized UTF-8 SOUL saves in Electron and saves the corrected draft", async () => {
   const saved: string[] = [];
   useConnection.setState({ api: {
