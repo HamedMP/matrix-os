@@ -256,7 +256,8 @@ export function createGenericHarnessModelCatalogReader(options: {
 
   async function observe(value: GenericHarnessModelCatalog, env: Record<string, string>): Promise<GenericHarnessModelCatalog> {
     const nativeDefaults: Partial<Record<CodingHarness, string>> = {};
-    const observations = await Promise.all(enabled.map(async (harness) => ({ harness, result: await profileObservers.find((observer) => observer.harness === harness)!.observe({
+    const selected = enabled.filter(harness => value.accessSources.some(source => source.harness === harness));
+    const observations = await Promise.all(selected.map(async (harness) => ({ harness, result: await profileObservers.find((observer) => observer.harness === harness)!.observe({
       homePath: options.homePath, harness, providerIds: value.accessSources.filter((source) => source.harness === harness).map((source) => source.providerId),
       env, now: now(),
     }) })));

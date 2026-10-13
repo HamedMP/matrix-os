@@ -39,33 +39,43 @@ export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarness
     // Coding metadata has a five-second lifetime; collect it after the slower
     // runtime renewal, within the same request budget, rather than aging it again.
     catalog = await renewStaleHermesObservation(catalog, options.hermesRuntimeSource, now, scope);
-    const expired = catalog.profiles.some(profile => (profile.harness === "pi" || profile.harness === "opencode")
-      && profile.localObservation.staleAfter !== null
-      && Date.parse(profile.localObservation.staleAfter) <= +now());
+    const expired = (["pi", "opencode"] as const).filter(harness => catalog.profiles.some(profile => profile.harness === harness
+      && profile.localObservation.staleAfter !== null && Date.parse(profile.localObservation.staleAfter) <= +now()));
     const coding = async (): Promise<Catalog> => {
-      if (!expired || !reader.renewObservations || scope.deadline <= +now()) return catalog;
+      if (!expired.length || !reader.renewObservations || scope.deadline <= +now()) return catalog;
       const renewalDeadline = Math.min(scope.deadline, +now() + 1000);
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let onAbort: (() => void) | undefined;
-      try {
-        const renewed = await Promise.race([
-          reader.renewObservations(projectCanonicalNativeHarnessCatalog(catalog)).then(canonicalCatalog),
-          new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), Math.max(0, renewalDeadline - +now())); }),
-          new Promise<never>((_, reject) => {
-            onAbort = () => reject(scope.signal?.reason);
-            scope.signal?.addEventListener("abort", onAbort, { once: true });
-            if (scope.signal?.aborted) onAbort();
-          }),
-        ]);
-        scope.signal?.throwIfAborted();
-        if (!renewed || renewalDeadline <= +now()) return catalog;
-        return { profiles: [...catalog.profiles.filter(profile => profile.harness !== "pi" && profile.harness !== "opencode"), ...renewed.profiles],
-          failures: catalog.failures };
-      } catch (error: unknown) {
-        scope.signal?.throwIfAborted();
-        console.warn("[ai-providers] Coding native observation unavailable", { errorClass: error instanceof Error ? error.name : "Unknown" });
-        return catalog;
-      } finally { if (timer) clearTimeout(timer); if (onAbort) scope.signal?.removeEventListener("abort", onAbort); }
+      // Each completed harness keeps its own evidence. Waiting for a slow sibling
+      // must not discard an observation accepted within this shared deadline.
+      const results = await Promise.all(expired.map(async harness => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let onAbort: (() => void) | undefined;
+        try {
+          const renewed = await Promise.race([
+            reader.renewObservations!(projectCanonicalNativeHarnessCatalog({
+              profiles: catalog.profiles.filter(profile => profile.harness === harness),
+              failures: catalog.failures.filter(failure => failure === harness),
+            })).then(canonicalCatalog),
+            new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), Math.max(0, renewalDeadline - +now())); }),
+            new Promise<never>((_, reject) => {
+              onAbort = () => reject(scope.signal?.reason);
+              scope.signal?.addEventListener("abort", onAbort, { once: true });
+              if (scope.signal?.aborted) onAbort();
+            }),
+          ]);
+          scope.signal?.throwIfAborted();
+          if (!renewed || renewalDeadline <= +now()) return null;
+          return { harness, profiles: renewed.profiles.filter(profile => profile.harness === harness) };
+        } catch (error: unknown) {
+          scope.signal?.throwIfAborted();
+          console.warn("[ai-providers] Coding native observation unavailable", { errorClass: error instanceof Error ? error.name : "Unknown" });
+          return null;
+        } finally { if (timer) clearTimeout(timer); if (onAbort) scope.signal?.removeEventListener("abort", onAbort); }
+      }));
+      scope.signal?.throwIfAborted();
+      const completed = results.filter(result => result !== null);
+      if (!completed.length) return catalog;
+      return { profiles: [...catalog.profiles.filter(profile => !completed.some(result => result.harness === profile.harness)),
+        ...completed.flatMap(result => result.profiles)], failures: catalog.failures };
     };
     return coding();
   };
