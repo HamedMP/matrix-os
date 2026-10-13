@@ -33,6 +33,7 @@ import {
 import { useShellOnboardingIntegrations } from "./use-shell-onboarding-integrations";
 
 const IDENTITY_TIMEOUT_MS = 10_000;
+const IDENTITY_RETRIES = 5;
 const EMPTY_CATALOG: CanonicalProviderCatalog = { revision: "onboarding-loading", drivers: [], instances: [] };
 
 export interface OnboardingWidgetHostProps {
@@ -40,16 +41,26 @@ export interface OnboardingWidgetHostProps {
   onOpenSettings: (section: OnboardingSettingsSection) => void;
 }
 
+class IdentityRequestError extends Error {
+  override readonly name = "IdentityRequestError";
+  constructor(readonly status: number) {
+    super(`IdentityRequestFailed:${status}`);
+  }
+}
+
+/** A missing route means this computer has no such field; other failures must stay retryable, not become the fallback key. */
 async function readOptionalJson(path: string): Promise<unknown> {
   try {
     const response = await fetch(`${getGatewayUrl()}${path}`, {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
     });
-    return response.ok ? await response.json() : null;
+    if (response.status === 404) return null;
+    if (!response.ok) throw new IdentityRequestError(response.status);
+    return await response.json();
   } catch (error: unknown) {
-    console.warn("[onboarding-widget] identity unavailable:", error instanceof Error ? error.name : typeof error);
-    return null;
+    console.warn("[onboarding-widget] identity unavailable:", error instanceof IdentityRequestError ? error.message : error instanceof Error ? error.name : typeof error);
+    throw error;
   }
 }
 
@@ -61,6 +72,7 @@ function useShellOnboardingIdentity(): ShellOnboardingIdentity | null {
       return shellOnboardingIdentity(owner, system);
     },
     staleTime: Number.POSITIVE_INFINITY,
+    retry: IDENTITY_RETRIES,
   });
   return data ?? null;
 }

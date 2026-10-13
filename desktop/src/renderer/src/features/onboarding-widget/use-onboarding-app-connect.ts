@@ -1,5 +1,5 @@
 import type { OnboardingWidgetEvent } from "@matrix-os/contracts";
-import { startConnectPoll, type OnboardingAppConnect } from "@matrix-os/ui";
+import { activeConnectionIds, hasNewActiveConnection, startConnectPoll, type OnboardingAppConnect } from "@matrix-os/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
@@ -41,7 +41,7 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
     };
     setConnectingService(serviceId);
     dispatch({ type: "connect.started" });
-    const previousIds = new Set(useIntegrations.getState().connections.map((connection) => connection.id));
+    const previouslyActive = activeConnectionIds(useIntegrations.getState().connections, serviceId);
     void (async () => {
       const url = await useIntegrations.getState().startConnect(serviceId, api);
       if (!isCurrent()) return;
@@ -54,7 +54,7 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
           const result = await useIntegrations.getState().syncNow(api);
           if (result === "superseded") cancelPollRef.current?.();
         },
-        isDone: () => useIntegrations.getState().connections.some((connection) => connection.service === serviceId && !previousIds.has(connection.id)),
+        isDone: () => hasNewActiveConnection(useIntegrations.getState().connections, serviceId, previouslyActive),
         onSettled: (found) => {
           if (!isCurrent()) return;
           cancelPollRef.current = null;
