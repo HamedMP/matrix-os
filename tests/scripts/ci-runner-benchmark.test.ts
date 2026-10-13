@@ -245,7 +245,7 @@ describe("isolated cold and warm benchmark execution", () => {
     const { result, calls } = invoke("full");
     expect(result.status, result.stderr).toBe(0);
     const gated = buildGatedElectronSuites();
-    expect(gated).toHaveLength(34);
+    expect(gated).toHaveLength(35);
     const general = calls.filter((call) => call.includes("--config vitest.e2e.config.ts") && call.includes("--exclude="));
     expect(general).toHaveLength(2);
     for (const call of general) {
