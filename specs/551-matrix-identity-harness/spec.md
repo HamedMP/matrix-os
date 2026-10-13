@@ -1,6 +1,6 @@
 # Connect Settings SOUL to Matrix Bot
 
-Status: implemented corrected Bot scope; exact-head live acceptance pending. ENG-235; PR2438.
+Status: implemented corrected Bot scope; exact-head live acceptance pending. ENG-235; original ordinary Chat work was tracked in PR2438. Personal Matrix Bot SOUL is delivered in PR2443; canonical-phase validation is layered above it in PR2445.
 
 ## Goal and scope
 
@@ -8,7 +8,7 @@ Settings > Identity & personality edits system/soul.md. The canonical personal M
 
 There is no pre-existing canonical Matrix Bot in the fixed recipe catalog. Add a dedicated Matrix Bot recipe using the existing recipe creation/Agents/direct Bot Chat flow. Its exact server-resolved recipe version opts into owner SOUL; other custom and task-specific Bots remain independent, even if named Matrix or Rick. No client-supplied inheritance flag, model/driver/name heuristic, auto-migration, or startup creation of an owner Bot.
 
-Settings redesign, onboarding/hatching, general memory, arbitrary Bot inheritance, coding CLIs, company/shared Bots, production fleet rollout, and merge before Human Review are deferred.
+Settings redesign, onboarding/hatching, general memory, arbitrary Bot inheritance, coding CLIs, company/shared Bots, production fleet rollout and live acceptance without a separately authorized test window are deferred.
 
 ## Source of truth and runtime flow
 
@@ -74,9 +74,9 @@ Wrong: decide SOUL inheritance from `agent.name === "Matrix Bot"` or the shared 
 
 ## Verification and delivery
 
-Run focused personality/recipe/orchestration/worker tests, typecheck, patterns, required full tests and lint; distinguish known base macOS failures from changed-code regressions. Update existing English implementation PR2438 and private FinnaAI/matrix-os-site docs PR221 with correct identity scope, creation entry, display-label separation and next-turn behavior. Link ENG235 and required PR invariants.
+Run focused personality/recipe/orchestration/worker tests, typecheck, patterns, required full tests and lint; distinguish known base macOS failures from changed-code regressions. Update the English SOUL implementation PR2443 (original ordinary Chat reference PR2438), canonical-phase PR2445, and private FinnaAI/matrix-os-site docs PR221 with correct identity scope, creation entry, display-label separation and next-turn behavior. Link ENG235 and required PR invariants.
 
-Prior Juniper/Cedar/Maple Main screenshots prove ordinary Matrix Pi Chat only. Private Preview inference was unavailable; no funding/credential transfer is authorized or required. Human Review readiness requires honest actual Bot evidence. No Greptile/merge until explicit Yuhan approval. No Slack/team message authorization.
+Prior Juniper/Cedar/Maple Main screenshots prove ordinary Matrix Pi Chat only. Private Preview inference was unavailable; no funding/credential transfer is authorized or required. Human Review readiness requires honest actual Bot evidence. Normal code review, Greptile, CI and merge preparation are authorized. The former shared-write hold is lifted; it is not a remaining approval gate. Fresh exact-head checks and applicable genuine Bot live acceptance remain required before declaring this feature accepted or ready to land. This authorization does not renew paid model, Main Computer configuration, or funding-authority changes. No Slack/team message authorization.
 
 
 ## Isolated readiness source composition
@@ -160,3 +160,14 @@ metadata preservation, repeated/concurrent saves, and outside-parent/staging-lin
 guards. Do not mock the reader or
 weaken its assertions. Gateway producer-only corrections do not relabel an
 unchanged Electron component's earlier source/package metadata.
+
+
+## Native Mobile launch recipe mirror
+
+The Native Mobile `LAUNCH_RECIPE_IDS` mirrors the shared Web
+`LAUNCH_BOT_RECIPE_IDS`, including `matrix-bot` as its first entry. This keeps the
+canonical server-backed recipe in the existing computer-template flow and out of
+the inspiration flow; recipe versions and identity authority remain server-owned.
+The unchanged `tests/ui/agent-gallery-mobile-parity.test.ts` equality assertion
+checks the complete ordered launch set across both surfaces. This mirror repair
+does not change SOUL admission, capabilities, approvals or recipe behavior.
