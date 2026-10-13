@@ -9,7 +9,7 @@ import { createCodexCredentialFileProofReader } from "../../packages/gateway/src
 import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
 const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
-async function fixture(account: unknown, modelProvider: string, resume = false, options: { file?: boolean; replaceAfterThread?: boolean; nextAccount?: unknown; configuredProvider?: string; revokeAt?: "before-spawn" | "after-thread"; revokeKind?: "off" | "reconnected" | "uncertain" | "route" | "model" } = {}) {
+async function fixture(account: unknown, modelProvider: string, resume = false, options: { file?: boolean; replaceAfterThread?: boolean; nextAccount?: unknown; configuredProvider?: string; revokeAt?: "before-spawn" | "after-thread"; revokeKind?: "off" | "reconnected" | "uncertain" | "route" | "model" | "presentation" } = {}) {
   const dir = await mkdtemp("/tmp/codex-native-runner-"); dirs.push(dir);
   const trace = join(dir, "trace.jsonl");
   if (options.file) { await mkdir(join(dir, ".codex"), { mode: 0o700 }); await writeFile(join(dir, ".codex/auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "fixture-access", refresh_token: "fixture-refresh" } }), { mode: 0o600 }); }
@@ -23,6 +23,7 @@ async function fixture(account: unknown, modelProvider: string, resume = false, 
     route: { kind: "fixed", providerId: "openai", modelId: "openai/gpt-5.6" } };
   const changedRow = { ...row, ...(options.revokeKind === "route" ? { route: { ...row.route, providerId: "funded" } }
     : options.revokeKind === "model" ? { route: { ...row.route, modelId: "openai/another-model" } }
+    : options.revokeKind === "presentation" ? { displayName: "Renamed Codex", accentColor: "blue" }
     : options.revokeKind === "reconnected" ? { nativeAccountConsentRevision: 2 } : { enabled: false }) };
   await mkdir(join(dir, "system/ai-providers"), { recursive: true });
   await writeFile(settingsPath, JSON.stringify({ harnesses: [row] }));
@@ -111,4 +112,10 @@ it.each(['off', 'reconnected', 'uncertain', 'route', 'model'] as const)('recheck
   expect(code).not.toBe(0);
   expect(messages.some(m => m.method === 'thread/start')).toBe(true);
   expect(messages.some(m => m.method === 'turn/start')).toBe(false);
+});
+
+it.each(['before-spawn', 'after-thread'] as const)('keeps native consent after presentation changes %s', async revokeAt => {
+  const { code, messages } = await fixture({ type: 'chatgpt', email: 'owner@example.test', id: 'account-a' }, 'openai', false, { revokeAt, revokeKind: 'presentation' });
+  expect(code).toBe(0);
+  expect(messages.some(m => m.method === 'turn/start')).toBe(true);
 });
