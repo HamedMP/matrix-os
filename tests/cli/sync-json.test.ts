@@ -177,6 +177,7 @@ describe("sync CLI JSON output", () => {
     // Real users can have a PostHog token in their environment while offline.
     const offlineTelemetry = {
       MATRIX_NO_TELEMETRY: "",
+      MATRIX_DEBUG: "",
       NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "phc_test_token",
       POSTHOG_HOST: "http://127.0.0.1:9",
     };
