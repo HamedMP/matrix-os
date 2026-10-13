@@ -76,10 +76,11 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     if (!latest || latest.revision !== config!.revision) reject();
     const principal = nativeAccountPrincipalFingerprint(metadata!);
     if (!principal || row.nativeAccountGeneration !== principal || row.nativeAccountConsentRevision === undefined) reject();
+    const configurationFingerprint = nativeCodexConfigurationFingerprint(row);
     const binding = createHash("sha256").update(JSON.stringify({
-      owner: userId, computer: resolve(options.homePath), row, principal,
+      owner: userId, computer: resolve(options.homePath), configurationFingerprint, principal,
     })).digest("hex");
-    return { binding, principal: principal!, consentRevision: row.nativeAccountConsentRevision!, configurationFingerprint: nativeCodexConfigurationFingerprint(row), harnessInstanceId: row.id, accountId: row.selectedAccountId! };
+    return { binding, principal: principal!, consentRevision: row.nativeAccountConsentRevision!, configurationFingerprint, harnessInstanceId: row.id, accountId: row.selectedAccountId! };
   }
   async function validate(userId: string, binding?: string, sessionId?: string) {
     const value = await current(userId);

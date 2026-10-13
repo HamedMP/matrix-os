@@ -1,6 +1,6 @@
 import { markSessionStartClean } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -127,6 +127,28 @@ describe("Codex exact native execution authority", () => {
   it("rejects a configured unknown or funded source instead of a default launch", async () => {
     const f = await fixture(); f.change({ source: "matrix_ai" }); await f.save();
     await expect(f.admission.start("owner")).rejects.toThrow("unavailable");
+  });
+  it.each(["displayName", "accentColor"])("preserves continuation and launch after changing %s", async (field) => {
+    const f = await fixture();
+    const binding = await f.admission.start("owner", "sess_active");
+    const path = join(f.homePath, "system/ai-providers/settings.json");
+    const config = JSON.parse(await readFile(path, "utf8"));
+    config.harnesses[0][field] = field === "displayName" ? "Personal coding" : "purple";
+    await writeFile(path, JSON.stringify(config));
+    await expect(f.admission.validate("owner", binding, "sess_active")).resolves.toBeUndefined();
+    const reopened = createCodexExecutionAdmission(f.options);
+    await expect(reopened.validateLaunch("owner", "sess_active")).resolves.toMatchObject({ expectedAccountId: "native_account" });
+  });
+  it.each(["model", "consent"])("rejects continued execution after a %s change", async (field) => {
+    const f = await fixture();
+    const binding = await f.admission.start("owner", "sess_active");
+    const path = join(f.homePath, "system/ai-providers/settings.json");
+    const config = JSON.parse(await readFile(path, "utf8"));
+    if (field === "model") config.harnesses[0].route.modelId = "openai/other-model";
+    else config.harnesses[0].nativeAccountConsentRevision++;
+    await writeFile(path, JSON.stringify(config));
+    await expect(f.admission.validate("owner", binding, "sess_active")).rejects.toThrow("unavailable");
+    await expect(createCodexExecutionAdmission(f.options).validateLaunch("owner", "sess_active")).rejects.toThrow("unavailable");
   });
   it("does not revoke native execution for an unrelated settings revision", async () => {
     const f = await fixture(); const binding = await f.admission.start("owner");
