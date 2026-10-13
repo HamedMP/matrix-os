@@ -44,6 +44,9 @@ jobs:
     timeout-minutes: 3
     outputs:
       source_sha: ${{ steps.refresh.outputs.sourceSha || github.sha }}
+      # Exact-source refresh dispatches run on main but check out a PR merge. They may restore
+      # caches but must never save them, or PR code could poison caches shared with main.
+      cache_write: ${{ (github.event_name == 'workflow_dispatch' && inputs.pr_number != '') && 'false' || 'true' }}
       snapshot: ${{ steps.refresh.outputs.snapshot }}
       base_sha: ${{ steps.changed.outputs.base_sha }}
       bootstrap: ${{ steps.changed.outputs.bootstrap }}
@@ -267,7 +270,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -304,13 +307,14 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
-      - name: Cache Next incremental compilation
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore Next incremental compilation
+        id: next-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: shell/.next/cache
           key: next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
@@ -329,6 +333,13 @@ jobs:
           NEXT_PUBLIC_POSTHOG_HOST: https://eu.posthog.com
           NEXT_PUBLIC_POSTHOG_API_HOST: /relay
         run: bun run build:shell:production
+
+      - name: Save Next incremental compilation
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.next-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: shell/.next/cache
+          key: next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
 
   patterns:
     name: Pattern Scan
@@ -481,7 +492,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 20
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -522,7 +533,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -575,7 +586,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'
@@ -640,7 +651,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
       - run: pnpm install --frozen-lockfile
       - name: Build test prerequisites once
         run: bun run test:prepare
@@ -689,7 +700,7 @@ jobs:
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -721,7 +732,7 @@ jobs:
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -776,7 +787,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'
@@ -790,8 +801,9 @@ jobs:
       - name: Build test prerequisites once
         run: bun run test:prepare
 
-      - name: Cache Playwright browser revisions
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore Playwright browser revisions
+        id: playwright-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
@@ -803,6 +815,13 @@ jobs:
       - name: Install Chromium for shell-scoped Settings regressions
         if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter shell exec playwright install --with-deps chromium
+
+      - name: Save Playwright browser revisions
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Run E2E tests
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'general'
