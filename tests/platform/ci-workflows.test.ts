@@ -322,30 +322,19 @@ describe('CI workflows', () => {
     expect(admitted.output).toContain('should_run=true');
   });
 
-  it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
+  it('runs every main commit to completion in its own concurrency group', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
-    const superseder = readFileSync(join(root, '.github/workflows/ci-supersede.yml'), 'utf8');
 
     expect(workflow).toContain("format('CI coverage-v1 · {0}', github.sha)");
     expect(workflow).toContain('CI refresh-v1 pr={0} head={1} base={2} merge={3}');
     expect(workflow).toContain('queue: max');
     expect(workflow).not.toContain('cancel-in-progress:');
     expect(workflow).toContain(
-      "github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared'",
+      "group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}",
     );
-    expect(superseder).toContain('actions: write');
-    expect(superseder).toContain('paths-ignore:');
-    expect(superseder).toContain("- 'docs/**'");
-    expect(superseder).toContain("- 'specs/**'");
-    expect(superseder).toContain("- '**/*.md'");
-    expect(superseder).toContain(
-      'uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
-    );
-    expect(superseder).toContain(
-      'uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6',
-    );
-    expect(superseder).toContain('node scripts/ci/supersede-main-ci.mjs');
+    expect(existsSync(join(root, '.github/workflows/ci-supersede.yml'))).toBe(false);
+    expect(existsSync(join(root, 'scripts/ci/supersede-main-ci.mjs'))).toBe(false);
   });
 
   it('exposes a stable aggregate CI result job for branch protection', () => {
@@ -495,8 +484,8 @@ describe('CI workflows', () => {
     expect(readme).toContain('React Doctor');
     expect(readme).toContain('Docs Contract Tests');
     expect(readme).toContain('coverage frontier');
-    expect(readme).toContain('ci-supersede.yml');
-    expect(readme).toMatch(/Docs-only successors\s+queue behind broader runs/);
+    expect(readme).not.toContain('ci-supersede.yml');
+    expect(readme).toMatch(/newer merge never cancels or delays an\s+older commit's run/);
     expect(readme).toContain('Screenshot workflow removed');
   });
 
