@@ -47,9 +47,14 @@ const RequestSchema = z.object({
   }
 });
 
-export function serializeFundedOpenAiRequest(value: unknown) {
+export type FundedOpenAiRequest = z.infer<typeof RequestSchema> & { max_tokens: number };
+
+export function serializeFundedOpenAiRequest(
+  value: unknown,
+  allowedModelIds: ReadonlySet<string> = new Set([FUNDED_GLM_FLASH]),
+): { request: FundedOpenAiRequest; body: string } {
   const parsed = RequestSchema.parse(value);
-  if (parsed.model !== FUNDED_GLM_FLASH) throw new Error("Unsupported funded AI model");
+  if (!allowedModelIds.has(parsed.model)) throw new Error("Unsupported funded AI model");
   // A client without an output limit still receives a bounded generation.
   const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? 8192;
   const request = { ...parsed, max_tokens: maxTokens };

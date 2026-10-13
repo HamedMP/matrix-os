@@ -47,6 +47,35 @@ describe("Jev settlement provenance contracts", () => {
     }).success).toBe(false);
   });
 
+  it("accepts bounded generic upstream provenance on exact finalization only", () => {
+    const upstreamProvenance = {
+      upstream: "aws_bedrock",
+      routeId: "bedrock-eu-primary",
+      resolvedModel: "qualified-model",
+      inferenceProfile: "arn:aws:bedrock:eu-west-1:123456789012:inference-profile/qualified-model",
+      region: "eu-west-1",
+      pricingVersion: "aws-bedrock-qualified-2026-10-13",
+      providerRequestId: "aws-request-1",
+    };
+    const exact = {
+      reservationId: "reservation_123", tokenId: "credential_123",
+      mode: "exact", actualCostMicrousd: 12, upstreamProvenance,
+    };
+    expect(FundedAiFinalizationRequestSchema.safeParse(exact).success).toBe(true);
+    expect(FundedAiFinalizationRequestSchema.safeParse({
+      ...exact, upstreamProvenance: { ...upstreamProvenance, accessKeyId: "secret" },
+    }).success).toBe(false);
+    expect(FundedAiFinalizationRequestSchema.safeParse({
+      ...exact, upstreamProvenance: { ...upstreamProvenance, upstream: "unknown" },
+    }).success).toBe(false);
+    expect(FundedAiFinalizationRequestSchema.safeParse({
+      ...exact, mode: "conservative", actualCostMicrousd: undefined,
+    }).success).toBe(false);
+    expect(FundedAiFinalizationRequestSchema.safeParse({
+      ...exact, jevProvenance,
+    }).success).toBe(false);
+  });
+
   it("keeps historical Jev results valid and exposes additive provenance without replacing stable model", () => {
     const legacy = {
       requestId: "jev_req_request_123", recipe: "email-triage-v1", model: JEV_MODEL_ID,

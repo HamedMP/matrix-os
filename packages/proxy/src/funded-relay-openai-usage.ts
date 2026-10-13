@@ -5,10 +5,17 @@ import type { FundedUsageTracker } from "./funded-relay-usage.js";
 const Tokens = z.number().int().nonnegative().max(10_000_000);
 const Usage = z.object({
   prompt_tokens: Tokens, completion_tokens: Tokens, total_tokens: Tokens,
-  prompt_tokens_details: z.object({ cached_tokens: Tokens.optional() }).optional(),
+  prompt_tokens_details: z.object({
+    cached_tokens: Tokens.optional(),
+    cache_write_5m_tokens: Tokens.optional(),
+    cache_write_1h_tokens: Tokens.optional(),
+  }).strict().optional(),
 }).superRefine((value, ctx) => {
+  const details = value.prompt_tokens_details;
+  const classifiedInput = (details?.cached_tokens ?? 0)
+    + (details?.cache_write_5m_tokens ?? 0) + (details?.cache_write_1h_tokens ?? 0);
   if (value.total_tokens !== value.prompt_tokens + value.completion_tokens
-    || (value.prompt_tokens_details?.cached_tokens ?? 0) > value.prompt_tokens) {
+    || classifiedInput > value.prompt_tokens) {
     ctx.addIssue({ code: "custom", message: "Inconsistent token usage" });
   }
 });
@@ -21,6 +28,7 @@ const Event = z.object({
 export function createFundedOpenAiUsageTracker(options: {
   contentType: string; nativeModelId: string; canonicalModelId: string;
   pricingVersion: string; maxCaptureBytes?: number;
+  priceUsage?: (usage: FundedTokenUsage) => number;
 }): FundedUsageTracker {
   const isSse = options.contentType.toLowerCase().startsWith("text/event-stream");
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -40,10 +48,13 @@ export function createFundedOpenAiUsageTracker(options: {
     responseId = event.id;
     if (event.choices.some((choice) => choice.finish_reason != null)) sawFinish = true;
     if (event.usage) {
-      const cached = event.usage.prompt_tokens_details?.cached_tokens ?? 0;
-      const next = { inputTokens: event.usage.prompt_tokens - cached,
+      const details = event.usage.prompt_tokens_details;
+      const cached = details?.cached_tokens ?? 0;
+      const cacheWrite5m = details?.cache_write_5m_tokens ?? 0;
+      const cacheWrite1h = details?.cache_write_1h_tokens ?? 0;
+      const next = { inputTokens: event.usage.prompt_tokens - cached - cacheWrite5m - cacheWrite1h,
         outputTokens: event.usage.completion_tokens, cacheReadTokens: cached,
-        cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 };
+        cacheWrite5mTokens: cacheWrite5m, cacheWrite1hTokens: cacheWrite1h };
       // Duplicate final usage events are harmless; differing totals are not.
       if (usage !== null && JSON.stringify(usage) !== JSON.stringify(next)) invalid = true;
       usage = next;
@@ -83,9 +94,11 @@ export function createFundedOpenAiUsageTracker(options: {
         if (isSse) { consume(); if (buffer.trim()) block(buffer); }
         else { accept(JSON.parse(buffer)); sawDone = true; }
         if (invalid || !sawDone || !sawFinish || !usage) return { mode: "conservative" };
-        return { mode: "exact", actualCostMicrousd: priceActualUsageMicrousd({
-          canonicalModelId: options.canonicalModelId, pricingVersion: options.pricingVersion, usage,
-        }) };
+        return { mode: "exact", actualCostMicrousd: options.priceUsage
+          ? options.priceUsage(usage)
+          : priceActualUsageMicrousd({
+            canonicalModelId: options.canonicalModelId, pricingVersion: options.pricingVersion, usage,
+          }) };
       } catch (error) {
         if (!(error instanceof Error)) console.warn("[proxy] Funded usage response decoding failed");
         return { mode: "conservative" };
