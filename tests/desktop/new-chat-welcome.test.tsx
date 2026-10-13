@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { notifyManager } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
+import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { createCanonicalChatWorkspaceClient, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
@@ -22,7 +24,17 @@ beforeEach(() => {
   useConnection.setState(useConnection.getInitialState(), true);
   useBoard.setState({ projects: [{ id: "matrix-os", slug: "matrix-os", name: "Matrix OS", kind: "folder" } as never] });
 });
-afterEach(cleanup);
+async function cleanupWorkspace() {
+  await act(async () => {
+    cleanup();
+    await desktopQueryClient.cancelQueries(undefined, { silent: true });
+    desktopQueryClient.clear();
+    // Join the actual notification queue before jsdom can be torn down.
+    await new Promise<void>(resolve => notifyManager.schedule(resolve));
+  });
+  vi.unstubAllGlobals();
+}
+afterEach(cleanupWorkspace);
 
 it.each([null, "matrix-os"])('fills an ordinary New Chat draft from each starter without sending (Project=%s)', async projectId => {
   const client = createCanonicalChatWorkspaceClient();
@@ -51,4 +63,16 @@ it.each(["index", "conversation"] as const)("does not introduce welcome cards in
   for (const prompt of prompts) expect(screen.queryByRole("button", { name: prompt })).toBeNull();
   expect(client.create).not.toHaveBeenCalled();
   expect(client.admitTurn).not.toHaveBeenCalled();
+});
+
+it("drains queued query notifications before completing fixture cleanup", async () => {
+  const client = createCanonicalChatWorkspaceClient();
+  render(<CanonicalChatWorkspace client={client} projectId={null} initialView="draft" externalNavigation active catalog={providerCatalog} />);
+  await screen.findByRole("textbox", { name: "Start a chat" });
+  expect(desktopQueryClient.getQueryCache().getAll().length).toBeGreaterThan(0);
+  const notified = vi.fn(() => expect(window.document).toBeDefined());
+  notifyManager.batch(() => notifyManager.batchCalls(notified)());
+  await cleanupWorkspace();
+  expect(notified).toHaveBeenCalledOnce();
+  expect(desktopQueryClient.getQueryCache().getAll()).toEqual([]);
 });
