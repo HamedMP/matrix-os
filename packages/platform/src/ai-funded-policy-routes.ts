@@ -33,6 +33,7 @@ import { getRunningUserMachineByHandle, type PlatformDB } from "./db.js";
 import { AiFundedPolicyError, type AiFundedPolicyRepository } from "./ai-funded-policy-repository.js";
 import { buildPlatformRuntimeVerificationToken, timingSafeTokenEquals } from "./platform-token.js";
 import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-model-probes.js";
+import { observeFundedModelRoutes } from "./ai-funded-route-observations.js";
 
 import { fundedReadinessPhase } from "./ai-funded-readiness-phase.js";
 
@@ -355,13 +356,13 @@ export function createAiFundedRuntimeRoutes(options: {
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
       stage = "model_health";
       const observations = options.routeProbes
-        ? await beforeDeadline(Promise.all(eligible.map(async (model) => ({ model, result: await (cacheOnly
+        ? await observeFundedModelRoutes(eligible, (model, call) => (cacheOnly
           ? options.routeProbes!.readCached?.bind(options.routeProbes)
             ?? (() => Promise.resolve({ ready: false, checkedAt: now().toISOString(), staleAfter: new Date(now().getTime() + 5000).toISOString() }))
           : options.routeProbes!.probe.bind(options.routeProbes))(model, {
-          signal: controller.signal, deadlineAtMs, receiptId,
+          ...call, receiptId,
           ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision, runtimeRevision: first.policy.runtimeRevision } } : {}),
-        }) }))), deadlineAtMs)
+        }), { signal: controller.signal, deadlineAtMs })
         : [];
       // An upstream probe is asynchronous. Re-read exact owner policy and ledger
       // before returning any model as ready; do not reuse an old authorization.

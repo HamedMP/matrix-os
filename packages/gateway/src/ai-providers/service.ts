@@ -400,7 +400,12 @@ export class AiProviderService implements AiProviderSnapshotReader {
     const managedMatrixOnly = canonicalOnly || options.admissionScope === "managed_matrix";
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
-    const nativeScope = { signal: options.signal, deadline: +snapshotTime + 13000, deferRenewal: true };
+    const nativeScope = {
+      signal: options.signal,
+      deadline: Math.min(+snapshotTime + 13000,
+        Number.isFinite(options.nativeObservationDeadline) ? options.nativeObservationDeadline! : Infinity),
+      deferRenewal: true,
+    };
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
