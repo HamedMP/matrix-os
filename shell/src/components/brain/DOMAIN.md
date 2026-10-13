@@ -16,8 +16,9 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
   the URL or the Chat app's selection, and reports the Chat after every admitted turn. The Bot comes from the slot
   (`botId`), so a draft already sends as the Bot, and a Bot chat shows no harness setup (a Bot runs on its own model).
   When a new thread's first turn is refused, the question moves into its composer, kept by the host even after a switch
-  away and put in front of a question typed there since (neither is lost), and the refusal stays shown through later
-  refreshes until the next send. A question with a reference sent while an answer runs is queued, as in the Chat app,
+  away and put in front of a question typed there since, or held until that one is sent when their references do not
+  all fit together (neither is lost or cut down), and the refusal stays shown through later refreshes until the next
+  send. A question with a reference sent while an answer runs is queued, as in the Chat app,
   and a retry keeps its queue. A thread switch remounts the view, so
   the host keeps the composer drafts (`composerDrafts`): each thread's unfinished question and references, and each
   project's draft (`newDraftScope`), come back when the viewer returns; a question sent before a switch leaves them once

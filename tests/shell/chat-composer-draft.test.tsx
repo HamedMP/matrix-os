@@ -95,6 +95,30 @@ it("keeps a question typed since when a returned question comes back, without do
   expect(back.result.current).toMatchObject({ text: "Why did it change?", resources: [notes] });
 });
 
+it("holds a returned question whose references do not fit beside the ones typed since until that one is sent", () => {
+  const keeper = createChatComposerDraftKeeper();
+  const chat = (id: string) => ({ kind: "chat" as const, id: `chat_${id}`, label: id });
+  const typed = [chat("plan"), chat("notes"), chat("tests")];
+  const refused = [chat("notes"), chat("release")];
+  const open = renderHook(() => useChatComposerDraft("chat_new", "gateway", keeper));
+  act(() => open.result.current.setDraft({ text: "Which tests?", resources: typed }));
+  act(() => keeper.restore({ identity: "gateway", scope: "chat_new", text: "Why did it change?", resources: refused }));
+  // A Chat takes three Chat references: neither question is cut down, and the one typed since stays as it was.
+  expect(open.result.current).toMatchObject({ text: "Which tests?", resources: typed });
+  open.unmount();
+  const back = renderHook(() => useChatComposerDraft("chat_new", "gateway", keeper));
+  expect(back.result.current).toMatchObject({ text: "Which tests?", resources: typed });
+  // Once that question is sent, the refused one comes back whole, and its references need fresh consent.
+  act(() => back.result.current.clear());
+  expect(back.result.current).toMatchObject({ text: "Why did it change?", resources: refused });
+  expect(back.result.current.permissionIdentity).toBe(back.result.current.requestId);
+  back.unmount();
+  const later = renderHook(() => useChatComposerDraft("chat_new", "gateway", keeper));
+  expect(later.result.current).toMatchObject({ text: "Why did it change?", resources: refused });
+  act(() => later.result.current.clear());
+  expect(later.result.current.text).toBe("");
+});
+
 it("bounds the keeper's listeners to a few views, dropping the oldest", () => {
   const keeper = createChatComposerDraftKeeper();
   const listeners = Array.from({ length: 100 }, () => vi.fn());
