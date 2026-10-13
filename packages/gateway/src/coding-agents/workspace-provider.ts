@@ -442,7 +442,7 @@ export function createWorkspaceCodingAgentProvider(
       if (agent !== "codex" || !options.codexControl) {
         throw new Error("Workspace provider approval unavailable");
       }
-      await options.codexAdmission?.validate(principal.userId, resumeState?.nativeAccountBinding);
+      await options.codexAdmission?.validate(principal.userId, resumeState?.nativeAccountBinding, sessionIdForThread(thread.id));
       await options.codexControl.submitApproval({
         sessionId: sessionIdForThread(thread.id),
         approvalId,
@@ -451,15 +451,16 @@ export function createWorkspaceCodingAgentProvider(
       });
       return [];
     },
-    async deferInput({ thread, inputRequestId }) {
+    async deferInput({ principal, thread, inputRequestId }) {
       if (agent !== "codex" || !options.codexControl) throw new Error("Input deferral unavailable");
+      await options.codexAdmission?.validateLaunch(principal.userId, sessionIdForThread(thread.id));
       await options.codexControl.deferInput({ sessionId: sessionIdForThread(thread.id), inputRequestId, clientRequestId: `defer_${inputRequestId}` });
     },
     async submitInput({ principal, thread, inputRequestId, request, resumeState }) {
       if (agent !== "codex" || !options.codexControl || !request.structuredAnswers) {
         throw new Error("Workspace provider input unavailable");
       }
-      await options.codexAdmission?.validate(principal.userId, resumeState?.nativeAccountBinding);
+      await options.codexAdmission?.validate(principal.userId, resumeState?.nativeAccountBinding, sessionIdForThread(thread.id));
       await options.codexControl.submitInput({
         sessionId: sessionIdForThread(thread.id),
         inputRequestId,
