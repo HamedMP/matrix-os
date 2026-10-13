@@ -1,4 +1,4 @@
-import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider } from "./native-codex-execution-proof.mjs";
+import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verifyNativeCodexHumanControl } from "./native-codex-execution-proof.mjs";
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
@@ -1132,6 +1132,7 @@ async function applyControl(control) {
     const same = replay.fingerprint === digest([control]);
     return same ? { ok: true, replayed: true } : { ok: false };
   }
+  await verifyNativeCodexHumanControl(control, verifyNativeSubscription, request);
   if (control.type === "turn") {
     if (!enqueuePendingTurn(control)) return { ok: false };
   } else if (control.type === "steer") {
