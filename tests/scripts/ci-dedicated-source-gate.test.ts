@@ -44,6 +44,9 @@ it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshn
 it.each(['failed','pending','attempt','missing','stale'])('blocks %s coverage in delegated mode',async kind=>{const f=completeFixture();
  f.github.rest.actions.getRepoVariable.mockImplementation(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?main:args.name.includes('IMAGE')?'sha256:'+'e'.repeat(64):args.name.includes('HARNESS')?'f'.repeat(64):'true'}}));
  degrade(f,kind);await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.every(([args]:any[])=>args.conclusion==='failure')).toBe(true);});
+it('fails instead of neutral when a newer hosted attempt starts during the shadow Linux wait',async()=>{const f=completeFixture();degrade(f,'missing');
+ f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async()=>{f.github.rest.actions.listWorkflowRuns.mockImplementation(async(args?:unknown)=>({data:{workflow_runs:(args as {workflow_id:number}).workflow_id===98?[{...f.ci,run_attempt:2,status:'queued'}]:[f.controller]}}));return{data:{artifacts:[]}};});
+ await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args.conclusion)).toEqual(['failure']);});
 it('marks shadow neutral results as unverified',async()=>{const f=completeFixture();degrade(f,'missing');await reconcile(f);
  const args=f.gateGithub.rest.checks.create.mock.calls[0][0];expect(args.conclusion).toBe("neutral");expect(JSON.parse(args.output.summary).shadowUnverified).toBe(true);});
 it.each(['push','schedule'])('never edits a candidate-branch %s impersonation of the default source gate',async event=>{

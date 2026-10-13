@@ -145,6 +145,8 @@ export async function reconcileSourceQualification(github,repo,controller,option
      // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block the PR.
      if(config.mode!=='shadow'||!(error instanceof Error))throw error;
      await verifyCurrentDedicatedSource(github,repo,snapshot);
+     const latest=await currentRequester(github,repo,snapshot,{});
+     if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
      await write('neutral','Shadow Linux qualification not verified; hosted CI passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,shadowUnverified:true});
      continue;
     }

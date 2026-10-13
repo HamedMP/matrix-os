@@ -944,6 +944,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
     runs-on: ubuntu-latest
+    # Shadow observes Linux qualification; checkout failures and timeouts must not fail the run either.
+    continue-on-error: ${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' }}
     timeout-minutes: 70
     permissions:
       actions: read

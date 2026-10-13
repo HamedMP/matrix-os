@@ -108,6 +108,8 @@ jobs:
           # contend for runners. Keep the release gate bounded while allowing
           # the same-SHA CI run enough time to finish under queue pressure.
           CI_GATE_TIMEOUT_SECONDS: "5400"
+          # Shadow Linux qualification is non-blocking; only delegated routing makes it required.
+          DEDICATED_SHADOW_ONLY: ${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' }}
         run: |
           set -euo pipefail
 
@@ -143,7 +145,7 @@ jobs:
                 continue
               fi
 
-              failed_job="$(printf '%s' "$run_jobs" | jq -r '.jobs | map(select(.conclusion != "success" and .conclusion != "skipped")) | .[0] | if . then "\(.name) (\(.conclusion // "unknown"))" else "" end')"
+              failed_job="$(printf '%s' "$run_jobs" | jq -r --arg shadow "${DEDICATED_SHADOW_ONLY:-false}" '.jobs | map(select(.conclusion != "success" and .conclusion != "skipped")) | map(select(($shadow == "true" and .name == "Verified Dedicated Linux Qualification") | not)) | .[0] | if . then "\(.name) (\(.conclusion // "unknown"))" else "" end')"
               if [ -n "$failed_job" ]; then
                 echo "CI workflow run passed but a job was not successful for $TARGET_SHA: $failed_job" >&2
                 printf '%s\n' "$run_jobs" >&2
