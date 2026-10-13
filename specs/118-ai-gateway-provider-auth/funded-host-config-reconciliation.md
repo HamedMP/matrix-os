@@ -40,6 +40,14 @@ availability. Public documentation follow-up stays within ENG-256 and describes
 only product boundaries if customer-visible routing behavior changes; private
 operator targets and commands stay outside the public docs site.
 
+Legacy `apply` may replace a malformed nonempty installed funded token. Transport
+output redaction matches complete 64-character hexadecimal credentials, while
+retaining the strict receipt allowlist and hashes; short invalid values must not
+match ordinary receipt text and falsely report failure after a successful write.
+Exercise the real bridge and atomic helper on owned temporary files, verifying
+the replacement, successful receipt, restart flag and full-credential redaction.
+Routing-only actions still require the existing valid installed credential.
+
 ## Scope and authority
 
 Repair missing funded Chat configuration through a reviewed immutable host

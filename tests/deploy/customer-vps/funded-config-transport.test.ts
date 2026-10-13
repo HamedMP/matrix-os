@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { deflateSync } from 'node:zlib';
 import { join, resolve } from 'node:path';
@@ -138,6 +139,23 @@ describe('authenticated stdin funding repair transport', () => {
     const result = bridge(sealFundedConfigRepair(request, source, authToken), path);
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ action: 'apply', changed: false });
+  });
+
+  it.each(['a', 'apply', 'true'])('returns the actual successful apply receipt after replacing malformed token %s', installed => {
+    const { root, path, contents } = supportedFixture();
+    writeFileSync(path, contents + `PLATFORM_INTERNAL_URL=https://platform.example.com\nMATRIX_FUNDED_AI_RUNTIME_TOKEN=${installed}\n`);
+    const stat = lstatSync(path);
+    const beforeSha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
+    const input = { ...request, expectedFile: { sha256: beforeSha256, inode: stat.ino, device: stat.dev } };
+    // Invoke the real atomic Python helper against this owned temporary env.
+    const actual = `import importlib.util,json,os,sys\ns=importlib.util.spec_from_file_location('repair',${JSON.stringify(resolve('scripts/ops/repair-funded-chat-config.py'))})\nm=importlib.util.module_from_spec(s);s.loader.exec_module(m)\nr=json.load(sys.stdin)\nprint(json.dumps(m.execute(r,${JSON.stringify(join(root, 'opt/matrix/env'))},os.getuid(),os.getgid(),lambda:None)))\n`;
+    const result = bridge(sealFundedConfigRepair(input, actual, authToken), path, true);
+    expect(readFileSync(path, 'utf8')).toContain(`MATRIX_FUNDED_AI_RUNTIME_TOKEN=${runtimeToken}\n`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: 'apply', changed: true, restartRequired: true, beforeSha256,
+      afterSha256: createHash('sha256').update(readFileSync(path)).digest('hex'), backup: 'host.env.funded-example.json' });
+    expect(result.stdout + result.stderr).not.toContain(runtimeToken);
+    expect(result.stdout + result.stderr).not.toContain(authToken);
   });
 
   it.each(['ciphertext', 'tag', 'salt', 'iv'])('rejects tampered %s before executing', field => {

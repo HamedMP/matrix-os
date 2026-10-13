@@ -37,7 +37,8 @@ export function sealFundedConfigRepair(request, helperSource, authToken, now = D
 }
 
 /** Isolated bootstrap; production command calls only fixed defaults.
- * Path/UID overrides are for unprivileged process tests, never envelope fields. */
+ * Path/UID overrides are for unprivileged process tests, never envelope fields.
+ * Redact complete installed credentials; malformed legacy values can match ordinary receipt text. */
 export function executeFundedConfigRepairBridge(transport, options = {}) {
   const fs = nodeRequire('node:fs');
   const crypto = nodeRequire('node:crypto');
@@ -142,7 +143,7 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
   const receipt = JSON.parse(result.stdout);
   const rendered = JSON.stringify(receipt);
   requireCondition(!rendered.includes(values.MATRIX_AUTH_TOKEN)
-    && !(values.MATRIX_FUNDED_AI_RUNTIME_TOKEN && rendered.includes(values.MATRIX_FUNDED_AI_RUNTIME_TOKEN))
+    && !(/^[a-f0-9]{64}$/.test(values.MATRIX_FUNDED_AI_RUNTIME_TOKEN ?? '') && rendered.includes(values.MATRIX_FUNDED_AI_RUNTIME_TOKEN))
     && !(typeof request.config?.runtimeToken === 'string' && rendered.includes(request.config.runtimeToken)));
   requireCondition(Object.keys(receipt).sort().join() === ['action', 'afterSha256', 'backup', 'beforeSha256', 'changed', 'restartRequired'].sort().join()
     && receipt.action === aad.action && typeof receipt.changed === 'boolean'
