@@ -141,7 +141,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                             catch (error: unknown) {
                                 if (controller.signal.aborted || call.signal.aborted)
                                     return;
-                                logPlanFailure('responses', error);
+                                logPlanFailure('responses', error, { requestId: request.id, runId: request.runId, computerId: request.computerId, requestClass: request.requestClass });
                                 try {
                                     await post(binding, 'reply', {
                                         ...session, id: request.id, ok: false, error: signal.aborted ? 'cancelled' : 'unavailable'
