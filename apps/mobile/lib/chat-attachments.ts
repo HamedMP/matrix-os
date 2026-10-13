@@ -45,6 +45,15 @@ export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const UPLOAD_DIRECTORY = "temporary/desktop-chat";
 const MAX_NAME_LENGTH = 120;
 const ATTACHMENT_ID = /^att_[a-f0-9]{32}$/;
+const NAME_ENDING = /\.[A-Za-z0-9]{1,8}$/;
+// The picture types the app shows, each with the endings a name of that type
+// has. The first is the one given to a name that has none of them.
+const PICTURE_ENDINGS: Readonly<Record<string, readonly string[]>> = {
+  "image/jpeg": [".jpg", ".jpeg"],
+  "image/png": [".png"],
+  "image/webp": [".webp"],
+  "image/gif": [".gif"],
+};
 const NO_KINDS: readonly ChatAttachmentKind[] = [];
 const NO_UNREADABLE: readonly ComposerAttachment[] = [];
 
@@ -60,13 +69,29 @@ export function attachmentIdFrom(bytes: Uint8Array): string {
   return `att_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function attachmentLabel(name: string): string {
-  return name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, MAX_NAME_LENGTH);
+function extensionOf(name: string): string {
+  const match = NAME_ENDING.exec(name);
+  return match ? match[0] : "";
 }
 
-function extensionOf(name: string): string {
-  const match = /\.[A-Za-z0-9]{1,8}$/.exec(name);
-  return match ? match[0] : "";
+/**
+ * The name an attachment is sent under. A picture's name ends like its type:
+ * the computer and the app tell a picture by the ending of its name, so one
+ * named without it, as some photo libraries name theirs, would be shown as a
+ * file as soon as the phone's copy is gone.
+ */
+export function attachmentName(name: string, mimeType: string): string {
+  const endings = PICTURE_ENDINGS[mimeType.toLowerCase()];
+  if (!endings || endings.includes(extensionOf(name).toLowerCase())) return name;
+  return `${name}${endings[0]}`;
+}
+
+function attachmentLabel(name: string): string {
+  const label = name.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (label.length <= MAX_NAME_LENGTH) return label;
+  // A name too long is cut before its ending, which says what the file is.
+  const ending = extensionOf(label);
+  return `${label.slice(0, MAX_NAME_LENGTH - ending.length)}${ending}`;
 }
 
 /**

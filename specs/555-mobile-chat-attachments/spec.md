@@ -36,6 +36,11 @@ scope.
   web composer applies. A photo larger than 2048 pixels on its longer side, larger
   than 5 MB, or in a type models do not read (HEIC) is scaled down and saved as
   JPEG before it is attached. Anything left out is named in one alert.
+- A picture is sent under a name that ends like its type (`.jpg`, `.png`,
+  `.webp`, `.gif`). Some photo libraries name a photo without an ending, and
+  the computer and the app both tell a picture by the ending of its name: sent
+  as it is named, such a photo would be shown as a file once the phone's copy
+  is gone. A name too long to keep whole is cut before its ending.
 - Attachments belong to the chat they were added in, like the text draft, and
   do not carry over to another account or computer. What is chosen for a new
   chat while its first message is on its way goes to the chat that message

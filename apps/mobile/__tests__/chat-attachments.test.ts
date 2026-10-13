@@ -7,6 +7,7 @@ import {
   appendAttachments,
   attachmentIdFrom,
   attachmentKindForMimeType,
+  attachmentName,
   attachmentsTitle,
   chatAttachmentPart,
   chatAttachmentUploadPath,
@@ -64,6 +65,36 @@ describe("chat attachments", () => {
     expect(chatAttachmentUploadPath({ id: attachmentIdFrom(bytes), name: "a.jpg" })).not.toBeNull();
   });
 
+  describe("the name a picture is sent under", () => {
+    it.each([
+      ["IMG_0001.jpg", "image/jpeg"],
+      ["IMG_0001.JPEG", "image/jpeg"],
+      ["Screenshot.png", "IMAGE/PNG"],
+      ["sticker.webp", "image/webp"],
+      ["loop.gif", "image/gif"],
+    ])("is %j as it is, ending like its type %s", (name, mimeType) => {
+      expect(attachmentName(name, mimeType)).toBe(name);
+    });
+
+    it.each([
+      ["IMG_0001", "image/jpeg", "IMG_0001.jpg"],
+      ["1000012345", "image/png", "1000012345.png"],
+      ["sticker", "image/webp", "sticker.webp"],
+      ["loop", "IMAGE/GIF", "loop.gif"],
+      // An ending that is not the type's own says nothing the computer can use.
+      ["IMG_0002.HEIC", "image/jpeg", "IMG_0002.HEIC.jpg"],
+      ["Screenshot 2026.10.12", "image/png", "Screenshot 2026.10.12.png"],
+    ])("gives %j of type %s the ending of its type", (name, mimeType, expected) => {
+      expect(attachmentName(name, mimeType)).toBe(expected);
+    });
+
+    it("leaves a file, and a picture of a type the app does not show, as it is named", () => {
+      expect(attachmentName("notes", "text/plain")).toBe("notes");
+      expect(attachmentName("scan", "image/tiff")).toBe("scan");
+      expect(attachmentName("drawing", "image/svg+xml")).toBe("drawing");
+    });
+  });
+
   describe("upload place", () => {
     it("is in the folder the computer clears, named by the attachment's id and a safe file name", () => {
       expect(chatAttachmentUploadPath(photo("a1", { name: "Holiday photo (1).jpg" })))
@@ -82,6 +113,18 @@ describe("chat attachments", () => {
       ["a/b\\c.png", `temporary/desktop-chat/${A1}-a_b_c.png`],
     ])("keeps the name %j inside the folder", (name, expected) => {
       expect(chatAttachmentUploadPath(photo("a1", { name }))).toBe(expected);
+    });
+
+    it("keeps the ending of a name too long to keep whole", () => {
+      const name = `${"a".repeat(200)}.png`;
+
+      const place = chatAttachmentUploadPath(photo("a1", { name }));
+
+      expect(place).toBe(`temporary/desktop-chat/${A1}-${"a".repeat(116)}.png`);
+      expect(chatAttachmentPart(photo("a1", { name, mimeType: "image/png" }))).toMatchObject({
+        label: `${"a".repeat(116)}.png`,
+        ownerReference: place,
+      });
     });
 
     it("has no place for an attachment whose id is not one this app made", () => {

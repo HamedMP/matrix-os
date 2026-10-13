@@ -7,6 +7,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   attachmentIdFrom,
   attachmentKindForMimeType,
+  attachmentName,
   type AttachmentRejection,
   type ChatAttachmentKind,
   type ComposerAttachment,
@@ -35,7 +36,14 @@ function attachment(uri: string, name: string, mimeType: string, sizeBytes: numb
   if (sizeBytes > MAX_ATTACHMENT_BYTES) return "too_large";
   // From the system's own random source: the id is part of where the upload is kept.
   const id = attachmentIdFrom(getRandomValues(new Uint8Array(16)));
-  return { id, uri, name, mimeType, kind: attachmentKindForMimeType(mimeType), sizeBytes };
+  return {
+    id,
+    uri,
+    name: attachmentName(name, mimeType),
+    mimeType,
+    kind: attachmentKindForMimeType(mimeType),
+    sizeBytes,
+  };
 }
 
 function collect(prepared: Prepared[], leftOut: number): PickedAttachments {

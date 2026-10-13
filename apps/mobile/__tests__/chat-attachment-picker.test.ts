@@ -1,4 +1,5 @@
 import { MAX_PHOTO_EDGE, pickFiles, pickPhotos } from "../lib/chat-attachment-picker";
+import { chatAttachmentUploadPath } from "../lib/chat-attachments";
 
 const mockLaunchImageLibrary = jest.fn();
 const mockPickFile = jest.fn();
@@ -173,6 +174,23 @@ describe("choosing attachments", () => {
       expect((await pickPhotos(8))?.attachments).toMatchObject([{ name: "photo-1.jpg", sizeBytes: 123_456 }]);
     });
 
+    it("ends a photo's name like its type when the library names it without an ending", async () => {
+      chose(
+        asset({ fileName: "1000012345", mimeType: "image/png" }),
+        asset({ fileName: "IMG_0004", mimeType: "image/jpeg" }),
+      );
+
+      const picked = await pickPhotos(8);
+
+      expect(picked?.attachments.map((item) => item.name)).toEqual(["1000012345.png", "IMG_0004.jpg"]);
+      // So the place it is uploaded to says it is a picture, with the phone's copy gone too.
+      expect(picked?.attachments.map((item) => chatAttachmentUploadPath(item))).toEqual([
+        expect.stringMatching(/-1000012345\.png$/),
+        expect.stringMatching(/-IMG_0004\.jpg$/),
+      ]);
+      expect(mockManipulate).not.toHaveBeenCalled();
+    });
+
     it("leaves out a photo that cannot be read and keeps the others", async () => {
       chose(asset({ uri: "file:///cache/gone.jpg", fileSize: undefined }), asset({ fileName: "IMG_0003.jpg" }));
 
@@ -231,6 +249,20 @@ describe("choosing attachments", () => {
       expect(picked?.attachments).toMatchObject([
         { uri: "file:///tmp/notes.txt", name: "notes.txt", mimeType: "text/plain", kind: "file", sizeBytes: 1_200 },
         { uri: "file:///tmp/chart.png", name: "chart.png", mimeType: "image/png", kind: "image", sizeBytes: 90_000 },
+      ]);
+    });
+
+    it("ends a picture's name like its type when the file has no ending", async () => {
+      mockPickFile.mockResolvedValue({
+        canceled: false,
+        result: [file("scan", "image/png", 90_000), file("notes", "text/plain", 1_200)],
+      });
+
+      const picked = await pickFiles(8, ["image", "file"]);
+
+      expect(picked?.attachments).toMatchObject([
+        { uri: "file:///tmp/scan", name: "scan.png", kind: "image" },
+        { uri: "file:///tmp/notes", name: "notes", kind: "file" },
       ]);
     });
 
