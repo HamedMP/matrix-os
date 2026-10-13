@@ -13,9 +13,9 @@
 #ph-conversations-widget-container button[aria-label^="Open chat"] {
   width: 44px !important;
   height: 44px !important;
-  border: 1px solid #eceae8 !important;
-  background: #ffffff !important;
-  color: #0d0c0c !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--bg-surface) !important;
+  color: var(--text-primary) !important;
   filter: none !important;
   box-shadow: 0 10px 28px -8px rgba(0, 0, 0, 0.28) !important;
 }
@@ -26,7 +26,7 @@
 }
 
 #ph-conversations-widget-container > div > div:has(button[aria-label="Close"]) {
-  border: 1px solid #eceae8 !important;
+  border: 1px solid var(--border-subtle) !important;
   border-radius: 16px !important;
   box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.22) !important;
 }

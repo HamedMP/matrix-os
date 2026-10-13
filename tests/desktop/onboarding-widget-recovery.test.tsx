@@ -123,6 +123,21 @@ describe("onboarding run recovery", () => {
     expect(result.current.state.screen).toEqual({ kind: "tasks" });
   });
 
+  it("keeps following a run that Chat still reports as running after a long time", async () => {
+    const client = { create: vi.fn(), admitTurn: vi.fn(), getDetail: vi.fn().mockResolvedValue({ runs: [{ id: "run_1", status: "running" }], messages: [] }) };
+    const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client));
+    await flush(31 * 60 * 1000);
+    expect(result.current.state.screen).toMatchObject({ phase: "running", runId: "run_1" });
+
+    client.getDetail.mockResolvedValue({
+      runs: [{ id: "run_1", status: "completed" }],
+      messages: [{ runId: "run_1", role: "assistant", parts: [{ type: "text", text: "Three Lisbon picks" }] }],
+    });
+    await flush(5_000);
+    expect(result.current.state.screen).toMatchObject({ phase: "done" });
+    expect(result.current.state.firstTaskCompleted).toBe(true);
+  });
+
   it("keeps following the run when reading the chat only timed out", async () => {
     const client = { create: vi.fn(), admitTurn: vi.fn(), getDetail: vi.fn().mockRejectedValue(new AppError("timeout")) };
     const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client));
