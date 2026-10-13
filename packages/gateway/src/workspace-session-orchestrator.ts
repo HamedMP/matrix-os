@@ -1,3 +1,4 @@
+import { markSessionStartClean } from "./coding-agents/session-start-cleanup-proof.js";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, opendir, realpath, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -358,6 +359,19 @@ export function createWorkspaceSessionOrchestrator(options: {
         : input.request;
       const sessionId = request.sessionId ?? idGenerator();
       if (!/^sess_[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return failure(400, "invalid_session_id", "Session identifier is invalid");
+      // Called only on settled failures before invoking the session manager. A
+      // missing record alone never proves cleanup after startup has been dispatched.
+      const cleanPrelaunchFailure = async (result: Failure): Promise<Failure> => {
+        try {
+          const existing = await options.agentSessionManager.getSession(sessionId);
+          if (!existing.ok && existing.status === 404 && existing.error.code === "not_found") {
+            return markSessionStartClean(result, input.ownerScope.id, sessionId);
+          }
+        } catch (error: unknown) {
+          console.warn("[workspace-session-orchestrator] Prelaunch absence unconfirmed", error instanceof Error ? error.name : "UnknownError");
+        }
+        return result;
+      };
       let sandbox: AgentLaunchSandbox | undefined;
       let effectiveRequest = request;
       let ownsRootWorkspace = false;
@@ -387,12 +401,12 @@ export function createWorkspaceSessionOrchestrator(options: {
             request.projectSlug,
             request.worktreeId,
           );
-          if (!workspaceRoot.ok) return workspaceRoot;
+          if (!workspaceRoot.ok) return cleanPrelaunchFailure(workspaceRoot);
           workspacePath = workspaceRoot.path;
           resolvedWorktreeId = workspaceRoot.worktreeId;
         } else {
           if (!prepareRootWorkspace) {
-            return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable");
+            return cleanPrelaunchFailure(failure(503, "sandbox_unavailable", "Agent sandbox is unavailable"));
           }
           try {
             const prepared = await prepareRootWorkspace(sessionId, async () => {
@@ -409,7 +423,7 @@ export function createWorkspaceSessionOrchestrator(options: {
               "[workspace-session-orchestrator] Root Chat workspace setup failed:",
               error instanceof Error ? error.name : "UnknownError",
             );
-            return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable");
+            return cleanPrelaunchFailure(failure(503, "sandbox_unavailable", "Agent sandbox is unavailable"));
           }
         }
         effectiveRequest = {
@@ -424,10 +438,13 @@ export function createWorkspaceSessionOrchestrator(options: {
           sessionId,
           workspacePath,
           reuseCodexScratch,
+        }).catch((error: unknown) => {
+          console.warn("[workspace-session-orchestrator] Sandbox preflight failed", error instanceof Error ? error.name : "UnknownError");
+          return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable");
         });
         if (!preflight.ok) {
           if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
-          return preflight;
+          return cleanPrelaunchFailure(preflight);
         }
         sandbox = preflight.sandbox;
       }
