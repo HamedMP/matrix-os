@@ -1,4 +1,4 @@
-import { markSessionStartClean, isSessionStartClean } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
+import { markSessionStartClean } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
 import { describe, expect, it, vi } from "vitest";
 import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
 import { CodingAgentProviderResumeStateSchema } from "../../packages/gateway/src/coding-agents/provider-adapter.js";
@@ -20,12 +20,11 @@ function fixture() {
 }
 
 describe("native admission at the actual Codex command boundary", () => {
-  it("cleans an observed absent session when watching fails before dispatch", async () => {
+  it("does not infer absence from a 404 when the runtime has no reservation seam", async () => {
     const f = fixture(); f.events.watch.mockRejectedValueOnce(new Error("watch failed"));
     await expect(f.provider.startThread({ ...f.base, request: { providerId: "codex", prompt: "Inspect", clientRequestId: "req_watch_fail" } })).rejects.toThrow("watch failed");
     expect(f.runtime.startSession).not.toHaveBeenCalled();
-    expect(f.admission.releaseFailedStart).toHaveBeenCalledOnce();
-    expect(isSessionStartClean(f.admission.releaseFailedStart.mock.calls[0]?.[3], "owner", "sess_native")).toBe(true);
+    expect(f.admission.releaseFailedStart).not.toHaveBeenCalled();
   });
   it("passes a settled clean failure to exact registration cleanup", async () => {
     const f = fixture();

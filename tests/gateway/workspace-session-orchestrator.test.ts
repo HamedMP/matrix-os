@@ -84,7 +84,7 @@ describe("workspace session orchestrator", () => {
     };
   }
 
-  it.each(["root", "sandbox", "sandbox_throw", "project"] as const)("marks an absent session's settled %s prelaunch failure as clean", async phase => {
+  it.each(["root", "sandbox", "sandbox_throw", "project"] as const)("does not invent proof for %s prelaunch failure without a manager reservation", async phase => {
     const d = deps();
     d.agentSessionManager.getSession.mockResolvedValue({ ok: false, status: 404, error: { code: "not_found" } } as never);
     if (phase === "sandbox_throw") d.agentSandbox.preflight.mockRejectedValue(new Error("preflight failed"));
@@ -96,7 +96,7 @@ describe("workspace session orchestrator", () => {
     });
     expect(result.ok).toBe(false);
     expect(d.agentSessionManager.startSession).not.toHaveBeenCalled();
-    expect(isSessionStartClean(result, "user_workspace", "sess_clean_prelaunch")).toBe(true);
+    expect(isSessionStartClean(result, "user_workspace", "sess_clean_prelaunch")).toBe(false);
     expect(isSessionStartClean({ ...result }, "user_workspace", "sess_clean_prelaunch")).toBe(false);
   });
   it.each(["present", "unavailable"] as const)("retains unknown startup ownership when session observation is %s", async state => {
