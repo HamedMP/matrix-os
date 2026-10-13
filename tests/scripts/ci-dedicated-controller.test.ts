@@ -79,12 +79,12 @@ export async function verifyDedicatedLeaseGrant(){${grant}}`);
   await writeFile(join(root,'scripts/ci/dedicated-outcome.mjs'),`export function validInfrastructureProof(){return false;}`);
   return root;
  }
- async function execute(name:string,workspace:string,env:Record<string,string>={}){
+ async function execute(name:string,workspace:string,env:Record<string,string>={},requester?:{event:Record<string,unknown>,live:Record<string,unknown>}){
   const program=`import {createRequire} from 'node:module';
   const require=createRequire(import.meta.url);
   Object.assign(process.env,${JSON.stringify({...job().env,GITHUB_WORKSPACE:workspace,SNAPSHOT:JSON.stringify({sha:'a'.repeat(40),head_sha:'a'.repeat(40),base_sha:'b'.repeat(40),base_ref:'main',pr_number:'0',source_kind:'main',merge_parents:JSON.stringify(['b'.repeat(40)]),requesting_run_id:'1',requesting_run_attempt:'1',mode:'shadow'}),...env})});
-  const context=${JSON.stringify(context)},outputs={},calls=[],notices=[];
-  const github={rest:{checks:{update:async value=>{calls.push(value);return{};},create:async()=>{throw Error('Unexpected check creation');}}}};
+  const context=${JSON.stringify(requester?{...context,payload:{...context.payload,workflow_run:requester.event}}:context)},outputs={},calls=[],notices=[];
+  const github={rest:{actions:{getWorkflowRun:async args=>{if(args.run_id!==${JSON.stringify(requester?.event.id)})throw Error('Unexpected requester lookup');return{data:${JSON.stringify(requester?.live??null)}};}},checks:{update:async value=>{calls.push(value);return{};},create:async()=>{throw Error('Unexpected check creation');}}}};
   const core={setOutput:(k,v)=>{outputs[k]=String(v);},notice:m=>notices.push(m),info:()=>{},setSecret:()=>{},warning:()=>{},setFailed:m=>{throw Error('setFailed '+m);}};
   await(async()=>{${step(name).with.script}})();console.log(JSON.stringify({outputs,calls,notices}));`;
   const {stdout}=await promisify(execFile)(process.execPath,['--input-type=module','-e',program],{timeout:10_000,maxBuffer:65_536,cwd:workspace});
@@ -94,6 +94,19 @@ export async function verifyDedicatedLeaseGrant(){${grant}}`);
   const root=await stubWorkspace(`throw new Error(${JSON.stringify(message)});`,'');
   const result=await execute('Admit current source head',root);
   expect(result.outputs.admitted).toBe('false');expect(result.notices.join()).toContain(message);
+ });
+ it.each([
+  ['completed',{id:38286749456,run_attempt:2,status:'completed'}],
+  ['superseded by a newer attempt',{id:38286749456,run_attempt:3,status:'queued'}],
+ ])('stands down a late controller whose requesting CI run is %s',async(_label,live)=>{
+  const root=await stubWorkspace(`throw new Error('admission must not run');`,'');
+  const result=await execute('Admit current source head',root,{},{event:{id:38286749456,run_attempt:2},live});
+  expect(result.outputs.admitted).toBe('false');expect(result.notices.join()).toContain('Requesting CI run 38286749456 attempt 2 is no longer active');
+ });
+ it('admits normally while the requesting CI run is still active',async()=>{
+  const root=await stubWorkspace('return null;','');
+  const result=await execute('Admit current source head',root,{},{event:{id:38286749456,run_attempt:2},live:{id:38286749456,run_attempt:2,status:'in_progress'}});
+  expect(result.outputs.admitted).toBe('false');expect(result.notices).toEqual([]);
  });
  it('lists only errors the pinned helpers actually throw',()=>{
   const errors=JSON.parse(job().env.RACE_LOST_ERRORS) as string[];

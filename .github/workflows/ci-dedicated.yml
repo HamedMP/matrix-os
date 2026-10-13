@@ -90,6 +90,14 @@ jobs:
             const {resolve}=require('node:path');
             const {admitDedicatedSource,newestRequestingCiRun}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             const raceLost=error=>error instanceof Error&&JSON.parse(process.env.RACE_LOST_ERRORS).includes(error.message);
+            // A controller can wait on a hosted runner past its requesting CI run; nothing is left to qualify then.
+            const requester=context.eventName==='workflow_run'?context.payload.workflow_run:null;
+            if(requester){
+              const {data:live}=await github.rest.actions.getWorkflowRun({...context.repo,run_id:requester.id,request:{timeout:10000}});
+              if(live.status==='completed'||live.run_attempt!==requester.run_attempt){
+                core.notice(`Standing down: Requesting CI run ${requester.id} attempt ${requester.run_attempt} is no longer active`);core.setOutput('admitted','false');return;
+              }
+            }
             let admission;
             try{admission=await admitDedicatedSource(github,{
               repo:context.repo, controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
