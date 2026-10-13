@@ -19,10 +19,13 @@ export interface OnboardingWidgetPlacement {
   bottom?: number;
 }
 
-interface Size {
+/** A measured width and height in CSS px, of the widget or the window. */
+export interface OnboardingWidgetBox {
   width: number;
   height: number;
 }
+
+type Size = OnboardingWidgetBox;
 
 interface Rect extends Size {
   left: number;
@@ -85,9 +88,29 @@ export function onboardingPlacement(position: OnboardingWidgetPosition, size: Si
   };
 }
 
+/** CSS px from the widget to the viewport's right and bottom edges, where the support launcher lives. */
+export interface OnboardingWidgetEdgeGaps {
+  right: number;
+  bottom: number;
+}
+
+/** The gaps a saved position implies before the widget is measured; an edge it is not anchored to counts as far away. */
+export function onboardingEdgeGaps(position: OnboardingWidgetPosition): OnboardingWidgetEdgeGaps {
+  return {
+    right: position.x === "right" ? position.dx : Number.POSITIVE_INFINITY,
+    bottom: position.y === "bottom" ? position.dy : Number.POSITIVE_INFINITY,
+  };
+}
+
+/** The gaps from where the widget really shows once fitted on screen, which can differ from the saved spot after a resize. */
+export function onboardingFittedEdgeGaps(placement: OnboardingWidgetPlacement, size: Size, viewport: Size): OnboardingWidgetEdgeGaps {
+  return {
+    right: placement.right ?? viewport.width - (placement.left ?? 0) - size.width,
+    bottom: placement.bottom ?? viewport.height - (placement.top ?? 0) - size.height,
+  };
+}
+
 /** The support launcher lives in the bottom-right corner; it only steps around a widget that would overlap it. */
-export function onboardingSupportDockCorner(position: OnboardingWidgetPosition): "right" | "away" {
-  return position.x === "right" && position.y === "bottom" && position.dx < SUPPORT_LAUNCHER_REACH && position.dy < SUPPORT_LAUNCHER_REACH
-    ? "right"
-    : "away";
+export function onboardingSupportDockCorner(gaps: OnboardingWidgetEdgeGaps): "right" | "away" {
+  return gaps.right < SUPPORT_LAUNCHER_REACH && gaps.bottom < SUPPORT_LAUNCHER_REACH ? "right" : "away";
 }

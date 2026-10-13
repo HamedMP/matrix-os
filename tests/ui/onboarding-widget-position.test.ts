@@ -3,6 +3,8 @@ import {
   DEFAULT_ONBOARDING_POSITION,
   isOnboardingCornerPosition,
   onboardingCornerPosition,
+  onboardingEdgeGaps,
+  onboardingFittedEdgeGaps,
   onboardingPlacement,
   onboardingPositionFromRect,
   onboardingSupportDockCorner,
@@ -45,11 +47,24 @@ describe("onboarding widget position", () => {
   });
 
   it("lets the support launcher dock above the widget only when the widget would overlap it", () => {
-    expect(onboardingSupportDockCorner(DEFAULT_ONBOARDING_POSITION)).toBe("right");
-    expect(onboardingSupportDockCorner({ ...DEFAULT_ONBOARDING_POSITION, dx: 60, dy: 70 })).toBe("right");
-    expect(onboardingSupportDockCorner({ ...DEFAULT_ONBOARDING_POSITION, dx: 80 })).toBe("away");
-    expect(onboardingSupportDockCorner({ ...DEFAULT_ONBOARDING_POSITION, dy: 400 })).toBe("away");
-    expect(onboardingSupportDockCorner({ ...DEFAULT_ONBOARDING_POSITION, y: "top" })).toBe("away");
-    expect(onboardingSupportDockCorner(onboardingCornerPosition("left"))).toBe("away");
+    expect(onboardingSupportDockCorner(onboardingEdgeGaps(DEFAULT_ONBOARDING_POSITION))).toBe("right");
+    expect(onboardingSupportDockCorner(onboardingEdgeGaps({ ...DEFAULT_ONBOARDING_POSITION, dx: 60, dy: 70 }))).toBe("right");
+    expect(onboardingSupportDockCorner(onboardingEdgeGaps({ ...DEFAULT_ONBOARDING_POSITION, dx: 80 }))).toBe("away");
+    expect(onboardingSupportDockCorner(onboardingEdgeGaps({ ...DEFAULT_ONBOARDING_POSITION, dy: 400 }))).toBe("away");
+    expect(onboardingSupportDockCorner(onboardingEdgeGaps({ ...DEFAULT_ONBOARDING_POSITION, y: "top" }))).toBe("away");
+    expect(onboardingSupportDockCorner(onboardingEdgeGaps(onboardingCornerPosition("left")))).toBe("away");
+  });
+
+  it("measures the gaps to the bottom-right edges from where the widget really shows, after fitting it on a smaller window", () => {
+    const savedWide = { x: "left", y: "bottom", dx: 600, dy: 24 } as const;
+    const narrow = { width: 1000, height: 800 };
+    const fitted = onboardingFittedEdgeGaps(onboardingPlacement(savedWide, CARD, narrow), CARD, narrow);
+    expect(fitted).toEqual({ right: 8, bottom: 24 });
+    expect(onboardingSupportDockCorner(fitted)).toBe("right");
+
+    const wide = onboardingFittedEdgeGaps(onboardingPlacement(savedWide, CARD, { width: 1920, height: 800 }), CARD, { width: 1920, height: 800 });
+    expect(onboardingSupportDockCorner(wide)).toBe("away");
+    expect(onboardingFittedEdgeGaps({ left: 100, top: 90 }, BUBBLE, SCREEN)).toEqual({ right: 1080, bottom: 758 });
+    expect(onboardingFittedEdgeGaps({ right: 30, bottom: 50 }, BUBBLE, SCREEN)).toEqual({ right: 30, bottom: 50 });
   });
 });

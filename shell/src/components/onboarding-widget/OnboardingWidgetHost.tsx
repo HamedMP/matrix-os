@@ -13,6 +13,7 @@ import {
   type OnboardingAiConnectPort,
   type OnboardingSettingsSection,
   type OnboardingStoredPrefs,
+  type OnboardingWidgetBox,
 } from "@matrix-os/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState, useSyncExternalStore } from "react";
@@ -134,7 +135,8 @@ function OnboardingWidgetSession({ prefsKey, displayName, initialPrefs, onOpenCh
 
   const chatFullscreen = useChatFullscreen();
   const supportOpen = useShellSupportOpen();
-  useOnboardingSupportDock({ size: state.size, position: prefs.position, visible: !chatFullscreen, supportOpen, dispatch, closeSupport: closeShellSupport });
+  const [widgetSize, setWidgetSize] = useState<OnboardingWidgetBox | null>(null);
+  useOnboardingSupportDock({ size: state.size, position: prefs.position, widgetSize, visible: !chatFullscreen, supportOpen, dispatch, closeSupport: closeShellSupport });
   if (chatFullscreen) return null;
-  return <OnboardingWidget {...widget} zIndex={SHELL_Z_INDEX.onboardingWidget} />;
+  return <OnboardingWidget {...widget} zIndex={SHELL_Z_INDEX.onboardingWidget} onSizeChange={setWidgetSize} />;
 }

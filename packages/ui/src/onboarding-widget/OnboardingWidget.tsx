@@ -46,7 +46,7 @@ function composerEvent(state: OnboardingWidgetState, text: string): OnboardingWi
 }
 
 export function OnboardingWidget(props: OnboardingWidgetProps) {
-  const { state, actions, prefs, runView, zIndex = 45 } = props;
+  const { state, actions, prefs, runView, zIndex = 45, onSizeChange } = props;
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const bubbleRef = useRef<HTMLButtonElement>(null);
@@ -58,7 +58,7 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
   const isBubble = state.size === "bubble";
   const keepInCorner = prefs.keepInCorner;
   const runInFlight = onboardingRunInFlight(state);
-  const placement = useWidgetPlacement(rootRef, prefs.position);
+  const placement = useWidgetPlacement(rootRef, prefs.position, onSizeChange);
   const drag = useWidgetDrag(rootRef, (position) => actions.changePrefs({ ...prefs, position }));
 
   useEffect(() => {

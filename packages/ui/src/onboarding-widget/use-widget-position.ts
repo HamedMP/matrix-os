@@ -11,6 +11,7 @@ import {
   ONBOARDING_EDGE_GAP,
   onboardingPlacement,
   onboardingPositionFromRect,
+  type OnboardingWidgetBox,
   type OnboardingWidgetPlacement,
   type OnboardingWidgetPosition,
 } from "./position.js";
@@ -84,18 +85,23 @@ export function useWidgetDrag(
         dx: 0,
         dy: 0,
       };
+      // Captured from the press so a release outside the handle still ends the session.
+      event.currentTarget.setPointerCapture?.(event.pointerId);
     },
     onPointerMove(event) {
       const session = sessionRef.current;
       const root = rootRef.current;
       if (!session || !root || event.pointerId !== session.pointerId) return;
+      if (event.buttons === 0) {
+        finish();
+        return;
+      }
       const travelX = event.clientX - session.startX;
       const travelY = event.clientY - session.startY;
       if (!session.moved) {
         if (Math.hypot(travelX, travelY) < DRAG_THRESHOLD_PX) return;
         session.moved = true;
         root.dataset.dragging = "";
-        event.currentTarget.setPointerCapture?.(event.pointerId);
       }
       const { rect } = session;
       session.dx = clamp(travelX, ONBOARDING_EDGE_GAP - rect.left, window.innerWidth - ONBOARDING_EDGE_GAP - rect.right);
@@ -132,6 +138,13 @@ export function useWidgetDrag(
   return { handle, onClickCapture };
 }
 
+/** The window size, or null before it is known (server render, before hydration). */
+export function useViewportSize(): OnboardingWidgetBox | null {
+  const width = useSyncExternalStore(subscribeToResize, () => window.innerWidth, () => 0);
+  const height = useSyncExternalStore(subscribeToResize, () => window.innerHeight, () => 0);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
 /**
  * The CSS offsets for the saved position, re-fitted whenever the window or the widget changes size
  * so a card opened from a spot that only fit the bubble is still fully visible.
@@ -139,10 +152,10 @@ export function useWidgetDrag(
 export function useWidgetPlacement(
   rootRef: RefObject<HTMLDivElement | null>,
   position: OnboardingWidgetPosition,
+  onSizeChange?: (size: OnboardingWidgetBox) => void,
 ): OnboardingWidgetPlacement {
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const viewportWidth = useSyncExternalStore(subscribeToResize, () => window.innerWidth, () => 0);
-  const viewportHeight = useSyncExternalStore(subscribeToResize, () => window.innerHeight, () => 0);
+  const viewport = useViewportSize();
 
   useEffect(() => {
     const root = rootRef.current;
@@ -150,11 +163,11 @@ export function useWidgetPlacement(
     const observer = new ResizeObserver(() => {
       const box = root.getBoundingClientRect();
       setSize((prev) => (prev.width === box.width && prev.height === box.height ? prev : { width: box.width, height: box.height }));
+      onSizeChange?.({ width: box.width, height: box.height });
     });
     observer.observe(root);
     return () => observer.disconnect();
-  }, [rootRef]);
+  }, [onSizeChange, rootRef]);
 
-  const viewport = viewportWidth > 0 && viewportHeight > 0 ? { width: viewportWidth, height: viewportHeight } : null;
   return onboardingPlacement(position, size, viewport);
 }

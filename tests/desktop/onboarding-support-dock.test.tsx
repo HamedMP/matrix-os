@@ -7,14 +7,19 @@ import { DEFAULT_ONBOARDING_POSITION, onboardingCornerPosition, type OnboardingW
 import { useOnboardingSupportDock } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-support-dock";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 
-type DockProps = { size: OnboardingWidgetSize; position?: OnboardingWidgetPosition; visible?: boolean };
+type DockProps = {
+  size: OnboardingWidgetSize;
+  position?: OnboardingWidgetPosition;
+  widgetSize?: { width: number; height: number } | null;
+  visible?: boolean;
+};
 
 function renderDock(initial: DockProps) {
   const dispatch = vi.fn();
   const closeSupport = vi.fn();
   const view = renderHook(
-    ({ size, position = DEFAULT_ONBOARDING_POSITION, visible }: DockProps) =>
-      useOnboardingSupportDock({ size, position, visible, dispatch, closeSupport }),
+    ({ size, position = DEFAULT_ONBOARDING_POSITION, widgetSize, visible }: DockProps) =>
+      useOnboardingSupportDock({ size, position, widgetSize, visible, dispatch, closeSupport }),
     { initialProps: initial },
   );
   return { ...view, dispatch, closeSupport };
@@ -57,6 +62,35 @@ describe("onboarding widget support dock", () => {
 
     unmount();
     expect(style.getPropertyValue("--mxo-onboarding-lift")).toBe("");
+  });
+
+  it("docks by where the widget really shows once a smaller window pushes it into the support corner", () => {
+    const savedLeft = { x: "left", y: "bottom", dx: 600, dy: 24 } as const;
+    const card = { width: 392, height: 624 };
+    const resizeTo = (width: number) => act(() => {
+      window.innerWidth = width;
+      window.dispatchEvent(new Event("resize"));
+    });
+    const startWidth = window.innerWidth;
+    try {
+      resizeTo(1920);
+      const { rerender, dispatch } = renderDock({ size: "corner", position: savedLeft });
+      expect(document.documentElement.dataset.mxoOnboarding).toBe("card-away");
+
+      rerender({ size: "corner", position: savedLeft, widgetSize: card });
+      expect(document.documentElement.dataset.mxoOnboarding).toBe("card-away");
+
+      resizeTo(1000);
+      expect(document.documentElement.dataset.mxoOnboarding).toBe("card-right");
+      expect(document.documentElement.style.getPropertyValue("--mxo-onboarding-lift")).toBe("88px");
+      act(() => useUi.getState().setSupportPanelOpen(true));
+      expect(dispatch).toHaveBeenCalledWith({ type: "size.changed", size: "bubble" });
+
+      resizeTo(1920);
+      expect(document.documentElement.dataset.mxoOnboarding).toBe("card-away");
+    } finally {
+      resizeTo(startWidth);
+    }
   });
 
   it("releases the corner while the widget is hidden behind a maximized Chat", () => {

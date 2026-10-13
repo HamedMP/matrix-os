@@ -5,7 +5,7 @@ import type {
   OnboardingWidgetEvent,
   OnboardingWidgetState,
 } from "@matrix-os/contracts";
-import type { OnboardingWidgetPosition } from "./position.js";
+import type { OnboardingWidgetBox, OnboardingWidgetPosition } from "./position.js";
 
 export type OnboardingAppCategory = "work" | "personal" | "dev";
 
@@ -65,4 +65,6 @@ export interface OnboardingWidgetProps {
   aiSignInNeedsCode?: boolean;
   prefs: OnboardingWidgetPrefs;
   zIndex?: number;
+  /** Reports the widget's measured size, so the host can keep the support launcher clear of where it really shows. */
+  onSizeChange?(size: OnboardingWidgetBox): void;
 }

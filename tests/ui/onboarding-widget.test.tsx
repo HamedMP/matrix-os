@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React, { useReducer } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import {
   initialOnboardingWidgetState,
@@ -48,9 +48,10 @@ const REPOS = [{ name: "portfolio", url: "https://github.com/sahar/portfolio", u
 function Harness({
   actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false,
   appsUnavailable = false, apps = APPS, repos = REPOS, activeAi = "matrix", matrixAvailable = true, connectedProviders = [],
-  prefs = { keepInCorner: true, position: DEFAULT_ONBOARDING_POSITION, showOnLogin: true },
+  prefs = { keepInCorner: true, position: DEFAULT_ONBOARDING_POSITION, showOnLogin: true }, onSizeChange,
 }: {
   prefs?: OnboardingWidgetPrefs;
+  onSizeChange?: OnboardingWidgetProps["onSizeChange"];
   repos?: OnboardingWidgetProps["repos"];
   actions: OnboardingWidgetActions;
   apps?: OnboardingWidgetApp[];
@@ -91,6 +92,7 @@ function Harness({
       aiSignInNeedsCode={aiSignInNeedsCode}
       appsUnavailable={appsUnavailable}
       prefs={prefs}
+      onSizeChange={onSizeChange}
     />
   );
 }
@@ -512,7 +514,7 @@ describe("moving the onboarding widget", () => {
 
   function drag(handle: Element, to: { x: number; y: number }, from = { x: 100, y: 100 }) {
     fireEvent.pointerDown(handle, { button: 0, clientX: from.x, clientY: from.y });
-    fireEvent.pointerMove(handle, { clientX: to.x, clientY: to.y });
+    fireEvent.pointerMove(handle, { buttons: 1, clientX: to.x, clientY: to.y });
     fireEvent.pointerUp(handle, { clientX: to.x, clientY: to.y });
   }
 
@@ -523,7 +525,7 @@ describe("moving the onboarding widget", () => {
     const root = container.querySelector(".mxo-root")!;
 
     fireEvent.pointerDown(header, { button: 0, clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(header, { clientX: 400, clientY: 300 });
+    fireEvent.pointerMove(header, { buttons: 1, clientX: 400, clientY: 300 });
     expect(root).toHaveAttribute("data-dragging");
     fireEvent.pointerUp(header, { clientX: 400, clientY: 300 });
 
@@ -532,6 +534,45 @@ describe("moving the onboarding widget", () => {
       position: { x: "left", y: "top", dx: 300, dy: 200 },
     }));
     expect(screen.getByRole("region", { name: "Matrix" })).toBeInTheDocument();
+  });
+
+  it("stops following the pointer once the button is released outside the header", () => {
+    const actions = makeActions();
+    const { container } = render(<Harness actions={actions} />);
+    const header = container.querySelector<HTMLElement>(".mxo-header")!;
+    const root = container.querySelector(".mxo-root")!;
+    const capture = vi.fn();
+    header.setPointerCapture = capture;
+
+    fireEvent.pointerDown(header, { button: 0, buttons: 1, pointerId: 1, clientX: 100, clientY: 100 });
+    expect(capture).toHaveBeenCalledWith(1);
+
+    fireEvent.pointerMove(header, { buttons: 0, pointerId: 1, clientX: 400, clientY: 300 });
+    expect(root).not.toHaveAttribute("data-dragging");
+    fireEvent.pointerMove(header, { buttons: 1, pointerId: 1, clientX: 500, clientY: 400 });
+    expect(root).not.toHaveAttribute("data-dragging");
+    expect(actions.changePrefs).not.toHaveBeenCalled();
+  });
+
+  it("tells the host its measured size so the support launcher can stay clear of it", () => {
+    const observers: Array<() => void> = [];
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(private readonly callback: () => void) {}
+      observe() {
+        observers.push(this.callback);
+      }
+      disconnect() {}
+    });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 392, 300));
+    try {
+      const onSizeChange = vi.fn();
+      render(<Harness actions={makeActions()} onSizeChange={onSizeChange} />);
+      act(() => observers.forEach((notify) => notify()));
+      expect(onSizeChange).toHaveBeenLastCalledWith({ width: 392, height: 300 });
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("keeps the header buttons working instead of starting a drag from them", () => {
@@ -572,7 +613,7 @@ describe("moving the onboarding widget", () => {
     const { container } = render(<Harness actions={actions} />);
     const header = container.querySelector(".mxo-header")!;
     fireEvent.pointerDown(header, { button: 0, clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(header, { clientX: 400, clientY: 300 });
+    fireEvent.pointerMove(header, { buttons: 1, clientX: 400, clientY: 300 });
     fireEvent.pointerCancel(header);
     expect(container.querySelector(".mxo-root")).not.toHaveAttribute("data-dragging");
     expect(actions.changePrefs).not.toHaveBeenCalled();

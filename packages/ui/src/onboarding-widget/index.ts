@@ -5,9 +5,13 @@ export {
   DEFAULT_ONBOARDING_POSITION,
   isOnboardingCornerPosition,
   onboardingCornerPosition,
+  onboardingEdgeGaps,
+  onboardingFittedEdgeGaps,
   onboardingPlacement,
   onboardingPositionFromRect,
   onboardingSupportDockCorner,
+  type OnboardingWidgetBox,
+  type OnboardingWidgetEdgeGaps,
   type OnboardingWidgetPlacement,
   type OnboardingWidgetPosition,
 } from "./position.js";
