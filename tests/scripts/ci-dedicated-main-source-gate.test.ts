@@ -287,4 +287,15 @@ describe('shadow mode observes without blocking main',()=>{
   if(kind==='main-moved'){const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{f.github.rest.repos.getBranch.mockImplementation(async(a:any)=>({data:{name:a.branch,commit:{sha:base}}}));return original(args);});}
   await reconcile(f);expect(written(f)).toMatchObject({conclusion:'failure'});
  });
+ it('logs why fresh main evidence is missing instead of failing silently',async()=>{
+  const f=fixture();await shadow(f);dropLinuxReceipt(f);
+  const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
+  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{f.github.rest.repos.getBranch.mockImplementation(async(a:any)=>({data:{name:a.branch,commit:{sha:base}}}));return original(args);});
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{
+   await reconcile(f);
+   expect(written(f)).toMatchObject({conclusion:'failure',output:{title:'Fresh exact-main qualification evidence is missing or stale'}});
+   expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Main source qualification failed: \S/));
+  }finally{warn.mockRestore();}
+ });
 });

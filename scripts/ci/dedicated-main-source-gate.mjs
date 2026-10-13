@@ -69,6 +69,8 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   await write('success',result.docsOnly?'Current exact-main selected documentation coverage passed':result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':result.linuxFallback?'Current exact-main full hosted fallback coverage passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
  }catch(error){
   if(!(error instanceof Error))throw error;
+  // The check title stays generic; the controller log keeps the reason for operators.
+  console.warn(`Main source qualification failed: ${String(error.message).split('\n')[0].slice(0,300)}`);
   await write('failure','Fresh exact-main qualification evidence is missing or stale');
  }
  return 1;

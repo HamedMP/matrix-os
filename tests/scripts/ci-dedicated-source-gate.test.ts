@@ -12,6 +12,16 @@ function fixture(){
 const reconcile=(f:ReturnType<typeof fixture>)=>gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,prNumber:2454,gateAppId:777,gateGithub:f.gateGithub});
 describe('always-required default-controller source gate',()=>{
  it('creates explicit N/A success on an unlabeled ordinary PR without dispatch or Actions-owned edits',async()=>{const f=fixture();await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',head_sha:head,conclusion:'success'}));expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();});
+ it('logs why the current source is unavailable instead of failing silently',async()=>{
+  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+  f.github.rest.repos.getCommit.mockRejectedValue(new Error('commit lookup exploded'));
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{
+   await reconcile(f);
+   expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure',output:expect.objectContaining({title:'Current source candidate is not available'})}));
+   expect(warn).toHaveBeenCalledWith(expect.stringContaining('commit lookup exploded'));
+  }finally{warn.mockRestore();}
+ });
  it('fails the freshness gate and dispatches main CI for current same-head/new-parent merge',async()=>{const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',head_sha:head,conclusion:'failure'}));expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({workflow_id:'ci.yml',ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:base,source_sha:merge},request:{timeout:10000}}));});
  it('does not dispatch when live parent ref moved before the PR merge snapshot updates',async()=>{const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:main}}}));await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));});
  it.each(['origin','api'])('fails closed on %s and never synthesizes CI Results',async kind=>{const f=fixture();if(kind==='api')f.github.rest.actions.getRepoVariable.mockRejectedValue(new Error('API denied'));await expect(gate.reconcileSourceQualification(f.github,repo,kind==='origin'?{...origin,ref:'refs/heads/child'}:origin,{runId:123,runAttempt:1,prNumber:2454,gateAppId:777,gateGithub:f.gateGithub})).rejects.toThrow();expect(f.gateGithub.rest.checks.create.mock.calls.every(([args])=>args.name!=='CI Results')).toBe(true);});
@@ -40,10 +50,16 @@ const degrade=(f:ReturnType<typeof completeFixture>,kind:string)=>{if(kind==='fa
 it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshness from %s coverage',async kind=>{const f=completeFixture();degrade(f,kind);await reconcile(f);
  const written=f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args);expect(written.length).toBeGreaterThan(0);expect(written.every(args=>args.conclusion!=='success')).toBe(true);
  // Shadow observes: hosted success with missing Linux evidence is neutral; hosted failure or stale source still fails.
- expect(written.every(args=>args.conclusion===(['attempt','missing'].includes(kind)?'neutral':'failure'))).toBe(true);});
+ expect(written.every(args=>args.conclusion===(['attempt','missing','pending'].includes(kind)?'neutral':'failure'))).toBe(true);});
 it.each(['failed','pending','attempt','missing','stale'])('blocks %s coverage in delegated mode',async kind=>{const f=completeFixture();
  f.github.rest.actions.getRepoVariable.mockImplementation(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?main:args.name.includes('IMAGE')?'sha256:'+'e'.repeat(64):args.name.includes('HARNESS')?'f'.repeat(64):'true'}}));
- degrade(f,kind);await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.every(([args]:any[])=>args.conclusion==='failure')).toBe(true);});
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ try{
+  degrade(f,kind);await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.every(([args]:any[])=>args.conclusion===(kind==='pending'?'neutral':'failure'))).toBe(true);
+  // Missing Linux evidence fails closed with the reason in the controller log.
+  if(kind==='missing')expect(warn).toHaveBeenCalledWith(expect.stringContaining('PR #2454 at qualification'));
+ }finally{warn.mockRestore();}
+});
 it('fails instead of neutral when a newer hosted attempt starts during the shadow Linux wait',async()=>{const f=completeFixture();degrade(f,'missing');
  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async()=>{f.github.rest.actions.listWorkflowRuns.mockImplementation(async(args?:unknown)=>({data:{workflow_runs:(args as {workflow_id:number}).workflow_id===98?[{...f.ci,run_attempt:2,status:'queued'}]:[f.controller]}}));return{data:{artifacts:[]}};});
  await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args.conclusion)).toEqual(['failure']);});
@@ -81,7 +97,7 @@ it.each(['unlabel','switch-off'])('keeps old delegated green blocked after paren
  if(kind==='unlabel')f.pull.labels=[{name:'ready-for-ci'}];else f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
  await reconcile(f);expect(prior.conclusion).toBe('failure');expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:nextBase,source_sha:nextMerge,execution_mode:'hosted-only'}}));
  const ci={created_at:new Date().toISOString(),id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI hosted-refresh-v1 pr=2454 head=${head} base=${nextBase} merge=${nextMerge}`,status:'queued',conclusion:'success'};
- f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[ci]}});await reconcile(f);expect(prior.conclusion).toBe('failure');ci.status='completed';ci.conclusion='failure';await reconcile(f);expect(prior.conclusion).toBe('failure');ci.conclusion='success';
+ f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[ci]}});await reconcile(f);expect(prior.conclusion).toBe('neutral');ci.status='completed';ci.conclusion='failure';await reconcile(f);expect(prior.conclusion).toBe('failure');ci.conclusion='success';
  const check={id:88,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',app:{slug:'github-actions'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/321/job/44'};
  const github={rest:{...f.github.rest,actions:{...f.github.rest.actions,listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[{id:44,run_id:321,run_attempt:1,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',check_run_url:'https://api.github.com/repos/HamedMP/matrix-os/check-runs/88'}]}}))},checks:{...f.github.rest.checks,get:vi.fn(async()=>({data:check}))}}};
  await reconcile({...f,github});expect(prior.conclusion).toBe('success');expect(JSON.parse(prior.output.summary)).toMatchObject({hostedRecovery:true,admittedPreviously:true,requestingRunId:321,requestingRunAttempt:1,sourceSha:nextMerge});expect(f.github.rest.checks.create).not.toHaveBeenCalled();expect(f.github.rest.checks.update).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update.mock.calls.every(([args]:any[])=>args.check_run_id===9)).toBe(true);
@@ -97,7 +113,7 @@ function hostedFixture(){
 }
 it.each(['job-failed','job-skipped','job-attempt','job-run','job-source','check-app','check-run','newer-pending','inventory','denial'])('never restores hosted recovery from %s aggregate evidence',async kind=>{
  const f=hostedFixture();if(kind==='job-failed')f.job.conclusion='failure';if(kind==='job-skipped')f.job.conclusion='skipped';if(kind==='job-attempt')f.job.run_attempt=2;if(kind==='job-run')f.job.run_id=999;if(kind==='job-source')f.job.head_sha=head;if(kind==='check-app')f.check.app.slug='other';if(kind==='check-run')f.check.details_url='https://github.com/HamedMP/matrix-os/actions/runs/999/job/44';if(kind==='newer-pending')f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[f.run,{...f.run,id:322,status:'queued'}]}});if(kind==='inventory')f.github.rest.actions.listJobsForWorkflowRun.mockResolvedValue({data:{total_count:101,jobs:[f.job]}});if(kind==='denial')f.github.rest.checks.get.mockRejectedValue(new Error('API denied'));
- await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));expect(f.github.rest.checks.update).not.toHaveBeenCalled();
+ await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({conclusion:kind==='newer-pending'?'neutral':'failure'}));expect(f.github.rest.checks.update).not.toHaveBeenCalled();
 });
 it('cannot fall back to a GITHUB_TOKEN writer if the dedicated App response has another issuer',async()=>{
  const f=fixture();f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>({data:{id:10,...args,app:{id:15368,slug:'github-actions'}}}));await expect(reconcile(f)).rejects.toThrow(/issuer/);expect(f.github.rest.checks.create).not.toHaveBeenCalled();
@@ -119,8 +135,9 @@ it.each(['unlabel','switch-off'])('requires a fresh main hosted dispatch after u
  // The unchanged tuple is eligible only through the explicit full-hosted marker.
  const fresh={...f.run,id:322,status:'queued',created_at:new Date(Date.now()+1000).toISOString()};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[previous,fresh]}});
- await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure'}));
- fresh.status='completed';fresh.conclusion='failure';await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure'}));
+ // Running CI is not a failure: the check waits neutrally, then settles on completion.
+ await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'neutral',output:expect.objectContaining({title:'Waiting for exact-source CI to finish'})}));
+ fresh.status='completed';fresh.conclusion='failure';await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure',output:expect.objectContaining({title:'Current requesting CI failed'})}));
  fresh.conclusion='success';
  f.github.rest.actions.listJobsForWorkflowRun.mockResolvedValue({data:{total_count:1,jobs:[{...f.job,run_id:322}]}});
  f.github.rest.checks.get.mockResolvedValue({data:{...f.check,details_url:'https://github.com/HamedMP/matrix-os/actions/runs/322/job/44'}});
@@ -137,7 +154,7 @@ it.each(['unlabel','switch-off'])('never reuses a previous hosted recovery after
  f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
  const delegated={...f.run,id:400,status:'queued',display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`,created_at:new Date().toISOString()};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[delegated,f.run]}});
- await reconcile(f);expect(prior.conclusion).toBe('failure');
+ await reconcile(f);expect(prior.conclusion).toBe('neutral');
  if(kind==='unlabel')f.pull.labels=[{name:'ready-for-ci'}];else f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
  await reconcile(f);expect(prior.conclusion).toBe('failure');expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenLastCalledWith(expect.objectContaining({inputs:expect.objectContaining({execution_mode:'hosted-only'})}));
  expect(JSON.parse(prior.output.summary)).toMatchObject({recoveryAfterRunId:400});
@@ -212,7 +229,7 @@ it('retains the same hosted recovery generation across a temporary source API fa
  f.github.rest.repos.getCommit.mockRejectedValueOnce(new Error('Temporary source API failure'));
  await reconcile(f);expect(prior.conclusion).toBe('failure');
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
- await reconcile(f);expect(prior.conclusion).toBe('failure');
+ await reconcile(f);expect(prior.conclusion).toBe('neutral');
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  expect(JSON.parse(prior.output.summary)).toMatchObject({recoveryStartedAt:saved.recoveryStartedAt,recoveryAfterRunId:saved.recoveryAfterRunId,requestingRunId:321});
  f.run.status='completed';await reconcile(f);
