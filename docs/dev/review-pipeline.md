@@ -258,7 +258,8 @@ How it decides:
 1. `.github/workflows/review-receipt.yml` runs on Greptile summary comments.
    It records only when the edit introduces a review (the footer's
    `Reviews (N)` count rises or the reviewed commit changes, compared with the
-   event's previous body) and the reviewed commit is still the PR head, so the
+   event's previous body), the reviewed commit is still the PR head, and the
+   PR base was not retargeted or force-pushed in the last 30 minutes, so the
    recorded base is the one Greptile reviewed against. Receipts live in a
    single `github-actions[bot]` PR comment (newest 30); the latest review of a
    commit, for example a re-review after a retarget, defines its base. The base
@@ -283,7 +284,9 @@ PR change, and a retarget that pulls parent commits into an unchanged head
 fail. The context check exists because git merges a base edit one line away
 from a PR change cleanly, such as a removed guard above an inserted call.
 Merge and diff run with an empty attribute source, so a PR's `.gitattributes`
-cannot change the outcome.
+cannot change the outcome. The live base is fetched into a private ref that is
+cleared first, so a failed fetch falls back to GitHub's reported base, never to
+an older cached tip.
 
 Limits:
 

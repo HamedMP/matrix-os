@@ -34,6 +34,10 @@ export const GREPTILE_LOGIN = 'greptile-apps[bot]';
 export const RECEIPT_LOGIN = 'github-actions[bot]';
 export const RECEIPT_MARKER = '<!-- matrix-review-receipt v1 -->';
 export const MAX_RECEIPTS = 30;
+// A review plus the record job's queue fit well inside this window.
+export const BASE_CHANGE_WINDOW_MS = 30 * 60_000;
+// Fetched fresh on every run; a failed fetch leaves it absent, never stale.
+const FETCHED_BASE = 'refs/review-carryover/base';
 
 // GitHub or git transport failed, so the answer is unknown rather than "no".
 export class AccessError extends Error {}
@@ -154,6 +158,16 @@ export function introducesReview(event, repo) {
   return null;
 }
 
+// A retarget or base force-push while Greptile reviewed or the record job
+// queued leaves the reviewed base unknown. Unparseable times count as recent.
+export function recentBaseChange(events, now = Date.now(), windowMs = BASE_CHANGE_WINDOW_MS) {
+  return events.some(entry => {
+    if (entry?.event !== 'base_ref_changed' && entry?.event !== 'base_ref_force_pushed') return false;
+    const at = Date.parse(entry.created_at);
+    return !Number.isFinite(at) || now - at <= windowMs;
+  });
+}
+
 const validReceipt = value => value && SHA.test(value.reviewed) && SHA.test(value.base) && typeof value.recordedAt === 'string';
 
 // Fork PRs cannot post as the workflow token. Repository writers can, but they
@@ -226,13 +240,14 @@ function loadPull(repo, pr) {
   return {view, comments};
 }
 
-const baseRef = name => `refs/remotes/origin/${name}`;
-
 // One fetch per ref or commit, so a deleted branch or an unserved commit only
-// removes that candidate; ls-remote first tells access failures apart.
+// removes that candidate; ls-remote first tells access failures apart. The
+// live base lands in a private ref that is cleared first, so a failed fetch
+// can never leave an older tip in play, and the caller's refs stay untouched.
 // Commits are fetched by SHA so a lagging refs/pull/<n>/head or a force-pushed
 // commit still resolves; GitHub serves unreachable PR commits by SHA.
-export function fetchPull(git, pr, baseRefName, shas = []) {
+// `optional` commits (GitHub's reported base) are used only when available.
+export function fetchPull(git, pr, baseRefName, shas = [], optional = []) {
   access(() => git(['ls-remote', '--exit-code', 'origin', `refs/pull/${pr}/head`]), 'git ls-remote');
   const attempt = refspec => {
     try {
@@ -242,23 +257,25 @@ export function fetchPull(git, pr, baseRefName, shas = []) {
       console.warn(`review-carryover: could not fetch ${refspec}: ${error.message.split('\n')[0]}`);
     }
   };
-  attempt(`+refs/heads/${baseRefName}:${baseRef(baseRefName)}`);
-  attempt(`+refs/pull/${pr}/head:refs/remotes/origin/pr/${pr}`);
-  for (const sha of new Set(shas)) if (!resolveCommit(git, sha)) attempt(sha);
+  git(['update-ref', '-d', FETCHED_BASE]);
+  attempt(`+refs/heads/${baseRefName}:${FETCHED_BASE}`);
+  for (const sha of new Set([...shas, ...optional])) if (SHA.test(sha) && !resolveCommit(git, sha)) attempt(sha);
   for (const sha of new Set(shas)) if (!resolveCommit(git, sha)) throw new FailClosed(`Commit ${sha} is not available`);
 }
 
+const baseCandidates = view => [view.baseRefOid, FETCHED_BASE];
+
 // `view` is the PR's headRefOid/baseRefName/baseRefOid as GitHub reports them.
 export function receiptFor(git, pr, view, reviewed, now = new Date()) {
-  fetchPull(git, pr, view.baseRefName, [reviewed]);
-  const base = forkPoint(git, reviewed, [view.baseRefOid, baseRef(view.baseRefName)]);
+  fetchPull(git, pr, view.baseRefName, [reviewed], [view.baseRefOid]);
+  const base = forkPoint(git, reviewed, baseCandidates(view));
   return {reviewed, base, recordedAt: now.toISOString()};
 }
 
 export function replayPull(git, pr, view, receipt) {
-  fetchPull(git, pr, view.baseRefName, [receipt.reviewed, receipt.base, view.headRefOid]);
+  fetchPull(git, pr, view.baseRefName, [receipt.reviewed, receipt.base, view.headRefOid], [view.baseRefOid]);
   if (!isAncestor(git, receipt.base, receipt.reviewed)) throw new FailClosed('Recorded base is not an ancestor of the reviewed commit');
-  const newBase = forkPoint(git, view.headRefOid, [view.baseRefOid, baseRef(view.baseRefName)]);
+  const newBase = forkPoint(git, view.headRefOid, baseCandidates(view));
   return {replayed: replayTree(git, receipt.reviewed, receipt.base, newBase), head: treeOf(git, view.headRefOid), newBase};
 }
 
@@ -279,8 +296,10 @@ function record(repo, pr, git) {
   };
   if (!summary) return skip('summary edit does not introduce a review');
   const {view, comments} = loadPull(repo, pr);
-  // Recording after a push or restack would pin the wrong base.
+  // Recording after a push, restack, or retarget would pin the wrong base.
   if (view.headRefOid !== summary.reviewed) return skip('PR head moved since the review');
+  const timeline = JSON.parse(gh(['api', `repos/${repo}/issues/${pr}/timeline?per_page=100`, '--paginate', '--slurp'])).flat();
+  if (recentBaseChange(timeline)) return skip('PR base changed during the review window');
   let receipt;
   try {
     receipt = receiptFor(git, pr, view, summary.reviewed);

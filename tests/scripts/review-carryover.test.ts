@@ -18,6 +18,7 @@ import {
   parseGreptileSummary,
   pullContexts,
   readReceipts,
+  recentBaseChange,
   receiptFor,
   renderReceipts,
   replayPull,
@@ -310,6 +311,28 @@ describe('receipts against a remote', () => {
     expect(c.run('rev-parse', 'refs/heads/origin/parent')).toBe(unrelated);
   });
 
+  it('never falls back to a stale cached base when the base fetch fails', () => {
+    const r = remoteStack();
+    r.publish(10);
+    const c = r.clone();
+    const receipt = receiptFor(c.git, 10, r.view(), r.reviewed);
+    // The parent is reset to main, then deleted, so the next base fetch fails.
+    r.run('push', '-q', '--force', 'origin', 'main:parent');
+    r.run('push', '-q', 'origin', '--delete', 'parent');
+    const reported = { ...r.view(), baseRefOid: r.run('rev-parse', 'main') };
+    expect(replayOk(c.git, 10, reported, receipt)).toBe(false);
+  });
+
+  it('fetches the GitHub-reported base by SHA when its branch is gone', () => {
+    const r = remoteStack();
+    r.run('checkout', '-q', 'parent');
+    const advanced = r.commit('p3.ts', 'parent moved on\n', 'parent advances');
+    r.publish(11);
+    const view = { ...r.view(), baseRefOid: advanced };
+    r.run('push', '-q', 'origin', '--delete', 'parent');
+    expect(receiptFor(r.clone().git, 11, view, r.reviewed).base).toBe(r.parent);
+  });
+
   it('keeps working after the base branch is deleted', () => {
     const r = remoteStack();
     r.publish(8);
@@ -371,6 +394,25 @@ describe('Greptile summary parsing', () => {
 
   it('returns null when Greptile has not summarized the PR', () => {
     expect(parseGreptileSummary(greptile('Reviewing...'))).toBeNull();
+  });
+});
+
+describe('base changes around a review', () => {
+  const now = Date.parse('2026-10-13T22:00:00Z');
+  const at = (minutesAgo: number, event: string) => ({ event, created_at: new Date(now - minutesAgo * 60_000).toISOString() });
+
+  it('flags a retarget or base force-push within the review window', () => {
+    expect(recentBaseChange([at(5, 'base_ref_changed')], now)).toBe(true);
+    expect(recentBaseChange([at(29, 'base_ref_force_pushed')], now)).toBe(true);
+  });
+
+  it('ignores older base changes and unrelated events', () => {
+    expect(recentBaseChange([at(31, 'base_ref_changed'), at(1, 'labeled'), at(1, 'head_ref_force_pushed')], now)).toBe(false);
+    expect(recentBaseChange([], now)).toBe(false);
+  });
+
+  it('treats an unparseable event time as a recent change', () => {
+    expect(recentBaseChange([{ event: 'base_ref_changed', created_at: 'garbage' }], now)).toBe(true);
   });
 });
 
