@@ -38,6 +38,7 @@ import {
 } from "./onboarding-widget-runner";
 import { useOnboardingAiConnect } from "./use-onboarding-ai-connect";
 import { useOnboardingAppConnect } from "./use-onboarding-app-connect";
+import { useOnboardingOverlayLease } from "./use-onboarding-overlay-lease";
 import { useOnboardingRun } from "./use-onboarding-run";
 import { useChatMaximized } from "./use-chat-maximized";
 import { useOnboardingSupportDock } from "./use-onboarding-support-dock";
@@ -82,6 +83,7 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
   const runView = useOnboardingRun(state, dispatch, { api, client, selection, selectionPending: initialLoading });
   const chatMaximized = useChatMaximized();
   useOnboardingSupportDock({ size: state.size, side: prefs.side, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
+  useOnboardingOverlayLease(state.size !== "bubble" && !chatMaximized);
   const ai = useOnboardingAiConnect(api, dispatch);
   const signInPanelOpen = state.ai?.step === "waiting";
   const abandonSignIn = ai.abandonSignIn;
