@@ -1,3 +1,4 @@
+import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import type {
   AiProviderSnapshotV3,
   ProviderHarnessInstallState,
@@ -44,6 +45,7 @@ export function coordinatorLifecycleAccounts(input: {
   config: ProviderSettingsConfiguration;
   canonical: AiProviderSnapshotV3;
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
+  codexNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   claudeNativeSignedOut?: ClaudeNativeSignedOut | null;
 }): ProviderLifecycleAccount[] {
   const preliminary = input.config.accountProfiles.flatMap((profile): ProviderLifecycleAccount[] => {
@@ -86,6 +88,11 @@ export function coordinatorLifecycleAccounts(input: {
   return lifecycleCredentialCompetition(preliminary.map(account => {
     const source = input.canonical.accessSources.find(row => row.id === account.accessSourceId);
     const canonicalAccount = input.canonical.accounts.find(row => row.id === account.id);
+    if (account.driverId === "codex" && account.id === "owner_codex" && account.accessSourceId === "owner_openai_profile"
+      && account.authMethod === "terminal" && canonicalAccount?.vendor === "openai" && source?.vendor === "openai"
+      && source.fundingKind === "owner_account" && input.codexNativeAccountMetadata?.authMethod === "terminal") {
+      return { ...account, authenticated: true, nativeCodexAccount: input.codexNativeAccountMetadata };
+    }
     return isNativeClaudeLifecycleAccount(account)
       && canonicalAccount?.vendor === "anthropic" && canonicalAccount.authMethod === "provider_profile"
       && source?.vendor === "anthropic" && source.fundingKind === "owner_account"
@@ -101,6 +108,7 @@ export function coordinatorLifecycleAccount(input: {
   config: ProviderSettingsConfiguration;
   canonical: AiProviderSnapshotV3;
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
+  codexNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   claudeNativeSignedOut?: ClaudeNativeSignedOut | null;
 }): ProviderLifecycleAccount | undefined {
   return coordinatorLifecycleAccounts(input).find((account) => account.id === input.accountId);
@@ -113,8 +121,9 @@ export function requireCoordinatorLifecycleAccount(
   canonical: AiProviderSnapshotV3,
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null,
   claudeNativeSignedOut?: ClaudeNativeSignedOut | null,
+  codexNativeAccountMetadata?: CodexNativeAccountMetadata | null,
 ): ProviderLifecycleAccount {
-  const account = coordinatorLifecycleAccount({ accountId, config, canonical, claudeNativeAccountMetadata, claudeNativeSignedOut });
+  const account = coordinatorLifecycleAccount({ accountId, config, canonical, claudeNativeAccountMetadata, claudeNativeSignedOut, codexNativeAccountMetadata });
   if (!lifecycle || !account) {
     throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
   }
@@ -183,6 +192,7 @@ export function supportedProviderSettingsActions(input: {
   canonical: AiProviderSnapshotV3;
   gatewayPolicyAuthority?: "local" | "platform";
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
+  codexNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   claudeNativeSignedOut?: ClaudeNativeSignedOut | null;
 }): ProviderSettingsSupportedAction[] {
   const actions: ProviderSettingsSupportedAction[] = input.runtime
@@ -200,7 +210,7 @@ export function supportedProviderSettingsActions(input: {
     actions.push("start_login");
   }
   const lifecycleAccounts = input.lifecycle
-    ? coordinatorLifecycleAccounts({ config: input.config, canonical: input.canonical, claudeNativeAccountMetadata: input.claudeNativeAccountMetadata, claudeNativeSignedOut: input.claudeNativeSignedOut })
+    ? coordinatorLifecycleAccounts({ config: input.config, canonical: input.canonical, claudeNativeAccountMetadata: input.claudeNativeAccountMetadata, claudeNativeSignedOut: input.claudeNativeSignedOut, codexNativeAccountMetadata: input.codexNativeAccountMetadata })
     : [];
   if (input.lifecycle && lifecycleAccounts.some((account) =>
     input.lifecycle!.supportedActions(account).includes("logout_account"))) {

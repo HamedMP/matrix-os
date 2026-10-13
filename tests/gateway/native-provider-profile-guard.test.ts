@@ -91,3 +91,13 @@ it('discovers a receipt-evicted historical native login and permits only its can
   await expect(guard.run('codex', { kind: 'write' }, async () => 'key')).rejects.toThrow();
   expect(await guard.run('codex', { kind: 'login', recoveryKey }, async () => 'replay')).toBe('replay');
 });
+it('denies read admission during a live native login even after handoff released its writer marker', async () => {
+  await fixture();
+  let state: 'running' | 'stopped' = 'running';
+  const guard = createNativeProviderProfileGuard({ homePath: home, registry: {
+    listProfileSessions: async () => [{ name: 'native-login', agent: 'codex' }],
+    get: async () => ({ name: 'native-login', agent: 'codex' }), observeAgentLiveness: async () => state,
+  } });
+  await expect(guard.assertReadable('codex')).rejects.toBeDefined();
+  state = 'stopped'; await expect(guard.assertReadable('codex')).resolves.toBeUndefined();
+});

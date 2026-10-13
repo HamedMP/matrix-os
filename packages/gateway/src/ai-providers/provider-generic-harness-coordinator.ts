@@ -625,7 +625,7 @@ export function createProviderGenericHarnessCoordinator(options: {
     const affected = affectedHarness(input);
     const specialized = affected.after ?? affected.before;
     if (specialized && isSpecializedHarness(specialized)) {
-      assertSpecializedHarnessEnablement({ harness: specialized, mutation, canonical: input.canonical, snapshot: input.snapshot, claudeNativeCompletion: input.claudeNativeCompletion });
+      assertSpecializedHarnessEnablement({ harness: specialized, mutation, canonical: input.canonical, snapshot: input.snapshot, claudeNativeCompletion: input.claudeNativeCompletion, codexNativeCompletion: input.codexNativeCompletion });
       replaceReceipt(receipts, { key: input.idempotencyKey, payloadHash, state: "applied" });
       await writeReceipts(receipts);
       return;

@@ -232,6 +232,7 @@ async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
 }
 
 export function createWorkspaceRoutes(options: {
+  beforeProjectSessionRemove?: Parameters<typeof createAgentSessionManager>[0]["beforeProjectSessionRemove"];
   backgroundRuntime?: BackgroundAgentRuntime;
   homePath: string;
   projectManager?: ProjectManager;
@@ -274,6 +275,7 @@ export function createWorkspaceRoutes(options: {
     agentLauncher,
     terminalRuntime,
     backgroundRuntime: options.backgroundRuntime,
+    beforeProjectSessionRemove: options.beforeProjectSessionRemove,
   });
   const agentSandbox = options.agentSandbox ?? createAgentSandbox({ homePath: options.homePath });
   const sessionRuntimeBridge = options.sessionRuntimeBridge ?? createSessionRuntimeBridge();
