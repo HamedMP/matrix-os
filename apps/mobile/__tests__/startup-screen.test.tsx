@@ -1,9 +1,10 @@
 import React from "react";
 import { render, screen } from "@testing-library/react-native";
-import { StyleSheet as NativeStyleSheet, Text } from "react-native";
+import { StyleSheet as NativeStyleSheet, Text, useColorScheme } from "react-native";
 import type { UnistylesThemes } from "react-native-unistyles";
 
 import { StartupScreen } from "../components/StartupScreen";
+import { useStartupColors } from "../lib/use-startup-colors";
 
 type SplashPluginOptions = {
   image: string;
@@ -39,15 +40,34 @@ function loadAppThemes(): UnistylesThemes {
 
 const appThemes = loadAppThemes();
 
-/** The Unistyles jest mock always serves the light theme; serve the named one instead. */
-function useAppTheme(name: keyof UnistylesThemes) {
+type ColorMode = keyof UnistylesThemes;
+
+/**
+ * Launches with the device in one appearance and the app's theme, as picked in
+ * Settings, possibly in the other. The Unistyles jest mock always serves the
+ * light theme, so the named one is served instead.
+ */
+function launchWith({ device, appTheme }: { device: ColorMode; appTheme: ColorMode }) {
+  // React Native's jest preset replaces useColorScheme with a mock pinned to light.
+  jest.mocked(useColorScheme).mockReturnValue(device);
   jest.spyOn(unistyles, "useUnistyles").mockImplementation(
-    () => ({ theme: appThemes[name], rt: unistyles.UnistylesRuntime }) as ReturnType<typeof unistyles.useUnistyles>,
+    () => ({ theme: appThemes[appTheme], rt: unistyles.UnistylesRuntime }) as ReturnType<typeof unistyles.useUnistyles>,
   );
+}
+
+/** Status content as the root layout hands it over: coloured for the startup screen's ground. */
+function StatusMessage() {
+  const colors = useStartupColors();
+  return <Text style={{ color: colors.textSubtle }}>Authenticating…</Text>;
+}
+
+function colorOf(text: string): unknown {
+  return NativeStyleSheet.flatten(screen.getByText(text).props.style).color;
 }
 
 describe("startup screen", () => {
   afterEach(() => {
+    jest.mocked(useColorScheme).mockReturnValue("light");
     jest.restoreAllMocks();
   });
 
@@ -84,7 +104,7 @@ describe("startup screen", () => {
 
   it("repeats the light splash: the same artwork on the same ground", () => {
     const splash = nativeSplash();
-    useAppTheme("light");
+    launchWith({ device: "light", appTheme: "light" });
     render(<StartupScreen />);
 
     expect(splash.image).toBe("./assets/splash-icon.png");
@@ -95,16 +115,50 @@ describe("startup screen", () => {
 
   it("repeats the dark splash, which has its own artwork and ground", () => {
     const splash = nativeSplash();
-    useAppTheme("dark");
+    launchWith({ device: "dark", appTheme: "dark" });
     render(<StartupScreen />);
 
-    // A dark-green rabbit would vanish on the dark ground, and the app's own
-    // dark background is not the splash's, so both have to follow the splash.
     expect(splash.dark.image).toBe("./assets/splash-icon-dark.png");
     expect(screen.getByTestId("startup-logo").props.source).toBe(require("../assets/splash-icon-dark.png"));
     const ground = NativeStyleSheet.flatten(screen.getByTestId("startup-screen").props.style);
     expect(ground.backgroundColor).toBe(splash.dark.backgroundColor);
     expect(splash.dark.backgroundColor).not.toBe(splash.backgroundColor);
+  });
+
+  // The native splash is drawn for the device's appearance; it knows nothing of
+  // the theme picked in Settings. The startup screen has to agree with it, or
+  // the launch flips colours at the hand-over.
+  it("stays on the dark splash on a dark device when Light is picked in Settings", () => {
+    const splash = nativeSplash();
+    launchWith({ device: "dark", appTheme: "light" });
+    render(
+      <StartupScreen>
+        <StatusMessage />
+      </StartupScreen>,
+    );
+
+    expect(screen.getByTestId("startup-logo").props.source).toBe(require("../assets/splash-icon-dark.png"));
+    const ground = NativeStyleSheet.flatten(screen.getByTestId("startup-screen").props.style);
+    expect(ground.backgroundColor).toBe(splash.dark.backgroundColor);
+    // Text on it is the dark scheme's too, or it would be dark on dark.
+    expect(colorOf("Matrix OS")).toBe(appThemes.dark.v2.colors.textDefault);
+    expect(colorOf("Authenticating…")).toBe(appThemes.dark.v2.colors.textSubtle);
+  });
+
+  it("stays on the light splash on a light device when Dark is picked in Settings", () => {
+    const splash = nativeSplash();
+    launchWith({ device: "light", appTheme: "dark" });
+    render(
+      <StartupScreen>
+        <StatusMessage />
+      </StartupScreen>,
+    );
+
+    expect(screen.getByTestId("startup-logo").props.source).toBe(require("../assets/splash-icon.png"));
+    const ground = NativeStyleSheet.flatten(screen.getByTestId("startup-screen").props.style);
+    expect(ground.backgroundColor).toBe(splash.backgroundColor);
+    expect(colorOf("Matrix OS")).toBe(appThemes.light.v2.colors.textDefault);
+    expect(colorOf("Authenticating…")).toBe(appThemes.light.v2.colors.textSubtle);
   });
 
   it("leaves the title out until its font has loaded", () => {
