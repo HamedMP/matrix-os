@@ -249,28 +249,32 @@ costs a paid review each and finds nothing new, which adds up quickly on long
 stacks.
 
 ```bash
-node scripts/review/review-carryover.mjs check <pr>   # exit 0: the review covers the head
+node scripts/review/review-carryover.mjs check <pr>
+# 0: the review covers the head   1: request a fresh review   3: gh/git access failed, fix and rerun
 ```
 
 How it decides:
 
-1. `.github/workflows/review-fingerprint.yml` runs whenever Greptile creates or
+1. `.github/workflows/review-receipt.yml` runs whenever Greptile creates or
    edits its summary comment and records the base the reviewed commit forked
    from in a single `github-actions[bot]` PR comment (newest 30 receipts; the
    first receipt for a reviewed commit wins). The base must be captured at
    review time: a restack force-pushes the parent, so the old fork point is no
    longer on any branch afterwards.
-2. `check` reads the Greptile summary (score and `Last reviewed commit`) and
-   stops early unless it is `5/5` with a recorded base. It then recomputes the
-   reviewed commit's own diff against that base and the head's own diff
-   against its current base, and carries the review only when they match.
+2. `check` reads Greptile's score heading and `Last reviewed commit` footer
+   (anything ambiguous fails closed) and stops early unless the score is `5/5`
+   with a recorded base. It then requires both:
+   - the head tree is exactly `git merge-tree --merge-base=<recorded base>
+     <head's base> <reviewed>`, the clean replay of the reviewed change onto
+     the head's current base; and
+   - the PR's own diff with three context lines (line numbers and blob ids
+     stripped) is unchanged.
 
-Both diffs keep three context lines and drop line numbers and blob ids. Base
-commits that shift lines or edit code away from the PR's changes keep the
-match. New PR commits, conflict resolutions, an identical edit moved elsewhere,
-or a base edit within three lines of a PR change break it. Every diff setting
-is pinned in the script, and both diffs come from the same machine, so local
-git config cannot split them.
+Restacks, retargets, base merges, and message-only amends pass. New PR work,
+conflict resolutions, an identical edit moved elsewhere (even between
+repeated blocks), and base edits within three lines of a PR change fail. The
+second check exists because git merges a base edit one line away from a PR
+change cleanly, such as a removed guard above an inserted call.
 
 Limits:
 

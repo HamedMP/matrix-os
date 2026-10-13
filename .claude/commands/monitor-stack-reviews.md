@@ -35,7 +35,8 @@ final human review.
 - Do not add `ready-for-ci` before the latest trusted Greptile review for that
   PR is `5/5`. There is no command-level override for this gate.
 - In this command, a *current-head* `5/5` also includes a `5/5` on an earlier
-  head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0). Restacks, retargets, and
+  head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0;
+  exit 1 needs a fresh review, exit 3 means fix `gh`/git access and rerun). Restacks, retargets, and
   base merges keep the PR's own diff, so they keep the review; do not request a
   re-review for them. New PR work or conflict resolutions fail the check and
   need a fresh review.
@@ -118,7 +119,8 @@ final human review.
      `ready-for-ci`, remove the label from that PR and every descendant PR
      whose head will be rewritten by the next stack rebase/submit:
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add labels only
-     after fresh current-head Greptile reviews return `5/5`.
+     after each rewritten PR has a current-head `5/5` again, either carried
+     over by the check or from a fresh Greptile review.
    - Run the narrow relevant tests after the fix. Before staging or committing,
      also run `git diff --check`, `bun run typecheck`,
      `bun run check:patterns`, and `bun run test`. If an external outage or
@@ -208,7 +210,8 @@ final human review.
    - If any fix requires a new push after `ready-for-ci` was applied, remove the
      label before editing:
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add it only after
-     a fresh current-head Greptile review returns `5/5` for the new commit.
+     the new commit has a current-head `5/5`, either carried over by the check
+     or from a fresh Greptile review.
    - Completion requires every monitored PR to be either:
      - latest trusted Greptile `5/5` with no unresolved human review threads,
        unresolved Codex review comments, or unresolved actionable issue
