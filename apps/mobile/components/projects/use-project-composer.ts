@@ -45,7 +45,7 @@ interface ProjectComposerOptions {
  * in the project, through the same request path as the chat screen. This
  * screen has no transcript to show a sent message in, so the text and the
  * attachments stay in the box until the server has them, and anything typed
- * or added meanwhile is kept.
+ * meanwhile is kept. Nothing can be attached meanwhile: see `canAddAttachments`.
  */
 export function useProjectComposer({
   projectId,
@@ -121,6 +121,12 @@ export function useProjectComposer({
     removeAttachment,
     /** How many more can be added. What is being sent stays in the box, so it is counted. */
     attachmentRoom: Math.max(0, MAX_MESSAGE_ATTACHMENTS - attachments.length),
+    /**
+     * False while a message is on its way. When it is in, this screen is left
+     * for the new chat, and what a photo library or file browser opened
+     * meanwhile handed back would have no composer left to go to.
+     */
+    canAddAttachments: !isSending,
     /** The waiting attachments the selected model does not read. Nothing is sent while there are any. */
     unreadableAttachments: unreadable,
     canSend,

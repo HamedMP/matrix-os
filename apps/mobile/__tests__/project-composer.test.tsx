@@ -237,6 +237,20 @@ describe("useProjectComposer", () => {
       expect(result.current.attachments.map((attachment) => attachment.name)).toEqual(["later.jpg"]);
     });
 
+    it("cannot be added while a message is on its way, as this screen is left for the new chat once it is in", () => {
+      const { result, rerender, initialProps } = renderComposer();
+      expect(result.current.canAddAttachments).toBe(true);
+
+      mockPending = true;
+      rerender({ ...initialProps });
+      expect(result.current.canAddAttachments).toBe(false);
+
+      // A send that failed leaves the person on this screen, where they can add again.
+      mockPending = false;
+      rerender({ ...initialProps });
+      expect(result.current.canAddAttachments).toBe(true);
+    });
+
     it("hold the message back while the selected model does not read one of them", () => {
       const { result, rerender, initialProps } = renderComposer({ attachmentKinds: ["file"] });
       act(() => result.current.setDraft("Look at this"));
