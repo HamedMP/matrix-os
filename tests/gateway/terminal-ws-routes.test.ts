@@ -62,19 +62,22 @@ function authorizedRoutes(input: {
   const homePath = mkdtempSync(join(tmpdir(), "terminal-ws-routes-"));
   homes.push(homePath);
 
+  const ownership = {
+      attach: vi.fn(),
+      detach: vi.fn(),
+      touch: vi.fn(),
+      role: vi.fn((): "writer" | "observer" => "writer"),
+      leaseEpoch: vi.fn(() => 1),
+      allowsMutation: vi.fn(() => true),
+  };
+
+
   registerTerminalWebSocketRoutes({
     app,
     upgradeWebSocket,
     homePath,
     terminalWorkspaceRuntime: { attach, listWorkspaces } as never,
-    terminalLiveOwnership: {
-      attach: vi.fn(),
-      detach: vi.fn(),
-      touch: vi.fn(),
-      role: vi.fn(() => "writer"),
-      leaseEpoch: vi.fn(() => 1),
-      allowsMutation: vi.fn(() => true),
-    } as never,
+    terminalLiveOwnership: ownership as never,
     workspaceSessionRuntimeBridge: { consumeSessionAttachment: vi.fn() } as never,
     terminalRuntimeOwnerIds: [OWNER_ID],
     chatRepository: chatRepository as never,
@@ -91,7 +94,7 @@ function authorizedRoutes(input: {
     const close = vi.fn();
     return { sent, close, context: { send: (frame: string) => sent.push(frame), close } as unknown as WSContext };
   };
-  return { app, socket, order, attach, withWorkspace, send, chatRepository, get events() { return events; } };
+  return { app, socket, order, attach, withWorkspace, send, chatRepository, ownership, get events() { return events; } };
 }
 
 function repositoryDouble(bound: boolean) {
@@ -296,6 +299,42 @@ describe("terminal WebSocket route registration", () => {
     await vi.waitFor(() => expect(routes.send).toHaveBeenCalledOnce());
     expect(routes.order).toEqual(["admission:run", "runtime-send:ping"]);
   });
+  it.each([false, true])("preserves ordered Enter admission and rechecks revocation=%s in the production callback", async revoked => {
+    const routes = authorizedRoutes({ accessScope: "owner", repository: repositoryDouble(false) });
+    const peer = await openTab(routes, "");
+    await vi.waitFor(() => expect(routes.attach).toHaveBeenCalledOnce());
+    let enterAdmission!: () => void;
+    let releaseAdmission!: () => void;
+    const admitted = new Promise<void>(resolve => { enterAdmission = resolve; });
+    const released = new Promise<void>(resolve => { releaseAdmission = resolve; });
+    routes.withWorkspace.mockImplementationOnce(async (_owner, _workspace, _action, run) => {
+      enterAdmission();
+      await released;
+      return run();
+    });
+    const input = (data: string) => routes.events?.onMessage?.(
+      { data: JSON.stringify({ type: "input", terminalRef: TERMINAL_REF, data }) } as never,
+      peer.context,
+    );
+    try {
+      input("hello");
+      await admitted;
+      input("\r");
+      if (revoked) {
+        routes.ownership.role.mockReturnValue("observer");
+        routes.ownership.allowsMutation.mockReturnValue(false);
+      }
+      releaseAdmission();
+      if (revoked) {
+        await vi.waitFor(() => expect(peer.sent.map(raw => JSON.parse(raw).code)).toEqual(["read_only", "read_only"]));
+        expect(routes.send).not.toHaveBeenCalled();
+      } else {
+        await vi.waitFor(() => expect(routes.send).toHaveBeenCalledTimes(2));
+        expect(routes.send.mock.calls.map(([frame]) => (frame as { data?: string }).data)).toEqual(["hello", "\r"]);
+      }
+    } finally { releaseAdmission(); routes.events?.onClose?.(new Event("close") as never, peer.context); }
+  });
+
   it("attaches the URL the CLI builds for a sized TTY as a hard writer", async () => {
     const routes = authorizedRoutes({ accessScope: "owner", repository: repositoryDouble(false) });
     const url = new URL(createShellClient({ gatewayUrl: "http://gateway" })

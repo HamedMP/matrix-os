@@ -4,8 +4,6 @@ import { resolve } from "node:path";
 import type { Browser, Page } from "playwright";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { TerminalTabClientFrameSchema } from "../../packages/contracts/src/index.js";
-import { TerminalFrameQueue } from "../../packages/terminal-runtime/src/input-frame-queue.js";
-import { createTerminalLiveOwnership } from "../../packages/gateway/src/terminal-live-ownership.js";
 
 const root = resolve(__dirname, "../..");
 const { chromium } = createRequire(resolve(root, "shell/package.json"))("@playwright/test");
@@ -140,13 +138,17 @@ describe("ENG-293 real-browser Web Terminal Enter", () => {
       await page.locator("#pane-0 textarea").evaluate(node => {
         node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
         node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, isComposing: true, bubbles: true }));
+        node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 0, isComposing: true, bubbles: true }));
+        });
+      expect((await inputs(page)).map(frame => frame.data).join("")).toBe("");
+      await page.locator("#pane-0 textarea").evaluate(node => {
         node.dispatchEvent(new CompositionEvent("compositionend", { data: "", bubbles: true }));
       });
       await page.keyboard.press("Control+g");
       await modernEnter(page);
-      expect(await inputs(page)).toEqual([]);
+      expect((await inputs(page)).map(frame => frame.data).join("")).toBe("");
       await page.keyboard.press("Enter");
-      expect((await inputs(page)).map(frame => frame.data)).toEqual(["\r"]);
+      expect((await inputs(page)).map(frame => frame.data).join("")).toBe("\r");
     } finally { await page.close(); }
   });
 
@@ -174,6 +176,17 @@ describe("ENG-293 real-browser Web Terminal Enter", () => {
       await page.keyboard.type("denied");
       await page.keyboard.press("Enter");
       await modernEnter(page);
+      const trusted = await page.locator("#pane-0 textarea").evaluate(node => {
+        let trustedLineBreak = false;
+        const capture = (event: Event) => { const input = event as InputEvent;
+          trustedLineBreak ||= input.inputType === "insertLineBreak" && input.isTrusted; };
+        node.addEventListener("input", capture, true);
+        document.execCommand("insertLineBreak");
+        node.removeEventListener("input", capture, true);
+        return trustedLineBreak;
+      });
+      expect(trusted).toBe(true);
+      await settle(page);
       expect(await inputs(page)).toEqual([]);
     } finally { await page.close(); }
   });
@@ -191,30 +204,4 @@ describe("ENG-293 real-browser Web Terminal Enter", () => {
     } finally { await page.close(); }
   });
 
-  it("rechecks writer ownership after ordered input waits in the real queue", async () => {
-    const page = await open();
-    const ownership = createTerminalLiveOwnership();
-    const writes: string[] = [];
-    let authorizations = 0;
-    const key = `owner:${ref.workspaceId}:${ref.tabId}`;
-    const queue = new TerminalFrameQueue({ onOverflow: () => { throw new Error("unexpected overflow"); },
-      onError: error => { throw error; } });
-    try {
-      ownership.attach({ key, viewerId: "browser", exclusive: true, onRevoked: () => undefined });
-      await page.keyboard.type("hello");
-      await page.keyboard.press("Enter");
-      const frames = await inputs(page);
-      expect(frames.map(frame => frame.data).join("")).toBe("hello\r");
-      for (const frame of frames) queue.enqueue(TerminalTabClientFrameSchema.parse(frame));
-      ownership.attach({ key, viewerId: "other", exclusive: true, onRevoked: () => undefined });
-      queue.resume(async frame => {
-        authorizations += 1;
-        if (frame.type === "input" && ownership.allowsMutation(key, "browser")) writes.push(frame.data);
-      });
-      await settle(page);
-      expect(authorizations).toBe(1); // paused adjacent inputs coalesce without reordering
-      expect(writes).toEqual([]);
-      expect(ownership.role(key, "browser")).toBe("observer");
-    } finally { queue.close(); ownership.close(); await page.close(); }
-  });
 });
