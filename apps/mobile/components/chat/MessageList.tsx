@@ -8,6 +8,7 @@ import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 
 import { AssistantMessage } from "./AssistantMessage";
 import type { MessageAttachmentsProps } from "./MessageAttachments";
+import { useUnsentMessageActions } from "./unsent-message-actions";
 import { UserMessage } from "./UserMessage";
 
 export interface MessageListProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
@@ -69,8 +70,21 @@ function Message({
   renderResults,
   renderComputerPhoto,
 }: Pick<MessageListProps, "renderResults" | "renderComputerPhoto"> & { message: TranscriptMessage }) {
+  // A message that was not sent offers what the chat it is shown in can do about it.
+  const unsent = useUnsentMessageActions();
   if (message.role === "user") {
-    return <UserMessage text={message.text} attachments={message.attachments} renderComputerPhoto={renderComputerPhoto} />;
+    const failed = message.delivery === "failed" && unsent !== null;
+    return (
+      <UserMessage
+        text={message.text}
+        attachments={message.attachments}
+        renderComputerPhoto={renderComputerPhoto}
+        delivery={message.delivery}
+        onRetry={failed ? () => unsent.onRetry(message.id) : undefined}
+        onEdit={failed ? () => unsent.onEdit(message.id) : undefined}
+        retryDisabled={message.retryBlocked}
+      />
+    );
   }
   if (message.role === "assistant") {
     return <AssistantMessage message={message} results={renderResults?.(message)} />;
