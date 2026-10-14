@@ -4,7 +4,7 @@ import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
-import { initializeCustomerFundedStarterPolicy } from '../../packages/platform/src/customer-funded-starter-policy.js';
+import { initializeCustomerFundedStarterPolicy, lockCustomerFundedStarterActivation } from '../../packages/platform/src/customer-funded-starter-policy.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
@@ -38,6 +38,11 @@ describe('ENG-291 completed customer starter recovery', () => {
   let repository: ReturnType<typeof createAiFundedPolicyRepository>;
   let admin: pg.Pool | undefined;
   let schema: string | undefined;
+  const serviceFor = (target: PlatformDB) => createCustomerVpsService({ db: target,
+    config: loadCustomerVpsConfig({ PLATFORM_SECRET: 'fixture-platform', HETZNER_API_TOKEN: 'fixture-hetzner',
+      S3_ACCESS_KEY_ID: 'fixture-r2', S3_SECRET_ACCESS_KEY: 'fixture-r2-secret',
+      S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'fixture', CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE: '1' }),
+    hetzner: createMockHetznerClient(), systemStore: createMockCustomerVpsSystemStore(), now: () => new Date(now) });
 
   beforeEach(async () => {
     for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
@@ -69,12 +74,7 @@ describe('ENG-291 completed customer starter recovery', () => {
       allowed_model_ids: JSON.stringify([modelId]), revision: 1 }).where('policy_id', '=', 'default').execute();
     repository = createAiFundedPolicyRepository({ db, credentialHashSecret: env.AI_FUNDED_CREDENTIAL_HASH_SECRET,
       now: () => new Date(now) });
-    service = createCustomerVpsService({ db,
-      config: loadCustomerVpsConfig({ PLATFORM_SECRET: 'fixture-platform', HETZNER_API_TOKEN: 'fixture-hetzner',
-        S3_ACCESS_KEY_ID: 'fixture-r2', S3_SECRET_ACCESS_KEY: 'fixture-r2-secret',
-        S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'fixture', CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE: '1' }),
-      hetzner: createMockHetznerClient(), systemStore: createMockCustomerVpsSystemStore(),
-      now: () => new Date(now) });
+    service = serviceFor(db);
   });
 
   afterEach(async () => {
@@ -157,6 +157,25 @@ describe('ENG-291 completed customer starter recovery', () => {
       .where('machine_id', '=', identity.machineId).execute();
     await service.reconcileProvisioning();
     expect(await ledger()).toHaveLength(1);
+  });
+
+  it('bounds lock admission before the first owner lock without changing later transactions', async () => {
+    const baseline = await sql<{ timeout: string }>`SELECT current_setting('lock_timeout') AS timeout`.execute(db.executor);
+    const transaction = db.transaction.bind(db);
+    vi.spyOn(db, 'transaction').mockImplementationOnce(work => transaction(async trx => {
+      const nested = trx.transaction.bind(trx);
+      vi.spyOn(trx, 'transaction').mockImplementationOnce(async innerWork => {
+        // Admission's first nested transaction is entered before its owner lock.
+        const setting = await sql<{ timeout: string }>`SELECT current_setting('lock_timeout') AS timeout`.execute(trx.executor);
+        expect(parseFloat(setting.rows[0].timeout)).toBeGreaterThan(0);
+        expect(parseFloat(setting.rows[0].timeout)).toBeLessThanOrEqual(250);
+        return nested(innerWork);
+      });
+      return work(trx);
+    }));
+    await service.reconcileProvisioning();
+    expect(await ledger()).toHaveLength(1);
+    expect(await sql<{ timeout: string }>`SELECT current_setting('lock_timeout') AS timeout`.execute(db.executor)).toEqual(baseline);
   });
 
   it.each([
@@ -248,7 +267,7 @@ describe('ENG-291 completed customer starter recovery', () => {
     expect(await snapshot()).toEqual(before);
   });
 
-  it.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL && !process.env.MATRIX_TEST_POSTGRES_URL)('issues exactly one lifetime grant across independent native PostgreSQL pools', async () => {
+  const openSecondPool = async () => {
     // The native fixture validates a disposable loopback URL and owns its clone.
     // No WASM fallback may stand in for independent-pool lock evidence.
     const result = await sql<{ name: string }>`SELECT current_database() AS name`.execute(db.executor);
@@ -260,6 +279,25 @@ describe('ENG-291 completed customer starter recovery', () => {
       statement_timeout: 10_000, query_timeout: 12_000,
     }) }) });
     await secondDb.ready;
+    return secondDb;
+  };
+
+  it.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL && !process.env.MATRIX_TEST_POSTGRES_URL)('skips a busy owner within a bounded pass and retries after its native lock is released', async () => {
+    const contender = serviceFor(await openSecondPool());
+    await db.transaction(async trx => {
+      await lockCustomerFundedStarterActivation(trx, identity.ownerId, env);
+      const started = Date.now();
+      await contender.reconcileProvisioning();
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(await trx.executor.selectFrom('ai_funded_credit_ledger').selectAll().execute()).toEqual([]);
+    });
+    await contender.reconcileProvisioning(); // Cursor reset.
+    await contender.reconcileProvisioning();
+    expect(await ledger()).toHaveLength(1);
+  });
+
+  it.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL && !process.env.MATRIX_TEST_POSTGRES_URL)('issues exactly one lifetime grant across independent native PostgreSQL pools', async () => {
+    await openSecondPool();
     let pending: Promise<boolean> | undefined;
     let firstChanged = false;
     try {
