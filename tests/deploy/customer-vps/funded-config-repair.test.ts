@@ -38,8 +38,9 @@ function routingRequest(path: string, action = 'align-routing') {
 }
 
 // Exercise real file descriptors/rename/fsync/flock with test-only directory and ownership injection.
+// -B: -I ignores PYTHONDONTWRITEBYTECODE, and a scripts/ops/__pycache__ would dirty the checkout.
 function run(root: string, input: unknown, setup = '', activity = 'lambda: None', anchored = false) {
-  const result = spawnSync('/usr/bin/python3', ['-I', '-c', `
+  const result = spawnSync('/usr/bin/python3', ['-I', '-B', '-c', `
 import importlib.util,json,os,sys
 s=importlib.util.spec_from_file_location('repair',sys.argv[1]); m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 root=sys.argv[2]
