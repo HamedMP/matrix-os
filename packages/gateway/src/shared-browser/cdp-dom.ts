@@ -12,8 +12,8 @@ export const SNAPSHOT_FUNCTION = `function MATRIX_SNAPSHOT(observationId) {
   const doc = this;
   ${NAME_FUNCTION}
   const secret = e => e instanceof HTMLInputElement && (e.type === 'password' || e.autocomplete === 'one-time-code' || [e.name,e.id,e.placeholder,e.getAttribute('aria-label') || '',nameOf(e)].some(value => /password|passcode|secret.?key|one.?time|verification.?code|authentication.?code|security.?code|confirmation.?code|two.?factor|2fa|\\botp\\b|^code$/i.test(value)));
-  if (doc.querySelector('[data-matrix-owner-handoff]') || Array.from(doc.querySelectorAll('input')).some(secret)) { globalThis.__matrixBrowserObservation = null; return {handoff:true}; }
   const visible = e => e.isConnected && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden],[inert],[aria-hidden="true"],[data-matrix-private]');
+  if (Array.from(doc.querySelectorAll('[data-matrix-owner-handoff]')).some(visible) || Array.from(doc.querySelectorAll('input')).some(e => visible(e) && secret(e))) { globalThis.__matrixBrowserObservation = null; return {handoff:true}; }
   const nodes = new Map(); const elements = [];
   for (const e of doc.querySelectorAll('a[href],button,input,select,textarea,[role="button"],[role="link"],[role="checkbox"]')) {
     if (elements.length >= 100) break;
@@ -38,7 +38,8 @@ export const ACTION_FUNCTION = `function MATRIX_ACTION(observationId,ref,action,
   ${NAME_FUNCTION}
   if (!state || state.id !== observationId || state.document !== doc || state.url !== doc.URL) return {ok:false,reason:'stale'};
   const secret = e => e instanceof HTMLInputElement && (e.type === 'password' || e.autocomplete === 'one-time-code' || [e.name,e.id,e.placeholder,e.getAttribute('aria-label') || '',nameOf(e)].some(value => /password|passcode|secret.?key|one.?time|verification.?code|authentication.?code|security.?code|confirmation.?code|two.?factor|2fa|\\botp\\b|^code$/i.test(value)));
-  if (doc.querySelector('[data-matrix-owner-handoff]') || Array.from(doc.querySelectorAll('input')).some(secret)) return {ok:false,reason:'owner'};
+  const visible = e => e.isConnected && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden' && !e.closest('[hidden],[inert],[aria-hidden="true"],[data-matrix-private]');
+  if (Array.from(doc.querySelectorAll('[data-matrix-owner-handoff]')).some(visible) || Array.from(doc.querySelectorAll('input')).some(e => visible(e) && secret(e))) return {ok:false,reason:'owner'};
   const row = state.nodes.get(ref); const e = row && row.element;
   if (!e || !e.isConnected || e.ownerDocument !== doc || secret(e)) return {ok:false,reason:'stale'};
   if (!e.getClientRects().length || getComputedStyle(e).visibility === 'hidden' || e.closest('[hidden],[inert],[aria-hidden="true"],[data-matrix-private]') || e.disabled) return {ok:false,reason:action === 'wait' ? 'waiting' : 'stale'};

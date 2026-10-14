@@ -105,7 +105,7 @@ describe("bot broker actions", () => {
     } } });
     await expect(actions.handleFrame(tool({ capability: "browser.action", args: { action: "snapshot" } })))
       .resolves.toMatchObject({ ok: true });
-    expect(timeouts).toHaveBeenCalledWith(310_000);
+    expect(timeouts).toHaveBeenCalledWith(360_000);
   });
   it("gives bounded Jev processing time beyond the ordinary tool deadline", async () => {
     binding.capabilities = ["jev.inbox"];

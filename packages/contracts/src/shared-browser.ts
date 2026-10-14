@@ -2,6 +2,8 @@ import { z } from "zod/v4";
 
 /** Bounds encoded JSON, including six-byte escapes for schema-valid 4,000-character text. */
 export const SHARED_BROWSER_ACTION_MAX_BYTES = 32 * 1024;
+/** Five-minute owner pause, 30-second driver action, and bounded response margin. */
+export const SHARED_BROWSER_ACTION_DEADLINE_MS = 6 * 60_000;
 
 const Reference = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const Observed = { observationId: Reference, ref: Reference };

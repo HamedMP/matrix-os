@@ -27,6 +27,19 @@ it('never reads password, one-time-code, secret-key fields or surrounding creden
     expect(snapshot.call(document, 'obs')).toEqual({ handoff: true });
   }
 });
+it('ignores hidden credential checkpoints until they become visible', () => {
+  document.body.innerHTML = '<p>Invoice list</p><div hidden data-matrix-owner-handoff><input type="password" value="private credential"></div><button>Collect</button>';
+  const button = document.querySelector('button')!;
+  const clicked = vi.fn(); button.addEventListener('click', clicked);
+  const observed = snapshot.call(document, 'obs');
+  expect(observed).toMatchObject({ content: 'Invoice list Collect', elements: [{ ref: 'r1', role: 'button', name: 'Collect' }] });
+  expect(JSON.stringify(observed)).not.toContain('private credential');
+  expect(action.call(document, 'obs', 'r1', 'click', null)).toEqual({ ok: true });
+  expect(clicked).toHaveBeenCalledOnce();
+  document.querySelector('div')!.hidden = false;
+  expect(action.call(document, 'obs', 'r1', 'click', null)).toMatchObject({ ok: false, reason: 'owner' });
+  expect(clicked).toHaveBeenCalledOnce();
+});
 it('returns visible content and grounded node refs without input values, hidden content or storage', () => {
   document.body.innerHTML = '<p>Invoice total EUR 90</p><p hidden>private hidden data</p><input aria-label="Invoice name" value="private input value"><textarea>private textarea value</textarea><button><span style="visibility:hidden">private hidden label</span>Collect invoice</button>';
   const result = snapshot.call(document, 'obs');
