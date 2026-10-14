@@ -17,8 +17,11 @@ Adding the labels the other way round still works, but CI that already
 started hosted is not cancelled. Keep the order: `fast-ci`, then
 `ready-for-ci`.
 
-Only PRs with **both** labels run on Linux. Main CI runs on hosted runners
-(`MATRIX_CI_DEDICATED_MAIN=false`), so main never holds the Linux host.
+Only open, non-draft, same-repository PRs with **both** labels run on Linux,
+and only when the change runs CI lanes at all: a docs-only change (only
+`docs/`, `specs/` or Markdown files) never gets `Dedicated CI Results`. Main CI
+runs on hosted runners (`MATRIX_CI_DEDICATED_MAIN=false`), so main never holds
+the Linux host.
 
 ## One host, one job at a time
 
@@ -30,7 +33,8 @@ with a 30-minute queue deadline. A job that waits longer fails with
   merge. Labelling a whole stack queues every layer behind each other and most
   of them time out. Hosted runners run many jobs in parallel and are free for
   this public repository, so they are the better choice for stack-wide CI.
-- **Push less often.** Every push to a `fast-ci` PR takes another slot.
+- **Push less often.** A push cancels your PR's in-flight Linux run and
+  starts over at the back of the queue, losing its place and progress.
 
 ## Reading the checks
 
@@ -40,8 +44,8 @@ with a 30-minute queue deadline. A job that waits longer fails with
 | `Dedicated CI Results` | The Linux suite for this head (unit, typecheck, SDK compatibility, docs, production Web, general and Electron E2E). | Read it when Linux failed. |
 | `CI Backend Decision` | Waits for and verifies the Linux result, then tells `CI Results` whether hosted lanes must run. | Read it when `CI Results` failed. |
 | `Type Check`, `Unit Tests (${{ matrix.shard }}/4)`, `E2E Tests (${{ matrix.lane }})`, `Shell Production Build`, ... **Skipped** | The hosted copies of lanes that ran on Linux. GitHub only fills in matrix names for jobs that run, so skipped matrix jobs show the raw template. | No. |
-| `Verified Dedicated Linux Qualification` **Skipped** | Only used in shadow mode. | No. |
-| `CI Source Qualification` red or "not admitted" | An internal freshness gate, not a required check. It also turns red after a PR merges, by design. | No. |
+| `Verified Dedicated Linux Qualification` **Skipped** | Not used by the current routing; `CI Backend Decision` does that verification. | No. |
+| `CI Source Qualification` red or "not admitted" | An internal freshness gate. The `main` ruleset does not currently require it (spec 605 intends to), so today it never blocks a merge. It also turns red after a PR merges, by design. | No, unless the ruleset starts requiring it. |
 
 The host is deliberately **not** a GitHub self-hosted runner, so it does not
 appear under Settings → Actions → Runners. A reviewed controller on a hosted
@@ -53,13 +57,15 @@ run code on the host.
 
 - **A real failure** (a failing test or build): fix it and push.
   `Dedicated CI Results` links to the failing phase.
-- **The host reported an infrastructure problem:** CI switches to the hosted
-  lanes automatically. Nothing to do.
-- **`queue_timeout`, or `CI Backend Decision` failing on a GitHub API error**
-  (for example `API rate limit exceeded for installation`): there is no hosted
-  fallback for PRs. Wait a few minutes, then re-run the failed jobs.
-- **Removing `fast-ci` after Linux ran** makes the source gate demand a fresh
-  hosted run of the same head. Prefer leaving the label on.
+- **The host was unavailable** (including waiting past the queue deadline,
+  `queue_timeout`): the host reports it as an infrastructure problem and CI
+  switches to the hosted lanes automatically. Nothing to do.
+- **`CI Backend Decision` failing on a GitHub API error** (for example
+  `API rate limit exceeded for installation`): there is no hosted fallback for
+  PRs in this case. Wait a few minutes, then re-run the failed jobs.
+- **Removing either label after Linux ran** makes the source gate dispatch a
+  hosted replacement run of the same head by itself. Nothing to do, and it does
+  not block merging.
 
 ## Merging
 
@@ -74,8 +80,10 @@ Merge only when all of these hold for the PR's current head:
 
 Updating a branch with `main` creates a new head, so CI runs again. The review
 usually carries over (exit `0`): base merges, restacks and retargets keep it,
-new work does not. Merge one PR at a time with
-`gh pr merge <n> --squash --match-head-commit <sha>`.
+new work does not. Merge a standalone PR with
+`gh pr merge <n> --squash --match-head-commit <sha>`, one PR at a time. Stack
+layers merge through the native stack merge in
+[Stacked PRs](stacked-prs.md), never a `gh pr merge` loop.
 
 ## Operators
 
@@ -85,8 +93,13 @@ Routing is controlled by repository variables: `MATRIX_CI_DEDICATED_ENABLED`
 `gh variable set MATRIX_CI_DEDICATED_ENABLED --repo HamedMP/matrix-os --body false`,
 which sends every PR back to hosted runners.
 
-The controller and the source qualification gates run their `scripts/ci/`
-helpers from the reviewed pin `MATRIX_CI_CONTROLLER_SHA`. Workflow YAML, and
-helpers that `ci.yml` runs from its own checkout, apply on merge; a change to a
-pinned controller or gate helper takes effect only after an operator moves the
-pin and the host's root policy to a green main commit that contains it.
+When a change takes effect depends on where it runs:
+
+- `ci.yml` is a `pull_request` workflow, so a PR that edits it, or the helpers
+  `ci.yml` loads from its own checkout, changes that PR's own CI run.
+- `ci-dedicated.yml` runs from `main`, so its edits apply once merged.
+- The controller and the source qualification gates load their `scripts/ci/`
+  helpers from the pin `MATRIX_CI_CONTROLLER_SHA`. A change there takes effect
+  only after an operator moves the pin and the host's root policy. By
+  procedure the target is a green `main` commit containing the change; the
+  controller itself only checks that the pin is on `main`.
