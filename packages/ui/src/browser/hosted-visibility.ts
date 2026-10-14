@@ -13,13 +13,22 @@ export function createHostedBrowserVisibility(host: Window, page: Document, nati
     if (count === 2 && message.type === "matrix-browser-visibility" && typeof message.active === "boolean") update(message.active);
   };
   const onVisibility = () => { if (!native) update(!page.hidden); };
+  const onPageHide = (event: PageTransitionEvent) => {
+    if (event.persisted) update(false);
+    else close();
+  };
+  const onPageShow = (event: PageTransitionEvent) => {
+    if (event.persisted && !native) update(!page.hidden);
+  };
   const close = () => {
     if (closed) return;
     update(false); closed = true; subscriber = undefined;
-    host.removeEventListener("message", onMessage); host.removeEventListener("pagehide", close);
+    host.removeEventListener("message", onMessage); host.removeEventListener("pagehide", onPageHide);
+    host.removeEventListener("pageshow", onPageShow);
     page.removeEventListener("visibilitychange", onVisibility);
   };
-  host.addEventListener("message", onMessage); host.addEventListener("pagehide", close, { once: true });
+  host.addEventListener("message", onMessage); host.addEventListener("pagehide", onPageHide);
+  host.addEventListener("pageshow", onPageShow);
   page.addEventListener("visibilitychange", onVisibility);
   return { active: () => active, subscribe(callback: (active: boolean) => void) {
     subscriber = callback;

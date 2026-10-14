@@ -26,4 +26,14 @@ describe("native product visibility handoff", () => {
     changed.mockClear(); send({ type: "matrix-browser-visibility", active: true });
     expect(visibility.active()).toBe(false); expect(changed).not.toHaveBeenCalled();
   });
+  it("resumes Web Desktop visibility after a back-forward cache restore", () => {
+    const visibility = createHostedBrowserVisibility(window, document, false);
+    const changed = vi.fn(); visibility.subscribe(changed);
+    window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+    expect(visibility.active()).toBe(false);
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    expect(visibility.active()).toBe(true);
+    expect(changed.mock.calls.map(([active]) => active)).toEqual([false, true]);
+    visibility.close();
+  });
 });

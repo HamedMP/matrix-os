@@ -140,6 +140,16 @@ describe("shared Chrome-first surface", () => {
     view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
     const next = await frame(); expect(next).not.toBe(previous); expect(ticketNumber).toBe(2);
   });
+  it("checks the owner session again soon after returning to an existing cookie", async () => {
+    const view = mount(); const previous = await frame(); message(previous);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
+    vi.useFakeTimers({ now: 4 * 60_000 });
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(ensureSession).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(ensureSession.mock.calls.length).toBeGreaterThan(2);
+  });
   it("ignores late claims and aborts their requests after deactivation", async () => {
     const normal = vi.mocked(fetch).getMockImplementation()!;
     let release!: (response: Response) => void; let signal: AbortSignal | undefined;

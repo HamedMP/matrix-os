@@ -35,7 +35,9 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
     const session = async () => {
       if (Date.now() < refreshAt) return;
       await ensureSession(controller.signal);
-      controller.signal.throwIfAborted(); refreshAt = Date.now() + 480_000;
+      // Hosted callers may skip renewal when their existing cookie is still valid.
+      // Recheck soon enough to reach their original renewal boundary after reactivation.
+      controller.signal.throwIfAborted(); refreshAt = Date.now() + 60_000;
     };
     const fail = () => update({ connection: "unavailable", viewerUrl: "", error: "Your Matrix computer’s browser is unavailable. Reconnect to try again." });
     const poll = async () => {
