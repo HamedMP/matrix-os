@@ -9,14 +9,14 @@ createInterface({input:process.stdin}).on('line',line=>{
 `;
 const METHODS=new Set(['initialize','initialized','thread/start','thread/resume','mcpServerStatus/list','config/mcpServer/reload']);
 const CODES=new Set([-32700,-32600,-32601,-32602,-32603,-32000,-32001,-32002]);
-function refused(method,code){const error=new Error('Native probe RPC refused');error.method=method;error.code=CODES.has(code)?code:'unclassified';return error;}
+function refused(method,code,message){const error=new Error('Native probe RPC refused');error.method=method;error.code=CODES.has(code)?code:'unclassified';error.nativeMessage=typeof message==='string'?message.slice(0,1024):undefined;return error;}
 export function createProbeClient(child,{requestTimeoutMs=10000,totalTimeoutMs=45000}={}) {
   let next=0,unavailable=false;const pending=new Map();
   function fail(){unavailable=true;for(const value of pending.values()){clearTimeout(value.timer);value.reject(new Error('Native probe unavailable'));}pending.clear();}
   child.on('error',fail);child.on('close',fail);child.stdin.on('error',fail);child.stdout.on('error',fail);
   const deadline=setTimeout(()=>{fail();child.kill('SIGKILL');},totalTimeoutMs);
   const lines=createInterface({input:child.stdout});
-  lines.on('line',line=>{try{if(Buffer.byteLength(line)>1024*1024)throw new Error('limit');const value=JSON.parse(line);const wait=pending.get(value.id);if(!wait)return;pending.delete(value.id);clearTimeout(wait.timer);value.error?wait.reject(refused(wait.method,value.error.code)):wait.resolve(value.result);}catch{fail();}});
+  lines.on('line',line=>{try{if(Buffer.byteLength(line)>1024*1024)throw new Error('limit');const value=JSON.parse(line);const wait=pending.get(value.id);if(!wait)return;pending.delete(value.id);clearTimeout(wait.timer);value.error?wait.reject(refused(wait.method,value.error.code,value.error.message)):wait.resolve(value.result);}catch{fail();}});
   function notify(method,params){if(unavailable)throw new Error('Native probe unavailable');child.stdin.write(JSON.stringify({method,params})+'\n',error=>{if(error)fail();});}
   return{
     notify,
