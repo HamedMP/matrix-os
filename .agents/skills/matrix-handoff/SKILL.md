@@ -1,55 +1,87 @@
 ---
 name: matrix-handoff
-description: Safely move the active repository and current coding-task context to the user's Matrix OS computer, then start a continuing Codex or Claude session there. Use when the user asks to continue work on Matrix, hand a local task to Matrix, upload the current project to Matrix, or move an agent conversation to another device.
+description: Move the current repository and coding task to the user's Matrix computer as a project Chat, creating the Matrix project if it is missing. Use when the user asks to continue on Matrix, hand off or migrate local work to Matrix, or move this Codex/Claude Code conversation to their Matrix computer.
+version: 3.0.0
+author: Matrix OS
+license: MIT
+platforms: [linux, macos]
 ---
 
-# Matrix Handoff
+# Matrix handoff
 
-Package the current working tree and a continuation brief, upload them through the authenticated Matrix CLI, and start a named remote agent session. The script deliberately excludes credentials, `.env` files, private keys, `.git`, dependencies, and build output.
+`matrix handoff` moves the current Git repository and task to the user's
+Matrix computer. It runs in two steps: a preview that changes nothing, then the
+approved handoff. It:
+
+- finds the matching Matrix project by its GitHub repository, or creates it
+  (cloning it from GitHub, or uploading it if Matrix cannot clone it);
+- carries over the branch, commits that are not on origin, and uncommitted
+  changes, including untracked files;
+- opens the branch's worktree;
+- starts a new Matrix Chat bound to that project, running the chosen agent,
+  with your brief as the first message.
+
+It never pushes to GitHub and never uploads `.env` files, keys, or credentials.
+
+## Readiness
+
+1. `matrix handoff --help` must work. If it does not, tell the user to update
+   the CLI with `npm i -g @finnaai/matrix`, and stop.
+2. `matrix whoami` must name the intended owner. If it does not, tell the user
+   to run `matrix login`, and stop. Never pass tokens in arguments.
 
 ## Workflow
 
-1. Confirm `matrix` is installed. If it is not, stop and tell the user to install the Matrix CLI.
-2. Write a concise continuation brief to a new temporary Markdown file outside the repository. Include:
-   - the user's active goal;
-   - work completed and important decisions;
+1. Write a continuation brief to a new temporary Markdown file outside the
+   repository. Include:
+   - the user's goal;
+   - what is done and the decisions made;
    - current failures or blockers;
-   - exact next actions;
-   - tests or commands already run.
-   Do not copy credentials, tokens, private keys, `.env` values, or unrelated conversation content into the brief.
-3. Select the destination agent from the user's request. Default to the agent currently running this skill.
-4. Run the preview from the repository root:
+   - the exact next steps;
+   - commands and tests already run.
+
+   Never copy credentials, tokens, `.env` values, or unrelated conversation
+   content into it.
+2. Choose the agent: whatever the user asked for, otherwise the agent running
+   this skill (`claude` for Claude Code, `codex` for Codex).
+3. Preview from inside the repository:
 
    ```bash
-   node .agents/skills/matrix-handoff/scripts/matrix-handoff.mjs \
-     --agent codex \
-     --brief /absolute/path/to/matrix-handoff-brief.md
+   matrix handoff --agent claude --brief /tmp/matrix-handoff-brief.md
    ```
 
-   Pass through user-requested options such as `--no-history`, `--history-file`, `--project-name`, or `--profile`.
-5. Show the preview to the user. Explicitly identify the selected transcript path and destination. Explain that raw agent transcripts can contain anything pasted into the chat, including secrets that cannot be reliably redacted.
-6. Ask for explicit confirmation before uploading. Never infer consent from the original request when a raw transcript is included; the preview is the final disclosure boundary.
-7. After confirmation, rerun the identical command with `--approve TOKEN`, using the exact token printed by the preview. Do not add a broader path or a different transcript after approval.
-8. Report the Matrix session name, project path, app URL, and CLI attach command printed by the script.
-9. Delete the temporary continuation brief after the handoff succeeds or the user cancels.
+   Pass on any options the user asked for: `--history none`, `--title`,
+   `--permission`, `--profile`.
+4. Show the preview to the user, in particular:
+   - the project action;
+   - the branch;
+   - the counts of commits and uncommitted changes;
+   - the withheld files;
+   - the transcript path;
+   - the agent.
 
-## Options
+   If a transcript is listed, say that the raw transcript can contain anything
+   pasted into this session, and that it is imported as a private Matrix Chat.
+5. Ask for explicit approval. Never treat the original request as approval.
+6. After approval, run the exact command the preview printed, ending in
+   `--approve <token>`. If it reports that the scope changed, preview again and
+   ask again.
+7. Report the Chat link, the project and the branch. If the result says it
+   landed on a `handoff/...` side branch, explain that the Matrix copy of the
+   branch had other work, and that nothing was overwritten.
+8. Delete the temporary brief.
 
-- `--agent codex|claude`: remote agent to start.
-- `--brief PATH`: agent-written continuation summary.
-- `--history-file PATH`: explicit raw JSONL transcript. Use only when the preview names it and the user approves it.
-- `--no-history`: summary-only handoff. Recommend this when transcript discovery is ambiguous or the conversation contains sensitive content.
-- `--project-name NAME`: base for the new, unique `~/projects/...-handoff-...` directory.
-- `--profile NAME`: target a non-default Matrix CLI profile.
-- `--attach`: attach the local terminal after the remote session is created.
-- `--approve TOKEN`: upload only when the newly staged scope exactly matches the preview token.
+## Failures
 
-## Safety rules
+- **The agent is not signed in on Matrix:** the preview prints the login
+  command. Tell the user to run it in a Matrix terminal (for example
+  `matrix run -it -- claude`), then retry.
+- **GitHub is not connected on Matrix:** the handoff uploads the repository
+  instead. To clone from GitHub in future, the user can run
+  `matrix run -it -- gh auth login`.
+- **Any other error:** do not work around it by copying files manually. Report
+  the message. Re-running is safe, because every step can be repeated.
 
-- Never upload `~/.codex`, `~/.claude`, their SQLite databases, auth files, or all global histories. Only the newest transcript that metadata ties to the active repository may be auto-selected.
-- Never upload a transcript discovered only by modification time when its metadata does not match the repository.
-- Never add secret files to bypass the built-in exclusion list. Authentication must happen again inside Matrix.
-- Never bypass the approval token. If repository files, the continuation brief, transcript content, agent, profile, or destination basis changes, run a new preview and ask for approval again.
-- The destination is always a new unique directory. Do not overwrite an existing Matrix project.
-- If automatic transcript discovery finds nothing, continue with the brief only unless the user explicitly supplies a transcript path.
-- Do not claim that Matrix resumes the original provider session ID. This is a context handoff into a new remote agent session.
+The handoff does not resume the original provider session. The Matrix Chat
+starts fresh from the brief, the repository state and, optionally, the imported
+transcript.

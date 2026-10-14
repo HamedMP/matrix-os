@@ -135,29 +135,40 @@ codex plugin add matrix-os@matrix-os
 
 ## Move a Local Task to Matrix
 
-The repo-scoped `matrix-handoff` skill under `.agents/skills/matrix-handoff/` safely moves the
-active working tree and a continuation brief to a new project directory on the user's Matrix
-computer, then starts Codex or Claude there. Claude also exposes the workflow as
-`/matrix-handoff` through `.claude/commands/matrix-handoff.md`.
+`matrix handoff` (spec 627) moves the current repository and task to the owner's Matrix computer
+as a new **project Chat**. Run it from inside any local Git checkout:
 
-The workflow has two explicit phases:
+```bash
+matrix handoff --agent claude --brief brief.md   # preview; nothing is uploaded
+matrix handoff ... --approve <token>              # run exactly the previewed scope
+```
 
-1. Preview the filtered file count, optional repository-matched transcript, destination, agent,
-   and a SHA-256 scope approval token.
-2. After the user approves that exact scope, rerun with `--approve TOKEN`. The script stages the
-   inputs again and refuses to upload if the files, brief, transcript, agent, profile, or
-   destination basis changed after preview.
+In an interactive terminal it asks for confirmation instead of printing a token. The handoff:
 
-Common secret files, `.env` files, private keys, `.git`, dependencies, and generated output are
-excluded. Use `--no-history` for a summary-only handoff that does not discover or upload a raw
-agent transcript. Authentication is never copied; GitHub and the selected coding agent must use
-their own browser/device flow or Matrix-managed key inside the runtime.
+1. Matches the Matrix project by GitHub `owner/repo`, or by `<repo>-<root-commit-7>`. A missing
+   project is cloned from GitHub. If Matrix has no GitHub login or cannot clone the repository,
+   it is uploaded as a git bundle and registered as a folder project.
+2. Sends unpushed commits and a snapshot of uncommitted and untracked work as one git bundle
+   staged in `~/data/matrix-handoff/<id>/`. Secret-looking files (`.env*`, keys, credential
+   files) keep their committed version or are left out. The local index and files are never
+   changed.
+3. Fast-forwards the Matrix branch when it is clean, and opens its worktree. If the Matrix copy
+   of the branch diverged or has uncommitted work, the handoff lands on
+   `handoff/<branch>-<stamp>` instead of overwriting anything.
+4. Optionally imports the matching local transcript as a private Chat (`--history none` skips
+   it). It then creates the project Chat with the brief as the first turn and prints a
+   `?launch=__chat__&chat=<id>` link that opens it.
+
+The `matrix-handoff` skill in `plugins/matrix-os/skills/` wraps this command for Codex and
+Claude Code on any laptop. A byte-identical copy lives in `.agents/skills/matrix-handoff/` for
+this repository, and Claude also exposes `/matrix-handoff`. Nothing is pushed to GitHub, and
+agent credentials are never copied. Sign agents in inside Matrix instead.
 
 Example prompts:
 
 ```text
-Use $matrix-handoff to move this task to Matrix with Codex, using --no-history.
-/matrix-handoff --agent claude --no-history
+Use $matrix-handoff to move this task to Matrix with Codex.
+/matrix-handoff --agent claude --history none
 ```
 
 ## Preconfigure Agent In Matrix
