@@ -20,11 +20,16 @@ export function swiftUiContextMenuModule() {
   };
   return {
     ...jest.requireActual<typeof import("@expo/ui/swift-ui")>("@expo/ui/swift-ui"),
-    Host: function Host({ children }: { children: ReactNode }) {
-      return <View testID="swift-ui-host">{children}</View>;
+    // Hands its settings on as a prop a test can read.
+    Host: function Host({ children, ...settings }: { children: ReactNode; ignoreSafeArea?: string; matchContents?: unknown }) {
+      return <View testID="swift-ui-host" {...{ hostSettings: settings }}>{children}</View>;
     },
     RNHostView: function RNHostView({ children }: { children: ReactNode }) {
       return children;
+    },
+    // Hands its modifiers on as a prop a test can read: the lifted preview's shape.
+    Group: function Group({ children, modifiers }: { children: ReactNode; modifiers?: unknown[] }) {
+      return <View testID="context-menu-preview" {...{ previewModifiers: modifiers }}>{children}</View>;
     },
     ContextMenu,
     Button: function Button({ label, systemImage, onPress }: { label: string; systemImage?: string; onPress?: () => void }) {
@@ -48,6 +53,16 @@ export function menuAround(element: ReactTestInstance): ReactTestInstance {
   if (!node) throw new Error("No context menu around this element");
   return node;
 }
+
+/** Test IDs the stand-in above draws, to leave out of a reading of what the screen draws. */
+export const CONTEXT_MENU_TEST_IDS: readonly string[] = [
+  "swift-ui-host",
+  "context-menu",
+  "context-menu-items",
+  "context-menu-share",
+  "context-menu-trigger",
+  "context-menu-preview",
+];
 
 /** The labels of a menu's items, in order. */
 export function menuItemLabels(menu: ReactTestInstance): string[] {

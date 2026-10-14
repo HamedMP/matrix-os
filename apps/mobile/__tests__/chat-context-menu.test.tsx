@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
+import { contentShape, shapes } from "@expo/ui/swift-ui/modifiers";
 
 import * as mockContextMenu from "./context-menu-test-utils";
 import { ChatContextMenu } from "../components/ChatContextMenu";
@@ -140,15 +141,90 @@ describe("ChatContextMenu on iOS", () => {
     expect(screen.queryByTestId("toast")).toBeNull();
   });
 
-  it("gives what it opens on the width of its row, as SwiftUI does not", () => {
-    renderMenu({ chatId: "chat_1", messageText: REPLY });
+  describe("what it lifts", () => {
+    function layOutRow(width: number) {
+      const row = screen.UNSAFE_getAllByType(View).find((view) => view.props.onLayout)!;
+      fireEvent(row, "layout", { nativeEvent: { layout: { x: 0, y: 0, width, height: 40 } } });
+      return row;
+    }
+    const hostedContent = () => screen.getByTestId("context-menu-preview").findByType(View);
 
-    const views = () => screen.UNSAFE_getAllByType(View);
-    const row = views().find((view) => view.props.onLayout)!;
-    fireEvent(row, "layout", { nativeEvent: { layout: { x: 0, y: 0, width: 362, height: 40 } } });
+    it("gives content that fills its row the row's width, as SwiftUI does not", () => {
+      renderMenu({ chatId: "chat_1", messageText: REPLY });
 
-    const sized = views().filter((view) => StyleSheet.flatten(view.props.style)?.width === 362);
-    expect(sized).toHaveLength(1);
-    expect(sized[0]!.findByProps({ testID: "row" })).toBeTruthy();
+      layOutRow(362);
+
+      expect(StyleSheet.flatten(hostedContent().props.style)).toEqual({ width: 362 });
+      expect(hostedContent().findByProps({ testID: "row" })).toBeTruthy();
+    });
+
+    it("keeps content at its own size against the row's end, bounded by the row", () => {
+      render(
+        <ChatContextMenu chatId="chat_1" messageText={REPLY} fit="end">
+          <Pressable testID="row"><Text>Row</Text></Pressable>
+        </ChatContextMenu>,
+      );
+
+      const row = layOutRow(362);
+
+      expect(StyleSheet.flatten(row.props.style)).toMatchObject({ alignSelf: "stretch", alignItems: "flex-end" });
+      expect(StyleSheet.flatten(hostedContent().props.style)).toEqual({ maxWidth: 362 });
+    });
+
+    it("leaves room inside what it lifts without moving the content", () => {
+      render(
+        <ChatContextMenu chatId="chat_1" messageText={REPLY} inset={10}>
+          <Pressable testID="row"><Text>Row</Text></Pressable>
+        </ChatContextMenu>,
+      );
+
+      const row = layOutRow(382);
+
+      expect(StyleSheet.flatten(row.props.style)).toMatchObject({ margin: -10 });
+      expect(StyleSheet.flatten(hostedContent().props.style)).toEqual({ width: 382, padding: 10 });
+    });
+
+    it("fills what it lifts when asked, so the lift's shadow cannot show through the content", () => {
+      render(
+        <ChatContextMenu chatId="chat_1" messageText={REPLY} backgroundColor="#FFFEFC">
+          <Pressable testID="row"><Text>Row</Text></Pressable>
+        </ChatContextMenu>,
+      );
+
+      const row = layOutRow(362);
+
+      expect(StyleSheet.flatten(hostedContent().props.style)).toEqual({ width: 362, backgroundColor: "#FFFEFC" });
+      // The row around it stays clear.
+      expect(StyleSheet.flatten(row.props.style).backgroundColor).toBeUndefined();
+    });
+
+    it("leaves content without a fill clear", () => {
+      renderMenu({ chatId: "chat_1", messageText: REPLY });
+
+      layOutRow(362);
+
+      expect(StyleSheet.flatten(hostedContent().props.style).backgroundColor).toBeUndefined();
+    });
+
+    it("lays the content out without the window's safe areas, so a row near an edge is drawn whole", () => {
+      renderMenu({ chatId: "chat_1", messageText: REPLY });
+
+      expect(screen.getByTestId("swift-ui-host").props.hostSettings).toEqual({
+        matchContents: { vertical: true },
+        ignoreSafeArea: "all",
+      });
+    });
+
+    it("gives the lifted preview the content's corners", () => {
+      render(
+        <ChatContextMenu chatId="chat_1" messageText={REPLY} cornerRadius={18}>
+          <Pressable testID="row"><Text>Row</Text></Pressable>
+        </ChatContextMenu>,
+      );
+
+      expect(screen.getByTestId("context-menu-preview").props.previewModifiers).toEqual([
+        contentShape(shapes.roundedRectangle({ cornerRadius: 18 }), "contextMenuPreview"),
+      ]);
+    });
   });
 });

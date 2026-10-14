@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 import { FlatList, StyleSheet as NativeStyleSheet, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
+import { contentShape, shapes } from "@expo/ui/swift-ui/modifiers";
 
 import * as mockContextMenu from "./context-menu-test-utils";
 import { MessageList } from "../components/chat/MessageList";
@@ -8,7 +9,7 @@ import { AnalyticsMask } from "../lib/analytics";
 import type { TranscriptMessage } from "../lib/canonical-chat-transcript";
 
 import { drawnTestIds } from "./chat-test-utils";
-import { menuAround, menuItem, menuItemLabels } from "./context-menu-test-utils";
+import { CONTEXT_MENU_TEST_IDS, menuAround, menuItem, menuItemLabels } from "./context-menu-test-utils";
 import { flat } from "./ui-test-utils";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -115,11 +116,9 @@ describe("MessageList", () => {
       />,
     );
 
-    expect(drawnTestIds(screen.getByTestId("assistant-message"))).toEqual([
-      "assistant-text",
-      "steps-block",
-      "results-msg_reply",
-    ]);
+    const drawn = drawnTestIds(screen.getByTestId("assistant-message"))
+      .filter((id) => !CONTEXT_MENU_TEST_IDS.includes(id));
+    expect(drawn).toEqual(["assistant-text", "steps-block", "results-msg_reply"]);
   });
 
   it("asks for results under replies only", () => {
@@ -199,15 +198,55 @@ describe("MessageList", () => {
     const working = message({ id: "msg_working", role: "assistant", text: "Adding the weekly", isRunning: true });
     const view = render(<MessageList messages={[working]} chatId="chat_1" />);
 
-    expect(menuItemLabels(menuAround(screen.getByTestId("assistant-message")))).toEqual(["Copy chat ID"]);
+    expect(menuItemLabels(menuAround(screen.getByTestId("assistant-text")))).toEqual(["Copy chat ID"]);
 
     view.rerender(<MessageList messages={[{ ...working, text: "Added the weekly view.", isRunning: false }]} chatId="chat_1" />);
-    expect(menuItemLabels(menuAround(screen.getByTestId("assistant-message")))).toEqual([
+    expect(menuItemLabels(menuAround(screen.getByTestId("assistant-text")))).toEqual([
       "Copy text", "Share", "Copy chat ID",
     ]);
   });
 
-  it("offers only the chat for a message the screen draws as a request", () => {
+  it("lifts a question's bubble alone, at its own size against the end and with its own corners", () => {
+    render(<MessageList messages={[question]} chatId="chat_1" />);
+
+    const menu = menuAround(screen.getByTestId("user-message"));
+    // The row the menu measures and aligns its content in.
+    let row = menu.parent;
+    while (row && typeof row.props.onLayout !== "function") row = row.parent;
+    expect(NativeStyleSheet.flatten(row!.props.style)).toMatchObject({ alignSelf: "stretch", alignItems: "flex-end" });
+    expect(within(menu).getByTestId("context-menu-preview").props.previewModifiers).toEqual([
+      contentShape(shapes.roundedRectangle({ cornerRadius: 18 }), "contextMenuPreview"),
+    ]);
+  });
+
+  it("lifts a reply's text alone, not its steps and results", () => {
+    render(
+      <MessageList
+        messages={[reply]}
+        chatId="chat_1"
+        renderResults={(item) => <View testID={`results-${item.id}`} />}
+      />,
+    );
+
+    const menu = menuAround(screen.getByTestId("assistant-text"));
+    expect(within(menu).queryByTestId("steps-block")).toBeNull();
+    expect(within(menu).queryByTestId("results-msg_reply")).toBeNull();
+    expect(within(menu).getByTestId("context-menu-preview").props.previewModifiers).toEqual([
+      contentShape(shapes.roundedRectangle({ cornerRadius: 12 }), "contextMenuPreview"),
+    ]);
+    // On a card of the screen's colour, so the lift's shadow stays around the text, not over it.
+    const hosted = within(menu).getByTestId("context-menu-preview").findByType(View);
+    expect(NativeStyleSheet.flatten(hosted.props.style)).toMatchObject({ padding: 10, backgroundColor: "#FFFEFC" });
+  });
+
+  it("lifts a question's bubble on its own colour, with no extra fill", () => {
+    render(<MessageList messages={[question]} chatId="chat_1" />);
+
+    const hosted = within(menuAround(screen.getByTestId("user-message"))).getByTestId("context-menu-preview").findByType(View);
+    expect(NativeStyleSheet.flatten(hosted.props.style)?.backgroundColor).toBeUndefined();
+  });
+
+  it("puts no menu on a message the screen draws as a request", () => {
     const request = message({ id: "msg_request", role: "system", text: "Allow this?" });
     render(
       <MessageList
@@ -217,7 +256,8 @@ describe("MessageList", () => {
       />,
     );
 
-    expect(menuItemLabels(menuAround(screen.getByText("Approval card")))).toEqual(["Copy chat ID"]);
+    expect(screen.getByText("Approval card")).toBeTruthy();
+    expect(screen.queryByTestId("context-menu")).toBeNull();
   });
 
   it("copies a message's text from its menu", async () => {

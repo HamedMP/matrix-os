@@ -12,6 +12,13 @@ export type ChatMenuAction =
 
 export type ChatMenuActionId = ChatMenuAction["id"];
 
+/**
+ * How what the menu opens on sits in its row: across the whole row, or at
+ * its own size against the row's end (its styles may cap it at a share of the
+ * row). iOS lifts exactly this area out of the screen as the menu opens.
+ */
+export type ChatMenuFit = "fill" | "end";
+
 /** What draws the menu: a native context menu on iOS, an alert elsewhere. */
 export interface ChatMenuTriggerProps {
   /** Heads the menu where the platform shows a title: "Message" or "Chat". */
@@ -20,6 +27,16 @@ export interface ChatMenuTriggerProps {
   actions: readonly ChatMenuAction[];
   /** Called as the menu opens. */
   onOpen: () => void;
+  fit: ChatMenuFit;
+  /** The corners of what is lifted, matching what it draws. */
+  cornerRadius: number;
+  /** Room left around the content inside what is lifted. It does not move the content on screen. */
+  inset: number;
+  /**
+   * Fills what is lifted when the content has no background of its own. iOS
+   * draws the lift's shadow behind it, which shows through anything clear.
+   */
+  backgroundColor?: string;
   /** What a long press opens the menu on. */
   children: ReactElement<PressableProps>;
 }
