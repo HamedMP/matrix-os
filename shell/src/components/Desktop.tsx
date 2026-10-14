@@ -1370,7 +1370,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         </div>
       </div>
 
-      <OnboardingWidgetHost onOpenChat={openOnboardingChat} onOpenSettings={openWebSettings} />
+      <OnboardingWidgetHost accountId={cacheScope?.userId ?? null} onOpenChat={openOnboardingChat} onOpenSettings={openWebSettings} />
       <Settings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

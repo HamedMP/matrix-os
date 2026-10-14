@@ -29,7 +29,7 @@ export function RabbitAvatar({ size = 30 }: { size?: number }) {
 export function AppLogo({ src, name, size = 28 }: { src?: string; name: string; size?: number }) {
   return (
     <span className="mxo-logo" style={{ width: size, height: size }} aria-hidden>
-      {src ? <img src={src} alt="" width={size - 8} height={size - 8} /> : <span>{name.slice(0, 1)}</span>}
+      {src ? <img src={src} alt="" width={size - 8} height={size - 8} referrerPolicy="no-referrer" /> : <span>{name.slice(0, 1)}</span>}
     </span>
   );
 }

@@ -119,7 +119,8 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     actions.dispatch(composerEvent(state, text));
   };
 
-  const rootClass = `mxo-root${prefs.position.x === "left" ? " mxo-root--left" : ""}${prefs.position.y === "top" ? " mxo-root--top" : ""}`;
+  // `ph-no-capture` keeps sign-in codes, prompts and repo names out of session replay.
+  const rootClass = `mxo-root ph-no-capture${prefs.position.x === "left" ? " mxo-root--left" : ""}${prefs.position.y === "top" ? " mxo-root--top" : ""}`;
   const rootStyle = { zIndex, ...placement };
 
   if (isBubble) {

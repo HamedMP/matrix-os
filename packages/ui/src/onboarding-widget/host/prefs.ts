@@ -52,8 +52,10 @@ export const DEFAULT_ONBOARDING_PREFS: OnboardingStoredPrefs = {
   pendingRun: null,
 };
 
-export function onboardingPrefsKey(handle: string, runtimeSlot: string): string {
-  return `${STORAGE_PREFIX}:${encodeURIComponent(handle)}:${encodeURIComponent(runtimeSlot)}`;
+/** Pass the signed-in account wherever one browser profile can hold several accounts' prefs. */
+export function onboardingPrefsKey(handle: string, runtimeSlot: string, account?: string): string {
+  const scope = `${encodeURIComponent(handle)}:${encodeURIComponent(runtimeSlot)}`;
+  return account === undefined ? `${STORAGE_PREFIX}:${scope}` : `${STORAGE_PREFIX}:${encodeURIComponent(account)}:${scope}`;
 }
 
 /** Returns null when nothing usable is stored, so callers can tell a first visit apart. */

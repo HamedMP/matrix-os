@@ -509,6 +509,22 @@ describe("OnboardingWidget", () => {
   });
 });
 
+describe("keeping the onboarding widget private", () => {
+  it("keeps the card and the bubble out of session replay", () => {
+    const card = render(<Harness actions={makeActions()} />);
+    expect(card.container.querySelector(".mxo-root")).toHaveClass("ph-no-capture");
+    card.unmount();
+
+    const bubble = render(<Harness actions={makeActions()} initial={initialOnboardingWidgetState({ size: "bubble", firstTaskCompleted: false })} />);
+    expect(bubble.container.querySelector(".mxo-root")).toHaveClass("ph-no-capture");
+  });
+
+  it("loads app logos without sending the page address", () => {
+    const { container } = render(<Harness actions={makeActions()} events={[{ type: "apps.opened" }]} />);
+    expect(container.querySelector('img[src="https://example.test/gcal.png"]')).toHaveAttribute("referrerpolicy", "no-referrer");
+  });
+});
+
 describe("moving the onboarding widget", () => {
   const BUBBLE_STATE = initialOnboardingWidgetState({ size: "bubble", firstTaskCompleted: false });
 

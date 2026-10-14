@@ -42,6 +42,12 @@ describe("onboarding widget prefs", () => {
     expect(onboardingPrefsKey("a:b", "x/y")).toBe("matrix:onboarding-widget:v1:a%3Ab:x%2Fy");
   });
 
+  it("keeps two signed-in accounts apart when they share a browser", () => {
+    expect(onboardingPrefsKey("owner", "primary", "user_a")).toBe("matrix:onboarding-widget:v1:user_a:owner:primary");
+    expect(onboardingPrefsKey("owner", "primary", "user_a")).not.toBe(onboardingPrefsKey("owner", "primary", "user_b"));
+    expect(onboardingPrefsKey("a:b", "primary", "x:y")).toBe("matrix:onboarding-widget:v1:x%3Ay:a%3Ab:primary");
+  });
+
   it("round-trips valid prefs and returns null for anything unusable", () => {
     const storage = memoryStorage({ junk: "{not json", wrong: JSON.stringify({ keepInCorner: "yes" }), huge: "x".repeat(3000) });
     writeOnboardingPrefs("k", { ...DEFAULT_ONBOARDING_PREFS, chatId: "chat_1" }, storage);

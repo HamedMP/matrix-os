@@ -1,10 +1,15 @@
 import {
   createSharedCanonicalChatEventSource,
+  type OnboardingAiConnectPort,
   type OnboardingChatPort,
   type OnboardingRepoSource,
 } from "@matrix-os/ui";
 import { z } from "zod/v4";
+import { currentAiCreditRuntimeSlot } from "@/lib/ai-credit-checkout";
 import { CanonicalShellChatRequestError, type CanonicalShellChatClient } from "@/lib/canonical-chat-client";
+import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
+import { getGatewayUrl } from "@/lib/gateway";
+import { createWebProviderWorkflowClient, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REPO_RESPONSE_BYTES = 512 * 1024;
@@ -23,15 +28,40 @@ export function isShellNotFound(error: unknown): boolean {
   return error instanceof CanonicalShellChatRequestError && error.status === 404;
 }
 
-export function createShellOnboardingChatPort(client: CanonicalShellChatClient): OnboardingChatPort {
+/** Raised instead of sending once the page talks to another computer; the widget remounts for the new one. */
+export class ShellOnboardingComputerChangedError extends Error {
+  override readonly name = "ShellOnboardingComputerChangedError";
+  constructor() {
+    super("OnboardingComputerChanged");
+  }
+}
+
+/** Names the computer and runtime this page talks to now; ports bound to an older value must stop sending. */
+export function shellOnboardingTransportKey(): string {
+  return `${getGatewayUrl()}|${currentAiCreditRuntimeSlot()}`;
+}
+
+function whileCurrent<T>(isCurrent: () => boolean, call: () => Promise<T>): Promise<T> {
+  return isCurrent() ? call() : Promise.reject(new ShellOnboardingComputerChangedError());
+}
+
+export function createShellOnboardingChatPort(client: CanonicalShellChatClient, isCurrent: () => boolean = () => true): OnboardingChatPort {
   return {
-    create: (input) => client.create(input),
-    detail: (chatId) => client.detail(chatId),
-    admitTurn: (chatId, input) => client.admitTurn(chatId, input),
+    create: (input) => whileCurrent(isCurrent, () => client.create(input)),
+    detail: (chatId) => whileCurrent(isCurrent, () => client.detail(chatId)),
+    admitTurn: (chatId, input) => whileCurrent(isCurrent, () => client.admitTurn(chatId, input)),
     isNotFound: isShellNotFound,
     isComputerStarting: isShellComputerStarting,
     watch(chatId, onChange) {
-      const eventSource = createSharedCanonicalChatEventSource({ openStream: (input) => client.openEventStream(input) });
+      if (!isCurrent()) return () => undefined;
+      const eventSource = createSharedCanonicalChatEventSource({
+        openStream: (input) => {
+          if (isCurrent()) return client.openEventStream(input);
+          // Disposing first stops the source from reconnecting to a computer this page no longer shows.
+          eventSource.dispose();
+          return Promise.reject(new ShellOnboardingComputerChangedError());
+        },
+      });
       const subscription = eventSource.subscribe((event) => {
         if (event.type === "chat.full_refresh" || event.chatId === chatId) onChange();
       });
@@ -51,18 +81,33 @@ async function boundedJson(response: Response): Promise<unknown> {
   return JSON.parse(text);
 }
 
-export function createShellOnboardingRepoSource(gatewayUrl: string, fetchFn: typeof fetch = fetch): OnboardingRepoSource {
+export function createShellOnboardingRepoSource(
+  gatewayUrl: string,
+  fetchFn: typeof fetch = fetch,
+  isCurrent: () => boolean = () => true,
+): OnboardingRepoSource {
   const signalFor = (signal: AbortSignal) => AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
   return {
-    readGithubApp: async (request, signal) => boundedJson(await fetchFn(`${gatewayUrl}/api/integrations/read-call`, {
+    readGithubApp: (request, signal) => whileCurrent(isCurrent, async () => boundedJson(await fetchFn(`${gatewayUrl}/api/integrations/read-call`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
       signal: signalFor(signal),
-    })),
-    listComputerRepos: async (limit, signal) => boundedJson(await fetchFn(`${gatewayUrl}/api/github/repos?limit=${limit}`, {
+    }))),
+    listComputerRepos: (limit, signal) => whileCurrent(isCurrent, async () => boundedJson(await fetchFn(`${gatewayUrl}/api/github/repos?limit=${limit}`, {
       signal: signalFor(signal),
-    })),
+    }))),
+  };
+}
+
+export function createShellOnboardingAiPort(isCurrent: () => boolean): OnboardingAiConnectPort {
+  return {
+    client: createWebProviderWorkflowClient({ isIdentityCurrent: isCurrent }),
+    openAuthorization: (url) => isCurrent() && openWebProviderWorkflowAuthorization(url),
+    isIdentityCurrent: isCurrent,
+    onConnected: () => {
+      if (isCurrent()) window.dispatchEvent(new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
+    },
   };
 }
 
