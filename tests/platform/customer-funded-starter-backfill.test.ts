@@ -3,6 +3,7 @@ import { PostgresDialect, sql } from 'kysely';
 import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
+import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { initializeCustomerFundedStarterPolicy } from '../../packages/platform/src/customer-funded-starter-policy.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
@@ -54,7 +55,7 @@ describe('ENG-291 completed customer starter recovery', () => {
     finally {
       secondDb = undefined;
       try { await destroyTestPlatformDb(db); }
-      finally { vi.unstubAllEnvs(); }
+      finally { vi.unstubAllEnvs(); vi.restoreAllMocks(); }
     }
   });
 
@@ -122,6 +123,55 @@ describe('ENG-291 completed customer starter recovery', () => {
       .where('machine_id', '=', identity.machineId).execute();
     await service.reconcileProvisioning();
     expect(await ledger()).toHaveLength(1);
+  });
+
+  it.each([
+    { clerk_user_id: 'replacement-owner' }, { activation_authorized_at: now },
+    { status: 'failed' as const }, { deleted_at: now },
+  ])('rechecks identity/cohort/eligibility when the sampled machine changes: %j', async changes => {
+    const transaction = db.transaction.bind(db);
+    vi.spyOn(db, 'transaction').mockImplementationOnce(async work => {
+      await db.executor.updateTable('user_machines').set(changes).where('machine_id', '=', identity.machineId).execute();
+      return transaction(work);
+    });
+    await service.reconcileProvisioning();
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').selectAll().execute()).toEqual([]);
+    expect(await db.executor.selectFrom('ai_funded_runtime_policies').selectAll().execute()).toEqual([]);
+  });
+
+  it('blocks deletion-pending owners and retries after cancellation without duplicate credit', async () => {
+    const secret = 'starter-backfill-deletion-secret-32-bytes';
+    vi.stubEnv('ACCOUNT_DELETION_SECRET', secret);
+    const deletion = new AccountDeletionRepository(db.kysely, { secret, now: () => new Date(now) });
+    await deletion.accept({ clerkUserId: identity.ownerId, appleTokens: [] }, false);
+    const receipt = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await service.reconcileProvisioning();
+    expect(await ledger()).toEqual([]);
+    expect(receipt).toHaveBeenCalledWith(expect.stringContaining('"outcome":"deletion_pending"'));
+    await db.executor.updateTable('account_deletion_jobs').set({ status: 'cancelled' }).execute();
+    await service.reconcileProvisioning(); // Reset exhausted page cursor.
+    await service.reconcileProvisioning();
+    expect(await ledger()).toHaveLength(1);
+  });
+
+  it('preserves conflicting grant evidence and continues the next bounded page', async () => {
+    await repository.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true,
+      allowedModelIds: [modelId], monthlyBudgetMicrousd: 5_000_000, expiresAt: null });
+    await repository.grantCredit({ identity, entryId: 'manual-main-chat-20261008-permanent-5usd:conflict',
+      kind: 'promotional_grant', amountMicrousd: 4_000_000, expiresAt: null,
+      sourceReference: 'user-authorized-main-chat-20261008-permanent-5usd' });
+    const before = await snapshot();
+    await insertUserMachine(db, { machineId: 'af05824c-8d0a-4d83-9cb4-b312d43ff112', clerkUserId: 'other-backfill-owner',
+      handle: 'other-backfill', runtimeSlot: 'primary', provisioningClass: 'customer', activationState: 'authorized',
+      status: 'running', imageVersion: 'reviewed-fixture', provisionedAt: activatedAt, activationAuthorizedAt: activatedAt,
+      hetznerServerId: 123457, publicIPv4: '203.0.113.11' });
+    const receipt = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await service.reconcileProvisioning();
+    expect(await snapshot()).toEqual(before);
+    expect(receipt).toHaveBeenCalledWith(expect.stringContaining('"outcome":"initialization_failed"'));
+    await service.reconcileProvisioning();
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').selectAll()
+      .where('owner_id', '=', 'other-backfill-owner').execute()).toHaveLength(1);
   });
 
   it('direct initializer control repairs the same completed state once without activation replay', async () => {
