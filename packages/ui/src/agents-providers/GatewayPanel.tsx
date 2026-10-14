@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { checkoutUnavailablePresentation } from "./checkout-unavailable-presentation.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import type {
   ProviderAccessSource,
   ProviderGatewayPolicy,
@@ -9,7 +10,7 @@ import type {
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
-import { gatewayChatAvailableMicrousd, gatewayCreditLines, money, shortDate, titleCase } from "./utils.js";
+import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, money, shortDate, titleCase } from "./utils.js";
 
 const capabilityLabels = {
   tools: "Tools",
@@ -41,9 +42,10 @@ export function isMatrixGatewaySourceReady(
   source: ProviderAccessSource | null,
   policy: ProviderGatewayPolicy | null,
   provider: ProviderModelProvider | null,
+  now = Date.now(),
 ): boolean {
   return isMatrixGatewayRouteVerified(source, policy, provider)
-    && (gatewayChatAvailableMicrousd(source) ?? 0) > 0;
+    && (gatewayChatAvailableMicrousd(source, now) ?? 0) > 0;
 }
 
 /** Purchase verification remains independent of spendable Chat capacity. */
@@ -147,11 +149,12 @@ export function GatewayPanel({
   useEffect(() => {
     setBudgetUsd(budget === null ? "" : String(budget / 1_000_000));
   }, [budget]);
+  const now = useLocalObservationExpiry([gatewayCreditStaleAfter(source)]) ?? Number.NaN;
   const credit = source
-    ? gatewayCreditLines(source)
+    ? gatewayCreditLines(source, now)
     : { primary: "Chat credit unavailable", secondary: null, stale: false };
   const usageAsOf = source?.usage.asOf ?? null;
-  const ready = isMatrixGatewaySourceReady(source, policy, provider);
+  const ready = isMatrixGatewaySourceReady(source, policy, provider, now);
   const creditRequired = source?.readiness.safeReason === "credit_required";
   const creditReserved = source?.readiness.safeReason === "credit_reserved"
     && source.usage.kind === "managed_credit" && source.usage.state === "current";

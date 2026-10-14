@@ -54,3 +54,11 @@ Regression evidence must cover fresh successive short-TTL responses, hidden moun
 ### Provider icon contrast
 
 Agents & providers keeps the white upstream OpenCode and Pi artwork on the matching canonical `CODING_AGENT_ARTWORK` background in both appearances, using the shared `HarnessIcon` across Web Canvas, Web Desktop and Electron Desktop. Keep the original shipped assets and other harness icons unchanged. Verify the actual PNG glyph pixels against their rendered background at contrast ≥3 across native/Web light/dark token mappings; transparent padding is excluded from glyph measurements.
+
+### Idle freshness presentation
+
+`Checked` describes the last accepted snapshot's age and must advance on an unchanged mounted page. Its local display clock must not refresh the snapshot, capability inventory or any connection workflow. Keep clock invalidation inside the age presentation rather than rerendering the complete Settings workspace every second.
+
+Managed-credit display retains its existing five-minute validity, measured from `usage.asOf` with matching `chatAvailability.asOf`. Expire the displayed current amount at that deadline without requiring an unrelated click. The existing `Chat credit unavailable` and last-confirmed presentation is conservative stale evidence, not proof that money was spent or removed. Explicit Refresh obtains another authoritative snapshot; local time cannot extend the old observation's validity or grant execution authority.
+
+Reuse bounded local expiry with an explicit time dependency for derived child presentation under React Compiler. The owning gateway selection derivation also invalidates at the credit deadline, so saved/unbound connection choices cannot retain an enabled Matrix action or selected-ready affordance after the amount expires. Preserve source/route precedence and server authority. Clean up clocks/deadlines on unmount and reconcile new timestamp props without retaining an old observation's deadline. Regress unchanged idle rendering, exact expiry, observation replacement, no request/capability fanout, preserved disclosure state and timer cleanup. Verify actual production Electron separately through the sole acceptance executor. The reproducible UI clock defect does not establish the unobserved live unavailable cause.

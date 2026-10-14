@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import {
   isRunnableGenericHarnessCredentialRoute,
   isSupportedGenericHarnessCredentialRoute,
@@ -6,6 +7,7 @@ import {
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { isMatrixGatewaySourceReady, isMatrixGatewaySourceDiscoverable, matrixGatewayEligibleModels } from "./GatewayPanel.js";
+import { gatewayCreditStaleAfter } from "./utils.js";
 import type {
   ProviderSettingsMutationIntent,
   AgentsProvidersViewProps,
@@ -39,9 +41,10 @@ export function useGatewaySelection({
     configurationHarnessKinds.includes(harness.harness);
   // One Matrix balance, with separate exact serving routes behind it. Preserve
   // the selected managed route; prefer GLM only when choosing Matrix anew.
+  const now = useLocalObservationExpiry(snapshot.accessSources.map(gatewayCreditStaleAfter)) ?? Number.NaN;
   const readyGatewaySource = (source: ProviderSettingsSnapshot["accessSources"][number]) =>
     isMatrixGatewaySourceReady(source, snapshot.gatewayPolicy,
-      snapshot.modelProviders.find((provider) => provider.id === source.providerId) ?? null);
+      snapshot.modelProviders.find((provider) => provider.id === source.providerId) ?? null, now);
   const discoveredGatewaySources = snapshot.accessSources.filter((source) =>
     isMatrixGatewaySourceDiscoverable(source, snapshot.gatewayPolicy,
       snapshot.modelProviders.find((provider) => provider.id === source.providerId) ?? null));
@@ -64,6 +67,7 @@ export function useGatewaySelection({
     gatewaySource,
     snapshot.gatewayPolicy,
     gatewayProvider,
+    now,
   );
   const gatewayModelsFor = (item: ProviderHarnessInstance) =>
     eligibleGatewayModels.filter(
