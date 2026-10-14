@@ -1417,7 +1417,13 @@ async function startNativeSession(lease) {
     onChild(value) { child = value; },
     onClosed() { if (stopTimer) clearTimeout(stopTimer); for (const pending of pendingRpc.values()) { clearTimeout(pending.timeout); pending.reject(new Error("provider_stopped")); } pendingRpc.clear(); },
     onMessage: handleProviderMessage,
-    onFailure(error) { if (error instanceof CodexTransportError) process.stderr.write(JSON.stringify({ event: "coding_transport_failed", category: error.category }) + "\n"); stop(); },
+    onFailure(error) {
+      if (error instanceof CodexTransportError) process.stderr.write(JSON.stringify({
+        event: "coding_transport_failed", category: error.category,
+        methods: [...pendingRpc.values()].slice(0, 8).map(({ method }) => method),
+      }) + "\n");
+      stop();
+    },
     onRetry: async ({ label }) => { startupReconnecting = true; await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect", kind: "phase", displayName: label }); },
   });
   childExit = nativeSession.closed; providerOutput = nativeSession.output; providerErrors = nativeSession.errors;
