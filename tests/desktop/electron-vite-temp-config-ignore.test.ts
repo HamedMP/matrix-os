@@ -22,6 +22,11 @@ describe("electron-vite temporary config bundles", () => {
     expect(ignored("desktop/electron.vite.config.1792001262925.mjs")).toBe(true);
   });
 
+  it("ignores Python bytecode caches written by script tests", () => {
+    expect(ignored("scripts/ops/__pycache__/repair-funded-chat-config.cpython-312.pyc")).toBe(true);
+    expect(ignored("scripts/ops/repair-funded-chat-config.py")).toBe(false);
+  });
+
   it("do not hide the real config or other desktop sources", () => {
     expect(ignored("desktop/electron.vite.config.ts")).toBe(false);
     expect(ignored("desktop/electron.vite.config.local.mjs")).toBe(false);

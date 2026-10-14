@@ -9,6 +9,9 @@ desktop/build/*
 # electron-vite bundles its config to a temporary sibling while loading it.
 # Concurrent loads must not see each other's bundle as an uncommitted change.
 /desktop/electron.vite.config.[0-9]*.mjs
+# Python bytecode caches written when tests import scripts/ops modules.
+__pycache__/
+*.py[cod]
 .next/
 *.tsbuildinfo
 .build-stamp
