@@ -2,15 +2,18 @@
 // Feature click-scripts require this file. Do not commit recorded MP4s.
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 const { execFileSync } = require("node:child_process");
 
 const SKILL = path.resolve(__dirname, "..");
+// Compiled tools live outside the skill so a repo checkout never picks up Mach-O binaries.
+const TOOLS_DIR = path.join(os.tmpdir(), "mxo-demo-tools");
 const ENCODER_SRC = path.join(__dirname, "encode-demo.swift");
-const ENCODER_BIN = path.join(__dirname, "encode-demo");
+const ENCODER_BIN = path.join(TOOLS_DIR, "encode-demo");
 const STITCH_SRC = path.join(__dirname, "stitch-complete.swift");
-const STITCH_BIN = path.join(__dirname, "stitch-complete");
+const STITCH_BIN = path.join(TOOLS_DIR, "stitch-complete");
 
 const WEB = { w: 1440, h: 810 };
 const EL = { w: 1440, h: 810 };
@@ -90,7 +93,10 @@ function makeSession(css) {
   const session = {
     css,
     mouse: { x: 760, y: Math.round(css.h * 0.52) },
-    timeline: { frames: [], segments: [], cameras: [], captions: [] },
+    timeline: {
+      framesDir: fs.mkdtempSync(path.join(os.tmpdir(), "mxo-demo-frames-")),
+      frames: [], segments: [], cameras: [], captions: [],
+    },
     writes: [],
     cdp: null,
     step: 0,
@@ -192,17 +198,24 @@ async function stopCapture(session) {
   session.timeline.segments.at(-1).end = now();
 }
 
-function compileEncoder() {
-  if (!fs.existsSync(ENCODER_BIN) || fs.statSync(ENCODER_BIN).mtimeMs < fs.statSync(ENCODER_SRC).mtimeMs) {
-    execFileSync("swiftc", ["-O", ENCODER_SRC, "-o", ENCODER_BIN], { stdio: "inherit" });
+function insideSkill(target) {
+  const rel = path.relative(SKILL, path.resolve(String(target)));
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function rejectInsideSkill(target, label) {
+  if (insideSkill(target)) throw new Error(`${label} must not be written inside the skill`);
+}
+
+function compileTool(src, bin, flags) {
+  fs.mkdirSync(TOOLS_DIR, { recursive: true });
+  if (!fs.existsSync(bin) || fs.statSync(bin).mtimeMs < fs.statSync(src).mtimeMs) {
+    execFileSync("swiftc", [...flags, src, "-o", bin], { stdio: "inherit" });
   }
 }
 
-function compileStitcher() {
-  if (!fs.existsSync(STITCH_BIN) || fs.statSync(STITCH_BIN).mtimeMs < fs.statSync(STITCH_SRC).mtimeMs) {
-    execFileSync("swiftc", ["-O", "-parse-as-library", STITCH_SRC, "-o", STITCH_BIN], { stdio: "inherit" });
-  }
-}
+const compileEncoder = () => compileTool(ENCODER_SRC, ENCODER_BIN, ["-O"]);
+const compileStitcher = () => compileTool(STITCH_SRC, STITCH_BIN, ["-O", "-parse-as-library"]);
 
 function warpSegment(segment, frames, captions, cameras) {
   const arrivals = frames.filter((frame) => frame.t <= segment.end).map((frame) => frame.t);
@@ -254,6 +267,7 @@ function warpSegment(segment, frames, captions, cameras) {
 }
 
 function encodeTimeline(timeline, css, output, segmentIndex = null) {
+  rejectInsideSkill(output, "encoded video");
   compileEncoder();
   if (Math.abs(css.h / css.w - OUT.screen / OUT.w) > 0.001) throw new Error(`source ${css.w}x${css.h} is not 16:9`);
   const FULL = { x: 0, y: 0, w: css.w, h: css.h };
@@ -400,8 +414,10 @@ function trimTail(timeline, cutSeconds, holdSeconds = 2.2) {
 }
 
 function stitch(recipe) {
-  compileStitcher();
+  rejectInsideSkill(recipe.output, "stitched video");
   const recipePath = recipe.recipePath ?? path.join(path.dirname(recipe.output), "recipe.json");
+  rejectInsideSkill(recipePath, "stitch recipe");
+  compileStitcher();
   fs.mkdirSync(path.dirname(recipe.output), { recursive: true });
   fs.writeFileSync(recipePath, JSON.stringify({
     output: recipe.output,
@@ -419,7 +435,7 @@ function stitch(recipe) {
 }
 
 module.exports = {
-  SKILL, WEB, EL, OUT, FPS, BAND, WARP,
+  SKILL, TOOLS_DIR, ENCODER_BIN, STITCH_BIN, WEB, EL, OUT, FPS, BAND, WARP,
   ease, hold, now, cursorOverlay, makeSession, glide, boxOf, hover, click,
   focusFor, camera, caption, startCapture, stopCapture, dragHandle,
   dismissUpdate, assertCssSize, launchWeb, launchElectron, releaseElectron, hideOpenChat,

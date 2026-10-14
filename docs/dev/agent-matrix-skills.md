@@ -18,6 +18,7 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `matrix-chat-import` | Import owner-selected Codex/Claude transcripts as private Matrix Chats. |
 | `matrix-personal-daily-brief` | Prepare a personal briefing from connected services. |
 | `matrix-jev-email-triage` | Triage email through the scoped Matrix workflow. |
+| `matrix-product-demo-video` | Record captioned click-through demo videos of Matrix surfaces on macOS, without committing the videos. |
 | `emil-design-eng` | Refine hierarchy, components, UI details, and interaction polish. |
 | `apple-design` | Build fluid direct manipulation, gestures, and spatial continuity. |
 | `animate` | Choose and implement purposeful web motion with local recipe references. |

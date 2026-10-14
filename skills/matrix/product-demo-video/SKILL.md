@@ -1,129 +1,117 @@
 ---
+triggers: ["product demo", "demo video", "record a demo", "click-through video", "team demo"]
 name: matrix-product-demo-video
-description: Record cinematic product demo videos with a scripted mouse, caption strip, time-warp, and dissolve chapter cards. Use when the user asks for a product demo, click-through video, demo recording, team demo, or a video like the onboarding-widget complete cut.
-version: 1.1.0
+description: Record captioned click-through demo videos of Matrix OS surfaces with a scripted cursor, time-warped waits, and dissolve chapter cards, rendered on macOS without committing the videos.
+version: 1.0.0
 author: Matrix OS
 license: MIT
 platforms: [macos]
-triggers: ["product demo", "demo video", "record a demo", "click-through video", "team demo"]
+related_skills: [matrix-dev-vps]
 metadata:
   agent:
     tags: [Matrix OS, demo, video, Playwright, Electron, Web Desktop, Web Canvas]
+    related_skills: [matrix-dev-vps]
 ---
 
-# Product demo video
+# Matrix Product Demo Video
 
-Record demos the way a human would click, then render them as a clean 16:9 film. Do not screen-record the agent chatting. Do not commit MP4s.
+## When to Use
 
-## When to use
+Use this when the user wants a shareable video of a Matrix feature on Web Desktop, Web Canvas, or Electron Desktop. This skill owns capture, captions, pacing, chapter cards, and QA. The click script that tells the feature's story is written fresh for each demo and stays out of git.
 
-Use when the user wants a shareable product video of Web Desktop, Web Canvas, Electron Desktop, Web Mobile, or Native Mobile. This skill owns capture, captions, speed, chapter cards, and QA. The feature-specific click script is written per demo.
+Web Mobile can reuse the web recorder with a phone-sized viewport when the user asks. Native Mobile is out of scope. Do not screen-record the agent chatting. Record the product the way a person would use it: open, act, see the result.
 
-## Non-negotiables
+## Safety Rules
 
-- **Never put demo videos in the repo.** Write MP4s to `~/Desktop/demo videos/` and keep frames/timelines in the agent store or `$TMPDIR`.
-- **Never spend AI credits or press Send / Connect** unless the user explicitly consents to that exact run.
-- **Never restart user services** without consent.
-- **Never read or copy desktop credentials** or isolated-profile tokens into the reply.
+- Never commit videos, frames, or recorder scripts. Write MP4s to `~/Desktop/demo videos/` and keep frames and timelines in `$TMPDIR`.
+- Never spend AI credits, press Send, or press Connect unless the user consents to that exact run.
+- Never restart the user's services without consent.
+- Record Electron Desktop with an isolated profile. Check sign-in only as a boolean; never print or copy tokens or desktop credentials.
+- If a permission such as Full Access was changed in the isolated profile, say so. Do not change the user's everyday app defaults.
 - Name surfaces exactly: Web Desktop, Web Canvas, Electron Desktop, Web Mobile, Native Mobile.
-- macOS only for encode/stitch (`swiftc` + AVFoundation). There is no ffmpeg in this pipeline.
+
+Encoding and stitching need macOS (`swiftc` and AVFoundation). There is no ffmpeg in this pipeline.
 
 ## Pipeline
 
-1. Write a feature recorder that drives Playwright (web) and/or `_electron.launch` (Electron).
-2. Inject the visible cursor overlay. Glide the mouse. Click with a short press. Caption each beat.
-3. Capture with CDP `Page.startScreencast` (jpeg q88, everyNthFrame 2) at **1440×810 CSS, DPR 2**.
-4. Encode each chapter with `scripts/encode-demo.swift` through `scripts/record-lib.cjs`.
-5. Stitch chapters with `scripts/stitch-complete.swift` (title card → clip, 0.45s dissolve).
-6. Copy the result to `~/Desktop/demo videos/<slug>.mp4`.
-7. QA with contact sheets. Fix bugs. Re-encode from the saved timeline when possible — do not re-run AI.
-
-## Look
-
-| Rule | Value |
-| --- | --- |
-| Screen | 1440×810, 16:9, DPR 2 |
-| Output frame | 1440×900 (810px screen + 90px caption strip) |
-| Mouse | eased glide ~380ms, click hold 90ms / 60ms |
-| Camera | optional crop that lerps; start and end on full frame |
-| Captions | one line in the strip under the screen, never over UI |
-| Steps | recount per chapter (`1/5`), not a leftover global counter |
-| Cards | 1.5–2.0s, dark `#0A0E0A`, one card per chapter |
-| Crossfade | 0.45s; trim the previous instruction so ranges do not overlap |
-| Speed | idle gaps ~9×, motion ~1.3×, keep each caption readable |
-
-## Recorder
-
-Require `scripts/record-lib.cjs` from this skill. Write the click script next to the output dir, not in git.
+1. Run the surface you are recording (see `matrix-dev-vps` for the local stack).
+2. Write a recorder that requires `scripts/record-lib.cjs` and drives Playwright for web surfaces or `_electron.launch` for Electron Desktop.
+3. Inject the cursor overlay, glide the mouse to each control, click with a short press, and caption each beat.
+4. Capture with `startCapture` / `stopCapture` (CDP screencast at 1440×810 CSS pixels, DPR 2).
+5. Encode each chapter with `encodeTimeline`, then join chapters with `stitch`.
+6. Copy the result to `~/Desktop/demo videos/<slug>.mp4` and run QA.
 
 ```js
 const lib = require("<skill>/scripts/record-lib.cjs");
 const session = lib.makeSession(lib.EL); // or lib.WEB
 await page.evaluate(lib.cursorOverlay, session.mouse);
 await lib.startCapture(session, page);
-lib.caption(session, "The widget opens on first login.", lib.BAND);
-await lib.click(session, page, widget.getByRole("button", { name: /Research anything/ }));
+lib.caption(session, "Open the feature from the Dock.", lib.BAND);
+await lib.click(session, page, page.getByRole("button", { name: /Open/ }));
 await lib.stopCapture(session);
-lib.encodeTimeline(session.timeline, lib.EL, outMp4);
+lib.encodeTimeline(session.timeline, lib.EL, chapterMp4);
 lib.stitch({
-  output: desktopOut, width: 1440, height: 900, fade: 0.45,
-  chapters: [{ title: "Research", subtitle: "Electron Desktop", cardSeconds: 1.6, src: outMp4 }],
+  output: finalMp4,
+  chapters: [{ title: "Open", subtitle: "Electron Desktop", cardSeconds: 1.6, src: chapterMp4 }],
 });
 ```
 
-Launch helpers:
+`makeSession` creates a fresh `$TMPDIR/mxo-demo-frames-*` folder per session. Compiled Swift tools are cached in `$TMPDIR/mxo-demo-tools/`. Encode and stitch refuse to write inside the skill.
 
-- **Web:** Chrome `channel: "chrome"`, `headless: true`, `--window-size=1440,897 --force-device-scale-factor=2`, `viewport: null`. Confirm the first screencast frame is 1440×810.
-- **Electron:** `_electron.launch` with `OPERATOR_USER_DATA_DIR` set to an isolated profile. Size the window to 1440×810. Dismiss "Update Matrix OS" with Escape. Confirm `auth:status` only as a boolean, never print tokens.
+## Look
 
-Motion that does nothing on screen is a bug.
-
-## Helpers the finished cut used
-
-`encode-demo.swift` and `stitch-complete.swift` are the same files that rendered `onboarding-widget-complete.mp4`. `record-lib.cjs` is the capture, time-warp, and stitch caller from that cut, plus the launch helpers that were inline in the recorders. Use these. Do not invent a slower mouse, overlay captions on the Dock, or letterbox 16:9 into 16:10.
-
-| Helper | What the video did |
+| Rule | Value |
 | --- | --- |
-| `launchWeb(chromium, session)` | Headless Chrome, window `1440×897`, DPR 2, `viewport: null`, cursor init script |
-| `launchElectron(electron, { repo, profile, rendererUrl })` | Isolated profile, content size 1440×810, always-on-top, background throttling off |
-| `dismissUpdate(page)` | Escape the "Update Matrix OS" dialog before and after reload |
-| `hideOpenChat(page)` | Minimize a leftover Chat window before an Electron tour |
-| `assertCssSize(page, css)` | Abort unless the page is 1440×810 at DPR 2 |
-| `dragHandle(session, page, handle, toX, toY)` | Grab, 620ms drag. Drag to about x=900 so snap-back returns to the right corner |
-| `snapshotFrame(session)` | One JPEG per poll while a run is in progress |
-| `wheelScroll(page, deltaY, steps, ms)` | Scroll the finished transcript into view |
-| `trimTail(timeline, seconds, 2.2)` | Cut a splash or reload out of the tail and hold the last good frame |
-| `releaseElectron(app)` | Clear always-on-top before close |
+| Screen | 1440×810, 16:9, DPR 2 |
+| Output frame | 1440×900: the screen plus a 90px caption strip below it |
+| Mouse | eased glide of about 380ms; click hold 90ms down, 60ms up |
+| Camera | optional crop that eases in; start and end on the full frame |
+| Captions | one line in the strip, never over the UI |
+| Steps | numbered per chapter (`1/5`), not with a global counter |
+| Cards | 1.5–2.0s on dark `#0A0E0A`, one per chapter |
+| Crossfade | 0.45s between cards and clips |
+| Pacing | idle gaps about 9×, motion about 1.3×, every caption long enough to read |
 
-Waiting stretches: `segment.fastForward = 8` for a web-search wait, `caption.maxSpeed = 3.5` while an answer streams. Chapter cards on that cut were 2.0s, then 1.5s, 1.5s, 1.6s, 1.6s, and a 2.2s outro, with a 0.45s dissolve.
+Motion that changes nothing on screen is a bug. Do not slow the mouse down, put captions over the Dock, or letterbox 16:9 footage into a 16:10 frame.
 
-The onboarding click script stays out of git. It is one feature's story. The look and the tools above are the reusable part.
+## Launching Surfaces
 
-## Time-warp
+- **Web Desktop / Web Canvas:** `launchWeb(chromium, session)` opens headless Chrome with a 1440×897 window, DPR 2, `viewport: null`, and the cursor overlay preinstalled. Call `assertCssSize(page, lib.WEB)` before recording.
+- **Electron Desktop:** `launchElectron(electron, { repo, profile, rendererUrl })` starts the desktop app with `OPERATOR_USER_DATA_DIR` set to the isolated profile, sizes content to 1440×810, keeps the window on top, and disables background throttling. Call `releaseElectron(app)` before closing it.
+- `dismissUpdate(page)` closes the "Update Matrix OS" dialog. Run it after launch and after any reload.
+- `hideOpenChat(page)` minimizes a leftover Chat window before a tour.
 
-`encodeTimeline` compresses stillness and keeps motion readable. For a wait you already filmed (a model run), set `segment.fastForward = 8` instead of leaving it at 1×. For a long streaming caption, set `caption.maxSpeed = 3.5`. After a crash or splash reload, cut the timeline before that frame and hold the last good frame ~2s.
+## Pacing and Edits
 
-Re-encode from `timeline.json` whenever the edit is only speed, captions, or a cut. Re-record only when the clicks were wrong.
+`encodeTimeline` compresses stillness and keeps motion readable.
 
-## QA before you call it done
+- For a long wait you already filmed, such as a model run, set `segment.fastForward = 8`.
+- For a long streaming answer, set `caption.maxSpeed = 3.5` on that caption.
+- Use `snapshotFrame(session)` to grab one frame per poll while a run is in progress.
+- Use `wheelScroll(page, deltaY, steps, ms)` to bring finished results into view.
+- After a crash, splash screen, or reload at the end, call `trimTail(timeline, seconds)` to cut it and hold the last good frame.
+
+`encodeTimeline` writes `<output>.manifest.json` next to the MP4. Save `session.timeline` as JSON too. When an edit only changes speed, captions, or a cut, re-encode from the saved timeline. Re-record only when the clicks were wrong, and never re-run AI just to fix the edit.
+
+## QA
 
 ```bash
-swiftc -O scripts/encode-demo.swift -o /tmp/encode-demo
-/tmp/encode-demo sheet "$HOME/Desktop/demo videos/<slug>.mp4" /tmp/demo-qa/all 0.3 <duration> 1 4 24
+mkdir -p "$TMPDIR/mxo-demo-tools"
+swiftc -O scripts/encode-demo.swift -o "$TMPDIR/mxo-demo-tools/encode-demo"
+"$TMPDIR/mxo-demo-tools/encode-demo" sheet "$HOME/Desktop/demo videos/<slug>.mp4" "$TMPDIR/mxo-demo-qa/all" 0.3 <duration> 1 4 24
 ```
 
-Read the sheets. Typical bugs: doubled title cards, 16:9 letterboxed into 16:10, captions covering the Dock, leftover Chat behind a tour, snap-to-wrong-corner, splash/reload at the tail, step counters that do not match the chapter.
+Read every contact sheet. Common bugs: doubled title cards, letterboxing, captions covering the Dock, a leftover Chat window behind a tour, a widget snapping to the wrong corner, a splash or reload at the end, and step counters that do not match the chapter.
 
-A single hero screenshot is not QA. Confirm the story: open → act → result.
+A single hero screenshot is not QA. Confirm each chapter tells the story: open, act, result.
 
-## Safety on a real computer
+## Cleanup
 
-- Isolated Electron profile only. Sign out and delete it when the demos are finished.
-- Delete `$TMPDIR/mxo-*` frames after the user is done.
-- If Full Access or another permission was changed in the isolated profile, say so. Do not change the user's everyday app defaults.
-- Follow-up issue for Supervised blocking WebSearch/WebFetch: #2538.
+- Sign out of the isolated Electron profile and delete it when the demos are finished.
+- Delete `$TMPDIR/mxo-demo-frames-*` once the user has the final video.
+- Report the output path, the surfaces actually recorded, and anything you could not capture.
 
-## Additional resources
+## Additional Resources
 
 - Encoder, stitcher, and recorder API: [scripts.md](scripts.md)
-- Minimal recorder sketch: [example-recorder.cjs](example-recorder.cjs)
+- Recorder starting point: [example-recorder.cjs](example-recorder.cjs)

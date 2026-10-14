@@ -1,14 +1,15 @@
-# Demo video scripts
+# Demo Video Scripts
 
-All paths are relative to this skill directory. Compile Swift tools on first use; `record-lib.cjs` does that.
+Paths are relative to this skill directory. `record-lib.cjs` compiles both Swift tools into `$TMPDIR/mxo-demo-tools/` on first use and recompiles them when the source changes.
 
 ## encode-demo.swift
 
 ```bash
-swiftc -O scripts/encode-demo.swift -o /tmp/encode-demo
-/tmp/encode-demo encode <manifest.json>
-/tmp/encode-demo frames <video.mp4> <out-dir> <seconds...>
-/tmp/encode-demo sheet <video.mp4> <out-prefix> <start> <end> <step> [cols] [perSheet]
+mkdir -p "$TMPDIR/mxo-demo-tools"
+swiftc -O scripts/encode-demo.swift -o "$TMPDIR/mxo-demo-tools/encode-demo"
+"$TMPDIR/mxo-demo-tools/encode-demo" encode <manifest.json>
+"$TMPDIR/mxo-demo-tools/encode-demo" frames <video.mp4> <out-dir> <seconds...>
+"$TMPDIR/mxo-demo-tools/encode-demo" sheet <video.mp4> <out-prefix> <start> <end> <step> [cols] [perSheet]
 ```
 
 Manifest fields:
@@ -17,38 +18,38 @@ Manifest fields:
 | --- | --- |
 | `output` | MP4 path |
 | `width`, `height` | 1440×900 |
-| `screenHeight` | 810 — captions render in the strip below |
+| `screenHeight` | 810; captions render in the strip below |
 | `fps` | 30 |
-| `bitrate` | ~3.2 Mbps |
+| `bitrate` | about 3.2 Mbps |
 | `cssWidth` | 1440 |
-| `frames[]` | `{ src, crop:[x,y,w,h], caption?, card? }` |
+| `frames[]` | `{ src, crop: [x, y, w, h], caption?, card? }` |
 
-`sheet` needs a hardware decoder. Run it outside the sandbox (`required_permissions: ["all"]`).
+`frames` and `sheet` decode video with AVFoundation. Agent sandboxes that block hardware decoders must run them outside the sandbox.
 
 ## stitch-complete.swift
 
 ```bash
-swiftc -O -parse-as-library scripts/stitch-complete.swift -o /tmp/stitch-complete
-/tmp/stitch-complete recipe.json
+swiftc -O -parse-as-library scripts/stitch-complete.swift -o "$TMPDIR/mxo-demo-tools/stitch-complete"
+"$TMPDIR/mxo-demo-tools/stitch-complete" recipe.json
 ```
 
 Recipe:
 
 ```json
 {
-  "output": "/Users/you/Desktop/demo videos/feature.mp4",
+  "output": "/absolute/path/to/demo videos/feature.mp4",
   "width": 1440,
   "height": 900,
   "fade": 0.45,
   "bitrate": 3200000,
   "chapters": [
-    { "title": "Web Desktop", "subtitle": "Same widget, same place", "cardSeconds": 1.6, "src": "/tmp/web.mp4" },
-    { "title": "Done", "subtitle": "PRs #2519–#2536", "cardSeconds": 2.2 }
+    { "title": "Web Desktop", "subtitle": "Open the feature", "cardSeconds": 1.6, "src": "/tmp/web.mp4" },
+    { "title": "Done", "subtitle": "What shipped", "cardSeconds": 2.2 }
   ]
 }
 ```
 
-A chapter with no `src` is a card-only outro. The stitcher must trim the previous instruction before appending a fade, or AVFoundation fails with -11841.
+The stitcher does not expand `~` or `$HOME`, so pass absolute paths. A chapter with no `src` is a card-only outro. When a crossfade starts, the stitcher trims the previous instruction so time ranges never overlap; overlapping ranges make AVFoundation fail with error -11841.
 
 ## record-lib.cjs
 
@@ -56,8 +57,9 @@ A chapter with no `src` is a card-only outro. The stitcher must trim the previou
 const lib = require("./scripts/record-lib.cjs");
 ```
 
-Exports: `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `hold`, `now`, `ease`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `dragHandle`, `dismissUpdate`, `assertCssSize`, `launchWeb`, `launchElectron`, `releaseElectron`, `hideOpenChat`, `snapshotFrame`, `wheelScroll`, `trimTail`, `encodeTimeline`, `stitch`, `compileEncoder`, `compileStitcher`.
+Exports: `SKILL`, `TOOLS_DIR`, `ENCODER_BIN`, `STITCH_BIN`, `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `WARP`, `ease`, `hold`, `now`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `dragHandle`, `dismissUpdate`, `assertCssSize`, `launchWeb`, `launchElectron`, `releaseElectron`, `hideOpenChat`, `snapshotFrame`, `wheelScroll`, `trimTail`, `compileEncoder`, `compileStitcher`, `encodeTimeline`, `stitch`.
 
-`encodeTimeline(timeline, css, output, segmentIndex?)` writes `<output>.manifest.json` and the MP4. Optional `segment.fastForward` and `caption.maxSpeed` control squeeze.
-
-`stitch({ output, width, height, fade, chapters })` writes a temp recipe and runs the stitcher.
+- `makeSession(css)` returns a session whose `timeline.framesDir` is a new `$TMPDIR/mxo-demo-frames-*` folder.
+- `encodeTimeline(timeline, css, output, segmentIndex?)` writes `<output>.manifest.json` and the MP4. Optional `segment.fastForward` and `caption.maxSpeed` control pacing.
+- `stitch({ output, width, height, fade, chapters })` writes `recipe.json` next to the output and runs the stitcher.
+- `dragHandle(session, page, handle, toX, toY)` grabs a handle and drags it over 620ms. Drop a corner-snapping widget past the middle of the screen so it snaps to the intended corner.
