@@ -12,16 +12,25 @@ export function createCodexBrowserRunScope(options: { broker: SharedBrowserBroke
       const signal = AbortSignal.any([input.signal, controller.signal]);
       const browser = options ? openNativeSharedBrowserRun({ ...options, harness: "codex" }, { ...input, signal }) : undefined;
       let closing: Promise<void> | undefined;
+      let cleanupUnconfirmed = false;
+      function markCleanupUnconfirmed(): void {
+        if (cleanupUnconfirmed) return;
+        cleanupUnconfirmed = true;
+        input.onCleanupUnconfirmed?.();
+      }
       const row = { ownerId: input.owner.ownerId, chatId: input.chatId, cancel: async () => { controller.abort(); await close(); } };
       function close(): Promise<void> {
         return closing ??= (async () => {
           try { await browser?.close(); }
-          catch (error: unknown) { input.onCleanupUnconfirmed?.(); throw error; }
+          catch (error: unknown) { markCleanupUnconfirmed(); throw error; }
+          // Durable failure projection cannot prove the native process stopped.
+          // Revoke the broker lease, but retain admission and throw to Chat.
+          if (cleanupUnconfirmed) throw new Error("Browser cleanup unconfirmed");
           if (active.get(input.runId) === row) active.delete(input.runId);
         })();
       }
       active.set(input.runId, row);
-      return { withContext: <T>(operation: () => T) => withNativeBrowserExecution(input.owner.ownerId, browser, operation, input.onCleanupUnconfirmed), close };
+      return { withContext: <T>(operation: () => T) => withNativeBrowserExecution(input.owner.ownerId, browser, operation, markCleanupUnconfirmed), close };
     },
     async cancel(input: { ownerId: string; chatId: string; runId: string }) {
       const row = active.get(input.runId);

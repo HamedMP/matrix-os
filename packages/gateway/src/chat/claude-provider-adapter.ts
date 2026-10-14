@@ -189,9 +189,17 @@ export function createClaudeChatProviderAdapter(options: {
     const input = parseCanonicalProviderRunInput(inputValue);
     const processController = new AbortController();
     let browserRun: NativeSharedBrowserRun | undefined;
+    let browserCleanupUnconfirmed = false;
     const closeBrowser = async () => {
       try { await browserRun?.close(); return true; }
-      catch (error: unknown) { console.warn("[chat-claude] Browser cleanup unavailable", error instanceof Error ? error.name : "UnknownError"); return false; }
+      catch (error: unknown) {
+        console.warn("[chat-claude] Browser cleanup unavailable", error instanceof Error ? error.name : "UnknownError");
+        if (!browserCleanupUnconfirmed) {
+          browserCleanupUnconfirmed = true;
+          input.onCleanupUnconfirmed?.();
+        }
+        return false;
+      }
     };
     const cwd = input.executionRoot ?? options.homePath;
     const selectedPermission = permissionMode(input.permissionMode, input.interactionMode);
@@ -869,7 +877,7 @@ export function createClaudeChatProviderAdapter(options: {
         capability?.revoke(); approvalControl?.close(); integrationApproval?.close();
       } else revokeApproval();
       capability?.revoke();
-      await closeBrowser();
+      if (!await closeBrowser()) throw new Error("Browser cleanup unconfirmed");
     }
   }
 

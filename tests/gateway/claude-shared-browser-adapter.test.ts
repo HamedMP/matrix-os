@@ -134,4 +134,51 @@ describe("Claude same Chrome execution", () => {
     expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "aborted" });
     expect(JSON.stringify(events)).not.toContain(token); await broker.close();
   });
+
+  it.each(["completed", "cancelled", "steered"])("throws after %s when the browser detach is physically unconfirmed", async (outcome) => {
+    const { createSharedBrowserBroker } = await import("../../packages/gateway/src/shared-browser/broker.js");
+    const detach = vi.fn(async () => { throw new Error("Synthetic detach refusal"); });
+    const broker = createSharedBrowserBroker({ ownerId: "owner_claude",
+      driver: { execute: async () => ({ success: true, observationId: "obs", content: "Page" }), detach, invalidateObservation() {} },
+      setHumanControl: async () => {},
+    });
+    const native = new EventEmitter() as EventEmitter & { stdout: FakeStream; stderr: FakeStream; kill: ReturnType<typeof vi.fn> };
+    Object.assign(native, { stdin: { write: (_frame: string, callback?: () => void) => { callback?.(); return true; } },
+      stdout: new FakeStream(), stderr: new FakeStream(), kill: vi.fn(() => queueMicrotask(() => native.emit("exit", null, "SIGTERM"))),
+    });
+    let token = "";
+    const spawnFn = vi.fn<CanonicalCliSpawn>((_command, _args, options) => {
+      token = options.env.MATRIX_SHARED_BROWSER_TOKEN!;
+      void broker.execute(broker.resolveCapability(token)!, { action: "snapshot" }, new AbortController().signal).then(() => {
+        native.stdout.emit("data", Buffer.from(JSON.stringify({ type: "system", subtype: "init", session_id: "native_unconfirmed" }) + "\n"));
+        if (outcome === "completed") {
+          native.stdout.emit("data", Buffer.from(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "native_unconfirmed" }) + "\n"));
+          native.emit("exit", 0, null);
+        }
+      });
+      return native;
+    });
+    const onCleanupUnconfirmed = vi.fn();
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", sharedBrowser: broker, spawnFn });
+    const events: unknown[] = [];
+    const running = (async () => {
+      for await (const event of adapter.start({ ...baseInput, permissionMode: "full_access", onCleanupUnconfirmed })) events.push(event);
+    })();
+    const rejected = expect(running).rejects.toThrow("Browser cleanup unconfirmed");
+    try {
+      if (outcome !== "completed") {
+        await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "state.updated" })));
+        if (outcome === "cancelled") await adapter.cancel!({ owner: baseInput.owner, chatId: baseInput.chatId, runId: baseInput.runId });
+        else await adapter.steer!({ owner: baseInput.owner, chatId: baseInput.chatId, runId: baseInput.runId,
+          turnId: baseInput.turnId, prompt: "Continue", parts: [{ type: "text", text: "Continue" }], clientRequestId: "steer-unconfirmed" });
+      }
+      await rejected;
+      expect(onCleanupUnconfirmed).toHaveBeenCalledOnce();
+      expect(detach).toHaveBeenCalledOnce();
+      expect(broker.resolveCapability(token)).toBeNull();
+      expect(spawnFn).toHaveBeenCalledOnce();
+      expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: outcome === "completed" ? "completed" : outcome === "cancelled" ? "aborted" : "failed" });
+    } finally { await broker.close(); }
+  });
+
 });

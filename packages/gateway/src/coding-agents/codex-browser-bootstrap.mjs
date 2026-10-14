@@ -24,7 +24,7 @@ export function codexBrowserThreadConfig(lease) {
     required: true,
     enabled_tools: ["shared_browser"],
     startup_timeout_sec: 20,
-    tool_timeout_sec: 330,
+    tool_timeout_sec: 390,
   } : { enabled: false } };
 }
 

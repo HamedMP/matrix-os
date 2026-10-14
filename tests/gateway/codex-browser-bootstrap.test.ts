@@ -1,3 +1,4 @@
+import { SHARED_BROWSER_ACTION_DEADLINE_MS } from "@matrix-os/contracts";
 import { expect,it } from "vitest";
 import { createCodexBrowserBootstrap,codexBrowserThreadConfig,codexBrowserChildEnvironment } from "../../packages/gateway/src/coding-agents/codex-browser-bootstrap.mjs";
 const lease={attemptId:"123e4567-e89b-42d3-a456-426614174000",token:"a".repeat(43),gatewayPort:4000};
@@ -14,8 +15,10 @@ it("fails wrong generations, cancellation and native readiness failures closed",
  const cancelled=createCodexBrowserBootstrap(lease.attemptId);const controller=new AbortController();const waiting=expect(cancelled.waitLease(controller.signal)).rejects.toThrow();controller.abort();await waiting;
 });
 it("puts only environment-variable names in native MCP config and clears inherited authority",()=>{
- const config=codexBrowserThreadConfig(lease);expect(JSON.stringify(config)).not.toContain(lease.token);
- expect(config['mcp_servers.matrix_shared_browser']).toMatchObject({env_vars:['MATRIX_SHARED_BROWSER_TOKEN','MATRIX_SHARED_BROWSER_GATEWAY_PORT'],required:true,enabled_tools:['shared_browser'],tool_timeout_sec:330});
+ const config=codexBrowserThreadConfig(lease);
+ expect(config['mcp_servers.matrix_shared_browser'].tool_timeout_sec * 1000).toBeGreaterThan(SHARED_BROWSER_ACTION_DEADLINE_MS);
+ expect(JSON.stringify(config)).not.toContain(lease.token);
+ expect(config['mcp_servers.matrix_shared_browser']).toMatchObject({env_vars:['MATRIX_SHARED_BROWSER_TOKEN','MATRIX_SHARED_BROWSER_GATEWAY_PORT'],required:true,enabled_tools:['shared_browser'],tool_timeout_sec:390});
  expect(codexBrowserChildEnvironment({BASE:'value',MATRIX_SHARED_BROWSER_TOKEN:'stale'},lease)).toEqual({BASE:'value',MATRIX_SHARED_BROWSER_TOKEN:lease.token,MATRIX_SHARED_BROWSER_GATEWAY_PORT:'4000'});
  expect(codexBrowserChildEnvironment({BASE:'value',MATRIX_SHARED_BROWSER_TOKEN:'stale',MATRIX_SHARED_BROWSER_GATEWAY_PORT:'4000'},undefined)).toEqual({BASE:'value'});
  expect(codexBrowserThreadConfig(undefined)).toEqual({'mcp_servers.matrix_shared_browser':{enabled:false}});

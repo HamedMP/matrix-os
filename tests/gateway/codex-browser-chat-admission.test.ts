@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
 import { nativeBrowserExecution } from "../../packages/gateway/src/chat/native-browser-execution-context.js";
@@ -17,4 +17,63 @@ it("carries canonical owner authority into delayed durable initial and successor
   for await(const _ of adapter.resume!({...base,runId:'run_restricted',permissionMode:'supervised',resumeState:state})){}
   expect(seen[2]).toBeUndefined();expect(live.size).toBe(0);
  }finally{await rm(home,{recursive:true,force:true});}
+});
+
+
+it.each(["initial", "successor"])("retains an unconfirmed physical cleanup through durable %s failure projection", async (phase) => {
+  const home = await mkdtemp("/tmp/mx-browser-unconfirmed-");
+  const live = new Set<string>();
+  const leaseClose = vi.fn(async (token: string) => { live.delete(token); });
+  const broker = {
+    openRun: (_binding, signal) => {
+      const token = randomBytes(32).toString("base64url");
+      live.add(token);
+      signal.addEventListener("abort", () => live.delete(token));
+      return { token, expiresAt: 1, close: () => leaseClose(token) };
+    },
+    resolveCapability: token => live.has(token) ? {} : null,
+  } as never;
+  const { prepareCodexBrowser } = await import("../../packages/gateway/src/coding-agents/codex-browser-bootstrap-client.js");
+  const cleanupUnconfirmed = vi.fn();
+  const bootstrapFailure = async ({ principal }) => {
+    await prepareCodexBrowser({
+      ownerId: principal.userId, sessionId: "sess_unconfirmed", browser: nativeBrowserExecution(principal.userId)!,
+      control: { prepareBrowser: async () => { throw new Error("Synthetic lost acknowledgement"); } } as never,
+      runtime: { stopSession: async () => ({ ok: false }) } as never,
+      signal: new AbortController().signal,
+    });
+    throw new Error("Unreachable synthetic bootstrap");
+  };
+  const complete = async ({ thread, now, nextEventId }) => ({
+    events: [{ type: "thread.completed", eventId: nextEventId(), threadId: thread.id,
+      occurredAt: now().toISOString(), outcome: "completed" }],
+    resumeState: { conversationId: "native_unconfirmed_thread" },
+  });
+  const threads = createCodingAgentThreadStore({ homePath: home,
+    providers: [{ providerId: "codex", initialRunExecution: "background",
+      startThread: phase === "initial" ? bootstrapFailure : complete, resumeTurn: bootstrapFailure }],
+    relationValidator: { validateCreate: async () => {}, validateThread: async () => {} },
+  });
+  const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads, sharedBrowser: broker, gatewayPort: 4000 });
+  const input = { owner: { type: "personal" as const, ownerId: "owner_unconfirmed" }, chatId: "chat_unconfirmed",
+    turnId: "cturn_unconfirmed", runId: "run_unconfirmed", prompt: "Synthetic", parts: [{ type: "text" as const, text: "Synthetic" }],
+    selection: { instanceId: "codex_default", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "full_access",
+    signal: new AbortController().signal, onCleanupUnconfirmed: cleanupUnconfirmed,
+  };
+  try {
+    let state;
+    if (phase === "successor") for await (const event of adapter.start!({ ...input, runId: "run_initial_success" })) {
+      if (event.type === "state.updated") state = event.state;
+    }
+    const projected: Array<{ type: string; outcome?: string }> = [];
+    await expect((async () => {
+      const execution = phase === "initial" ? adapter.start!(input) : adapter.resume!({ ...input, resumeState: state });
+      for await (const event of execution) projected.push(event);
+    })()).rejects.toThrow("Browser cleanup unconfirmed");
+    expect(projected).toContainEqual(expect.objectContaining({ type: "run.completed", outcome: "failed" }));
+    expect(cleanupUnconfirmed).toHaveBeenCalledOnce();
+    expect(live.size).toBe(0);
+    expect(leaseClose).toHaveBeenCalledTimes(phase === "initial" ? 1 : 2);
+    await expect(adapter.start!(input).next()).rejects.toThrow("Browser run unavailable");
+  } finally { await rm(home, { recursive: true, force: true }); }
 });

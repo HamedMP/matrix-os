@@ -7,7 +7,7 @@ export function configureClaudeSharedBrowser(launch: AgentLaunchSpec, run: Nativ
   if (!launch.args.includes("--strict-mcp-config") || !launch.args.includes("--no-chrome")) throw new Error("Browser launch unavailable");
   const index = launch.args.indexOf("--mcp-config");
   const config = index < 0 ? { mcpServers: {} } : JSON.parse(launch.args[index + 1]!);
-  const server = { ...run.mcpServer, timeout: 330_000,
+  const server = { ...run.mcpServer, timeout: 390_000,
     // Claude expands documented ${VAR} references. No bearer in argv/config.
     env: { MATRIX_SHARED_BROWSER_TOKEN: "${MATRIX_SHARED_BROWSER_TOKEN}", MATRIX_SHARED_BROWSER_GATEWAY_PORT: "${MATRIX_SHARED_BROWSER_GATEWAY_PORT}" } };
   config.mcpServers[NATIVE_SHARED_BROWSER_SERVER] = server;
