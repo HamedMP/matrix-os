@@ -69,6 +69,7 @@ export async function ownerReadFixture(options: { runtime?: string; rows?: numbe
   for (const slug of ["notes", "private_app"]) {
     await apps.register({ slug, name: slug, tables: {
       entries: { columns: { title: "text", position: "integer" } },
+      restricted: { columns: { secret: "text" } },
     } });
   }
   // Physically present but NOT declared in the manifest/registry projection.

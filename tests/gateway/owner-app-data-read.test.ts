@@ -24,7 +24,7 @@ describe("ENG-289 dedicated owner app-data read boundary (RED)", () => {
     expect(response.status).toBe(200);
     const schema = await response.json();
     expect(schema).toMatchObject({ app: "notes", schema: "notes", tables: { entries: expect.any(Object) } });
-    expect(JSON.stringify(schema)).not.toMatch(/hidden|private_app|password|DATABASE_URL/);
+    expect(JSON.stringify(schema)).not.toMatch(/hidden|restricted|private_app|password|DATABASE_URL/);
     expect(f.writes.every(spy => spy.mock.calls.length === 0)).toBe(true);
   });
 
@@ -55,6 +55,7 @@ describe("ENG-289 dedicated owner app-data read boundary (RED)", () => {
 
   it.each([
     ["cross-app", { ...fiveRows, app: "private_app" }, 403],
+    ["declared but ungranted table", { ...fiveRows, table: "restricted" }, 403],
     ["undeclared physical table", { ...fiveRows, table: "hidden" }, 403],
     ["schema override", { ...fiveRows, schema: "private_app" }, 400],
     ["owner override", { ...fiveRows, ownerId: "owner_other" }, 400],
@@ -79,12 +80,15 @@ describe("ENG-289 dedicated owner app-data read boundary (RED)", () => {
     expect(await response.text()).not.toMatch(/SELECT|DROP|private_app|undeclared-secret|db-secret|Zod/);
   });
 
-  it.each(["revoked", "expired", "identity-forgery", "foreign-token"])("denies and audits %s", async scenario => {
+  it.each(["revoked", "expired", "identity-forgery", "foreign-token", "machine-token", "unscoped-run"])("denies and audits %s", async scenario => {
     const f = await ownerReadFixture();
     if (scenario === "revoked") f.grant.revoke();
     if (scenario === "expired") f.expire();
+    const unscoped = scenario === "unscoped-run" ? f.capabilities.issue({ owner: OWNER, runId: "run_no_read", scope: "chat_call" })! : null;
     const extra = scenario === "identity-forgery"
       ? { "x-platform-user-id": "owner_other", "x-platform-verified": "forged" }
+      : scenario === "machine-token" ? { authorization: `Bearer ${MACHINE_SECRET}` }
+      : unscoped ? { authorization: `Bearer ${unscoped.token}` }
       : scenario === "foreign-token" ? { authorization: `Bearer ${"a".repeat(64)}` } : {};
     const response = await f.request(fiveRows, extra);
     expect(response.status).toBe(401);
@@ -112,7 +116,10 @@ describe("ENG-289 dedicated owner app-data read boundary (RED)", () => {
 
   it("bounds UTF-8 output and returns no oversized record or internal error", async () => {
     const f = await ownerReadFixture();
-    await f.engine.update("notes", "entries", f.before[0].id as string, { title: "界".repeat(MAX_BYTES) });
+    await f.engine.update("notes", "entries", f.before[0].id as string, { title: "界".repeat(Math.floor(MAX_BYTES / 2)) });
+    const encoded = JSON.stringify({ rows: await f.engine.find("notes", "entries", { limit: 5, orderBy: { position: "asc", id: "asc" } }) });
+    expect(encoded.length).toBeLessThan(MAX_BYTES);
+    expect(Buffer.byteLength(encoded)).toBeGreaterThan(MAX_BYTES);
     vi.clearAllMocks();
     const response = await f.request(fiveRows);
     expect(response.status).toBe(413);
