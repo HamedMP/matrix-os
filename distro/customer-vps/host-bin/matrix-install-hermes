@@ -94,6 +94,17 @@ run_installer_as_runtime_user env \
   PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
   bash "$HERMES_INSTALLER_PATH" --branch main --commit "$HERMES_COMMIT" --force-commit --skip-setup
 
+# Hermes owns its private Node, but global user installs share Matrix's prefix.
+# Its own tool installs use an explicit --prefix and are unaffected.
+if [ -f "$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs" ]; then
+  run_installer_as_runtime_user env \
+    MATRIX_RUNTIME_HOME="$MATRIX_RUNTIME_HOME" \
+    MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}" \
+    HERMES_HOME="$HERMES_HOME" \
+    "${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin/node" \
+    "$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs"
+fi
+
 # Native Anthropic is an upstream optional extra, so the base installer may
 # omit it. Provision all supported native routes from the same pinned source
 # dependency contract rather than duplicating provider SDK versions here.

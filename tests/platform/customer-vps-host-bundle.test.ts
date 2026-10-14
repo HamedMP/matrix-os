@@ -214,6 +214,10 @@ describe('customer VPS host bundle', () => {
     expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');
     expect(installer).toContain('install_coding_agents()');
     expect(installer).toContain('finish_agent_install()');
+    expect(installer).toContain('reconcile_agent_npm_prefix()');
+    expect(hermesInstaller).toContain('$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs');
+    expect(script).toContain("prefix=/opt/matrix/runtime/node\\n");
+    expect(script).toContain('g+rwX \"$STAGE_DIR/runtime/node/etc\"');
     expect(installer).toContain('install_code_server()');
     expect(installer).toContain('install_hermes()');
     expect(installer).toContain('"@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"');
@@ -240,7 +244,7 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('install_codex_package()');
     expect(installer).toContain('install_opencode_package()');
     expect(installer).toContain('install_pi_package()');
-    expect(installer).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
+    expect(installer).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  reconcile_agent_npm_prefix\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
     expect(installer).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors');
     expect(installer).toContain('sync-matrix-agent-skills.sh');
     expect(installer).toContain('claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');
