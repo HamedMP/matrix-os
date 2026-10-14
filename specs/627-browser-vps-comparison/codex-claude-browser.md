@@ -31,3 +31,9 @@ Status: active. Owner requested both additional harnesses in the existing Browse
 ## Review and documentation
 
 One owner scopes implementation to a separate follow-up worktree/PR above the existing six-PR native GitHub stack. The six existing review gates remain distinct. Record exact live-tested versions and limitations; update the public documentation PR with available harnesses and simple prompts only after successful qualification. No real account pages, credentials or private incident details enter published evidence.
+
+## Local verification (2026-10-14)
+
+U5 and U6 have focused unit/adapter qualification only: 100 tests across seven files pass on Node 24.13.1; gateway build passes. These exercise fresh leases, exact-row cleanup, scoped admission, strict Claude MCP merging without bearer argv, preflight failures, completion, and delayed browser drain before Steer creates the next execution. Existing Claude, OpenClaw, Hermes and launcher suites remain green. Claude environment interpolation follows the official MCP documentation at https://code.claude.com/docs/en/mcp; exact pinned native startup/tool catalog remains a required preview probe. No model execution or account-browser workflow is claimed.
+
+The public `scripts/spikes/browser-vps/codex-mcp-refresh.mjs` probe sends initialization, synthetic MCP thread start/resume, catalog reads and reload only. It never submits a model turn or requests authentication. Its caller must isolate the native owner's home and network. MCP refresh semantics are pending a real pinned 0.162.1 run before U7 behavior is chosen.
