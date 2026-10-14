@@ -8,7 +8,7 @@ const TERMINAL_INPUT_CHUNK_CHARS = 32_768;
 const TERMINAL_GRID_LIMITS = { minCols: 20, maxCols: 500, minRows: 5, maxRows: 200 };
 
 export type TerminalClientFrame =
-  | { type: "input"; terminalRef: TerminalRef; data: string }
+  | { type: "input"; terminalRef: TerminalRef; data: string; isUserInput?: boolean }
   | { type: "binary"; terminalRef: TerminalRef; dataBase64: string }
   | { type: "resize"; terminalRef: TerminalRef; mode: "hard"; size: TerminalGridSize }
   | { type: "detach"; terminalRef: TerminalRef }
@@ -80,6 +80,7 @@ export class MobileTerminalConnection {
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSeq: number;
   private binaryInputSupported = false;
+  private inputActivitySupported = false;
   private hasWriteOwnership = false;
   private requestedOwnership: "exclusive" | "observe" = "exclusive";
   private viewport: TerminalGridSize | null = null;
@@ -108,6 +109,7 @@ export class MobileTerminalConnection {
 
   private bindSocket(ws: WebSocket): void {
     this.binaryInputSupported = false;
+    this.inputActivitySupported = false;
     this.hasWriteOwnership = false;
     this.canDeclareViewport = false;
     this.declaredViewport = null;
@@ -129,6 +131,7 @@ export class MobileTerminalConnection {
       if (frame) {
         if (frame.type === "attached") {
           this.binaryInputSupported = frame.capabilities?.includes("binary-input-v1") ?? false;
+          this.inputActivitySupported = frame.capabilities?.includes("input-activity-v1") ?? false;
           this.hasWriteOwnership = frame.ownership !== "observer";
           if (frame.ownership === "observer") this.requestedOwnership = "observe";
           else if (frame.leaseEpoch !== undefined) this.requestedOwnership = "exclusive";
@@ -166,9 +169,9 @@ export class MobileTerminalConnection {
     };
   }
 
-  sendInput(data: string): boolean {
+  sendInput(data: string, isUserInput?: boolean): boolean {
     if (!this.hasWriteOwnership) return false;
-    return this.sendFrame({ type: "input", terminalRef: this.terminalRef, data });
+    return this.sendFrame({ type: "input", terminalRef: this.terminalRef, data, ...(this.inputActivitySupported && typeof isUserInput === "boolean" ? { isUserInput } : {}) });
   }
 
   sendBinary(data: string): boolean {
@@ -310,6 +313,7 @@ export function buildTerminalWebSocketUrl(baseUrl: string, refKey: string, token
   url.searchParams.set("tabId", tabId ?? "");
   url.searchParams.set("client", "mobile");
   url.searchParams.set("inputCapability", "binary-input-v1");
+  url.searchParams.set("activityCapability", "input-activity-v1");
   url.searchParams.set("lease", "exclusive");
   if (token) url.searchParams.set("token", token);
   return url.toString();
@@ -325,7 +329,7 @@ function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
       if (!canonicalSize) return null;
       const capabilities = Array.isArray(frame.capabilities)
         ? frame.capabilities.slice(0, 8)
-          .filter((value): value is string => value === "binary-input-v1")
+          .filter((value): value is string => value === "binary-input-v1" || value === "input-activity-v1")
         : undefined;
       return { ...frame, canonicalSize, ...(capabilities ? { capabilities } : {}) };
     }

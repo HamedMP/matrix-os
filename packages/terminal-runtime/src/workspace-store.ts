@@ -400,16 +400,20 @@ export class TerminalWorkspaceStore {
     });
   }
 
-  async recordInputActivity(refInput: TerminalRef): Promise<void> {
+  captureInputActivityTime(): string { return this.now().toISOString(); }
+
+  async recordInputActivity(refInput: TerminalRef, activityAt = this.captureInputActivityTime()): Promise<void> {
+    activityAt = z.iso.datetime().parse(activityAt);
     const ref = TerminalRefSchema.parse(refInput);
     await this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
-      tab.activityAt = this.now().toISOString();
-      tab.updatedAt = tab.activityAt;
+      if (!tab.activityAt || Date.parse(activityAt) > Date.parse(tab.activityAt)) tab.activityAt = activityAt;
+      const now = this.now().toISOString();
+      tab.updatedAt = now;
       tab.revision += 1;
-      workspace.updatedAt = tab.activityAt;
+      workspace.updatedAt = now;
       workspace.revision += 1;
       state.revision += 1;
     });

@@ -13,6 +13,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
+import { InputActivityRecorder } from "./input-activity-recorder.js";
 import { terminalTabIncarnation } from "./incarnation.js";
 import { TerminalCommandStateRefSchema, TerminalCommandStateSchema, type TerminalCommandState } from "./terminal-command-state.js";
 import { archiveEndedTerminalTab, TerminalEndedTabArchiveInputSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
@@ -88,7 +89,7 @@ export interface TerminalRuntimeOptions {
   observerCloseTimeoutMs?: number;
 }
 export interface TerminalViewer {
-  write(data: string | Uint8Array): Promise<void>;
+  write(data: string | Uint8Array, isUserInput?: boolean): Promise<void>;
   touch(): void;
   detach(): Promise<void>;
 }
@@ -111,6 +112,7 @@ interface AttachmentState {
 }
 
 interface InputQueueState {
+  activity?: InputActivityRecorder;
   chain: Promise<void>;
   pendingBytes: number;
   lastTouched: number;
@@ -664,12 +666,12 @@ export class TerminalRuntime {
     bootstrap?.flush();
     let detached = false;
     return {
-      write: async (data) => {
+      write: async (data, isUserInput) => {
         if (detached) throw new TerminalRuntimeError("conflict");
         const viewer = attachment!.viewers.get(viewerId);
         if (!viewer) throw new TerminalRuntimeError("unavailable");
         viewer.lastTouched = Date.now();
-        await this.enqueueWrite(ref, data, (encoded) => attachment!.handle.write(encoded));
+        await this.enqueueWrite(ref, data, (encoded) => attachment!.handle.write(encoded), isUserInput);
       },
       touch: () => {
         if (detached) return;
@@ -705,6 +707,7 @@ export class TerminalRuntime {
     });
     await this.flushCheckpoints();
     await Promise.all([...this.inputQueues.values()].map((queue) => queue.chain));
+    await this.flushInputActivity();
     await Promise.all([...this.attachments.keys()].map((key) => this.closeAttachment(key, true)));
     this.inputQueues.clear();
     this.closingPaneTabKeys.clear();
@@ -724,6 +727,10 @@ export class TerminalRuntime {
       if (!tab || terminalTabIncarnation(tab) !== expectedIncarnation) throw new TerminalRuntimeError("not_found");
       return this.store.readSnapshot(parsed);
     });
+  }
+
+  async flushInputActivity(): Promise<void> {
+    await Promise.all([...this.inputQueues.values()].map((queue) => queue.activity?.flush()));
   }
 
   async flushCheckpoints(): Promise<void> {
@@ -940,6 +947,7 @@ export class TerminalRuntime {
     ref: TerminalRef,
     dataInput: string | Uint8Array,
     writer: (data: Uint8Array) => Promise<void>,
+    isUserInput = true,
   ): Promise<void> {
     if (this.shuttingDown) throw new TerminalRuntimeError("unavailable");
     if (this.deletingWorkspaceId === ref.workspaceId) {
@@ -957,7 +965,7 @@ export class TerminalRuntime {
     if (!queue) {
       if (this.inputQueues.size >= this.maxAttachments * 2) {
         const idle = [...this.inputQueues.entries()]
-          .filter(([, candidate]) => candidate.pendingBytes === 0)
+          .filter(([, candidate]) => candidate.pendingBytes === 0 && !candidate.activity?.pending)
           .sort((left, right) => left[1].lastTouched - right[1].lastTouched)[0];
         if (!idle) throw new TerminalRuntimeError("capacity");
         this.inputQueues.delete(idle[0]);
@@ -975,10 +983,11 @@ export class TerminalRuntime {
       // admitted, the write must drain before termination, deletion, or
       // shutdown closes the underlying runtime resource.
       await writer(data);
-      // Input has already reached the process: a metadata failure must not invite a duplicate write.
-      await this.store.recordInputActivity(ref).catch((error: unknown) => {
-        console.error("[terminal-runtime] failed to record input activity", error instanceof Error ? error.name : "unknown_error");
-      });
+      // Capture successful delivery now; bounded/coalesced persistence stays off the input queue.
+      if (isUserInput) {
+        queue!.activity ??= new InputActivityRecorder(() => this.store.captureInputActivityTime(), (at) => this.store.recordInputActivity(ref, at));
+        queue!.activity.mark();
+      }
     });
     queue.chain = write.catch((error: unknown) => {
       console.error(
@@ -1033,6 +1042,7 @@ export class TerminalRuntime {
     const queues = [...this.inputQueues.entries()]
       .filter(([key]) => key.startsWith(prefix));
     await Promise.all(queues.map(([, queue]) => queue.chain));
+    await Promise.all(queues.map(([, queue]) => queue.activity?.flush()));
     for (const [key, queue] of queues) {
       if (queue.pendingBytes === 0 && this.inputQueues.get(key) === queue) {
         this.inputQueues.delete(key);
@@ -1044,6 +1054,7 @@ export class TerminalRuntime {
     const queue = this.inputQueues.get(key);
     if (!queue) return;
     await queue.chain;
+    await queue.activity?.flush();
     if (queue.pendingBytes === 0 && this.inputQueues.get(key) === queue) {
       this.inputQueues.delete(key);
     }

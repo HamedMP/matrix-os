@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
 import { TerminalRuntime, type ZellijObserverEvent, type ZellijRuntimeAdapter } from "../../packages/terminal-runtime/src/runtime.js";
+import { TerminalRuntimeSocketClient } from "../../packages/terminal-runtime/src/socket-client.js";
+import { TerminalRuntimeSocketServer } from "../../packages/terminal-runtime/src/socket-server.js";
 import { isTerminalOutputActivity } from "../../packages/terminal-runtime/src/terminal-activity.js";
 
 const homes: string[] = [];
@@ -25,6 +27,67 @@ async function fixture() {
 const screen = { ansi: "ready$ ", viewport: ["ready$ "], scrollback: [] };
 
 describe("terminal activity timestamps", () => {
+  it("delivers later input while activity persistence is blocked, and coalesces pending timestamps", async () => {
+    const { store, ref, advance } = await fixture();
+    await store.activateTab(ref, { tabId: 1, paneId: "terminal_1" });
+    const delivered: string[] = [];
+    const gate = Promise.withResolvers<void>();
+    const original = store.recordInputActivity.bind(store);
+    const recorded = vi.spyOn(store, "recordInputActivity").mockImplementationOnce(async (...args) => { await gate.promise; await original(...args); });
+    const runtime = new TerminalRuntime({ store, zellij: {
+      ensureSession: async () => undefined, createTab: async () => ({ tabId: 1, paneId: "terminal_1" }),
+      openAttachment: async () => ({ write: async (data) => { delivered.push(new TextDecoder().decode(data)); }, resize: async () => undefined, close: async () => undefined }),
+    } });
+    let first: Promise<void> | undefined; let second: Promise<void> | undefined;
+    try {
+      const viewer = await runtime.attach(ref, { viewerId: "slow-disk", send: () => undefined, size: { cols: 120, rows: 36 } });
+      advance(); first = viewer.write("a");
+      await vi.waitFor(() => expect(recorded).toHaveBeenCalledTimes(1));
+      advance(); second = viewer.write("b");
+      await vi.waitFor(() => expect(delivered).toEqual(["a", "b"]), { timeout: 400 });
+      advance(); await viewer.write("c");
+      expect(recorded).toHaveBeenCalledTimes(1);
+      // Persistence completes later than the input: it must retain the captured input time.
+      advance(); gate.resolve();
+      await Promise.all([first, second]);
+      await runtime.shutdown();
+      expect(recorded).toHaveBeenCalledTimes(2);
+      expect((await store.getTab(ref))?.activityAt).toBe("2026-10-14T10:03:00.000Z");
+    } finally { gate.resolve(); await Promise.all([first, second]); await runtime.shutdown(); }
+  });
+
+  it("delivers automatic replies without activity and records identical user bytes", async () => {
+    const { store, ref, tab, advance } = await fixture();
+    await store.activateTab(ref, { tabId: 1, paneId: "terminal_1" });
+    const delivered: string[] = [];
+    const runtime = new TerminalRuntime({ store, zellij: {
+      ensureSession: async () => undefined, createTab: async () => ({ tabId: 1, paneId: "terminal_1" }),
+      openAttachment: async () => ({ write: async (data) => { delivered.push(new TextDecoder().decode(data)); }, resize: async () => undefined, close: async () => undefined }),
+      writeToPane: async (_session, _pane, data) => { delivered.push(new TextDecoder().decode(data)); },
+    } });
+    const socketHome = await mkdtemp("/tmp/terminal-provenance-"); homes.push(socketHome);
+    const socketPath = join(socketHome, "r.sock");
+    const server = new TerminalRuntimeSocketServer({ socketPath, runtime });
+    let stream: ReturnType<TerminalRuntimeSocketClient["attach"]> | undefined;
+    try {
+      await server.start();
+      const ready = Promise.withResolvers<void>();
+      stream = new TerminalRuntimeSocketClient({ socketPath }).attach({ ref, viewerId: "provenance", mode: "soft", size: { cols: 120, rows: 36 },
+        onFrame: (frame) => { if (frame.type === "attached") { expect(frame.capabilities).toContain("input-activity-v1"); ready.resolve(); } },
+        onError: ready.reject, onClose: () => undefined });
+      await ready.promise;
+      advance(); stream.send({ type: "input", terminalRef: ref, data: "\x1b[1;2R", isUserInput: false });
+      await vi.waitFor(() => expect(delivered).toHaveLength(1));
+      expect((await store.getTab(ref))?.activityAt).toBe(tab.activityAt);
+      advance(); stream.send({ type: "input", terminalRef: ref, data: "\x1b[1;2R", isUserInput: true });
+      await vi.waitFor(async () => expect((await store.getTab(ref))?.activityAt).toBe("2026-10-14T10:02:00.000Z"));
+      advance(); await runtime.writeInput(ref, "direct\r");
+      await runtime.flushInputActivity();
+      expect((await store.getTab(ref))?.activityAt).toBe("2026-10-14T10:03:00.000Z");
+      expect(delivered).toEqual(["\x1b[1;2R", "\x1b[1;2R", "direct\r"]);
+    } finally { stream?.close(); await server.close(); await runtime.shutdown(); }
+  });
+
   it.each([
     { ansi: "changed", viewport: screen.viewport, scrollback: [] },
     { ...screen, viewport: ["changed"] },
@@ -112,9 +175,11 @@ describe("terminal activity timestamps", () => {
       viewer.touch();
       expect((await runtime.listWorkspaces())[0]?.tabs[0]?.activityAt).toBe(tab.createdAt);
       await viewer.write("echo hello\r");
+      await runtime.flushInputActivity();
       expect((await store.getTab(ref))?.activityAt).toBe("2026-10-14T10:02:00.000Z");
       advance();
       await runtime.writeInput(ref, "echo remote\r");
+      await runtime.flushInputActivity();
       const accepted = await store.getTab(ref);
       expect(accepted?.activityAt).toBe("2026-10-14T10:03:00.000Z");
       advance();
@@ -124,6 +189,7 @@ describe("terminal activity timestamps", () => {
       failInput = false;
       vi.spyOn(store, "recordInputActivity").mockRejectedValueOnce(new Error("disk unavailable"));
       await expect(runtime.writeInput(ref, "already delivered\r")).resolves.toBeUndefined();
+      await runtime.flushInputActivity();
       expect((await store.getTab(ref))?.activityAt).toBe(accepted?.activityAt);
       await viewer.detach();
     } finally { await runtime.shutdown(); }

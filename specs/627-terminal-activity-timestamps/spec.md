@@ -10,6 +10,7 @@ At main `0348437bc120a37d861904fa7969066e8bbe9222`, Desktop renders `TerminalTab
 
 - Optional `activityAt` is owner-local durable terminal activity, distinct from metadata `updatedAt`.
 - New tabs start at creation; successful input and changed, non-initial output advance activity.
+- Automatic emulator replies do not count as activity. A feature-detected hook in pinned xterm 6.0.0 distinguishes user input from identical reply bytes; it is disposed with the data subscription. Unsupported emulators default to counting input. Web, Electron and Native carry optional provenance only when the runtime advertises `input-activity-v1`; older runtimes retain their original frame shape. Binary mouse and direct CLI/API input remain activity-bearing.
 - Restore, observer initial replay, identical output, snapshot import, heartbeat, canonical-size bookkeeping and UI metadata do not advance activity. A subsequent screen redraw that changes content counts as output.
 - Legacy/migrated records with no trustworthy activity timestamp remain unknown until new input/output. Do not infer activity from an already polluted `updatedAt`.
 - Desktop shows `activityAt` with a tooltip explaining input/output semantics. Web carries it through refresh equality and shows it in ordinary Terminal hover cards; agent hover timestamps remain explicitly labeled agent metadata updates. Background command output counts as activity even if the user has not opened that tab.
@@ -25,6 +26,8 @@ At main `0348437bc120a37d861904fa7969066e8bbe9222`, Desktop renders `TerminalTab
 | Input | Deliver viewer input or direct CLI/API input | Activity advances only after success |
 | Rejected input | Fail the actual pane write | Activity unchanged |
 | Persistence failure | Deliver input, then fail activity bookkeeping | Input acknowledged; no invitation to replay the command |
+| Automatic reply | Reconnect query emits the same bytes as a user key/input | Reply reaches the process without activity; identical genuine input advances it |
+| Slow storage | Block activity persistence, send subsequent keys | Keys remain ordered and unblocked; pending timestamps coalesce and shutdown drains them |
 | Read/heartbeat | Poll workspaces and touch a viewer | Activity unchanged |
 | UI bookkeeping | Save pin/read state and reconcile runtime IDs | Metadata can advance, activity unchanged |
 | Historical import | Import a retained snapshot | Import is not fresh activity |
@@ -33,7 +36,7 @@ At main `0348437bc120a37d861904fa7969066e8bbe9222`, Desktop renders `TerminalTab
 
 ## Invariants and implementation boundary
 
-The owner-local `terminal-workspaces.json` remains canonical. Activity updates use the existing serialized, atomic store mutation path. Input stays in its existing per-tab queue; bookkeeping failure is logged after successful delivery rather than turning it into a failed command. No auth, endpoint, secret or control policy changes. No new timers or registries.
+The owner-local `terminal-workspaces.json` remains canonical. Input stays in its existing per-tab delivery queue; activity persistence runs in a separate coalescing worker attached to that bounded queue. Each worker captures successful input time and writes at most once per 250 ms, preserving later output timestamps and logging bookkeeping failure without inviting command replay. Shutdown, workspace deletion and tab deletion drain the worker. Busy workers cannot be evicted, so timers/workers remain bounded by the existing input-queue cap. No new auth, endpoint, secret or input-control permissions are introduced; provenance is activity metadata, validated as an optional boolean at the existing frame boundary.
 
 Output classification is extracted into `terminal-activity.ts`. The large runtime entrypoint receives only the observer flag and one queue completion hook; broader runtime/contract refactoring is deferred to avoid changing unrelated behavior.
 
@@ -41,7 +44,7 @@ Output classification is extracted into `terminal-activity.ts`. The large runtim
 
 The screenshot shows a valid `handoff-skill` label and `Could not rename shell`. Local source reproductions establish two independent defects: output/checkpoint revisions reject an otherwise unchanged display name, and runtime rename changes the Zellij internal discovery name before the metadata compare-and-swap. After that side effect, restoration cannot discover the original tab; a failed CAS can therefore still damage runtime identity.
 
-Rename now atomically changes durable display metadata only. It preserves the physical tab name, stable ref, incarnation, process and I/O. New Desktop, Web and Mobile callers send optional `expectedName`; the store compares that field under its existing write serialization and rejects an actual competing rename or future revision. Older callers keep the full-revision guard. HTTP and owner-only socket schemas validate/forward the same precondition. Staged/exited metadata can be renamed without a live Zellij command. Existing owner and project admission remain unchanged.
+Rename now atomically changes durable display metadata only. It preserves the physical tab name, stable ref, incarnation, process and I/O. New Desktop, Web and Mobile callers send optional `expectedName`; Desktop and Web retain the edit-start name/revision across background refreshes. The store compares that field under its existing write serialization and rejects an actual competing rename or future revision. Older callers keep the full-revision guard. HTTP and owner-only socket schemas validate/forward the same precondition. Staged/exited metadata can be renamed without a live Zellij command. Existing owner and project admission remain unchanged.
 
 The upstream 0.44.3 CLI supports `rename-tab --tab-id`; parameter mismatch is excluded ([version-pinned CLI source](https://raw.githubusercontent.com/zellij-org/zellij/v0.44.3/zellij-utils/src/cli.rs)). These are source/runtime reproductions; no read of Hamed's Main or claim about its exact network error status was made.
 

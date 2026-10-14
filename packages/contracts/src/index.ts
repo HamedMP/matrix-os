@@ -729,6 +729,7 @@ export const TerminalTabClientFrameSchema = z.discriminatedUnion("type", [
     type: z.literal("input"),
     terminalRef: TerminalRefSchema,
     data: z.string().min(1).max(64 * 1024),
+    isUserInput: z.boolean().optional(),
   }).strict(),
   z.object({
     type: z.literal("binary"),
@@ -756,7 +757,7 @@ const TerminalServerEventBaseSchema = z.object({
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
 
-export const TerminalInputCapabilitySchema = z.enum(["binary-input-v1", "native-scroll-v1"]);
+export const TerminalInputCapabilitySchema = z.enum(["binary-input-v1", "native-scroll-v1", "input-activity-v1"]);
 export type TerminalInputCapability = z.infer<typeof TerminalInputCapabilitySchema>;
 
 export const TerminalTabServerFrameSchema = z.discriminatedUnion("type", [

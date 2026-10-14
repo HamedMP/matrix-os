@@ -9,6 +9,7 @@ import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
+import { observeTerminalData } from "@matrix-os/ui/terminal-input-provenance";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { TerminalControls, createTerminalNativeHistory } from "@matrix-os/ui";
 import { createTerminalKeyHandler } from "./terminal-key-handler";
@@ -111,14 +112,14 @@ const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
 };
 const TERMINAL_INPUT_CHUNK_CHARS = 32_768;
 
-function sendTerminalInputFrame(ws: WebSocket, terminalKey: string | null, data: string): boolean {
+function sendTerminalInputFrame(ws: WebSocket, terminalKey: string | null, data: string, isUserInput?: boolean): boolean {
   const terminalRef = parseTerminalRefKey(terminalKey);
   if (!terminalRef || ws.readyState !== WebSocket.OPEN) return false;
-  ws.send(JSON.stringify({ type: "input", terminalRef, data }));
+  ws.send(JSON.stringify({ type: "input", terminalRef, data, ...(typeof isUserInput === "boolean" ? { isUserInput } : {}) }));
   return true;
 }
 
-function sendTerminalBinaryFrame(ws: WebSocket, terminalKey: string | null, data: string): boolean {
+function sendTerminalBinaryFrame(ws: WebSocket, terminalKey: string | null, data: string, isUserInput?: boolean): boolean {
   const terminalRef = parseTerminalRefKey(terminalKey);
   if (!terminalRef || ws.readyState !== WebSocket.OPEN || data.length === 0) return false;
   for (const value of data) {
@@ -208,6 +209,7 @@ export function TerminalPane({
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const onBinaryDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const binaryInputSupportedRef = useRef(false);
+  const inputActivitySupportedRef = useRef(false);
   const hasWriteOwnershipRef = useRef(false);
   const hasExclusiveOwnershipRef = useRef(false);
   const requestedOwnershipRef = useRef<"exclusive" | "observe" | null>(isFocused ? "exclusive" : null);
@@ -1162,6 +1164,7 @@ export function TerminalPane({
             case "attached":
               resetViewportDeclaration();
               binaryInputSupportedRef.current = msg.capabilities.includes("binary-input-v1");
+              inputActivitySupportedRef.current = msg.capabilities.includes("input-activity-v1");
               hasWriteOwnershipRef.current = msg.ownership === "writer";
               nativeHistory.attach(msg.capabilities.includes("native-scroll-v1"));
               hasExclusiveOwnershipRef.current = msg.leaseEpoch !== null;
@@ -1512,10 +1515,10 @@ export function TerminalPane({
       container.addEventListener("contextmenu", onLinkContextMenu, true);
 
       onDataDisposableRef.current?.dispose();
-      onDataDisposableRef.current = term.onData((data: string) => {
+      onDataDisposableRef.current = observeTerminalData(term, (data, isUserInput) => {
         const ws = wsRef.current;
         if (hasWriteOwnershipRef.current && ws && ws.readyState === WebSocket.OPEN) {
-          sendTerminalInputFrame(ws, sessionIdRef.current, data);
+          sendTerminalInputFrame(ws, sessionIdRef.current, data, inputActivitySupportedRef.current ? isUserInput : undefined);
         }
       });
 
@@ -1605,6 +1608,7 @@ export function TerminalPane({
         onBinaryDisposableRef.current?.dispose();
         onBinaryDisposableRef.current = null;
         binaryInputSupportedRef.current = false;
+        inputActivitySupportedRef.current = false;
         onResizeDisposableRef.current?.dispose();
         onResizeDisposableRef.current = null;
         const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);

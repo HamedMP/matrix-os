@@ -8,11 +8,13 @@ export function terminalFrameForInputCapabilities<T extends TerminalServerFrame>
   frame: T,
   binaryInputRequested: boolean,
   nativeScrollRequested = false,
+  inputActivityRequested = false,
 ): T | Omit<T, "capabilities"> {
   if (frame.type !== "attached" || !("capabilities" in frame)) return frame;
   const { capabilities, ...compatibleFrame } = frame;
   const advertised = Array.isArray(capabilities) ? capabilities.filter((capability) =>
     (capability === "binary-input-v1" && binaryInputRequested)
-    || (capability === "native-scroll-v1" && nativeScrollRequested)) : [];
+    || (capability === "native-scroll-v1" && nativeScrollRequested)
+    || (capability === "input-activity-v1" && inputActivityRequested)) : [];
   return advertised.length > 0 ? { ...compatibleFrame, capabilities: advertised } as T : compatibleFrame;
 }

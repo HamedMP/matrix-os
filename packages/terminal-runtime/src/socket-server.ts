@@ -66,7 +66,7 @@ export interface TerminalRuntimeControlApi {
     expectedIncarnation?: string;
     send(data: Uint8Array): void | Promise<void>;
     onExit(exitCode: number | null): void | Promise<void>;
-  }): Promise<{ write(data: string | Uint8Array): Promise<void>; touch(): void; detach(): Promise<void> }>;
+  }): Promise<{ write(data: string | Uint8Array, isUserInput?: boolean): Promise<void>; touch(): void; detach(): Promise<void> }>;
 }
 
 type TerminalServerFrame = z.infer<typeof TerminalTabServerFrameSchema>;
@@ -263,7 +263,7 @@ export class TerminalRuntimeSocketServer {
       canonicalSize: resized.canonicalSize,
       revision,
       nextSeq,
-      capabilities: this.options.runtime.scrollState ? ["binary-input-v1", "native-scroll-v1"] : ["binary-input-v1"],
+      capabilities: this.options.runtime.scrollState ? ["binary-input-v1", "native-scroll-v1", "input-activity-v1"] : ["binary-input-v1", "input-activity-v1"],
     });
     send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
     if (snapshot) {
@@ -339,7 +339,10 @@ export class TerminalRuntimeSocketServer {
         const state = await this.options.runtime.scrollState?.(ref, frame.line) ?? null;
         send({ type: "scroll-state", terminalRef: ref, revision, state });
       }
-      if (frame.type === "input") await viewer.write(frame.data);
+      if (frame.type === "input") {
+        if (frame.isUserInput === undefined) await viewer.write(frame.data);
+        else await viewer.write(frame.data, frame.isUserInput);
+      }
       if (frame.type === "binary") await viewer.write(Buffer.from(frame.dataBase64, "base64"));
       if (frame.type === "resize") {
         const workspace = await this.options.runtime.resize(ref, frame, request.input.viewerId);

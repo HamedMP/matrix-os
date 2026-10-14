@@ -15,6 +15,7 @@ export function buildTerminalConnectionQuery(input: TerminalConnectionQueryInput
     client: input.mobile ? "mobile" : "browser",
     inputCapability: "binary-input-v1",
     scrollCapability: "native-scroll-v1",
+    activityCapability: "input-activity-v1",
     ...(input.lease ? { lease: input.lease } : {}),
     ...(input.size ? { cols: String(input.size.cols), rows: String(input.size.rows) } : {}),
   };

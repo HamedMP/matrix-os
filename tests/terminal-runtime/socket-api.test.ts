@@ -275,7 +275,7 @@ describe("terminal runtime Unix socket API", () => {
 
     expect(frames.find((frame) => frame.type === "attached")).toMatchObject({
       nextSeq: 42,
-      capabilities: ["binary-input-v1"],
+      capabilities: ["binary-input-v1", "input-activity-v1"],
     });
     const screen = frames.find((frame) => frame.type === "snapshot");
     expect(screen?.ansi).toBeDefined();

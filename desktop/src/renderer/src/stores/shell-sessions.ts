@@ -57,7 +57,7 @@ interface ShellSessionsState {
   create(api: ApiClient, options?: ShellSessionCreateOptions): Promise<ShellSessionSummary | null>;
   adoptCreatedSession(name: string): void;
   deleteSession(api: ApiClient, name: string): Promise<boolean>;
-  rename(api: ApiClient, name: string, nextName: string): Promise<boolean>;
+  rename(api: ApiClient, name: string, nextName: string, editBase?: Pick<ShellSessionSummary, "revision" | "subtitle">): Promise<boolean>;
   reorder(api: ApiClient, fromName: string, toName: string): Promise<boolean>;
   patchUiState(api: ApiClient, name: string, patch: ShellUiStatePatch): Promise<boolean>;
 }
@@ -433,7 +433,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     }
   },
 
-  rename: async (api, name, nextNameRaw) => {
+  rename: async (api, name, nextNameRaw, editBase) => {
     const nextName = nextNameRaw.trim();
     if (originalDisplayName(get().sessions, name) === nextName) return true;
     if (nextName.length < 1 || nextName.length > 120) {
@@ -452,8 +452,8 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       if (!original) throw new Error("Terminal tab not found");
       const response = await api.patch<{ tab?: unknown }>(`/api/terminal/workspaces/${original.workspaceId}/tabs/${original.tabId}`, {
         name: nextName,
-        baseRevision: original.revision,
-        expectedName: original.subtitle,
+        baseRevision: editBase?.revision ?? original.revision,
+        expectedName: editBase ? editBase.subtitle : original.subtitle,
       });
       if (!isCurrentRuntimeGeneration(generation)) return false;
       const renamed = asShellSession(response.tab, {
