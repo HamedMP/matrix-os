@@ -103,6 +103,23 @@ describe("shared Chrome-first surface", () => {
     expect(screen.getByRole("button", { name: "Restore Chrome" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reconnect" })).toBeTruthy();
   });
+  it("light dismisses settings and restores focus to its trigger", async () => {
+    mount(); await frame();
+    const trigger = screen.getByRole("button", { name: "Browser settings" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("region", { name: "Browser settings" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close browser settings" })).toBe(document.activeElement);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Browser settings" })).toBeNull();
+    expect(trigger).toBe(document.activeElement);
+    fireEvent.click(trigger);
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("region", { name: "Browser settings" })).toBeNull();
+    expect(trigger).toBe(document.activeElement);
+    fireEvent.click(trigger);
+    fireEvent.focusIn(document.body);
+    expect(screen.queryByRole("region", { name: "Browser settings" })).toBeNull();
+  });
   it("rejects messages with the wrong source, origin or payload", async () => {
     mount(); const viewer = await frame();
     message(viewer, undefined, "https://attacker.test");

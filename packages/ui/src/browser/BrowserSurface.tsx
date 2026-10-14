@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FolderOpen, Globe2, Monitor, RefreshCw, Settings2, Terminal, X, Pause, Play, Hand, Square } from "lucide-react";
 import { useBrowserSurface } from "./use-browser-surface.js";
 import { browserAutomationActionAllowed, browserControlLabel, browserHumanInputAllowed } from "./automation-state.js";
@@ -10,6 +10,31 @@ import "./browser.css";
 export function BrowserSurface(props: BrowserSurfaceProps) {
   const { state, iframe, viewerKey, reconnect, control, automationControl } = useBrowserSurface(props);
   const [settings, setSettings] = useState(false);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const settingsPanel = useRef<HTMLElement>(null);
+  const settingsClose = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!settings) return;
+    settingsClose.current?.focus();
+    const dismiss = () => { setSettings(false); settingsTrigger.current?.focus(); };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    const onMouseDown = (event: MouseEvent) => {
+      if (!settingsPanel.current?.contains(event.target as Node)
+        && !settingsTrigger.current?.contains(event.target as Node)) dismiss();
+    };
+    const onFocus = (event: FocusEvent) => {
+      if (!settingsPanel.current?.contains(event.target as Node)
+        && !settingsTrigger.current?.contains(event.target as Node)) setSettings(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("focusin", onFocus);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("focusin", onFocus);
+    };
+  }, [settings]);
   const desktop = props.surface === "desktop";
   const available = state.status?.available === true;
   const connected = state.connection === "connected";
@@ -45,7 +70,7 @@ export function BrowserSurface(props: BrowserSurfaceProps) {
           {props.onOpenCloudDesktop && <button onClick={props.onOpenCloudDesktop}><Monitor size={16} aria-hidden="true"/>Cloud desktop</button>}
         </>}
         {!settings && (state.connection === "disconnected" || state.connection === "unavailable") && <button disabled={state.busy || props.active === false} onClick={reconnect}><RefreshCw size={16} aria-hidden="true"/>Reconnect</button>}
-        <button className="matrix-browser-icon-button" aria-label="Browser settings" aria-expanded={settings} onClick={() => setSettings(value => !value)}><Settings2 size={18} aria-hidden="true"/></button>
+        <button ref={settingsTrigger} className="matrix-browser-icon-button" aria-label="Browser settings" aria-expanded={settings} onClick={() => setSettings(value => !value)}><Settings2 size={18} aria-hidden="true"/></button>
       </div>
     </header>
     {state.error && <p className="matrix-browser-error" role="alert">{state.error}</p>}
@@ -64,8 +89,8 @@ export function BrowserSurface(props: BrowserSurfaceProps) {
       {minimized && state.viewerUrl && <div className="matrix-browser-recovery"><strong>Chrome is minimized</strong>
         <button disabled={!interactive} onClick={() => { void action("restore-chrome"); }}>Restore Chrome</button></div>}
       {connected && !automation && !state.status?.humanControlAvailable && <div className="matrix-browser-recovery"><strong>This view is read only</strong><button onClick={reconnect}>Take control</button></div>}
-      {settings && <section className="matrix-browser-settings" aria-label="Browser settings">
-        <div><strong>Display</strong><button className="matrix-browser-icon-button" aria-label="Close browser settings" onClick={() => setSettings(false)}><X size={18} aria-hidden="true"/></button></div>
+      {settings && <section ref={settingsPanel} className="matrix-browser-settings" aria-label="Browser settings">
+        <div><strong>Display</strong><button ref={settingsClose} className="matrix-browser-icon-button" aria-label="Close browser settings" onClick={() => { setSettings(false); settingsTrigger.current?.focus(); }}><X size={18} aria-hidden="true"/></button></div>
         <p>The desktop fits this window so Chrome’s tabs, extensions and dialogs remain within reach.</p>
         <p>Closing this view leaves Chrome and your apps open on your Matrix computer.</p>
         <div className="matrix-browser-settings-actions">

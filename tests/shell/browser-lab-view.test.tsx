@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
     calls.push([String(url), options]);
     if (url.endsWith("/api/apps/browser-lab/session")) return Response.json({ expiresAt: Date.now() + 600_000 });
-    if (url.endsWith("/api/status")) return Response.json(phase);
+    if (url.endsWith("/api/status")) return Response.json(phase, { headers: { "x-matrix-browser-lab-comparison": "enabled" } });
     if (url.endsWith("/api/viewer-session")) return Response.json({ ticket: "a".repeat(48), expiresAt: Date.now() + 60_000 });
     if (url.endsWith("/api/control")) {
       const body = JSON.parse(String(options?.body));
