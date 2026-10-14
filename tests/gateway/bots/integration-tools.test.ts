@@ -27,7 +27,7 @@ import { createBotTasksRepository } from "../../../packages/gateway/src/bots/rep
 import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
-import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
+import { BOT, OTHER_OWNER, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 const CHAT = "chat_integrations1";
 const AT = "2026-09-28T09:00:00.000Z";
@@ -158,6 +158,149 @@ describe("bot integration tools", () => {
       `Gmail (gmail): account "Work", connection conn_work, allowed: read, send`,
       "Google Calendar (google_calendar): not connected",
     ].join("\n") }] });
+  });
+
+  it("turns missing required inventory access into one actionable multi-account choice", async () => {
+    connected = [WORK, HOME];
+    const { tools } = setup();
+    await expect(tools.inventory(binding, {})).resolves.toEqual({ ok: true, content: [{
+      type: "text", text: expect.stringMatching(/asked which Gmail account.*End your turn now/),
+    }] });
+    await expect(tools.inventory(binding, {})).resolves.toEqual({ ok: true, content: [{
+      type: "text", text: expect.stringMatching(/not answered.*End your turn now/),
+    }] });
+    expect(await pending()).toEqual([expect.objectContaining({
+      kind: "account_choice", status: "pending",
+      payload: {
+        kind: "account_choice", service: "gmail", access: ["read", "send"],
+        options: [
+          { connectionId: WORK.connectionId, label: WORK.label },
+          { connectionId: HOME.connectionId, label: HOME.label },
+        ],
+      },
+    })]);
+  });
+
+  it("requests read only for Inbox Triage and keeps the selected Gmail account", async () => {
+    connected = [WORK, HOME];
+    const recipe = { ...RECIPE, integrations: [{ service: "gmail", effects: ["read"], required: true }] } as BotRecipe;
+    const { tools, interactions, call } = setup(undefined, undefined, undefined, undefined, recipe);
+    await tools.inventory(binding, {});
+    const [choice] = await pending();
+    expect(choice).toMatchObject({ payload: { service: "gmail", access: ["read"], options: [
+      { connectionId: WORK.connectionId, label: WORK.label },
+      { connectionId: HOME.connectionId, label: HOME.label },
+    ] } });
+    await interactions.resolve(OWNER, CHAT, choice!.interaction_id, {
+      kind: "account_choice", baseRevision: 1, connectionId: HOME.connectionId,
+    });
+    expect((await tools.inventory(binding, {})).content[0]?.text).toContain("connection conn_home, allowed: read");
+    await tools.call(binding, { ...read, connectionId: HOME.connectionId });
+    expect(call).toHaveBeenCalledWith(OWNER, expect.objectContaining({ connectionId: HOME.connectionId, read: true }), undefined);
+    await expect(tools.call(binding, { ...send, connectionId: HOME.connectionId })).rejects.toMatchObject({ code: "denied" });
+  });
+
+  it("does not repeat a declined inventory request in the same task", async () => {
+    connected = [WORK, HOME];
+    const { tools, interactions } = setup();
+    await tools.inventory(binding, {});
+    const [choice] = await pending();
+    await interactions.resolve(OWNER, CHAT, choice!.interaction_id, {
+      kind: "account_choice", baseRevision: 1, connectionId: WORK.connectionId,
+    });
+    await createBotGrantsRepository(db).revoke({
+      ownerId: OWNER,
+      grantId: (await createBotGrantsRepository(db).listLive({ ownerId: OWNER, botId: BOT, audience: "direct", now: AT }))[0]!.grantId,
+      now: toolClock.toISOString(),
+    });
+    await expect(tools.inventory(binding, {})).resolves.toEqual({ ok: true, content: [{
+      type: "text", text: expect.stringContaining("do not ask again"),
+    }] });
+    expect(await pending()).toHaveLength(1);
+  });
+
+  it.each(["granted", "missing"])("continues to Gmail after Calendar is declined (%s Gmail access)", async (gmailAccess) => {
+    connected = [WORK];
+    if (gmailAccess === "granted") await grant(WORK, ["read"]);
+    const recipe = { ...RECIPE, integrations: [
+      { service: "google_calendar", effects: ["read"] as const, required: true },
+      { service: "gmail", effects: ["read"] as const, required: true },
+    ] };
+    const { tools, interactions } = setup(undefined, undefined, undefined, undefined, recipe);
+    expect((await tools.inventory(binding, {})).content[0]?.text).toContain("asked to connect Google Calendar");
+    const [calendar] = await pending();
+    await interactions.resolve(OWNER, CHAT, calendar!.interaction_id, { kind: "connect_request", baseRevision: 1, action: "decline" });
+    const result = (await tools.inventory(binding, {})).content[0]?.text;
+    if (gmailAccess === "granted") {
+      expect(result).toContain('Gmail (gmail): account "Work", connection conn_work, allowed: read');
+      expect(await pending()).toHaveLength(1);
+    } else {
+      expect(result).toContain("asked which Gmail account");
+      expect((await pending())[1]).toMatchObject({ kind: "account_choice", payload: { service: "gmail" } });
+    }
+    expect((await tools.inventory(binding, { service: "google_calendar" })).content[0]?.text).toContain("do not ask again");
+  });
+
+  it("replaces an expired inventory choice instead of waiting forever", async () => {
+    connected = [WORK, HOME];
+    const { tools } = setup();
+    await tools.inventory(binding, {});
+    const [first] = await pending();
+    await db.updateTable("bot_interactions").set({ expires_at: "2026-09-28T10:30:00.000Z" })
+      .where("interaction_id", "=", first!.interaction_id).execute();
+    toolClock = new Date("2026-09-28T11:00:00.000Z");
+    await expect(tools.inventory(binding, {})).resolves.toEqual({ ok: true, content: [{
+      type: "text", text: expect.stringContaining("asked which Gmail account"),
+    }] });
+    const rows = await pending();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ interaction_id: first!.interaction_id, status: "expired", revision: 2 });
+    expect(rows[1]).toMatchObject({ kind: "account_choice", status: "pending" });
+  });
+
+  it.each(["revoked", "disconnected"])("does not report a %s grant as usable inventory", async (state) => {
+    const existing = await grant(WORK);
+    if (state === "revoked") {
+      await createBotGrantsRepository(db).revoke({ ownerId: OWNER, grantId: existing.grantId, now: toolClock.toISOString() });
+    } else {
+      connected = [HOME];
+    }
+    const { tools } = setup();
+    await expect(tools.inventory(binding, {})).resolves.toEqual({ ok: true, content: [{
+      type: "text", text: expect.stringContaining("asked which Gmail account"),
+    }] });
+    const [choice] = await pending();
+    expect(choice).toMatchObject({
+      kind: "account_choice",
+      payload: { options: state === "revoked"
+        ? [{ connectionId: WORK.connectionId, label: WORK.label }]
+        : [{ connectionId: HOME.connectionId, label: HOME.label }] },
+    });
+  });
+
+  it("isolates another owner's grants from inventory authorization", async () => {
+    await createBotGrantsRepository(db).grant({
+      ownerId: OTHER_OWNER, botId: BOT, service: WORK.service, connectionId: WORK.connectionId,
+      accountLabel: WORK.label, effects: ["read", "send"], audience: "direct",
+      grantedByActorId: OTHER_OWNER, now: AT,
+    });
+    const { tools, client } = setup();
+    await tools.inventory(binding, {});
+    expect(client.inventory).toHaveBeenCalledExactlyOnceWith(OWNER, undefined);
+    expect(await pending()).toEqual([expect.objectContaining({ kind: "account_choice", status: "pending" })]);
+  });
+
+  it("leaves optional integrations non-blocking until the bot asks for that service", async () => {
+    connected = [WORK];
+    await grant(WORK);
+    const { tools } = setup();
+    const general = await tools.inventory(binding, {});
+    expect(general.content.map(part => part.text).join("\n")).toContain("Google Calendar (google_calendar): not connected");
+    expect(await pending()).toEqual([]);
+    await tools.inventory(binding, { service: "google_calendar" });
+    expect(await pending()).toEqual([expect.objectContaining({
+      kind: "connect_request", payload: expect.objectContaining({ service: "google_calendar", access: ["read"] }),
+    })]);
   });
 
   it.each([false, true])("keeps the granted immutable account through the real bot client/read route (label reused=%s)", async replaced => {

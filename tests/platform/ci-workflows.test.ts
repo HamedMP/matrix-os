@@ -178,8 +178,8 @@ fi
 function runPullRequestChangeDetection(
   root: string,
   workflowPath: string,
-  hasReadyForCi: boolean,
-  options: { action?: string; labelName?: string } = {},
+  draft: boolean,
+  options: { action?: string; baseEdit?: boolean } = {},
 ): {
   output: string;
   status: number | null;
@@ -236,8 +236,8 @@ exit 64
         GITHUB_SHA: '0123456789012345678901234567890123456789',
         GITHUB_TOKEN: 'test-token',
         PR_ACTION: options.action ?? 'synchronize',
-        PR_HAS_READY_FOR_CI: String(hasReadyForCi),
-        PR_LABEL_NAME: options.labelName ?? '',
+        PR_BASE_EDIT: String(options.baseEdit ?? false),
+        PR_DRAFT: String(draft),
       },
     });
 
@@ -277,49 +277,47 @@ describe('CI workflows', () => {
   it.each([
     ['core CI', '.github/workflows/ci.yml'],
     ['Docker CI', '.github/workflows/docker-test.yml'],
-  ])('reruns %s for each new head while ready-for-ci remains applied', (_name, path) => {
+  ])('runs %s for every non-draft PR head without a label', (_name, path) => {
     const workflow = readFileSync(join(process.cwd(), path), 'utf8');
+    expect(workflow).toMatch(/types:\s*\[opened, ready_for_review, synchronize, reopened[^\]]*\]/);
+    expect(workflow).not.toMatch(/types:\s*\[[^\]]*labeled/);
+    expect(workflow).not.toContain('ready-for-ci');
+    expect(workflow).toContain('PR_DRAFT: ${{ github.event.pull_request.draft == true }}');
 
-    expect(workflow).toMatch(/types:\s*\[[^\]]*synchronize[^\]]*\]/);
-    expect(workflow).toContain(
-      "PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}",
-    );
-    expect(path === '.github/workflows/ci.yml' ? sourceChangeScript : workflow).toContain(
-      '[ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]',
-    );
+    const actions = path.endsWith('ci.yml')
+      ? ['opened', 'ready_for_review', 'synchronize', 'reopened']
+      : ['opened', 'ready_for_review', 'synchronize', 'reopened'];
+    for (const action of actions) {
+      const ready = runPullRequestChangeDetection(process.cwd(), path, false, { action });
+      expect(ready.status, ready.stderr).toBe(0);
+      expect(ready.output, action).toContain('should_run=true');
+      if (path.endsWith('ci.yml')) expect(ready.output, action).toContain('trigger_requested=true');
 
-    const unlabeled = runPullRequestChangeDetection(process.cwd(), path, false);
-    expect(unlabeled.status, unlabeled.stderr).toBe(0);
-    expect(unlabeled.output).toContain('should_run=false');
-    if (path.endsWith('ci.yml')) {
-      expect(unlabeled.output).toContain('trigger_requested=false');
-    }
-
-    const labeled = runPullRequestChangeDetection(process.cwd(), path, true);
-    expect(labeled.status, labeled.stderr).toBe(0);
-    expect(labeled.output).toContain('should_run=true');
-    if (path.endsWith('ci.yml')) {
-      expect(labeled.output).toContain('trigger_requested=true');
+      const draft = runPullRequestChangeDetection(process.cwd(), path, true, { action });
+      expect(draft.status, draft.stderr).toBe(0);
+      expect(draft.output, action).toContain('should_run=false');
+      if (path.endsWith('ci.yml')) expect(draft.output, action).toContain('trigger_requested=false');
     }
   });
 
-  it('keeps unrelated label events admitted after ready-for-ci is applied', () => {
+  it('reruns core CI on a base retarget but not on title or body edits', () => {
     const path = '.github/workflows/ci.yml';
-    const unadmitted = runPullRequestChangeDetection(process.cwd(), path, false, {
-      action: 'labeled',
-      labelName: 'documentation',
-    });
-    expect(unadmitted.status, unadmitted.stderr).toBe(0);
-    expect(unadmitted.output).toContain('trigger_requested=false');
-    expect(unadmitted.output).toContain('should_run=false');
+    const retarget = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'edited', baseEdit: true });
+    expect(retarget.output).toContain('trigger_requested=true');
+    const metadata = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'edited' });
+    expect(metadata.output).toContain('trigger_requested=false');
+    const unknown = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'labeled' });
+    expect(unknown.output).toContain('trigger_requested=false');
+  });
 
-    const admitted = runPullRequestChangeDetection(process.cwd(), path, true, {
-      action: 'labeled',
-      labelName: 'documentation',
-    });
-    expect(admitted.status, admitted.stderr).toBe(0);
-    expect(admitted.output).toContain('trigger_requested=true');
-    expect(admitted.output).toContain('should_run=true');
+  it('never publishes a CI Results check for drafts or metadata edits', () => {
+    // A draft cannot merge; leaving the required check absent shows "expected", never red.
+    const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
+    const results = workflow.jobs['ci-results'];
+    const ignored = "(github.event_name == 'pull_request' && (github.event.pull_request.draft == true || (github.event.action == 'edited' && github.event.changes.base == null)))";
+    expect(results.name).toBe(`\${{ ${ignored} && 'CI Draft or Metadata (ignored)' || 'CI Results' }}`);
+    expect(results.if).toBe(`always() && !${ignored}`);
+    expect(workflow['run-name']).toContain(`${ignored} && format('CI metadata-v1 · {0}', github.sha)`);
   });
 
   it('runs every main commit to completion in its own concurrency group', () => {
@@ -331,7 +329,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('queue: max');
     expect(workflow).not.toContain('cancel-in-progress:');
     expect(workflow).toContain(
-      "group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}",
+      "group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'shared' }}",
     );
     expect(existsSync(join(root, '.github/workflows/ci-supersede.yml'))).toBe(false);
     expect(existsSync(join(root, 'scripts/ci/supersede-main-ci.mjs'))).toBe(false);

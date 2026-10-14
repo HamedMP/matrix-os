@@ -4,7 +4,7 @@ name: Supersede PR CI
 # in a workflow with the Actions cancellation permission.
 on:
   pull_request_target:
-    types: [synchronize, ready_for_review, labeled]
+    types: [synchronize, ready_for_review]
 
 permissions:
   actions: write
@@ -14,9 +14,7 @@ permissions:
 jobs:
   supersede:
     name: Cancel obsolete PR CI heads
-    if: >-
-      github.event.action == 'ready_for_review' ||
-      contains(github.event.pull_request.labels.*.name, 'ready-for-ci')
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:

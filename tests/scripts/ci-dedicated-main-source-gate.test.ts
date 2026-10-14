@@ -196,14 +196,14 @@ it('qualifies delegated main through full hosted fallback coverage when Linux ev
  await reconcile(f);expect(history.current()).toMatchObject({conclusion:'success',output:{title:'Current exact-main full hosted fallback coverage passed'}});
  expect(JSON.parse(history.current().output.summary)).toMatchObject({linuxFallback:true,qualificationMode:'delegated'});
 });
-it('waits neutrally when the push reconcile runs before CI is visible',async()=>{
+it('stays pending when the push reconcile runs before CI is visible',async()=>{
  const f=fixture();f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{total_count:0,workflow_runs:[]}} as any);
- await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral',output:{title:'Waiting for exact-main CI to finish'}});
+ await reconcile(f);expect(written(f)).toMatchObject({status:'in_progress',output:{title:'Waiting for exact-main CI to finish'}});expect(written(f)).not.toHaveProperty('conclusion');
 });
-it.each(['delegated','shadow'])('waits neutrally instead of failing while exact-main CI is still running (%s)',async mode=>{
+it.each(['delegated','shadow'])('stays pending while exact-main CI is still running (%s)',async mode=>{
  const f=fixture();f.ci.status='in_progress';
  if(mode==='shadow'){const configuration=(await f.github.rest.actions.listRepoVariables()).data;configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_ENABLED')!.value='false';configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_SHADOW')!.value='true';f.github.rest.actions.listRepoVariables.mockResolvedValue({data:configuration});}
- await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral',output:{title:'Waiting for exact-main CI to finish'}});
+ await reconcile(f);expect(written(f)).toMatchObject({status:'in_progress',output:{title:'Waiting for exact-main CI to finish'}});expect(written(f)).not.toHaveProperty('conclusion');
  expect(JSON.parse(written(f).output.summary)).toMatchObject({waitingForRequester:true,requestingRunId:321});
 });
 

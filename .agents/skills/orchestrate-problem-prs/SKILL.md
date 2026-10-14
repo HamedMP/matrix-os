@@ -23,7 +23,7 @@ comparable evidence and PR comments.
   otherwise.
 - Inspect the primary checkout and preserve unrelated work. Never implement in
   the primary checkout.
-- Confirm GitHub CLI authentication, the `ready-for-ci` label, and available
+- Confirm GitHub CLI authentication and available
   agent capacity before starting mutations.
 
 ## Coordinator Invariants
@@ -130,14 +130,13 @@ Require focused tests and all applicable repository gates. React changes also
 require React Doctor and current screenshot evidence. Record every skipped gate
 with its exact reason.
 
-After implementation and local validation, tell the owner to mark its draft PR
-ready for review and verify that it is no longer a draft. The same problem
-owner is personally responsible for invoking and completing
+After implementation and local validation, keep the PR as a draft. The same
+problem owner is personally responsible for invoking and completing
 `$worktree-pr-monitor` for its single assigned PR. The owner must:
 
 1. resolve current-head review feedback until Greptile reports `5/5`;
-2. add `ready-for-ci` only at the point required by that skill;
-3. wait for the label-triggered current-head CI to pass; and
+2. mark the PR ready for review only at the point required by that skill;
+3. wait for the current-head CI to pass; and
 4. return the PR URL, worktree, branch, SHA, checks, Greptile rating, and risks.
 
 Do not accept stale reviews or checks from an earlier commit.
