@@ -28,3 +28,27 @@ describe("electron-vite temporary config bundles", () => {
     expect(ignored("desktop/src/main/index.ts")).toBe(false);
   });
 });
+
+describe("release build source guard", () => {
+  it("names the uncommitted paths it rejects", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { readBuildSource } = await import("../../scripts/release/build-source.mjs");
+    const repo = mkdtempSync(join(tmpdir(), "build-source-guard-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "T", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "T", GIT_COMMITTER_EMAIL: "t@example.invalid" } }).trim();
+    try {
+      git("init", "-q");
+      writeFileSync(join(repo, "a.txt"), "a\n");
+      git("add", ".");
+      git("commit", "-qm", "init");
+      const head = git("rev-parse", "HEAD");
+      expect(readBuildSource(repo, head)?.commit).toBe(head);
+      writeFileSync(join(repo, "stray.txt"), "x\n");
+      writeFileSync(join(repo, "a.txt"), "changed\n");
+      expect(() => readBuildSource(repo, head)).toThrow("Release checkout has uncommitted source changes: a.txt, stray.txt");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
