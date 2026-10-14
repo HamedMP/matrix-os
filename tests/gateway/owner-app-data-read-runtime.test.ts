@@ -28,7 +28,22 @@ describe("ENG-289 production owner read composition", () => {
     expect(result[0]!.event).toMatchObject({ runId: RUN, outcome: "allowed" });
   });
 
-  it("delegates app reads to the actual native process without DB/machine credentials, then revokes", async () => {
+  it("keeps eligible app grants when another app exceeds limits or the installation exceeds 64 apps", async () => {
+    const f = await ownerReadFixture();
+    const runtime = await createOwnerAppDataReadRuntime({ apps: f.apps, queryEngine: f.engine,
+      kysely: f.kysely, ownerId: OWNER.ownerId, runtimeHandle: RUNTIME });
+    const notes = (await f.apps.get("notes"))!;
+    const listed = vi.spyOn(f.apps, "listApps");
+    listed.mockResolvedValueOnce([{ ...notes, slug: "oversized", tables: Object.fromEntries(
+      Array.from({ length: 33 }, (_, i) => [`table${i}`, { columns: { title: "text" } }])) }, notes]);
+    expect((await runtime.resolveGrant(OWNER))?.apps.map(app => app.app)).toEqual(["notes"]);
+    listed.mockResolvedValueOnce([notes, ...Array.from({ length: 64 }, (_, i) => ({ ...notes, slug: `app${i}` }))]);
+    const grant = await runtime.resolveGrant(OWNER);
+    expect(grant?.apps).toHaveLength(64);
+    expect(grant?.apps[0]?.app).toBe("notes");
+  });
+
+  it.each(["ready", "unavailable"])("delegates only available reads without blocking native Chat (%s)", async state => {
     const f = await ownerReadFixture();
     const runtime = await createOwnerAppDataReadRuntime({ apps: f.apps, queryEngine: f.engine,
       kysely: f.kysely, ownerId: OWNER.ownerId, runtimeHandle: RUNTIME });
@@ -49,13 +64,14 @@ describe("ENG-289 production owner read composition", () => {
     const issued = vi.spyOn(f.capabilities, "issue");
     const adapter = createClaudeChatProviderAdapter({ homePath: "/safe/home", spawnFn,
       resolveCredentialEnv: async () => ({ MATRIX_AUTH_TOKEN: MACHINE_SECRET, DATABASE_URL: DATABASE_SECRET, PGPASSWORD: "db-secret" }),
-      matrixMcpCapabilityIssuer: f.capabilities, resolveAppDataReadGrant: runtime.resolveGrant });
+      matrixMcpCapabilityIssuer: f.capabilities, resolveAppDataReadGrant: state === "ready" ? runtime.resolveGrant : async () => { throw new Error(DATABASE_SECRET); } });
     for await (const _ of adapter.start({ owner: OWNER, chatId: "chat_fixture", turnId: "cturn_fixture", runId: "run_native",
       prompt: "Read my app", parts: [{ type: "text", text: "Read my app" }],
       selection: { instanceId: "claude_code_default", model: "claude-haiku-4-5" },
       interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal,
     })) { /* Drain the production adapter. */ }
-    expect(issued).toHaveBeenCalledWith(expect.objectContaining({ appDataRead: expect.objectContaining({ runtimeHandle: RUNTIME }) }));
+    if (state === "ready") expect(issued).toHaveBeenCalledWith(expect.objectContaining({ appDataRead: expect.objectContaining({ runtimeHandle: RUNTIME }) }));
+    else expect(issued.mock.calls[0]![0]).not.toHaveProperty("appDataRead");
     const env = (spawnFn.mock.calls as unknown as Array<[string, string[], { env: Record<string, string> }]>)[0]![2].env;
     expect(env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toMatch(/^[a-f0-9]{64}$/);
     expect(env).not.toHaveProperty("DATABASE_URL");

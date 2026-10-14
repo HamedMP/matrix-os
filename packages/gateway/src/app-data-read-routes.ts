@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { OWNER_APP_READ_PATH, OwnerAppReadInputSchema, OWNER_APP_READ_DEFAULT_ROWS,
   OWNER_APP_READ_MAX_ROWS, OWNER_APP_READ_MAX_BYTES, OWNER_APP_READ_BODY_BYTES,
@@ -23,21 +23,26 @@ export function registerOwnerAppDataReadRoutes(app: Hono, options: OwnerAppReadR
     || caps[0]! > caps[1]!) throw new Error("Invalid app read limits");
   const [defaultRows, maxRows, maxBytes, bodyBytes] = caps as [number, number, number, number];
   const unavailable = { error: "App data read unavailable" };
+  const runAuthority = (c: Context) => {
+    const run = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as MatrixMcpRunContext | undefined;
+    return { ownerId: run?.actorId, runId: run?.runId, runtimeHandle: options.runtimeHandle };
+  };
   const routes = new Hono();
   routes.onError((error, c) => {
     console.warn("[app-data-read] Request unavailable", error.name);
     return c.json(unavailable, 503);
   });
   routes.post(OWNER_APP_READ_PATH, bodyLimit({ maxSize: bodyBytes, onError: async c => {
-    await options.audit({ outcome: "denied" });
+    await options.audit({ ...runAuthority(c), outcome: "denied" });
     return c.json({ error: "App data request too large" }, 413);
   } }), async c => {
     const run = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as MatrixMcpRunContext | undefined;
     const live = () => !!run?.isLive?.() && run.actorId === options.configuredOwnerId
       && run.appDataRead?.runtimeHandle === options.runtimeHandle;
-    const authority = { ownerId: run?.actorId, runId: run?.runId, runtimeHandle: options.runtimeHandle };
+    const authority = runAuthority(c);
+    let requestDetails: { app?: string; action?: "listApps" | "schema" | "find"; table?: string } = {};
     const deny = async (status: 400 | 401 | 403) => {
-      await options.audit({ ...authority, outcome: "denied" });
+      await options.audit({ ...authority, ...requestDetails, outcome: "denied" });
       return c.json({ error: "App data read denied" }, status);
     };
     if (!live()) return deny(401);
@@ -50,7 +55,9 @@ export function registerOwnerAppDataReadRoutes(app: Hono, options: OwnerAppReadR
     const parsed = OwnerAppReadInputSchema.safeParse(value);
     if (!parsed.success) return deny(400);
     const input = parsed.data;
-    const event = { ...authority, action: input.action, ...("app" in input ? { app: input.app } : {}) };
+    requestDetails = { action: input.action, ...("app" in input ? { app: input.app } : {}),
+      ...("table" in input ? { table: input.table } : {}) };
+    const event = { ...authority, ...requestDetails };
     let data: unknown;
     try {
       const grants = run!.appDataRead!.apps;

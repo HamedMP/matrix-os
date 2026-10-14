@@ -122,7 +122,8 @@ export function createQueryEngine(db: AppDb): QueryEngine {
         if (!Number.isSafeInteger(budget) || budget < 1 || budget > 65536 || !opts.readOnly || !opts.columns?.length) throw new Error("Invalid bounded read");
         // The database computes total encoded bytes before returning any values.
         // An oversized individual record is never copied into the agent process.
-        q = `SELECT CASE WHEN sum(octet_length(row_to_json(_read)::text) + 1) OVER () <= ${budget} THEN row_to_json(_read) ELSE NULL END AS record FROM (${q}) _read`;
+        const outputOrder = Object.entries(opts.orderBy ?? { id: "asc" }).map(([col, dir]) => `_read."${col}" ${dir === "desc" ? "DESC" : "ASC"}`).join(", ");
+        q = `SELECT CASE WHEN sum(octet_length(row_to_json(_read)::text) + 1) OVER () <= ${budget} THEN row_to_json(_read) ELSE NULL END AS record FROM (${q}) _read ORDER BY ${outputOrder}`;
         const result = await db.raw(q, params, { readOnly: true });
         if (result.rows.some(row => row.record === null)) {
           const error = new Error("App data response too large"); error.name = "AppReadLimitError"; throw error;

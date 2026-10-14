@@ -77,6 +77,9 @@ describe("ENG-289 dedicated owner app-data read boundary", () => {
     expect(f.raw).not.toHaveBeenCalled();
     expect(f.writes.every(spy => spy.mock.calls.length === 0)).toBe(true);
     expect(f.audit).toHaveBeenCalledWith(expect.objectContaining({ outcome: "denied" }));
+    if (status === 403 && "app" in body) expect(f.audit).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: OWNER.ownerId, runId: RUN, runtimeHandle: RUNTIME, app: body.app, action: "find", outcome: "denied",
+    }));
     expect(await response.text()).not.toMatch(/SELECT|DROP|private_app|undeclared-secret|db-secret|Zod/);
   });
 
@@ -110,6 +113,7 @@ describe("ENG-289 dedicated owner app-data read boundary", () => {
     const response = await f.gateway.request(READ_PATH, { method: "POST", headers: f.headers,
       body: JSON.stringify({ ...fiveRows, filter: { title: "x".repeat(BODY_BYTES + 1) } }) });
     expect(response.status).toBe(413);
+    expect(f.audit).toHaveBeenCalledWith(expect.objectContaining({ ownerId: OWNER.ownerId, runId: RUN, runtimeHandle: RUNTIME, outcome: "denied" }));
     expect(f.raw).not.toHaveBeenCalled();
     expect(f.audit).toHaveBeenCalledWith(expect.objectContaining({ outcome: "denied" }));
   });
@@ -186,6 +190,7 @@ describe("ENG-289 dedicated owner app-data read boundary", () => {
     expect(body.rows.map((r: { title: string }) => r.title)).toEqual(["note-3", "note-4"]);
     expect(JSON.stringify(body)).not.toContain("private-column");
     expect(f.find).toHaveBeenCalledWith("notes", "entries", expect.objectContaining({ orderBy: { id: "asc" }, offset: 2 }));
+    expect(f.raw.mock.calls[0]![0]).toMatch(/\) _read ORDER BY _read\."id" ASC$/);
   });
 
   it("distinguishes empty records from generic database unavailability without credential exposure", async () => {

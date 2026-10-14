@@ -11,6 +11,7 @@ const AuditSchema = z.strictObject({
   runId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/).optional(),
   runtimeHandle: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
   app: z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/).optional(),
+  table: z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/).optional(),
   action: z.enum(["listApps", "schema", "find"]).optional(), outcome: z.enum(["allowed", "denied", "error"]),
 });
 
@@ -43,10 +44,16 @@ export async function createOwnerAppDataReadRuntime(options: {
   async function resolveGrant(owner: { type: string; ownerId: string }): Promise<OwnerAppReadGrant | null> {
     if (owner.type !== "personal" || owner.ownerId !== ownerId) return null;
     const installed = await apps!.listApps(65);
-    const parsed = OwnerAppReadGrantSchema.safeParse({ runtimeHandle, apps: installed
-      .filter(app => Object.keys(app.tables).length > 0)
-      .map(app => ({ app: app.slug, schema: app.slug, tables: Object.keys(app.tables) })) });
-    return parsed.success ? parsed.data : null;
+    const eligible: OwnerAppReadGrant["apps"] = [];
+    for (const app of installed) {
+      if (!app.tables || typeof app.tables !== "object" || Array.isArray(app.tables)) continue;
+      const parsed = OwnerAppReadGrantSchema.safeParse({ runtimeHandle, apps: [
+        { app: app.slug, schema: app.slug, tables: Object.keys(app.tables) },
+      ] });
+      if (parsed.success) eligible.push(parsed.data.apps[0]!);
+      if (eligible.length === 64) break;
+    }
+    return { runtimeHandle, apps: eligible };
   }
   return { audit, resolveGrant, auth: { runtimeHandle, audit }, register(app: Hono) {
     registerOwnerAppDataReadRoutes(app, { appRegistry: apps, queryEngine, configuredOwnerId: ownerId, runtimeHandle, audit });

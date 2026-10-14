@@ -35,7 +35,7 @@ export const OwnerAppReadGrantSchema = z.strictObject({
 export type OwnerAppReadGrant = z.infer<typeof OwnerAppReadGrantSchema>;
 export interface OwnerAppReadAuditEvent {
   ownerId?: string; runId?: string; runtimeHandle?: string; app?: string;
-  action?: "listApps" | "schema" | "find";
+  action?: "listApps" | "schema" | "find"; table?: string;
   outcome: "allowed" | "denied" | "error";
 }
 export type OwnerAppReadAudit = (event: OwnerAppReadAuditEvent) => Promise<void>;

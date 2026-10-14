@@ -191,8 +191,13 @@ export function createClaudeChatProviderAdapter(options: {
     // A presentation selector never authorizes a Gateway request.
     const mcpScope = approvalReady && input.interactionMode === "default" && selectedPermission !== "plan"
       ? "chat_call" : "chat_discovery";
-    const appDataRead = !input.sharedScopeId && input.owner.type === "personal"
-      ? await options.resolveAppDataReadGrant?.(input.owner) : null;
+    let appDataRead: OwnerAppReadGrant | null | undefined;
+    if (!input.sharedScopeId && input.owner.type === "personal") {
+      try { appDataRead = await options.resolveAppDataReadGrant?.(input.owner); }
+      catch (error: unknown) {
+        console.warn("[app-data-read] Grant discovery unavailable", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
     input.signal.throwIfAborted();
     const capability = options.matrixMcpCapabilityIssuer?.issue({
       owner: input.owner,

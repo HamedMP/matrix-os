@@ -87,7 +87,7 @@ export function createAppRegistry(db: AppDb, kysely: Kysely<any>): AppRegistry {
       const result = await sql<AppRecord>`
         SELECT slug, name, description, version, installed_version, author, category, tables,
           created_at::text AS created_at, updated_at::text AS updated_at
-        FROM public._apps ORDER BY name ${limit === undefined ? sql`` : sql`LIMIT ${Math.max(1, Math.min(65, Math.floor(limit)))}`}
+        FROM public._apps ORDER BY name, slug ${limit === undefined ? sql`` : sql`LIMIT ${Math.max(1, Math.min(65, Math.floor(limit)))}`}
       `.execute(kysely);
       return result.rows as AppRecord[];
     },
