@@ -49,6 +49,11 @@ async function ownedGate(github,repo,pull,workflow,appId){
  }
  throw new Error('Relevant source gate history exceeds bounded coverage');
 }
+async function staleGreenAggregate(github,repo,headSha,requesterId){
+ const {data}=await github.rest.checks.listForRef({...repo,ref:headSha,check_name:'CI Results',filter:'all',per_page:100,request});
+ if(!Number.isSafeInteger(data?.total_count)||!Array.isArray(data.check_runs)||data.total_count>100||data.check_runs.length!==data.total_count)throw new Error('CI Results inventory is incomplete');
+ return data.check_runs.some(check=>check.app?.slug==='github-actions'&&check.status==='completed'&&check.conclusion==='success'&&!String(check.details_url).includes(`/actions/runs/${requesterId}/`));
+}
 // The check title stays generic; the controller log keeps the reason for operators.
 function logGateError(prNumber,stage,error){console.warn(`Source qualification failed for PR #${prNumber} at ${stage}: ${String(error.message).split('\n')[0].slice(0,300)}`);}
 async function currentRequester(github,repo,snapshot,options={}){
@@ -138,11 +143,16 @@ export async function reconcileSourceQualification(github,repo,controller,option
    if(!duplicate){await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:pull.head.sha,base_sha:pull.base.sha,source_sha:pull.merge_commit_sha,...(recovery?{execution_mode:'hosted-only'}:{})},request});dispatched++;}
    continue;
   }
-  // The PR's own run for this head is not a failure while it runs: its CI Results on the head
-  // is pending too, so nothing stale can pass. A dispatched refresh or hosted replacement runs
-  // on main while the head keeps an older green CI Results, so that wait stays failure.
+  // The PR's own run for this head is not a failure while it runs, as long as no other run's
+  // green CI Results sits on the head; neutral counts as passing for required checks, so it
+  // must never pair with a stale green aggregate. Dispatched refresh and hosted replacement
+  // runs execute on main while the head keeps an older green CI Results, so they stay failure.
   if(requester.status!=='completed'){
-   const ownRun=!recovery&&requester.event==='pull_request'&&requester.head_sha===pull.head.sha;
+   let ownRun=!recovery&&requester.event==='pull_request'&&requester.head_sha===pull.head.sha;
+   if(ownRun){
+    try{ownRun=!(await staleGreenAggregate(github,repo,pull.head.sha,requester.id));}
+    catch(error){if(!(error instanceof Error))throw error;logGateError(pull.number,'aggregate-lookup',error);ownRun=false;}
+   }
    await write(ownRun?'neutral':'failure',ownRun?'Waiting for exact-source CI to finish':'Current requesting CI is pending',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,waitingForRequester:true});continue;
   }
   if(requester.conclusion!=='success'){await write('failure','Current requesting CI failed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
@@ -168,9 +178,10 @@ export async function reconcileSourceQualification(github,repo,controller,option
    if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
    if(recovery){const newest=await currentRequester(github,repo,snapshot,{allModes:true});if(newest?.id!==requester.id||newest.run_attempt!==requester.run_attempt)throw new Error('A newer admission superseded hosted recovery');}
    await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
-   // Main reuses this exact merge's result after the PR lands; the proof is an
-   // optimization, so failing to record it never turns a qualified PR red.
-   try{await recordMergeQualification({github,gateGithub:options.gateGithub,repo,snapshot,requester,gateAppId:options.gateAppId,
+   // Main reuses this exact merge's result after the PR lands; only the PR's own run, which
+   // ran the merge's ci.yml and plan, qualifies. The proof is an optimization, so failing
+   // to record it never turns a qualified PR red.
+   if(!recovery&&requester.event==='pull_request')try{await recordMergeQualification({github,gateGithub:options.gateGithub,repo,snapshot,requester,gateAppId:options.gateAppId,
     qualification:{controllerSha:controller.sha,imageDigest:config.imageDigest,harnessDigest:config.harnessDigest},
     coverage:recovery?'hosted-recovery':evidence.infrastructureFallback?'infrastructure-hosted':'linux'});}
    catch(proofError){if(!(proofError instanceof Error))throw proofError;logGateError(pull.number,'merge-qualification',proofError);}

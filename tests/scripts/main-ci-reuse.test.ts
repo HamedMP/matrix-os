@@ -33,7 +33,7 @@ function fixture() {
     path: '.github/workflows/ci.yml', display_title: `CI coverage-v1 · ${merge}`, created_at: '2026-10-13T23:00:00Z',
     repository: { full_name: 'HamedMP/matrix-os' }, head_repository: { full_name: 'HamedMP/matrix-os' },
   };
-  const parentRun = { id: 300, run_attempt: 1, status: 'completed', conclusion: 'success', event: 'push', head_sha: parent, head_branch: 'main', path: '.github/workflows/ci.yml', display_title: `CI coverage-v1 · ${parent}`, repository: { full_name: 'HamedMP/matrix-os' }, head_repository: { full_name: 'HamedMP/matrix-os' } };
+  const parentQualification = { id: 700, name: 'CI Source Qualification', head_sha: parent, status: 'completed', conclusion: 'success', app: { id: gateAppId, slug: GATE_APP_SLUG }, output: { summary: JSON.stringify({ sourceKind: 'main', sourceSha: parent, headSha: parent }) } };
   const newer: any[] = [];
   const aggregate = { id: 44, name: 'CI Results', run_id: 321, run_attempt: 1, head_sha: head, status: 'completed', conclusion: 'success', check_run_url: 'https://api.github.com/repos/HamedMP/matrix-os/check-runs/88' };
   const aggregateCheck = { id: 88, name: 'CI Results', head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' }, details_url: 'https://github.com/HamedMP/matrix-os/actions/runs/321/job/44' };
@@ -45,19 +45,19 @@ function fixture() {
         listPullRequestsAssociatedWithCommit: vi.fn(async () => ({ data: [pull] })),
       },
       checks: {
-        listForRef: vi.fn(async () => ({ data: { total_count: checks.length, check_runs: checks } })),
+        listForRef: vi.fn(async (args: any) => ({ data: args.check_name === 'CI Source Qualification' ? { total_count: 1, check_runs: [parentQualification] } : { total_count: checks.length, check_runs: checks } })),
         get: vi.fn(async () => ({ data: aggregateCheck })),
         create: vi.fn(async (args: any) => ({ data: { id: 901, ...args, app: { id: gateAppId } } })),
       },
       actions: {
         getWorkflowRunAttempt: vi.fn(async () => ({ data: run })),
         getWorkflowRun: vi.fn(async () => ({ data: run })),
-        listWorkflowRuns: vi.fn(async (args: any) => ({ data: args.event === 'push' ? { total_count: 1, workflow_runs: [parentRun] } : { total_count: newer.length, workflow_runs: newer } })),
+        listWorkflowRuns: vi.fn(async () => ({ data: { total_count: newer.length, workflow_runs: newer } })),
         listJobsForWorkflowRunAttempt: vi.fn(async () => ({ data: { total_count: 1, jobs: [aggregate] } })),
       },
     },
   };
-  return { github, commits, pull, run, parentRun, newer, aggregate, aggregateCheck, checks };
+  return { github, commits, pull, run, parentQualification, newer, aggregate, aggregateCheck, checks };
 }
 
 const resolve = (f: ReturnType<typeof fixture>, options: Record<string, unknown> = {}) => resolveReusablePrCoverage(f.github, repo, squash, { qualification, ...options });
@@ -72,13 +72,12 @@ describe('resolving reusable PR coverage for a main push', () => {
     expect(f.github.rest.checks.listForRef).toHaveBeenCalledWith(expect.objectContaining({ ref: head, check_name: MERGE_QUALIFICATION_CHECK, filter: 'all' }));
   });
 
-  it('accepts a qualified main refresh run for the same PR snapshot', async () => {
+  it('never reuses a refresh or hosted-recovery dispatch, which runs main\'s ci.yml with a reduced plan', async () => {
     const f = fixture();
     Object.assign(f.run, { event: 'workflow_dispatch', head_sha: squash, head_branch: 'main', display_title: `CI refresh-v1 pr=7 head=${head} base=${parent} merge=${merge}` });
-    // Refresh runs execute from main, so their jobs carry the main SHA.
     f.aggregate.head_sha = squash;
     f.aggregateCheck.head_sha = squash;
-    expect(await resolve(f, { gateAppId })).toMatchObject({ reused: true });
+    expect(await resolve(f, { gateAppId })).toEqual({ reused: false, reason: 'qualified PR run is not a genuine successful CI run' });
   });
 
   it('identifies the gate App by slug when its id is not available', async () => {
@@ -105,12 +104,15 @@ describe('resolving reusable PR coverage for a main push', () => {
     ['a proof from another controller pin', (f: any) => { f.checks[0] = proofCheck({}, evidence({ controllerSha: '3'.repeat(40) })); }, 'no merge qualification matches the squash'],
     ['a proof from another runner image', (f: any) => { f.checks[0] = proofCheck({}, evidence({ imageDigest: `sha256:${'4'.repeat(64)}` })); }, 'no merge qualification matches the squash'],
     ['a proof from another harness', (f: any) => { f.checks[0] = proofCheck({}, evidence({ harnessDigest: '5'.repeat(64) })); }, 'no merge qualification matches the squash'],
-    ['a parent without green main coverage', (f: any) => { f.parentRun.conclusion = 'failure'; }, 'main coverage frontier is not the squash parent'],
-    ['a parent coverage run for another commit', (f: any) => { f.parentRun.display_title = `CI coverage-v1 · ${'6'.repeat(40)}`; }, 'main coverage frontier is not the squash parent'],
+    ['a parent the gate did not qualify', (f: any) => { f.parentQualification.conclusion = 'failure'; }, 'main coverage frontier is not the squash parent'],
+    ['a parent still waiting for qualification', (f: any) => { f.parentQualification.conclusion = 'neutral'; }, 'main coverage frontier is not the squash parent'],
+    ['a parent qualification from another App', (f: any) => { f.parentQualification.app = { id: 1, slug: 'other' }; }, 'main coverage frontier is not the squash parent'],
+    ['a parent qualification for another commit', (f: any) => { f.parentQualification.output.summary = JSON.stringify({ sourceKind: 'main', sourceSha: '6'.repeat(40) }); }, 'main coverage frontier is not the squash parent'],
+    ['a not-applicable parent qualification', (f: any) => { f.parentQualification.output.summary = JSON.stringify({ sourceKind: 'main', sourceSha: parent, notApplicable: true }); }, 'main coverage frontier is not the squash parent'],
     ['a superseding PR run for the same merge', (f: any) => { f.newer.push({ ...f.run, id: 999, conclusion: 'failure' }); }, 'qualified PR run is not a genuine successful CI run'],
-    ['a superseding refresh run for the same merge', (f: any) => { f.newer.push({ ...f.run, id: 999, event: 'workflow_dispatch', head_branch: 'main', head_sha: squash, display_title: `CI refresh-v1 pr=7 head=${head} base=${parent} merge=${merge}` }); }, 'qualified PR run is not a genuine successful CI run'],
     ['a newer attempt of the same run', (f: any) => { f.github.rest.actions.getWorkflowRun.mockResolvedValue({ data: { ...f.run, run_attempt: 2 } }); }, 'qualified PR run is not a genuine successful CI run'],
     ['a failed requesting run', (f: any) => { f.run.conclusion = 'failure'; }, 'qualified PR run is not a genuine successful CI run'],
+    ['a dispatched run that otherwise matches the PR run', (f: any) => { f.run.event = 'workflow_dispatch'; }, 'qualified PR run is not a genuine successful CI run'],
     ['a run for another merge', (f: any) => { f.run.display_title = `CI coverage-v1 · ${'7'.repeat(40)}`; }, 'qualified PR run is not a genuine successful CI run'],
     ['a run from another workflow', (f: any) => { f.run.path = '.github/workflows/other.yml'; }, 'qualified PR run is not a genuine successful CI run'],
     ['a failed aggregate', (f: any) => { f.aggregate.conclusion = 'failure'; }, 'qualified PR run is not a genuine successful CI run'],
@@ -142,10 +144,11 @@ describe('resolving reusable PR coverage for a main push', () => {
 
   it('fails closed on incomplete histories and missing configuration', async () => {
     const f = fixture();
-    f.github.rest.checks.listForRef.mockResolvedValue({ data: { total_count: 101, check_runs: f.checks } } as any);
+    const list = f.github.rest.checks.listForRef.getMockImplementation()!;
+    f.github.rest.checks.listForRef.mockImplementation(async (args: any) => (args.check_name === MERGE_QUALIFICATION_CHECK ? { data: { total_count: 101, check_runs: f.checks } } : list(args)) as any);
     await expect(resolve(f, { gateAppId })).rejects.toThrow('inventory is incomplete');
     const g = fixture();
-    g.github.rest.actions.listWorkflowRuns.mockImplementation(async (args: any) => ({ data: args.event === 'push' ? { total_count: 1, workflow_runs: [g.parentRun] } : { total_count: 101, workflow_runs: [] } }) as any);
+    g.github.rest.actions.listWorkflowRuns.mockResolvedValue({ data: { total_count: 101, workflow_runs: [] } } as any);
     await expect(resolve(g, { gateAppId })).rejects.toThrow('history is incomplete');
     await expect(resolveReusablePrCoverage(fixture().github, repo, squash, { gateAppId })).rejects.toThrow('qualification configuration');
   });

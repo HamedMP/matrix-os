@@ -321,7 +321,7 @@ function reuseFixture(decisionOverrides:Record<string,unknown>={}){
  const f=fixture();
  const detector=f.jobs.find(job=>job.name==='Detect CI-relevant changes')! as any;
  detector.steps=[...detector.steps.slice(0,1),{number:9,name:'Resolve reusable PR coverage',status:'completed',conclusion:'success'},...detector.steps.slice(1)];
- for(const job of f.jobs)if(!['Detect CI-relevant changes','CI Results','Pattern Scan','React Doctor','Sync Client Package','Funded Settlement PostgreSQL','Protected Funded Host Root Contracts'].includes(job.name))job.conclusion='skipped';
+ for(const job of f.jobs)if(!['Detect CI-relevant changes','CI Results','Pattern Scan','React Doctor','Sync Client Package','Funded Settlement PostgreSQL','Protected Funded Host Root Contracts','OS View Parity'].includes(job.name))job.conclusion='skipped';
  const decision={schemaVersion:2,sourceKind:'main',repository:'HamedMP/matrix-os',workflowRef:'HamedMP/matrix-os/.github/workflows/ci.yml@refs/heads/main',sourceSha:source,requestingRunId:321,requestingRunAttempt:1,coverageBaseSha:base,bootstrap:false,shouldRun:true,docsContractTests:true,osViewParityTests:true,dedicatedEligible:false,dedicatedRequired:false,reusedFrom,...decisionOverrides};
  const bytes=receiptZip(decision),artifact={id:57,name:`main-ci-decision-${source}-321-1`,expired:false,size_in_bytes:bytes.length,digest:'sha256:'+createHash('sha256').update(bytes).digest('hex'),workflow_run:{id:321,head_sha:source}};
  const download=f.github.rest.actions.downloadArtifact;
@@ -330,7 +330,8 @@ function reuseFixture(decisionOverrides:Record<string,unknown>={}){
  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async(args:any)=>args.run_id===321?{data:{total_count:1,artifacts:[artifact]}} as any:inventory(args));
  const proof={id:900,name:'CI Merge Qualification',head_sha:prHead,status:'completed',conclusion:'success',external_id:`merge-qualification-${prMerge}-654-1`,app:{id:777,slug:'matrix-ci-qualification'},output:{summary:JSON.stringify({schemaVersion:1,kind:'merge-qualification',prNumber:7,headSha:prHead,baseSha:base,sourceSha:prMerge,requestingRunId:654,requestingRunAttempt:1,coverage:'linux',controllerSha,imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64)})}};
  const listForRef=f.github.rest.checks.listForRef.getMockImplementation()!;
- f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='CI Merge Qualification'?{data:{total_count:1,check_runs:[proof]}} as any:listForRef(args));
+ const parentQualification={id:701,name:'CI Source Qualification',head_sha:base,status:'completed',conclusion:'success',app:{id:777,slug:'matrix-ci-gate'},output:{summary:JSON.stringify({sourceKind:'main',sourceSha:base,headSha:base})}};
+ f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='CI Merge Qualification'?{data:{total_count:1,check_runs:[proof]}} as any:args.ref===base&&args.check_name==='CI Source Qualification'?{data:{total_count:1,check_runs:[parentQualification]}} as any:listForRef(args));
  (f.github.rest.repos as any).listPullRequestsAssociatedWithCommit=vi.fn(async()=>({data:[{number:7,merged_at:'2026-10-14T00:00:00Z',merge_commit_sha:source,base:{ref:'main',repo:{full_name:'HamedMP/matrix-os'}},head:{sha:prHead,ref:'feature',repo:{full_name:'HamedMP/matrix-os'}}}]}));
  f.github.rest.repos.getCommit.mockImplementation(async(args:any)=>({data:args.ref===prMerge?{sha:prMerge,parents:[{sha:base},{sha:prHead}],commit:{tree:{sha:tree}}}:{sha:source,parents:[{sha:base}],commit:{tree:{sha:tree}}}}) as any);
  const prRun={id:654,run_attempt:1,status:'completed',conclusion:'success',event:'pull_request',head_sha:prHead,head_branch:'feature',path:'.github/workflows/ci.yml',display_title:`CI coverage-v1 · ${prMerge}`,created_at:'2026-10-13T23:00:00Z',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}};
@@ -350,10 +351,33 @@ it('qualifies main from the merged PR qualification when the squash tree was alr
  expect(written(f)).toMatchObject({name:'CI Source Qualification',head_sha:source,conclusion:'success',output:{title:'Current exact-main reused PR qualification passed'}});
  expect(JSON.parse(written(f).output.summary)).toMatchObject({requestingRunId:321,reusedFrom});
 });
+it('keeps an already verified reuse green when live history later changes',async()=>{
+ const f=reuseFixture();
+ const prior:any={};
+ // The prior gate check is authenticated through its protected scheduled controller run.
+ const protectedRun={...f.controller,id:123,event:'schedule',head_branch:'main'};
+ const getRun=f.github.rest.actions.getWorkflowRun.getMockImplementation()!;
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async(args:any)=>args.run_id===123?{data:protectedRun} as any:getRun(args));
+ f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{Object.assign(prior,{id:100,name:'CI Source Qualification',head_sha:source,...args,app:{id:777,slug:'matrix-ci-gate'}});return{data:prior};});
+ f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{Object.assign(prior,args);return{data:prior};});
+ await reconcile(f);expect(prior).toMatchObject({conclusion:'success',output:{title:'Current exact-main reused PR qualification passed'}});
+ const list=f.github.rest.checks.listForRef.getMockImplementation()!;
+ f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='CI Merge Qualification'?{data:{total_count:0,check_runs:[]}} as any:args.check_name==='CI Source Qualification'&&args.ref===source?{data:{check_runs:[prior]}} as any:list(args));
+ await reconcile(f);expect(prior).toMatchObject({conclusion:'success',output:{title:'Current exact-main reused PR qualification passed'}});
+});
+it.each(['linux-failed','parity-skipped','fake-aggregate'])('never qualifies reused coverage when main itself disagrees: %s',async kind=>{
+ const f=reuseFixture();
+ if(kind==='linux-failed'){const list=f.github.rest.checks.listForRef.getMockImplementation()!;f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='Dedicated CI Results'?{data:{check_runs:[{...f.check,status:'completed',conclusion:'failure'}]}} as any:list(args));}
+ if(kind==='parity-skipped')f.jobs.find(job=>job.name==='OS View Parity')!.conclusion='skipped';
+ if(kind==='fake-aggregate')f.aggregate.app.slug='other';
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ try{await reconcile(f);expect(written(f)).toMatchObject({conclusion:'failure'});}finally{warn.mockRestore();}
+});
 it('keeps verifying the proof the receipt named when a later proof lands for the same head',async()=>{
  const f=reuseFixture();
  const later={...f.proof,id:950,external_id:`merge-qualification-${prMerge}-654-2`,output:{summary:JSON.stringify({...JSON.parse(f.proof.output.summary),requestingRunAttempt:2})}};
- f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:args.check_name==='CI Merge Qualification'?{total_count:2,check_runs:[f.proof,later]}:{check_runs:[f.check]}}) as any);
+ const list=f.github.rest.checks.listForRef.getMockImplementation()!;
+ f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='CI Merge Qualification'?{data:{total_count:2,check_runs:[f.proof,later]}} as any:list(args));
  await reconcile(f);
  expect(written(f)).toMatchObject({conclusion:'success',output:{title:'Current exact-main reused PR qualification passed'}});
 });

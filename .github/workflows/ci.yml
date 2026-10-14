@@ -156,11 +156,25 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/dedicated-changes.mjs
 
+      # The pinned main gate re-verifies reuse with the controller pin's helper, so ci.yml decides
+      # with that same copy rather than the merged tree's.
+      - name: Checkout pinned reuse helpers
+        id: pinned
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.MATRIX_CI_MAIN_REUSE == 'true' && steps.changed.outputs.should_run == 'true'
+        continue-on-error: true
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          path: .ci-controller
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
       - name: Resolve reusable PR coverage
         id: reuse
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.MATRIX_CI_MAIN_REUSE == 'true' && steps.changed.outputs.should_run == 'true'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          PINNED_OUTCOME: ${{ steps.pinned.outcome }}
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
           HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
@@ -170,9 +184,9 @@ jobs:
           script: |
             const {pathToFileURL}=require('node:url');const {resolve}=require('node:path');
             try{
-              // The pinned main gate verifies reused receipts, so reuse only once the pin carries the helper.
-              await github.rest.repos.getContent({...context.repo,path:'scripts/ci/main-ci-reuse.mjs',ref:process.env.CONTROLLER_SHA,request:{timeout:10000}});
-              const {resolveReusablePrCoverage}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/main-ci-reuse.mjs')).href);
+              if(process.env.PINNED_OUTCOME!=='success')throw new Error('pinned controller helpers are unavailable');
+              // A pin without the helper fails this import, which falls back to full main CI.
+              const {resolveReusablePrCoverage}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'.ci-controller/scripts/ci/main-ci-reuse.mjs')).href);
               const result=await resolveReusablePrCoverage(github,context.repo,context.sha,{
                 qualification:{controllerSha:process.env.CONTROLLER_SHA,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST},
                 frontier:{coverageBaseSha:process.env.COVERAGE_BASE_SHA,bootstrap:process.env.COVERAGE_BOOTSTRAP==='true'}});

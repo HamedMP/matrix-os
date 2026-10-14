@@ -46,21 +46,40 @@ function completeFixture(){
  pinArtifactFixture(github,check,controller);return{...f,github,ci,controller,check};
 }
 it('waits neutrally only while the PR head\'s own CI run is in flight',async()=>{
- const f=completeFixture();
- Object.assign(f.ci,{event:'pull_request',head_sha:head,head_branch:'child',status:'in_progress',conclusion:null,display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2454,head:{sha:head,ref:'child'},base:{sha:base,ref:'stack/parent'}}]});
+ const f=completeFixture();ownRun(f,'in_progress');emptyProofs(f);
  await reconcile(f);
  expect(f.gateGithub.rest.checks.create).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'neutral',output:expect.objectContaining({title:'Waiting for exact-source CI to finish'})}));
 });
-// The proof inventory is a filtered check listing; GitHub always reports its total.
-const emptyProofs=(f:ReturnType<typeof completeFixture>)=>{const list=f.github.rest.checks.listForRef.getMockImplementation()!;f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='CI Merge Qualification'?{data:{total_count:0,check_runs:[]}}:list(args));};
-it('records an immutable merge qualification for main reuse after qualifying the exact merge',async()=>{
+it('stays failure while its own run is queued behind an older green CI Results on the head',async()=>{
+ const f=completeFixture();ownRun(f,'queued');
+ emptyProofs(f,[{id:8,name:'CI Results',head_sha:head,status:'completed',conclusion:'success',app:{slug:'github-actions'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/111/job/1'}]);
+ await reconcile(f);
+ expect(f.gateGithub.rest.checks.create).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure',output:expect.objectContaining({title:'Current requesting CI is pending'})}));
+});
+it('stays failure when the head aggregate inventory cannot be read',async()=>{
+ const f=completeFixture();ownRun(f,'in_progress');emptyProofs(f);
+ const list=f.github.rest.checks.listForRef.getMockImplementation()!;
+ f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>{if(args.check_name==='CI Results')throw new Error('checks unavailable');return list(args);});
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ try{await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure'}));expect(warn).toHaveBeenCalledWith(expect.stringContaining('aggregate-lookup: checks unavailable'));}finally{warn.mockRestore();}
+});
+it('records no reusable proof for a dispatched refresh qualification',async()=>{
  const f=completeFixture();emptyProofs(f);await reconcile(f);
+ expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',conclusion:'success'}));
+ expect(f.gateGithub.rest.checks.create.mock.calls.some(([args]:any[])=>args.name==='CI Merge Qualification')).toBe(false);
+});
+// Filtered check listings report their total; the proof and aggregate inventories start empty.
+const emptyProofs=(f:ReturnType<typeof completeFixture>,aggregates:any[]=[])=>{const list=f.github.rest.checks.listForRef.getMockImplementation()!;f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='CI Merge Qualification'?{data:{total_count:0,check_runs:[]}}:args.check_name==='CI Results'?{data:{total_count:aggregates.length,check_runs:aggregates}}:list(args));};
+// The PR head's own pull_request run, the only run whose result main may reuse.
+const ownRun=(f:ReturnType<typeof completeFixture>,status='completed')=>Object.assign(f.ci,{event:'pull_request',head_sha:head,head_branch:'child',status,conclusion:status==='completed'?'success':null,display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2454,head:{sha:head,ref:'child'},base:{sha:base,ref:'stack/parent'}}]});
+it('records an immutable merge qualification for main reuse after qualifying the exact merge',async()=>{
+ const f=completeFixture();ownRun(f);emptyProofs(f);await reconcile(f);
  const proof=f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args).find((args:any)=>args.name==='CI Merge Qualification');
  expect(proof).toMatchObject({head_sha:head,status:'completed',conclusion:'success',external_id:`merge-qualification-${merge}-321-1`});
  expect(JSON.parse(proof.output.summary)).toMatchObject({kind:'merge-qualification',prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,requestingRunId:321,requestingRunAttempt:1});
 });
 it('keeps a qualified PR green when recording the merge qualification fails',async()=>{
- const f=completeFixture();emptyProofs(f);
+ const f=completeFixture();ownRun(f);emptyProofs(f);
  const create=f.gateGithub.rest.checks.create.getMockImplementation()!;
  f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{if(args.name==='CI Merge Qualification')throw new Error('proof write failed');return create(args);});
  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);

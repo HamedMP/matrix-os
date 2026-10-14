@@ -5,10 +5,12 @@
 // is rewritten and the open-PR Linux verifier no longer applies, so the proof is what
 // survives. Data mismatches return {reused:false}; API failures throw to the caller.
 //
-// Reuse also requires the squash parent's own main coverage run to have passed: main
-// plans its lanes from the last green coverage commit, so only then does main's plan
-// equal the PR's plan for the same diff.
-import {parseRefreshMarker} from './dedicated-refresh.mjs';
+// Only a PR's own pull_request run qualifies: it runs the merge's own ci.yml and plans its
+// lanes from the same diff main will. Refresh and hosted-recovery dispatches run main's
+// ci.yml with a reduced plan, so their results are never reused.
+//
+// Reuse also requires the squash parent to be gate-qualified on main: main plans its
+// lanes from the last qualified commit, so only then does main's plan equal the PR's.
 
 export const MERGE_QUALIFICATION_CHECK='CI Merge Qualification';
 export const GATE_APP_SLUG='matrix-ci-qualification';
@@ -80,8 +82,7 @@ async function commitOf(github,repo,ref){
 }
 
 const ciRun=(run,full)=>CI_PATHS.includes(run?.path)&&same(run.repository?.full_name,full)&&same(run.head_repository?.full_name,full);
-const testsMerge=(run,proof)=>run.event==='pull_request'?run.head_sha===proof.headSha&&run.display_title===`CI coverage-v1 · ${proof.sourceSha}`
- :run.event==='workflow_dispatch'&&run.head_branch==='main'&&(marker=>marker?.prNumber===proof.prNumber&&marker.headSha===proof.headSha&&marker.baseSha===proof.baseSha&&marker.sourceSha===proof.sourceSha)(parseRefreshMarker(run.display_title));
+const testsMerge=(run,proof)=>run.event==='pull_request'&&run.head_sha===proof.headSha&&run.display_title===`CI coverage-v1 · ${proof.sourceSha}`;
 
 async function runsAfter(github,repo,filter,createdAt){
  const {data}=await github.rest.actions.listWorkflowRuns({...repo,workflow_id:'ci.yml',...filter,created:`>=${createdAt}`,per_page:MAX_RUNS,request});
@@ -89,16 +90,16 @@ async function runsAfter(github,repo,filter,createdAt){
  return data.workflow_runs;
 }
 
-// The exact CI attempt the proof names must be a genuine successful ci.yml run for this
-// PR snapshot, still its run's latest attempt, not superseded by a newer run for the same
-// merge, and carry a GitHub Actions-issued CI Results aggregate.
+// The exact CI attempt the proof names must be a genuine successful pull_request ci.yml run
+// for this PR snapshot, still its run's latest attempt, not superseded by a newer run for
+// the same merge, and carry a GitHub Actions-issued CI Results aggregate.
 async function genuineRequestingRun(github,repo,proof){
  const full=`${repo.owner}/${repo.repo}`;
  const {data:run}=await github.rest.actions.getWorkflowRunAttempt({...repo,run_id:proof.requestingRunId,attempt_number:proof.requestingRunAttempt,request});
  if(run?.id!==proof.requestingRunId||run.run_attempt!==proof.requestingRunAttempt||run.status!=='completed'||run.conclusion!=='success'||!ciRun(run,full)||!testsMerge(run,proof)||!run.created_at)return false;
  const {data:latest}=await github.rest.actions.getWorkflowRun({...repo,run_id:run.id,request});
  if(latest?.id!==run.id||latest.run_attempt!==run.run_attempt)return false;
- const newer=[...await runsAfter(github,repo,{event:'pull_request',head_sha:proof.headSha},run.created_at),...await runsAfter(github,repo,{event:'workflow_dispatch',branch:'main'},run.created_at)];
+ const newer=await runsAfter(github,repo,{event:'pull_request',head_sha:proof.headSha},run.created_at);
  if(newer.some(other=>other.id>run.id&&ciRun(other,full)&&testsMerge(other,proof)))return false;
  const {data}=await github.rest.actions.listJobsForWorkflowRunAttempt({...repo,run_id:run.id,attempt_number:run.run_attempt,per_page:100,request});
  if(!Number.isSafeInteger(data?.total_count)||data.total_count>100||!Array.isArray(data.jobs)||data.jobs.length!==data.total_count)return false;
@@ -111,10 +112,16 @@ async function genuineRequestingRun(github,repo,proof){
  return check?.id===checkId&&check.name==='CI Results'&&check.app?.slug==='github-actions'&&check.head_sha===run.head_sha&&check.status==='completed'&&check.conclusion==='success'&&check.details_url?.startsWith(`https://github.com/${full}/actions/runs/${run.id}/`);
 }
 
-async function parentCoverageGreen(github,repo,parent){
- const {data}=await github.rest.actions.listWorkflowRuns({...repo,workflow_id:'ci.yml',event:'push',branch:'main',head_sha:parent,per_page:20,request});
- const full=`${repo.owner}/${repo.repo}`;
- return Array.isArray(data?.workflow_runs)&&data.workflow_runs.some(run=>run.head_sha===parent&&run.status==='completed'&&run.conclusion==='success'&&ciRun(run,full)&&run.display_title===`CI coverage-v1 · ${parent}`);
+// A green ci.yml run alone is not enough: a main run the gate rejected still reports
+// success, so the parent must carry the gate App's own CI Source Qualification success.
+async function parentQualified(github,repo,parent,gateAppId){
+ const {data}=await github.rest.checks.listForRef({...repo,ref:parent,check_name:'CI Source Qualification',filter:'latest',per_page:20,request});
+ if(!Array.isArray(data?.check_runs))return false;
+ return data.check_runs.some(check=>{
+  if(!fromGate(check,gateAppId)||check.head_sha!==parent||check.status!=='completed'||check.conclusion!=='success'||typeof check.output?.summary!=='string'||Buffer.byteLength(check.output.summary)>MAX_SUMMARY)return false;
+  try{const evidence=JSON.parse(check.output.summary);return evidence?.sourceKind==='main'&&evidence.sourceSha===parent&&evidence.notApplicable!==true;}
+  catch(error){if(!(error instanceof SyntaxError))throw error;return false;}
+ });
 }
 
 // `qualification` is the current controller pin and runner image: proofs from any other
@@ -129,7 +136,7 @@ export async function resolveReusablePrCoverage(github,repo,mainSha,{gateAppId,q
  if(main.parents.length!==1)return {reused:false,reason:'main commit is not a single-parent squash'};
  const [parent]=main.parents,full=`${repo.owner}/${repo.repo}`;
  if(frontier&&(frontier.bootstrap!==false||frontier.coverageBaseSha!==parent))return {reused:false,reason:'main coverage frontier is not the squash parent'};
- if(!await parentCoverageGreen(github,repo,parent))return {reused:false,reason:'main coverage frontier is not the squash parent'};
+ if(!await parentQualified(github,repo,parent,gateAppId))return {reused:false,reason:'main coverage frontier is not the squash parent'};
  const {data:pulls}=await github.rest.repos.listPullRequestsAssociatedWithCommit({...repo,commit_sha:mainSha,per_page:100,request});
  const merged=(Array.isArray(pulls)?pulls:[]).filter(pull=>id(pull.number)&&pull.merged_at&&pull.merge_commit_sha===mainSha&&pull.base?.ref==='main'&&same(pull.base?.repo?.full_name,full)&&same(pull.head?.repo?.full_name,full)&&sha.test(pull.head?.sha||''));
  if(merged.length!==1)return {reused:false,reason:'no single merged PR for the main commit'};

@@ -96,6 +96,10 @@ export async function verifyMainCiDecision(github,repo,run,context){
  if(decision.reusedFrom){
   const matches=detector.steps?.filter(step=>step.name==='Resolve reusable PR coverage');
   if(matches?.length!==1||matches[0].status!=='completed'||matches[0].conclusion!=='success')throw new Error('Actual main reuse detector step missing');
+  // Main always selects OS View Parity, which a PR plan may skip, so reuse keeps it: it must
+  // have actually run and passed here, under a genuine Actions-issued aggregate.
+  selectedJob(data.jobs,'OS View Parity',run);
+  await verifyAggregate(github,repo,data.jobs,run);
  }
  const coverageProof=context?(cached??verifiedProof(decision,artifact,context)):undefined;
  if(decision.shouldRun)return{...decision,coverageProof};

@@ -126,16 +126,21 @@ OTA payloads.
 
 Main reuses a merged PR's result when nothing changed: under the strict up-to-date ruleset the
 squash commit on `main` has the same tree as the PR merge commit that PR CI tested. When the pinned
-PR source gate qualifies an open PR it records an immutable `CI Merge Qualification` check on the PR
-head, bound to that merge, CI attempt, controller pin and runner image. With
-`MATRIX_CI_MAIN_REUSE=true`, a main push reuses a proof only when it is a single-parent squash whose
-tree matches the tested merge, the parent's own main coverage run passed (so main and the PR plan the
-same lanes), the proof matches the current pin and image, and no newer CI run for that merge exists.
-It then skips the heavy lanes and the main Linux controller (OS View Parity, which main always runs,
-still runs), records `reusedFrom` in its decision receipt, and the pinned main gate re-verifies that
-exact proof before writing `CI Source Qualification`. Any mismatch, missing proof, or API error runs
-full main CI. The controller and `ci.yml` decide reuse independently from the same proof; if they
-disagree, main pays the five-minute Linux admission window and falls back to full hosted CI.
+PR source gate qualifies an open PR from the PR head's own `pull_request` run, it records an
+immutable `CI Merge Qualification` check on the PR head, bound to that merge, CI attempt, controller
+pin and runner image. Refresh and hosted-recovery dispatches run main's `ci.yml` with a reduced plan
+and never produce reusable proofs. With `MATRIX_CI_MAIN_REUSE=true`, a main push reuses a proof only
+when it is a single-parent squash whose tree matches the tested merge, its parent carries the gate's
+own `CI Source Qualification` success (so main and the PR plan the same lanes), the proof matches the
+current pin and image, and no newer CI run for that merge exists. `ci.yml` decides with the pinned
+controller's copy of the helper. The reused run skips the heavy lanes and the main Linux controller
+(OS View Parity, which main always runs, still runs and must pass), records `reusedFrom` in its
+decision receipt, and the pinned main gate re-verifies that exact proof once, then keeps its own
+authenticated success. A Linux qualification that failed on the main commit, any mismatch, missing
+proof, or API error runs or keeps full main CI. The controller and `ci.yml` decide reuse
+independently from the same proof; if they disagree, main pays the five-minute Linux admission window
+and falls back to full hosted CI. Known gap: reused main pushes skip the jobs that save the shared
+Next.js and Playwright caches, so those caches refresh only on non-reused main pushes.
 Roll out in order: merge, main CI green, move `MATRIX_CI_CONTROLLER_SHA` to a commit that contains
 `scripts/ci/main-ci-reuse.mjs`, let PRs record proofs, then set `MATRIX_CI_MAIN_REUSE=true`.
 
