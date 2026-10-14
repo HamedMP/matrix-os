@@ -1,0 +1,31 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { spawn } from "node:child_process";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, it, vi } from "vitest";
+import { SYNTHETIC_MCP_SOURCE, createProbeClient } from "../../scripts/spikes/browser-vps/codex-mcp-probe-support.mjs";
+it("generates valid MCP JavaScript and returns actual newline-delimited JSON",async()=>{
+  const dir=await mkdtemp(join(tmpdir(),"matrix-probe-source-"));
+  try{const path=join(dir,"mock.mjs");await writeFile(path,SYNTHETIC_MCP_SOURCE);
+    const child=spawn(process.execPath,[path],{env:{PATH:process.env.PATH,MATRIX_SYNTHETIC_MARKER:"synthetic-A"},stdio:["pipe","pipe","pipe"]});
+    const closed=new Promise<number|null>((resolve,reject)=>{child.once("close",resolve);child.once("error",reject);});
+    let output="",error="";child.stdout.on("data",chunk=>{output+=chunk;});child.stderr.on("data",chunk=>{error+=chunk;});
+    child.stdin.end(JSON.stringify({id:1,method:"tools/list"})+"\n");expect(await closed,error).toBe(0);
+    expect(output.endsWith("\n")).toBe(true);expect(output.split("\n")).toHaveLength(2);
+    expect(JSON.parse(output)).toMatchObject({id:1,result:{tools:[{description:"synthetic-A"}]}});
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+function fakeChild(){const child=new EventEmitter() as never;Object.assign(child,{stdout:new PassThrough(),stdin:new PassThrough(),kill:vi.fn()});return child;}
+it("settles pending requests on native exit and refuses further requests",async()=>{
+  const child=fakeChild();const client=createProbeClient(child,{requestTimeoutMs:50,totalTimeoutMs:100});
+  const waiting=expect(client.request("initialize",{})).rejects.toThrow("Native probe unavailable");child.emit("close",1);await waiting;
+  await expect(client.request("thread/start",{})).rejects.toThrow();client.dispose();
+});
+it("bounds silent native requests and handles spawn errors",async()=>{
+  const child=fakeChild();const client=createProbeClient(child,{requestTimeoutMs:5,totalTimeoutMs:50});
+  await expect(client.request("initialize",{})).rejects.toThrow("Native probe request timed out");client.dispose();
+  const failed=fakeChild();const c=createProbeClient(failed,{requestTimeoutMs:50,totalTimeoutMs:100});
+  const waiting=expect(c.request("initialize",{})).rejects.toThrow("Native probe unavailable");failed.emit("error",new Error("synthetic spawn failure"));await waiting;c.dispose();
+});
