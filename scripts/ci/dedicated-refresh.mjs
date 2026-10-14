@@ -40,6 +40,8 @@ export async function resolveRequestingSource(github,repo,context,inputs){
 export function refreshExecutionRequested(action,run){
  // A main push's coverage title is fixed by its SHA, so its requested event qualifies before GitHub renders the title.
  if(action==='requested'&&run?.run_attempt===1&&run?.event==='push'&&run?.head_branch==='main')return true;
+ // A manual refresh can still have GitHub's default title in its sole requested event.
+ if(action==='requested'&&run?.run_attempt===1&&run?.event==='workflow_dispatch'&&run?.head_branch==='main'&&run?.display_title==='CI')return true;
  const title=run?.display_title;
  if(typeof title!=='string')return false;
  const executes=title.startsWith('CI refresh-v1 ')||title.startsWith('CI coverage-v1 · ');
@@ -48,7 +50,12 @@ export function refreshExecutionRequested(action,run){
 export function authenticatedControllerRun(run,repo,value,workflow,headRef){
  if(!id(run.id)||run.workflow_id!==workflow.id||!['.github/workflows/ci-dedicated.yml','.github/workflows/ci-dedicated.yml@main','.github/workflows/ci-dedicated.yml@refs/heads/main'].includes(run.path)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))return false;
  if(value.sourceKind==='main')return run.event==='workflow_run'&&run.head_branch==='main'&&run.head_sha===value.headSha&&run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=CI coverage-v1 · ${value.sourceSha??value.mergeSha}`;
- if(run.event==='workflow_run')return ((run.head_branch==='main'&&sha.test(run.head_sha||''))||(run.head_branch===headRef&&run.head_sha===value.headSha))&&[refreshMarker(value),`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`].some(title=>run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=${title}`);
+ if(run.event==='workflow_run'){
+  // The placeholder carries only the requester ID. Grant/receipt validation separately
+  // authenticates that requester's rendered exact-source tuple before any workload.
+  if(run.head_branch==='main'&&sha.test(run.head_sha||'')&&run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=CI`)return true;
+  return ((run.head_branch==='main'&&sha.test(run.head_sha||''))||(run.head_branch===headRef&&run.head_sha===value.headSha))&&[refreshMarker(value),`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`].some(title=>run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=${title}`);
+ }
  return run.event==='pull_request_target'&&run.head_sha===value.headSha&&run.head_branch===headRef&&run.display_title===`dedicated-ci-v2 pr=${value.prNumber} head=${value.headSha} base=${value.baseSha} requested=true`;
 }
 const TITLE_POLLS=12;
@@ -60,12 +67,13 @@ export async function admitRefreshController(github,repo,event,options={}){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refreshing workflow definition');
  let {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request});
- // Requested can arrive before CI's run-name is rendered; a main run that never shows its coverage title stands down.
- for(let poll=0;run.event==='push'&&run.head_branch==='main'&&run.display_title!==`CI coverage-v1 · ${run.head_sha}`;poll++){
+ // Requested can precede the rendered run-name. Bound waiting for main coverage or refresh titles.
+ for(let poll=0;(run.event==='push'&&run.head_branch==='main'&&run.display_title!==`CI coverage-v1 · ${run.head_sha}`)||(run.event==='workflow_dispatch'&&run.display_title==='CI');poll++){
   if(poll>=TITLE_POLLS)return null;
   await (options.delay??titleDelay)();
   ({data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request}));
  }
+ if(run.display_title?.startsWith('CI hosted-refresh-v1 '))return null;
  let snapshot=run.event==='push'&&run.head_branch==='main'?await resolveMainSource(github,repo,run.head_sha):parseRefreshMarker(run.display_title);
  if(!snapshot){
   const source=typeof run.display_title==='string'&&run.display_title.match(/^CI coverage-v1 · ([a-f0-9]{40})$/);

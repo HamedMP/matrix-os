@@ -164,3 +164,56 @@ it('binds source-reading unit builds to the verified refresh checkout',async()=>
  expect(unit.env?.UNIT_SOURCE_SHA).toBe('${{ needs.changes.outputs.source_sha || github.sha }}');
  expect(unit.run).toMatch(/^GITHUB_SHA="\$UNIT_SOURCE_SHA" bun run test -- --shard=/);
 });
+
+it('admits a main refresh requested before GitHub renders its run title', async () => {
+ const f=fixture();
+ const run={id:321,run_attempt:1,status:'queued',workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:'CI',pull_requests:[]};
+ const marker=helpers.refreshMarker({prNumber:2454,headSha:head,baseSha:base,sourceSha:merge});
+ const getWorkflowRun=vi.fn().mockResolvedValueOnce({data:{...run}}).mockResolvedValue({data:{...run,display_title:marker}});
+ const github={rest:{...f.github.rest,actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),getWorkflowRun}}};
+ const delay=vi.fn(async()=>{});
+ expect(helpers.refreshExecutionRequested('requested',run)).toBe(true);
+ await expect(helpers.admitRefreshController(github,repo,{action:'requested',workflow_run:run},{delay})).resolves.toMatchObject({prNumber:2454,sourceSha:merge,mergeParents:[base,head]});
+ expect(delay).toHaveBeenCalledTimes(1);
+});
+
+it('never turns a not-yet-rendered hosted-only refresh into Linux work', async () => {
+ const f=fixture();
+ const run={id:321,run_attempt:1,status:'queued',workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:'CI',pull_requests:[]};
+ const rendered={...run,display_title:helpers.refreshMarker({prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,executionMode:'hosted-only'})};
+ const getWorkflowRun=vi.fn().mockResolvedValueOnce({data:{...run}}).mockResolvedValue({data:rendered});
+ const github={rest:{...f.github.rest,actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),getWorkflowRun}}};
+ const delay=vi.fn(async()=>{});
+ await expect(helpers.admitRefreshController(github,repo,{action:'requested',workflow_run:run},{delay})).resolves.toBeNull();
+ expect(getWorkflowRun).toHaveBeenCalledTimes(2);
+ expect(f.github.rest.pulls.get).not.toHaveBeenCalled();
+});
+
+it('keeps an unrendered refresh controller bound to its default-main workflow and requester', () => {
+ const scope={prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,requestingRunId:321};
+ const run={id:124,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'workflow_run',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:'dedicated-refresh-v2 execution=true request=321 title=CI'};
+ expect(helpers.authenticatedControllerRun(run,repo,scope,{id:99},'child')).toBe(true);
+ for(const change of [{head_branch:'child',head_sha:head},{workflow_id:98},{display_title:'dedicated-refresh-v2 execution=true request=322 title=CI'},{head_repository:{full_name:'untrusted/repo'}}])expect(helpers.authenticatedControllerRun({...run,...change},repo,scope,{id:99},'child')).toBe(false);
+});
+
+it('keeps both workflow execution predicates aligned for an unrendered main dispatch', async () => {
+ const {readFileSync}=await import('node:fs'),{parse}=await import('yaml');const w=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
+ const run={id:321,event:'workflow_dispatch',head_branch:'main',head_sha:main,run_attempt:1,display_title:'CI'};
+ const github={event_name:'workflow_run',ref:'refs/heads/main',event:{action:'requested',workflow_run:run}};
+ const startsWith=(text:string,prefix:string)=>text.startsWith(prefix),format=(text:string,...args:any[])=>text.replace(/\{([0-9]+)\}/g,(_,i)=>String(args[Number(i)]));
+ const invoke=(expression:string)=>Function('vars','github','format','startsWith','contains',`return (${jsCondition(expression)});`)({MATRIX_CI_DEDICATED_ENABLED:'true'},github,format,startsWith,contains);
+ expect(invoke(w['run-name'].trim().slice(3,-2))).toContain('execution=true request=321 title=CI');
+ expect(invoke(w.jobs.benchmark.if)).toBe(true);
+ for(const action of ['in_progress','completed']){github.event.action=action;expect(invoke(w.jobs.benchmark.if)).toBe(false);}
+});
+
+it('bounds waiting for a refresh title that never renders', async () => {
+ const f=fixture();const run={id:321,run_attempt:1,status:'queued',workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:'CI',pull_requests:[]};
+ const getWorkflowRun=vi.fn(async()=>({data:run}));const github={rest:{...f.github.rest,actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),getWorkflowRun}}};const delay=vi.fn(async()=>{});
+ await expect(helpers.admitRefreshController(github,repo,{action:'requested',workflow_run:run},{delay})).resolves.toBeNull();
+ expect(delay).toHaveBeenCalledTimes(12);expect(getWorkflowRun).toHaveBeenCalledTimes(13);expect(f.github.rest.pulls.get).not.toHaveBeenCalled();
+});
+
+it.each([{event:'pull_request'},{head_branch:'child'},{display_title:'CI metadata-v1'},{run_attempt:2}])('rejects unrelated placeholder event %j', change => {
+ expect(helpers.refreshExecutionRequested('requested',{event:'workflow_dispatch',head_branch:'main',run_attempt:1,display_title:'CI',...change})).toBe(false);
+});

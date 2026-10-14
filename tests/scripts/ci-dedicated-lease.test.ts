@@ -94,3 +94,11 @@ it.each([[base],[base,head]])('attests explicit main at lock, renewal and final 
  await verify(f);await verify(f);expect(f.github.rest.pulls.get).not.toHaveBeenCalled();
  f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:head}}}));await expect(verify(f)).rejects.toThrow(/stale|ancestor|moved/);
 });
+
+it('authenticates the live exact requester before granting a placeholder-title refresh controller', async () => {
+ const f=fixture();Object.assign(f.ciRun,{event:'workflow_dispatch',head_sha:controller,head_branch:'main',display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`,pull_requests:[]});
+ Object.assign(f.controllerRun,{event:'workflow_run',head_sha:controller,head_branch:'main',display_title:'dedicated-refresh-v2 execution=true request=321 title=CI'});
+ await verify(f);
+ f.ciRun.display_title=`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${head}`;
+ await expect(verify(f)).rejects.toThrow(/requesting|CI/);
+});
