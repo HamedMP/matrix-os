@@ -31,7 +31,6 @@ skills=(
   jev-email-triage
   landing-design
   personal-daily-brief
-  product-demo-video
   review-animations
   shadcn
 )

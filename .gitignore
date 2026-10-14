@@ -120,6 +120,10 @@ skills-lock.json
 !.agents/skills/worktree-pr-monitor/**
 !.agents/skills/matrix-handoff/
 !.agents/skills/matrix-handoff/**
+# Team-only macOS demo recorder; never part of the shipped skills/matrix pack
+!.agents/skills/product-demo-video/
+!.agents/skills/product-demo-video/**
+!.claude/skills/product-demo-video
 # Matrix OS seeds its own skills under home/ -- track them explicitly
 !home/agents/skills/
 !home/agents/skills/**

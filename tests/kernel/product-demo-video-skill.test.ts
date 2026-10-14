@@ -3,27 +3,37 @@ import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { discoverRecipeSkills } from "../../packages/gateway/src/chat/agent-recipe-skills.js";
 
-const skillsRoot = resolve(__dirname, "../../skills/matrix");
-const root = join(skillsRoot, "product-demo-video");
+const repo = resolve(__dirname, "../..");
+const root = join(repo, ".agents/skills/product-demo-video");
 const read = (file: string) => readFileSync(join(root, file), "utf8");
+const readRepo = (file: string) => readFileSync(join(repo, file), "utf8");
 const lib = createRequire(import.meta.url)(join(root, "scripts/record-lib.cjs"));
 const inside = (dir: string, path: string) => !relative(dir, path).startsWith("..");
 
 describe("Matrix product demo video skill", () => {
-  it("is discovered by the bundled recipe loader", async () => {
-    const discovered = await discoverRecipeSkills({ skillsRoot }, false);
-    expect(discovered.map((skill) => skill.id)).toContain("matrix-product-demo-video");
+  it("is a team skill, not part of the skill pack shipped to customer computers", () => {
+    expect(existsSync(join(repo, "skills/matrix/product-demo-video"))).toBe(false);
+    for (const file of [
+      "scripts/install-agent-matrix-skills.sh",
+      "scripts/install-hermes-matrix-skills.sh",
+      "docs/dev/agent-matrix-skills.md",
+    ]) {
+      expect(readRepo(file), file).not.toMatch(/product-demo-video/);
+    }
   });
 
-  it("uses the shared skill frontmatter shape", () => {
+  it("is tracked for agents working in this repo", () => {
+    const ignore = readRepo(".gitignore");
+    expect(ignore).toMatch(/^!\.agents\/skills\/product-demo-video\/\*\*$/m);
+    expect(ignore).toMatch(/^!\.claude\/skills\/product-demo-video$/m);
+    expect(read("../../../.claude/skills/product-demo-video/SKILL.md")).toBe(read("SKILL.md"));
+  });
+
+  it("uses the team skill frontmatter shape", () => {
     const content = read("SKILL.md");
-    expect(content.split("\n")[1]).toMatch(/^triggers:\s*\[[^\]]+\]$/);
-    expect(content).toMatch(/^name: matrix-product-demo-video$/m);
-    expect(content).toMatch(/^version: 1\.0\.0$/m);
-    expect(content).toMatch(/^author: Matrix OS$/m);
-    expect(content).toMatch(/^related_skills: \[.+\]$/m);
+    expect(content.split("\n")[1]).toBe("name: product-demo-video");
+    expect(content.split("\n")[2]).toMatch(/^description: .*team.*$/i);
     expect(content).toMatch(/^# Matrix Product Demo Video$/m);
     expect(content).toMatch(/^## When to Use$/m);
   });
@@ -33,11 +43,6 @@ describe("Matrix product demo video skill", () => {
       const content = read(file);
       expect(content, file).not.toMatch(/#\d{3,}|onboarding|\/Users\//i);
     }
-  });
-
-  it("is listed in the shipped skill docs", () => {
-    const docs = readFileSync(resolve(__dirname, "../../docs/dev/agent-matrix-skills.md"), "utf8");
-    expect(docs).toContain("| `matrix-product-demo-video` |");
   });
 
   it("keeps compiled encoder tools out of the skill directory", () => {

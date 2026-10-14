@@ -1,23 +1,15 @@
 ---
-triggers: ["product demo", "demo video", "record a demo", "click-through video", "team demo"]
-name: matrix-product-demo-video
-description: Record captioned click-through demo videos of Matrix OS surfaces with a scripted cursor, time-warped waits, and dissolve chapter cards, rendered on macOS without committing the videos.
-version: 1.0.0
-author: Matrix OS
-license: MIT
-platforms: [macos]
-related_skills: [matrix-dev-vps]
-metadata:
-  agent:
-    tags: [Matrix OS, demo, video, Playwright, Electron, Web Desktop, Web Canvas]
-    related_skills: [matrix-dev-vps]
+name: product-demo-video
+description: Matrix team tool for recording captioned click-through demo videos of Matrix OS surfaces (Web Desktop, Web Canvas, Electron Desktop) on an engineer's Mac, with a scripted cursor, time-warped waits, and dissolve chapter cards. Use when asked for a product demo, demo video, or click-through video of a feature in this repo.
 ---
 
 # Matrix Product Demo Video
 
 ## When to Use
 
-Use this when the user wants a shareable video of a Matrix feature on Web Desktop, Web Canvas, or Electron Desktop. This skill owns capture, captions, pacing, chapter cards, and QA. The click script that tells the feature's story is written fresh for each demo and stays out of git.
+This is an internal Matrix engineering tool for this repo. It is not shipped to customer computers and is not part of the `skills/matrix/` pack.
+
+Use this when a Matrix engineer wants a shareable video of a Matrix feature on Web Desktop, Web Canvas, or Electron Desktop. This skill owns capture, captions, pacing, chapter cards, and QA. The click script that tells the feature's story is written fresh for each demo and stays out of git.
 
 Web Mobile can reuse the web recorder with a phone-sized viewport when the user asks. Native Mobile is out of scope. Do not screen-record the agent chatting. Record the product the way a person would use it: open, act, see the result.
 
@@ -34,7 +26,7 @@ Encoding and stitching need macOS (`swiftc` and AVFoundation). There is no ffmpe
 
 ## Pipeline
 
-1. Run the surface you are recording (see `matrix-dev-vps` for the local stack).
+1. Run the surface you are recording (see the `launch-app` skill for the local stack).
 2. Write a recorder that requires `scripts/record-lib.cjs` and drives Playwright for web surfaces or `_electron.launch` for Electron Desktop.
 3. Inject the cursor overlay, glide the mouse to each control, click with a short press, and caption each beat.
 4. Capture with `startCapture` / `stopCapture` (CDP screencast at 1440×810 CSS pixels, DPR 2).
