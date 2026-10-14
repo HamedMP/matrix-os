@@ -17,10 +17,7 @@ describe("native desktop default apps", () => {
       "notes",
       "whiteboard",
     ]);
-    // The native Cloud desktop destination is implemented in the next Electron Desktop layer.
-    expect(FIXED_DESKTOP_APPS.map((app) => app.path)).toEqual(
-      DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.filter((path) => path !== "__cloud-desktop__"),
-    );
+    expect(FIXED_DESKTOP_APPS.map((app) => app.path)).toEqual(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS);
   });
 
   it("keeps every desktop destination identity unique even when surfaces are shared", () => {
