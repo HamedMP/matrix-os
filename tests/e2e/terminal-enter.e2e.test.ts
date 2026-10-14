@@ -94,10 +94,10 @@ describe("ENG-293 real-browser Web Terminal Enter", () => {
         const seen: { type: string; trusted: boolean; data: string | null }[] = [];
         const capture = (event: Event) => { const input = event as InputEvent;
           seen.push({ type: input.inputType, trusted: input.isTrusted, data: input.data }); };
-        node.addEventListener("input", capture, true);
+        node.ownerDocument.addEventListener("input", capture, true);
         // Chromium's editing command generates the event; no isTrusted spoofing.
         document.execCommand("insertLineBreak");
-        node.removeEventListener("input", capture, true);
+        node.ownerDocument.removeEventListener("input", capture, true);
         return seen;
       });
       expect(events).toContainEqual({ type: "insertLineBreak", trusted: true, data: null });
@@ -180,12 +180,51 @@ describe("ENG-293 real-browser Web Terminal Enter", () => {
         let trustedLineBreak = false;
         const capture = (event: Event) => { const input = event as InputEvent;
           trustedLineBreak ||= input.inputType === "insertLineBreak" && input.isTrusted; };
-        node.addEventListener("input", capture, true);
+        node.ownerDocument.addEventListener("input", capture, true);
         document.execCommand("insertLineBreak");
-        node.removeEventListener("input", capture, true);
+        node.ownerDocument.removeEventListener("input", capture, true);
         return trustedLineBreak;
       });
       expect(trusted).toBe(true);
+      await settle(page);
+      expect(await inputs(page)).toEqual([]);
+    } finally { await page.close(); }
+  });
+
+  it("does not retain a key-only Enter gesture indefinitely when automation omits keyup", async () => {
+    const page = await open();
+    try {
+      await page.locator("#pane-0 textarea").evaluate(node => node.dispatchEvent(new KeyboardEvent("keydown",
+        { key: "Enter", code: "Enter", bubbles: true, cancelable: true })));
+      await settle(page);
+      await page.locator("#pane-0 textarea").evaluate(() => document.execCommand("insertLineBreak"));
+      expect((await inputs(page)).map(frame => frame.data)).toEqual(["\r", "\r"]);
+    } finally { await page.close(); }
+  });
+
+  it("keeps trusted line breaks blocked throughout composition, including after a keyup", async () => {
+    const page = await open();
+    try {
+      await page.locator("#pane-0 textarea").evaluate(node => {
+        node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+        node.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+      });
+      await settle(page);
+      await page.locator("#pane-0 textarea").evaluate(() => document.execCommand("insertLineBreak"));
+      expect((await inputs(page)).map(frame => frame.data).join("")).toBe("");
+    } finally { await page.close(); }
+  });
+
+  it("does not reinterpret malformed or modified key-only Enter", async () => {
+    const page = await open();
+    try {
+      await page.locator("#pane-0 textarea").evaluate(node => {
+        for (const init of [{ code: "KeyA" }, { code: "Enter", ctrlKey: true },
+          { code: "Enter", altKey: true }, { code: "Enter", metaKey: true }, { code: "Enter", shiftKey: true }]) {
+          for (const type of ["keydown", "keyup"]) node.dispatchEvent(new KeyboardEvent(type,
+            { key: "Enter", keyCode: 0, bubbles: true, ...init }));
+        }
+      });
       await settle(page);
       expect(await inputs(page)).toEqual([]);
     } finally { await page.close(); }

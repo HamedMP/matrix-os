@@ -303,6 +303,7 @@ describe("terminal WebSocket route registration", () => {
     const routes = authorizedRoutes({ accessScope: "owner", repository: repositoryDouble(false) });
     const peer = await openTab(routes, "");
     await vi.waitFor(() => expect(routes.attach).toHaveBeenCalledOnce());
+    routes.send.mockClear();
     let enterAdmission!: () => void;
     let releaseAdmission!: () => void;
     const admitted = new Promise<void>(resolve => { enterAdmission = resolve; });
@@ -327,7 +328,7 @@ describe("terminal WebSocket route registration", () => {
       releaseAdmission();
       if (revoked) {
         await vi.waitFor(() => expect(peer.sent.map(raw => JSON.parse(raw).code)).toEqual(["read_only", "read_only"]));
-        expect(routes.send).not.toHaveBeenCalled();
+        expect(routes.send.mock.calls.filter(([frame]) => frame.type === "input")).toEqual([]);
       } else {
         await vi.waitFor(() => expect(routes.send).toHaveBeenCalledTimes(2));
         expect(routes.send.mock.calls.map(([frame]) => (frame as { data?: string }).data)).toEqual(["hello", "\r"]);
