@@ -16,9 +16,18 @@ let config: { main?: BuildConfig; preload?: BuildConfig };
 
 beforeAll(async () => {
   const api = await import(pathToFileURL(compiler).href);
-  ({ config } = await api.loadConfigFromFile(
-    { command: "build", mode: "production" }, configPath, desktop, "silent", true,
-  ));
+  // electron-vite writes a temporary config into the checkout while loading it.
+  // Provenance is tested separately; this suite verifies Electron bundling only.
+  const githubSha = process.env.GITHUB_SHA;
+  process.env.GITHUB_SHA = "";
+  try {
+    ({ config } = await api.loadConfigFromFile(
+      { command: "build", mode: "production" }, configPath, desktop, "silent", true,
+    ));
+  } finally {
+    if (githubSha === undefined) delete process.env.GITHUB_SHA;
+    else process.env.GITHUB_SHA = githubSha;
+  }
 });
 
 describe("Rolldown Electron builtin boundary", () => {
@@ -60,7 +69,7 @@ describe("Rolldown Electron builtin boundary", () => {
       execFileSync(process.execPath, ["--input-type=module", "-e", `
         const { build } = await import(${JSON.stringify(pathToFileURL(compiler).href)});
         await build({ configFile: ${JSON.stringify(join(fixture, "config.mjs"))}, ignoreConfigWarning: true });
-      `], { cwd: desktop, timeout: 20_000, maxBuffer: 1024 * 1024, stdio: "pipe" });
+      `], { cwd: desktop, env: { ...process.env, GITHUB_SHA: "" }, timeout: 20_000, maxBuffer: 1024 * 1024, stdio: "pipe" });
       const main = readFileSync(join(fixture, "main/index.js"), "utf8");
       const preload = readFileSync(join(fixture, "preload/index.cjs"), "utf8");
       expect(main).toMatch(/from ["']electron["']/);
