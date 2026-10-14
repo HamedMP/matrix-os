@@ -1,5 +1,8 @@
 import { ChatAgentContextError } from "./agent-context.js";
 import { mapChatAgentContextError } from "./orchestration-errors.js";
+import type { SharedBrowserBroker } from "../shared-browser/broker.js";
+import { openHermesSharedBrowserRun } from "./hermes-shared-browser.js";
+import { hermesToolActivity, hermesActivitySummary, hermesStatusActivity, hermesToolFailed } from "./hermes-tool-activity.js";
 import { createHermesSubagentActivity } from "./hermes-subagent-activity.js";
 import { restrictedHermesPythonArguments } from "./jev-hermes-python.js";
 import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
@@ -144,43 +147,6 @@ function remainingHermesInterimText(streamed: string, interim: string): string |
   return interim.slice(publishedPrefix.length);
 }
 
-function hermesToolActivity(name: string): Pick<HermesActivity, "kind" | "label"> {
-  const normalized = name.trim().toLowerCase();
-  if (["terminal", "shell", "bash", "execute", "execute_code", "run_command"].includes(normalized)) {
-    return { kind: "command", label: "Run command" };
-  }
-  if (["web_search", "web_extract", "browser", "browser_use"].includes(normalized)) {
-    return { kind: "web_search", label: "Search the web" };
-  }
-  if (["delegate_task", "subagent", "spawn_subagent"].includes(normalized)) {
-    return { kind: "delegation", label: "Delegated task" };
-  }
-  if (["todo", "plan", "update_plan"].includes(normalized)) {
-    return { kind: "plan", label: "Update plan" };
-  }
-  if (/^(?:write|edit|patch|replace|apply)_?file$/.test(normalized) || normalized === "apply_patch") {
-    return { kind: "file_change", label: "Update file" };
-  }
-  if (normalized.startsWith("mcp_") || normalized.includes("mcp")) {
-    return { kind: "mcp_tool", label: "Use connected tool" };
-  }
-  if (normalized.includes("image") && (normalized.includes("inspect") || normalized.includes("analy"))) {
-    return { kind: "image_inspection", label: "Inspect image" };
-  }
-  const safeWords = /^[a-z0-9_.:-]+$/.test(normalized)
-    ? normalized.split(/[_.:-]+/).filter(Boolean).slice(0, 6).join(" ")
-    : "";
-  return { kind: "dynamic_tool", label: safeWords ? `Use ${safeWords}` : "Use tool" };
-}
-
-function hermesActivitySummary(kind: HermesActivity["kind"], failed: boolean): string {
-  if (kind === "command") return failed ? "Command failed." : "Command completed.";
-  if (kind === "web_search") return failed ? "Web search failed." : "Web search completed.";
-  if (kind === "delegation") return failed ? "Delegated work failed." : "Delegated work completed.";
-  if (kind === "file_change") return failed ? "File update failed." : "File update completed.";
-  return failed ? "Tool failed." : "Tool completed.";
-}
-
 function providerReference(prefix: string, value: string): string {
   const candidate = `${prefix}${value}`;
   if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(candidate) && !candidate.includes("..")) return candidate;
@@ -210,38 +176,6 @@ function setBounded<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number): vo
     if (oldest !== undefined) map.delete(oldest);
   }
   map.set(key, value);
-}
-
-function hermesStatusActivity(kind: string): Pick<HermesActivity, "activityId" | "kind" | "label"> | undefined {
-  const normalized = kind.trim().toLowerCase();
-  if (["planning", "plan", "todo"].includes(normalized)) {
-    return { activityId: "status_planning", kind: "plan", label: "Planning" };
-  }
-  if (["thinking", "reasoning"].includes(normalized)) {
-    return { activityId: "status_reasoning", kind: "reasoning", label: "Analyzing" };
-  }
-  if (normalized === "compacting") {
-    return { activityId: "status_compacting", kind: "phase", label: "Summarizing conversation" };
-  }
-  if (["process", "loop", "lifecycle"].includes(normalized)) {
-    return { activityId: `status_${normalized}`, kind: "phase", label: "Working" };
-  }
-  if (["working", "work", "executing", "running"].includes(normalized)) {
-    return { activityId: "status_working", kind: "phase", label: "Working" };
-  }
-  return undefined;
-}
-
-function hermesToolFailed(result: unknown): boolean {
-  if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
-  const value = result as Record<string, unknown>;
-  if (value.success === false || value.ok === false) return true;
-  if (["error", "failed", "failure"].includes(String(value.status ?? "").toLowerCase())) return true;
-  if (typeof value.exit_code === "number" && value.exit_code !== 0) return true;
-  return value.error !== undefined
-    && value.error !== null
-    && value.error !== false
-    && value.error !== "";
 }
 
 function collectUnsafeToolFragments(value: unknown, fragments: Set<string>, depth = 0): void {
@@ -287,6 +221,8 @@ function deferred<T>() {
 
 export function createHermesChatProviderAdapter(options: {
   homePath: string;
+  sharedBrowser?: SharedBrowserBroker;
+  sharedBrowserGatewayPort?: number;
   toolOutputKey?: Buffer;
   spawnFn?: HermesGatewaySpawn;
   timeoutMs?: number;
@@ -462,6 +398,7 @@ export function createHermesChatProviderAdapter(options: {
     };
 
     const handleEvent = (event: HermesGatewayEvent) => {
+      browserRun?.observe(event);
       catalogGate?.observe(event);
       selectedRouteGate?.observe(event);
       if (completionSettled || !liveSessionId || event.session_id !== liveSessionId) return;
@@ -675,16 +612,23 @@ export function createHermesChatProviderAdapter(options: {
     if (credentials) await options.jev!.verifyRuntime(hermesRoot, input.signal, credentials.apiMode);
     const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId, jevScope);
     let restrictedProfile: Awaited<ReturnType<typeof createJevHermesProfile>> | undefined;
-    try { if (credentials) restrictedProfile = await createJevHermesProfile(credentials, integrationCapability.token); }
+    let browserRun: ReturnType<typeof openHermesSharedBrowserRun> | undefined;
+    try {
+      if (credentials) restrictedProfile = await createJevHermesProfile(credentials, integrationCapability.token);
+      if (options.sharedBrowser && !jevScope && input.owner.type === "personal" && !input.sharedScopeId) browserRun = openHermesSharedBrowserRun({
+        broker: options.sharedBrowser, root: hermesRoot, gatewayPort: options.sharedBrowserGatewayPort ?? 4000, owner: input.owner,
+        chatId: input.chatId, runId: input.runId, signal: input.signal });
+    }
     catch (error) { integrationCapability.revoke(); throw error; }
     const executionCwd = restrictedProfile?.homePath ?? input.executionRoot ?? options.homePath;
     const clientOptions = {
       command: join(hermesRoot, "venv", "bin", "python"),
-      args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache")) : ["-u", "-m", "tui_gateway.entry"],
+      args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache")) : browserRun?.args ?? ["-u", "-m", "tui_gateway.entry"],
       cwd: executionCwd,
       inheritEnvironment: !restrictedProfile,
       env: {
         ...(restrictedProfile?.env ?? buildAgentRuntimeEnvironment(options.homePath)),
+        ...browserRun?.env,
         // The MCP child receives a short-lived bearer scoped to this run's
         // authenticated actor and only the integrations/Jev Gateway routes.
         MATRIX_CLERK_USER_ID: input.owner.ownerId,
@@ -778,6 +722,7 @@ export function createHermesChatProviderAdapter(options: {
             }));
         const session = HermesSessionSchema.parse(rawSession);
         liveSessionId = session.session_id;
+        browserRun?.setSession(liveSessionId);
         catalogGate?.setSession(liveSessionId);
         selectedRouteGate?.setSession(liveSessionId, Boolean(resumeState));
         durableSessionId = session.stored_session_id ?? session.session_key ?? resumeState?.sessionId;
@@ -837,6 +782,7 @@ export function createHermesChatProviderAdapter(options: {
           await withinRun(catalogGate!.ready(startupSignal));
           await withinRun(options.jev!.preflight(input.owner.ownerId, jevScope, startupSignal));
         }
+        await browserRun?.ready(startupSignal);
         await selectedRouteGate?.ready(startupSignal, Math.min(options.requestTimeoutMs ?? 30_000, 30_000));
         startupSignal.throwIfAborted();
         HermesPromptResponseSchema.parse(await withinRun(client.request("prompt.submit", {
@@ -924,6 +870,8 @@ export function createHermesChatProviderAdapter(options: {
         };
       } finally {
         integrationCapability.revoke();
+        try { await browserRun?.close(); }
+        catch (error: unknown) { console.warn("[chat/hermes] Browser cleanup unavailable", error instanceof Error ? error.name : "UnknownError"); }
         if (jevScope) options.jev!.clearRun(input.owner.ownerId, input.runId);
         releaseSteerRun?.();
         releaseApprovalRun?.();

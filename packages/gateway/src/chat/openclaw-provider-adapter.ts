@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import type { SharedBrowserBroker } from "../shared-browser/broker.js";
+import { openOpenClawSharedBrowserRun } from "./openclaw-shared-browser-run.js";
 import { z } from "zod/v4";
 import type {
   OpenClawRpcClient,
@@ -52,6 +54,7 @@ interface ActiveRun {
   sessionKey?: string;
   agentId?: string;
   cancelled: boolean;
+  browserClose?: () => Promise<void>;
 }
 
 interface OpenClawChatProviderOptions {
@@ -59,10 +62,12 @@ interface OpenClawChatProviderOptions {
   homePath: string;
   timeoutMs?: number;
   maxBufferedEvents?: number;
+  sharedBrowser?: SharedBrowserBroker;
 }
 
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const MAX_RUN_TIMEOUT_MS = 5 * 60_000;
+const BROWSER_RUN_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_MAX_BUFFERED_EVENTS = 500;
 const MAX_ACTIVE_RUNS = 128;
 
@@ -190,7 +195,7 @@ export function createOpenClawChatProviderAdapter(
 ): CanonicalChatProviderAdapter<OpenClawChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
   const maxBufferedEvents = options.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > MAX_RUN_TIMEOUT_MS) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > (options.sharedBrowser ? BROWSER_RUN_TIMEOUT_MS : MAX_RUN_TIMEOUT_MS)) {
     throw new RangeError("Invalid OpenClaw Chat run timeout");
   }
   if (!Number.isInteger(maxBufferedEvents) || maxBufferedEvents < 1 || maxBufferedEvents > 1_000) {
@@ -217,6 +222,7 @@ export function createOpenClawChatProviderAdapter(
 
   async function abortRun(active: ActiveRun, state?: OpenClawChatState): Promise<void> {
     active.cancelled = true;
+    await active.browserClose?.();
     const sessionKey = active.sessionKey ?? state?.sessionKey;
     if (!sessionKey) return;
     const agentId = active.agentId ?? state?.agentId;
@@ -262,6 +268,16 @@ export function createOpenClawChatProviderAdapter(
       cancelled: false,
     };
     track(input.runId, active);
+    if (options.sharedBrowser && input.owner.type === "personal" && !input.sharedScopeId && input.permissionMode === "full_access") {
+      try {
+        const browser = await openOpenClawSharedBrowserRun({ broker: options.sharedBrowser, rpc: options.rpc,
+          ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, sessionKey: requestedSessionKey, signal: input.signal });
+        active.browserClose = browser.close;
+      } catch (error: unknown) {
+        console.warn("[chat-openclaw] Browser admission unavailable", error instanceof Error ? error.name : "UnknownError");
+        activeRuns.delete(input.runId); yield input.signal.aborted ? completion("aborted") : failure(); return;
+      }
+    }
 
     const onEvent = (event: OpenClawRpcEvent) => {
       if (event.event !== "agent") return;
@@ -278,17 +294,18 @@ export function createOpenClawChatProviderAdapter(
     input.signal.addEventListener("abort", onAbort, { once: true });
     if (input.signal.aborted) onAbort();
 
+    const runTimeoutMs = active.browserClose && options.timeoutMs === undefined ? BROWSER_RUN_TIMEOUT_MS : timeoutMs;
     const call = options.rpc.call("agent", {
       message: input.prompt,
       provider: selectedModel.provider,
       model: selectedModel.model,
       sessionKey: requestedSessionKey,
       deliver: false,
-      timeout: Math.ceil(timeoutMs / 1_000),
+      timeout: Math.ceil(runTimeoutMs / 1_000),
       idempotencyKey: input.runId,
     }, new AbortController().signal, {
       expectFinal: true,
-      timeoutMs: Math.min(timeoutMs + 5_000, MAX_RUN_TIMEOUT_MS),
+      timeoutMs: Math.min(runTimeoutMs + 5_000, active.browserClose ? BROWSER_RUN_TIMEOUT_MS : MAX_RUN_TIMEOUT_MS),
       onAccepted(value) {
         const parsed = AcceptedSchema.safeParse(value);
         if (!parsed.success) {
@@ -299,7 +316,9 @@ export function createOpenClawChatProviderAdapter(
         active.providerRunId = parsed.data.runId;
         if (parsed.data.sessionKey !== undefined) active.sessionKey = parsed.data.sessionKey;
         active.agentId = parsed.data.agentId;
-        if (active.cancelled) void abortRun(active, input.resumeState);
+        if (active.browserClose && (parsed.data.runId !== input.runId || parsed.data.sessionKey !== undefined && parsed.data.sessionKey !== requestedSessionKey)) {
+          protocolFailed = true; void abortRun(active, input.resumeState);
+        } else if (active.cancelled) void abortRun(active, input.resumeState);
         wake.resolve();
       },
       onEvent,
@@ -337,7 +356,7 @@ export function createOpenClawChatProviderAdapter(
         if (wake.promise === waiting) wake = Promise.withResolvers<void>();
       }
       const terminal = TerminalResponseSchema.safeParse(terminalValue);
-      if (active.cancelled || input.signal.aborted) {
+      if (input.signal.aborted || active.cancelled && !protocolFailed) {
         yield completion("aborted");
       } else if (overflowed || protocolFailed || terminalError !== undefined
         || !terminal.success || terminal.data.status !== "ok") {
@@ -348,6 +367,7 @@ export function createOpenClawChatProviderAdapter(
     } finally {
       input.signal.removeEventListener("abort", onAbort);
       activeRuns.delete(input.runId);
+      await active.browserClose?.();
     }
   }
 
@@ -368,7 +388,9 @@ export function createOpenClawChatProviderAdapter(
     },
     async cancel(input) {
       const state = input.state === undefined ? undefined : OpenClawChatStateSchema.parse(input.state);
-      const active = activeRuns.get(input.runId) ?? {
+      const tracked = activeRuns.get(input.runId);
+      if (tracked && (tracked.ownerId !== input.owner.ownerId || tracked.chatId !== input.chatId)) throw new Error("OpenClaw cancellation unavailable");
+      const active = tracked ?? {
         ownerId: input.owner.ownerId,
         chatId: input.chatId,
         providerRunId: input.runId,

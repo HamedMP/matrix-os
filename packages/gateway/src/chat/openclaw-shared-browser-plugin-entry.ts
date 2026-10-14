@@ -1,0 +1,18 @@
+import { z } from "zod/v4";
+import { registerOpenClawSharedBrowserPlugin, type SharedBrowserPluginApi } from "./openclaw-shared-browser-plugin.js";
+const Config = z.object({ gatewayPort: z.number().int().min(1).max(65535).default(4000) }).strict();
+/** Write this manifest alongside a package.json pointing openclaw.extensions at this compiled entry. */
+export const OPENCLAW_SHARED_BROWSER_MANIFEST = {
+  id: "matrix-shared-browser", name: "Matrix shared Chrome", version: "1.0.0",
+  description: "Run-bound owner-gated control of the visible Matrix Chrome app.",
+  activation: { onStartup: true },
+  contracts: { tools: ["shared_browser"], gatewayMethodDispatch: ["authenticated-request"] },
+  configSchema: z.toJSONSchema(Config),
+};
+export default {
+  id: "matrix-shared-browser", name: "Matrix shared Chrome",
+  register(api: SharedBrowserPluginApi & { pluginConfig?: unknown }) {
+    const config = Config.parse(api.pluginConfig ?? {});
+    registerOpenClawSharedBrowserPlugin(api, config);
+  },
+};
