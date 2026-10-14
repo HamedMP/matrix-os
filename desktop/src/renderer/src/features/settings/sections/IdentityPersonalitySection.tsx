@@ -1,3 +1,4 @@
+import { OWNER_SOUL_MAX_BYTES, ownerSoulExceedsLimit, ownerSoulHasInvalidControls } from "@matrix-os/contracts/bots";
 import { Save } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../design/primitives";
@@ -49,8 +50,13 @@ function SoulEditor() {
   }, [api]);
 
   const dirty = soul !== baseline;
+  const exceedsLimit = ownerSoulExceedsLimit(soul);
+  const invalidControls = ownerSoulHasInvalidControls(soul);
+  const validationError = exceedsLimit
+    ? `Content exceeds the ${OWNER_SOUL_MAX_BYTES / 1024} KiB UTF-8 limit. Shorten it before saving.`
+    : invalidControls ? "Remove unsupported control characters before saving." : null;
   const save = async () => {
-    if (!api || !dirty) return;
+    if (!api || !dirty || validationError) return;
     const saveSeq = saveSeqRef.current + 1;
     saveSeqRef.current = saveSeq;
     const nextSoul = soul;
@@ -83,12 +89,15 @@ function SoulEditor() {
         <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>SOUL · system/soul.md</span>
         <div className="flex items-center gap-2">
           {status === "saved" ? <span className="text-xs" style={{ color: "var(--success)" }}>Saved</span> : null}
-          <Button variant="primary" disabled={!dirty || status === "saving"} onClick={() => void save()}>
+          <Button variant="primary" disabled={!dirty || status === "saving" || !!validationError} onClick={() => void save()}>
             <Save size={13} />
             {status === "saving" ? "Saving…" : "Save"}
           </Button>
         </div>
       </div>
+      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+        Up to {OWNER_SOUL_MAX_BYTES / 1024} KiB of UTF-8 text. Applies to your personal Matrix Bot.
+      </p>
       {!loaded ? (
         <Empty text="Loading…" />
       ) : (
@@ -103,7 +112,11 @@ function SoulEditor() {
           data-selectable
         />
       )}
-      {error ? <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : null}
+      {validationError || error ? (
+        <span role="alert" className="text-xs" style={{ color: "var(--danger)" }}>
+          {validationError ?? error}
+        </span>
+      ) : null}
     </Card>
   );
 }

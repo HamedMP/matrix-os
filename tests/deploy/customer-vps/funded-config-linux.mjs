@@ -1,4 +1,4 @@
-// Manual Linux integration fixture, exclusively inside a disposable container.
+// Linux integration fixture, exclusively inside a disposable container.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -8,6 +8,9 @@ import { buildFundedConfigRepairCommand } from '../../../scripts/ops/funded-conf
 assert(process.platform === 'linux' && process.getuid() === 0 && existsSync('/.dockerenv')
   && process.env.MATRIX_FUNDED_REPAIR_DISPOSABLE_TEST === '1' && !existsSync('/opt/matrix'),
 'This fixture requires a fresh disposable Linux container; never run on a VPS.');
+if (process.env.MATRIX_FUNDED_REPAIR_EXPECT_ARCH !== undefined)
+  assert.equal(process.arch, process.env.MATRIX_FUNDED_REPAIR_EXPECT_ARCH);
+console.log(JSON.stringify({ fixture: 'funded-config-linux', platform: process.platform, architecture: process.arch }));
 const group = spawnSync('/usr/sbin/groupadd', ['-g', '2001', 'matrix']);
 assert.equal(group.status, 0);
 for (const [path, mode] of [['/opt/matrix', 0o770], ['/opt/matrix/env', 0o750], ['/opt/matrix/runtime', 0o755],
@@ -42,6 +45,58 @@ assert.equal(JSON.parse(result.stdout).changed, true); assert(readFileSync(path,
 result = run(request()); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).changed, false);
 result = run(request('rollback')); assert.equal(result.status, 0, result.stderr); assert.equal(readFileSync(path, 'utf8'), initial);
 
+// Exercise the actual URL-only helper through the encrypted generated command.
+const release = { version: 'v2026.10.11-test', gitCommit: 'e'.repeat(40) };
+const releasePath = '/opt/matrix/release.json';
+writeFileSync(releasePath, JSON.stringify(release), { mode: 0o644 }); chownSync(releasePath, 0, 2001);
+const routingInitial = initial + 'MATRIX_FUNDED_AI_ENABLED=false\nMATRIX_FUNDED_AI_RUNTIME_TOKEN=' + 'a'.repeat(64)
+  + '\nMATRIX_FUNDED_AI_RELAY_URL=https://old---relay.example.com\nMATRIX_FUNDED_AI_PLATFORM_URL=https://old---platform.example.com\n';
+writeFileSync(path, routingInitial);
+function routingRequest(action = 'align-routing') {
+  return { ...request(action), rolloutId: 'linux-routing', expectedRelease: release,
+    ...(action === 'align-routing' ? { config: { relayUrl: 'https://relay.example.com', platformUrl: 'https://platform.example.com' } } : {}) };
+}
+const aligned = routingInitial.replace('https://old---relay.example.com', 'https://relay.example.com')
+  .replace('https://old---platform.example.com', 'https://platform.example.com');
+// Older protected releases are root:root even when matrix has a nonzero gid.
+chownSync(releasePath, 0, 0);
+result = run({ ...routingRequest(), rolloutId: 'linux-old-root-release' }); assert.equal(result.status, 0, result.stderr);
+assert.equal(readFileSync(path, 'utf8'), aligned);
+result = run({ ...routingRequest('rollback-routing'), rolloutId: 'linux-old-root-release' }); assert.equal(result.status, 0, result.stderr);
+assert.equal(readFileSync(path, 'utf8'), routingInitial);
+chownSync(releasePath, 0, 2002);
+result = run(routingRequest()); assert.equal(result.status, 1);
+assert.equal(readFileSync(path, 'utf8'), routingInitial);
+chownSync(releasePath, 0, 2001);
+chmodSync(releasePath, 0o664);
+result = run(routingRequest()); assert.equal(result.status, 1);
+assert.equal(readFileSync(path, 'utf8'), routingInitial);
+chmodSync(releasePath, 0o644); chownSync(releasePath, 1, 2001);
+result = run(routingRequest()); assert.equal(result.status, 1);
+assert.equal(readFileSync(path, 'utf8'), routingInitial);
+chownSync(releasePath, 0, 2001);
+result = run(routingRequest()); assert.equal(result.status, 0, result.stderr); assert.equal(readFileSync(path, 'utf8'), aligned);
+result = run(routingRequest()); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).changed, false);
+writeFileSync(path, aligned + 'UNRELATED_LATER=preserved\n');
+result = run(routingRequest('rollback-routing')); assert.equal(result.status, 0, result.stderr);
+assert.equal(readFileSync(path, 'utf8'), routingInitial + 'UNRELATED_LATER=preserved\n');
+const staleSource = routingRequest(); staleSource.expectedRelease = { ...release, gitCommit: 'f'.repeat(40) };
+result = run(staleSource); assert.equal(result.status, 1); assert.equal(readFileSync(path, 'utf8'), routingInitial + 'UNRELATED_LATER=preserved\n');
+
+// Inject only a post-rename metadata drift; the actual helper/bridge must hide a
+// failed receipt, retain its journal, and refuse replay of the stale file CAS.
+const drift = `replace=os.replace\ndef source_drift(*a,**kw):\n replace(*a,**kw)\n with open('/opt/matrix/release.json','w') as f:json.dump({'version':'different','gitCommit':'f'*40},f)\nos.replace=source_drift\n`;
+const driftHelper = helper.replace('if __name__ == "__main__":', drift + '\nif __name__ == "__main__":');
+const unknown = routingRequest(); unknown.rolloutId = 'linux-unknown';
+result = run(unknown, driftHelper); assert.equal(result.status, 1); assert.equal(result.stdout, '');
+assert.equal(readFileSync(path, 'utf8'), aligned + 'UNRELATED_LATER=preserved\n');
+assert(existsSync('/opt/matrix/env/host.env.funded-linux-unknown.json'));
+result = run(unknown); assert.equal(result.status, 1); assert.equal(result.stdout, '');
+writeFileSync(releasePath, JSON.stringify(release));
+result = run({ ...routingRequest('rollback-routing'), rolloutId: 'linux-unknown' }); assert.equal(result.status, 0, result.stderr);
+assert.equal(readFileSync(path, 'utf8'), routingInitial + 'UNRELATED_LATER=preserved\n');
+writeFileSync(path, initial);
+
 // A group-writable runtime replacement never becomes privileged executable code.
 writeFileSync(runtime, '#!/bin/sh\ntouch /tmp/untrusted-executed\n');
 result = run(request()); assert.equal(result.status, 1); assert(!existsSync('/tmp/untrusted-executed'));
@@ -58,4 +113,4 @@ result = run(attackRequest, attackedSource); assert.equal(result.status, 1); ass
 assert(lstatSync('/opt/matrix/env').isSymbolicLink(), 'The attack must actually reach the rebind branch: ' + (existsSync('/tmp/activity-calls') ? readFileSync('/tmp/activity-calls','utf8') : 'no helper activity'));
 rmSync('/opt/matrix/env');
 // Container is removed by --rm; no customer configuration was touched.
-console.log(JSON.stringify({ supportedLayout: '0770/0750/0640', apply: 'passed', noOp: 'passed', rollback: 'passed', sealedInterpreter: 'passed', writableRuntimeReplacement: 'rejected', wrongPin: 'rejected', ancestorRebind: 'rejected', inheritedEnvFd: 3, sanitizedEnvironment: 'passed' }));
+console.log(JSON.stringify({ supportedLayout: '0770/0750/0640', releaseRootGroup: 'passed', releaseMatrixGroup: 'passed', releaseOtherGroupWritableOrWrongOwner: 'rejected', apply: 'passed', noOp: 'passed', rollback: 'passed', routing: 'passed', routingNoOp: 'passed', routingRollbackPreservesLaterEdits: 'passed', staleRoutingSource: 'rejected', routingUnknownCommit: 'rejected-with-journal', staleRoutingReplay: 'rejected', sealedInterpreter: 'passed', writableRuntimeReplacement: 'rejected', wrongPin: 'rejected', ancestorRebind: 'rejected', inheritedEnvFd: 3, sanitizedEnvironment: 'passed' }));

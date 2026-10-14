@@ -115,6 +115,7 @@ async function waitWithinDeadline(github, expected, options={}) {
       throw new Error('Verified dedicated Linux qualification failed');
     }
     const selected=await newestController(github,repo,expected,workflow,latest);
+    if(!selected&&options.admissionAttempts&&attempt+1>=options.admissionAttempts)throw new Error('No Linux controller admitted within the admission window');
     if(selected?.run.status==='completed') {
       const {check,evidence,run}=selected;
       if(run.conclusion!=='success' || (check.status==='completed' && check.conclusion!=='success'&&!(check.conclusion==='neutral'&&validInfrastructureProof(evidence)))) {

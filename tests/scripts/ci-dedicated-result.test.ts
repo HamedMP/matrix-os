@@ -69,6 +69,15 @@ describe("exact merge revision dedicated qualification evidence",()=>{
       await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow("failed");
     }
   });
+  it('gives up after the admission window when no controller check ever appears',async()=>{
+    const {github}=fixture();github.rest.checks.listForRef.mockResolvedValue({data:{total_count:0,check_runs:[]}});
+    const delay=vi.fn(async()=>{});
+    await expect(waitForDedicatedResult(github,expected,{maxAttempts:10,admissionAttempts:3,delay})).rejects.toThrow('No Linux controller admitted within the admission window');
+    expect(delay).toHaveBeenCalledTimes(2);
+  });
+  it('keeps waiting past the admission window once a controller is admitted',async()=>{
+    const {github}=fixture();await expect(waitForDedicatedResult(github,expected,{maxAttempts:2,admissionAttempts:1,delay:async()=>{}})).resolves.toEqual({runId:123,sourceSha});
+  });
   it("waits for controller settlement and fails closed on missing evidence",async()=>{
     const {github,run}=fixture(); run.status="in_progress"; await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow("No verified");
     expect(github.rest.checks.listForRef).toHaveBeenCalledTimes(2);

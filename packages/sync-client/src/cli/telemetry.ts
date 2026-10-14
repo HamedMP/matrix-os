@@ -210,10 +210,22 @@ export function createCliTelemetry(options: CreateCliTelemetryOptions = {}): Cli
 
 let sharedTelemetry: CliTelemetry | null = null;
 
+/**
+ * Telemetry diagnostics must not corrupt machine-readable stderr, so in --json mode they are
+ * only written when MATRIX_DEBUG is set.
+ */
+export function machineOutputLogger(env: EnvSource = process.env): CliTelemetryLogger {
+  return {
+    warn(message) {
+      if (env.MATRIX_DEBUG?.trim()) console.warn(message);
+    },
+  };
+}
+
 /** Lazily created process-wide telemetry instance for CLI entrypoints. */
-export function getCliTelemetry(): CliTelemetry {
+export function getCliTelemetry(options: { machineOutput?: boolean } = {}): CliTelemetry {
   if (!sharedTelemetry) {
-    sharedTelemetry = createCliTelemetry();
+    sharedTelemetry = createCliTelemetry(options.machineOutput ? { logger: machineOutputLogger() } : {});
   }
   return sharedTelemetry;
 }

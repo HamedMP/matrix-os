@@ -16,7 +16,7 @@ function fixture(){
  const check={id:12,name:'Dedicated CI Results',head_sha:source,app:{slug:'github-actions'},status:'completed',conclusion:'neutral',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124',output:{summary:JSON.stringify({schemaVersion:3,sourceKind:'main',prNumber:0,suite:'qualification',headSha:source,baseSha:base,baseRef:'main',sourceSha:source,mergeParents:[base],controllerSha,controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',controllerAttempt:1,requestingRunId:321,requestingRunAttempt:1,mode:'delegated',imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),receiptVerified:false,requestDigest:'9'.repeat(64),leaseId:'8'.repeat(32),outcome:'infrastructure-unavailable',status:76,reason:'queue_timeout',stage:'admission',workloadStarted:false,containerGone:true})}};
  const jobs=[...HOSTED_LANES,'CI Results'].map((name,i)=>({id:i+1,name,run_id:321,run_attempt:1,head_sha:source,status:'completed',conclusion:'success',check_run_url:`https://api.github.com/repos/HamedMP/matrix-os/check-runs/${i+1}`}));
  const aggregate={id:jobs.at(-1)!.id,name:'CI Results',app:{slug:'github-actions'},head_sha:source,status:'completed',conclusion:'success',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/321/job/99'};
- const github={rest:{pulls:{list:vi.fn(async()=>({data:[]})),get:vi.fn()},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:source}}})),getCommit:vi.fn(async()=>({data:{sha:source,parents:[{sha:base}],commit:{tree:{sha:tree}}}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}})),get:vi.fn(async()=>({data:aggregate})),create:vi.fn(),update:vi.fn()},actions:{getWorkflow:vi.fn(async({workflow_id}:any)=>({data:{id:workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+workflow_id}})),listRepoVariables:vi.fn(async()=>({data:{total_count:5,variables:[{name:'MATRIX_CI_CONTROLLER_SHA',value:controllerSha},{name:'MATRIX_CI_DEDICATED_ENABLED',value:'true'},{name:'MATRIX_CI_DEDICATED_SHADOW',value:'false'},{name:'MATRIX_CI_RUNNER_IMAGE_DIGEST',value:'sha256:'+'e'.repeat(64)},{name:'MATRIX_CI_RUNNER_HARNESS_DIGEST',value:'f'.repeat(64)}]}})),listWorkflowRuns:vi.fn(async({workflow_id}:any)=>({data:{workflow_runs:workflow_id===98?[ci]:[controller]}})),getWorkflowRun:vi.fn(async()=>({data:controller})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${source}-${source}-${base}-pr0-request321-1-attempt1`,id:55,expired:false,size_in_bytes:2000,workflow_run:{id:124}}]}})),listJobsForWorkflowRun:vi.fn(async({run_id}:any)=>({data:run_id===124?{jobs:[{name:'benchmark',status:'completed',conclusion:'success'}]}:{total_count:jobs.length,jobs}})),createWorkflowDispatch:vi.fn()}}};
+ const github={rest:{pulls:{list:vi.fn(async()=>({data:[]})),get:vi.fn()},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:source}}})),getCommit:vi.fn(async()=>({data:{sha:source,parents:[{sha:base}],commit:{tree:{sha:tree}}}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}})),get:vi.fn(async()=>({data:aggregate})),create:vi.fn(),update:vi.fn()},actions:{getWorkflow:vi.fn(async({workflow_id}:any)=>({data:{id:workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+workflow_id}})),listRepoVariables:vi.fn(async()=>({data:{total_count:6,variables:[{name:'MATRIX_CI_CONTROLLER_SHA',value:controllerSha},{name:'MATRIX_CI_DEDICATED_ENABLED',value:'true'},{name:'MATRIX_CI_DEDICATED_MAIN',value:'true'},{name:'MATRIX_CI_DEDICATED_SHADOW',value:'false'},{name:'MATRIX_CI_RUNNER_IMAGE_DIGEST',value:'sha256:'+'e'.repeat(64)},{name:'MATRIX_CI_RUNNER_HARNESS_DIGEST',value:'f'.repeat(64)}]}})),listWorkflowRuns:vi.fn(async({workflow_id}:any)=>({data:{workflow_runs:workflow_id===98?[ci]:[controller]}})),getWorkflowRun:vi.fn(async()=>({data:controller})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${source}-${source}-${base}-pr0-request321-1-attempt1`,id:55,expired:false,size_in_bytes:2000,workflow_run:{id:124}}]}})),listJobsForWorkflowRun:vi.fn(async({run_id}:any)=>({data:run_id===124?{jobs:[{name:'benchmark',status:'completed',conclusion:'success'}]}:{total_count:jobs.length,jobs}})),createWorkflowDispatch:vi.fn()}}};
  const gateGithub={rest:{checks:{create:vi.fn(async(args:any)=>({data:{id:100,...args,app:{id:777,slug:'matrix-ci-gate'}}})),update:vi.fn(async(args:any)=>({data:{id:args.check_run_id,name:'CI Source Qualification',head_sha:source,...args,app:{id:777,slug:'matrix-ci-gate'}}}))}}};
  pinArtifactFixture(github,check,controller);const result={github,gateGithub,ci,controller,check,jobs,aggregate};pinFullDecision(result);return result;
 }
@@ -38,7 +38,7 @@ it('independently verifies exact main infrastructure recovery even with no open 
  expect(f.github.rest.actions.listJobsForWorkflowRun).toHaveBeenCalledWith(expect.objectContaining({run_id:321,filter:'latest',request:expect.objectContaining({timeout:10000})}));
  expect(f.github.rest.checks.create).not.toHaveBeenCalled();expect(f.github.rest.checks.update).not.toHaveBeenCalled();expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
 });
-it.each(['missing','skipped','failed','attempt','head','run','duplicate','truncated','fake-app','aggregate-run','inventory-denied','requester-pending','requester-attempt','receipt-missing','main-moved','newer-attempt'])('fails the independent main App gate for %s despite a green Actions aggregate',async kind=>{
+it.each(['missing','skipped','failed','attempt','head','run','duplicate','truncated','fake-app','aggregate-run','inventory-denied','requester-attempt','receipt-missing','main-moved','newer-attempt'])('fails the independent main App gate for %s despite a green Actions aggregate',async kind=>{
  const f=fixture();
  if(kind==='missing')f.jobs.splice(0,1);if(kind==='skipped')f.jobs[0].conclusion='skipped';if(kind==='failed')f.jobs[0].conclusion='failure';if(kind==='attempt')f.jobs[0].run_attempt=2;if(kind==='head')f.jobs[0].head_sha=base;if(kind==='run')f.jobs[0].run_id=999;if(kind==='duplicate')f.jobs.push({...f.jobs[0],id:999});
  if(kind==='truncated')f.github.rest.actions.listJobsForWorkflowRun.mockImplementation(async({run_id}:any)=>({data:run_id===124?{jobs:[{name:'benchmark',status:'completed',conclusion:'success'}]}:{total_count:101,jobs:f.jobs}}));
@@ -186,7 +186,25 @@ it('never substitutes the cached detector decision for an expired private Linux 
  const f=fixture(),history=retainAppHistory(f);await reconcile(f);expect(history.current().conclusion).toBe('success');
  const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{const value:any=await original(args);for(const artifact of value.data.artifacts)artifact.expired=true;return value;});
+ f.jobs[0].conclusion='skipped';
  await reconcile(f);expect(history.current().conclusion).toBe('failure');
+});
+it('qualifies delegated main through full hosted fallback coverage when Linux evidence is missing',async()=>{
+ const f=fixture(),history=retainAppHistory(f);
+ const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
+ f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async(args:any)=>args.run_id===321?original(args):{data:{total_count:0,artifacts:[]}} as any);
+ await reconcile(f);expect(history.current()).toMatchObject({conclusion:'success',output:{title:'Current exact-main full hosted fallback coverage passed'}});
+ expect(JSON.parse(history.current().output.summary)).toMatchObject({linuxFallback:true,qualificationMode:'delegated'});
+});
+it('waits neutrally when the push reconcile runs before CI is visible',async()=>{
+ const f=fixture();f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{total_count:0,workflow_runs:[]}} as any);
+ await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral',output:{title:'Waiting for exact-main CI to finish'}});
+});
+it.each(['delegated','shadow'])('waits neutrally instead of failing while exact-main CI is still running (%s)',async mode=>{
+ const f=fixture();f.ci.status='in_progress';
+ if(mode==='shadow'){const configuration=(await f.github.rest.actions.listRepoVariables()).data;configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_ENABLED')!.value='false';configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_SHADOW')!.value='true';f.github.rest.actions.listRepoVariables.mockResolvedValue({data:configuration});}
+ await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral',output:{title:'Waiting for exact-main CI to finish'}});
+ expect(JSON.parse(written(f).output.summary)).toMatchObject({waitingForRequester:true,requestingRunId:321});
 });
 
 it('retains exact authenticated docs coverage after routing is switched off and its artifact expires',async()=>{
@@ -243,6 +261,14 @@ describe('shadow mode observes without blocking main',()=>{
   await reconcile(f);expect(written(f)).toMatchObject({name:"CI Source Qualification",head_sha:source,conclusion:"neutral"});
   expect(JSON.parse(written(f).output.summary)).toMatchObject({shadowUnverified:true,qualificationMode:'shadow',requestingRunId:321});
  });
+ it('keeps main in shadow while routing is enabled only for PRs',async()=>{
+  const f=fixture(),configuration=(await f.github.rest.actions.listRepoVariables()).data;
+  configuration.variables=configuration.variables.filter(value=>value.name!=='MATRIX_CI_DEDICATED_MAIN');configuration.total_count=configuration.variables.length;
+  configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_SHADOW')!.value='true';
+  f.github.rest.actions.listRepoVariables.mockResolvedValue({data:configuration});dropLinuxReceipt(f);
+  await reconcile(f);expect(written(f)).toMatchObject({name:'CI Source Qualification',head_sha:source,conclusion:'neutral'});
+  expect(JSON.parse(written(f).output.summary)).toMatchObject({shadowUnverified:true,qualificationMode:'shadow',requestingRunId:321});
+ });
  it('stays neutral on a second reconciliation after the hosted decision artifact expires',async()=>{
   const f=fixture();await shadow(f);dropLinuxReceipt(f);const history=retainAppHistory(f);
   await reconcile(f);expect(history.current().conclusion).toBe('neutral');const proof=JSON.parse(history.current().output.summary).coverageProof;
@@ -255,10 +281,36 @@ describe('shadow mode observes without blocking main',()=>{
   f.github.rest.actions.listWorkflowRuns.mockImplementation(async(args:any)=>args.workflow_id===98&&++requesterLookups>1?{data:{workflow_runs:[{...f.ci,run_attempt:2,status:'queued'}]}}:original(args));
   await reconcile(f);expect(requesterLookups).toBeGreaterThan(1);expect(written(f)).toMatchObject({conclusion:'failure'});
  });
- it.each(['requester-pending','main-moved'])('still fails in shadow mode when %s',async kind=>{
+ it.each(['main-moved'])('still fails in shadow mode when %s',async kind=>{
   const f=fixture();await shadow(f);dropLinuxReceipt(f);
   if(kind==='requester-pending')f.ci.status='in_progress';
   if(kind==='main-moved'){const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{f.github.rest.repos.getBranch.mockImplementation(async(a:any)=>({data:{name:a.branch,commit:{sha:base}}}));return original(args);});}
   await reconcile(f);expect(written(f)).toMatchObject({conclusion:'failure'});
+ });
+ it('logs which stage left fresh main evidence missing',async()=>{
+  const f=fixture();await shadow(f);dropLinuxReceipt(f);
+  const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
+  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{f.github.rest.repos.getBranch.mockImplementation(async(a:any)=>({data:{name:a.branch,commit:{sha:base}}}));return original(args);});
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{
+   await reconcile(f);
+   expect(written(f)).toMatchObject({conclusion:'failure',output:{title:'Fresh exact-main qualification evidence is missing or stale'}});
+   expect(warn).toHaveBeenCalledWith('Main source qualification failed at shadow-supersede: Current main source is stale');
+  }finally{warn.mockRestore();}
+ });
+ it('logs why Linux did not verify before falling back to hosted coverage',async()=>{
+  const f=fixture();await shadow(f);dropLinuxReceipt(f);
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral'});expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Main source qualification fell back at linux: \S/));}finally{warn.mockRestore();}
+ });
+ it('labels a failing main gate write as the write stage',async()=>{
+  const f=fixture();f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{if(args.conclusion==='success')throw new Error('gate write rejected');return{data:{id:100,...args,app:{id:777,slug:'matrix-ci-gate'}}};});
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{await reconcile(f);expect(warn).toHaveBeenCalledWith('Main source qualification failed at write: gate write rejected');}finally{warn.mockRestore();}
+ });
+ it('logs the decision stage when the main coverage receipt is missing',async()=>{
+  const f=fixture();f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{total_count:0,artifacts:[]}} as any);
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{await reconcile(f);expect(written(f)).toMatchObject({conclusion:'failure'});expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Main source qualification failed at decision: /));}finally{warn.mockRestore();}
  });
 });

@@ -2,7 +2,7 @@ name: Dedicated CI Benchmark
 # Data-only identity is available in the API even while the controller is queued.
 # Exact ref/merge/attempt provenance is still verified after admission.
 run-name: >-
-  ${{ github.event_name == 'workflow_run' && format('dedicated-refresh-v2 execution={0} request={1} title={2}', ((startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ') || startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ')) && ((github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1))) && 'true' || 'false', github.event.workflow_run.id, github.event.workflow_run.display_title) || format('dedicated-ci-v2 pr={0} head={1} base={2} requested={3}', github.event.pull_request.number || 0, github.event.pull_request.head.sha || github.sha, github.event.pull_request.base.sha || 'manual', github.event_name == 'pull_request_target' && (github.event.action == 'opened' || github.event.action == 'labeled' || github.event.action == 'ready_for_review' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'edited' && github.event.changes.base != null)) && 'true' || 'false') }}
+  ${{ github.event_name == 'workflow_run' && format('dedicated-refresh-v2 execution={0} request={1} title={2}', ((github.event.workflow_run.event != 'push' || (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && vars.MATRIX_CI_DEDICATED_MAIN == 'true')) && (((startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ') || startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ')) && ((github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1))) || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1))) && 'true' || 'false', github.event.workflow_run.id, github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && format('CI coverage-v1 · {0}', github.event.workflow_run.head_sha) || github.event.workflow_run.display_title) || format('dedicated-ci-v2 pr={0} head={1} base={2} requested={3}', github.event.pull_request.number || 0, github.event.pull_request.head.sha || github.sha, github.event.pull_request.base.sha || 'manual', github.event_name == 'pull_request_target' && (github.event.action == 'opened' || github.event.action == 'labeled' || github.event.action == 'ready_for_review' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'edited' && github.event.changes.base != null)) && 'true' || 'false') }}
 
 # This controller comes from the default branch and never executes PR code.
 # Parent-only moves fail CI Source Qualification and dispatch fresh main-defined CI.
@@ -45,7 +45,8 @@ concurrency:
 
 jobs:
   benchmark:
-    if: (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && github.ref == 'refs/heads/main' && (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && ((startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ') || startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ')) && ((github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1)))))
+    # The main-delegation guard here must match the run-name execution flag; both are evaluated in tests.
+    if: (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && github.ref == 'refs/heads/main' && ((github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'fast-ci')) || (github.event_name == 'workflow_run' && (github.event.workflow_run.event != 'push' || (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && vars.MATRIX_CI_DEDICATED_MAIN == 'true')) && (((startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ') || startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ')) && ((github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1))) || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1))))
     runs-on: ubuntu-latest
     environment: matrix-ci
     timeout-minutes: 70
@@ -82,6 +83,7 @@ jobs:
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
           MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
+          MATRIX_CI_DEDICATED_MAIN: ${{ vars.MATRIX_CI_DEDICATED_MAIN }}
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
           HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
         with:
@@ -94,7 +96,10 @@ jobs:
             const requester=context.eventName==='workflow_run'?context.payload.workflow_run:null;
             const requesterInactive=async()=>{
               const {data:live}=await github.rest.actions.getWorkflowRun({...context.repo,run_id:requester.id,request:{timeout:10000}});
-              return live.status==='completed'||live.run_attempt!==requester.run_attempt;
+              // A push leaves the old head's CI run in flight until it is cancelled; that head has nothing left to qualify.
+              const pull=live.event==='pull_request'&&live.pull_requests?.length===1?live.pull_requests[0]:null;
+              const replacedHead=pull!==null&&/^[a-f0-9]{40}$/.test(pull.head?.sha||'')&&pull.head.sha!==live.head_sha;
+              return live.status==='completed'||live.run_attempt!==requester.run_attempt||replacedHead;
             };
             const standDownInactive=()=>{core.notice(`Standing down: Requesting CI run ${requester.id} attempt ${requester.run_attempt} is no longer active`);core.setOutput('admitted','false');};
             if(requester&&await requesterInactive()){standDownInactive();return;}
@@ -109,6 +114,7 @@ jobs:
             }
             if (!admission) { core.setOutput('admitted','false'); return; }
             const {sourceSha:sha,headSha,baseSha,baseRef,prNumber}=admission;
+            // The job condition admits main only when ENABLED and MAIN are both on, so main is always delegated here.
             const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow';
             const requesting=prNumber>0||admission.sourceKind==='main'?await newestRequestingCiRun(github,context.repo,admission,mode):null;
             const summary={schemaVersion:3,suite:context.payload.inputs?.suite || 'qualification',
