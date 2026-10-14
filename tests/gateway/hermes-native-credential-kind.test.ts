@@ -1,7 +1,10 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
+import { chmod, mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { createHermesNativeCredentialKindReader, HERMES_NATIVE_CREDENTIAL_KIND_SCRIPT } from '../../packages/gateway/src/agent-config/hermes-native-credential-kind.js';
+import { createHermesNativeCredentialKindReader, HERMES_NATIVE_CREDENTIAL_KIND_SCRIPT, resolveHermesNativeRoot } from '../../packages/gateway/src/agent-config/hermes-native-credential-kind.js';
 const prelude = `
 import sys,types,os
 os.environ['HERMES_HOME']='/synthetic/hermes'
@@ -21,6 +24,30 @@ function evaluate(extra='') {
  return JSON.parse(result.stdout);
 }
 describe('Hermes credential kind metadata',()=>{
+ it('resolves the managed bash launcher and rejects a modified launcher', async()=>{
+  const home=await mkdtemp(join(tmpdir(),'matrix-hermes-reader-'));
+  try {
+   const root=join(home,'.hermes/hermes-agent');
+   await mkdir(join(home,'.local/bin'),{recursive:true});
+   await mkdir(join(root,'venv/bin'),{recursive:true});
+   await mkdir(join(root,'hermes_cli'));
+   await writeFile(join(root,'venv/bin/python'),'python');
+   await writeFile(join(root,'hermes'),'entry');
+   for (const path of [root,join(root,'hermes_cli')]) await chmod(path,0o755);
+   await chmod(join(root,'venv/bin/python'),0o755);
+   const launcher=join(home,'.local/bin/hermes');
+   await writeFile(launcher,`#!/usr/bin/env bash\nunset PYTHONPATH\nunset PYTHONHOME\nexec "${root}/venv/bin/python" "${root}/hermes" "$@"\n`);
+   await chmod(launcher,0o755);
+   expect(await resolveHermesNativeRoot(home)).toBe(root);
+   await writeFile(launcher,`#!/usr/bin/env bash\nexec "${root}/venv/bin/python" "${root}/hermes" "$@"\n`);
+   await expect(resolveHermesNativeRoot(home)).rejects.toThrow('Native installation unavailable');
+   await rm(launcher);
+   await writeFile(join(root,'venv/bin/hermes'),'entry');
+   await chmod(join(root,'venv/bin/hermes'),0o755);
+   await symlink(join(root,'venv/bin/hermes'),launcher);
+   expect(await resolveHermesNativeRoot(home)).toBe(root);
+  } finally { await rm(home,{recursive:true,force:true}); }
+ });
  it('emits only an exact default model and API credential kind',()=>expect(evaluate()).toEqual({providerId:'anthropic',modelId:'native-model',credentialKind:'api_key'}));
  it.each([
  "auth.get_anthropic_key=lambda:'sk-ant-oat01-synthetic-oauth'\n",

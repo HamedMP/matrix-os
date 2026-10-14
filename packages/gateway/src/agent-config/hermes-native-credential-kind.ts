@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, open, realpath } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod/v4';
 import { buildAgentRuntimeEnvironment } from '../agent-launcher.js';
@@ -60,10 +60,26 @@ print(json.dumps(result))
 
 /** Use the installed owner launcher, including a trusted installer target outside the home. */
 export async function resolveHermesNativeRoot(homePath: string): Promise<string> {
-  const launcher = await realpath(join(resolve(homePath), '.local/bin/hermes'));
-  if (basename(launcher) !== 'hermes' || basename(dirname(launcher)) !== 'bin'
-    || basename(dirname(dirname(launcher))) !== 'venv') throw new Error('Native installation unavailable');
-  const root = dirname(dirname(dirname(launcher)));
+  const home = resolve(homePath);
+  const launcherPath = join(home, '.local/bin/hermes');
+  const launcher = await realpath(launcherPath);
+  const managedLauncher = launcher === launcherPath;
+  const root = managedLauncher ? await realpath(join(home, '.hermes/hermes-agent'))
+    : dirname(dirname(dirname(launcher)));
+  if (!managedLauncher && (basename(launcher) !== 'hermes' || basename(dirname(launcher)) !== 'bin'
+    || basename(dirname(dirname(launcher))) !== 'venv')) throw new Error('Native installation unavailable');
+  if (managedLauncher) {
+    const expected = `#!/usr/bin/env bash\nunset PYTHONPATH\nunset PYTHONHOME\nexec "${root}/venv/bin/python" "${root}/hermes" "$@"\n`;
+    const handle = await open(launcher, 'r');
+    try {
+      const metadata = await handle.stat();
+      const content = Buffer.alloc(Buffer.byteLength(expected) + 1);
+      const { bytesRead } = await handle.read(content, 0, content.length, 0);
+      if (!metadata.isFile() || metadata.size !== Buffer.byteLength(expected)
+        || bytesRead !== metadata.size || content.subarray(0, bytesRead).toString('utf8') !== expected)
+        throw new Error('Native installation unavailable');
+    } finally { await handle.close(); }
+  }
   for (const path of [root, join(root, 'hermes_cli'), launcher, await realpath(join(root, 'venv/bin/python'))]) {
     const metadata = await lstat(path);
     if ((!metadata.isFile() && !metadata.isDirectory()) || metadata.isSymbolicLink()
