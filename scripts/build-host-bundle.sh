@@ -122,8 +122,8 @@ curl --fail --location --max-time 120 "$UV_INSTALLER_URL" -o "$DIST_DIR/uv-insta
 INSTALLER_NO_MODIFY_PATH=1 UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin" sh "$DIST_DIR/uv-install.sh"
 # Customer VPS terminals run as the matrix user. Keep the runtime prefix
 # group-writable so selectable boot-time tool packs can install in place.
-chmod -R g+rwX "$STAGE_DIR/runtime/node/etc" "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"
-find "$STAGE_DIR/runtime/node/etc" "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
+chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"
+find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 # Native Browser services live outside app/. Stage separate guarded Preview and
@@ -160,6 +160,7 @@ cp -a "$ROOT_DIR/scripts/build-default-apps.mjs" "$STAGE_DIR/app/scripts/build-d
 cp -a "$ROOT_DIR/scripts/reset-shipped-icons.mjs" "$STAGE_DIR/app/scripts/reset-shipped-icons.mjs"
 cp -a "$ROOT_DIR/scripts/install-hermes-matrix-skills.sh" "$STAGE_DIR/app/scripts/install-hermes-matrix-skills.sh"
 cp -a "$ROOT_DIR/scripts/configure-hermes-matrix-defaults.mjs" "$STAGE_DIR/app/scripts/configure-hermes-matrix-defaults.mjs"
+cp -a "$ROOT_DIR/scripts/reconcile-agent-npm-prefix.mjs" "$STAGE_DIR/app/scripts/reconcile-agent-npm-prefix.mjs"
 cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sync-matrix-agent-skills.sh"
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"

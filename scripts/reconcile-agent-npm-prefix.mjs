@@ -39,7 +39,9 @@ async function reconcile() {
   const home = absolutePath(process.env.MATRIX_RUNTIME_HOME ?? process.env.MATRIX_HOME ?? '/home/matrix/home');
   const hermes = absolutePath(process.env.HERMES_HOME ?? join(home, '.hermes'));
   const prefix = absolutePath(process.env.MATRIX_NODE_PREFIX ?? '/opt/matrix/runtime/node');
-  await configurePrefix(join(prefix, 'etc/npmrc'), prefix);
+  // Legacy hosts have a root-owned runtime tree with no etc directory.
+  // Runtime npm already defaults to its executable prefix; preserve its config
+  // rather than requiring privilege just to repair Hermes's owner-local npm.
   // Do not create an uninstalled Hermes tree or edit the owner's ~/.npmrc.
   if (await metadata(join(hermes, 'node'))) {
     await configurePrefix(join(hermes, 'node/etc/npmrc'), prefix);

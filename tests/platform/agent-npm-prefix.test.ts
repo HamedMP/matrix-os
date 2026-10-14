@@ -24,7 +24,7 @@ async function fixture() {
 }
 
 describe('managed agent npm ownership', () => {
-  it('converges npm prefixes while preserving Hermes tools and unrelated options', async () => {
+  it('repairs Hermes npm prefix while preserving runtime config, tools and unrelated options', async () => {
     const f = await fixture();
     await writeFile(join(f.hermes, 'node/etc/npmrc'), `# upstream\nprefix=${f.home}/.local\nfund=false\n`);
     await writeFile(join(f.prefix, 'etc/npmrc'), 'audit=false\nprefix=/old\n');
@@ -32,10 +32,10 @@ describe('managed agent npm ownership', () => {
     const result = f.run();
     expect(result.status, result.stderr).toBe(0);
     expect(await readFile(join(f.hermes, 'node/etc/npmrc'), 'utf8')).toBe(`# upstream\nfund=false\nprefix=${f.prefix}\n`);
-    expect(await readFile(join(f.prefix, 'etc/npmrc'), 'utf8')).toBe(`audit=false\nprefix=${f.prefix}\n`);
+    expect(await readFile(join(f.prefix, 'etc/npmrc'), 'utf8')).toBe('audit=false\nprefix=/old\n');
     for (const cli of ['node', 'npm', 'npx']) expect(await readlink(join(f.home, '.local/bin', cli))).toBe(join(f.hermes, 'node/bin', cli));
     expect(f.run().status).toBe(0);
-    expect(await readFile(join(f.prefix, 'etc/npmrc'), 'utf8')).toBe(`audit=false\nprefix=${f.prefix}\n`);
+    expect(await readFile(join(f.prefix, 'etc/npmrc'), 'utf8')).toBe('audit=false\nprefix=/old\n');
   });
 
   it.each(['relative', 'absolute'])('redirects the recognized %s npm Codex shim, including stale shell hashes', async kind => {
@@ -69,6 +69,18 @@ describe('managed agent npm ownership', () => {
     await rm(f.hermes, { recursive: true });
     expect(f.run().status).toBe(0);
     await expect(readFile(join(f.hermes, 'node/etc/npmrc'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('repairs legacy Hermes without writing a read-only runtime prefix', async () => {
+    const f = await fixture();
+    await rm(join(f.prefix, 'etc'), { recursive: true });
+    await chmod(f.prefix, 0o555);
+    try {
+      const result = f.run();
+      expect(result.status, result.stderr).toBe(0);
+      expect(await readFile(join(f.hermes, 'node/etc/npmrc'), 'utf8')).toBe(`prefix=${f.prefix}\n`);
+      await expect(readFile(join(f.prefix, 'etc/npmrc'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await chmod(f.prefix, 0o755); }
   });
 
   it('preserves an old shim when the managed executable is missing', async () => {

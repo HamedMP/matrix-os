@@ -4,7 +4,7 @@
 
 **Goal:** Make Terminal updates and managed Codex consumers resolve the same explicitly promoted CLI without Hermes redirecting npm globals to a second installation.
 **Spec:** Linear ENG-298 description and Hamed's complete 2026-10-14 exploration/plan; Slack thread 1791983925.023589.
-**Architecture:** Preserve Hermes's private Node and command links because its own tools may need them. Reconcile both runtime-local and Hermes-local global npm configuration to the managed prefix, preserving unrelated options and owner npm overrides. Redirect only recognized npm-created local Codex shims to the managed binary after it exists. Explicitly promote the already recorded 0.162.1 contracts; retain exact runtime version gates.
+**Architecture:** Preserve Hermes's private Node and command links because its own tools may need them. Ship the runtime-local npm default for new images and reconcile Hermes-local global npm configuration to the managed prefix, preserving existing runtime config, unrelated options and owner npm overrides. Redirect only recognized npm-created local Codex shims to the managed binary after it exists. Explicitly promote the already recorded 0.162.1 contracts; retain exact runtime version gates.
 **Stack:** Bash host installers, Node filesystem APIs, TypeScript/Vitest.
 
 ## Global constraints
@@ -20,7 +20,7 @@
 Files: scripts/reconcile-agent-npm-prefix.mjs; tests/platform/agent-npm-prefix.test.ts; distro/customer-vps/host-bin/matrix-install-hermes and matrix-install-tool-pack; scripts/build-host-bundle.sh.
 Interface: CLI reads MATRIX_RUNTIME_HOME, HERMES_HOME and MATRIX_NODE_PREFIX, all absolute; invoked as the runtime owner by both installers. Managed prefix defaults to /opt/matrix/runtime/node.
 
-- [ ] Write failing subprocess tests: runtime and Hermes npmrc prefixes converge; other options persist; Hermes node/npm/npx links persist; old npm Codex shim redirects; unrelated command stays; missing managed binary preserves old shim; repeat repair is idempotent; config symlinks fail without writing their target.
+- [ ] Write failing subprocess tests: Hermes npmrc prefix converges while existing runtime config is preserved; other options persist; Hermes node/npm/npx links persist; old npm Codex shim redirects; unrelated command stays; missing managed binary preserves old shim; repeat repair is idempotent; config symlinks fail without writing their target.
 - [ ] Run tests and record expected failures before implementation.
 - [ ] Implement atomic npmrc rewrite and exact recognized-shim migration, with no credential reads and no package deletion. Wire after successful installs and ship runtime npmrc for new bundles.
 - [ ] Run focused tests and existing host-bundle/developer-tools tests. Commit.
@@ -44,3 +44,6 @@ Existing owner npmrc overrides remain authoritative; report them without reading
 - Use the existing visible `matrix-install-tool-pack codex` command rather than adding a new public CLI command.
 - Preserve Hermes Node/npm links and change its npm prefix; upstream's pinned installer explicitly documents that its own globals pass an explicit --prefix and are unaffected.
 - Explicit 0.162.1 promotion is the bounded implementation of ENG-298; automatic qualification/promotion and broad version-gate relaxation are deferred design changes.
+
+- Review ruling: existing runtime npm derives the correct prefix without an npmrc. Preserve its root-owned config and do not create etc on old hosts; only repair the owner-local Hermes configuration. Cost if wrong: a non-default runtime global npmrc remains an explicit operator configuration, diagnosable with npm prefix -g.
+- Review ruling: the scope worker's removed disable_response_storage key must be removed for 0.162.1. The real-binary loopback test confirms store=false and no tools/authorization without it; preserving the obsolete key would prevent execution. Cost if wrong: upstream transport privacy/feature drift must be caught by rerunning the exact-binary contract before another promotion.
