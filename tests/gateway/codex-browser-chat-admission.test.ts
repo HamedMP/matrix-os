@@ -77,3 +77,58 @@ it.each(["initial", "successor"])("retains an unconfirmed physical cleanup throu
     await expect(adapter.start!(input).next()).rejects.toThrow("Browser run unavailable");
   } finally { await rm(home, { recursive: true, force: true }); }
 });
+
+it("keeps cancellation admission until a delayed native bootstrap stop has settled", async () => {
+  const home = await mkdtemp("/tmp/mx-browser-cancel-race-");
+  const live = new Set<string>();
+  const broker = {
+    openRun: (_binding, signal) => {
+      const token = randomBytes(32).toString("base64url"); live.add(token);
+      signal.addEventListener("abort", () => live.delete(token));
+      return { token, expiresAt: 1, close: async () => { live.delete(token); } };
+    }, resolveCapability: token => live.has(token) ? {} : null,
+  } as never;
+  const { prepareCodexBrowser } = await import("../../packages/gateway/src/coding-agents/codex-browser-bootstrap-client.js");
+  let releaseStop!: () => void;
+  const stopSession = vi.fn(() => new Promise<{ ok: false }>(resolve => { releaseStop = () => resolve({ ok: false }); }));
+  const prepareBrowser = vi.fn(({ signal }) => new Promise<void>((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(new Error("Synthetic aborted bootstrap")), { once: true });
+  }));
+  const threads = createCodingAgentThreadStore({ homePath: home,
+    providers: [{ providerId: "codex", initialRunExecution: "background", startThread: async ({ principal, signal }) => {
+      await prepareCodexBrowser({ ownerId: principal.userId, sessionId: "sess_cancel_race",
+        browser: nativeBrowserExecution(principal.userId)!, control: { prepareBrowser } as never,
+        runtime: { stopSession } as never, signal: signal!,
+      });
+      return [];
+    }, abortThread: async ({ thread, now, nextEventId }) => [{ type: "thread.completed", eventId: nextEventId(),
+      threadId: thread.id, occurredAt: now().toISOString(), outcome: "aborted" }] }], relationValidator: { validateCreate: async () => {}, validateThread: async () => {} },
+  });
+  const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads, sharedBrowser: broker, gatewayPort: 4000 });
+  const onCleanupUnconfirmed = vi.fn();
+  const input = { owner: { type: "personal" as const, ownerId: "owner_cancel_race" }, chatId: "chat_cancel_race",
+    turnId: "cturn_cancel_race", runId: "run_cancel_race", prompt: "Synthetic", parts: [{ type: "text" as const, text: "Synthetic" }],
+    selection: { instanceId: "codex_default", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "full_access",
+    signal: new AbortController().signal, onCleanupUnconfirmed,
+  };
+  let state, runSettled = false, cancelSettled = false;
+  const running = (async () => { for await (const event of adapter.start!(input)) if (event.type === "state.updated") state = event.state; })();
+  const runResult = running.then(() => { runSettled = true; return undefined; }, error => { runSettled = true; return error; });
+  try {
+    await vi.waitFor(() => { expect(state).toBeDefined(); expect(prepareBrowser).toHaveBeenCalledOnce(); });
+    const cancellation = adapter.cancel!({ owner: input.owner, chatId: input.chatId, runId: input.runId, state });
+    const cancelResult = cancellation.then(() => { cancelSettled = true; return undefined; }, error => { cancelSettled = true; return error; });
+    await vi.waitFor(() => expect(stopSession).toHaveBeenCalledOnce());
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(live.size).toBe(0);
+    expect(cancelSettled).toBe(false); expect(runSettled).toBe(false);
+    await expect(adapter.start!(input).next()).rejects.toThrow("Browser run unavailable");
+    releaseStop();
+    expect(await cancelResult).toMatchObject({ message: "Browser cleanup unconfirmed" });
+    expect(await runResult).toMatchObject({ message: "Browser cleanup unconfirmed" });
+    expect(onCleanupUnconfirmed).toHaveBeenCalledOnce();
+    await expect(adapter.start!(input).next()).rejects.toThrow("Browser run unavailable");
+  } finally {
+    releaseStop?.(); await runResult; await rm(home, { recursive: true, force: true });
+  }
+});
