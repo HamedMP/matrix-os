@@ -534,6 +534,7 @@ Read these on demand, not every session:
 
 - `ARCHITECTURE.md` and root `DOMAIN.md` (if present) -- when changing package ownership, cross-package imports, or domain boundaries; if a package/context has its own `ARCHITECTURE.md` / `DOMAIN.md`, read the nearest relevant docs before moving code
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
+- `docs/dev/fast-ci.md` -- when using the `fast-ci` label, reading Linux CI checks (skipped hosted lanes, `Dedicated CI Results`), or merging a fast-ci PR
 - `docs/dev/stacked-prs.md` -- when creating, reviewing or merging GitHub native stacks
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
