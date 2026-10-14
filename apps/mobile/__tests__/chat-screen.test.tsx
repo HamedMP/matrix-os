@@ -633,6 +633,28 @@ describe("chat screen: recovering from failures", () => {
     expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
   });
 
+  it("holds the Retry of a message that was not sent, and the keyboard's send, while a run is active", () => {
+    openChat();
+    const view = render(<ChatScreen />);
+    typeAndSend("Ship it");
+    failLatestSend();
+
+    mockDetail = chatDetail({ runs: [runningRun] });
+    view.rerender(<ChatScreen />);
+    const retry = screen.getByRole("button", { name: "Retry sending" });
+    expect(retry.props.accessibilityState).toMatchObject({ disabled: true });
+    fireEvent.press(retry);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Also this");
+    fireEvent(screen.getByLabelText("Message Matrix"), "submitEditing");
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+
+    // Once the run is over, it can be sent again.
+    mockDetail = chatDetail({ runs: [finishedRun] });
+    view.rerender(<ChatScreen />);
+    fireEvent.press(screen.getByRole("button", { name: "Retry sending" }));
+    expect(mockSendMessage).toHaveBeenCalledTimes(2);
+  });
+
   it("offers to run a failed turn again, at the chat's revision, as the same retry when pressed again", () => {
     openChat({ messages: [prompt], turns: [turn], runs: [failedRun], activities: [connectionLost] });
     render(<ChatScreen />);

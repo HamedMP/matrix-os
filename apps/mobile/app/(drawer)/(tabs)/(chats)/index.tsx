@@ -6,7 +6,7 @@ import { useAuth } from "@clerk/clerk-expo";
 
 import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agents/chat-draft-request";
 import { ChatScreenView } from "@/components/chat/ChatScreenView";
-import { chatLoadState, chatScreenTitle, composerPlaceholder } from "@/components/chat/chat-screen-state";
+import { activeChatRun, chatLoadState, chatScreenTitle, composerPlaceholder } from "@/components/chat/chat-screen-state";
 import { CHAT_SUGGESTIONS } from "@/components/chat/chat-suggestions";
 import { composerAddProps } from "@/components/chat/composer-add";
 import { ModelTrigger } from "@/components/chat/ModelTrigger";
@@ -41,8 +41,11 @@ export default function ChatScreen() {
     detail, computer, refresh, isError: chatReadFailed, reload: reloadChat,
   } = useCanonicalChatDetail(activeChatId);
   // An open chat is sent to at the revision it was read at, so nothing is
-  // sent to it before it has been read.
+  // sent to it before it has been read -- nor while a run is active, which
+  // the computer would refuse: that holds Retry of a message that was not
+  // sent, and the keyboard's send key, as well as the Send button.
   const chatUnread = activeChatId !== null && !detail;
+  const runActive = activeChatRun(detail) !== undefined;
   const { chats } = useCanonicalChats();
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   const botChat = useBotChat(activeChatId, gatewayUrl);
@@ -76,7 +79,7 @@ export default function ChatScreen() {
     projectId: selectedProjectId,
     attachmentKinds,
     // The selection is not final until the provider catalog has loaded.
-    disabled: providerCatalogLoading || chatUnread,
+    disabled: providerCatalogLoading || chatUnread || runActive,
   });
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
 
@@ -90,7 +93,7 @@ export default function ChatScreen() {
   });
   const busy = isSending || running;
   const isConnected = Boolean(isSignedIn);
-  const canSend = composerCanSend && isConnected && !running;
+  const canSend = composerCanSend && isConnected;
   const chatState = chatLoadState({
     chatId: activeChatId,
     loaded: !chatUnread,

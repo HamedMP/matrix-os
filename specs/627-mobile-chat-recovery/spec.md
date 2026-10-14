@@ -47,7 +47,8 @@ Native Mobile only: the Chats tab and an agent's chat.
   what failed, otherwise the chat. The loading state shows again while it
   reads.
 - Send and the keyboard's send key are off until the chat has been read, so a
-  message is never sent against a revision the phone does not know.
+  message is never sent against a revision the phone does not know, and while
+  a run is active, which the computer would refuse.
 
 ### A message that was not sent
 
@@ -56,8 +57,8 @@ Native Mobile only: the Chats tab and an agent's chat.
 - **Retry** sends it again with the same chat and turn request ids, text and
   attachments, so a send whose answer was only lost is seen by the computer
   as one message. Retry is off while another message is on its way, while
-  sending is held back (model list not loaded, chat not read), or while the
-  selected model does not read its attachments.
+  sending is held back (model list not loaded, chat not read, a run active),
+  or while the selected model does not read its attachments.
 - **Edit** puts its text in front of anything typed since, and its
   attachments ahead of any added since. Places in the composer stay held for
   its attachments while it waits, so they always fit. Sending that text
@@ -65,11 +66,13 @@ Native Mobile only: the Chats tab and an agent's chat.
 - When the send that failed was to an existing chat, the chat is read again
   at once: if the computer did admit the turn, its message appears and the
   "Not sent" copy gives way to it.
-- A new chat's unsent message stays on that new chat. If the next message
-  sent there creates the chat, the unsent one moves into it. If the user
-  moves on instead (another chat, or another project's new chat), it goes
-  back as text into the next new chat's composer once that is empty, as a
-  failed send always did.
+- A new chat's unsent message stays on that new chat while it is on screen.
+  Once the screen moves on (the next message there creates its chat, the user
+  opens another chat, or another project's new chat), it goes back as text
+  into the next new chat's composer once that is empty, as a failed send
+  always did. It keeps its ids: the computer may have admitted it in a chat of
+  its own, and turn ids are told apart per chat, so it is never retried in
+  another chat. Sent unchanged, it reaches its own chat.
 - Typing the same words again is a new message, not a retry. Only Retry, or
   Edit followed by an unchanged send, reuses the request ids.
 

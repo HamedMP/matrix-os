@@ -360,19 +360,17 @@ export function useChatComposer({
       chatRequestId,
       turnRequestId,
       onChatCreated: (chatId) => update((current) => {
-        // Still on the new chat this was sent from: what is in it now belongs
-        // to the chat that exists -- text typed and attachments added while
-        // this first send was in flight, and messages from it that were not
-        // sent. A new chat the user has started since holds something else.
+        // Still on the new chat this was sent from: text typed and attachments
+        // added while this first send was in flight belong to the chat that
+        // exists. A new chat the user has started since holds something else.
+        // A message from this new chat that was not sent does not move with
+        // them: the computer may have admitted it in a chat of its own, and
+        // turn ids are told apart per chat. Once the screen moves on it goes
+        // back to the next new chat's composer, keeping its creation key.
         const stayed = current.navigation === navigation;
         return {
           ...current,
-          pending: current.pending.map((message) => (
-            message.id === optimisticId
-              || (stayed && message.failed && message.chatId === null && message.navigation === navigation)
-              ? { ...message, chatId }
-              : message
-          )),
+          pending: current.pending.map((message) => (message.id === optimisticId ? { ...message, chatId } : message)),
           drafts: stayed ? moveChatDraft(current.drafts, draftKey, chatDraftKey(chatId)) : current.drafts,
           attachments: stayed
             ? moveAttachmentDraft(current.attachments, draftKey, chatDraftKey(chatId))

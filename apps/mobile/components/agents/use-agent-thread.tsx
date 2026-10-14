@@ -10,7 +10,7 @@ import { useCallback, useMemo } from "react";
 import { Linking } from "react-native";
 import { useAuth } from "@clerk/clerk-expo";
 
-import { chatLoadState } from "@/components/chat/chat-screen-state";
+import { activeChatRun, chatLoadState } from "@/components/chat/chat-screen-state";
 import { composerAddProps } from "@/components/chat/composer-add";
 import { useChatThread } from "@/components/chat/use-chat-thread";
 import { defaultTurnModes } from "@/lib/canonical-chat-selection";
@@ -79,8 +79,9 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     projectId: null,
     attachmentKinds,
     // Without a chat id a send would start a new chat, which is not this
-    // agent's; and a chat is sent to at the revision it was read at.
-    disabled: chatId === null || !detail,
+    // agent's; a chat is sent to at the revision it was read at; and the
+    // computer refuses a turn while another runs.
+    disabled: chatId === null || !detail || activeChatRun(detail) !== undefined,
   });
 
   const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
@@ -131,7 +132,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
       onChangeDraft: handleDraftChange,
       editable: signedIn,
       onFocus: warmSessionToken,
-      canSend: canSend && signedIn && !running,
+      canSend: canSend && signedIn,
       onSend: send,
       running: busy,
       onStop,
