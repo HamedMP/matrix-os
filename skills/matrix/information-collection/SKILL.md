@@ -1,5 +1,9 @@
 ---
-name: information-collection
+name: matrix-information-collection
+version: 1.0.0
+author: Matrix OS
+license: MIT
+platforms: [linux, macos]
 description: Gather web information with traceable sources.
 triggers: [collect information, compare services, research a topic]
 category: research

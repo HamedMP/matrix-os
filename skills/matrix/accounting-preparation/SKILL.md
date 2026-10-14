@@ -1,5 +1,9 @@
 ---
-name: accounting-preparation
+name: matrix-accounting-preparation
+version: 1.0.0
+author: Matrix OS
+license: MIT
+platforms: [linux, macos]
 description: Collect invoice and receipt evidence for owner review.
 triggers: [collect invoices, prepare accounting, organize receipts]
 category: finance

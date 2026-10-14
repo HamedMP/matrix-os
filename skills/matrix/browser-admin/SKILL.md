@@ -1,5 +1,9 @@
 ---
-name: browser-admin
+name: matrix-browser-admin
+version: 1.0.0
+author: Matrix OS
+license: MIT
+platforms: [linux, macos]
 description: Prepare web forms and admin tasks for owner review.
 triggers: [admin work, prepare a form, prepare an application]
 category: productivity

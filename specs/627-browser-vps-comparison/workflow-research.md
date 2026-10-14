@@ -220,7 +220,7 @@ evidence, and missing or uncertain information is visible.
 - Inspected the live source files named above and the official pinned skill examples; all project license labels have direct license-file links.
 - Drafts contain Matrix browser actions only; OpenClaw/Hermes/agent-browser commands are discussed as upstream patterns, not substituted into Matrix tool calls.
 - No credentials, private customer identifiers, machine addresses or signed session links appear in the drafts.
-- Three original skills are now bundled in `home/.agents/skills/` and installed only on the disposable test VPS. The real parser/mirror tests pass, and its owner-authenticated `/api/settings/skills` catalog returns all three enabled.
+- The three workflows are shipped from the canonical `skills/matrix/` pack as `matrix-browser-admin`, `matrix-accounting-preparation`, and `matrix-information-collection`. The normal skill sync installs them into Matrix's catalog; the sync and loader tests pass. An earlier disposable test VPS showed the unprefixed drafts enabled, but the renamed release pack still needs live catalog verification.
 - An independent synthetic accounting evaluation retained conflicting currency/amount evidence, detected an identical duplicate, reported incomplete pagination and missing original invoices, and ignored embedded payment instructions. This is behavioral evidence for preparation; it is not a live accounting-service automation test.
 - Existing Chat browser tooling still starts separate Chromium. Shared headed Chrome attachment, original download handling, native AI pause/resume and real-account/passkey validation remain follow-up work.
 
