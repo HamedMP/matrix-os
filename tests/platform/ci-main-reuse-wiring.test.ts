@@ -77,7 +77,10 @@ describe('main CI reuse of qualified PR coverage', () => {
   it('stands the main Linux controller down only behind the same switch and never on errors', () => {
     const { source } = load('ci-dedicated.yml');
     expect(source).toContain('MATRIX_CI_MAIN_REUSE: ${{ vars.MATRIX_CI_MAIN_REUSE }}');
-    expect(source).toContain("if(admission.sourceKind==='main'&&process.env.MATRIX_CI_MAIN_REUSE==='true'){");
+    // Only main push events stand down; operator dispatches always qualify on Linux.
+    expect(source).toContain("if(admission.sourceKind==='main'&&context.eventName==='workflow_run'&&process.env.MATRIX_CI_MAIN_REUSE==='true'){");
+    expect(source).toContain('GATE_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}');
+    expect(source).toContain('resolveReusablePrCoverage(github,context.repo,admission.sourceSha,{gateAppId:Number(process.env.GATE_APP_ID),');
     expect(source).toContain("if(reuse.reused){core.notice(`Standing down: main reuses PR #${reuse.reusedFrom.prNumber} qualified coverage`);core.setOutput('admitted','false');return;}");
     expect(source).toContain('}catch(error){core.warning(`Main reuse check unavailable; qualifying on Linux:');
   });

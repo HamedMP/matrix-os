@@ -11,17 +11,18 @@
 //
 // Reuse also requires the squash parent to be gate-qualified on main: main plans its
 // lanes from the last qualified commit, so only then does main's plan equal the PR's.
+import {verifyActionsAggregate} from './dedicated-hosted.mjs';
 
 export const MERGE_QUALIFICATION_CHECK='CI Merge Qualification';
 export const GATE_APP_SLUG='matrix-ci-qualification';
 const request={timeout:10000},sha=/^[a-f0-9]{40}$/;
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const same=(a,b)=>typeof a==='string'&&typeof b==='string'&&a.toLowerCase()===b.toLowerCase();
-const COVERAGE=['linux','infrastructure-hosted','hosted-recovery'];
+const COVERAGE=['linux','infrastructure-hosted'];
 const IMAGE=/^sha256:[a-f0-9]{64}$/,HARNESS=/^[a-f0-9]{64}$/;
 const CI_PATHS=['.github/workflows/ci.yml','.github/workflows/ci.yml@main','.github/workflows/ci.yml@refs/heads/main'];
 const evidenceKeys=['schemaVersion','kind','prNumber','headSha','baseSha','sourceSha','requestingRunId','requestingRunAttempt','coverage','controllerSha','imageDigest','harnessDigest'];
-const reusedKeys=['prNumber','headSha','mergeSha','tree','requestingRunId','requestingRunAttempt','qualificationCheckId','coverage'];
+const reusedKeys=['prNumber','headSha','mergeSha','tree','requestingRunId','requestingRunAttempt','qualificationCheckId','coverage','controllerSha','imageDigest','harnessDigest'];
 const exactKeys=(value,keys)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
 const externalId=value=>`merge-qualification-${value.sourceSha}-${value.requestingRunId}-${value.requestingRunAttempt}`;
 const MAX_SUMMARY=4096,MAX_PROOFS=100,MAX_RUNS=100;
@@ -38,8 +39,10 @@ export function mergeQualificationEvidence({snapshot,requester,coverage,qualific
  return value;
 }
 
+// `controllerSha`/`imageDigest`/`harnessDigest` record the configuration main decided under, so a
+// pin or image rotation while the run is in flight cannot unseat an already-made decision.
 export function assertReusedFrom(value){
- if(!exactKeys(value,reusedKeys)||!id(value.prNumber)||![value.headSha,value.mergeSha,value.tree].every(v=>sha.test(v||''))||!id(value.requestingRunId)||!id(value.requestingRunAttempt)||!id(value.qualificationCheckId)||!COVERAGE.includes(value.coverage))throw new Error('Invalid reused PR coverage');
+ if(!exactKeys(value,reusedKeys)||!id(value.prNumber)||![value.headSha,value.mergeSha,value.tree,value.controllerSha].every(v=>sha.test(v||''))||!IMAGE.test(value.imageDigest||'')||!HARNESS.test(value.harnessDigest||'')||!id(value.requestingRunId)||!id(value.requestingRunAttempt)||!id(value.qualificationCheckId)||!COVERAGE.includes(value.coverage))throw new Error('Invalid reused PR coverage');
  return value;
 }
 
@@ -91,29 +94,32 @@ async function runsAfter(github,repo,filter,createdAt){
 }
 
 // The exact CI attempt the proof names must be a genuine successful pull_request ci.yml run
-// for this PR snapshot, still its run's latest attempt, not superseded by a newer run for
-// the same merge, and carry a GitHub Actions-issued CI Results aggregate.
-async function genuineRequestingRun(github,repo,proof){
- const full=`${repo.owner}/${repo.repo}`;
+// for this PR snapshot, the run's latest attempt at merge time, not superseded by a run for
+// the same merge created before the PR merged, and carry a genuine CI Results aggregate.
+// Activity after the merge (a label on the closed PR, a re-run) cannot change what merged.
+async function genuineRequestingRun(github,repo,proof,mergedAt){
+ const full=`${repo.owner}/${repo.repo}`,merged=Date.parse(mergedAt);
+ if(!Number.isFinite(merged))return false;
  const {data:run}=await github.rest.actions.getWorkflowRunAttempt({...repo,run_id:proof.requestingRunId,attempt_number:proof.requestingRunAttempt,request});
  if(run?.id!==proof.requestingRunId||run.run_attempt!==proof.requestingRunAttempt||run.status!=='completed'||run.conclusion!=='success'||!ciRun(run,full)||!testsMerge(run,proof)||!run.created_at)return false;
  const {data:latest}=await github.rest.actions.getWorkflowRun({...repo,run_id:run.id,request});
- if(latest?.id!==run.id||latest.run_attempt!==run.run_attempt)return false;
+ if(latest?.id!==run.id)return false;
+ if(latest.run_attempt!==run.run_attempt&&!(Date.parse(latest.run_started_at)>merged))return false;
  const newer=await runsAfter(github,repo,{event:'pull_request',head_sha:proof.headSha},run.created_at);
- if(newer.some(other=>other.id>run.id&&ciRun(other,full)&&testsMerge(other,proof)))return false;
+ if(newer.some(other=>other.id>run.id&&!(Date.parse(other.created_at)>merged)&&ciRun(other,full)&&testsMerge(other,proof)))return false;
  const {data}=await github.rest.actions.listJobsForWorkflowRunAttempt({...repo,run_id:run.id,attempt_number:run.run_attempt,per_page:100,request});
  if(!Number.isSafeInteger(data?.total_count)||data.total_count>100||!Array.isArray(data.jobs)||data.jobs.length!==data.total_count)return false;
- const aggregates=data.jobs.filter(job=>job.name==='CI Results');
- if(aggregates.length!==1)return false;
- const [job]=aggregates,prefix=`https://api.github.com/repos/${full}/check-runs/`;
- if(job.run_id!==run.id||job.run_attempt!==run.run_attempt||job.head_sha!==run.head_sha||job.status!=='completed'||job.conclusion!=='success'||!job.check_run_url?.startsWith(prefix))return false;
- const checkId=Number(job.check_run_url.slice(prefix.length));if(!id(checkId))return false;
- const {data:check}=await github.rest.checks.get({...repo,check_run_id:checkId,request});
- return check?.id===checkId&&check.name==='CI Results'&&check.app?.slug==='github-actions'&&check.head_sha===run.head_sha&&check.status==='completed'&&check.conclusion==='success'&&check.details_url?.startsWith(`https://github.com/${full}/actions/runs/${run.id}/`);
+ try{await verifyActionsAggregate(github,repo,data.jobs,run);}catch(error){if(!(error instanceof Error))throw error;return false;}
+ return true;
 }
 
-// A green ci.yml run alone is not enough: a main run the gate rejected still reports
-// success, so the parent must carry the gate App's own CI Source Qualification success.
+// A Linux qualification that actually failed on this exact main commit always wins over reuse.
+export async function mainLinuxFailed(github,repo,mainSha){
+ const {data}=await github.rest.checks.listForRef({...repo,ref:mainSha,check_name:'Dedicated CI Results',filter:'all',per_page:100,request});
+ if(!Number.isSafeInteger(data?.total_count)||!Array.isArray(data.check_runs)||data.total_count>100||data.check_runs.length!==data.total_count)throw new Error('Main Linux qualification inventory is incomplete');
+ return data.check_runs.some(check=>check.app?.slug==='github-actions'&&check.head_sha===mainSha&&check.status==='completed'&&check.conclusion==='failure');
+}
+
 async function parentQualified(github,repo,parent,gateAppId){
  const {data}=await github.rest.checks.listForRef({...repo,ref:parent,check_name:'CI Source Qualification',filter:'latest',per_page:20,request});
  if(!Array.isArray(data?.check_runs))return false;
@@ -136,7 +142,8 @@ export async function resolveReusablePrCoverage(github,repo,mainSha,{gateAppId,q
  if(main.parents.length!==1)return {reused:false,reason:'main commit is not a single-parent squash'};
  const [parent]=main.parents,full=`${repo.owner}/${repo.repo}`;
  if(frontier&&(frontier.bootstrap!==false||frontier.coverageBaseSha!==parent))return {reused:false,reason:'main coverage frontier is not the squash parent'};
- if(!await parentQualified(github,repo,parent,gateAppId))return {reused:false,reason:'main coverage frontier is not the squash parent'};
+ if(!await parentQualified(github,repo,parent,gateAppId))return {reused:false,reason:'main parent is not gate-qualified'};
+ if(await mainLinuxFailed(github,repo,mainSha))return {reused:false,reason:'Linux qualification failed on the main commit'};
  const {data:pulls}=await github.rest.repos.listPullRequestsAssociatedWithCommit({...repo,commit_sha:mainSha,per_page:100,request});
  const merged=(Array.isArray(pulls)?pulls:[]).filter(pull=>id(pull.number)&&pull.merged_at&&pull.merge_commit_sha===mainSha&&pull.base?.ref==='main'&&same(pull.base?.repo?.full_name,full)&&same(pull.head?.repo?.full_name,full)&&sha.test(pull.head?.sha||''));
  if(merged.length!==1)return {reused:false,reason:'no single merged PR for the main commit'};
@@ -148,8 +155,9 @@ export async function resolveReusablePrCoverage(github,repo,mainSha,{gateAppId,q
  for(const {check,value} of proofs){
   const tested=await commitOf(github,repo,value.sourceSha);
   if(tested.tree!==main.tree||tested.parents.length!==2||tested.parents[0]!==parent||tested.parents[1]!==pull.head.sha)continue;
-  if(!await genuineRequestingRun(github,repo,value))return {reused:false,reason:'qualified PR run is not a genuine successful CI run'};
-  return {reused:true,reusedFrom:assertReusedFrom({prNumber:pull.number,headSha:pull.head.sha,mergeSha:value.sourceSha,tree:main.tree,requestingRunId:value.requestingRunId,requestingRunAttempt:value.requestingRunAttempt,qualificationCheckId:check.id,coverage:value.coverage})};
+  if(!await genuineRequestingRun(github,repo,value,pull.merged_at))return {reused:false,reason:'qualified PR run is not a genuine successful CI run'};
+  return {reused:true,reusedFrom:assertReusedFrom({prNumber:pull.number,headSha:pull.head.sha,mergeSha:value.sourceSha,tree:main.tree,requestingRunId:value.requestingRunId,requestingRunAttempt:value.requestingRunAttempt,qualificationCheckId:check.id,coverage:value.coverage,
+   controllerSha:qualification.controllerSha,imageDigest:qualification.imageDigest,harnessDigest:qualification.harnessDigest})};
  }
  return {reused:false,reason:'no merge qualification matches the squash'};
 }

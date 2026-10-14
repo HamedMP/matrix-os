@@ -301,7 +301,7 @@ describe('shadow mode observes without blocking main',()=>{
 });
 
 const prHead='e'.repeat(40),prMerge='f'.repeat(40);
-const reusedFrom={prNumber:7,headSha:prHead,mergeSha:prMerge,tree,requestingRunId:654,requestingRunAttempt:1,qualificationCheckId:900,coverage:'linux'};
+const reusedFrom={prNumber:7,headSha:prHead,mergeSha:prMerge,tree,requestingRunId:654,requestingRunAttempt:1,qualificationCheckId:900,coverage:'linux',controllerSha,imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64)};
 it('records reused PR coverage as a v2 decision only with Linux routing off',async()=>{
  const directory=mkdtempSync(join(tmpdir(),'main-decision-reuse-'));
  try{
@@ -317,7 +317,7 @@ it('records reused PR coverage as a v2 decision only with Linux routing off',asy
 });
 
 // A main push whose heavy lanes were skipped because the merged PR's exact tree was qualified.
-function reuseFixture(decisionOverrides:Record<string,unknown>={}){
+function reuseFixture(decisionOverrides:Record<string,unknown>={},proofOverrides:Record<string,unknown>={}){
  const f=fixture();
  const detector=f.jobs.find(job=>job.name==='Detect CI-relevant changes')! as any;
  detector.steps=[...detector.steps.slice(0,1),{number:9,name:'Resolve reusable PR coverage',status:'completed',conclusion:'success'},...detector.steps.slice(1)];
@@ -328,10 +328,10 @@ function reuseFixture(decisionOverrides:Record<string,unknown>={}){
  f.github.rest.actions.downloadArtifact=async(args:any)=>args.artifact_id===57?artifactDownloadApi(bytes)(args):download(args);
  const inventory=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async(args:any)=>args.run_id===321?{data:{total_count:1,artifacts:[artifact]}} as any:inventory(args));
- const proof={id:900,name:'CI Merge Qualification',head_sha:prHead,status:'completed',conclusion:'success',external_id:`merge-qualification-${prMerge}-654-1`,app:{id:777,slug:'matrix-ci-qualification'},output:{summary:JSON.stringify({schemaVersion:1,kind:'merge-qualification',prNumber:7,headSha:prHead,baseSha:base,sourceSha:prMerge,requestingRunId:654,requestingRunAttempt:1,coverage:'linux',controllerSha,imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64)})}};
+ const proof={id:900,name:'CI Merge Qualification',head_sha:prHead,status:'completed',conclusion:'success',external_id:`merge-qualification-${prMerge}-654-1`,app:{id:777,slug:'matrix-ci-qualification'},output:{summary:JSON.stringify({schemaVersion:1,kind:'merge-qualification',prNumber:7,headSha:prHead,baseSha:base,sourceSha:prMerge,requestingRunId:654,requestingRunAttempt:1,coverage:'linux',controllerSha,imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),...proofOverrides})}};
  const listForRef=f.github.rest.checks.listForRef.getMockImplementation()!;
  const parentQualification={id:701,name:'CI Source Qualification',head_sha:base,status:'completed',conclusion:'success',app:{id:777,slug:'matrix-ci-gate'},output:{summary:JSON.stringify({sourceKind:'main',sourceSha:base,headSha:base})}};
- f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='CI Merge Qualification'?{data:{total_count:1,check_runs:[proof]}} as any:args.ref===base&&args.check_name==='CI Source Qualification'?{data:{total_count:1,check_runs:[parentQualification]}} as any:listForRef(args));
+ f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='CI Merge Qualification'?{data:{total_count:1,check_runs:[proof]}} as any:args.ref===base&&args.check_name==='CI Source Qualification'?{data:{total_count:1,check_runs:[parentQualification]}} as any:args.check_name==='Dedicated CI Results'&&args.ref===source?{data:{total_count:1,check_runs:[f.check]}} as any:listForRef(args));
  (f.github.rest.repos as any).listPullRequestsAssociatedWithCommit=vi.fn(async()=>({data:[{number:7,merged_at:'2026-10-14T00:00:00Z',merge_commit_sha:source,base:{ref:'main',repo:{full_name:'HamedMP/matrix-os'}},head:{sha:prHead,ref:'feature',repo:{full_name:'HamedMP/matrix-os'}}}]}));
  f.github.rest.repos.getCommit.mockImplementation(async(args:any)=>({data:args.ref===prMerge?{sha:prMerge,parents:[{sha:base},{sha:prHead}],commit:{tree:{sha:tree}}}:{sha:source,parents:[{sha:base}],commit:{tree:{sha:tree}}}}) as any);
  const prRun={id:654,run_attempt:1,status:'completed',conclusion:'success',event:'pull_request',head_sha:prHead,head_branch:'feature',path:'.github/workflows/ci.yml',display_title:`CI coverage-v1 · ${prMerge}`,created_at:'2026-10-13T23:00:00Z',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}};
@@ -364,10 +364,27 @@ it('keeps an already verified reuse green when live history later changes',async
  const list=f.github.rest.checks.listForRef.getMockImplementation()!;
  f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='CI Merge Qualification'?{data:{total_count:0,check_runs:[]}} as any:args.check_name==='CI Source Qualification'&&args.ref===source?{data:{check_runs:[prior]}} as any:list(args));
  await reconcile(f);expect(prior).toMatchObject({conclusion:'success',output:{title:'Current exact-main reused PR qualification passed'}});
+ // An API error while settled keeps the tested green; a Linux run that later failed still wins.
+ const settled=f.github.rest.checks.listForRef.getMockImplementation()!;
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ try{
+  // ownedGate also lists Dedicated CI Results (filter latest); only the Linux lookup lists all.
+  f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>{if(args.check_name==='Dedicated CI Results'&&args.filter==='all')throw new Error('checks unavailable');return settled(args);});
+  await reconcile(f);expect(prior).toMatchObject({conclusion:'success'});expect(warn).toHaveBeenCalledWith(expect.stringContaining('kept settled reuse: checks unavailable'));
+  f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='Dedicated CI Results'&&args.filter==='all'?{data:{total_count:1,check_runs:[{...f.check,status:'completed',conclusion:'failure'}]}} as any:settled(args));
+  await reconcile(f);expect(prior).toMatchObject({conclusion:'failure'});
+ }finally{warn.mockRestore();}
+});
+it('verifies against the configuration main decided under, surviving a pin move mid-flight',async()=>{
+ // Main decided (and the PR was qualified) under pin 7..7; the gate now runs as the moved pin d..d.
+ const decidedPin='7'.repeat(40);
+ const f=reuseFixture({reusedFrom:{...reusedFrom,controllerSha:decidedPin}},{controllerSha:decidedPin});
+ await reconcile(f);
+ expect(written(f)).toMatchObject({conclusion:'success',output:{title:'Current exact-main reused PR qualification passed'}});
 });
 it.each(['linux-failed','parity-skipped','fake-aggregate'])('never qualifies reused coverage when main itself disagrees: %s',async kind=>{
  const f=reuseFixture();
- if(kind==='linux-failed'){const list=f.github.rest.checks.listForRef.getMockImplementation()!;f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='Dedicated CI Results'?{data:{check_runs:[{...f.check,status:'completed',conclusion:'failure'}]}} as any:list(args));}
+ if(kind==='linux-failed'){const list=f.github.rest.checks.listForRef.getMockImplementation()!;f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>args.check_name==='Dedicated CI Results'&&args.ref===source&&args.filter==='all'?{data:{total_count:1,check_runs:[{...f.check,status:'completed',conclusion:'failure'}]}} as any:list(args));}
  if(kind==='parity-skipped')f.jobs.find(job=>job.name==='OS View Parity')!.conclusion='skipped';
  if(kind==='fake-aggregate')f.aggregate.app.slug='other';
  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);

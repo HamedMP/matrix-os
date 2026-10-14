@@ -84,6 +84,7 @@ jobs:
           MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
           MATRIX_CI_DEDICATED_MAIN: ${{ vars.MATRIX_CI_DEDICATED_MAIN }}
           MATRIX_CI_MAIN_REUSE: ${{ vars.MATRIX_CI_MAIN_REUSE }}
+          GATE_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
           HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
         with:
@@ -114,11 +115,12 @@ jobs:
             }
             if (!admission) { core.setOutput('admitted','false'); return; }
             // A main push that reuses its merged PR's qualified coverage needs no Linux run.
-            // The helper is pinned, so the switch stays off until the pin includes it.
-            if(admission.sourceKind==='main'&&process.env.MATRIX_CI_MAIN_REUSE==='true'){
+            // The helper is pinned, so the switch stays off until the pin includes it. Operator
+            // dispatches always qualify on Linux.
+            if(admission.sourceKind==='main'&&context.eventName==='workflow_run'&&process.env.MATRIX_CI_MAIN_REUSE==='true'){
               try{
                 const {resolveReusablePrCoverage}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/main-ci-reuse.mjs')).href);
-                const reuse=await resolveReusablePrCoverage(github,context.repo,admission.sourceSha,{
+                const reuse=await resolveReusablePrCoverage(github,context.repo,admission.sourceSha,{gateAppId:Number(process.env.GATE_APP_ID),
                   qualification:{controllerSha:process.env.CONTROLLER_SHA,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST}});
                 if(reuse.reused){core.notice(`Standing down: main reuses PR #${reuse.reusedFrom.prNumber} qualified coverage`);core.setOutput('admitted','false');return;}
               }catch(error){core.warning(`Main reuse check unavailable; qualifying on Linux: ${error instanceof Error ? error.message : 'unknown error'}`);}

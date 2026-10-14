@@ -5,18 +5,16 @@ import {resolveMainSource,verifyMainSource} from './dedicated-main.mjs';
 import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {verifyFullHostedCoverage} from './dedicated-hosted.mjs';
 import {verifyMainCiDecision,authenticatedMainDecisionProof} from './main-ci-decision.mjs';
-import {resolveReusablePrCoverage} from './main-ci-reuse.mjs';
+import {resolveReusablePrCoverage,mainLinuxFailed} from './main-ci-reuse.mjs';
 const request={timeout:10000};
 // Reuse is re-derived with the exact gate App id against the exact proof the receipt named,
-// and a Linux qualification that actually failed on this main commit always wins.
-async function verifyFreshReuse(github,repo,snapshot,decision,{options,controller,config}){
- const {data}=await github.rest.checks.listForRef({...repo,ref:snapshot.sourceSha,check_name:'Dedicated CI Results',filter:'all',per_page:100,request});
- if(!Array.isArray(data?.check_runs))throw new Error('Main Linux qualification inventory unavailable');
- if(data.check_runs.some(check=>check.app?.slug==='github-actions'&&check.head_sha===snapshot.sourceSha&&check.status==='completed'&&check.conclusion==='failure'))throw new Error('Linux qualification failed on this main commit');
- const again=await resolveReusablePrCoverage(github,repo,snapshot.sourceSha,{gateAppId:options.gateAppId,checkId:decision.reusedFrom.qualificationCheckId,
-  qualification:{controllerSha:controller.sha,imageDigest:config.imageDigest,harnessDigest:config.harnessDigest},
+// under the configuration main decided with; a Linux failure on this main commit always wins.
+async function verifyFreshReuse(github,repo,snapshot,decision,options){
+ const from=decision.reusedFrom;
+ const again=await resolveReusablePrCoverage(github,repo,snapshot.sourceSha,{gateAppId:options.gateAppId,checkId:from.qualificationCheckId,
+  qualification:{controllerSha:from.controllerSha,imageDigest:from.imageDigest,harnessDigest:from.harnessDigest},
   frontier:{coverageBaseSha:decision.coverageBaseSha,bootstrap:decision.bootstrap}});
- if(!again.reused||JSON.stringify(again.reusedFrom)!==JSON.stringify(decision.reusedFrom))throw new Error(`Reused PR coverage did not re-verify: ${again.reason??'proof changed'}`);
+ if(!again.reused||JSON.stringify(again.reusedFrom)!==JSON.stringify(from))throw new Error(`Reused PR coverage did not re-verify: ${again.reason??'proof changed'}`);
 }
 export async function reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester}){
  const source=await readCurrentBranchSha(github,repo,'main',request);
@@ -58,7 +56,15 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
    // history only grows, and re-deriving it would turn a tested main red with nothing to
    // fall back on. The prior check is this App's own authenticated output.
    const settled=prior?.check.status==='completed'&&prior.check.conclusion==='success'&&prior.evidence.sourceSha===snapshot.sourceSha&&prior.evidence.requestingRunId===requester.id&&prior.evidence.requestingRunAttempt===requester.run_attempt&&JSON.stringify(prior.evidence.reusedFrom)===JSON.stringify(decision.reusedFrom);
-   if(!settled)await verifyFreshReuse(github,repo,snapshot,decision,{options,controller,config});
+   if(!settled)await verifyFreshReuse(github,repo,snapshot,decision,options);
+   else{
+    // A Linux run that finishes failed after settling still wins; an API error alone never
+    // flips settled, tested coverage to red.
+    let failed=false;
+    try{failed=await mainLinuxFailed(github,repo,snapshot.sourceSha);}
+    catch(error){if(!(error instanceof Error))throw error;console.warn(`Main source qualification kept settled reuse: ${String(error.message).split('\n')[0].slice(0,300)}`);}
+    if(failed)throw new Error('Linux qualification failed on this main commit');
+   }
    result={reusedFrom:decision.reusedFrom};
   }
   else try{result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};}

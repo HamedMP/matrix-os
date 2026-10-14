@@ -133,12 +133,15 @@ pin and runner image. Refresh and hosted-recovery dispatches run main's `ci.yml`
 and never produce reusable proofs. With `MATRIX_CI_MAIN_REUSE=true`, a main push reuses a proof only
 when it is a single-parent squash whose tree matches the tested merge, its parent carries the gate's
 own `CI Source Qualification` success (so main and the PR plan the same lanes), the proof matches the
-current pin and image, and no newer CI run for that merge exists. `ci.yml` decides with the pinned
-controller's copy of the helper. The reused run skips the heavy lanes and the main Linux controller
-(OS View Parity, which main always runs, still runs and must pass), records `reusedFrom` in its
-decision receipt, and the pinned main gate re-verifies that exact proof once, then keeps its own
-authenticated success. A Linux qualification that failed on the main commit, any mismatch, missing
-proof, or API error runs or keeps full main CI. The controller and `ci.yml` decide reuse
+current pin and image, no Linux qualification failed on the main commit, and no newer CI run or
+attempt for that merge started before the PR merged (activity on the closed PR afterwards cannot
+change what merged). `ci.yml` decides with the pinned controller's copy of the helper. The reused run
+skips the heavy lanes and the main Linux controller (OS View Parity, which main always runs, still
+runs and must pass; operator dispatches always qualify on Linux), records `reusedFrom` with the pin
+and image it decided under, and the pinned main gate re-verifies that exact proof under that
+configuration once, then keeps its own authenticated success. A Linux qualification that later fails
+on the main commit still turns it red; an API error alone never does. Any mismatch, missing proof,
+or API error before that runs full main CI. The controller and `ci.yml` decide reuse
 independently from the same proof; if they disagree, main pays the five-minute Linux admission window
 and falls back to full hosted CI. Known gap: reused main pushes skip the jobs that save the shared
 Next.js and Playwright caches, so those caches refresh only on non-reused main pushes.

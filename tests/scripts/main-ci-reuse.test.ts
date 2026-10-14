@@ -35,6 +35,7 @@ function fixture() {
   };
   const parentQualification = { id: 700, name: 'CI Source Qualification', head_sha: parent, status: 'completed', conclusion: 'success', app: { id: gateAppId, slug: GATE_APP_SLUG }, output: { summary: JSON.stringify({ sourceKind: 'main', sourceSha: parent, headSha: parent }) } };
   const newer: any[] = [];
+  const linux: any[] = [];
   const aggregate = { id: 44, name: 'CI Results', run_id: 321, run_attempt: 1, head_sha: head, status: 'completed', conclusion: 'success', check_run_url: 'https://api.github.com/repos/HamedMP/matrix-os/check-runs/88' };
   const aggregateCheck = { id: 88, name: 'CI Results', head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' }, details_url: 'https://github.com/HamedMP/matrix-os/actions/runs/321/job/44' };
   const checks = [proofCheck()];
@@ -45,7 +46,7 @@ function fixture() {
         listPullRequestsAssociatedWithCommit: vi.fn(async () => ({ data: [pull] })),
       },
       checks: {
-        listForRef: vi.fn(async (args: any) => ({ data: args.check_name === 'CI Source Qualification' ? { total_count: 1, check_runs: [parentQualification] } : { total_count: checks.length, check_runs: checks } })),
+        listForRef: vi.fn(async (args: any) => ({ data: args.check_name === 'CI Source Qualification' ? { total_count: 1, check_runs: [parentQualification] } : args.check_name === 'Dedicated CI Results' ? { total_count: linux.length, check_runs: linux } : { total_count: checks.length, check_runs: checks } })),
         get: vi.fn(async () => ({ data: aggregateCheck })),
         create: vi.fn(async (args: any) => ({ data: { id: 901, ...args, app: { id: gateAppId } } })),
       },
@@ -57,7 +58,7 @@ function fixture() {
       },
     },
   };
-  return { github, commits, pull, run, parentQualification, newer, aggregate, aggregateCheck, checks };
+  return { github, commits, pull, run, parentQualification, newer, linux, aggregate, aggregateCheck, checks };
 }
 
 const resolve = (f: ReturnType<typeof fixture>, options: Record<string, unknown> = {}) => resolveReusablePrCoverage(f.github, repo, squash, { qualification, ...options });
@@ -67,7 +68,7 @@ describe('resolving reusable PR coverage for a main push', () => {
     const f = fixture();
     expect(await resolve(f, { gateAppId })).toEqual({
       reused: true,
-      reusedFrom: { prNumber: 7, headSha: head, mergeSha: merge, tree, requestingRunId: 321, requestingRunAttempt: 1, qualificationCheckId: 900, coverage: 'linux' },
+      reusedFrom: { prNumber: 7, headSha: head, mergeSha: merge, tree, requestingRunId: 321, requestingRunAttempt: 1, qualificationCheckId: 900, coverage: 'linux', ...qualification },
     });
     expect(f.github.rest.checks.listForRef).toHaveBeenCalledWith(expect.objectContaining({ ref: head, check_name: MERGE_QUALIFICATION_CHECK, filter: 'all' }));
   });
@@ -104,13 +105,14 @@ describe('resolving reusable PR coverage for a main push', () => {
     ['a proof from another controller pin', (f: any) => { f.checks[0] = proofCheck({}, evidence({ controllerSha: '3'.repeat(40) })); }, 'no merge qualification matches the squash'],
     ['a proof from another runner image', (f: any) => { f.checks[0] = proofCheck({}, evidence({ imageDigest: `sha256:${'4'.repeat(64)}` })); }, 'no merge qualification matches the squash'],
     ['a proof from another harness', (f: any) => { f.checks[0] = proofCheck({}, evidence({ harnessDigest: '5'.repeat(64) })); }, 'no merge qualification matches the squash'],
-    ['a parent the gate did not qualify', (f: any) => { f.parentQualification.conclusion = 'failure'; }, 'main coverage frontier is not the squash parent'],
-    ['a parent still waiting for qualification', (f: any) => { f.parentQualification.conclusion = 'neutral'; }, 'main coverage frontier is not the squash parent'],
-    ['a parent qualification from another App', (f: any) => { f.parentQualification.app = { id: 1, slug: 'other' }; }, 'main coverage frontier is not the squash parent'],
-    ['a parent qualification for another commit', (f: any) => { f.parentQualification.output.summary = JSON.stringify({ sourceKind: 'main', sourceSha: '6'.repeat(40) }); }, 'main coverage frontier is not the squash parent'],
-    ['a not-applicable parent qualification', (f: any) => { f.parentQualification.output.summary = JSON.stringify({ sourceKind: 'main', sourceSha: parent, notApplicable: true }); }, 'main coverage frontier is not the squash parent'],
+    ['a parent the gate did not qualify', (f: any) => { f.parentQualification.conclusion = 'failure'; }, 'main parent is not gate-qualified'],
+    ['a parent still waiting for qualification', (f: any) => { f.parentQualification.conclusion = 'neutral'; }, 'main parent is not gate-qualified'],
+    ['a parent qualification from another App', (f: any) => { f.parentQualification.app = { id: 1, slug: 'other' }; }, 'main parent is not gate-qualified'],
+    ['a parent qualification for another commit', (f: any) => { f.parentQualification.output.summary = JSON.stringify({ sourceKind: 'main', sourceSha: '6'.repeat(40) }); }, 'main parent is not gate-qualified'],
+    ['a not-applicable parent qualification', (f: any) => { f.parentQualification.output.summary = JSON.stringify({ sourceKind: 'main', sourceSha: parent, notApplicable: true }); }, 'main parent is not gate-qualified'],
     ['a superseding PR run for the same merge', (f: any) => { f.newer.push({ ...f.run, id: 999, conclusion: 'failure' }); }, 'qualified PR run is not a genuine successful CI run'],
-    ['a newer attempt of the same run', (f: any) => { f.github.rest.actions.getWorkflowRun.mockResolvedValue({ data: { ...f.run, run_attempt: 2 } }); }, 'qualified PR run is not a genuine successful CI run'],
+    ['a newer attempt of the same run before the merge', (f: any) => { f.github.rest.actions.getWorkflowRun.mockResolvedValue({ data: { ...f.run, run_attempt: 2, run_started_at: '2026-10-13T23:30:00Z' } }); }, 'qualified PR run is not a genuine successful CI run'],
+    ['a Linux failure on the main commit', (f: any) => { f.linux.push({ id: 60, name: 'Dedicated CI Results', head_sha: squash, status: 'completed', conclusion: 'failure', app: { slug: 'github-actions' } }); }, 'Linux qualification failed on the main commit'],
     ['a failed requesting run', (f: any) => { f.run.conclusion = 'failure'; }, 'qualified PR run is not a genuine successful CI run'],
     ['a dispatched run that otherwise matches the PR run', (f: any) => { f.run.event = 'workflow_dispatch'; }, 'qualified PR run is not a genuine successful CI run'],
     ['a run for another merge', (f: any) => { f.run.display_title = `CI coverage-v1 · ${'7'.repeat(40)}`; }, 'qualified PR run is not a genuine successful CI run'],
@@ -121,6 +123,13 @@ describe('resolving reusable PR coverage for a main push', () => {
     const f = fixture();
     mutate(f);
     expect(await resolve(f, { gateAppId })).toEqual({ reused: false, reason });
+  });
+
+  it('ignores runs and re-runs that started after the PR merged', async () => {
+    const f = fixture();
+    f.newer.push({ ...f.run, id: 999, conclusion: 'failure', created_at: '2026-10-14T01:00:00Z' });
+    f.github.rest.actions.getWorkflowRun.mockResolvedValue({ data: { ...f.run, run_attempt: 2, run_started_at: '2026-10-14T01:00:00Z' } } as any);
+    expect(await resolve(f, { gateAppId })).toMatchObject({ reused: true });
   });
 
   it('ignores newer runs for other merges of the same head', async () => {
@@ -206,7 +215,7 @@ describe('recording a merge qualification', () => {
 });
 
 describe('reusedFrom receipts', () => {
-  const valid = { prNumber: 7, headSha: head, mergeSha: merge, tree, requestingRunId: 321, requestingRunAttempt: 1, qualificationCheckId: 900, coverage: 'linux' };
+  const valid = { prNumber: 7, headSha: head, mergeSha: merge, tree, requestingRunId: 321, requestingRunAttempt: 1, qualificationCheckId: 900, coverage: 'linux', ...qualification };
 
   it('accepts exactly the resolved shape', () => {
     expect(() => assertReusedFrom(valid)).not.toThrow();
@@ -218,6 +227,8 @@ describe('reusedFrom receipts', () => {
     ['a bad sha', { ...valid, mergeSha: 'x' }],
     ['a bad run id', { ...valid, requestingRunId: 0 }],
     ['an unknown coverage', { ...valid, coverage: 'guess' }],
+    ['a hosted-recovery coverage', { ...valid, coverage: 'hosted-recovery' }],
+    ['a bad image digest', { ...valid, imageDigest: 'latest' }],
   ])('rejects %s', (_name, value) => {
     expect(() => assertReusedFrom(value)).toThrow('Invalid reused PR coverage');
   });

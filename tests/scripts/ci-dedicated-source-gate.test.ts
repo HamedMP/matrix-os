@@ -56,6 +56,12 @@ it('stays failure while its own run is queued behind an older green CI Results o
  await reconcile(f);
  expect(f.gateGithub.rest.checks.create).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure',output:expect.objectContaining({title:'Current requesting CI is pending'})}));
 });
+it('stays failure while a re-run attempt is in flight beside its earlier attempt\'s green CI Results',async()=>{
+ const f=completeFixture();ownRun(f,'in_progress');f.ci.run_attempt=2;
+ emptyProofs(f,[{id:9,name:'CI Results',head_sha:head,status:'completed',conclusion:'success',app:{slug:'github-actions'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/321/job/5'}]);
+ await reconcile(f);
+ expect(f.gateGithub.rest.checks.create).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure',output:expect.objectContaining({title:'Current requesting CI is pending'})}));
+});
 it('stays failure when the head aggregate inventory cannot be read',async()=>{
  const f=completeFixture();ownRun(f,'in_progress');emptyProofs(f);
  const list=f.github.rest.checks.listForRef.getMockImplementation()!;

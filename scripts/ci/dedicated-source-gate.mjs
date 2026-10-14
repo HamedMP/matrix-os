@@ -49,10 +49,13 @@ async function ownedGate(github,repo,pull,workflow,appId){
  }
  throw new Error('Relevant source gate history exceeds bounded coverage');
 }
-async function staleGreenAggregate(github,repo,headSha,requesterId){
+// While the requester runs, its own aggregate is the run's last job and is not yet green, so
+// any completed green CI Results on the head (an earlier run or an earlier attempt of this
+// run) is stale and must not pair with a passing neutral.
+async function greenAggregateOnHead(github,repo,headSha){
  const {data}=await github.rest.checks.listForRef({...repo,ref:headSha,check_name:'CI Results',filter:'all',per_page:100,request});
  if(!Number.isSafeInteger(data?.total_count)||!Array.isArray(data.check_runs)||data.total_count>100||data.check_runs.length!==data.total_count)throw new Error('CI Results inventory is incomplete');
- return data.check_runs.some(check=>check.app?.slug==='github-actions'&&check.status==='completed'&&check.conclusion==='success'&&!String(check.details_url).includes(`/actions/runs/${requesterId}/`));
+ return data.check_runs.some(check=>check.app?.slug==='github-actions'&&check.status==='completed'&&check.conclusion==='success');
 }
 // The check title stays generic; the controller log keeps the reason for operators.
 function logGateError(prNumber,stage,error){console.warn(`Source qualification failed for PR #${prNumber} at ${stage}: ${String(error.message).split('\n')[0].slice(0,300)}`);}
@@ -150,7 +153,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
   if(requester.status!=='completed'){
    let ownRun=!recovery&&requester.event==='pull_request'&&requester.head_sha===pull.head.sha;
    if(ownRun){
-    try{ownRun=!(await staleGreenAggregate(github,repo,pull.head.sha,requester.id));}
+    try{ownRun=!(await greenAggregateOnHead(github,repo,pull.head.sha));}
     catch(error){if(!(error instanceof Error))throw error;logGateError(pull.number,'aggregate-lookup',error);ownRun=false;}
    }
    await write(ownRun?'neutral':'failure',ownRun?'Waiting for exact-source CI to finish':'Current requesting CI is pending',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,waitingForRequester:true});continue;
@@ -183,7 +186,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
    // to record it never turns a qualified PR red.
    if(!recovery&&requester.event==='pull_request')try{await recordMergeQualification({github,gateGithub:options.gateGithub,repo,snapshot,requester,gateAppId:options.gateAppId,
     qualification:{controllerSha:controller.sha,imageDigest:config.imageDigest,harnessDigest:config.harnessDigest},
-    coverage:recovery?'hosted-recovery':evidence.infrastructureFallback?'infrastructure-hosted':'linux'});}
+    coverage:evidence.infrastructureFallback?'infrastructure-hosted':'linux'});}
    catch(proofError){if(!(proofError instanceof Error))throw proofError;logGateError(pull.number,'merge-qualification',proofError);}
   }catch(error){await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;logGateError(pull.number,'qualification',error);}
  }

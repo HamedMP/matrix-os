@@ -12,10 +12,18 @@ export async function verifyFullHostedCoverage(github,repo,run){
   const job=matches[0];
   if(!id(job.id)||job.run_id!==run.id||job.run_attempt!==run.run_attempt||job.head_sha!==run.head_sha||job.status!=='completed'||job.conclusion!=='success')throw new Error('Required hosted lane failed or stale');
  }
- const aggregate=data.jobs.find(job=>job.name==='CI Results'),prefix=`https://api.github.com/repos/${repo.owner}/${repo.repo}/check-runs/`;
- if(!aggregate.check_run_url?.startsWith(prefix))throw new Error('Hosted aggregate identity missing');
- const checkId=Number(aggregate.check_run_url.slice(prefix.length));if(!id(checkId))throw new Error('Invalid hosted aggregate identity');
- const {data:check}=await github.rest.checks.get({...repo,check_run_id:checkId,request});
- if(check.id!==checkId||check.name!=='CI Results'||check.app?.slug!=='github-actions'||check.head_sha!==run.head_sha||check.status!=='completed'||check.conclusion!=='success'||!check.details_url?.startsWith(`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${run.id}/`))throw new Error('Hosted aggregate is not genuine');
+ await verifyActionsAggregate(github,repo,data.jobs,run);
  return {hostedLaneCount:HOSTED_LANES.length};
+}
+
+// One Actions-issued CI Results aggregate, for exactly this run attempt and head, that GitHub
+// itself completed successfully. Shared by every gate that trusts a run's aggregate.
+export async function verifyActionsAggregate(github,repo,jobs,run){
+ const matches=jobs.filter(job=>job.name==='CI Results');
+ if(matches.length!==1)throw new Error('CI Results aggregate missing or duplicated');
+ const [job]=matches,full=`${repo.owner}/${repo.repo}`,prefix=`https://api.github.com/repos/${full}/check-runs/`;
+ if(!id(job.id)||job.run_id!==run.id||job.run_attempt!==run.run_attempt||job.head_sha!==run.head_sha||job.status!=='completed'||job.conclusion!=='success'||!job.check_run_url?.startsWith(prefix))throw new Error('CI Results aggregate failed or stale');
+ const checkId=Number(job.check_run_url.slice(prefix.length));if(!id(checkId))throw new Error('Invalid CI Results aggregate identity');
+ const {data:check}=await github.rest.checks.get({...repo,check_run_id:checkId,request});
+ if(check.id!==checkId||check.name!=='CI Results'||check.app?.slug!=='github-actions'||check.head_sha!==run.head_sha||check.status!=='completed'||check.conclusion!=='success'||!check.details_url?.startsWith(`https://github.com/${full}/actions/runs/${run.id}/`))throw new Error('CI Results aggregate is not genuine');
 }
