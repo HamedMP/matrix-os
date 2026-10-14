@@ -13,7 +13,7 @@ import { UserMessage } from "./UserMessage";
 export interface MessageListProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
   /** Newest first: the list is drawn from the bottom up. */
   messages: TranscriptMessage[];
-  /** The chat the long-press menu acts on. None for a chat that does not exist yet. */
+  /** The chat the long-press menu's "Copy chat ID" names. None for a chat that does not exist yet. */
   chatId?: string | null;
   /** Draws a message that asks the person something, in place of its text. Null for any other message. */
   renderRequest?: (message: TranscriptMessage) => ReactNode;
@@ -34,17 +34,22 @@ export function MessageList({
   renderComputerPhoto,
   footer,
 }: MessageListProps) {
-  const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
-    <ChatContextMenu chatId={chatId}>
-      <Pressable accessible={false}>
-        <AnalyticsMask>
-          {renderRequest?.(item) ?? (
-            <Message message={item} renderResults={renderResults} renderComputerPhoto={renderComputerPhoto} />
-          )}
-        </AnalyticsMask>
-      </Pressable>
-    </ChatContextMenu>
-  ), [chatId, renderRequest, renderResults, renderComputerPhoto]);
+  const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => {
+    const request = renderRequest?.(item);
+    return (
+      // A card that asks something draws its own words, so only the chat is
+      // offered for it; a reply's text is offered once it has finished.
+      <ChatContextMenu chatId={chatId} messageText={request || item.isRunning ? null : item.text}>
+        <Pressable accessible={false}>
+          <AnalyticsMask>
+            {request ?? (
+              <Message message={item} renderResults={renderResults} renderComputerPhoto={renderComputerPhoto} />
+            )}
+          </AnalyticsMask>
+        </Pressable>
+      </ChatContextMenu>
+    );
+  }, [chatId, renderRequest, renderResults, renderComputerPhoto]);
 
   return (
     <FlatList

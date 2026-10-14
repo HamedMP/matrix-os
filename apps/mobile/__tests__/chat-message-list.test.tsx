@@ -1,15 +1,20 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
-import { Alert, FlatList, StyleSheet as NativeStyleSheet, Text, View } from "react-native";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
+import { FlatList, StyleSheet as NativeStyleSheet, Text, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 
+import * as mockContextMenu from "./context-menu-test-utils";
 import { MessageList } from "../components/chat/MessageList";
 import { AnalyticsMask } from "../lib/analytics";
 import type { TranscriptMessage } from "../lib/canonical-chat-transcript";
 
 import { drawnTestIds } from "./chat-test-utils";
+import { menuAround, menuItem, menuItemLabels } from "./context-menu-test-utils";
 import { flat } from "./ui-test-utils";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+// Jest resolves the iOS files, so each message sits in a native context menu.
+jest.mock("@expo/ui/swift-ui", () => mockContextMenu.swiftUiContextMenuModule());
 
 function message(overrides: Partial<TranscriptMessage> & Pick<TranscriptMessage, "id" | "role" | "text">): TranscriptMessage {
   return { toolCalls: [], activities: [], isRunning: false, createdAt: 0, ...overrides };
@@ -170,16 +175,56 @@ describe("MessageList", () => {
     expect(screen.UNSAFE_getAllByType(AnalyticsMask)).toHaveLength(2);
   });
 
-  it("offers the chat menu on a long press, and nothing for a chat that does not exist yet", () => {
-    const alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
-    const view = render(<MessageList messages={[question]} chatId="chat_1" />);
+  it("offers a message's text and the chat in the long-press menu", () => {
+    render(<MessageList messages={[reply, question]} chatId="chat_1" />);
 
-    fireEvent(screen.getByText("Build an app that tracks my habits"), "longPress");
-    expect(alert.mock.calls[0]?.[2]?.some((button) => button.text === "Copy chat ID")).toBe(true);
+    expect(menuItemLabels(menuAround(screen.getByText("Build an app that tracks my habits")))).toEqual([
+      "Copy text", "Share", "Copy chat ID",
+    ]);
+    const [replyText] = screen.getAllByText("Done. It has a daily checklist.");
+    expect(menuItemLabels(menuAround(replyText!))).toEqual(["Copy text", "Share", "Copy chat ID"]);
+    expect(screen.getAllByTestId("context-menu-share").map((share) => share.props.accessibilityValue.text)).toEqual([
+      "Done. It has a daily checklist.",
+      "Build an app that tracks my habits",
+    ]);
+  });
 
-    alert.mockClear();
-    view.rerender(<MessageList messages={[question]} chatId={null} />);
-    fireEvent(screen.getByText("Build an app that tracks my habits"), "longPress");
-    expect(alert).not.toHaveBeenCalled();
+  it("offers a message's text but no chat ID in a chat that does not exist yet", () => {
+    render(<MessageList messages={[question]} chatId={null} />);
+
+    expect(menuItemLabels(menuAround(screen.getByText("Build an app that tracks my habits")))).toEqual(["Copy text", "Share"]);
+  });
+
+  it("offers a reply's text only once it has finished", () => {
+    const working = message({ id: "msg_working", role: "assistant", text: "Adding the weekly", isRunning: true });
+    const view = render(<MessageList messages={[working]} chatId="chat_1" />);
+
+    expect(menuItemLabels(menuAround(screen.getByTestId("assistant-message")))).toEqual(["Copy chat ID"]);
+
+    view.rerender(<MessageList messages={[{ ...working, text: "Added the weekly view.", isRunning: false }]} chatId="chat_1" />);
+    expect(menuItemLabels(menuAround(screen.getByTestId("assistant-message")))).toEqual([
+      "Copy text", "Share", "Copy chat ID",
+    ]);
+  });
+
+  it("offers only the chat for a message the screen draws as a request", () => {
+    const request = message({ id: "msg_request", role: "system", text: "Allow this?" });
+    render(
+      <MessageList
+        messages={[request]}
+        chatId="chat_1"
+        renderRequest={(item) => (item.id === "msg_request" ? <Text>Approval card</Text> : null)}
+      />,
+    );
+
+    expect(menuItemLabels(menuAround(screen.getByText("Approval card")))).toEqual(["Copy chat ID"]);
+  });
+
+  it("copies a message's text from its menu", async () => {
+    render(<MessageList messages={[question]} chatId="chat_1" />);
+
+    fireEvent.press(menuItem(screen.getByText("Build an app that tracks my habits"), "Copy text"));
+
+    await waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenCalledWith("Build an app that tracks my habits"));
   });
 });

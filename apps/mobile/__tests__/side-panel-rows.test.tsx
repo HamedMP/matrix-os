@@ -1,12 +1,17 @@
-import { cleanup, fireEvent, screen, within } from "@testing-library/react-native";
-import { Alert } from "react-native";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
 
+import * as mockContextMenu from "./context-menu-test-utils";
 import { IconTile } from "../components/ui/IconTile";
 import { ChatIcon } from "../components/ui/icons";
 
+import { menuAround, menuItem, menuItemLabels } from "./context-menu-test-utils";
 import { NOW, chatRecord, renderPanel } from "./side-panel-test-utils";
 import { flat } from "./ui-test-utils";
+
+// Jest resolves the iOS files, so each row sits in a native context menu.
+jest.mock("@expo/ui/swift-ui", () => mockContextMenu.swiftUiContextMenuModule());
 
 describe("SidePanel chats", () => {
   afterEach(() => {
@@ -81,18 +86,17 @@ describe("SidePanel chats", () => {
       expect(props.onSelectChat).toHaveBeenCalledWith("chat-q4");
     });
 
-    it("opens the chat menu on a long press, in either group", () => {
-      const alert = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
+    it("opens the chat menu on a long press, in either group", async () => {
       const props = renderPanel();
 
-      fireEvent(screen.getByTestId("side-panel-chat-chat-weekly"), "longPress");
+      for (const id of ["chat-weekly", "chat-q4"]) {
+        expect(menuItemLabels(menuAround(screen.getByTestId(`side-panel-chat-${id}`)))).toEqual(["Copy chat ID"]);
+      }
       fireEvent(screen.getByTestId("side-panel-chat-chat-q4"), "longPress");
+      expect(Haptics.impactAsync).toHaveBeenCalledWith(Haptics.ImpactFeedbackStyle.Medium);
 
-      expect(alert).toHaveBeenCalledTimes(2);
-      const copy = alert.mock.calls[1]?.[2]?.find((button) => button.text === "Copy chat ID");
-      expect(copy).toBeDefined();
-      copy!.onPress?.();
-      expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat-q4");
+      fireEvent.press(menuItem(screen.getByTestId("side-panel-chat-chat-q4"), "Copy chat ID"));
+      await waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat-q4"));
       expect(props.onSelectChat).not.toHaveBeenCalled();
     });
   });

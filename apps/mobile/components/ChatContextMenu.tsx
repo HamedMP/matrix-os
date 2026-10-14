@@ -1,40 +1,25 @@
-import { cloneElement, useEffect, useRef, type ReactElement } from "react";
-import { Alert, type PressableProps } from "react-native";
-import * as Clipboard from "expo-clipboard";
+import type { ReactElement } from "react";
+import type { PressableProps } from "react-native";
+
+import { chatMenuOpenHaptic, useChatMenuActions } from "./chat-menu-actions";
+import { ChatMenuTrigger } from "./ChatMenuTrigger";
+
+export interface ChatContextMenuProps {
+  /** The chat the menu acts on. None for a chat that does not exist yet. */
+  chatId?: string | null;
+  /** The message a long press was on, for Copy text and Share. None for a chat as a whole. */
+  messageText?: string | null;
+  children: ReactElement<PressableProps>;
+}
 
 /** Native Mobile's long-press equivalent of the shared Chat context menu. */
-export function ChatContextMenu({ chatId, children }: {
-  chatId?: string | null;
-  children: ReactElement<PressableProps>;
-}) {
-  const generation = useRef(0);
-  useEffect(() => {
-    generation.current += 1;
-    return () => { generation.current += 1; };
-  }, [chatId]);
-  if (!chatId) return children;
-  return cloneElement(children, {
-    onLongPress: () => {
-      const attempt = ++generation.current;
-      Alert.alert("Chat", undefined, [
-        {
-          text: "Copy chat ID",
-          onPress: () => {
-            if (attempt !== generation.current) return;
-            void (async () => {
-              try {
-                const copied = await Clipboard.setStringAsync(chatId);
-                if (copied === false) throw new Error("Clipboard unavailable");
-                if (attempt === generation.current) Alert.alert("Chat ID copied");
-              } catch (error: unknown) {
-                console.warn("[chat] Clipboard copy failed", error instanceof Error ? "Error" : "UnknownError");
-                if (attempt === generation.current) Alert.alert("Could not copy chat ID", "Try again.");
-              }
-            })();
-          },
-        },
-        { text: "Cancel", style: "cancel" },
-      ]);
-    },
-  });
+export function ChatContextMenu({ chatId, messageText, children }: ChatContextMenuProps) {
+  const text = messageText?.trim() || null;
+  const actions = useChatMenuActions(chatId || null, text);
+  if (actions.length === 0) return children;
+  return (
+    <ChatMenuTrigger title={text ? "Message" : "Chat"} actions={actions} onOpen={chatMenuOpenHaptic}>
+      {children}
+    </ChatMenuTrigger>
+  );
 }
