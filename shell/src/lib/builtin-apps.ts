@@ -2,7 +2,7 @@ import type { LayoutWindow } from "@/hooks/useWindowManager";
 import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { getCodeEditorUrl } from "./feature-flags";
-import { resolveWebDesktopBuiltInLaunch } from "./web-desktop-app-launch";
+import { openWebAppBridgeWindow, resolveWebDesktopBuiltInLaunch } from "./web-desktop-app-launch";
 
 const BUILT_IN_APP_VALUES = [
   "__terminal__",
@@ -88,7 +88,7 @@ export function routeAppBridgeLaunch(
     useDesktopMode.getState().setMode(destination.mode);
     return;
   }
-  openWindow(destination?.kind === "app" ? destination.name : name, destination?.kind === "app" ? destination.path : path);
+  openWebAppBridgeWindow(destination?.kind === "app" ? destination.name : name, destination?.kind === "app" ? destination.path : path, openWindow);
 }
 
 const BUILT_IN_PATHS = new Set<string>(BUILT_IN_APP_VALUES);

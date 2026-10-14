@@ -23,6 +23,14 @@ export function showWebDesktop(minimizeWindow: (id: string) => void = useWindowM
   }
 }
 
+/** A bridge launch must reveal its destination instead of leaving another app covering it. */
+export function openWebAppBridgeWindow(name: string, path: string, openWindow: (name: string, path: string) => void): void {
+  const state = useWindowManager.getState();
+  if (state.fullscreenWindowId !== null
+    && state.windows.find(window => window.id === state.fullscreenWindowId)?.path !== path) state.exitFullscreen();
+  openWindow(name, path);
+}
+
 export type WebDesktopBuiltInLaunch =
   | { kind: "external"; url: string }
   | { kind: "external-code" }

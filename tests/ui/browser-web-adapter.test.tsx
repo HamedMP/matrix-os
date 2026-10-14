@@ -28,6 +28,7 @@ describe("web Browser surface adapter", () => {
 });
 
 import { useWindowManager, resetWindowManagerLayoutPersistenceForTests } from "../../shell/src/hooks/useWindowManager";
+import { routeAppBridgeLaunch } from "../../shell/src/lib/builtin-apps";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode";
 
 describe("Browser fullscreen minimize and launcher restore", () => {
@@ -71,6 +72,26 @@ describe("Browser fullscreen minimize and launcher restore", () => {
       });
     });
 
+    it.each(["desktop", "canvas"] as const)("reveals Cloud desktop launched from fullscreen Browser in %s", (mode) => {
+      useDesktopMode.setState({ mode });
+      const store = useWindowManager.getState();
+      store.openWindow("Browser", "__browser__", 0);
+      const browser = useWindowManager.getState().windows[0];
+      store.toggleFullscreen(browser.id);
+      routeAppBridgeLaunch("Cloud desktop", "__cloud-desktop__", (name, path) => {
+        useWindowManager.getState().openWindow(name, path, 0);
+      });
+      const state = useWindowManager.getState();
+      const cloud = state.windows.find(window => window.path === "__cloud-desktop__")!;
+      expect(state.focusedWindowId).toBe(cloud.id);
+      expect(state.fullscreenWindowId).toBeNull();
+      expect(state.windows.find(window => window.id === browser.id)).toEqual(browser);
+      store.toggleFullscreen(cloud.id);
+      routeAppBridgeLaunch("Cloud desktop", "__cloud-desktop__", (name, path) => {
+        useWindowManager.getState().openWindow(name, path, 0);
+      });
+      expect(useWindowManager.getState().fullscreenWindowId).toBe(cloud.id);
+    });
     it("leaves another fullscreen window active when minimizing a background app", () => {
       useWindowManager.getState().openWindow("Browser", "__browser__", 80);
       useWindowManager.getState().openWindow("Cloud desktop", "__cloud-desktop__", 80);
