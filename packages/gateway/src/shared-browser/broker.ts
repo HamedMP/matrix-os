@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { SHARED_BROWSER_ACTION_DEADLINE_MS, SharedBrowserActionSchema, SharedBrowserControlSchema, type SharedBrowserAction,
   type SharedBrowserActionResult, type SharedBrowserControl, type SharedBrowserState } from "@matrix-os/contracts";
 
-export interface SharedBrowserBinding { ownerId: string; chatId: string; runId: string; harness: "pi" | "openclaw" | "hermes" }
+export interface SharedBrowserBinding { ownerId: string; chatId: string; runId: string; harness: "pi" | "openclaw" | "hermes" | "codex" | "claude_code" }
 export interface SharedBrowserDriver {
   execute(input: SharedBrowserAction, signal: AbortSignal): Promise<SharedBrowserActionResult>;
   invalidateObservation(): void;
@@ -76,12 +76,12 @@ export function createSharedBrowserBroker(options: {
   function openRun(binding:SharedBrowserBinding,signal:AbortSignal) {
     sweep();
     if(closed || signal.aborted || binding.ownerId!==options.ownerId || ![binding.chatId,binding.runId].every(x=>SAFE_ID.test(x))
-      || !["pi","openclaw","hermes"].includes(binding.harness) || runs.has(binding.runId) || runs.size>=64)throw new SharedBrowserError("run_unavailable");
+      || !["pi","openclaw","hermes","codex","claude_code"].includes(binding.harness) || runs.has(binding.runId) || runs.size>=64)throw new SharedBrowserError("run_unavailable");
     const token=randomBytes(32).toString("base64url");
     const row:Registered={binding:{...binding},signal,controller:new AbortController(),expiresAt:now()+ttl,hash:digest(token),collectionId:randomUUID(),artifacts:[],
       onAbort:()=>{void closeRun(binding.runId).catch(report);}};
     runs.set(binding.runId,row);signal.addEventListener("abort",row.onAbort,{once:true});
-    return{token,expiresAt:row.expiresAt};
+    return{token,expiresAt:row.expiresAt,close:()=>row.closing ?? (runs.get(binding.runId)===row ? closeRun(binding.runId) : Promise.resolve())};
   }
   function resolveCapability(token:string):SharedBrowserBinding|null {
     if(!/^[A-Za-z0-9_-]{43}$/.test(token))return null;
