@@ -7,7 +7,7 @@ import { RemoteBrowserView } from "../../shell/src/components/RemoteBrowserView"
 let props: BrowserSurfaceProps;
 vi.mock("@matrix-os/ui", async (importOriginal) => ({ ...await importOriginal<typeof import("@matrix-os/ui")>(), BrowserSurface: (value: BrowserSurfaceProps) => { props = value; return <div/>; } }));
 vi.mock("../../shell/src/lib/gateway", () => ({ getGatewayUrl: () => "https://app.matrix-os.com/vm/pr-2526" }));
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); resetWindowManagerLayoutPersistenceForTests(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 describe("web Browser surface adapter", () => {
   it("renews only the selected runtime app cookie with credentialed abortable HTTP", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ expiresAt: Date.now() + 600_000 })));
@@ -32,6 +32,8 @@ import { useDesktopMode } from "../../shell/src/stores/desktop-mode";
 
 describe("Browser fullscreen minimize and launcher restore", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({})));
     resetWindowManagerLayoutPersistenceForTests();
     useWindowManager.setState({ windows: [], nextZ: 1, closedPaths: new Set(), closedLayouts: new Map(), focusedWindowId: null, fullscreenWindowId: null });
   });
