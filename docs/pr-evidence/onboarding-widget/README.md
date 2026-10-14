@@ -40,3 +40,32 @@ and is the same component Electron Desktop renders.
   is disabled with "Not available on this computer", Claude and
   ChatGPT / Codex stay connectable, and the footer reads "Matrix AI isn't
   available here".
+
+## Chat handoff and free position
+
+Layer 6 ([#2536](https://github.com/HamedMP/matrix-os/pull/2536)). The only chat
+text shown is the onboarding task's own prompt.
+
+Electron Desktop, captured on 2026-10-12 from a Playwright-driven Electron
+session signed in to a real Matrix computer:
+
+- `electron-desktop-chat-handoff.jpg`: a frame from the real Research run. The
+  main Chat has opened on the new chat "Research: Trip ideas for Lisbon" while
+  the run works, and the widget has shrunk to its bubble ("Working…").
+- `electron-desktop-named-chats.jpg`: earlier tasks each in their own chat named
+  after the task ("Research: …", "Plan my week", "Website: Portfolio"), with
+  the widget minimized to its bubble.
+
+Web Desktop and Web Canvas, captured on 2026-10-14 from #2536 in headless
+Chromium at 1440 × 900 against a local gateway, using `next dev` with the E2E
+auth bypass. The card was dragged by its header with real pointer events:
+
+- `web-desktop-free-position.jpg` and `web-canvas-free-position.jpg`: the card
+  dropped away from the corners. The support launcher stays in its own corner
+  because the widget no longer overlaps it.
+- `web-desktop-free-position-menu.jpg`: the More menu after a free move,
+  offering "Move back to the corner" and "Move to the right corner".
+
+The chat handoff is the shared `useOnboardingChatHandoff` hook that all three
+desktop surfaces run. A Web handoff was not captured, because that needs a
+real, credit-spending run.
