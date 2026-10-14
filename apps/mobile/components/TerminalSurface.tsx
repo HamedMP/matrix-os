@@ -433,6 +433,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         let msg: {
           type?: string;
           data?: string;
+          isUserInput?: unknown;
           cols?: number;
           rows?: number;
           bottom?: number;
