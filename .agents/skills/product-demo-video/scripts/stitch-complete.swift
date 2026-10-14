@@ -17,7 +17,6 @@ struct Recipe: Decodable {
   let width: Int
   let height: Int
   let fade: Double
-  let bitrate: Int?
   let chapters: [Chapter]
 }
 

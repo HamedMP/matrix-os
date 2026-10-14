@@ -1,6 +1,6 @@
 # Demo Video Scripts
 
-Paths are relative to this skill directory. `record-lib.cjs` compiles both Swift tools into `$TMPDIR/mxo-demo-tools/` on first use and recompiles them when the source changes.
+Paths are relative to this skill directory. `record-lib.cjs` compiles both Swift tools into `$TMPDIR/mxo-demo-tools/` on first use, naming each build by a hash of its source and flags so worktrees never share a stale binary.
 
 ## encode-demo.swift
 
@@ -41,7 +41,6 @@ Recipe:
   "width": 1440,
   "height": 900,
   "fade": 0.45,
-  "bitrate": 3200000,
   "chapters": [
     { "title": "Web Desktop", "subtitle": "Open the feature", "cardSeconds": 1.6, "src": "/tmp/web.mp4" },
     { "title": "Done", "subtitle": "What shipped", "cardSeconds": 2.2 }
@@ -49,7 +48,7 @@ Recipe:
 }
 ```
 
-The stitcher does not expand `~` or `$HOME`, so pass absolute paths. A chapter with no `src` is a card-only outro. When a crossfade starts, the stitcher trims the previous instruction so time ranges never overlap; overlapping ranges make AVFoundation fail with error -11841.
+The export uses AVFoundation's highest-quality preset, which chooses the final bitrate. The stitcher does not expand `~` or `$HOME`, so pass absolute paths. A chapter with no `src` is a card-only outro. When a crossfade starts, the stitcher trims the previous instruction so time ranges never overlap; overlapping ranges make AVFoundation fail with error -11841.
 
 ## record-lib.cjs
 
@@ -57,7 +56,7 @@ The stitcher does not expand `~` or `$HOME`, so pass absolute paths. A chapter w
 const lib = require("./scripts/record-lib.cjs");
 ```
 
-Exports: `SKILL`, `TOOLS_DIR`, `ENCODER_BIN`, `STITCH_BIN`, `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `WARP`, `ease`, `hold`, `now`, `fadeOverlapSeconds`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `dragHandle`, `dismissUpdate`, `assertCssSize`, `launchWeb`, `launchElectron`, `releaseElectron`, `hideOpenChat`, `snapshotFrame`, `wheelScroll`, `trimTail`, `compileEncoder`, `compileStitcher`, `encodeTimeline`, `stitch`.
+Exports: `SKILL`, `TOOLS_DIR`, `ENCODER_BIN`, `STITCH_BIN`, `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `WARP`, `ease`, `hold`, `now`, `fadeOverlapSeconds`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `dragHandle`, `dismissUpdate`, `assertCssSize`, `launchWeb`, `launchElectron`, `releaseElectron`, `hideOpenChat`, `snapshotFrame`, `wheelScroll`, `trimTail`, `cameraPath`, `toolPath`, `compileEncoder`, `compileStitcher`, `encodeTimeline`, `stitchRecipe`, `stitch`.
 
 - `makeSession(css)` returns a session whose `timeline.framesDir` is a new `$TMPDIR/mxo-demo-frames-*` folder.
 - `encodeTimeline(timeline, css, output, segmentIndex?)` writes `<output>.manifest.json` and the MP4. Optional `segment.fastForward` and `caption.maxSpeed` control pacing.

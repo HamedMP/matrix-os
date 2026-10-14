@@ -1,5 +1,6 @@
 // Shared capture / encode / stitch helpers for Matrix product demo videos.
 // Feature click-scripts require this file. Do not commit recorded MP4s.
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const os = require("node:os");
@@ -9,11 +10,20 @@ const { execFileSync } = require("node:child_process");
 
 const SKILL = path.resolve(__dirname, "..");
 // Compiled tools live outside the skill so a repo checkout never picks up Mach-O binaries.
+// Each build is keyed by source content and flags, so worktrees with different sources never share one.
 const TOOLS_DIR = path.join(os.tmpdir(), "mxo-demo-tools");
 const ENCODER_SRC = path.join(__dirname, "encode-demo.swift");
-const ENCODER_BIN = path.join(TOOLS_DIR, "encode-demo");
+const ENCODER_FLAGS = ["-O"];
 const STITCH_SRC = path.join(__dirname, "stitch-complete.swift");
-const STITCH_BIN = path.join(TOOLS_DIR, "stitch-complete");
+const STITCH_FLAGS = ["-O", "-parse-as-library"];
+
+function toolPath(src, flags) {
+  const hash = crypto.createHash("sha256").update(fs.readFileSync(src)).update(flags.join("\0")).digest("hex");
+  return path.join(TOOLS_DIR, `${path.basename(src, ".swift")}-${hash.slice(0, 16)}`);
+}
+
+const ENCODER_BIN = toolPath(ENCODER_SRC, ENCODER_FLAGS);
+const STITCH_BIN = toolPath(STITCH_SRC, STITCH_FLAGS);
 
 const WEB = { w: 1440, h: 810 };
 const EL = { w: 1440, h: 810 };
@@ -226,14 +236,29 @@ function rejectInsideSkill(target, label) {
 }
 
 function compileTool(src, bin, flags) {
+  if (fs.existsSync(bin)) return;
   fs.mkdirSync(TOOLS_DIR, { recursive: true });
-  if (!fs.existsSync(bin) || fs.statSync(bin).mtimeMs < fs.statSync(src).mtimeMs) {
-    execFileSync("swiftc", [...flags, src, "-o", bin], { stdio: "inherit" });
-  }
+  const partial = `${bin}.${process.pid}.partial`;
+  execFileSync("swiftc", [...flags, src, "-o", partial], { stdio: "inherit" });
+  fs.renameSync(partial, bin);
 }
 
-const compileEncoder = () => compileTool(ENCODER_SRC, ENCODER_BIN, ["-O"]);
-const compileStitcher = () => compileTool(STITCH_SRC, STITCH_BIN, ["-O", "-parse-as-library"]);
+const compileEncoder = () => compileTool(ENCODER_SRC, ENCODER_BIN, ENCODER_FLAGS);
+const compileStitcher = () => compileTool(STITCH_SRC, STITCH_BIN, STITCH_FLAGS);
+
+function cameraPath(cameraEvents, css, freezeAt = Infinity) {
+  const FULL = { x: 0, y: 0, w: css.w, h: css.h };
+  const lerp = (a, b, k) => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, w: a.w + (b.w - a.w) * k, h: a.h + (b.h - a.h) * k });
+  const at = (event, t) => lerp(event.from, event.rect, event.dur ? ease(Math.min(1, Math.max(0, (t - event.t) / event.dur))) : 1);
+  const cameras = cameraEvents.map((event) => ({ ...event })).sort((a, b) => a.t - b.t);
+  cameras.forEach((event, i) => { event.from = i === 0 ? FULL : at(cameras[i - 1], event.t); });
+  return (time) => {
+    const t = Math.min(time, freezeAt);
+    let current = null;
+    for (const event of cameras) { if (event.t <= t) current = event; else break; }
+    return current ? at(current, t) : FULL;
+  };
+}
 
 function warpSegment(segment, frames, captions, cameras) {
   const arrivals = frames.filter((frame) => frame.t <= segment.end).map((frame) => frame.t);
@@ -288,16 +313,7 @@ function encodeTimeline(timeline, css, output, segmentIndex = null) {
   rejectInsideSkill(output, "encoded video");
   compileEncoder();
   if (Math.abs(css.h / css.w - OUT.screen / OUT.w) > 0.001) throw new Error(`source ${css.w}x${css.h} is not 16:9`);
-  const FULL = { x: 0, y: 0, w: css.w, h: css.h };
-  const lerp = (a, b, k) => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, w: a.w + (b.w - a.w) * k, h: a.h + (b.h - a.h) * k });
-  const at = (event, t) => lerp(event.from, event.rect, event.dur ? ease(Math.min(1, Math.max(0, (t - event.t) / event.dur))) : 1);
-  const cameras = timeline.cameras.map((event) => ({ ...event })).sort((a, b) => a.t - b.t);
-  cameras.forEach((event, i) => { event.from = i === 0 ? FULL : at(cameras[i - 1], event.t); });
-  const rectAt = (t) => {
-    let current = null;
-    for (const event of cameras) { if (event.t <= t) current = event; else break; }
-    return current ? at(current, t) : FULL;
-  };
+  const rectAt = cameraPath(timeline.cameras, css, timeline.freezeAt);
   const segments = segmentIndex == null ? timeline.segments : [timeline.segments[segmentIndex]];
   const inClip = (t) => segments.some((segment) => t >= segment.start - 0.01 && t < segment.end);
   const captions = timeline.captions.filter((event) => inClip(event.t)).map((event) => {
@@ -316,7 +332,7 @@ function encodeTimeline(timeline, css, output, segmentIndex = null) {
     if (index < 0) continue;
     const samples = segment.fastForward
       ? Array.from({ length: Math.ceil(((segment.end - segment.start) / segment.fastForward) * FPS) }, (_, i) => segment.start + (i * segment.fastForward) / FPS)
-      : warpSegment(segment, timeline.frames, captions, cameras);
+      : warpSegment(segment, timeline.frames, captions, timeline.cameras);
     for (const t of samples) {
       while (index + 1 < timeline.frames.length && timeline.frames[index + 1].t <= t) index += 1;
       const rect = rectAt(t);
@@ -432,8 +448,22 @@ function trimTail(timeline, cutSeconds, holdSeconds = 2.2) {
   const result = timeline.segments.at(-1);
   const cutAt = result.start + cutSeconds;
   timeline.frames = timeline.frames.filter((frame) => frame.t <= cutAt);
+  timeline.captions = timeline.captions.filter((event) => event.t <= cutAt);
+  timeline.cameras = timeline.cameras.filter((event) => event.t <= cutAt);
+  timeline.freezeAt = cutAt;
   result.end = cutAt + holdSeconds;
   return timeline;
+}
+
+// The export uses AVAssetExportPresetHighestQuality, which picks its own bitrate.
+function stitchRecipe(recipe) {
+  return {
+    output: recipe.output,
+    width: recipe.width ?? OUT.w,
+    height: recipe.height ?? OUT.h,
+    fade: recipe.fade ?? 0.45,
+    chapters: recipe.chapters,
+  };
 }
 
 function stitch(recipe) {
@@ -442,14 +472,7 @@ function stitch(recipe) {
   rejectInsideSkill(recipePath, "stitch recipe");
   compileStitcher();
   fs.mkdirSync(path.dirname(recipe.output), { recursive: true });
-  fs.writeFileSync(recipePath, JSON.stringify({
-    output: recipe.output,
-    width: recipe.width ?? OUT.w,
-    height: recipe.height ?? OUT.h,
-    fade: recipe.fade ?? 0.45,
-    bitrate: recipe.bitrate ?? 3_200_000,
-    chapters: recipe.chapters,
-  }));
+  fs.writeFileSync(recipePath, JSON.stringify(stitchRecipe(recipe)));
   for (const chapter of recipe.chapters) {
     if (chapter.src && !fs.existsSync(chapter.src)) throw new Error(`missing chapter ${chapter.src}`);
   }
@@ -462,6 +485,6 @@ module.exports = {
   ease, hold, now, fadeOverlapSeconds, cursorOverlay, makeSession, glide, boxOf, hover, click,
   focusFor, camera, caption, startCapture, stopCapture, dragHandle,
   dismissUpdate, assertCssSize, launchWeb, launchElectron, releaseElectron, hideOpenChat,
-  snapshotFrame, wheelScroll, trimTail,
-  compileEncoder, compileStitcher, encodeTimeline, stitch,
+  snapshotFrame, wheelScroll, trimTail, cameraPath, toolPath,
+  compileEncoder, compileStitcher, encodeTimeline, stitchRecipe, stitch,
 };

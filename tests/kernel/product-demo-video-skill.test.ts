@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
@@ -151,6 +151,47 @@ describe("Matrix product demo video skill", () => {
     expect(lib.fadeOverlapSeconds(0.45, 1.6, 0.6)).toBeCloseTo(0.3);
     expect(lib.fadeOverlapSeconds(0.45, 2, 2)).toBeCloseTo(0.45);
     expect(lib.fadeOverlapSeconds(0.45, 2, 0)).toBe(0);
+  });
+
+  it("drops captions and camera moves after a trimTail cut and freezes the crop", () => {
+    const focus = { x: 288, y: 162, w: 1152, h: 648 };
+    const timeline = {
+      frames: Array.from({ length: 21 }, (_, i) => ({ t: i, file: `${i}.jpg`, w: 1440, h: 810 })),
+      segments: [{ start: 0, end: 20 }],
+      captions: [{ t: 2, text: "kept" }, { t: 11, text: "after the cut" }],
+      cameras: [{ t: 9.8, rect: focus, dur: 0.7 }, { t: 12, rect: { x: 0, y: 0, w: 1440, h: 810 }, dur: 0.5 }],
+    };
+    lib.trimTail(timeline, 10);
+    expect(timeline.frames.at(-1).t).toBe(10);
+    expect(timeline.captions.map((c: { text: string }) => c.text)).toEqual(["kept"]);
+    expect(timeline.cameras).toHaveLength(1);
+    expect(timeline.segments[0].end).toBeCloseTo(12.2);
+    const rectAt = lib.cameraPath(timeline.cameras, lib.WEB, timeline.freezeAt);
+    expect(rectAt(11)).toEqual(rectAt(10));
+    expect(rectAt(10)).not.toEqual(focus);
+  });
+
+  it("keys cached Swift tools by source content and compile flags", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mxo-demo-cache-test-"));
+    try {
+      const a = join(dir, "a.swift");
+      const b = join(dir, "b.swift");
+      writeFileSync(a, "print(1)");
+      writeFileSync(b, "print(2)");
+      expect(lib.toolPath(a, ["-O"])).toBe(lib.toolPath(a, ["-O"]));
+      expect(lib.toolPath(a, ["-O"])).not.toBe(lib.toolPath(b, ["-O"]));
+      expect(lib.toolPath(a, ["-O"])).not.toBe(lib.toolPath(a, ["-O", "-parse-as-library"]));
+      expect(inside(lib.TOOLS_DIR, lib.toolPath(a, ["-O"]))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not offer a stitch bitrate the export would ignore", () => {
+    const recipe = lib.stitchRecipe({ output: "/tmp/demo.mp4", bitrate: 1, chapters: [] });
+    expect(recipe).not.toHaveProperty("bitrate");
+    expect(read("scripts/stitch-complete.swift")).not.toMatch(/bitrate/);
+    expect(read("scripts.md")).not.toMatch(/"bitrate"/);
   });
 
   it("documents the QA sheet folder and a 1.6s card default", () => {

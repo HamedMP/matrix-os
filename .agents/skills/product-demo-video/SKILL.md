@@ -81,7 +81,7 @@ Motion that changes nothing on screen is a bug. Do not slow the mouse down, put 
 - For a long streaming answer, set `caption.maxSpeed = 3.5` on that caption.
 - Use `snapshotFrame(session)` to grab one frame per poll while a run is in progress.
 - Use `wheelScroll(page, deltaY, steps, ms)` to bring finished results into view.
-- After a crash, splash screen, or reload at the end, call `trimTail(timeline, seconds)` to cut it and hold the last good frame.
+- After a crash, splash screen, or reload at the end, call `trimTail(timeline, seconds)` to cut it and hold the last good frame; captions and camera moves after the cut are dropped.
 
 `encodeTimeline` writes `<output>.manifest.json` next to the MP4. Save `session.timeline` as JSON too. When an edit only changes speed, captions, or a cut, re-encode from the saved timeline. Re-record only when the clicks were wrong, and never re-run AI just to fix the edit.
 
