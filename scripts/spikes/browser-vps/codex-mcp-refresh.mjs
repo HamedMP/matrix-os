@@ -29,21 +29,23 @@ const catalog=threadId=>request('mcpServerStatus/list',{threadId,serverName:'mat
 const marker=value=>JSON.stringify(value).includes(markerB)?'B':JSON.stringify(value).includes(markerA)?'A':'missing';
 // This root is safe only because the caller replaced HOME's backing mount.
 async function scanDisposableHome(root) {
-  let files=0,entriesSeen=0,bytes=0,markerPersisted=false;
+  let files=0,entriesSeen=0,bytes=0,readBytes=0,largestFileBytes=0,markerPersisted=false;
+  function exceeded(limitKind){const error=new Error('Synthetic persistence scan exceeded bounds');error.limitKind=limitKind;error.counters={scannedFiles:files,scannedBytes:readBytes,inspectedBytes:bytes,largestFileBytes};throw error;}
   async function walk(path,depth=0) {
-    if(depth>16)throw new Error('Synthetic persistence scan exceeded bounds');
+    if(depth>16)exceeded('depth');
     let entries;try{entries=await readdir(path,{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return;throw error;}
     for(const entry of entries){
-      if(++entriesSeen>2048)throw new Error('Synthetic persistence scan exceeded bounds');
+      if(++entriesSeen>2048)exceeded('entries');
       const childPath=join(path,entry.name);const info=await lstat(childPath);
       if(info.isSymbolicLink())continue;
       if(info.isDirectory()){await walk(childPath,depth+1);continue;}
       if(!info.isFile())continue;
-      if(++files>1024 || info.size>2*1024*1024 || (bytes+=info.size)>16*1024*1024)throw new Error('Synthetic persistence scan exceeded bounds');
-      const value=await readFile(childPath);markerPersisted ||= value.includes(Buffer.from(markerA)) || value.includes(Buffer.from(markerB));
+      files++;bytes+=info.size;largestFileBytes=Math.max(largestFileBytes,info.size);
+      if(files>1024)exceeded('file_count');if(info.size>8*1024*1024)exceeded('file_bytes');if(bytes>16*1024*1024)exceeded('total_bytes');
+      const value=await readFile(childPath);readBytes+=value.length;markerPersisted ||= value.includes(Buffer.from(markerA)) || value.includes(Buffer.from(markerB));
     }
   }
-  await walk(root);return{markerPersisted,scannedFiles:files,scannedBytes:bytes};
+  await walk(root);return{persistenceConfirmed:true,markerPersisted,scannedFiles:files,scannedBytes:readBytes,inspectedBytes:bytes,largestFileBytes};
 }
 let outcome,failure,stage="initialize",first="missing",resumed="missing",reload="missing";
 try {
@@ -73,6 +75,9 @@ try {
 }
 finally{
   try{await confirmProbeChildStopped(native.child,native.closed);
-    const persistence=await scanDisposableHome(join(homedir(),'.codex'));process.stdout.write(JSON.stringify({...outcome,...failure,...persistence})+'\n');
+    let persistence;
+    try{persistence=await scanDisposableHome(join(homedir(),'.codex'));}
+    catch(error){persistence={persistenceConfirmed:false,limitKind:error.limitKind??'scan_failed',...error.counters};process.exitCode=1;}
+    process.stdout.write(JSON.stringify({...outcome,...failure,...persistence})+'\n');
   }finally{native.client.dispose();await rm(scratch,{recursive:true,force:true});}
 }
