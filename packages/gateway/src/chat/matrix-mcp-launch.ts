@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { previewDriveActionCanonical } from "@matrix-os/contracts";
+import { OWNER_APP_READ_PATH, OwnerAppReadGrantSchema, type OwnerAppReadGrant, previewDriveActionCanonical } from "@matrix-os/contracts";
 import { SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
 import { createIntegrationToolAuthority } from "./integration-tool-authority.js";
 
@@ -48,6 +48,8 @@ export interface MatrixMcpRunContext {
   previewDrive?: PreviewDriveRunContext;
   driveContext?: boolean;
   integrationRead?: boolean;
+  appDataRead?: OwnerAppReadGrant;
+  isLive?: () => boolean;
 }
 
 /** The configured stdio server only exposes Matrix's stable broker contract. */
@@ -74,7 +76,7 @@ export interface MatrixMcpRunCapability {
 }
 
 export interface MatrixMcpCapabilityIssuer {
-  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope; fullAccess?: boolean; driveContext?: boolean; integrationRead?: boolean }): MatrixMcpRunCapability | null;
+  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope; fullAccess?: boolean; driveContext?: boolean; integrationRead?: boolean; appDataRead?: OwnerAppReadGrant }): MatrixMcpRunCapability | null;
 }
 
 export interface MatrixMcpCapabilityRegistry extends MatrixMcpCapabilityIssuer {
@@ -112,9 +114,11 @@ function permitted(method: string, path: string, scope: MatrixMcpRunScope, integ
 export function createMatrixMcpCapabilityRegistry(options: {
   configuredOwnerId?: string;
   previewRuntime?: boolean;
+  configuredRuntimeHandle?: string;
   now?: () => number;
 }): MatrixMcpCapabilityRegistry {
   const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; driveContext?: boolean; integrationRead?: boolean; expiresAt: number;
+    appDataRead?: OwnerAppReadGrant;
     authority?: ReturnType<typeof createIntegrationToolAuthority>; previewDrive?: PreviewDriveRunContext;
     onRevoke?: () => void }>();
   const previewRuns = new Map<string, { actorId: string; chatId: string; runGrant: string; expiresAt: number;
@@ -136,10 +140,12 @@ export function createMatrixMcpCapabilityRegistry(options: {
     if (closed || !/^[a-f0-9]{64}$/.test(token)) return null;
     sweep();
     const grant = active.get(digest(token));
-    return grant && (permitted(method, path, grant.scope, grant.integrationRead)
+    return grant && ((grant.appDataRead && method === "POST" && path === OWNER_APP_READ_PATH) || permitted(method, path, grant.scope, grant.integrationRead)
       || (grant.driveContext === true && method === "POST"
         && (path === "/api/chat-drive-context/search" || path === "/api/chat-drive-context/read")))
       ? { actorId: grant.actorId, runId: grant.runId, scope: grant.scope,
+        ...(grant.appDataRead ? { appDataRead: structuredClone(grant.appDataRead),
+          isLive: () => !closed && active.get(digest(token)) === grant && now() < grant.expiresAt } : {}),
         ...(grant.driveContext ? { driveContext: true } : {}),
         ...(grant.integrationRead ? { integrationRead: true } : {}),
         ...(grant.authority && !grant.previewDrive ? { consumeIntegrationRequest: grant.authority.consumeIntegrationRequest } : {}),
@@ -176,6 +182,11 @@ export function createMatrixMcpCapabilityRegistry(options: {
       if (closed || !input.runId || input.runId.length > 256
         || (input.integrationRead !== undefined && typeof input.integrationRead !== "boolean")
         || (input.integrationRead === true && !["call", "discovery", "integration_read"].includes(input.scope))) return null;
+      const readGrant = input.appDataRead === undefined ? undefined : OwnerAppReadGrantSchema.safeParse(input.appDataRead);
+      if (readGrant && (!readGrant.success || options.previewRuntime
+        || !["chat_call", "chat_discovery"].includes(input.scope)
+        || readGrant.data.runtimeHandle !== options.configuredRuntimeHandle)) return null;
+      const appDataRead = readGrant?.success ? readGrant.data : undefined;
       sweep();
       if (options.previewRuntime) {
         const pending = previewRuns.get(input.runId);
@@ -240,7 +251,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
         now, fullAccess: input.fullAccess === true,
         live: () => !closed && active.has(key) && now() < expiresAt,
       }) : undefined;
-      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(input.driveContext ? { driveContext: true } : {}), ...(input.integrationRead === true ? { integrationRead: true } : {}), expiresAt, authority });
+      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(appDataRead ? { appDataRead: structuredClone(appDataRead) } : {}), ...(input.driveContext ? { driveContext: true } : {}), ...(input.integrationRead === true ? { integrationRead: true } : {}), expiresAt, authority });
       return { token, revoke: () => { active.delete(key); },
         ...(authority ? { grantIntegrationTool: authority.grantIntegrationTool } : {}) };
     },

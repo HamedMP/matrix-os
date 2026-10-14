@@ -12,6 +12,10 @@ export interface FindOptions {
   orderBy?: Record<string, "asc" | "desc">;
   limit?: number;
   offset?: number;
+  /** Dedicated scoped reads only: projected columns and SQL-side transfer cap. */
+  columns?: string[];
+  maxResponseBytes?: number;
+  readOnly?: true;
 }
 
 export interface QueryEngine {
@@ -86,7 +90,8 @@ export function createQueryEngine(db: AppDb): QueryEngine {
       parseSafeName(table, "table");
       const qt = qualifiedTable(schema, table);
 
-      let q = `SELECT * FROM ${qt}`;
+      const selected = opts?.columns?.map(col => { parseSafeName(col, "column"); return `"${col}"`; }).join(", ") ?? "*";
+      let q = `SELECT ${selected} FROM ${qt}`;
       let params: unknown[] = [];
 
       if (opts?.filter && Object.keys(opts.filter).length > 0) {
@@ -112,6 +117,18 @@ export function createQueryEngine(db: AppDb): QueryEngine {
         if (!isNaN(n)) q += ` OFFSET ${Math.max(0, n)}`;
       }
 
+      if (opts?.maxResponseBytes !== undefined) {
+        const budget = opts.maxResponseBytes;
+        if (!Number.isSafeInteger(budget) || budget < 1 || budget > 65536 || !opts.readOnly || !opts.columns?.length) throw new Error("Invalid bounded read");
+        // The database computes total encoded bytes before returning any values.
+        // An oversized individual record is never copied into the agent process.
+        q = `SELECT CASE WHEN sum(octet_length(row_to_json(_read)::text) + 1) OVER () <= ${budget} THEN row_to_json(_read) ELSE NULL END AS record FROM (${q}) _read`;
+        const result = await db.raw(q, params, { readOnly: true });
+        if (result.rows.some(row => row.record === null)) {
+          const error = new Error("App data response too large"); error.name = "AppReadLimitError"; throw error;
+        }
+        return result.rows.map(row => row.record as Record<string, unknown>);
+      }
       const result = await db.raw(q, params);
       return result.rows;
     },

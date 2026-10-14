@@ -9,6 +9,7 @@ import type { AppRegistry } from "../app-db-registry.js";
 import type { QueryEngine } from "../app-db-query.js";
 import type { KvStore } from "../app-db-kv.js";
 import type { ServerMessage } from "./types.js";
+export { registerOwnerAppDataReadRoutes } from "../app-data-read-routes.js";
 
 export interface BridgeDataRouteOptions {
   homePath: string;

@@ -1,3 +1,4 @@
+import { OWNER_APP_READ_PATH, type OwnerAppReadAudit } from "@matrix-os/contracts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import {
@@ -215,6 +216,7 @@ export function authMiddleware(
   token: string | undefined,
   options?: {
     webhookProviders?: Set<string>;
+    ownerAppDataRead?: { runtimeHandle: string; audit: OwnerAppReadAudit };
     resolveMatrixMcpCapability?: (token: string, method: string, path: string) => string | null;
     resolveMatrixMcpRunContext?: (token: string, method: string, path: string) => MatrixMcpRunContext | null;
   },
@@ -240,6 +242,27 @@ export function authMiddleware(
     const expectedRuntimeSlot = process.env.MATRIX_RUNTIME_SLOT;
 
     const normalizedPath = c.req.path;
+    // Dedicated authority gate: never fall through to JWT/machine/dev bypass.
+    if (normalizedPath === OWNER_APP_READ_PATH) {
+      const config = options?.ownerAppDataRead;
+      const header = c.req.header("authorization");
+      const run = header?.startsWith("Bearer ")
+        ? options?.resolveMatrixMcpRunContext?.(header.slice(7), c.req.method, new URL(c.req.raw.url).pathname) : null;
+      if (!config || c.req.method !== "POST" || !run?.appDataRead || !run.isLive?.()
+        || run.appDataRead.runtimeHandle !== config.runtimeHandle
+        || c.req.header("x-platform-user-id") || c.req.header("x-platform-verified")) {
+        try { await config?.audit({ outcome: "denied" }); }
+        catch (error: unknown) {
+          console.warn("[app-data-read] Auth audit unavailable", error instanceof Error ? error.name : "UnknownError");
+          return c.json({ error: "App data read unavailable" }, 503);
+        }
+        return unauthorized(c);
+      }
+      setPlatformVerifiedPrincipal(c, run.actorId);
+      c.set(MATRIX_MCP_RUN_CONTEXT_KEY as never, run);
+      return nextWithReady(c, next);
+    }
+
     if ((c.req.method === "GET" && /^\/api\/share\/chats\/[a-f0-9]{64}$/.test(normalizedPath)) || PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return nextWithReady(c, next);
