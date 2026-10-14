@@ -45,9 +45,9 @@ export function BotEditorApps({ agentId, client, authority }: {
             : connection.state === "granted" && !connection.accounts?.length ? "Status unavailable" : "Connected"}</span>
         </div>
         {connection.accounts?.length ? <div className="mt-2 grid gap-2 pl-14">
-          {connection.accounts.map(account => <div key={account.displayKey} className="flex items-start justify-between gap-3">
-            <div className="min-w-0"><div className="truncate">{account.label}</div>
-              {account.email && <div className="truncate" style={chatAgentMutedStyle}>{account.email}</div>}</div>
+          {connection.accounts.map(account => <div key={account.displayKey} className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+            <div className="min-w-0 flex-1 basis-40"><div className="[overflow-wrap:anywhere]">{account.label}</div>
+              {account.email && <div className="[overflow-wrap:anywhere]" style={chatAgentMutedStyle}>{account.email}</div>}</div>
             <span className="shrink-0" style={chatAgentMutedStyle}>{account.state === "granted" ? "Bot access granted" : "Permission required"}</span>
           </div>)}
         </div> : <p className="mt-2 pl-14" style={chatAgentMutedStyle}>{connection.state === "granted" ? "Saved bot permission; account status unavailable" : connection.state === "not_connected" ? "Connect an account in Integrations." : "Permission required"}</p>}
