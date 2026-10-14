@@ -1,3 +1,4 @@
+import { BotCreationSnapshotSchema } from "#bot-creation-draft";
 import { z } from "zod/v4";
 import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";
 import { canonicalBoundedText, canonicalSafeLabel, canonicalEncodedByteLength } from "#canonical-chat-primitives";
@@ -18,6 +19,7 @@ export const ChatContextSnapshotSchema = z.object({
 
 /** Written only by the gateway after owner-scoped resolution, never accepted from a client. */
 export const ChatRunContextSchema = z.object({
+  botCreation: BotCreationSnapshotSchema.optional(),
   version: z.literal(1),
   requestHash: z.string().regex(/^[a-f0-9]{64}$/),
   agent: z.object({
@@ -30,7 +32,9 @@ export const ChatRunContextSchema = z.object({
   chats: z.array(ChatContextSnapshotSchema).max(3),
   drives: z.array(OrganizationDriveContextReferenceSchema).min(1).max(3).optional(),
   history: ChatContextSnapshotSchema.optional(),
-}).strict().refine((value) => canonicalEncodedByteLength(value) <= 64 * 1024, {
+}).strict().refine(value => !value.botCreation || (!value.agent && !value.chats.length && !value.drives?.length), {
+  message: "Bot creation cannot inherit saved Agent or reference authority",
+}).refine((value) => canonicalEncodedByteLength(value) <= 64 * 1024, {
   message: "Resolved Chat context exceeds its byte limit",
 });
 

@@ -1,3 +1,4 @@
+import { BotCreationDraftPatchSchema } from "#bot-creation-draft";
 import { z } from "zod/v4";
 import { canonicalBoundedText, canonicalEncodedByteLength, canonicalOwnerRelativePath, canonicalReferenceId } from "#canonical-chat-primitives";
 import { BotConnectionIdSchema, BotIntegrationServiceSchema } from "#bots/ids";
@@ -22,6 +23,7 @@ const textEncoder = new TextEncoder();
 
 /** M1 capabilities. Later milestones add handoffs and computer actions. */
 export const BotToolCapabilitySchema = z.enum([
+  "bot.creation.propose",
   "agent.task",
   "integration.inventory",
   "integration.call",
@@ -44,6 +46,7 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 }).strict();
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
+  capability("bot.creation.propose", z.object({ patch: BotCreationDraftPatchSchema }).strict()),
   capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
   capability("jev.inbox", JevInboxInputSchema),
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),

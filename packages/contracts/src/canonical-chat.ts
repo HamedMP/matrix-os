@@ -1,3 +1,6 @@
+import { CanonicalChatModelSelectionSchema } from "#canonical-chat-selection";
+export { CanonicalChatModelSelectionSchema } from "#canonical-chat-selection";
+import { BotDraftProposalSchema } from "#bot-creation-draft";
 import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "#canonical-chat-import-parts";
 import { z } from "zod/v4";
 import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";
@@ -62,20 +65,6 @@ export const CanonicalChatAttentionSchema = z.enum([
   "input_required",
   "failed",
 ]);
-
-export const CanonicalChatModelSelectionSchema = z.object({
-  instanceId: CanonicalProviderInstanceIdSchema,
-  model: CanonicalChatModelReferenceSchema,
-  options: z.array(z.object({
-    id: canonicalReferenceId(80),
-    value: z.union([canonicalReferenceId(160), z.boolean()]),
-  }).strict()).max(32).optional(),
-}).strict().superRefine((selection, ctx) => {
-  const ids = selection.options?.map((option) => option.id) ?? [];
-  if (new Set(ids).size !== ids.length) {
-    ctx.addIssue({ code: "custom", path: ["options"], message: "Duplicate option selection" });
-  }
-});
 
 export const CanonicalChatInvocationSchema = z.object({
   kind: z.enum(["skill", "command"]),
@@ -494,6 +483,7 @@ export const CanonicalChatAgentActivityPayloadSchema = z.object({
 export const CanonicalChatToolOutputTextSchema = canonicalSafeErrorText(4_000, 16 * 1024);
 
 export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
+  CanonicalChatRunActivityBaseSchema.extend({ type: z.literal("bot.draft.proposed"), ...BotDraftProposalSchema.shape }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("run.status"),
     status: z.enum([

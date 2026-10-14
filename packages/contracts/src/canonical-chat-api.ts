@@ -1,3 +1,4 @@
+import { BotCreationSnapshotSchema } from "#bot-creation-draft";
 import { ChatRunContextSchema } from "#chat-agent-context";
 import { z } from "zod/v4";
 import {
@@ -146,6 +147,7 @@ const MentionAwareInputPartsSchema = z.array(CanonicalChatUserInputPartSchema).m
   .refine(validMentionCounts, { message: "Use one Agent and up to three distinct Chats and drive references" });
 
 export const CanonicalCreateChatTurnRequestSchema = z.object({
+  botCreation: BotCreationSnapshotSchema.optional(),
   clientRequestId: CanonicalChatRequestIdSchema,
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   parts: MentionAwareInputPartsSchema,
