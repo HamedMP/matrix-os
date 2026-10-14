@@ -687,7 +687,8 @@ export class TerminalRuntime {
       touch: () => {
         if (detached) return;
         const viewer = attachment!.viewers.get(viewerId);
-        if (viewer) viewer.lastTouched = Date.now();
+        if (!viewer || viewer.send !== send) throw new TerminalRuntimeError("unavailable");
+        viewer.lastTouched = Date.now();
       },
       detach: async () => {
         if (detached) return;
@@ -1136,6 +1137,10 @@ export class TerminalRuntime {
         if (now - viewer.lastTouched > this.viewerTtlMs) {
           viewer.disposeOutput();
           attachment.viewers.delete(viewerId);
+          try { await viewer.onDisconnect?.(); }
+          catch (error: unknown) {
+            console.error("[terminal-runtime] stale viewer disconnect failed", error instanceof Error ? error.name : "unknown_error");
+          }
         }
       }
       if (attachment.viewers.size === 0) await this.closeAttachment(key);
