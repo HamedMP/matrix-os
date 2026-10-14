@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { ChatAgentsPanel } from "../../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
 import { BotChatPanel } from "../../../packages/ui/src/chat-agents/bots/BotChatPanel.js";
+import { BotEditorApps } from "../../../packages/ui/src/chat-agents/bots/BotEditorApps.js";
 import { AgentRecipesPanel } from "../../../packages/ui/src/chat-agents/AgentRecipesPanel.js";
 import { clientFixture, saved } from "../../desktop/chat-agents-fixture.js";
 
@@ -141,8 +142,8 @@ it("shows branded connected accounts and clear Chat consent guidance in Agent se
   client.bots = { recipes: vi.fn(async () => []), authority: vi.fn(async () => ({ grants: [], connections: [{
     service: "gmail", serviceName: "Gmail", logoUrl: "https://pipedream.com/s.v0/gmail/logo/48", state: "connected_not_granted",
     accounts: [
-      { label: "Work", email: "work@example.test", state: "connected_not_granted" },
-      { label: "Personal", email: "personal@example.test", state: "connected_not_granted" },
+      { displayKey: `acct_${"a".repeat(24)}`, label: "Work", email: "work@example.test", state: "connected_not_granted" },
+      { displayKey: `acct_${"b".repeat(24)}`, label: "Personal", email: "personal@example.test", state: "connected_not_granted" },
     ],
   }], memory: { items: [] }, routines: [], pendingInteractions: [] })) } as never;
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
@@ -157,4 +158,22 @@ it("shows branded connected accounts and clear Chat consent guidance in Agent se
   expect(screen.getByText(/Ask this bot to use Gmail in Chat/)).toBeTruthy();
   expect(client.bots!.authority).toHaveBeenCalledWith(bot.id);
   expect(screen.queryByRole("button", { name: /^Connect|^Grant/ })).toBeNull();
+});
+
+it("keeps duplicate-label account rows attached to their identity across reorder and removal", () => {
+  const accounts = [
+    { displayKey: "acct_aaaaaaaaaaaaaaaaaaaaaaaa", label: "Gmail", email: "first@example.test", state: "connected_not_granted" as const },
+    { displayKey: "acct_bbbbbbbbbbbbbbbbbbbbbbbb", label: "Gmail", email: "second@example.test", state: "granted" as const },
+  ];
+  const authority = (rows: typeof accounts) => ({ agentId: "bot_research1", revision: 1, grants: [],
+    connections: [{ service: "gmail", state: "granted" as const, accounts: rows }],
+    routines: [], pendingInteractions: [], memory: { items: [] } });
+  const view = render(<BotEditorApps agentId="bot_research1" authority={authority(accounts)} />);
+  const firstRow = screen.getByText("first@example.test").parentElement?.parentElement;
+  const secondRow = screen.getByText("second@example.test").parentElement?.parentElement;
+  view.rerender(<BotEditorApps agentId="bot_research1" authority={authority([...accounts].reverse())} />);
+  expect(screen.getByText("first@example.test").parentElement?.parentElement).toBe(firstRow);
+  expect(screen.getByText("second@example.test").parentElement?.parentElement).toBe(secondRow);
+  view.rerender(<BotEditorApps agentId="bot_research1" authority={authority([accounts[1]!])} />);
+  expect(screen.getByText("second@example.test").parentElement?.parentElement).toBe(secondRow);
 });

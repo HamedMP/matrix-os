@@ -251,16 +251,28 @@ export function createBotIntegrationTools(deps: {
       const grants = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).listLive({
         ownerId: binding.ownerId, botId: binding.botId, audience: AUDIENCE, now: now().toISOString(),
       }, tx.db));
-      const missing = integrations.find(({ service, effects, required }) => {
-        if (!required && !args.service) return false;
-        return !grants.some((grant) => grant.service === service && effects.every((effect) => grant.effects.includes(effect))
+      const available: typeof integrations[number][] = [];
+      let skippedDeclined = false;
+      for (const entry of integrations) {
+        const { service, effects, required } = entry;
+        const usable = grants.some((grant) => grant.service === service && effects.every((effect) => grant.effects.includes(effect))
           && connected.filter((connection) => connection.service === service && connection.label === grant.accountLabel).length === 1
           && connected.some((connection) => connection.service === service && connection.connectionId === grant.connectionId && connection.label === grant.accountLabel));
-      });
-      if (missing) {
-        return text(await deps.transact(binding.ownerId, (tx) => requestAccess(tx, binding, missing.service, missing.effects, connected)));
+        if (!usable && !args.service) {
+          const declined = await deps.transact(binding.ownerId, async (tx) => Boolean(await tx.db.selectFrom("bot_interactions")
+            .select("interaction_id").where("owner_id", "=", binding.ownerId).where("task_id", "=", binding.taskId)
+            .where("kind", "in", ["account_choice", "connect_request"]).where("status", "in", ["resolved", "cancelled"])
+            .where(({ eb, ref }) => eb(ref("payload", "->>").key("service" as never), "=", service))
+            .executeTakeFirst()));
+          if (declined) { skippedDeclined = true; continue; }
+        }
+        if (!usable && (required || args.service)) {
+          return text(await deps.transact(binding.ownerId, (tx) => requestAccess(tx, binding, service, effects, connected)));
+        }
+        available.push(entry);
       }
-      const lines = integrations.map(({ service }) => {
+      if (available.length === 0) return text("The owner did not give access to these services in this task. Continue without them and do not ask again.");
+      const lines = available.map(({ service }) => {
         const granted = grants.filter((grant) => grant.service === service
           && connected.filter((connection) => connection.service === service && connection.label === grant.accountLabel).length === 1
           && connected.some((connection) => connection.service === service && connection.connectionId === grant.connectionId && connection.label === grant.accountLabel));
@@ -271,6 +283,7 @@ export function createBotIntegrationTools(deps: {
         const count = connected.filter((connection) => connection.service === service).length;
         return `${serviceName(service)} (${service}): ${count > 0 ? "connected, but this bot has no access yet" : "not connected"}`;
       });
+      if (skippedDeclined) lines.push("The owner did not give access to another service in this task. Continue without it and do not ask again.");
       return text(lines.join("\n"));
     },
 

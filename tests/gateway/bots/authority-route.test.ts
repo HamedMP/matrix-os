@@ -48,17 +48,43 @@ beforeEach(async () => {
 });
 afterEach(async () => destroy());
 
-function authority(inventory: () => Promise<Array<{ connectionId: string; service: string; label: string; email?: string | null }>>) {
+function authority(inventory: () => Promise<Array<{ connectionId: string; service: string; label: string; email?: string | null }>>, recipe = RECIPE) {
   return createBotAuthority({
     transact: createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>)),
     agents: { get: vi.fn(async (_owner, id) => (id === BOT ? { id: BOT, revision: 7, recipeRef: { recipeId: "brief", version: "1" } } : null) as never) },
-    recipes: createBotRecipeCatalog([RECIPE]),
+    recipes: createBotRecipeCatalog([recipe]),
     client: { inventory: vi.fn(inventory) } as never,
     now: () => new Date("2026-09-28T10:00:00.000Z"),
   });
 }
 
 describe("bot authority view", () => {
+  it("keeps X app access available when its registry logo is a local asset", async () => {
+    const recipe = { ...RECIPE, integrations: [{ service: "twitter", effects: ["read"] as const, required: true }] };
+    const view = await authority(async () => [], recipe).view(OWNER, BOT);
+    expect(view.connections).toEqual([{ service: "twitter", serviceName: "X", state: "not_connected", accounts: [] }]);
+  });
+
+  it("reports and displays a usable grant beyond the ten-account display limit", async () => {
+    const connected = Array.from({ length: 10 }, (_, index) => ({ connectionId: `conn_extra_${index}`, service: "gmail", label: `Extra ${index}` }));
+    connected.push({ connectionId: "conn_work", service: "gmail", label: "Work" });
+    const view = await authority(async () => connected).view(OWNER, BOT);
+    expect(view.connections[0]).toMatchObject({ state: "granted" });
+    expect(view.connections[0]?.accounts).toHaveLength(10);
+    expect(view.connections[0]?.accounts).toContainEqual(expect.objectContaining({ label: "Work", state: "granted" }));
+  });
+
+  it("gives duplicate account labels stable distinct display keys without exposing connection IDs", async () => {
+    const view = await authority(async () => [
+      { connectionId: "conn_first", service: "gmail", label: "Gmail" },
+      { connectionId: "conn_second", service: "gmail", label: "Gmail" },
+    ]).view(OWNER, BOT);
+    const accounts = view.connections[0]?.accounts ?? [];
+    expect(accounts.map(account => account.displayKey)).toEqual([expect.stringMatching(/^acct_[a-f0-9]{24}$/), expect.stringMatching(/^acct_[a-f0-9]{24}$/)]);
+    expect(accounts[0]?.displayKey).not.toBe(accounts[1]?.displayKey);
+    expect(JSON.stringify(view)).not.toContain("conn_");
+  });
+
   it("matches server state: grants, service states, open requests, and memory, with no account IDs", async () => {
     const view = await authority(async () => [
       { connectionId: "conn_work", service: "gmail", label: "Work" },

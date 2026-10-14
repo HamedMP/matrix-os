@@ -8,6 +8,7 @@ import { BotInteractionKindSchema } from "#bots/interactions";
 import { BotMemoryItemSchema } from "#bots/memory";
 
 export const BotConnectionAccountSchema = z.object({
+  displayKey: z.string().regex(/^acct_[a-f0-9]{24}$/),
   label: canonicalBoundedText(120, 480),
   email: z.string().max(254).nullable(),
   state: z.enum(["connected_not_granted", "granted"]),

@@ -219,6 +219,28 @@ describe("bot integration tools", () => {
     expect(await pending()).toHaveLength(1);
   });
 
+  it.each(["granted", "missing"])("continues to Gmail after Calendar is declined (%s Gmail access)", async (gmailAccess) => {
+    connected = [WORK];
+    if (gmailAccess === "granted") await grant(WORK, ["read"]);
+    const recipe = { ...RECIPE, integrations: [
+      { service: "google_calendar", effects: ["read"] as const, required: true },
+      { service: "gmail", effects: ["read"] as const, required: true },
+    ] };
+    const { tools, interactions } = setup(undefined, undefined, undefined, undefined, recipe);
+    expect((await tools.inventory(binding, {})).content[0]?.text).toContain("asked to connect Google Calendar");
+    const [calendar] = await pending();
+    await interactions.resolve(OWNER, CHAT, calendar!.interaction_id, { kind: "connect_request", baseRevision: 1, action: "decline" });
+    const result = (await tools.inventory(binding, {})).content[0]?.text;
+    if (gmailAccess === "granted") {
+      expect(result).toContain('Gmail (gmail): account "Work", connection conn_work, allowed: read');
+      expect(await pending()).toHaveLength(1);
+    } else {
+      expect(result).toContain("asked which Gmail account");
+      expect((await pending())[1]).toMatchObject({ kind: "account_choice", payload: { service: "gmail" } });
+    }
+    expect((await tools.inventory(binding, { service: "google_calendar" })).content[0]?.text).toContain("do not ask again");
+  });
+
   it("replaces an expired inventory choice instead of waiting forever", async () => {
     connected = [WORK, HOME];
     const { tools } = setup();
