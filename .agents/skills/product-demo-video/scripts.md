@@ -1,6 +1,6 @@
 # Demo Video Scripts
 
-Paths are relative to this skill directory. `record-lib.cjs` compiles both Swift tools into `$TMPDIR/mxo-demo-tools/` on first use, naming each build by a hash of its source and flags so worktrees never share a stale binary.
+Paths are relative to this skill directory. `record-lib.cjs` compiles both Swift tools into `$TMPDIR/mxo-demo-tools/` on first use, naming each build by a hash of its source and flags so worktrees never share a stale binary. Each use keeps the four most recently used builds per tool, deletes the rest, and removes partial compiles older than 10 minutes.
 
 ## encode-demo.swift
 
@@ -56,7 +56,7 @@ The export uses AVFoundation's highest-quality preset, which chooses the final b
 const lib = require("./scripts/record-lib.cjs");
 ```
 
-Exports: `SKILL`, `TOOLS_DIR`, `ENCODER_BIN`, `STITCH_BIN`, `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `WARP`, `ease`, `hold`, `now`, `fadeOverlapSeconds`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `dragHandle`, `dismissUpdate`, `assertCssSize`, `launchWeb`, `launchElectron`, `releaseElectron`, `hideOpenChat`, `snapshotFrame`, `wheelScroll`, `trimTail`, `cameraPath`, `toolPath`, `compileEncoder`, `compileStitcher`, `encodeTimeline`, `stitchRecipe`, `stitch`.
+Exports: `SKILL`, `TOOLS_DIR`, `ENCODER_BIN`, `STITCH_BIN`, `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `WARP`, `ease`, `hold`, `now`, `fadeOverlapSeconds`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `dragHandle`, `dismissUpdate`, `assertCssSize`, `launchWeb`, `launchElectron`, `releaseElectron`, `hideOpenChat`, `snapshotFrame`, `wheelScroll`, `trimTail`, `cameraPath`, `toolPath`, `pruneTools`, `compileEncoder`, `compileStitcher`, `encodeTimeline`, `stitchRecipe`, `stitch`.
 
 - `makeSession(css)` returns a session whose `timeline.framesDir` is a new `$TMPDIR/mxo-demo-frames-*` folder.
 - `encodeTimeline(timeline, css, output, segmentIndex?)` writes `<output>.manifest.json` and the MP4. Optional `segment.fastForward` and `caption.maxSpeed` control pacing.

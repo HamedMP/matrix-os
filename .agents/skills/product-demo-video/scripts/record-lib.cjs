@@ -235,12 +235,56 @@ function rejectInsideSkill(target, label) {
   if (insideSkill(target)) throw new Error(`${label} must not be written inside the skill`);
 }
 
+const TOOL_BUILDS_KEPT = 4;
+const PARTIAL_MAX_AGE_MS = 10 * 60_000;
+
+// Keeps the most recently used builds of one tool and drops abandoned partial compiles.
+function pruneTools(dir, name, current) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  const builds = [];
+  for (const entry of entries) {
+    if (!entry.startsWith(`${name}-`)) continue;
+    const file = path.join(dir, entry);
+    let stat;
+    try {
+      stat = fs.lstatSync(file);
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+    if (!stat.isFile()) continue;
+    if (entry.endsWith(".partial")) {
+      if (Date.now() - stat.mtimeMs > PARTIAL_MAX_AGE_MS) fs.rmSync(file, { force: true });
+    } else if (file !== current) {
+      builds.push({ file, used: stat.mtimeMs });
+    }
+  }
+  builds.sort((a, b) => b.used - a.used);
+  for (const { file } of builds.slice(TOOL_BUILDS_KEPT - 1)) fs.rmSync(file, { force: true });
+}
+
 function compileTool(src, bin, flags) {
-  if (fs.existsSync(bin)) return;
-  fs.mkdirSync(TOOLS_DIR, { recursive: true });
-  const partial = `${bin}.${process.pid}.partial`;
-  execFileSync("swiftc", [...flags, src, "-o", partial], { stdio: "inherit" });
-  fs.renameSync(partial, bin);
+  if (fs.existsSync(bin)) {
+    const now = new Date();
+    fs.utimesSync(bin, now, now);
+  } else {
+    fs.mkdirSync(TOOLS_DIR, { recursive: true });
+    const partial = `${bin}.${process.pid}.partial`;
+    try {
+      execFileSync("swiftc", [...flags, src, "-o", partial], { stdio: "inherit" });
+      fs.renameSync(partial, bin);
+    } catch (error) {
+      fs.rmSync(partial, { force: true });
+      throw error;
+    }
+  }
+  pruneTools(TOOLS_DIR, path.basename(src, ".swift"), bin);
 }
 
 const compileEncoder = () => compileTool(ENCODER_SRC, ENCODER_BIN, ENCODER_FLAGS);
@@ -485,6 +529,6 @@ module.exports = {
   ease, hold, now, fadeOverlapSeconds, cursorOverlay, makeSession, glide, boxOf, hover, click,
   focusFor, camera, caption, startCapture, stopCapture, dragHandle,
   dismissUpdate, assertCssSize, launchWeb, launchElectron, releaseElectron, hideOpenChat,
-  snapshotFrame, wheelScroll, trimTail, cameraPath, toolPath,
+  snapshotFrame, wheelScroll, trimTail, cameraPath, toolPath, pruneTools,
   compileEncoder, compileStitcher, encodeTimeline, stitchRecipe, stitch,
 };

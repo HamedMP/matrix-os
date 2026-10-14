@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
@@ -182,6 +182,46 @@ describe("Matrix product demo video skill", () => {
       expect(lib.toolPath(a, ["-O"])).not.toBe(lib.toolPath(b, ["-O"]));
       expect(lib.toolPath(a, ["-O"])).not.toBe(lib.toolPath(a, ["-O", "-parse-as-library"]));
       expect(inside(lib.TOOLS_DIR, lib.toolPath(a, ["-O"]))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes old tool builds and stale partial files, leaving symlinks alone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mxo-demo-prune-test-"));
+    const at = (file: string, secondsAgo: number) => {
+      const when = new Date(Date.now() - secondsAgo * 1000);
+      utimesSync(file, when, when);
+    };
+    try {
+      const builds = Array.from({ length: 6 }, (_, i) => join(dir, `encode-demo-${String(i).repeat(16)}`));
+      builds.forEach((file, i) => {
+        writeFileSync(file, "bin");
+        at(file, 100 - i * 10);
+      });
+      const current = builds[0];
+      const stale = join(dir, "encode-demo-aaaaaaaaaaaaaaaa.123.partial");
+      const fresh = join(dir, "encode-demo-bbbbbbbbbbbbbbbb.456.partial");
+      writeFileSync(stale, "half");
+      writeFileSync(fresh, "half");
+      at(stale, 3600);
+      const other = join(dir, "stitch-complete-cccccccccccccccc");
+      writeFileSync(other, "bin");
+      at(other, 9999);
+      const link = join(dir, "encode-demo-dddddddddddddddd");
+      symlinkSync(join(dir, "elsewhere"), link);
+
+      lib.pruneTools(dir, "encode-demo", current);
+
+      expect(readdirSync(dir).sort()).toEqual([
+        "encode-demo-3333333333333333",
+        "encode-demo-4444444444444444",
+        "encode-demo-5555555555555555",
+        "encode-demo-bbbbbbbbbbbbbbbb.456.partial",
+        "encode-demo-dddddddddddddddd",
+        "encode-demo-0000000000000000",
+        "stitch-complete-cccccccccccccccc",
+      ].sort());
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
