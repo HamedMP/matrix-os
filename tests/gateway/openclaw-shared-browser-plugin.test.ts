@@ -120,3 +120,50 @@ it("cannot resurrect a revoked lease after delayed native authentication complet
   expect(await s.hooks.get("before_tool_call")!({ toolName: "shared_browser", params: { action: "status" } }, { runId: "run_qa", sessionKey: "agent:main:qa", toolCallId: "late_1", toolName: "shared_browser" })).toMatchObject({ block: true });
   s.close();
 });
+it("reclaims a cancelled bind after authentication settles so the same Chat can retry", async () => {
+  const s = setup(); const response = Promise.withResolvers<Response>();
+  s.fetcher.mockImplementationOnce(async () => response.promise);
+  const binding = s.bind();
+  await s.methods.get("matrix.browser.revoke")!({ params: { runId: "run_qa" }, respond: vi.fn() });
+  const retryParams = { runId: "run_retry", sessionKey: "agent:main:qa", token: "a".repeat(43), expiresAt: Date.now() + 60_000 };
+  const early = vi.fn();
+  await s.methods.get("matrix.browser.bind")!({ params: retryParams, respond: early });
+  expect(early).toHaveBeenCalledWith(false, undefined, expect.any(Object));
+  response.resolve(Response.json({ success: true }));
+  expect(await binding).toHaveBeenCalledWith(false, undefined, expect.any(Object));
+  const retry = vi.fn();
+  await s.methods.get("matrix.browser.bind")!({ params: retryParams, respond: retry });
+  expect(retry).toHaveBeenCalledWith(true, { bound: true });
+  s.close();
+});
+it("recovers all capacity from cancelled pending binds without native agent_end events", async () => {
+  const s = setup(); const response = Promise.withResolvers<Response>();
+  s.fetcher.mockImplementation(async () => (await response.promise).clone());
+  const jobs = Array.from({ length: 64 }, (_, index) => s.methods.get("matrix.browser.bind")!({
+    params: { runId: `pending_${index}`, sessionKey: `pending_session_${index}`, token: "a".repeat(43), expiresAt: Date.now() + 60_000 }, respond: vi.fn(),
+  }));
+  for (let index = 0; index < 64; index++) {
+    await s.methods.get("matrix.browser.revoke")!({ params: { runId: `pending_${index}` }, respond: vi.fn() });
+  }
+  response.resolve(Response.json({ success: true }));
+  await Promise.all(jobs);
+  expect(await s.bind()).toHaveBeenCalledWith(true, { bound: true });
+  s.close();
+});
+it("does not reclaim a later authenticated revoked guard when an older cancelled bind settles", async () => {
+  const s = setup(); const response = Promise.withResolvers<Response>();
+  s.fetcher.mockImplementationOnce(async () => response.promise);
+  const oldBinding = s.bind();
+  await s.methods.get("matrix.browser.revoke")!({ params: { runId: "run_qa" }, respond: vi.fn() });
+  // A terminal event may settle the old native incarnation before its delayed
+  // authentication reply. A replacement with the same public ID is distinct.
+  s.hooks.get("agent_end")!({}, { runId: "run_qa" });
+  expect(await s.bind()).toHaveBeenCalledWith(true, { bound: true });
+  await s.methods.get("matrix.browser.revoke")!({ params: { runId: "run_qa" }, respond: vi.fn() });
+  response.resolve(Response.json({ success: true }));
+  await oldBinding;
+  expect(s.hooks.get("before_tool_call")!({ toolName: "exec" }, { runId: "run_qa", sessionKey: "agent:main:qa" }))
+    .toMatchObject({ block: true });
+  expect(await s.bind()).toHaveBeenCalledWith(false, undefined, expect.any(Object));
+  s.close();
+});

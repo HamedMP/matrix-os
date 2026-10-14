@@ -16,7 +16,8 @@ export interface SharedBrowserPluginApi {
   registerTool(factory: (context: Context) => NativeTool | null, options: { names: string[]; optional: boolean }): void;
   on(name: string, handler: (event: { toolName?: string; params?: unknown }, context: Context) => unknown): void;
 }
-interface Lease extends z.infer<typeof Bind> { controller: AbortController; browserStarted: boolean; authenticated: boolean }
+interface RevokedGuard { sessionKey: string }
+interface Lease extends z.infer<typeof Bind> { controller: AbortController; browserStarted: boolean; authenticated: boolean; cancelledBindGuard?: RevokedGuard }
 interface Ticket { lease: Lease; toolCallId: string; expiresAt: number; input: string }
 export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi, options: { gatewayPort: number; fetcher?: typeof fetch; now?: () => number }): () => void {
   sharedBrowserEndpoint(options.gatewayPort);
@@ -24,7 +25,7 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
   const leases = new Map<string, Lease>(); // <=64, terminal/revoke/shutdown/30m TTL.
   // Shares the 64-run cap with leases. Native termination (or gateway stop)
   // evicts these credential-free guards; an elapsed TTL does not prove exit.
-  const revoked = new Map<string, { sessionKey: string }>();
+  const revoked = new Map<string, RevokedGuard>();
   const tickets = new Map<string, Ticket>(); // <=128, one-use, 10s TTL and lease removal.
   let closed = false;
   function release(runId: string) { const lease = leases.get(runId); if (!lease) return; leases.delete(runId); lease.controller.abort();
@@ -33,7 +34,12 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
     const lease = leases.get(runId); if (!lease) return;
     // Abort is asynchronous in the native harness. Remove bearer authority
     // immediately without reopening native browser/shell fallbacks meanwhile.
-    revoked.set(runId, { sessionKey: lease.sessionKey }); release(runId);
+    const guard = { sessionKey: lease.sessionKey };
+    revoked.set(runId, guard);
+    // An unauthenticated reservation has not acknowledged a native start.
+    // Keep its exact guard until that bind's asynchronous work settles.
+    if (!lease.authenticated) lease.cancelledBindGuard = guard;
+    release(runId);
   }
   function sweep() { for (const lease of leases.values()) if (lease.expiresAt <= now()) revoke(lease.runId);
     for (const [id,ticket] of tickets) if (ticket.expiresAt <= now()) tickets.delete(id); }
@@ -54,6 +60,8 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
     } catch (error: unknown) {
       // A failed bind cannot start native inference, so it needs no tombstone.
       if (pending && leases.get(pending.runId) === pending) release(pending.runId);
+      if (pending && !pending.authenticated && pending.cancelledBindGuard
+        && revoked.get(pending.runId) === pending.cancelledBindGuard) revoked.delete(pending.runId);
       console.warn("[shared-browser-openclaw] Binding refused", error instanceof Error ? error.name : "UnknownError");
       respond(false, undefined, { code: "INVALID_REQUEST", message: "Browser binding unavailable." }); }
   }, { scope: "operator.admin" });
