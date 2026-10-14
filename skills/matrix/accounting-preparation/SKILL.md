@@ -18,7 +18,8 @@ Confirm the entity/account label, period, currency and requested services. Produ
 an evidence packet for review; do not claim bookkeeping, tax or filing correctness.
 
 Use the installed shared tool: `shared_browser` in Matrix Pi/OpenClaw, or
-`mcp__matrix_shared_browser__shared_browser` in Hermes. Begin with `status`,
+`mcp__matrix_shared_browser__shared_browser` in Hermes, Codex or Claude Code
+when advertised by the current run. Begin with `status`,
 `navigate` to the authorized service and `snapshot`. Use exact current
 `observationId` and `ref` for actions, never selectors or arbitrary evaluation.
 On Take over/Pause, wait for the owner's explicit Resume and a fresh snapshot;

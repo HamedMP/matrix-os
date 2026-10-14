@@ -19,7 +19,8 @@ available public search/fetch tool for static public pages. Use the browser when
 rendering or interaction is needed; do not imply access to absent tools.
 
 When present, use `shared_browser` in Matrix Pi/OpenClaw or
-`mcp__matrix_shared_browser__shared_browser` in Hermes for visible Matrix Chrome.
+`mcp__matrix_shared_browser__shared_browser` in Hermes, Codex or Claude Code
+when advertised by the current run, for visible Matrix Chrome.
 Begin with `status`, `navigate` and `snapshot`; actions use exact current
 `observationId` and `ref`. There are no arbitrary selectors/evaluation in this
 shared tool. On Take over/Pause, wait for owner Resume and a fresh snapshot;
