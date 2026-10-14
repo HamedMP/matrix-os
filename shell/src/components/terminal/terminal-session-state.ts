@@ -10,6 +10,7 @@ export interface ShellSessionSummary {
   status?: "active" | "exited" | "degraded";
   placement?: "active" | "background";
   updatedAt?: string;
+  activityAt?: string;
   attachedClients?: number;
   latestSeq?: number | null;
   lastSeenSeq?: number | null;
@@ -71,6 +72,7 @@ export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSess
       session.status !== next.status ||
       session.placement !== next.placement ||
       session.updatedAt !== next.updatedAt ||
+      session.activityAt !== next.activityAt ||
       session.attachedClients !== next.attachedClients ||
       session.latestSeq !== next.latestSeq ||
       session.lastSeenSeq !== next.lastSeenSeq ||

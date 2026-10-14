@@ -12,7 +12,7 @@ At main `0348437bc120a37d861904fa7969066e8bbe9222`, Desktop renders `TerminalTab
 - New tabs start at creation; successful input and changed, non-initial output advance activity.
 - Restore, observer initial replay, identical output, snapshot import, heartbeat, canonical-size bookkeeping and UI metadata do not advance activity. A subsequent screen redraw that changes content counts as output.
 - Legacy/migrated records with no trustworthy activity timestamp remain unknown until new input/output. Do not infer activity from an already polluted `updatedAt`.
-- Desktop shows `activityAt` with a tooltip explaining input/output semantics. Background command output counts as activity even if the user has not opened that tab.
+- Desktop shows `activityAt` with a tooltip explaining input/output semantics. Web carries it through refresh equality and shows it in ordinary Terminal hover cards; agent hover timestamps remain explicitly labeled agent metadata updates. Background command output counts as activity even if the user has not opened that tab.
 
 ## Regression scenarios
 
@@ -54,8 +54,8 @@ Local component screenshots use actual main/fixed Sidebar components with real s
 | Surface | Scope / evidence status |
 | --- | --- |
 | Electron Desktop | Affected list UI; component regression passes. Real Electron screenshot/recording pending with sole GUI executor. |
-| Web Desktop / Web Canvas | Runtime contract carries the optional field; no activity list rendering changed. Formal surface validation pending. |
-| Web Mobile / Native Mobile | Optional contract field is additive; no UI changed. Formal recovery validation pending. |
+| Web Desktop / Web Canvas | Ordinary Terminal hover cards display confirmed activity, with unknown legacy fallback; agent metadata updates retain their existing meaning. Formal surface validation pending. |
+| Web Mobile / Native Mobile | Web session refresh includes the optional activity field; Native contract remains additive. Formal recovery validation pending. |
 
 Linear searches found no exact matching timestamp issue; ticket confirmation is pending before publication. ENG-294 concerns frozen output after reattachment and is not reused. Stakeholder review of the timestamp semantics is recommended. Public documentation adds no feature in this repair; the semantics and test cases are recorded here for review.
 

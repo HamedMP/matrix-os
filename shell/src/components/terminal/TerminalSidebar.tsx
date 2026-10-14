@@ -324,6 +324,7 @@ export function LocalTerminalSidebar({
             agent: terminalTab.agent?.providerId as ShellSessionSummary["agent"],
             subtitle: terminalTab.name,
             updatedAt: terminalTab.updatedAt,
+            activityAt: terminalTab.activityAt,
           })))
         : [];
       commitShellRefreshState(applyShellRefreshSuccess(

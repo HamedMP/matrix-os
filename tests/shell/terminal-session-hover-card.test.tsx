@@ -40,12 +40,25 @@ function renderHoverCard(shell: ShellSessionSummary, canvasZoom = 1) {
   );
 
   const hoverCard = screen.getByTestId(`terminal-session-hover-card-${shell.name}`);
-  return within(hoverCard).getByTestId(`terminal-session-agent-metadata-grid-${shell.name}`);
+  return shell.agent ? within(hoverCard).getByTestId(`terminal-session-agent-metadata-grid-${shell.name}`) : hoverCard;
 }
 
 describe("TerminalSessionHoverCard", () => {
   afterEach(() => {
     act(() => useCanvasTransform.setState({ zoom: 1 }));
+    vi.useRealTimers();
+  });
+
+  it("shows confirmed terminal activity despite a recent metadata refresh", () => {
+    vi.setSystemTime(new Date("2026-10-14T10:00:00Z"));
+    renderHoverCard({ name: "idle-activity", updatedAt: "2026-10-14T09:58:00Z", activityAt: "2026-10-14T04:00:00Z", tabs: [] });
+    expect(screen.getByText("Activity 6h ago").getAttribute("dateTime")).toBe("2026-10-14T04:00:00Z");
+    expect(screen.queryByText("Updated 2m ago")).toBeNull();
+  });
+
+  it("does not invent recent activity for a legacy terminal", () => {
+    renderHoverCard({ name: "legacy-activity", updatedAt: new Date().toISOString(), tabs: [] });
+    expect(screen.getByText("Activity unknown").getAttribute("dateTime")).toBeNull();
   });
 
   it("uses the renderer's effective zoom instead of stale global canvas zoom", () => {

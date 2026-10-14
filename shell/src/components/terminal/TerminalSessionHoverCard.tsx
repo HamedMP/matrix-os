@@ -142,7 +142,9 @@ export function TerminalSessionHoverCard({
   const [theme, setTheme] = useState(FALLBACK_HOVER_CARD_THEME);
   const agentName = shell.agent ? formatTerminalAgentName(shell.agent) : "Terminal";
   const liveState = getShellVisualStatus(shell);
-  const updatedAt = shell.agent ? shell.agentUpdatedAt : shell.updatedAt;
+  const updatedAt = shell.agent ? shell.agentUpdatedAt : shell.activityAt;
+  const activityLabel = updatedAt && Number.isFinite(Date.parse(updatedAt))
+    ? formatAgentUpdatedAt(updatedAt).replace(/^Updated /, "Activity ") : "Activity unknown";
   const pullRequestUrl = safePullRequestUrl(shell.pullRequest?.url);
   const hasProjectContext = Boolean(shell.project || shell.repository || shell.branch || shell.pullRequest);
   const canDisplay = open && !suppressed && canOpenToRight(cardRef.current, canvasZoom);
@@ -272,9 +274,10 @@ export function TerminalSessionHoverCard({
           ) : null}
           <time
             dateTime={updatedAt}
+            title={shell.agent ? "Agent metadata update" : "Last terminal input or output; new sessions start at creation"}
             style={{ color: theme.subtle, fontSize: 10 }}
           >
-            {formatAgentUpdatedAt(updatedAt)}
+            {shell.agent ? formatAgentUpdatedAt(updatedAt) : activityLabel}
           </time>
         </HoverCardPrimitive.Content>
       </HoverCardPrimitive.Portal>
