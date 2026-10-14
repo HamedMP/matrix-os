@@ -268,7 +268,7 @@ export function createBotTaskOrchestrator(deps: {
     }
     try {
       let ownerSoul: string | undefined;
-      if (recipe.identitySource === "owner_soul" && deps.personality?.runtimeOwnerId === input.ownerId) {
+      if (deps.personality?.runtimeOwnerId === input.ownerId) {
         if (!await deps.admission.ownsDirectChat?.({ ownerId: input.ownerId, botId, chatId: input.chatId })) {
           throw new OwnerPersonalityError("unsafe_file");
         }
