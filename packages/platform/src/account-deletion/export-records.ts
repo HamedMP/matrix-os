@@ -49,24 +49,28 @@ export async function exportOwnerPlatformData(db:PlatformDB,owner:string,
     version:2 as const,exportedAt:new Date().toISOString(),positions:Object.fromEntries(GROUPS.map(group=>[group,{after:null,done:false}])) as Record<Group,z.infer<typeof Position>> };
   await db.ready;
   return db.transaction(async trx=>{
+    await sql`SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
     // One Clerk identity maps to at most one platform user; do not buffer an owner inventory.
     const profile = await trx.executor.selectFrom('users').select('id').where('clerk_id','=',owner).limit(2).execute();
     if(profile.length>1)throw new Error('Export identity mismatch');
     const definitions=selections(owner,[owner,...profile.map(row=>row.id)]);
-    const result=Object.fromEntries(GROUPS.map(group=>[group,[]])) as Record<Group,PortableRow[]>;
+    const result:Record<Group,PortableRow[]>={profile:[],posts:[],comments:[],likes:[],follows:[],machines:[],billing:[],onboarding:[],apps:[],appRatings:[],appInstalls:[],creditLedger:[],onboardingJourney:[]};
     const positions={...state.positions};
     let bytes=0;
     for(const group of GROUPS){
       const position=state.positions[group];
       if(position.done)continue;
       const definition=definitions[group];
+      const portableValue=(column:string)=>column==='amount_microusd'
+        ?sql`CASE WHEN amount_microusd BETWEEN -9007199254740991 AND 9007199254740991 THEN to_jsonb(amount_microusd) ELSE to_jsonb(amount_microusd::text) END`
+        :sql`${sql.ref(column)}`;
       const date=definition.time ? sql`${sql.ref(definition.time)}::timestamptz <= ${state.exportedAt}::timestamptz` : sql`true`;
       const after=position.after===null?sql`true`:sql`${definition.key} COLLATE "C" > ${position.after}`;
       // The DB bounds each payload before it crosses the process boundary; oversize is a failure, never truncation.
       const response=await sql<{ export_key:string; data:PortableRow|null }>`SELECT export_key,
         CASE WHEN octet_length(portable::text) <= ${MAX_RECORD_BYTES} THEN portable ELSE NULL END AS data
         FROM (SELECT ${definition.key} COLLATE "C" AS export_key,
-          jsonb_build_object(${sql.join(definition.columns.flatMap(column=>[sql`${column}::text`,sql`${sql.ref(column)}`]))}) AS portable
+          jsonb_build_object(${sql.join(definition.columns.flatMap(column=>[sql`${column}::text`,portableValue(column)]))}) AS portable
           FROM ${sql.table(definition.table)} WHERE ${definition.filter} AND ${date} AND ${after}
           ORDER BY ${definition.key} COLLATE "C" LIMIT ${ROWS_PER_GROUP+1}) page`.execute(trx.executor);
       let accepted=0;

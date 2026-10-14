@@ -129,4 +129,12 @@ describe("saving account records", () => {
       await expect(saveAccountRecords(RECORDS)).rejects.toThrow("read-only folder");
     });
   });
+  it("keeps numbered pages separate and does not confirm a dismissed iOS share", async () => {
+    jest.replaceProperty(Platform, "OS", "ios");
+    const share = jest.spyOn(Share, "share").mockResolvedValue({ action: "dismissedAction" });
+    await expect(saveAccountRecords(RECORDS, 2)).resolves.toBe(false);
+    expect(share).toHaveBeenCalledWith({ url: "file:///cache/matrix-account-page-002.json" });
+    expect(mockFiles).toEqual({});
+  });
+
 });

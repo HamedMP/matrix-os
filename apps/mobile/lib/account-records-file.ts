@@ -14,23 +14,25 @@ const RECORDS_FILE_NAME = "matrix-account.json";
  * Resolves false when the user backed out of the Android folder picker, and
  * rejects when the file could not be written or shared.
  */
-export async function saveAccountRecords(json: string): Promise<boolean> {
-  if (Platform.OS === "android") return saveToPickedDirectory(json);
+export async function saveAccountRecords(json: string, page?: number): Promise<boolean> {
+  if (page !== undefined && (!Number.isSafeInteger(page) || page < 1 || page > 1_000_000)) throw new Error("Invalid record page");
+  const name = page === undefined ? RECORDS_FILE_NAME : `matrix-account-page-${String(page).padStart(3, "0")}.json`;
+  if (Platform.OS === "android") return saveToPickedDirectory(json, name);
 
-  const file = new File(Paths.cache, RECORDS_FILE_NAME);
+  const file = new File(Paths.cache, name);
   try {
     if (file.exists) file.delete();
     file.create();
     file.write(json);
-    await Share.share({ url: file.uri });
-    return true;
+    const result = await Share.share({ url: file.uri });
+    return result.action !== Share.dismissedAction;
   } finally {
     // The export holds personal data; it must not outlive the share sheet.
     if (file.exists) file.delete();
   }
 }
 
-async function saveToPickedDirectory(json: string): Promise<boolean> {
+async function saveToPickedDirectory(json: string, name: string): Promise<boolean> {
   let directory: Directory;
   try {
     directory = await Directory.pickDirectoryAsync();
@@ -40,7 +42,7 @@ async function saveToPickedDirectory(json: string): Promise<boolean> {
     if (isPickerCancellation(error)) return false;
     throw error;
   }
-  directory.createFile(RECORDS_FILE_NAME, "application/json").write(json);
+  directory.createFile(name, "application/json").write(json);
   return true;
 }
 

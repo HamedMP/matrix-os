@@ -33,3 +33,19 @@ describe('account export continuation boundaries',()=>{
       getPresignedGetUrl:async()=> 'https://storage.example.test/notes',deleteObject:async()=>{},abortOwnerMultipartUploads:async()=>{}},'user_a','matrixos-sync')).rejects.toThrow('fixture unavailable');
   });
 });
+
+import { sql } from 'kysely';
+import { createTestPlatformDb } from './native-platform-db-test-helper.js';
+import { exportOwnerPlatformData } from '../../packages/platform/src/account-deletion/export.js';
+it('preserves exact owner credit amounts outside JavaScript safe integer precision',async()=>{
+  const {db}=await createTestPlatformDb();
+  try{
+    await sql`INSERT INTO user_machines(machine_id,clerk_user_id,handle,provisioned_at)
+      VALUES('precision-machine','user_precision','precision','2026-10-01T12:00:00Z')`.execute(db.executor);
+    await sql`INSERT INTO ai_funded_credit_ledger(entry_id,owner_id,machine_id,runtime_slot,kind,amount_microusd,source_reference,created_at)
+      VALUES('precision-credit','user_precision','precision-machine','primary','addon_grant',9007199254740993,'PRIVATE_SOURCE','2026-10-01T12:00:00Z')`.execute(db.executor);
+    const page=await exportOwnerPlatformData(db,'user_precision');
+    expect(page.creditLedger[0].amount_microusd).toBe('9007199254740993');
+    expect(JSON.stringify(page)).not.toContain('PRIVATE_SOURCE');
+  }finally{await db.destroy();}
+});
