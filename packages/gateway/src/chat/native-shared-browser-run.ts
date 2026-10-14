@@ -23,6 +23,7 @@ export function openNativeSharedBrowserRun(options: {
   }
   let closing: Promise<void> | undefined;
   return {
+    isLive: () => options.broker.resolveCapability(lease.token) !== null,
     attemptId: randomUUID(), token: lease.token, expiresAt: lease.expiresAt,
     mcpServer: {
       command: "/opt/matrix/runtime/node/bin/node",
