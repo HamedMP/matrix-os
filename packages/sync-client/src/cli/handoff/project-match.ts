@@ -14,6 +14,7 @@ export interface MatrixProject {
   github?: { owner: string; repo: string };
   archivedAt?: string;
   deletingAt?: string;
+  createRequestId?: string;
 }
 
 const GITHUB_NAME = /^[A-Za-z0-9_.-]{1,100}$/;

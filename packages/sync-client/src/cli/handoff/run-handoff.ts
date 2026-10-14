@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, open, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { HandoffApiError, type ChatSelection, type HandoffGateway, type ProviderInstance } from "./gateway-api.js";
@@ -53,6 +54,8 @@ export interface TranscriptChoice {
   modifiedMs: number;
   /** File identity at preview time; the import reads exactly these bytes. */
   capture: { size: number; dev: bigint; ino: bigint };
+  /** SHA-256 of the approved byte range, filled in before confirmation. */
+  sha256?: string;
 }
 
 export interface HandoffInput {
@@ -232,6 +235,20 @@ async function runScript(gateway: HandoffGateway, command: RemoteCommand, step: 
   return output;
 }
 
+async function hashPrefix(path: string, size: number): Promise<string> {
+  const hash = createHash("sha256");
+  if (size > 0) {
+    for await (const chunk of createReadStream(path, { start: 0, end: size - 1 })) hash.update(chunk as Buffer);
+  }
+  return hash.digest("hex");
+}
+
+/** Request ids this approved handoff uses when it creates the project. */
+export function handoffCreateRequestIds(uploadId: string): string[] {
+  const base = `req_${uploadId.replace(/-/g, "_")}`;
+  return [`${base}_project`, `${base}_project_alt`, `${base}_folder`];
+}
+
 async function resolveTranscript(
   history: HandoffInput["history"],
   root: string,
@@ -278,7 +295,16 @@ export async function runHandoff(
       ? { action: "create_github", slug: slugBase(repo.github.repo), url: githubHttpsUrl(repo.github) }
       : { action: "create_folder", slug: fallbackSlug };
 
-  const transcript = await resolveTranscript(input.history, repo.root, deps);
+  const resolved = await resolveTranscript(input.history, repo.root, deps);
+  const transcript = resolved ? { ...resolved, sha256: await hashPrefix(resolved.path, resolved.capture.size) } : null;
+  // A project this approved handoff itself created (an earlier attempt that
+  // failed later) still counts as the approved "create" plan.
+  const approvedUploadId = approved ? `handoff-${approved[1]}-${approved[2]!.slice(0, 12)}` : null;
+  const createdByThisHandoff = Boolean(match?.createRequestId && approvedUploadId
+    && handoffCreateRequestIds(approvedUploadId).includes(match.createRequestId));
+  const projectScope = match && !createdByThisHandoff
+    ? { reuse: match.id }
+    : { create: { github: repo.github ? githubHttpsUrl(repo.github).toLowerCase() : null, fallbackSlug } };
 
   return await withScratchDir(async (scratch) => {
     const snapshot = await snapshotWorkingTree(repo, scratch);
@@ -292,16 +318,14 @@ export async function runHandoff(
       branch,
       snapshot: snapshot.commit,
       withheld: snapshot.withheldPaths,
-      // The project's identity, not the reuse/create decision, so a retry after
-      // this handoff created the project still matches the approval.
-      project: { github: repo.github ? githubHttpsUrl(repo.github).toLowerCase() : null, fallbackSlug },
+      project: projectScope,
       agent: input.agent,
       selection,
       permissionMode,
       brief: input.brief ?? "",
       title,
       transcript: transcript
-        ? { path: transcript.path, bytes: transcript.bytes, dev: String(transcript.capture.dev), ino: String(transcript.capture.ino) }
+        ? { path: transcript.path, bytes: transcript.bytes, dev: String(transcript.capture.dev), ino: String(transcript.capture.ino), sha256: transcript.sha256 }
         : null,
     };
     const digest = digestOf(scope);
