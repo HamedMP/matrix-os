@@ -5,7 +5,7 @@ import {resolveMainSource,verifyMainSource} from './dedicated-main.mjs';
 import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {verifyFullHostedCoverage} from './dedicated-hosted.mjs';
 import {verifyMainCiDecision,authenticatedMainDecisionProof} from './main-ci-decision.mjs';
-import {gateErrorLine} from './gate-log.mjs';
+import {logGateEvent} from './gate-log.mjs';
 const request={timeout:10000};
 export async function reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester}){
  const source=await readCurrentBranchSha(github,repo,'main',request);
@@ -51,10 +51,10 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   try{result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};}
   catch(error){
    if(!(error instanceof Error))throw error;
-   console.warn(`Main source qualification fell back at linux: ${gateErrorLine(error)}`);
    // Delegated main runs full hosted CI whenever Linux does not verify; that hosted coverage qualifies main.
+   if(mode!=='delegated'&&mode!=='shadow')throw error;
+   logGateEvent('Main source qualification fell back','linux',error);
    if(mode==='delegated')result={linuxFallback:true};
-   else if(mode!=='shadow')throw error;
   }
   if(!result){
    // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block main.
@@ -83,7 +83,7 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   await write('success',result.docsOnly?'Current exact-main selected documentation coverage passed':result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':result.linuxFallback?'Current exact-main full hosted fallback coverage passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
  }catch(error){
   if(!(error instanceof Error))throw error;
-  console.warn(`Main source qualification failed at ${stage}: ${gateErrorLine(error)}`);
+  logGateEvent('Main source qualification failed',stage,error);
   await write('failure','Fresh exact-main qualification evidence is missing or stale');
  }
  return 1;

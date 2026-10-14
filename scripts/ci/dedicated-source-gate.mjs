@@ -7,7 +7,7 @@ import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {readReviewedConfiguration} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
 import {reconcileMainSourceQualification} from './dedicated-main-source-gate.mjs';
-import {gateErrorLine} from './gate-log.mjs';
+import {logGateEvent} from './gate-log.mjs';
 const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const sha=/^[a-f0-9]{40}$/;
@@ -50,7 +50,7 @@ async function ownedGate(github,repo,pull,workflow,appId){
  throw new Error('Relevant source gate history exceeds bounded coverage');
 }
 // Logged before the failure write, so a failing write cannot hide the root cause.
-function logGateError(prNumber,stage,error){console.warn(`Source qualification failed for PR #${prNumber} at ${stage}: ${gateErrorLine(error)}`);}
+function logGateError(prNumber,stage,error){logGateEvent(`Source qualification failed for PR #${prNumber}`,stage,error);}
 async function currentRequester(github,repo,snapshot,options={}){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refresh CI definition');
@@ -148,7 +148,9 @@ export async function reconcileSourceQualification(github,repo,controller,option
     catch(error){
      // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block the PR.
      if(config.mode!=='shadow'||!(error instanceof Error))throw error;
-     logGateError(pull.number,'shadow-linux',error);
+     // Shadow mode only observes Linux, so a miss is logged as observed rather than failed.
+     logGateEvent(`Source qualification observed a shadow Linux miss for PR #${pull.number}`,'shadow-linux',error);
+     phase='shadow-supersede';
      await verifyCurrentDedicatedSource(github,repo,snapshot);
      const latest=await currentRequester(github,repo,snapshot,{});
      if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
@@ -158,6 +160,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
     }
     if(result.infrastructure){await verifyFullHostedCoverage(github,repo,requester);evidence.infrastructureFallback=true;evidence.infrastructure=result.infrastructure;}
    }
+   phase='supersede';
    const currentPull=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);
    if(recovery&&(await settings(github,repo)).admitted&&['fast-ci','ready-for-ci'].every(label=>currentPull.labels?.some(value=>value.name===label)))throw new Error('Admission changed during hosted recovery');
    const latest=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});

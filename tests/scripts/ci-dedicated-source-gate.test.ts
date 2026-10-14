@@ -66,7 +66,7 @@ it('restores only the distinct gate after real-shaped fresh hosted and complete 
 const degrade=(f:ReturnType<typeof completeFixture>,kind:string)=>{if(kind==='failed')f.ci.conclusion='failure';if(kind==='pending')f.ci.status='queued';if(kind==='attempt')f.ci.run_attempt=2;if(kind==='missing')f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[]}});if(kind==='stale')f.pull.merge_commit_sha=main;};
 it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshness from %s coverage',async kind=>{const f=completeFixture();degrade(f,kind);const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
  // Shadow mode swallows the Linux error to write neutral; the reason still reaches the controller log.
- try{await reconcile(f);if(kind==='missing')expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Source qualification failed for PR #2454 at shadow-linux: /));}finally{warn.mockRestore();}
+ try{await reconcile(f);if(kind==='missing')expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Source qualification observed a shadow Linux miss for PR #2454 at shadow-linux: /));}finally{warn.mockRestore();}
  const written=f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args);expect(written.length).toBeGreaterThan(0);expect(written.every(args=>args.conclusion!=='success')).toBe(true);
  // Shadow observes: hosted success with missing Linux evidence is neutral; hosted failure or stale source still fails.
  expect(written.every(args=>args.conclusion===(['attempt','missing'].includes(kind)?'neutral':'failure'))).toBe(true);});
