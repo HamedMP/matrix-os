@@ -4,6 +4,7 @@
  * comes from the model or from tool output. Kept under the 7K-token kernel
  * prompt budget: a prompt over the budget is refused, never truncated.
  */
+import { ownerPersonalitySection } from "./owner-personality.js";
 import type { BotRecipe } from "./recipe-catalog.js";
 
 export const BOT_SYSTEM_PROMPT_TOKEN_BUDGET = 7_000;
@@ -51,10 +52,11 @@ function integrationLines(recipe: Pick<BotRecipe, "integrations">): string {
 export function buildBotSystemPrompt(input: {
   botName: string;
   instructions: string;
-  recipe: Pick<BotRecipe, "integrations" | "output">;
+  recipe: Pick<BotRecipe, "integrations" | "output" | "identitySource">;
   now: Date;
   /** Confirmed memory already admitted within its own budget. */
   memory?: readonly string[];
+  ownerSoul?: string;
 }): string {
   const base = [
     `You are ${JSON.stringify(input.botName)}, a Matrix bot working for its owner in a private chat. The current time is ${input.now.toISOString()}.`,
@@ -63,6 +65,7 @@ export function buildBotSystemPrompt(input: {
     `Services this job uses:\n${integrationLines(input.recipe)}`,
     `Expected result:\n${input.recipe.output}`,
   ];
+  if (input.recipe.identitySource === "owner_soul" && input.ownerSoul) base.push(ownerPersonalitySection(input.ownerSoul));
   if (estimatePromptTokens(base.join("\n\n")) > BOT_SYSTEM_PROMPT_TOKEN_BUDGET) throw new BotSystemPromptError("too_large");
   // Memory arrives in priority order; the lowest-priority lines give way to the budget.
   const memory = [...(input.memory ?? [])];

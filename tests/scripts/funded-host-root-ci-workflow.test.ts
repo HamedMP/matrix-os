@@ -9,7 +9,7 @@ const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
 const root = workflow.jobs["funded-host-root"];
 const aggregate = workflow.jobs["ci-results"];
 
-function executeRootStep(pullFails: false | true | "primary" = false) {
+function executeRootStep(pullFails: false | true | "primary" = false, architecture = "x86_64", generatedFails = false) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "funded-host-ci-images-")));
   try {
     const trace = join(dir, "docker-arguments");
@@ -20,18 +20,21 @@ function executeRootStep(pullFails: false | true | "primary" = false) {
       'printf "\\0" >> "$DOCKER_TRACE"',
       'if [[ "$1" == pull && "$PULL_FAILS" == true ]]; then exit 42; fi',
       'if [[ "$1" == pull && "$PULL_FAILS" == primary && "$2" == public.ecr.aws/* ]]; then exit 42; fi',
+      'if [[ "$1" == run && "${!#}" == */funded-config-linux.mjs && "$GENERATED_FAILS" == true ]]; then exit 43; fi',
       "",
     ].join("\n"));
     writeFileSync(join(dir, "timeout"), '#!/usr/bin/env bash\nshift 2\nexec "$@"\n');
+    writeFileSync(join(dir, "uname"), '#!/usr/bin/env bash\nprintf "%s\\n" "$TEST_ARCHITECTURE"\n');
     chmodSync(join(dir, "docker"), 0o700);
     chmodSync(join(dir, "timeout"), 0o700);
+    chmodSync(join(dir, "uname"), 0o700);
     const step = root.steps.find((candidate: { name?: string }) =>
       candidate.name === "Execute isolated root fixtures without skipped cases");
     const result = spawnSync("bash", ["-eu", "-c", step.run], {
       cwd: dir, encoding: "utf8", timeout: 5_000,
       env: { ...process.env, PATH: `${dir}:${process.env.PATH}`,
         GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "2", DOCKER_TRACE: trace,
-        PULL_FAILS: String(pullFails) },
+        PULL_FAILS: String(pullFails), TEST_ARCHITECTURE: architecture, GENERATED_FAILS: String(generatedFails) },
     });
     const calls = readFileSync(trace, "utf8").split("\0\0").filter(Boolean).map(call => call.split("\0"));
     return { status: result.status, calls, dir };
@@ -52,8 +55,27 @@ describe("protected funded host disposable root CI", () => {
         "--env", "MATRIX_DISPOSABLE_ROOT_TEST=true",
         "--mount", `type=bind,src=${result.dir},dst=/work,readonly`,
         image, "python3", "-I", "/work/scripts/ci/run-funded-host-root-tests.py"],
+      ["run", "--rm", "--init", "--name", "funded-host-root-123-2", "--network", "none",
+        "--cpus", "2", "--memory", "2g", "--pids-limit", "256",
+        "--env", "MATRIX_FUNDED_REPAIR_DISPOSABLE_TEST=1",
+        "--env", "MATRIX_FUNDED_REPAIR_EXPECT_ARCH=x64",
+        "--mount", `type=bind,src=${result.dir},dst=/work,readonly`,
+        image, "node", "/work/tests/deploy/customer-vps/funded-config-linux.mjs"],
       ["rm", "-f", "funded-host-root-123-2"],
     ]);
+  });
+
+  it("rejects a translated or non-x64 runner before pulling or executing fixtures", () => {
+    const result = executeRootStep(false, "arm64");
+    expect(result.status).not.toBe(0);
+    expect(result.calls).toEqual([]);
+  });
+
+  it("fails the required job when the whole generated command fixture fails and still cleans up", () => {
+    const result = executeRootStep(false, "x86_64", true);
+    expect(result.status).toBe(43);
+    expect(result.calls.filter(call => call[0] === "run")).toHaveLength(2);
+    expect(result.calls.at(-1)).toEqual(["rm", "-f", "funded-host-root-123-2"]);
   });
 
   it("fails before root execution when the image pull fails and still cleans up", () => {
@@ -76,6 +98,10 @@ describe("protected funded host disposable root CI", () => {
     expect(run).toContain("none");
     expect(run).toContain("MATRIX_DISPOSABLE_ROOT_TEST=true");
     expect(run.at(-1)).toBe("/work/scripts/ci/run-funded-host-root-tests.py");
+    const generated = result.calls.filter(call => call[0] === "run")[1];
+    expect(generated).toContain("docker.io/library/node:24-bookworm");
+    expect(generated).toContain("MATRIX_FUNDED_REPAIR_DISPOSABLE_TEST=1");
+    expect(generated.at(-1)).toBe("/work/tests/deploy/customer-vps/funded-config-linux.mjs");
   });
 
   it("isolates root execution, resource limits and checkout credentials", () => {
@@ -83,6 +109,7 @@ describe("protected funded host disposable root CI", () => {
     expect(root["timeout-minutes"]).toBe(10);
     expect(root.permissions).toEqual({ contents: "read" });
     expect(root.steps[0].with["persist-credentials"]).toBe(false);
+    expect(root.steps[0].with.ref).toBe("${{ needs.changes.outputs.source_sha }}");
     const run = root.steps.find((step: { run?: string }) => step.run)?.run;
     expect(run).toContain("--network none");
     expect(run).toContain("--cpus 2 --memory 2g --pids-limit 256");

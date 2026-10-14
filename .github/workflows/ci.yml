@@ -29,7 +29,7 @@ on:
     types: [labeled, ready_for_review, synchronize, reopened, edited]
 
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}
+  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}
   queue: max
 
 permissions:
@@ -44,14 +44,20 @@ jobs:
     timeout-minutes: 3
     outputs:
       source_sha: ${{ steps.refresh.outputs.sourceSha || github.sha }}
+      # Exact-source refresh dispatches run on main but check out a PR merge. They may restore
+      # caches but must never save them, or PR code could poison caches shared with main.
+      cache_write: ${{ (github.event_name == 'workflow_dispatch' && inputs.pr_number != '') && 'false' || 'true' }}
       snapshot: ${{ steps.refresh.outputs.snapshot }}
       base_sha: ${{ steps.changed.outputs.base_sha }}
       bootstrap: ${{ steps.changed.outputs.bootstrap }}
-      trigger_requested: ${{ steps.changed.outputs.trigger_requested }}
-      should_run: ${{ steps.changed.outputs.should_run }}
-      docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
-      os_view_parity_tests: ${{ steps.changed.outputs.os_view_parity_tests }}
+      # A superseded PR head skips every heavy lane: queued runs for pushes that a newer push replaced
+      # would otherwise each spend a full CI on the saturated hosted runner pool.
+      trigger_requested: ${{ steps.superseded.outputs.stale == 'true' && 'true' || steps.changed.outputs.trigger_requested }}
+      should_run: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.should_run }}
+      docs_contract_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests }}
+      os_view_parity_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.os_view_parity_tests }}
       dedicated_eligible: ${{ steps.route.outputs.eligible }}
+      dedicated_mode: ${{ steps.route.outputs.mode }}
       dedicated_required: ${{ steps.route.outputs.required }}
     steps:
       - name: Checkout trusted main refresh helpers
@@ -114,6 +120,24 @@ jobs:
             sleep "$backoff_seconds"
           done
 
+      - name: Skip superseded PR heads
+        id: superseded
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const pull=context.payload.pull_request;
+            try{
+              const {data:live}=await github.rest.pulls.get({...context.repo,pull_number:pull.number,request:{timeout:10000}});
+              const stale=live.head.sha!==pull.head.sha;
+              core.setOutput('stale',String(stale));
+              if(stale)core.notice(`PR head ${pull.head.sha} was superseded by ${live.head.sha}; skipping CI lanes for the old head.`);
+            }catch(error){
+              // Never block CI on this optimization: run normally when the live head is unknown.
+              core.warning(`Superseded-head check unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
+              core.setOutput('stale','false');
+            }
+
       - name: Detect source changes
         id: changed
         env:
@@ -128,6 +152,7 @@ jobs:
         id: route
         env:
           MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
+          MATRIX_CI_DEDICATED_MAIN: ${{ vars.MATRIX_CI_DEDICATED_MAIN }}
           MATRIX_CI_DEDICATED_SHADOW: ${{ vars.MATRIX_CI_DEDICATED_SHADOW }}
           SHOULD_RUN: ${{ steps.changed.outputs.should_run }}
           REFRESH_SNAPSHOT: ${{ steps.refresh.outputs.snapshot }}
@@ -137,14 +162,17 @@ jobs:
           const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
           const {selectDedicatedRoute}=await import('./scripts/ci/dedicated-admission.mjs');
           const refresh=process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null;
-          if(refresh){const hosted=refresh.executionMode==='hosted-only';appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${!hosted&&process.env.MATRIX_CI_DEDICATED_ENABLED==='true'}\nrequired=${!hosted}\n`);process.exit(0);}
+          const enabled=process.env.MATRIX_CI_DEDICATED_ENABLED==='true';
+          if(refresh){const hosted=refresh.executionMode==='hosted-only';appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${!hosted&&enabled}\nrequired=${!hosted}\nmode=${!hosted&&enabled?'delegated':'shadow'}\n`);process.exit(0);}
+          // Main pushes delegate behind their own flag, so PR routing can ship before main controllers do.
+          const scoped=enabled&&(process.env.GITHUB_EVENT_NAME!=='push'||process.env.MATRIX_CI_DEDICATED_MAIN==='true');
           const eligible=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
-            eventName:process.env.GITHUB_EVENT_NAME, enabled:process.env.MATRIX_CI_DEDICATED_ENABLED,
+            eventName:process.env.GITHUB_EVENT_NAME, enabled:scoped?'true':'false',
             shouldRun:process.env.SHOULD_RUN, ref:process.env.GITHUB_REF, pull:event.pull_request});
           const required=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
             eventName:process.env.GITHUB_EVENT_NAME, enabled:(process.env.MATRIX_CI_DEDICATED_ENABLED==='true'||process.env.MATRIX_CI_DEDICATED_SHADOW==='true')?'true':'false',
             shouldRun:process.env.SHOULD_RUN,ref:process.env.GITHUB_REF,pull:event.pull_request});
-          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\nmode=${scoped?'delegated':'shadow'}\n`);
           NODE
 
 
@@ -207,11 +235,11 @@ jobs:
           script: |
             if(process.env.DEDICATED_ELIGIBLE!=='true'){core.setOutput('provider','hosted');core.setOutput('infrastructure_fallback','false');return;}
             const {pathToFileURL}=require('node:url');const {resolve}=require('node:path');
-            const {requestingSnapshot,decideCiBackend}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
-            const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
-            const result=await decideCiBackend(github,{...context.repo,...snapshot,requestingRunId:context.runId,
+            const {decideRequestingBackend}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
+            const result=await decideRequestingBackend(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null,{requestingRunId:context.runId,
               requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:'delegated',imageDigest:process.env.IMAGE_DIGEST,
               harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl});
+            if(result.fallbackReason)core.warning(`Main Linux qualification fell back to full hosted CI: ${result.fallbackReason}`);
             core.setOutput('provider',result.provider);core.setOutput('infrastructure_fallback',String(result.infrastructureFallback));
 
   typecheck:
@@ -242,7 +270,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -279,13 +307,14 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
-      - name: Cache Next incremental compilation
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore Next incremental compilation
+        id: next-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: shell/.next/cache
           key: next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
@@ -304,6 +333,13 @@ jobs:
           NEXT_PUBLIC_POSTHOG_HOST: https://eu.posthog.com
           NEXT_PUBLIC_POSTHOG_API_HOST: /relay
         run: bun run build:shell:production
+
+      - name: Save Next incremental compilation
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.next-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: shell/.next/cache
+          key: next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
 
   patterns:
     name: Pattern Scan
@@ -456,7 +492,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 20
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -497,7 +533,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -550,7 +586,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'
@@ -587,7 +623,9 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16
+        # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
+        # and a service container cannot fall back; Google's Docker Hub mirror is not pull-limited.
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: matrix_test
           POSTGRES_PASSWORD: matrix_test
@@ -613,7 +651,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
       - run: pnpm install --frozen-lockfile
       - name: Build test prerequisites once
         run: bun run test:prepare
@@ -629,10 +667,10 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/platform/account-deletion-*-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
-      - name: Bot creation, Integration grant and source admission races
+      - name: Bot creation, Integration grant and canonical phase admission races
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          pnpm exec vitest run tests/gateway/bots/integration-grant-source-postgres.test.ts tests/gateway/bots/instantiation.test.ts tests/gateway/bots/funded-inference-timeout.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/gateway/bots/integration-grant-source-postgres.test.ts tests/gateway/bots/instantiation.test.ts tests/gateway/bots/matrix-bot-personality.test.ts tests/gateway/bots/funded-inference-timeout.test.ts tests/platform/canonical-phase-catalog-readiness.test.ts tests/platform/canonical-funding-expiry-projection.test.ts tests/gateway/canonical-phase-discovery.test.ts tests/platform/canonical-phase-postgres-cleanup.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Preview Drive revocation and admission races
         run: |
@@ -662,7 +700,7 @@ jobs:
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -694,7 +732,7 @@ jobs:
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -749,7 +787,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'
@@ -763,8 +801,9 @@ jobs:
       - name: Build test prerequisites once
         run: bun run test:prepare
 
-      - name: Cache Playwright browser revisions
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore Playwright browser revisions
+        id: playwright-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
@@ -776,6 +815,13 @@ jobs:
       - name: Install Chromium for shell-scoped Settings regressions
         if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter shell exec playwright install --with-deps chromium
+
+      - name: Save Playwright browser revisions
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Run E2E tests
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'general'
@@ -926,6 +972,7 @@ jobs:
       - name: Execute isolated root fixtures without skipped cases
         run: |
           set -euo pipefail
+          if [[ "$(uname -m)" != x86_64 ]]; then exit 1; fi
           container_name="funded-host-root-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT
           image="public.ecr.aws/docker/library/node:24-bookworm"
@@ -938,16 +985,23 @@ jobs:
             --env MATRIX_DISPOSABLE_ROOT_TEST=true \
             --mount "type=bind,src=$PWD,dst=/work,readonly" \
             "$image" python3 -I /work/scripts/ci/run-funded-host-root-tests.py
+          # A fresh container is required: the generated-command fixture owns /opt/matrix.
+          timeout --kill-after=10s 180s docker run --rm --init \
+            --name "$container_name" --network none --cpus 2 --memory 2g --pids-limit 256 \
+            --env MATRIX_FUNDED_REPAIR_DISPOSABLE_TEST=1 \
+            --env MATRIX_FUNDED_REPAIR_EXPECT_ARCH=x64 \
+            --mount "type=bind,src=$PWD,dst=/work,readonly" \
+            "$image" node /work/tests/deploy/customer-vps/funded-config-linux.mjs
 
   dedicated-linux:
     name: Verified Dedicated Linux Qualification
     needs: changes
     # Only delegated routing waits on Linux here. In shadow mode CI Results would otherwise wait up to
     # 70 minutes for a non-blocking result; the controller check and source gates record shadow outcomes.
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && vars.MATRIX_CI_DEDICATED_ENABLED == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && needs.changes.outputs.dedicated_mode == 'delegated'
     runs-on: ubuntu-latest
     # Shadow observes Linux qualification; checkout failures and timeouts must not fail the run either.
-    continue-on-error: ${{ vars.MATRIX_CI_DEDICATED_ENABLED != 'true' }}
+    continue-on-error: ${{ needs.changes.outputs.dedicated_mode != 'delegated' }}
     timeout-minutes: 70
     permissions:
       actions: read
@@ -963,7 +1017,7 @@ jobs:
         env:
           REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
           REQUESTING_ATTEMPT: ${{ github.run_attempt }}
-          MODE: ${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}
+          MODE: ${{ needs.changes.outputs.dedicated_mode == 'delegated' && 'delegated' || 'shadow' }}
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
           HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
         with:
@@ -1006,7 +1060,7 @@ jobs:
           CI_BACKEND_PROVIDER: ${{ needs.ci-backend.outputs.provider }}
           INFRASTRUCTURE_FALLBACK: ${{ needs.ci-backend.outputs.infrastructure_fallback }}
           DEDICATED_LINUX_RESULT: ${{ needs.dedicated-linux.result }}
-          DEDICATED_MODE: ${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}
+          DEDICATED_MODE: ${{ needs.changes.outputs.dedicated_mode == 'delegated' && 'delegated' || 'shadow' }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           SHELL_PRODUCTION_BUILD_RESULT: ${{ needs.shell-production-build.result }}

@@ -1,0 +1,34 @@
+name: Review Receipt
+
+# Records the base each Greptile-reviewed commit forked from, so that
+# scripts/review/review-carryover.mjs can replay the reviewed change onto a
+# restacked, retargeted or updated base and carry a 5/5 review over. Runs
+# main's code only; PR commits are read as data.
+on:
+  issue_comment:
+    types: [created, edited]
+
+concurrency:
+  group: review-receipt-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  record:
+    if: github.event.issue.pull_request && github.event.comment.user.login == 'greptile-apps[bot]' && contains(github.event.comment.body, 'Confidence Score:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # Treeless: merge-base needs the commit graph only, a few MB.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          filter: tree:0
+          persist-credentials: false
+      - name: Record review base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: node scripts/review/review-carryover.mjs record "$PR_NUMBER"

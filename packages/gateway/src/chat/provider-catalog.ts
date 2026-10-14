@@ -503,6 +503,7 @@ function projectSkills(
 }
 
 export function createChatProviderCatalogService(options: {
+  observationScope?: (principal: RequestPrincipal) => "canonical_matrix" | undefined;
   codingProviders: Pick<CodingAgentProviderRegistry, "listProviders" | "invalidate">;
   agentRuntimeSource: AgentRuntimeSource;
   systemRuntimeSources?: Partial<Record<SystemDriverKind, AgentRuntimeSource>>;
@@ -525,8 +526,9 @@ export function createChatProviderCatalogService(options: {
   // Keep refresh mode local to this call; never cache owner/funding authority.
   async function readCatalog(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions,
     refreshAiProvider = false, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
-    const scope = chatCatalogDiscoveryScope(selection);
-    const systemRuntimeReads = Promise.all(scope.systems.map(async (kind) => {
+    const observationScope = options.observationScope?.(principal);
+    const scope = chatCatalogDiscoveryScope(selection, observationScope);
+    const systemRuntimeReads = Promise.all(scope.readSystems.map(async (kind) => {
       const source = options.systemRuntimeSources?.[kind];
       if (!source) return [kind, null] as const;
       try {
@@ -537,10 +539,10 @@ export function createChatProviderCatalogService(options: {
       }
     }));
     const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
-      scope.coding.length > 0 ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
+      scope.readCoding ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
       scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
       scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot(selection ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
+      options.harnessSettingsSource?.getSnapshot(selection || observationScope ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
       systemRuntimeReads,
     ]);
     if (codingResult.status === "rejected") {
@@ -679,15 +681,18 @@ export function createChatProviderCatalogService(options: {
       console.warn(`[chat-providers] Canonical Provider projection failed validation: ${safeIssuePaths.join(",")}`);
       throw new ProviderCatalogUnavailableError(false);
     }
+    options.observationScope?.(principal);
     return parsed.data;
   }
   const service: ChatProviderCatalogService = {
     async refresh(principal, readOptions) {
-      options.invalidateCodingModelCatalog?.(principal);
-      options.codingProviders.invalidate(principal.userId);
-      options.agentRuntimeSource.invalidate?.();
-      for (const source of Object.values(options.systemRuntimeSources ?? {})) {
-        source?.invalidate?.();
+      if (!options.observationScope?.(principal)) {
+        options.invalidateCodingModelCatalog?.(principal);
+        options.codingProviders.invalidate(principal.userId);
+        options.agentRuntimeSource.invalidate?.();
+        for (const source of Object.values(options.systemRuntimeSources ?? {})) {
+          source?.invalidate?.();
+        }
       }
       return readCatalog(principal, readOptions, true);
     },

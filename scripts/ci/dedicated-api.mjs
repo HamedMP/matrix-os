@@ -54,7 +54,7 @@ export function createConditionalGithub(source,options={}){
 export async function readReviewedConfiguration(github,repo){
  const {data}=await github.rest.actions.listRepoVariables({...repo,per_page:100,page:1,request:{timeout:10000}});
  if(!Number.isSafeInteger(data?.total_count)||data.total_count<0||data.total_count>100||!Array.isArray(data.variables)||data.variables.length!==data.total_count)throw new Error('Reviewed variable list exceeds bounded coverage');
- const names=['MATRIX_CI_CONTROLLER_SHA','MATRIX_CI_DEDICATED_ENABLED','MATRIX_CI_DEDICATED_SHADOW','MATRIX_CI_RUNNER_IMAGE_DIGEST','MATRIX_CI_RUNNER_HARNESS_DIGEST'];
+ const names=['MATRIX_CI_CONTROLLER_SHA','MATRIX_CI_DEDICATED_ENABLED','MATRIX_CI_DEDICATED_MAIN','MATRIX_CI_DEDICATED_SHADOW','MATRIX_CI_RUNNER_IMAGE_DIGEST','MATRIX_CI_RUNNER_HARNESS_DIGEST'];
  const values={};
  for(const variable of data.variables){if(!names.includes(variable.name))continue;if(Object.hasOwn(values,variable.name))throw new Error('Duplicate reviewed configuration variable');if(typeof variable.value!=='string'||variable.value.length>256)throw new Error('Invalid reviewed configuration value');values[variable.name]=variable.value;}
  return values;

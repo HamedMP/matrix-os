@@ -1,4 +1,4 @@
-import { isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
+import { isolatedChatModelMatches, isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
 import { sameCustomCoordinatorSelection } from "./custom-procedure.js";
 import { recipeCoordinatorSelection } from "./coordinator-selection.js";
 /**
@@ -29,6 +29,7 @@ import type { ChatAgentStore } from "../chat/agent-store.js";
 import { createCanonicalCliEventQueue, type CanonicalCliEventQueue } from "../chat/cli-process.js";
 import type { ScopeRuntimeHostClient } from "../scope-runtime-host/index.js";
 import { BotAdmissionError, type PrivateBotAdmission } from "./admission.js";
+import { readTrustedBotRunLimits } from "./trusted-inference-limits.js";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "./broker-actions.js";
 import { BotRecipeCatalogError, type BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotBindingsRepository } from "./repositories/bindings.js";
@@ -38,12 +39,12 @@ import type { BotMemoryService } from "./memory-service.js";
 import { createBotTasksRepository, type BotBlockedReason, type BotTask } from "./repositories/tasks.js";
 import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
 import { BOT_RUNTIME_REGISTRY_CAPACITY, type BotRuntimeRegistry } from "./runtime-registry.js";
+import { readOwnerSoul, OwnerPersonalityError, type OwnerPersonalityConfig } from "./owner-personality.js";
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
 
 const ACTIVE_DEADLINE_MS = 10 * 60_000;
 /** How long a worker that took the cancel has to end its run before its runtime is stopped. */
 const CANCEL_GRACE_MS = 10_000;
-const MAX_TOOL_ACTIONS = 60;
 const MAX_QUEUED_EVENTS = 1_000;
 /** Tools the broker serves today; the rest of a recipe's set arrives with later layers. */
 const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
@@ -99,7 +100,9 @@ export function createBotTaskOrchestrator(deps: {
   resolveProcedure?(ownerId: string, agent: ChatAgent): Promise<import("./recipe-catalog.js").BotRecipe>;
   resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
   executorReady?(ownerId: string, botId: string): Promise<boolean>;
-  admission: Pick<PrivateBotAdmission, "admit" | "release">;
+  admission: Pick<PrivateBotAdmission, "admit" | "release"> & Partial<Pick<PrivateBotAdmission, "ownsDirectChat">>;
+  personality?: OwnerPersonalityConfig;
+  isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
   registry: Pick<BotRuntimeRegistry, "lookupRun" | "cancelInference">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
   onRunFinished?(runId: string): void;
@@ -109,6 +112,7 @@ export function createBotTaskOrchestrator(deps: {
   /** Test hook; 10 seconds, and never longer. */
   cancelGraceMs?: number;
 }) {
+  const limits = readTrustedBotRunLimits();
   const now = () => (deps.now?.() ?? new Date()).toISOString();
   const activeDeadlineMs = Math.max(1, Math.min(Math.trunc(deps.activeDeadlineMs ?? ACTIVE_DEADLINE_MS), ACTIVE_DEADLINE_MS));
   const cancelGraceMs = Math.max(1, Math.min(Math.trunc(deps.cancelGraceMs ?? CANCEL_GRACE_MS), CANCEL_GRACE_MS));
@@ -211,8 +215,26 @@ export function createBotTaskOrchestrator(deps: {
       if (error instanceof BotRecipeCatalogError || error instanceof BotRouteError) return { status: "failed" };
       throw error;
     }
+    let selection: import("@matrix-os/contracts").CanonicalChatModelSelection | undefined;
+    let isolatedModel: import("@matrix-os/contracts").IsolatedChatEnvelope["modelId"] | undefined;
+    try {
+      isolatedModel = deps.isolatedChat?.selectCanonical?.({ ownerId: input.ownerId, chatId: input.chatId,
+        botId, recipeRef: agent.recipeRef });
+      if (isolatedModel) {
+        selection = recipeCoordinatorSelection(input.selection, agent.selection);
+        deps.isolatedChat?.selectCanonical?.({ ownerId: input.ownerId, chatId: input.chatId,
+          botId, recipeRef: agent.recipeRef, ...(selection ? { modelId: selection.model } : {}) });
+        if (recipe.identitySource !== "owner_soul" || selection && (selection.instanceId !== "matrix_pi_default" || selection.options?.length)) throw new Error("Isolated Bot unavailable");
+        selection = { instanceId: "matrix_pi_default", model: isolatedModel === "anthropic/claude-sonnet-5"
+          ? "claude-sonnet-5" : isolatedModel };
+      }
+    } catch (error: unknown) {
+      console.warn("[bots] coordinator unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return { status: "blocked", blockedReason: "policy_denied" };
+    }
     const { task, continued } = await begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId });
     run.queue.push({ kind: "state", state: { taskId: task.taskId } });
+    if (isolatedModel && continued) return settle(task, "blocked", "policy_denied");
     // A reply in Chat answers a question the waiting task still has open.
     try {
       if (continued) await deps.interactions?.answerWithMessage({ ownerId: input.ownerId, taskId: task.taskId, chatId: input.chatId, text: input.text });
@@ -224,13 +246,18 @@ export function createBotTaskOrchestrator(deps: {
 
     let resolved: ResolvedBotRoute;
     try {
-      resolved = await deps.resolveRoute(recipeCoordinatorSelection(input.selection, agent.selection));
+      resolved = await deps.resolveRoute(isolatedModel ? selection : recipeCoordinatorSelection(input.selection, agent.selection));
+      if (isolatedModel) {
+        if (resolved.accessSourceId !== "matrix_included" || resolved.subscription || resolved.anthropicApi
+          || !isolatedChatModelMatches(isolatedModel, resolved.route.modelId)) throw new BotRouteError("model_unavailable");
+        resolved = { ...resolved, route: { ...resolved.route, maxOutputTokens: 256 } };
+      }
     } catch (error: unknown) {
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
     }
-    const capabilities = recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
-    try { if (await deps.executorReady?.(input.ownerId, botId)) capabilities.push('agent.task'); }
+    const capabilities = isolatedModel ? [] : recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
+    try { if (!isolatedModel && await deps.executorReady?.(input.ownerId, botId)) capabilities.push('agent.task'); }
     catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return settle(task, 'blocked', 'policy_denied'); }
     let memory: string[];
     try {
@@ -240,15 +267,23 @@ export function createBotTaskOrchestrator(deps: {
       return settle(task, "failed");
     }
     try {
+      let ownerSoul: string | undefined;
+      if (recipe.identitySource === "owner_soul" && deps.personality?.runtimeOwnerId === input.ownerId) {
+        if (!await deps.admission.ownsDirectChat?.({ ownerId: input.ownerId, botId, chatId: input.chatId })) {
+          throw new OwnerPersonalityError("unsafe_file");
+        }
+        ownerSoul = await readOwnerSoul(deps.personality.homePath);
+      }
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, now: new Date(now()) }),
+        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, now: new Date(now()) }),
         capabilities,
-        limits: { maxToolActions: MAX_TOOL_ACTIONS },
+        limits: isolatedModel ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         turn: { kind: "prompt", text: input.text },
       });
     } catch (error: unknown) {
-      if (!(error instanceof BotSystemPromptError)) console.warn("[bots] run spec invalid:", error instanceof Error ? error.name : "UnknownError");
+      if (error instanceof OwnerPersonalityError) console.warn("[bots] personality unavailable:", error.code);
+      else if (!(error instanceof BotSystemPromptError)) console.warn("[bots] run spec invalid:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "policy_denied");
     }
 
@@ -256,6 +291,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       runtime = await deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
+        ...(isolatedModel ? { recipeRef: agent.recipeRef } : {}),
         ...(isManagedCustomBot(agent) ? { managedDefinitionRevision: agent.revision } : {}),
         route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: "interactive",
       });
@@ -272,6 +308,13 @@ export function createBotTaskOrchestrator(deps: {
     try {
       // Cancelled while the runtime was being admitted: the run never starts.
       if (input.signal.aborted || run.stopping) return await settle(task, "cancelled");
+      if (isolatedModel) {
+        const binding = deps.registry.lookupRun({ ...run.runtime, runId: input.runId });
+        if (!binding) return await settle(task, "blocked", "policy_denied");
+        const isolatedTurn = await deps.isolatedChat!.claim(binding);
+        if (!isolatedTurn?.target) return await settle(task, "blocked", "policy_denied");
+        run.spec = BotRunSpecSchema.parse({ ...run.spec, isolatedTurn });
+      }
       const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId } });
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
       // Past the deadline only a finished reply stands; anything else would need more time.
@@ -333,7 +376,7 @@ export function createBotTaskOrchestrator(deps: {
     /** Relays a person's steering message to the running worker. */
     async steer(runId: string, text: string): Promise<boolean> {
       const run = active.get(runId);
-      if (!run?.runtime || !deps.registry.lookupRun({ ...run.runtime, runId })) return false;
+      if (!run?.runtime || run.spec?.isolatedTurn || !deps.registry.lookupRun({ ...run.runtime, runId })) return false;
       const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.steer", runId, text: text.slice(0, 8 * 1024) } });
       return reply.ok;
     },

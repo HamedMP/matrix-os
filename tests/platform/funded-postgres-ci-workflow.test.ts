@@ -47,7 +47,12 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(result.status, result.diagnostics).toBe(0);
     expect(result.args).toEqual([
       "exec", "vitest", "run", "tests/gateway/bots/integration-grant-source-postgres.test.ts",
-      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/matrix-bot-personality.test.ts",
+      "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "tests/platform/canonical-phase-catalog-readiness.test.ts",
+      "tests/platform/canonical-funding-expiry-projection.test.ts",
+      "tests/gateway/canonical-phase-discovery.test.ts",
+      "tests/platform/canonical-phase-postgres-cleanup.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
     ]);
     const absentUrl = executeSettlementStep(undefined, step);
@@ -59,7 +64,12 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(result.status, result.diagnostics).toBe(0);
     expect(result.args).toEqual([
       "exec", "vitest", "run", "tests/gateway/bots/integration-grant-source-postgres.test.ts",
-      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/matrix-bot-personality.test.ts",
+      "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "tests/platform/canonical-phase-catalog-readiness.test.ts",
+      "tests/platform/canonical-funding-expiry-projection.test.ts",
+      "tests/gateway/canonical-phase-discovery.test.ts",
+      "tests/platform/canonical-phase-postgres-cleanup.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
     ]);
     const absentUrl = executeSettlementStep(undefined, step);
@@ -125,7 +135,7 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.should_run == 'true'");
     expect(job["timeout-minutes"]).toBe(10);
-    expect(job.services.postgres.image).toBe("public.ecr.aws/docker/library/postgres:16");
+    expect(job.services.postgres.image).toBe("mirror.gcr.io/library/postgres:16");
     expect(job.services.postgres.env).toEqual({ POSTGRES_USER: "matrix_test",
       POSTGRES_PASSWORD: "matrix_test", POSTGRES_DB: "matrix_test" });
     expect(job.env.MATRIX_TEST_POSTGRES_URL).toBe("postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test");

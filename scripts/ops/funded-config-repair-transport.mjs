@@ -14,7 +14,7 @@ export function sealFundedConfigRepair(request, helperSource, authToken, now = D
   }
   const plaintext = Buffer.from(JSON.stringify(request));
   if (plaintext.length > 4096 || !request?.identity || !request?.expectedFile
-    || !['apply', 'rollback'].includes(request.action)) throw new Error('Invalid repair request');
+    || !['apply', 'rollback', 'align-routing', 'rollback-routing'].includes(request.action)) throw new Error('Invalid repair request');
   if (helperSource.includes(authToken) || (typeof request.config?.runtimeToken === 'string'
     && helperSource.includes(request.config.runtimeToken))) throw new Error('Secrets must not be embedded in helper source');
   const aad = {
@@ -32,12 +32,14 @@ export function sealFundedConfigRepair(request, helperSource, authToken, now = D
   return {
     envelope: { version: 1, aad, salt: salt.toString('base64'), iv: iv.toString('base64'),
       tag: cipher.getAuthTag().toString('base64'), ciphertext: ciphertext.toString('base64') },
-    helper: deflateSync(Buffer.from(helperSource)).toString('base64'),
+    helper: deflateSync(Buffer.from(helperSource), { level: 9 }).toString('base64'),
   };
 }
 
 /** Isolated bootstrap; production command calls only fixed defaults.
- * Path/UID overrides are for unprivileged process tests, never envelope fields. */
+ * Path/UID overrides are for unprivileged process tests, never envelope fields.
+ * Production fds come from the trusted stdlib launcher; never reopen host.env through writable ancestors.
+ * Redact complete installed credentials; malformed legacy values can match ordinary receipt text. */
 export function executeFundedConfigRepairBridge(transport, options = {}) {
   const fs = nodeRequire('node:fs');
   const crypto = nodeRequire('node:crypto');
@@ -69,8 +71,6 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
     }
   };
   verifyPath();
-  // Production fds are inherited from the trusted stdlib launcher. Never reopen
-  // host.env through writable ancestors after validation.
   const fd = anchored ? descriptors.host : fs.openSync(envPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   let bytes;
   try {
@@ -90,13 +90,14 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
   } finally { fs.closeSync(fd); }
   const names = { machineId: 'MATRIX_MACHINE_ID', ownerId: 'MATRIX_CLERK_USER_ID',
     handle: 'MATRIX_HANDLE', runtimeSlot: 'MATRIX_RUNTIME_SLOT', epoch: 'MATRIX_RUNTIME_TOKEN_EPOCH' };
-  const watched = new Set([...Object.values(names), 'MATRIX_AUTH_TOKEN']);
+  const watched = new Set([...Object.values(names), 'MATRIX_AUTH_TOKEN', 'MATRIX_FUNDED_AI_RUNTIME_TOKEN']);
   const values = {};
   for (const line of bytes.toString('utf8').split('\n')) {
     const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
     if (!match || !watched.has(match[1])) continue;
     requireCondition(!(match[1] in values) && line.startsWith(match[1] + '=')
-      && /^[A-Za-z0-9_-]+$/.test(line.slice(match[1].length + 1)));
+      && (match[1] === 'MATRIX_FUNDED_AI_RUNTIME_TOKEN' ? /^[A-Za-z0-9_./:@%+~-]*$/ : /^[A-Za-z0-9_-]+$/)
+        .test(line.slice(match[1].length + 1)));
     values[match[1]] = line.slice(match[1].length + 1);
   }
   const envelope = transport.envelope;
@@ -141,6 +142,7 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
   const receipt = JSON.parse(result.stdout);
   const rendered = JSON.stringify(receipt);
   requireCondition(!rendered.includes(values.MATRIX_AUTH_TOKEN)
+    && !(/^[a-f0-9]{64}$/.test(values.MATRIX_FUNDED_AI_RUNTIME_TOKEN ?? '') && rendered.includes(values.MATRIX_FUNDED_AI_RUNTIME_TOKEN))
     && !(typeof request.config?.runtimeToken === 'string' && rendered.includes(request.config.runtimeToken)));
   requireCondition(Object.keys(receipt).sort().join() === ['action', 'afterSha256', 'backup', 'beforeSha256', 'changed', 'restartRequired'].sort().join()
     && receipt.action === aad.action && typeof receipt.changed === 'boolean'
@@ -155,8 +157,8 @@ export function buildFundedConfigRepairCommand(request, helperSource, authToken,
   if (typeof nodeSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(nodeSha256)) throw new Error('Independently verified Node digest is required');
   const transport = sealFundedConfigRepair(request, helperSource, authToken, now);
   const bootstrap = `const nodeRequire=require;${executeFundedConfigRepairBridge.toString()};try{process.stdout.write(JSON.stringify(executeFundedConfigRepairBridge(JSON.parse(require('node:zlib').inflateSync(Buffer.from(process.argv.slice(2).join(''),'base64'),{maxOutputLength:16384}).toString('utf8'))))+'\\n')}catch{process.stderr.write('{"error":"transport_failed"}\\n');process.exit(1)}`;
-  const compressedBootstrap = deflateSync(Buffer.from(bootstrap)).toString('base64');
-  const launcher = deflateSync(readFileSync(new URL('./launch-funded-config-repair.py', import.meta.url))).toString('base64');
+  const compressedBootstrap = deflateSync(Buffer.from(bootstrap), { level: 9 }).toString('base64');
+  const launcher = deflateSync(readFileSync(new URL('./launch-funded-config-repair.py', import.meta.url)), { level: 9 }).toString('base64');
   const loader = `import sys,zlib,base64
 try:
  d=zlib.decompressobj();s=d.decompress(base64.b64decode(sys.argv.pop(1),validate=True),16385)
@@ -165,7 +167,7 @@ try:
 except Exception:
  print('{"error":"transport_failed"}',file=sys.stderr);sys.exit(1)
 `;
-  const encoded = deflateSync(Buffer.from(JSON.stringify(transport))).toString('base64');
+  const encoded = deflateSync(Buffer.from(JSON.stringify(transport)), { level: 9 }).toString('base64');
   const chunks = encoded.match(/.{1,4096}/g) ?? [];
   const command = ['/usr/bin/sudo', '-n', '/usr/bin/python3', '-I', '-c', loader, launcher, nodeSha256, compressedBootstrap, ...chunks];
   if (command.length > 64 || command.some(arg => arg.length > 4096)

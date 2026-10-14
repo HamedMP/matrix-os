@@ -1,5 +1,55 @@
 # Funded host configuration reconciliation
 
+## Standalone operator routing alignment (ENG-256)
+
+The existing normal-owner configuration repair transport may carry an explicit
+`align-routing` action for an already configured customer primary. This is
+separate from automatic funded-host reconciliation: it changes exactly the
+funded Platform and Relay URL assignments to reviewed normal HTTPS origins,
+preserving the installed runtime token, enabled state (including disabled),
+epoch, all excluded assignments, installed bundle, owner data and financial
+state. The operator payload contains no funded runtime credential. Do not
+silently repair missing assignments or substitute a Preview/tag origin.
+
+Require the existing identity/primary-slot/epoch and full-file digest/device/
+inode CAS, externally coordinated idle/sole-writer window, recipient trust and
+independently verified runtime-interpreter provenance. Additionally bind both
+routing actions to the exact full source SHA and version of protected installed
+release metadata. Check that binding before preparation, immediately before
+rename and after commit. A local metadata match does not replace independent
+immutable artifact, loaded Gateway, current registry, authority/credential
+compatibility or destination revision/image/default-origin evidence. Do not
+read credential values to bridge an unproven authority transition.
+
+`rollback-routing` consumes only its version-2 journal and requires fresh CAS,
+identity/epoch and the original release binding. Refuse independently changed
+target fields, token, enabled state or release; preserve later unrelated edits.
+An unchanged post-image restores exact original bytes, and an already restored
+state is a no-op. Failures after commit remain unknown outcomes requiring
+independent readback, never a blind request replay. Existing private journal
+retention and conflict rules still apply.
+
+The helper never restarts a service. A changed configuration requires the
+coordinator's separately approved delayed Gateway restart and loaded readback
+under the same idle window. Disconnections and foreground interruption remain
+possible. Tool tests must exercise actual files/locks/CAS/atomic writes/rollback,
+redaction of installed tokens absent from the request, source drift and unknown
+commit refusal through the existing transport. No new endpoint, grants,
+credentials, model call, deployment or runtime acceptance follows from tool
+availability. Public documentation follow-up stays within ENG-256 and describes
+only product boundaries if customer-visible routing behavior changes; private
+operator targets and commands stay outside the public docs site.
+
+Legacy `apply` may replace a malformed nonempty installed funded token. The bridge
+accepts the helper's literal-value alphabet for that field, including punctuation;
+spaces, quotes, semicolons and dollar signs remain rejected without changing the
+file. Transport output redaction matches complete 64-character hexadecimal credentials, while
+retaining the strict receipt allowlist and hashes; short invalid values must not
+match ordinary receipt text and falsely report failure after a successful write.
+Exercise the real bridge and atomic helper on owned temporary files, verifying
+the replacement, successful receipt, restart flag and full-credential redaction.
+Routing-only actions still require the existing valid installed credential.
+
 ## Scope and authority
 
 Repair missing funded Chat configuration through a reviewed immutable host

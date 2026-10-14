@@ -28,7 +28,7 @@ import {
   readBoundedBody,
   safeResponseHeaders,
 } from "../collaboration/scope-runtime-broker.js";
-import type { PiRuntimeBinding } from "./runtime-registry.js";
+import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
 /** Funded relay generation may buffer the full reply; the worker bridge and
@@ -40,6 +40,8 @@ const BotInferenceBodySchema = z.object({
   model: z.string().min(1).max(256),
   stream: z.literal(true),
   tools: z.array(z.unknown()).max(MAX_BOT_TOOLS).optional(),
+  max_tokens: z.number().int().positive().optional(),
+  max_completion_tokens: z.number().int().positive().optional(),
 }).passthrough();
 
 export interface BotInferenceDependencies {
@@ -103,8 +105,10 @@ export async function forwardBotInference(
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResponse> {
   let modelId: string;
+  let parsedBody: z.infer<typeof BotInferenceBodySchema>;
   try {
-    modelId = BotInferenceBodySchema.parse(JSON.parse(request.body)).model;
+    parsedBody = BotInferenceBodySchema.parse(JSON.parse(request.body));
+    modelId = parsedBody.model;
   } catch (error: unknown) {
     if (!(error instanceof SyntaxError) && !(error instanceof z.ZodError)) {
       console.warn("[bots] inference validation failed:", error instanceof Error ? error.name : "UnknownError");
@@ -142,6 +146,18 @@ export async function forwardBotInference(
     return failure(request.requestId, "provider_unavailable");
   }
 
+  // The registry's resolved route is the output authority. Omission must not
+  // let an upstream default widen it; preserve smaller explicit limits (for
+  // example session summaries) and reject conflicting/oversized limits.
+  if ((parsedBody.max_tokens !== undefined && parsedBody.max_completion_tokens !== undefined)
+    || (request.action === "inference.messages" && parsedBody.max_completion_tokens !== undefined)) {
+    return failure(request.requestId, "invalid_request");
+  }
+  const outputTokens = parsedBody.max_tokens ?? parsedBody.max_completion_tokens ?? binding.route.maxOutputTokens;
+  if (outputTokens > binding.route.maxOutputTokens) return failure(request.requestId, "invalid_request");
+  const inferenceBody = parsedBody.max_tokens === undefined && parsedBody.max_completion_tokens === undefined
+    ? JSON.stringify({ ...parsedBody, max_tokens: outputTokens }) : request.body;
+
   const accessSourceId = authorization.accessSourceId;
   const stillAuthorized = () => {
     if (lifecycle.aborted) return false;
@@ -152,6 +168,7 @@ export async function forwardBotInference(
   const fetchImpl = deps.fetchImpl ?? fetch;
 
   try {
+    if (isolated && (await deps.isolatedChat!.validate?.(binding) === false || lifecycle.aborted || !stillAuthorized())) return failure(request.requestId, "action_denied");
     const launch = binding.anthropicApi ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, lifecycle) } } : await resolveInferenceCredentials(
       accessSourceId,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
@@ -183,7 +200,7 @@ export async function forwardBotInference(
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
-        body: request.body,
+        body: inferenceBody,
         redirect: "error",
         signal: AbortSignal.any([lifecycle, AbortSignal.timeout(
           accessSourceId === "matrix_included" ? FUNDED_INFERENCE_TIMEOUT_MS : INFERENCE_TIMEOUT_MS,
@@ -249,11 +266,16 @@ const IsolatedInferenceSchema = z.object({
   temperature: z.number().min(0).max(2).optional(), top_p: z.number().min(0).max(1).optional(),
   n: z.literal(1).optional(), store: z.literal(false).optional(),
 }).strict();
+// Canonical Bot phases may reuse bounded text history. Ordinary managed phases
+// retain the original empty-session wire contract.
+const CanonicalIsolatedInferenceSchema = IsolatedInferenceSchema.extend({
+  messages: z.array(z.object({ role: z.enum(["system", "developer", "user", "assistant"]), content: IsolatedText }).strict()).min(1).max(32),
+});
 function validIsolatedInference(request: ScopeRuntimeBotInferenceRequest, binding: PiRuntimeBinding): boolean {
   if (Buffer.byteLength(request.body, "utf8") > 131072 || binding.accessSourceId !== "matrix_included"
     || binding.route.maxOutputTokens !== 256) return false;
   try {
-    const value = IsolatedInferenceSchema.safeParse(JSON.parse(request.body));
+    const value = (isManagedPiBinding(binding) ? IsolatedInferenceSchema : CanonicalIsolatedInferenceSchema).safeParse(JSON.parse(request.body));
     if (!value.success || value.data.model !== binding.route.modelId
       || (value.data.max_tokens === undefined) === (value.data.max_completion_tokens === undefined)
       || value.data.messages.at(-1)?.role !== "user") return false;

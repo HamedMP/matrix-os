@@ -98,6 +98,7 @@ export async function verifyDedicatedLeaseGrant(){${grant}}`);
  it.each([
   ['completed',{id:38286749456,run_attempt:2,status:'completed'}],
   ['superseded by a newer attempt',{id:38286749456,run_attempt:3,status:'queued'}],
+  ['for a PR head that a newer push replaced',{id:38286749456,run_attempt:2,status:'in_progress',event:'pull_request',head_sha:'a'.repeat(40),pull_requests:[{number:7,head:{sha:'c'.repeat(40)}}]}],
  ])('stands down a late controller whose requesting CI run is %s',async(_label,live)=>{
   const root=await stubWorkspace(`throw new Error('admission must not run');`,'');
   const result=await execute('Admit current source head',root,{},{event:{id:38286749456,run_attempt:2},live});
@@ -108,6 +109,21 @@ export async function verifyDedicatedLeaseGrant(){${grant}}`);
   const run=execute('Admit current source head',root,{},{event:{id:38286749456,run_attempt:2},live:{id:38286749456,run_attempt:2,status:'in_progress'},afterAdmission:{id:38286749456,run_attempt:2,status}});
   if(standsDown){const result=await run;expect(result.outputs.admitted).toBe('false');expect(result.notices.join()).toContain('is no longer active');}
   else await expect(run).rejects.toThrow('Refresh requester is not currently admitted');
+ });
+ it('stands down when the requesting PR head is replaced during admission',async()=>{
+  const root=await stubWorkspace(`throw new Error('Refresh requester is not currently admitted');`,'');
+  const pr=(sha:string)=>({id:38286749456,run_attempt:2,status:'in_progress',event:'pull_request',head_sha:'a'.repeat(40),pull_requests:[{number:7,head:{sha}}]});
+  const result=await execute('Admit current source head',root,{},{event:{id:38286749456,run_attempt:2},live:pr('a'.repeat(40)),afterAdmission:pr('c'.repeat(40))});
+  expect(result.outputs.admitted).toBe('false');expect(result.notices.join()).toContain('is no longer active');
+ });
+ it.each([
+  ['its PR head is current',[{number:7,head:{sha:'a'.repeat(40)}}]],
+  ['its PR head is unreadable',[{number:7,head:{}}]],
+  ['several PRs share the head',[{number:7,head:{sha:'c'.repeat(40)}},{number:8,head:{sha:'a'.repeat(40)}}]],
+ ])('keeps an active PR requester when %s',async(_label,pulls)=>{
+  const root=await stubWorkspace('return null;','');
+  const result=await execute('Admit current source head',root,{},{event:{id:38286749456,run_attempt:2},live:{id:38286749456,run_attempt:2,status:'in_progress',event:'pull_request',head_sha:'a'.repeat(40),pull_requests:pulls}});
+  expect(result.outputs.admitted).toBe('false');expect(result.notices).toEqual([]);
  });
  it('admits normally while the requesting CI run is still active',async()=>{
   const root=await stubWorkspace('return null;','');
