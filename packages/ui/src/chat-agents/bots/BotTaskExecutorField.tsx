@@ -1,21 +1,24 @@
-import {useEffect, useState} from "react";
+import {useState} from "react";
 import type {BotProviderConnections} from "./provider-connections-client.js";
 import {chatAgentInputClass, chatAgentMutedStyle} from "../theme.js";
 export type BotExecutorSelection = {connectionId: "claude_code_tasks"; model: string};
 
 /** Claude Code executes tasks separately from the Pi coordinator's model loop. */
-export function BotTaskExecutorField({connections, value, pending, onChange, onSetup, onRefresh, onIncompleteChange}: {
+export function BotTaskExecutorField({connections, value, pending, onChange, onSetup, onRefresh, onIncompleteChange, connectionIntent, onConnectionIntentChange}: {
+ connectionIntent?: "claude_code_tasks" | null; onConnectionIntentChange?: (value: "claude_code_tasks" | null) => void;
  connections: BotProviderConnections | null; value: BotExecutorSelection | null; pending: boolean;
  onRefresh?:()=>void; onIncompleteChange?: (value:boolean) => void; onChange(value: BotExecutorSelection | null): void; onSetup?: () => void;
 }) {
  const connection = connections?.connections.find(item => item.id === "claude_code_tasks");
- const [chosen, setChosen] = useState(value?.connectionId ?? "");
- useEffect(() => setChosen(value?.connectionId ?? ""), [value?.connectionId]);
+ const [localChosen, setChosen] = useState(value?.connectionId ?? "");
+ const [previousConnection, setPreviousConnection] = useState(value?.connectionId);
+ if (previousConnection !== value?.connectionId) { setPreviousConnection(value?.connectionId); setChosen(value?.connectionId ?? ""); }
+ const chosen = connectionIntent === undefined ? localChosen : connectionIntent ?? "";
  const available = connection?.availability === "available" && connection.authorization.enabled && connection.models.length > 0;
  const savedUnavailable = value && (!available || !connection?.models.some(model => model.id === value.model));
  return <section className="grid gap-2">
    <label className="grid gap-1.5 text-sm">Task executor<select className={chatAgentInputClass} value={chosen} disabled={pending || !connections} onChange={event => {
-     setChosen(event.target.value); onIncompleteChange?.(!!event.target.value && !value); if (!event.target.value) onChange(null);
+     setChosen(event.target.value); onConnectionIntentChange?.(event.target.value === "claude_code_tasks" ? "claude_code_tasks" : null); onIncompleteChange?.(!!event.target.value && !value); if (!event.target.value) onChange(null);
    }}><option value="">Bot tools only</option><option value="claude_code_tasks" disabled={!available}>Claude Code{available ? "" : " · unavailable"}</option></select></label>
    {chosen === "claude_code_tasks" ? <label className="grid gap-1.5 text-sm">Task model<select className={chatAgentInputClass} value={value?.model ?? ""} disabled={pending || !available} onChange={event => {
      if (available && connection?.models.some(model => model.id === event.target.value)) {onIncompleteChange?.(false); onChange({connectionId:"claude_code_tasks", model:event.target.value});}

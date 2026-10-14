@@ -9,6 +9,8 @@ export type AgentDraft = {
   selection: CanonicalChatModelSelection | null;
   requestId: string;
   recipe?: ChatAgentRecipe | null;
+  taskExecutor?: { connectionId: "claude_code_tasks"; model: string | null } | null;
+  coordinatorInstanceId?: string | null;
 };
 export type AgentDraftChange = Partial<Omit<AgentDraft, "requestId">>;
 
@@ -20,6 +22,8 @@ export function copyAgentDraft(draft: AgentDraft): AgentDraft {
     selection: draft.selection ? { ...draft.selection,
       ...(Object.hasOwn(draft.selection, "options") ? { options: draft.selection.options?.map(option => ({ ...option })) } : {}),
     } : null,
+    ...(Object.hasOwn(draft, "taskExecutor") ? { taskExecutor: draft.taskExecutor ? { ...draft.taskExecutor } : draft.taskExecutor } : {}),
+    ...(Object.hasOwn(draft, "coordinatorInstanceId") ? { coordinatorInstanceId: draft.coordinatorInstanceId } : {}),
     ...(Object.hasOwn(draft, "recipe") ? {
       recipe: draft.recipe ? copyEditableAgentRecipe(draft.recipe) : draft.recipe,
     } : {}),
@@ -46,6 +50,9 @@ export function patchAgentDraft(draft: AgentDraft, change: AgentDraftChange, new
   const next = copyAgentDraft({ ...draft, ...change });
   if (draft.name === next.name && draft.description === next.description && draft.instructions === next.instructions
     && sameSelection(draft.selection, next.selection) && sameRecipe(draft.recipe, next.recipe)
-    && Object.hasOwn(draft, "recipe") === Object.hasOwn(next, "recipe")) return draft;
+    && Object.hasOwn(draft, "recipe") === Object.hasOwn(next, "recipe")
+    && draft.coordinatorInstanceId === next.coordinatorInstanceId
+    && (draft.taskExecutor == null || next.taskExecutor == null ? draft.taskExecutor === next.taskExecutor
+      : draft.taskExecutor.connectionId === next.taskExecutor.connectionId && draft.taskExecutor.model === next.taskExecutor.model)) return draft;
   return { ...next, requestId: newRequestId() };
 }

@@ -248,3 +248,7 @@ export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
+
+export { useCreationConversation } from "./chat-agents/useCreationConversation.js";
+export { creationConversationSelection, type CreationConversationClient } from "./chat-agents/creation-conversation.js";
+export type { BotCreationChatProps, BotCreationSeed, BotCreationChange, RenderBotCreationChat } from "./chat-agents/BotCreationChat.js";

@@ -53,8 +53,8 @@ function AgentEditorActions({ editing, pending, saveDisabled, onArchive, onBack,
 }
 
 export function AgentEditor({ botClient, draft, editing, pending, models, catalog, catalogLoading = false, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
-  change, onSave, onArchive, onBack, onSetup, onRefreshCatalog, onRetryRecipe, allowArchive = true, cancelLabel = "Back", apps }: {
-  botClient?: BotClient; apps?: ReactNode; draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
+  change, onSave, onArchive, onBack, onSetup, onRefreshCatalog, onRetryRecipe, allowArchive = true, cancelLabel = "Back", apps, hideModelField = false, saveDisabledOverride = false, fixedTemplate = false, managedCreation = false, allowAutomaticSelection = false }: {
+  allowAutomaticSelection?: boolean; fixedTemplate?: boolean; managedCreation?: boolean; saveDisabledOverride?: boolean; hideModelField?: boolean; botClient?: BotClient; apps?: ReactNode; draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
   recipeCatalog: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[];
   recipeLoading: boolean; recipeError: string; connectionError: string;
@@ -75,24 +75,24 @@ export function AgentEditor({ botClient, draft, editing, pending, models, catalo
   const eligibleModels = managedAgent ? matrixBotSelectableModelChoices(models, catalog, recipeBot || subscriptionNew) : customAgentModelChoices(models);
   const selectionChanged = editing === "new" || JSON.stringify(draft.selection) !== JSON.stringify(editing.selection);
   const modelAvailable = eligibleModels.some((choice) => botModelChoiceMatchesSelection(choice, draft.selection));
-  const recipeValid = !editableRecipe || draft.recipe === undefined || draft.recipe === null || (ChatAgentRecipeSchema.safeParse(draft.recipe).success
+  const recipeValid = fixedTemplate || !editableRecipe || draft.recipe === undefined || draft.recipe === null || (ChatAgentRecipeSchema.safeParse(draft.recipe).success
     && recipeSkillsFit(draft.recipe.skills, recipeCatalog?.skills ?? []));
-  const saveDisabled = pending || (catalogLoading && selectionChanged) || !draft.name.trim() || !draft.instructions.trim() || !recipeValid || unsupportedRecipe
-    || (selectionChanged && !modelAvailable && !(recipeBot && isAutomaticBotSelection(draft.selection)));
+  const saveDisabled = saveDisabledOverride || pending || (catalogLoading && selectionChanged) || !draft.name.trim() || !draft.instructions.trim() || !recipeValid || unsupportedRecipe
+    || (selectionChanged && !modelAvailable && !((recipeBot || allowAutomaticSelection) && isAutomaticBotSelection(draft.selection)));
   return <form className="mt-5 grid gap-4" onSubmit={(event) => { event.preventDefault(); if (!saveDisabled) void onSave(); }}>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-name`}>Name<input id={`${ids}-name`} className={input} value={draft.name} maxLength={80} required disabled={pending} onChange={(event) => change({ name: event.target.value })} /></label>
-      <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-description`}>Description <span className="text-xs" style={muted}>Optional</span><input id={`${ids}-description`} className={input} value={draft.description} maxLength={400} disabled={pending} onChange={(event) => change({ description: event.target.value })} /></label>
-      <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-instructions`}>Instructions<textarea id={`${ids}-instructions`} className={`${input} min-h-32 resize-y`} value={draft.instructions} maxLength={8000} required disabled={pending} placeholder="What should this Agent do? How should it work?" onChange={(event) => change({ instructions: event.target.value })} /></label>
+      <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-description`}>Description <span className="text-xs" style={muted}>Optional</span><input id={`${ids}-description`} className={input} value={draft.description} maxLength={400} readOnly={fixedTemplate} disabled={pending} onChange={(event) => change({ description: event.target.value })} /></label>
+      <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-instructions`}>Instructions<textarea id={`${ids}-instructions`} className={`${input} min-h-32 resize-y`} value={draft.instructions} maxLength={8000} required readOnly={fixedTemplate} disabled={pending} placeholder="What should this Agent do? How should it work?" onChange={(event) => change({ instructions: event.target.value })} /></label>
       {apps}
-      {managedAgent ? <div className="grid gap-3 text-sm">
+      {!hideModelField ? managedAgent ? <div className="grid gap-3 text-sm">
         <MatrixBotModelField botClient={botClient} id={`${ids}-model`} selection={draft.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} allowAutomatic={recipeBot} allowSubscription={recipeBot || subscriptionNew} onRefreshCatalog={onRefreshCatalog} preservedSelection={editing !== "new" && !recipeBot ? editing.selection : undefined} onSetup={onSetup} pending={pending} onChange={(selection) => change({ selection })} />
         <p className="text-xs" style={muted}>{recipeBot ? "This bot runs in its own Chat. Choose a Matrix AI model or keep Automatic computer routing." : isChatgptPlanBotRoute({instanceId: draft.selection?.instanceId ?? "", driverKind: "matrix_bot"}) ? "This bot uses its selected subscription in its own Chat. Creating it does not run it." : "Choose a Matrix AI model for this agent. Saving an agent does not run it."}</p>
-      </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />}
+      </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} /> : null}
       {unsupportedRecipe ? <p role="alert" className="text-sm">Remove the unavailable skill before saving this bot.</p> : null}
       {editableRecipe ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={editableRecipeCatalog}
-        connections={connections} loading={recipeLoading} error={recipeError} connectionError={connectionError} pending={pending}
+        connections={connections} loading={recipeLoading} error={recipeError} connectionError={connectionError} pending={pending || fixedTemplate}
         onChange={(recipe) => change({ recipe })} onRetry={onRetryRecipe} /> : null}
-      {!recipeBot && draft.selection?.instanceId !== "matrix_chatgpt_plan" ? <p className="text-xs" style={muted}>Agent requests use Full access. You choose this access when sending. Creating an Agent does not run it.</p> : null}
+      {!managedCreation && !recipeBot && draft.selection?.instanceId !== "matrix_chatgpt_plan" ? <p className="text-xs" style={muted}>Agent requests use Full access. You choose this access when sending. Creating an Agent does not run it.</p> : null}
       <AgentEditorActions editing={editing} pending={pending} saveDisabled={saveDisabled} onArchive={onArchive} onBack={onBack} allowArchive={allowArchive} cancelLabel={cancelLabel} />
     </form>;
 }
