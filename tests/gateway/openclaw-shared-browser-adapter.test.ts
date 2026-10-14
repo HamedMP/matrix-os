@@ -47,7 +47,7 @@ it("rejects cancellation from another owner or Chat without revoking the active 
   for (;;) { if ((await iterator.next()).done) break; }
   expect(broker.closeRun).toHaveBeenCalledOnce();
 });
-it("sends native abort before a slow browser drain finishes", async () => {
+it("sends native abort and starts browser revocation before a slow drain finishes", async () => {
   const { broker, rpc, adapter } = setup();
   const drain = Promise.withResolvers<void>();
   const agent = Promise.withResolvers<unknown>();
@@ -65,7 +65,9 @@ it("sends native abort before a slow browser drain finishes", async () => {
   const cancelling = adapter.cancel!({ owner: input.owner, chatId: input.chatId, runId: input.runId });
   try {
     await vi.waitFor(() => expect(rpc.call.mock.calls.map(call => call[0])).toContain("chat.abort"), { timeout: 250 });
-    expect(nativeSignal.aborted).toBe(true);
+    expect(broker.closeRun).toHaveBeenCalledWith(input.runId);
+    // Keep the RPC correlation alive briefly for a late accepted run ID.
+    expect(nativeSignal.aborted).toBe(false);
   } finally {
     drain.resolve(); agent.resolve({ runId: input.runId, status: "error" });
     await cancelling;
