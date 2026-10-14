@@ -10,6 +10,7 @@ import { useWindowManager } from "@/hooks/useWindowManager";
 import { CanonicalShellChatRequestError } from "@/lib/canonical-chat-client";
 import { isShellSupportOpen, subscribeShellSupportPanel } from "@/lib/posthog-client";
 import {
+  createShellOnboardingAiPort,
   createShellOnboardingRepoSource,
   isShellComputerStarting,
   isShellNotFound,
@@ -246,6 +247,19 @@ describe("web onboarding repo source", () => {
   it("rejects failed reads instead of parsing error bodies", async () => {
     const source = createShellOnboardingRepoSource(GATEWAY, vi.fn().mockResolvedValue(json({ error: "nope" }, 502)));
     await expect(source.listComputerRepos(20, new AbortController().signal)).rejects.toThrow();
+  });
+});
+
+describe("web onboarding AI port", () => {
+  it("keeps Claude and Codex sign-in on the computer the widget opened after Shared with me", async () => {
+    window.history.replaceState({}, "", "/vm/alice");
+    const gatewayUrl = `${window.location.origin}/vm/alice`;
+    const fetchFn = vi.fn().mockResolvedValue(json([]));
+    const port = createShellOnboardingAiPort(gatewayUrl, fetchFn);
+    window.history.replaceState({}, "", "/shared");
+
+    await expect(port.client.capabilities(new AbortController().signal)).resolves.toEqual([]);
+    expect(String(fetchFn.mock.calls[0]![0])).toBe(`${gatewayUrl}/api/ai/provider-settings/workflows/v2/capabilities`);
   });
 });
 

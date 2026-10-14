@@ -10,7 +10,6 @@ import {
   useOnboardingSupportDock,
   useOnboardingWidgetSession,
   useOnboardingWidgetState,
-  type OnboardingAiConnectPort,
   type OnboardingSettingsSection,
   type OnboardingStoredPrefs,
   type OnboardingWidgetBox,
@@ -19,13 +18,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { useChatProviderState } from "@/components/chat-app-provider-setup";
 import { useWindowManager } from "@/hooks/useWindowManager";
-import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 import { createCanonicalShellChatClient } from "@/lib/canonical-chat-client";
 import { getGatewayUrl } from "@/lib/gateway";
 import { closeShellSupport, isShellSupportOpen, subscribeShellSupportPanel } from "@/lib/posthog-client";
-import { createWebProviderWorkflowClient, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
+  createShellOnboardingAiPort,
   createShellOnboardingChatPort,
   createShellOnboardingRepoSource,
   shellOnboardingIdentity,
@@ -125,12 +123,7 @@ function OnboardingWidgetSession({ prefsKey, displayName, gatewayUrl, initialPre
   const provider = useChatProviderState();
   const chatPort = useMemo(() => createShellOnboardingChatPort(createCanonicalShellChatClient({ gatewayUrl })), [gatewayUrl]);
   const repoSource = useMemo(() => createShellOnboardingRepoSource(gatewayUrl), [gatewayUrl]);
-  const aiPort = useMemo<OnboardingAiConnectPort>(() => ({
-    client: createWebProviderWorkflowClient(),
-    openAuthorization: openWebProviderWorkflowAuthorization,
-    isIdentityCurrent: () => true,
-    onConnected: () => window.dispatchEvent(new Event(PROVIDER_SETTINGS_CHANGED_EVENT)),
-  }), []);
+  const aiPort = useMemo(() => createShellOnboardingAiPort(gatewayUrl), [gatewayUrl]);
   const integrations = useShellOnboardingIntegrations(dispatch, { gatewayUrl });
 
   const widget = useOnboardingWidgetSession({
