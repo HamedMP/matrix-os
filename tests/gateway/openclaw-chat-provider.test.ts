@@ -38,6 +38,7 @@ class FakeRpc implements OpenClawRpcClient {
   ): Promise<unknown> => {
     this.calls.push({ method, params, options });
     if (method === "agent") {
+      options?.onDispatched?.();
       this.pendingAgentOptions = options;
       if (this.respectAgentAbort) signal.addEventListener("abort", () => {
         this.pendingAgentOptions = undefined;

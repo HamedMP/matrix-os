@@ -55,9 +55,11 @@ interface ActiveRun {
   agentId?: string;
   cancelled: boolean;
   accepted?: boolean;
+  dispatched?: boolean;
   agentController?: AbortController;
   lateAcceptTimer?: ReturnType<typeof setTimeout>;
   browserClose?: () => Promise<void>;
+  browserMarkDispatched?: () => void;
 }
 
 interface OpenClawChatProviderOptions {
@@ -228,7 +230,7 @@ export function createOpenClawChatProviderAdapter(
     active.cancelled = true;
     // Keep the pending RPC correlation briefly so a late native acceptance can
     // reveal its actual run identity and receive a second chat.abort.
-    if (active.accepted) active.agentController?.abort();
+    if (active.accepted || !active.dispatched) active.agentController?.abort();
     else if (active.agentController && !active.lateAcceptTimer) {
       active.lateAcceptTimer = setTimeout(() => {
         active.lateAcceptTimer = undefined;
@@ -291,10 +293,15 @@ export function createOpenClawChatProviderAdapter(
         const browser = await openOpenClawSharedBrowserRun({ broker: options.sharedBrowser, rpc: options.rpc,
           ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, sessionKey: requestedSessionKey, signal: input.signal });
         active.browserClose = browser.close;
+        active.browserMarkDispatched = browser.markDispatched;
       } catch (error: unknown) {
         console.warn("[chat-openclaw] Browser admission unavailable", error instanceof Error ? error.name : "UnknownError");
         activeRuns.delete(input.runId); yield input.signal.aborted ? completion("aborted") : failure(); return;
       }
+    }
+
+    if (active.cancelled || input.signal.aborted) {
+      activeRuns.delete(input.runId); await active.browserClose?.(); yield completion("aborted"); return;
     }
 
     const scheduleAbort = () => {
@@ -333,7 +340,13 @@ export function createOpenClawChatProviderAdapter(
     }, agentController.signal, {
       expectFinal: true,
       timeoutMs: Math.min(runTimeoutMs + 5_000, active.browserClose ? BROWSER_RUN_TIMEOUT_MS : MAX_RUN_TIMEOUT_MS),
+      onDispatched() {
+        active.dispatched = true;
+        active.browserMarkDispatched?.();
+      },
       onAccepted(value) {
+        // Native acceptance is also proof of dispatch for injected transports.
+        active.dispatched = true; active.browserMarkDispatched?.();
         const parsed = AcceptedSchema.safeParse(value);
         if (!parsed.success) {
           protocolFailed = true;

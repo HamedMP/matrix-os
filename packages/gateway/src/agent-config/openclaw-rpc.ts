@@ -108,8 +108,11 @@ const BrowserBindParamsSchema = z.object({
   sessionKey: SafeRpcReferenceSchema,
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   expiresAt: z.number().int(),
+  bindingId: z.string().regex(/^[a-f0-9]{32}$/).optional(),
 }).strict();
-const BrowserRevokeParamsSchema = z.object({ runId: BrowserRunIdSchema }).strict();
+const BrowserRevokeParamsSchema = z.object({ runId: BrowserRunIdSchema,
+  bindingId: z.string().regex(/^[a-f0-9]{32}$/).optional(), nativeNotStarted: z.literal(true).optional(),
+}).strict().refine(value => value.nativeNotStarted !== true || value.bindingId !== undefined);
 const MethodParamsSchemas: Record<string, z.ZodType> = {
   health: EmptyParamsSchema,
   "channels.status": EmptyParamsSchema,
@@ -180,6 +183,8 @@ export interface OpenClawRpcCallOptions {
   timeoutMs?: number;
   onAccepted?: (payload: unknown) => void;
   onEvent?: (event: OpenClawRpcEvent) => void;
+  /** Called at the last synchronous boundary before socket.send; a throwing send may still have dispatched. */
+  onDispatched?: () => void;
 }
 
 export interface OpenClawRpcClient {
@@ -609,6 +614,7 @@ export function createOpenClawRpcClient(
     signal.addEventListener("abort", onAbort, { once: true });
     if (method === "config.patch") configPatchWrites.push(now());
     try {
+      callOptions.onDispatched?.();
       socket.send(serialized);
     } catch (error) {
       pending.delete(id);

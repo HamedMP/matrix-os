@@ -167,3 +167,24 @@ it("does not reclaim a later authenticated revoked guard when an older cancelled
   expect(await s.bind()).toHaveBeenCalledWith(false, undefined, expect.any(Object));
   s.close();
 });
+it("reclaims acknowledged never-dispatched binds only for their exact binding nonce", async () => {
+  const s = setup();
+  const bindingId = "b".repeat(32);
+  const params = { runId: "run_qa", sessionKey: "agent:main:qa", token: "a".repeat(43), expiresAt: Date.now() + 60_000, bindingId };
+  await s.methods.get("matrix.browser.bind")!({ params, respond: vi.fn() });
+  await s.methods.get("matrix.browser.revoke")!({ params: { runId: params.runId, bindingId: "c".repeat(32), nativeNotStarted: true }, respond: vi.fn() });
+  expect(await s.bind()).toHaveBeenCalledWith(false, undefined, expect.any(Object));
+  await s.methods.get("matrix.browser.revoke")!({ params: { runId: params.runId, bindingId, nativeNotStarted: true }, respond: vi.fn() });
+  expect(await s.bind()).toHaveBeenCalledWith(true, { bound: true });
+  s.close();
+});
+it("keeps revoked native guards after observing a native tool even if cleanup claims no dispatch", async () => {
+  const s = setup(); const bindingId = "b".repeat(32);
+  await s.methods.get("matrix.browser.bind")!({ params: { runId: "run_qa", sessionKey: "agent:main:qa", token: "a".repeat(43), expiresAt: Date.now() + 60_000, bindingId }, respond: vi.fn() });
+  const context = { runId: "run_qa", sessionKey: "agent:main:qa" };
+  s.hooks.get("before_tool_call")!({ toolName: "exec" }, context);
+  await s.methods.get("matrix.browser.revoke")!({ params: { runId: context.runId, bindingId, nativeNotStarted: true }, respond: vi.fn() });
+  expect(s.hooks.get("before_tool_call")!({ toolName: "exec" }, context)).toMatchObject({ block: true });
+  expect(await s.bind()).toHaveBeenCalledWith(false, undefined, expect.any(Object));
+  s.close();
+});

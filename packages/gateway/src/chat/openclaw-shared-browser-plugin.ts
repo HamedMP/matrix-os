@@ -4,8 +4,10 @@ import { SharedBrowserActionSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { callSharedBrowser, sharedBrowserEndpoint } from "./shared-browser-client.js";
 const Id = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
-const Bind = z.object({ runId: Id, sessionKey: z.string().min(1).max(512), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), expiresAt: z.number().int() }).strict();
-const Revoke = z.object({ runId: Id }).strict();
+const BindingId = z.string().regex(/^[a-f0-9]{32}$/);
+const Bind = z.object({ runId: Id, sessionKey: z.string().min(1).max(512), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), expiresAt: z.number().int(), bindingId: BindingId.optional() }).strict();
+const Revoke = z.object({ runId: Id, bindingId: BindingId.optional(), nativeNotStarted: z.literal(true).optional() }).strict()
+  .refine(value => value.nativeNotStarted !== true || value.bindingId !== undefined);
 const TICKET = "__matrix_browser_ticket";
 const ToolInput = z.object({ [TICKET]: z.string().regex(/^[a-f0-9]{32}$/) }).passthrough();
 const BYPASS = new Set(["browser", "exec", "execute", "bash", "process"]);
@@ -16,8 +18,8 @@ export interface SharedBrowserPluginApi {
   registerTool(factory: (context: Context) => NativeTool | null, options: { names: string[]; optional: boolean }): void;
   on(name: string, handler: (event: { toolName?: string; params?: unknown }, context: Context) => unknown): void;
 }
-interface RevokedGuard { sessionKey: string }
-interface Lease extends z.infer<typeof Bind> { controller: AbortController; browserStarted: boolean; authenticated: boolean; cancelledBindGuard?: RevokedGuard }
+interface RevokedGuard { sessionKey: string; bindingId?: string; nativeObserved: boolean }
+interface Lease extends z.infer<typeof Bind> { controller: AbortController; browserStarted: boolean; authenticated: boolean; nativeObserved: boolean; cancelledBindGuard?: RevokedGuard }
 interface Ticket { lease: Lease; toolCallId: string; expiresAt: number; input: string }
 export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi, options: { gatewayPort: number; fetcher?: typeof fetch; now?: () => number }): () => void {
   sharedBrowserEndpoint(options.gatewayPort);
@@ -30,11 +32,20 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
   let closed = false;
   function release(runId: string) { const lease = leases.get(runId); if (!lease) return; leases.delete(runId); lease.controller.abort();
     for (const [id,ticket] of tickets) if (ticket.lease === lease) tickets.delete(id); }
-  function revoke(runId: string) {
-    const lease = leases.get(runId); if (!lease) return;
+  function revoke(runId: string, proof?: z.infer<typeof Revoke>) {
+    const lease = leases.get(runId);
+    if (!lease) {
+      const guard = revoked.get(runId);
+      if (proof?.nativeNotStarted === true && proof.bindingId && guard?.bindingId === proof.bindingId && !guard.nativeObserved) revoked.delete(runId);
+      return;
+    }
+    if (proof?.bindingId !== undefined && lease.bindingId !== proof.bindingId) return;
+    // Only the trusted operator RPC can prove it never dispatched inference.
+    // An exact binding nonce prevents old cleanup from reclaiming a new run.
+    if (proof?.nativeNotStarted === true && proof.bindingId && !lease.nativeObserved) { release(runId); return; }
     // Abort is asynchronous in the native harness. Remove bearer authority
     // immediately without reopening native browser/shell fallbacks meanwhile.
-    const guard = { sessionKey: lease.sessionKey };
+    const guard = { sessionKey: lease.sessionKey, bindingId: lease.bindingId, nativeObserved: lease.nativeObserved };
     revoked.set(runId, guard);
     // An unauthenticated reservation has not acknowledged a native start.
     // Keep its exact guard until that bind's asynchronous work settles.
@@ -52,7 +63,7 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
       if (closed || parsed.expiresAt <= now() || parsed.expiresAt > now() + 30 * 60_000 || leases.size + revoked.size >= 64 || leases.has(parsed.runId) || revoked.has(parsed.runId)
         || [...leases.values(), ...revoked.values()].some(lease => lease.sessionKey === parsed.sessionKey)) throw new Error("Browser binding unavailable");
       // Reserve before the network await: capacity and revoke also cover in-flight authentication.
-      pending = { ...parsed, controller: new AbortController(), browserStarted: false, authenticated: false };
+      pending = { ...parsed, controller: new AbortController(), browserStarted: false, authenticated: false, nativeObserved: false };
       leases.set(parsed.runId, pending);
       await callSharedBrowser({ ...options, token: parsed.token, action: { action: "status" }, signal: pending.controller.signal });
       if (closed || parsed.expiresAt <= now() || pending.controller.signal.aborted || leases.get(parsed.runId) !== pending) throw new Error("Browser binding unavailable");
@@ -68,10 +79,13 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
   api.registerGatewayMethod("matrix.browser.revoke", async ({ params, respond }) => {
     const parsed = Revoke.safeParse(params);
     if (!parsed.success) { respond(false, undefined, { code: "INVALID_REQUEST", message: "Browser binding unavailable." }); return; }
-    revoke(parsed.data.runId); respond(true, { revoked: true });
+    revoke(parsed.data.runId, parsed.data); respond(true, { revoked: true });
   }, { scope: "operator.admin" });
   api.on("before_tool_call", (event, context) => {
     sweep(); const lease = context.runId ? leases.get(context.runId) : undefined;
+    if (lease && lease.sessionKey === context.sessionKey) lease.nativeObserved = true;
+    const guard = context.runId ? revoked.get(context.runId) : undefined;
+    if (guard && guard.sessionKey === context.sessionKey) guard.nativeObserved = true;
     const name = event.toolName ?? context.toolName;
     if (name !== "shared_browser") return (context.runId && revoked.has(context.runId) && BYPASS.has(name ?? ""))
       || (lease && (name === "browser" || lease.browserStarted && BYPASS.has(name ?? ""))) ? unavailable : undefined;
