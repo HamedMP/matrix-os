@@ -388,10 +388,82 @@ def execute(request, root, uid, gid, activity):
             root.close()
 
 
-def known_activity():
+def committed_routing_snapshot(anchor, expected):
+    """Retain committed snapshots; loaded-source/idle exclusion remains external."""
+    anchor.verify()
+    parent = anchor.fds[-2]
+    if not os.path.lexists('/opt/matrix/staging/update-transaction'):
+        return None
+    descriptors, bindings, proof = [], [], []
+    try:
+        import pwd
+        matrix_uid = pwd.getpwnam('matrix').pw_uid
+        gid = anchor.gid
+        for name, directory, owners in (
+                ('staging', parent, (0, matrix_uid)),
+                ('update-transaction', None, (0,)),
+                ('app', parent, (0, matrix_uid))):
+            directory = descriptors[0] if directory is None else directory
+            fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            descriptors.append(fd)
+            info = os.fstat(fd)
+            require(info.st_uid in owners and info.st_gid in (0, gid)
+                    and stat.S_IMODE(info.st_mode) == 0o755, 'writer_busy')
+            bindings.append((directory, name, fd, fingerprint(info)))
+        stage, transaction, app = descriptors
+        require(not os.path.lexists('/opt/matrix/staging/update-transaction/same-version-repair.json'), 'writer_busy')
+
+        def read(directory, name, limit):
+            info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            require(info.st_gid in (0, gid), 'writer_busy')
+            data, info = read_file(directory, name, 0, info.st_gid, 0o644, limit)
+            proof.append((name, fingerprint(info), sha(data)))
+            return data
+
+        require(read(transaction, 'state', 256) == b'mutating\n', 'writer_busy')
+        require(read(transaction, 'candidate-version', 256) == (expected['version'] + '\n').encode(), 'writer_busy')
+        current = json.loads(read(parent, 'release.json', LIMIT), object_pairs_hook=unique_object)
+        require(isinstance(current, dict) and all(current.get(k) == v for k, v in expected.items()), 'writer_busy')
+        require(read(app, 'BUNDLE_VERSION', 256) == (expected['version'] + '\n').encode(), 'writer_busy')
+        previous = json.loads(read(transaction, 'release-metadata', LIMIT), object_pairs_hook=unique_object)
+        # Same-version repair is not an idle update.
+        require(isinstance(previous, dict) and isinstance(previous.get('version'), str)
+                and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', previous['version'])
+                and previous['version'] != expected['version']
+                and isinstance(previous.get('gitCommit'), str)
+                and re.fullmatch(r'[a-f0-9]{40}', previous['gitCommit']), 'writer_busy')
+        for directory, name, fd, original in bindings:
+            require(fingerprint(os.fstat(fd)) == original
+                    and fingerprint(os.stat(name, dir_fd=directory, follow_symlinks=False)) == original, 'writer_busy')
+        anchor.verify()
+        return tuple(proof + [(name, info) for _, name, _, info in bindings])
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError, RepairError):
+        raise RepairError('writer_busy') from None
+    finally:
+        for fd in reversed(descriptors):
+            os.close(fd)
+
+
+def routing_activity_guard(request, anchor):
+    if request['action'] not in ('align-routing', 'rollback-routing'):
+        return known_activity
+    previous, initialized = None, False
+
+    def activity():
+        nonlocal previous, initialized
+        current = committed_routing_snapshot(anchor, request['expectedRelease'])
+        require(not initialized or current == previous, 'writer_busy')
+        known_activity(committed=current is not None)
+        previous, initialized = current, True
+    return activity
+
+
+def known_activity(committed=False):
     for path in ("/opt/matrix/app/.update-now", "/opt/matrix/app/.update-repair-now",
                  "/opt/matrix/app/.rollback-now", "/opt/matrix/staging/update-phase",
                  "/opt/matrix/staging/update-transaction/state"):
+        if committed and path == '/opt/matrix/staging/update-transaction/state':
+            continue  # Only the anchored, rechecked routing proof can admit it.
         require(not os.path.lexists(path), "writer_busy")
     # The persistent idle sync daemon is not a writer-activity proof. Its markers
     # cover upgrades, not every legacy env edit; external coordination remains required.
@@ -436,7 +508,7 @@ def main():
     except BaseException:
         anchor.close()
         raise
-    receipt = execute(request, anchor, 0, gid, known_activity)
+    receipt = execute(request, anchor, 0, gid, routing_activity_guard(request, anchor))
     print(json.dumps(receipt, separators=(",", ":")))
 
 

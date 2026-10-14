@@ -40,6 +40,18 @@ and reviewed destination revision/image/default-origin binding remain independen
 preconditions. Alignment does not probe a provider, issue credentials or establish
 that an existing token is accepted by a different Platform authority.
 
+Successful native updates can intentionally retain a `mutating` transaction for
+manual rollback. URL-only routing admits that snapshot only when anchored,
+bounded reads match its candidate version, installed full source/version and
+bundle version, and the prior release differs from the candidate. Files must be
+root-owned, single-link, non-symlink 0644; the transaction directory must remain
+protected. Phase/trigger markers, repair pins, active writer processes,
+incomplete/same-version snapshots and changes between checks still defer. The
+snapshot is preserved. Legacy credential repairs retain their original strict
+activity guard. This installed-file proof does not replace the independent
+running-source, active-turn idle and externally coordinated sole-writer checks;
+the final check-to-rename interval is not a cross-writer lock.
+
 Use `action: rollback-routing`, the same rollout ID and release binding, plus
 fresh identity and full-file guards. Routing journals use version 2; the legacy
 `rollback` action cannot consume them. Rollback refuses independently changed
@@ -71,6 +83,12 @@ inside the helper, and rollback requires the same controlled restart/readback.
 The Python helper accepts no command-line payload or paths, makes no network request and never restarts services. Its CLI uses fixed production paths. Local file/ownership injection is available only through the imported test function, not the stdin schema.
 
 The existing terminal runner accepts arguments without stdin. Use `buildFundedConfigRepairCommand(request, reviewedPythonSource, currentPerHostAuthBearer, independentlyVerifiedNodeSha256)` from `funded-config-repair-transport.mjs`. The returned command carries compressed reviewed code and an opaque AES-256-GCM envelope; it never includes plaintext tokens. HKDF-SHA256 uses a distinct context, random salt and the existing per-host `MATRIX_AUTH_TOKEN`, never the broad Platform secret. Authenticated metadata binds identity, epoch, action, expected file, request hash, helper hash and a maximum 120-second deadline. The stdlib launcher passes protected env-directory/file descriptors to the sealed Node bootstrap; it does not reopen the environment through writable ancestors. Node checks host identity and file safety, decrypts and validates the bounded source, then feeds the request through an isolated Python child's stdin and passes only the anchored env-directory descriptor as fd 3. Python independently checks that descriptor against its own anchored canonical chain before repair or rollback. The bridge restricts child environment, duration and output, and validates/redacts receipts. The builder rejects arguments above 4096 characters, more than 64 arguments or a JSON request body above 16384 bytes.
+
+The helper and Node bootstrap use Brotli with paired producer/decoder bytes in
+the same generated command. The outer Python launcher and transport frame keep
+their bounded zlib encoding. Neither codec changes the source hash, envelope
+authentication, inflation limits, Node pin or terminal size caps. Never mix
+builder/bridge/launcher generations or widen a cap to fit a larger repair.
 
 Dispatch through the existing owner-authenticated terminal argument-vector transport with its normal signed owner principal, reviewed destination and 15-second request deadline. Never send raw Platform secrets to a runtime. A timeout or error may mean an unknown outcome: inspect the host independently before retrying.
 

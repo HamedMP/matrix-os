@@ -111,7 +111,7 @@ def main():
     keep = {0, 1, 2, 3, 4, 5, 6, executable}
     for fd in set(env + runtime + [host, node, sealed]) - keep:
         os.close(fd)
-    loader = "require('node:vm').runInThisContext(require('node:zlib').inflateSync(Buffer.from(process.argv[1],'base64'),{maxOutputLength:32768}).toString('utf8'))"
+    loader = "require('node:vm').runInThisContext(require('node:zlib').brotliDecompressSync(Buffer.from(process.argv[1],'base64'),{maxOutputLength:32768}).toString('utf8'))"
     os.execve(executable, ["node", "-e", loader, "--", *sys.argv[2:]], clean_environment())
 
 

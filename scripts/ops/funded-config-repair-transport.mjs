@@ -1,7 +1,7 @@
 import { createCipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { deflateSync } from 'node:zlib';
+import { brotliCompressSync, deflateSync } from 'node:zlib';
 
 const nodeRequire = createRequire(import.meta.url);
 const CONTEXT = 'matrix-funded-chat-repair-envelope-v1';
@@ -32,7 +32,7 @@ export function sealFundedConfigRepair(request, helperSource, authToken, now = D
   return {
     envelope: { version: 1, aad, salt: salt.toString('base64'), iv: iv.toString('base64'),
       tag: cipher.getAuthTag().toString('base64'), ciphertext: ciphertext.toString('base64') },
-    helper: deflateSync(Buffer.from(helperSource), { level: 9 }).toString('base64'),
+    helper: brotliCompressSync(Buffer.from(helperSource)).toString('base64'),
   };
 }
 
@@ -129,7 +129,7 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
   const request = JSON.parse(plaintext.toString('utf8'));
   requireCondition(request.action === aad.action && JSON.stringify(request.identity) === JSON.stringify(aad.identity)
     && JSON.stringify(request.expectedFile) === JSON.stringify(aad.expectedFile));
-  const helper = zlib.inflateSync(decode(transport.helper, 65_536), { maxOutputLength: 65_536 });
+  const helper = zlib.brotliDecompressSync(decode(transport.helper, 65_536), { maxOutputLength: 65_536 });
   requireCondition(hash(helper) === aad.helperSha256);
   verifyPath();
   const result = spawnSync(options.pythonPath ?? '/usr/bin/python3', ['-I', '-c', helper.toString('utf8')], {
@@ -157,7 +157,7 @@ export function buildFundedConfigRepairCommand(request, helperSource, authToken,
   if (typeof nodeSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(nodeSha256)) throw new Error('Independently verified Node digest is required');
   const transport = sealFundedConfigRepair(request, helperSource, authToken, now);
   const bootstrap = `const nodeRequire=require;${executeFundedConfigRepairBridge.toString()};try{process.stdout.write(JSON.stringify(executeFundedConfigRepairBridge(JSON.parse(require('node:zlib').inflateSync(Buffer.from(process.argv.slice(2).join(''),'base64'),{maxOutputLength:16384}).toString('utf8'))))+'\\n')}catch{process.stderr.write('{"error":"transport_failed"}\\n');process.exit(1)}`;
-  const compressedBootstrap = deflateSync(Buffer.from(bootstrap), { level: 9 }).toString('base64');
+  const compressedBootstrap = brotliCompressSync(Buffer.from(bootstrap)).toString('base64');
   const launcher = deflateSync(readFileSync(new URL('./launch-funded-config-repair.py', import.meta.url)), { level: 9 }).toString('base64');
   const loader = `import sys,zlib,base64
 try:
