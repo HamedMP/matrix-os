@@ -181,7 +181,7 @@ describe("funded AI readiness", () => {
       expect(completed).toBe(0);
       await vi.advanceTimersByTimeAsync(999);
       expect(completed).toBe(0);
-      await vi.advanceTimersByTimeAsync(8_000);
+      await vi.advanceTimersByTimeAsync(25_000);
       expect(completed).toBe(2);
       expect((await first).readiness.state).toBe("unavailable");
       expect((await reader.read()).readiness.state).toBe("ready");

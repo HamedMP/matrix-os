@@ -8,16 +8,16 @@ export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;
 
 // Generic relay readiness includes scale-from-zero startup and the relay's
-// bounded 8s generation. Keep 2s for relay transport/startup, then leave time
+// bounded 25s generation. Keep 2s for relay transport/startup, then leave time
 // for budget admission, owner-policy rereads,
 // and transport at each outer boundary; credential/funding requests stay 5s.
 export const FUNDED_AI_READINESS_TIMEOUTS = Object.freeze({
-  relayUpstreamProbeMs: 8_000,
-  relayProbeMs: 10_000,
-  platformRouteMs: 12_000,
-  gatewayRequestMs: 13_000,
-  gatewayObservationMs: 14_000,
-  rendererRequestMs: 15_000,
+  relayUpstreamProbeMs: 25_000,
+  relayProbeMs: 27_000,
+  platformRouteMs: 29_000,
+  gatewayRequestMs: 30_000,
+  gatewayObservationMs: 31_000,
+  rendererRequestMs: 32_000,
   // Jev readiness is owner-funded: cold-start + inference + exact settlement
   // and policy reread must finish before the temporary credential is revoked.
   jevProbeMs: 20_000,
