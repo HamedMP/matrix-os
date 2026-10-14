@@ -1,3 +1,4 @@
+import type { CpuCapacity } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
 
@@ -25,7 +26,7 @@ export interface ActivitySnapshot {
     uptimeSeconds: number;
   };
   resources: {
-    cpu: { cores: number; load1: number; load5: number; load15: number; pressureSome10?: number };
+    cpu: { capacity?: CpuCapacity; cores: number; load1: number; load5: number; load15: number; pressureSome10?: number };
     memory: {
       totalBytes: number;
       usedBytes: number;

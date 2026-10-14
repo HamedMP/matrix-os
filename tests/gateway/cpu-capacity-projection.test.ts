@@ -16,8 +16,27 @@ const constraints = vi.hoisted(() => ({
 
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
+  const handles = new Map<number, { content: string; offset: number }>();
+  let nextHandle = -100;
   return {
     ...fs,
+    openSync: (path: string, flags: string) => {
+      if (path === "/sys/fs/cgroup/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("denied"), { code: "EACCES" });
+      const content = constraints[path as keyof typeof constraints];
+      if (content === undefined) return fs.openSync(path, flags);
+      const fd = nextHandle--;
+      handles.set(fd, { content, offset: 0 });
+      return fd;
+    },
+    readSync: (fd: number, buffer: Buffer, offset: number, length: number, position: number | null) => {
+      const handle = handles.get(fd);
+      if (!handle) return fs.readSync(fd, buffer, offset, length, position);
+      const source = Buffer.from(handle.content);
+      const copied = source.copy(buffer, offset, handle.offset, handle.offset + length);
+      handle.offset += copied;
+      return copied;
+    },
+    closeSync: (fd: number) => { if (!handles.delete(fd)) fs.closeSync(fd); },
     readFileSync: (path: Parameters<typeof fs.readFileSync>[0], ...args: unknown[]) => {
       if (String(path) === "/sys/fs/cgroup/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("fixture unavailable"), { code: "EACCES" });
       const content = constraints[String(path) as keyof typeof constraints];

@@ -54,7 +54,7 @@ it("loads Resource Manager through the actual native app preload", async () => {
   });
   await import("../../desktop/src/preload/index.js");
   render(React.createElement(App));
-  await waitFor(() => expect(screen.getByText("4 cores")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText(/4 visible logical CPUs/)).toBeTruthy());
   expect(screen.queryByText("Resource data is unavailable.")).toBeNull();
   expect(fetchFn).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));

@@ -1,3 +1,4 @@
+import type { CpuCapacity } from "@matrix-os/contracts";
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
@@ -58,6 +59,7 @@ export interface CustomerVpsRoutesDeps {
     probeLatencyMs?: number;
     load1?: number | null;
     cpuCount?: number | null;
+    cpuCapacity?: CpuCapacity | null;
     memoryTotalBytes?: number | null;
     memoryFreeBytes?: number | null;
     diskTotalBytes?: number | null;
