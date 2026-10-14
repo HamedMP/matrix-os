@@ -39,8 +39,10 @@ function assertAbsolutePath(value: string) {
 const PRELUDE = `set -eu
 export GIT_TERMINAL_PROMPT=0
 home=$(pwd -P)
-id=$1
-sha=$2
+# Empty values travel as "-" because the run API rejects empty arguments.
+v() { [ "$1" = "-" ] || printf '%s' "$1"; }
+id=$(v "$1")
+sha=$(v "$2")
 stage="$home/${HANDOFF_STAGE_DIR}/$id"
 bundle="$stage/handoff.bundle"
 if [ ! -f "$bundle" ] && [ -n "$sha" ]; then
@@ -57,7 +59,7 @@ inside_home() { case "$1" in "$home"/*) return 0;; *) return 1;; esac; }
 `;
 
 function script(body: string, args: string[]): string[] {
-  return ["sh", "-c", `${PRELUDE}${body}`, "matrix-handoff", ...args];
+  return ["sh", "-c", `${PRELUDE}${body}`, "matrix-handoff", ...args.map((arg) => arg === "" ? "-" : arg)];
 }
 
 /** Creates ~/projects/<slug> from a full bundle for a project Matrix cannot clone. */
@@ -76,10 +78,10 @@ export function seedProjectCommand(input: {
   assertCommit(input.head, "head commit");
   const origin = input.originUrl ?? "";
   assert(origin.length <= 512 && !/[\u0000-\u001f\u007f]/.test(origin), "Invalid origin URL");
-  const body = `slug=$3
-branch=$4
-head=$5
-origin=$6
+  const body = `slug=$(v "$3")
+branch=$(v "$4")
+head=$(v "$5")
+origin=$(v "$6")
 dest="$home/projects/$slug"
 [ ! -e "$dest" ] || { echo "result=destination_exists"; exit 0; }
 git init -q "$dest"
@@ -120,12 +122,12 @@ export function integrateCommand(input: {
   assert(isSafeBranchName(input.branch) && isSafeBranchName(input.sideBranch), "Invalid branch");
   assertCommit(input.head, "head commit");
   if (input.snapshot) assertCommit(input.snapshot, "snapshot commit");
-  const body = `repo=$3
-slug=$4
-branch=$5
-side=$6
-head=$7
-snapshot=$8
+  const body = `repo=$(v "$3")
+slug=$(v "$4")
+branch=$(v "$5")
+side=$(v "$6")
+head=$(v "$7")
+snapshot=$(v "$8")
 inside_home "$repo" || { echo "result=invalid_path"; exit 0; }
 cd "$repo"
 refs="refs/matrix-handoff/$id"
@@ -207,10 +209,10 @@ export function applySnapshotCommand(input: {
   assertAbsolutePath(input.checkoutPath);
   assertCommit(input.head, "head commit");
   if (input.snapshot) assertCommit(input.snapshot, "snapshot commit");
-  const body = `repo=$3
-checkout=$4
-head=$5
-snapshot=$6
+  const body = `repo=$(v "$3")
+checkout=$(v "$4")
+head=$(v "$5")
+snapshot=$(v "$6")
 inside_home "$repo" && inside_home "$checkout" || { echo "result=invalid_path"; exit 0; }
 cd "$checkout"
 [ "$(git rev-parse HEAD)" = "$head" ] || { echo "result=checkout_moved"; exit 0; }
@@ -231,7 +233,7 @@ echo "result=ok"
 export function cleanupCommand(input: { uploadId: string; repoPath: string | null }): RemoteCommand {
   assertId(input.uploadId);
   if (input.repoPath) assertAbsolutePath(input.repoPath);
-  const body = `repo=$3
+  const body = `repo=$(v "$3")
 if [ -n "$repo" ] && inside_home "$repo" && [ -d "$repo" ]; then
   git -C "$repo" for-each-ref --format='%(refname)' "refs/matrix-handoff/$id/" | while read -r ref; do
     git -C "$repo" update-ref -d "$ref"

@@ -145,6 +145,7 @@ export const handoffCommand = defineCommand({
     title: { type: "string", required: false, description: "Chat title" },
     history: { type: "string", required: false, description: "Transcript to import as a private Chat: auto (default), none, or a .jsonl path" },
     permission: { type: "string", required: false, description: "Chat permission mode: supervised (default), auto_accept_edits, auto, full_access" },
+    model: { type: "string", required: false, description: "Model for the Matrix agent (default: the agent's default model)" },
     approve: { type: "string", required: false, description: "Approval token printed by the preview" },
     open: { type: "boolean", default: true, description: "Open the Chat in the browser when done (interactive terminals only)" },
     profile: { type: "string", required: false },
@@ -179,6 +180,7 @@ export const handoffCommand = defineCommand({
           ...(typeof args.title === "string" ? { title: args.title } : {}),
           history: historyOption(args.history),
           ...(typeof args.permission === "string" ? { permissionMode: args.permission } : {}),
+          ...(typeof args.model === "string" ? { model: args.model } : {}),
           ...(typeof args.approve === "string" ? { approvalToken: args.approve } : {}),
           gatewayUrl: profile.gatewayUrl,
         },
@@ -261,7 +263,7 @@ function quote(value: string): string {
 /** Re-states the preview's options so the approval command covers the same scope. */
 function reproduceArgs(args: Record<string, unknown>): string {
   const parts: string[] = [];
-  for (const key of ["agent", "brief", "message", "title", "history", "permission", "profile", "gateway"]) {
+  for (const key of ["agent", "brief", "message", "title", "history", "permission", "model", "profile", "gateway"]) {
     if (typeof args[key] === "string") parts.push(`--${key} ${quote(args[key] as string)}`);
   }
   if (args.dev === true) parts.push("--dev");

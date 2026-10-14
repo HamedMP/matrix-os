@@ -75,7 +75,8 @@ describe("handoff gateway client", () => {
     expect(JSON.parse(seen[1]!.body.toString())).toEqual({ branch: "feat/x" });
     expect(seen[1]!.type).toBe("application/json");
     const run = JSON.parse(seen[5]!.body.toString());
-    expect(run).toMatchObject({ cwd: "~", command: ["sh", "-c", expect.any(String), "matrix-handoff", "handoff-202610141200-aaaaaaaaaaaa", "", ""] });
+    expect(run).toMatchObject({ cwd: "~", command: ["sh", "-c", expect.any(String), "matrix-handoff", "handoff-202610141200-aaaaaaaaaaaa", "-", "-"] });
+    expect(run.command.every((item: string) => item.length >= 1 && item.length <= 4096)).toBe(true);
     expect(seen[5]!.body.length).toBeLessThan(16_384);
   });
 
