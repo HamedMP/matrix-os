@@ -44,7 +44,7 @@ describe('ENG-291 completed customer starter recovery', () => {
     service = createCustomerVpsService({ db,
       config: loadCustomerVpsConfig({ PLATFORM_SECRET: 'fixture-platform', HETZNER_API_TOKEN: 'fixture-hetzner',
         S3_ACCESS_KEY_ID: 'fixture-r2', S3_SECRET_ACCESS_KEY: 'fixture-r2-secret',
-        S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'fixture' }),
+        S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'fixture', CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE: '1' }),
       hetzner: createMockHetznerClient(), systemStore: createMockCustomerVpsSystemStore(),
       now: () => new Date(now) });
   });
@@ -71,7 +71,7 @@ describe('ENG-291 completed customer starter recovery', () => {
   const snapshot = async () => ({ policy: await policy(), ledger: await ledger(),
     balance: await balances(), grants: await grants() });
 
-  it('automatically reconciles an eligible owner whose activation completed before rollout (RED)', async () => {
+  it('automatically reconciles an eligible owner whose activation completed before rollout', async () => {
     expect(await snapshot()).toEqual({ policy: undefined, ledger: [], balance: undefined, grants: [] });
     // Exercise the existing automatic entry point, never the initializer control.
     // No registration/payment replay, live provider request or operator repair.
@@ -87,6 +87,41 @@ describe('ENG-291 completed customer starter recovery', () => {
     expect(await repository.getRuntimeFundingSummary(identity)).toMatchObject({
       policy: { enabled: true, allowedModelIds: [modelId] },
     });
+  });
+
+  it('bounds each pass and advances past an opt-out without starving another historical owner', async () => {
+    await repository.setRuntimePolicy({ identity, expectedRevision: 0, enabled: false,
+      allowedModelIds: [modelId], monthlyBudgetMicrousd: 5_000_000, expiresAt: null });
+    const otherMachine = 'af05824c-8d0a-4d83-9cb4-b312d43ff112';
+    await insertUserMachine(db, { machineId: otherMachine, clerkUserId: 'other-backfill-owner', handle: 'other-backfill',
+      runtimeSlot: 'primary', provisioningClass: 'customer', activationState: 'authorized', status: 'running',
+      imageVersion: 'reviewed-fixture', provisionedAt: activatedAt, activationAuthorizedAt: activatedAt,
+      hetznerServerId: 123457, publicIPv4: '203.0.113.11' });
+    await service.reconcileProvisioning();
+    expect(await ledger()).toEqual([]);
+    expect(await db.executor.selectFrom('ai_funded_runtime_policies').selectAll()
+      .where('machine_id', '=', otherMachine).execute()).toEqual([]);
+    await service.reconcileProvisioning();
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').selectAll()
+      .where('owner_id', '=', 'other-backfill-owner').execute()).toHaveLength(1);
+    await service.reconcileProvisioning(); // End of keyset traversal resets the cursor.
+    await service.reconcileProvisioning();
+    expect(await policy()).toMatchObject({ enabled: false });
+    expect(await ledger()).toEqual([]);
+  });
+
+  it.each(['2026-10-12T17:00:25Z', '2026-10-13T18:00:00Z', 'not-a-time'])('excludes newer or unreadable activation evidence: %s', async time => {
+    await db.executor.updateTable('user_machines').set({ activation_authorized_at: time })
+      .where('machine_id', '=', identity.machineId).execute();
+    await service.reconcileProvisioning();
+    expect(await snapshot()).toEqual({ policy: undefined, ledger: [], balance: undefined, grants: [] });
+  });
+
+  it('recovers legacy completed owners without an activation timestamp using old provisioning evidence', async () => {
+    await db.executor.updateTable('user_machines').set({ activation_authorized_at: null })
+      .where('machine_id', '=', identity.machineId).execute();
+    await service.reconcileProvisioning();
+    expect(await ledger()).toHaveLength(1);
   });
 
   it('direct initializer control repairs the same completed state once without activation replay', async () => {
@@ -140,8 +175,31 @@ describe('ENG-291 completed customer starter recovery', () => {
       statement_timeout: 10_000, query_timeout: 12_000,
     }) }) });
     await secondDb.ready;
-    const outcomes = await Promise.all([initialize(db), initialize(secondDb)]);
-    expect(outcomes.sort()).toEqual([false, true]);
+    let pending: Promise<boolean> | undefined;
+    let firstChanged = false;
+    try {
+      await db.transaction(async trx => {
+        firstChanged = await initialize(trx);
+        pending = initialize(secondDb!);
+        // Observe a real waiter for this exact owner lock, not timing alone.
+        await vi.waitFor(async () => {
+          const waiting = await sql<{ count: number }>`SELECT count(*)::int AS count
+            FROM pg_locks AS waiting JOIN pg_locks AS held
+              ON waiting.locktype = held.locktype AND waiting.database = held.database
+              AND waiting.classid = held.classid AND waiting.objid = held.objid AND waiting.objsubid = held.objsubid
+            WHERE waiting.locktype = 'advisory' AND NOT waiting.granted
+              AND held.granted AND held.pid = pg_backend_pid()`.execute(trx.executor);
+          expect(waiting.rows[0].count).toBeGreaterThan(0);
+        }, { timeout: 3000, interval: 25 });
+      });
+      expect(firstChanged).toBe(true);
+      expect(await pending).toBe(false);
+    } finally {
+      // Release the first transaction before draining an unsuccessful contender.
+      if (pending) await pending.catch(error => {
+        console.error('[starter-backfill-test] contender failed:', error instanceof Error ? error.name : 'UnknownError');
+      });
+    }
     expect(await ledger()).toHaveLength(1);
     expect(await policy()).toMatchObject({ revision: 1 });
     expect(await balances()).toMatchObject({ credit_balance_microusd: 5_000_000 });
