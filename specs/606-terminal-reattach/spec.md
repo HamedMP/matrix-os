@@ -21,6 +21,25 @@ ENG-293, #2599, process restart/recreation and terminal redesign.
 
 ## Boundaries and failure handling
 
+Startup wiring is unchanged. `packages/terminal-runtime/src/service.ts:main`
+resolves the owner home/socket, checks the user-systemd controller installation,
+constructs the Zellij adapter, initializes config and completes migration. It
+then creates `TerminalRuntime` with `new TerminalWorkspaceStore({ homePath })`,
+the adapter and bounded limits; awaits `runtime.restoreAll()`; creates
+`TerminalRuntimeSocketServer({ socketPath, runtime })`; and awaits `server.start()`
+before starting the orphan sweeper (`service.ts:98–105`). Shutdown closes the
+socket server and orphan sweeper before draining the runtime.
+
+`packages/gateway/src/server.ts` creates `TerminalRuntimeSocketClient` for the
+configured socket and injects it into `registerTerminalWebSocketRoutes`.
+The browser's authenticated `/ws/terminal/tab` route authorizes owner/runtime,
+Chat and live-ownership access before calling that client's `attach`. The
+owner-only Unix server admits the runtime viewer, buffers its output, reads the
+snapshot, sends replay framing, then drains the handoff. Gateway frame
+forwarding and close propagation remain unchanged. Lifecycle tests construct
+the same store/runtime/server/client path with a deterministic Zellij adapter;
+the sandbox-only net substitute is explicitly not production startup evidence.
+
 | Boundary | Authorization / validation |
 | --- | --- |
 | Browser `/ws/terminal/tab` | Existing gateway request principal, runtime owner access, Chat binding/token and live-ownership checks remain unchanged |
