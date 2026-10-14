@@ -10,6 +10,7 @@ const Status = z.object({
   engine: z.enum(["agent-browser", "browser-use"]).nullable(),
   generation: z.number().int().nonnegative(), checkpoint: z.number().int().min(0).max(3),
   workCompleted: z.number().int().min(0).max(10), humanControlAvailable: z.boolean(),
+  comparisonAvailable: z.boolean().optional(),
 });
 type LabStatus = z.infer<typeof Status>;
 type Engine = "agent-browser" | "browser-use";
@@ -24,6 +25,7 @@ export function BrowserLabView() {
   const [status, setStatus] = useState<LabStatus>(INITIAL);
   const [engine, setEngine] = useState<Engine>("agent-browser");
   const [connected, setConnected] = useState(false);
+  const [comparisonAvailable, setComparisonAvailable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [viewerBusy, setViewerBusy] = useState(false);
   const [viewerUrl, setViewerUrl] = useState("");
@@ -40,7 +42,9 @@ export function BrowserLabView() {
       ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
     });
     if (!response.ok) throw new Error("Browser service unavailable");
-    return response.json();
+    const value: unknown = await response.json();
+    if (suffix === "status") return { ...Status.parse(value), comparisonAvailable: response.headers.get("x-matrix-browser-lab-comparison") === "enabled" };
+    return value;
   };
   const reconnect = async (signal: AbortSignal) => {
     const version = ++viewerVersion.current;
@@ -79,10 +83,11 @@ export function BrowserLabView() {
         }
         if (controller.signal.aborted) return;
         const next = Status.parse(await request("status", controller.signal));
-        if (!controller.signal.aborted && version === controlVersion.current && !controlBusy.current) { setStatus(next); setConnected(true); }
+        if (!controller.signal.aborted && version === controlVersion.current && !controlBusy.current) { setStatus(next); setComparisonAvailable(next.comparisonAvailable === true); setConnected(true); }
       } catch (failure) {
         if (!controller.signal.aborted && version === controlVersion.current && !controlBusy.current) {
           setConnected(false);
+          setComparisonAvailable(false);
           console.warn("[browser-lab] Status unavailable", failure instanceof Error ? failure.name : "unknown");
         }
       } finally {
@@ -96,7 +101,7 @@ export function BrowserLabView() {
 
   const control = async (action: Action) => {
     const signal = lifetime.current?.signal;
-    if (!signal || signal.aborted || controlBusy.current) return;
+    if (!signal || signal.aborted || controlBusy.current || !connected || !comparisonAvailable) return;
     controlBusy.current = true;
     controlVersion.current++;
     setBusy(true); setError("");
@@ -117,20 +122,22 @@ export function BrowserLabView() {
   };
   const running = status.phase === "running";
   const human = status.phase === "human";
-  const interactive = connected && status.humanControlAvailable && !busy;
+  const canCompare = connected && comparisonAvailable;
+  const interactive = canCompare && status.humanControlAvailable && !busy;
   const canResume = !!status.engine && ["human", "failed", "stopped"].includes(status.phase);
   const buttonClass = "rounded-md border border-[var(--border)] px-3 py-1.5 text-sm disabled:opacity-40";
   const stateLabel = !connected ? "Connecting…" : human ? "You are in control" : running ? "Agent working" : status.phase === "completed" ? "Fixture complete" : "Ready";
   return <section className="flex h-full min-h-0 flex-col gap-2 bg-[var(--background)] p-3 text-[var(--foreground)]" aria-label="Browser Lab">
     <header className="flex items-center justify-between"><div><h1 className="font-semibold">Browser Lab</h1><p className="text-xs opacity-70">Your Chrome. Shared with the agent.</p></div><span className="text-xs">Owner-only test VPS</span></header>
     <div className="flex flex-wrap items-center gap-2" aria-label="Automation controls">
-      {(["agent-browser", "browser-use"] as const).map((tool) => <button key={tool} className={buttonClass} aria-pressed={engine === tool} disabled={busy || running || human} onClick={() => setEngine(tool)}>{tool === "browser-use" ? "Browser Use" : "agent-browser"}</button>)}
-      <button className={buttonClass} disabled={!connected || busy || running || human} onClick={() => { void control("start"); }}>Run comparison</button>
-      <button className={buttonClass} disabled={!connected || busy || human} onClick={() => { void control("takeover"); }}>Take over</button>
-      <button className={buttonClass} disabled={!connected || busy || !canResume} onClick={() => { void control("resume"); }}>Resume</button>
-      <button className={buttonClass} disabled={!connected || busy || ["idle", "stopped"].includes(status.phase)} onClick={() => { void control("stop"); }}>Stop</button>
+      {(["agent-browser", "browser-use"] as const).map((tool) => <button key={tool} className={buttonClass} aria-pressed={engine === tool} disabled={!canCompare || busy || running || human} onClick={() => setEngine(tool)}>{tool === "browser-use" ? "Browser Use" : "agent-browser"}</button>)}
+      <button className={buttonClass} disabled={!canCompare || busy || running || human} onClick={() => { void control("start"); }}>Run comparison</button>
+      <button className={buttonClass} disabled={!canCompare || busy || human} onClick={() => { void control("takeover"); }}>Take over</button>
+      <button className={buttonClass} disabled={!canCompare || busy || !canResume} onClick={() => { void control("resume"); }}>Resume</button>
+      <button className={buttonClass} disabled={!canCompare || busy || ["idle", "stopped"].includes(status.phase)} onClick={() => { void control("stop"); }}>Stop</button>
       <button className={buttonClass} disabled={viewerBusy} onClick={() => { const signal = lifetime.current?.signal; if (signal) void reconnect(signal); }}>Reconnect preview</button>
     </div>
+    {connected && !comparisonAvailable && <p className="text-xs opacity-70">Comparison controls are unavailable while shared Chat owns Chrome. Use Browser controls in Matrix.</p>}
     <div className="flex justify-between text-xs" aria-live="polite"><span>{busy ? "Applying action…" : stateLabel}</span><span>{status.workCompleted}/10 actions</span></div>
     {error && <p role="alert" className="text-sm">{error}</p>}
     <div className="relative min-h-0 flex-1 overflow-hidden rounded-md border border-[var(--border)]">
