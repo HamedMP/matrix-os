@@ -1,3 +1,4 @@
+import { createTerminalOutputHandoff } from "./output-handoff.js";
 import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
@@ -246,50 +247,27 @@ export class TerminalRuntimeSocketServer {
       : await this.options.runtime.resize(ref, { ...request.input, mode: "soft" });
     const tab = resized.tabs.find((candidate) => candidate.id === ref.tabId);
     if (!tab) throw new Error("Terminal tab not found");
-    const snapshot = request.input.expectedIncarnation
-      ? await this.options.runtime.getSnapshot(ref, request.input.expectedIncarnation)
-      : await this.options.runtime.getSnapshot(ref);
-    const effectiveFromSeq = request.input.fromSeq === LIVE_TAIL_FROM_SEQ
-      ? (snapshot?.seq ?? -1) + 1
-      : request.input.fromSeq;
-    let nextSeq = Math.max(effectiveFromSeq, (snapshot?.seq ?? -1) + 1);
-    let revision = Math.max(tab.revision, snapshot?.revision ?? 0);
+    let nextSeq = 0;
+    let revision = tab.revision;
     const send = (frame: TerminalServerFrame) => {
       if (!socket.destroyed) socket.write(encodeSocketResponseFrame(frame));
     };
-    send({
-      type: "attached",
-      terminalRef: ref,
-      canonicalSize: resized.canonicalSize,
-      revision,
-      nextSeq,
-      capabilities: this.options.runtime.scrollState ? ["binary-input-v1", "native-scroll-v1"] : ["binary-input-v1"],
-    });
-    send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
-    if (snapshot) {
-      if (effectiveFromSeq < snapshot.seq) {
-        send({ type: "replay-evicted", terminalRef: ref, revision, fromSeq: effectiveFromSeq, nextSeq: snapshot.seq });
-      }
-      send({
-        type: "snapshot",
-        terminalRef: ref,
-        canonicalSize: resized.canonicalSize,
-        revision,
-        presentationRevision: snapshot.presentationRevision,
-        seq: snapshot.seq,
-        ansi: normalizeTerminalSnapshot(presentZellijSnapshot(snapshot.ansi, snapshot.viewport.length, resized.canonicalSize.rows)),
-        viewport: { top: 0, rows: Math.min(snapshot.viewport.length || resized.canonicalSize.rows, 200) },
-      });
-    }
-    send({ type: "replay-end", terminalRef: ref, revision, nextSeq, toSeq: snapshot?.seq ?? null });
     const decoder = new TextDecoder();
+    const output = createTerminalOutputHandoff((data) => {
+      const text = decoder.decode(data, { stream: true });
+      if (text) send({ type: "output", terminalRef: ref, revision, seq: nextSeq++, data: text });
+    });
+    socket.once("close", () => output.dispose());
     const viewer = await this.options.runtime.attach(ref, {
       viewerId: request.input.viewerId,
       ...(request.input.expectedIncarnation ? { expectedIncarnation: request.input.expectedIncarnation } : {}),
       send: (data) => {
-        const text = decoder.decode(data, { stream: true });
-        if (!text) return;
-        send({ type: "output", terminalRef: ref, revision, seq: nextSeq++, data: text });
+        try { output.write(data); }
+        catch (error: unknown) {
+          output.dispose();
+          socket.destroy();
+          throw error;
+        }
       },
       onDisconnect: () => { socket.end(); },
       onCanonicalSize: (canonicalSize, workspaceRevision) => {
@@ -311,6 +289,49 @@ export class TerminalRuntimeSocketServer {
     else socket.once("close", () => { void detach().catch((error: unknown) => {
       console.error("[terminal-runtime] detach failed", error instanceof Error ? error.name : "unknown_error");
     }); });
+    // Admit the live viewer before reading its baseline. A checkpoint that
+    // advances while admission is pending must be included in this handshake.
+    // Output received during the read is bounded and released only once.
+    try {
+      const snapshot = request.input.expectedIncarnation
+        ? await this.options.runtime.getSnapshot(ref, request.input.expectedIncarnation)
+        : await this.options.runtime.getSnapshot(ref);
+      const effectiveFromSeq = request.input.fromSeq === LIVE_TAIL_FROM_SEQ
+        ? (snapshot?.seq ?? -1) + 1
+        : request.input.fromSeq;
+      nextSeq = Math.max(effectiveFromSeq, (snapshot?.seq ?? -1) + 1);
+      revision = Math.max(tab.revision, snapshot?.revision ?? 0);
+      send({
+        type: "attached",
+        terminalRef: ref,
+        canonicalSize: resized.canonicalSize,
+        revision,
+        nextSeq,
+        capabilities: this.options.runtime.scrollState ? ["binary-input-v1", "native-scroll-v1"] : ["binary-input-v1"],
+      });
+      send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
+      if (snapshot) {
+        if (effectiveFromSeq < snapshot.seq) {
+          send({ type: "replay-evicted", terminalRef: ref, revision, fromSeq: effectiveFromSeq, nextSeq: snapshot.seq });
+        }
+        send({
+          type: "snapshot",
+          terminalRef: ref,
+          canonicalSize: resized.canonicalSize,
+          revision,
+          presentationRevision: snapshot.presentationRevision,
+          seq: snapshot.seq,
+          ansi: normalizeTerminalSnapshot(presentZellijSnapshot(snapshot.ansi, snapshot.viewport.length, resized.canonicalSize.rows)),
+          viewport: { top: 0, rows: Math.min(snapshot.viewport.length || resized.canonicalSize.rows, 200) },
+        });
+      }
+      send({ type: "replay-end", terminalRef: ref, revision, nextSeq, toSeq: snapshot?.seq ?? null });
+      output.flush();
+    } catch (error: unknown) {
+      output.dispose();
+      await detach();
+      throw error;
+    }
     if (!socket.destroyed && request.input.mode === "hard") {
       await this.options.runtime.resize(ref, request.input, request.input.viewerId);
     }
