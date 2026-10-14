@@ -496,6 +496,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           w.id === id ? { ...w, minimized: true } : w,
         ),
         focusedWindowId: state.focusedWindowId === id ? null : state.focusedWindowId,
+        fullscreenWindowId: state.fullscreenWindowId === id ? null : state.fullscreenWindowId,
       }));
     },
 

@@ -127,6 +127,53 @@ describe("Window Manager Store", () => {
   });
 
   describe("minimizeWindow / restoreWindow", () => {
+    it.each(["desktop", "canvas"] as const)("minimizes a fullscreen Browser and restores its existing window from the %s launcher", (mode) => {
+      useDesktopMode.setState({ mode });
+      useWindowManager.getState().openWindow("Browser", "__browser__", 80);
+      const original = useWindowManager.getState().windows[0];
+      useWindowManager.getState().toggleFullscreen(original.id);
+
+      const changed = vi.fn();
+      const unsubscribe = useWindowManager.subscribe(changed);
+      useWindowManager.getState().minimizeWindow(original.id);
+
+      expect(changed).toHaveBeenCalledOnce();
+      expect(useWindowManager.getState()).toMatchObject({
+        focusedWindowId: null,
+        fullscreenWindowId: null,
+        windows: [{ ...original, minimized: true }],
+      });
+      unsubscribe();
+
+      useWindowManager.getState().openWindow("Browser", "__browser__", 80);
+      expect(useWindowManager.getState().windows).toHaveLength(1);
+      expect(useWindowManager.getState()).toMatchObject({
+        focusedWindowId: original.id,
+        fullscreenWindowId: null,
+        windows: [{
+          id: original.id,
+          x: original.x,
+          y: original.y,
+          width: original.width,
+          height: original.height,
+          minimized: false,
+        }],
+      });
+    });
+
+    it("leaves another fullscreen window active when minimizing a background app", () => {
+      useWindowManager.getState().openWindow("Browser", "__browser__", 80);
+      useWindowManager.getState().openWindow("Cloud desktop", "__cloud-desktop__", 80);
+      const [browser, cloudDesktop] = useWindowManager.getState().windows;
+      useWindowManager.getState().toggleFullscreen(cloudDesktop.id);
+
+      useWindowManager.getState().minimizeWindow(browser.id);
+
+      expect(useWindowManager.getState().fullscreenWindowId).toBe(cloudDesktop.id);
+      expect(useWindowManager.getState().focusedWindowId).toBe(cloudDesktop.id);
+      expect(useWindowManager.getState().getWindow(browser.id)?.minimized).toBe(true);
+    });
+
     it("minimizes a window", () => {
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const winId = useWindowManager.getState().windows[0].id;
