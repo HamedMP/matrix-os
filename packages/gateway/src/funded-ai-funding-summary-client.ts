@@ -22,6 +22,7 @@ export interface FundedAiFundingSummaryReader {
     }
   >;
   setUpstreamPreference?(input: {
+    idempotencyKey: string;
     expectedRevision: number;
     selectedUpstream: FundedAiUpstreamPreferenceValue;
     signal?: AbortSignal;
@@ -29,7 +30,7 @@ export interface FundedAiFundingSummaryReader {
 }
 
 export class FundedAiFundingSummaryClientError extends Error {
-  constructor() {
+  constructor(readonly code: "revision_conflict" | "unavailable" = "unavailable") {
     super(SAFE_MESSAGE);
     this.name = "FundedAiFundingSummaryClientError";
   }
@@ -170,11 +171,18 @@ export function createFundedAiFundingSummaryClient(
             "content-type": "application/json",
             accept: "application/json",
           },
-          body: JSON.stringify({ expectedRevision: input.expectedRevision,
+          body: JSON.stringify({ idempotencyKey: input.idempotencyKey, expectedRevision: input.expectedRevision,
             selectedUpstream: input.selectedUpstream }),
         });
         if (!response.ok) {
-          await cancelResponse(response);
+          if (response.status === 409) {
+            const rejection = FundedAiSafeErrorSchema.safeParse(await readBoundedFundedJson(response));
+            if (rejection.success && rejection.data.error.code === "revision_conflict") {
+              throw new FundedAiFundingSummaryClientError("revision_conflict");
+            }
+          } else {
+            await cancelResponse(response);
+          }
           throw new FundedAiFundingSummaryClientError();
         }
         const parsed = FundedAiUpstreamPreferenceResponseSchema.safeParse(await readBoundedFundedJson(response));

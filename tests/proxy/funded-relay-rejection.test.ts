@@ -59,6 +59,12 @@ describe("funded generation rejection settlement", () => {
       expect(response.headers.get("x-matrix-funded-reason")).toBeNull();
       await vi.waitFor(() => expect(control.finalize).toHaveBeenCalledWith({
         reservationId: "reservation_1", tokenId: IDENTITY.tokenId, mode: "exact", actualCostMicrousd: 0,
+        upstreamProvenance: {
+          upstream: "cloudflare_anthropic",
+          routeId: "cloudflare-anthropic",
+          resolvedModel: "claude-sonnet-5",
+          pricingVersion: expect.any(String),
+        },
       }, expect.any(AbortSignal)));
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(control.release).not.toHaveBeenCalled();

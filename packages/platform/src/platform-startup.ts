@@ -375,6 +375,9 @@ async function startPlatformServerWithCleanup(
       credentials: fundedAiRepository,
       relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
       relayControlToken: fundedAiConfig.relayControlToken,
+      ...(upstreamPreferenceConfig.enabled
+        ? { bedrockModelIds: upstreamPreferenceConfig.bedrockModelIds }
+        : {}),
       ...probeLimits,
     });
     if (upstreamPreferenceConfig.enabled) {

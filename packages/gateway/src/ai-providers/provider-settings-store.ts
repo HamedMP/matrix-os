@@ -60,7 +60,10 @@ import {
   hashProviderSettingsMutation,
   sameProviderDependencyCounts,
 } from "./provider-settings-receipts.js";
-import type { FundedAiFundingSummaryReader } from "../funded-ai-funding-summary-client.js";
+import {
+  FundedAiFundingSummaryClientError,
+  type FundedAiFundingSummaryReader,
+} from "../funded-ai-funding-summary-client.js";
 import { readProviderSettingsEnrichment, type ProviderSettingsEnrichment } from "./provider-settings-enrichment.js";
 
 const CONFIG_PATH = "system/ai-providers/settings.json";
@@ -572,6 +575,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         if (!setPreference) throw new ProviderSettingsStoreError("runtime_unavailable", 503);
         try {
           const upstreamPreference = await setPreference({
+            idempotencyKey: mutation.idempotencyKey,
             expectedRevision: mutation.expectedUpstreamRevision,
             selectedUpstream: mutation.selectedUpstream,
           });
@@ -581,6 +585,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           });
         } catch (error) {
           if (error instanceof ProviderSettingsStoreError) throw error;
+          if (error instanceof FundedAiFundingSummaryClientError && error.code === "revision_conflict") {
+            throw new ProviderSettingsStoreError("revision_conflict", 409);
+          }
           console.warn("[provider-settings] Matrix upstream preference update failed:",
             error instanceof Error ? error.name : "UnknownError");
           throw new ProviderSettingsStoreError("runtime_unavailable", 503);

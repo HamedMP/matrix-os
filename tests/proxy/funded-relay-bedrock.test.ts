@@ -110,6 +110,19 @@ describe("funded Bedrock relay", () => {
     await service.close();
   });
 
+  it("fails an explicit Bedrock readiness request closed instead of probing Cloudflare", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ ready: true }));
+    const service = createFundedRelayService(config(), { now: () => NOW, fetchFn });
+    const ready = await service.app.request(
+      `/ready?model=${encodeURIComponent(FUNDED_GLM_FLASH)}&upstream=aws_bedrock`,
+      { headers: { authorization: `Bearer ${config().relayControlToken}` } },
+    );
+    expect(ready.status).toBe(503);
+    expect(await ready.json()).toEqual({ ready: false });
+    expect(fetchFn).not.toHaveBeenCalled();
+    await service.close();
+  });
+
   it("checks policy, reserves, starts, dispatches, and settles exact route-bound usage", async () => {
     const control = platform();
     const order: string[] = [];

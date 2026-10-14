@@ -110,6 +110,7 @@ export function createFundedRelayService(config: FundedRelayConfig, options: {
         return c.json({ ready: false }, 503);
       }
     }
+    if (query.data.upstream === "aws_bedrock") return c.json({ ready: false }, 503);
     if (model !== FUNDED_GLM_FLASH && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
     const priceValidThrough = fundedModelPriceValidThrough(model, config.pricingReviews);
     if (!priceValidThrough || !isFundedModelPriceCurrent(model, now(), config.pricingReviews)) {
