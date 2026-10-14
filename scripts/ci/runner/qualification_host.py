@@ -17,7 +17,7 @@ from host_command import host_command as command
 from lease_config import read_owned, read_owned_json
 from lease_contract import canonical_digest, hex_value, LIMITS
 from lease_store import LeaseStore
-from lease_outcome import InfrastructureUnavailable
+from lease_outcome import HostRejection, InfrastructureUnavailable
 
 MAX_FILE = 50 * 1024 * 1024
 MAX_TOTAL = 150 * 1024 * 1024
@@ -91,14 +91,19 @@ class QualificationHost:
         self.digest = canonical_digest(request)
         private_dir(self.root)
         private_dir(self.root / 'results')
-        from lease_retention import cleanup_results
-        cleanup_results(self.root)
+        from lease_retention import cleanup_results, LEASE_RESULT_CAP, RESULT_ENTRY_CAP
+        entries, leases = cleanup_results(self.root)
         self.lease_dir = self.root / 'results' / ('lease.' + lease)
         self.result = self.lease_dir / 'evidence'
         # Root-owned cleanup-host.sh has recurring retention. Never silently
         # evict uncertain active/replay evidence to make space for new requests.
-        if not self.lease_dir.exists() and len(list((self.root / 'results').iterdir())) >= 32:
-            raise ValueError('Qualification result directory cap; operator retention required')
+        # Lease slots use retention's own definition of a lease directory, so
+        # manual evidence never holds one; lease directories retention cannot
+        # prove complete (unknown ownership, still active) do hold slots until
+        # pruned. A full host stays red with a coded reason and is never an
+        # availability fallback. A lease may always reopen its own directory.
+        if not self.lease_dir.exists() and (entries >= RESULT_ENTRY_CAP or leases >= LEASE_RESULT_CAP):
+            raise HostRejection('result_cap')
         private_dir(self.lease_dir)
         private_dir(self.result)
         filename = self.lease_dir / 'request.json'

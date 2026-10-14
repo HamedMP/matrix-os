@@ -12,7 +12,7 @@ from lease_io import ControlPipe
 from lease_process import OwnedProcess
 from lease_protocol import LeaseProtocol
 from lease_store import LeaseStore
-from lease_outcome import InfrastructureUnavailable
+from lease_outcome import HostRejection, InfrastructureUnavailable
 
 
 class LeaseManager:
@@ -148,6 +148,9 @@ class LeaseManager:
             status, kind, reason = 76, 'infrastructure-unavailable', error.reason
         except InterruptedError:
             status, kind, reason = 75, 'cancelled', 'lease_revoked'
+        except HostRejection as error:
+            # A fixed code from a closed set; never exception text or a path.
+            status, kind, reason = 70, 'failed', error.reason
         except (ValueError, RuntimeError, TimeoutError, OSError) as error:
             # Never print an envelope, capability, raw candidate text or private path.
             print('Lease manager rejected operation: ' + type(error).__name__, file=__import__('sys').stderr)

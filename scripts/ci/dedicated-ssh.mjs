@@ -13,6 +13,8 @@ const limits={unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,h
 const electronFiles=['file-download','canonical-input','provider-auth-terminal','agents-providers-figma','agents-providers-button-contrast','provider-settings-idle','project-folder-picker-layout','terminal-file-drop','terminal-snapshot','release-alignment','chat-title-layout','terminal-clipboard'].map(name=>`tests/e2e/desktop/${name}.e2e.test.ts`).concat('tests/e2e/provider-authorization-electron.e2e.test.ts').sort();
 const reports=['unit','general','grid','electron-download','electron-input','electron-providers','electron-folder','electron-clipboard','electron-drop','electron-snapshot','electron-release','electron-title'];
 const integer=value=>Number.isSafeInteger(value)&&value>=0;
+// Mirrors FAILURE_REASONS in scripts/ci/runner/lease_outcome.py, keyed by record type.
+export const LEASE_FAILURE_REASONS={failed:['execution_failed','cleanup_failed','evidence_failed','result_cap'],cancelled:['lease_revoked']};
 export async function writeSshPrivateKey(path,key){
  if(typeof key!=='string'||!key||key.length>16384)throw new Error('Pinned SSH connection is not configured');
  // Secret transport may trim the PEM/OpenSSH final newline. Preserve every
@@ -82,7 +84,8 @@ export async function runDedicatedLeaseSession(child,envelope,options){
    if(record.type==='running'&&state==='granted'){state='running';return;}
    if(record.type==='completed'&&state==='running'&&record.status===0){terminal=verifyLeaseReceipt(record.receipt,envelope);await revalidate(record,true);return;}
    if(record.type==='infrastructure-unavailable'&&['initial','queued'].includes(state)){const proof=verifyInfrastructureRecord(record,envelope,digest);await revalidate(record,true);terminal=proof;return;}
-   if(['failed','cancelled'].includes(record.type))throw new Error('Owned Linux qualification did not complete');
+   // The host's terminal reason is a fixed code (lease_manager.py); only known codes are repeated.
+   if(['failed','cancelled'].includes(record.type))throw new Error(`Owned Linux qualification did not complete${LEASE_FAILURE_REASONS[record.type].includes(record.reason)?` (${record.reason})`:''}`);
    throw new Error('Unexpected Linux lease control transition');
   };
   child.stdout.on('data',data=>{

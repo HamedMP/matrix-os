@@ -22,35 +22,49 @@ def remove_log(path, older_than=None):
         path.unlink()
 
 
+RESULT_ENTRY_CAP = 512
+LEASE_RESULT_CAP = 32
+
+
+def lease_directories(entries):
+    """Yield (path, lease, lstat) for the entries named and shaped like lease result directories."""
+    for path in entries:
+        match = re.fullmatch(r'lease\.([a-f0-9]{32})', path.name)
+        if not match:
+            continue # Unrelated manual evidence is never inspected.
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue # Removed after listing; it no longer holds a slot.
+        if stat.S_ISDIR(info.st_mode):
+            yield path, match[1], info # Symlinks are never followed or counted.
+
+
 def cleanup_results(root, now=None):
     root = Path(root)
     now = time.time() if now is None else now
     directory = root / 'results'
     if not directory.exists():
-        return
+        return 0, 0
     info = directory.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
         raise ValueError('Untrusted result retention root')
-    entries = list(directory.iterdir())
-    if len(entries) > 512:
-        raise ValueError('Result retention directory cap')
     store = LeaseStore(root / 'leases')
     rows = []
     with store.locked():
-        for path in entries:
-            match = re.fullmatch(r'lease\.([a-f0-9]{32})', path.name)
-            info = path.lstat()
-            if not match or not stat.S_ISDIR(info.st_mode):
-                continue # Explicitly skip symlinks and unrelated manual evidence.
+        entries = list(directory.iterdir())
+        leases = 0
+        for path, lease, info in lease_directories(entries):
+            leases += 1
             if info.st_uid != os.getuid() or info.st_mode & 0o022:
                 raise ValueError('Untrusted owned evidence directory')
             try:
-                record = store.read(match[1])
+                record = store.read(lease)
             except FileNotFoundError:
                 print('Retaining evidence with unknown lease ownership', file=sys.stderr)
                 continue
             if record.get('status') == 'completed':
-                rows.append((info.st_mtime, path, match[1]))
+                rows.append((info.st_mtime, path, lease))
         rows.sort()
         for index, (mtime, path, lease) in enumerate(rows):
             if now - mtime <= 2700 or (now - mtime <= RETENTION_SECONDS and index >= len(rows) - 20):
@@ -60,6 +74,8 @@ def cleanup_results(root, now=None):
             if not shutil.rmtree.avoids_symlink_attacks:
                 raise ValueError('Symlink-safe result removal unavailable')
             shutil.rmtree(path)
+            entries.remove(path)
+            leases -= 1
             log = root / (lease + '.log')
             remove_log(log)
         # Retry a completed log left after interrupted evidence removal. Its
@@ -75,9 +91,14 @@ def cleanup_results(root, now=None):
         # Still under the same registry flock: only resource-free expired
         # replay tombstones can disappear after proven owned-output removal.
         store.records(now=now)
+        # Counted under the registry flock after pruning, so admission needs no second scan.
+        return len(entries), leases
 
 
 if __name__ == '__main__':
     if os.geteuid() != 0 or len(sys.argv) != 1:
         raise SystemExit(64)
-    cleanup_results(Path('/var/lib/matrix-ci'))
+    usage = cleanup_results(Path('/var/lib/matrix-ci'))
+    # Retention never removes manual evidence or leases it cannot prove complete.
+    if usage and (usage[0] >= RESULT_ENTRY_CAP or usage[1] >= LEASE_RESULT_CAP):
+        print('Result directory is full; new leases fail with result_cap until results are pruned', file=sys.stderr)
