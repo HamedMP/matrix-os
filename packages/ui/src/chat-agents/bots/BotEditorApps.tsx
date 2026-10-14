@@ -39,7 +39,7 @@ export function BotEditorApps({ agentId, client, authority }: {
     {view ? groups.length ? <>
       {groups.map(connection => <div key={connection.service} className="rounded-lg border border-current/10 p-3">
         <div className="flex items-center gap-3">
-          <BotServiceIcon name={connection.serviceName ?? connection.service} logoUrl={connection.logoUrl} />
+          <BotServiceIcon key={connection.logoUrl ?? connection.service} name={connection.serviceName ?? connection.service} logoUrl={connection.logoUrl} />
           <div className="min-w-0 flex-1 font-medium">{connection.serviceName ?? connection.service.replaceAll("_", " ")}</div>
           <span style={chatAgentMutedStyle}>{connection.state === "not_connected" ? "Not connected"
             : connection.state === "granted" && !connection.accounts?.length ? "Status unavailable" : "Connected"}</span>
