@@ -12,6 +12,26 @@ function fixture(){
 const reconcile=(f:ReturnType<typeof fixture>)=>gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,prNumber:2454,gateAppId:777,gateGithub:f.gateGithub});
 describe('always-required default-controller source gate',()=>{
  it('creates explicit N/A success on an unlabeled ordinary PR without dispatch or Actions-owned edits',async()=>{const f=fixture();await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',head_sha:head,conclusion:'success'}));expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();});
+ it('logs why the current source is unavailable, before writing the failure',async()=>{
+  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+  f.github.rest.repos.getCommit.mockRejectedValue(new Error('commit lookup exploded'));
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{
+   await reconcile(f);
+   expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure',output:expect.objectContaining({title:'Current source candidate is not available'})}));
+   expect(warn).toHaveBeenCalledWith('Source qualification failed for PR #2454 at current-source: commit lookup exploded');
+   // A failing write must not hide the root cause.
+   warn.mockClear();f.gateGithub.rest.checks.create.mockRejectedValue(new Error('gate write rejected'));
+   await expect(reconcile(f)).rejects.toThrow('gate write rejected');
+   expect(warn).toHaveBeenCalledWith('Source qualification failed for PR #2454 at current-source: commit lookup exploded');
+  }finally{warn.mockRestore();}
+ });
+ it('logs why requesting CI discovery failed',async()=>{
+  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+  f.github.rest.actions.listWorkflowRuns.mockRejectedValue(new Error('runs unavailable'));
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{await reconcile(f);expect(warn).toHaveBeenCalledWith('Source qualification failed for PR #2454 at requester-discovery: runs unavailable');}finally{warn.mockRestore();}
+ });
  it('fails the freshness gate and dispatches main CI for current same-head/new-parent merge',async()=>{const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',head_sha:head,conclusion:'failure'}));expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({workflow_id:'ci.yml',ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:base,source_sha:merge},request:{timeout:10000}}));});
  it('does not dispatch when live parent ref moved before the PR merge snapshot updates',async()=>{const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:main}}}));await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));});
  it.each(['origin','api'])('fails closed on %s and never synthesizes CI Results',async kind=>{const f=fixture();if(kind==='api')f.github.rest.actions.getRepoVariable.mockRejectedValue(new Error('API denied'));await expect(gate.reconcileSourceQualification(f.github,repo,kind==='origin'?{...origin,ref:'refs/heads/child'}:origin,{runId:123,runAttempt:1,prNumber:2454,gateAppId:777,gateGithub:f.gateGithub})).rejects.toThrow();expect(f.gateGithub.rest.checks.create.mock.calls.every(([args])=>args.name!=='CI Results')).toBe(true);});
@@ -43,7 +63,12 @@ it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshn
  expect(written.every(args=>args.conclusion===(['attempt','missing'].includes(kind)?'neutral':'failure'))).toBe(true);});
 it.each(['failed','pending','attempt','missing','stale'])('blocks %s coverage in delegated mode',async kind=>{const f=completeFixture();
  f.github.rest.actions.getRepoVariable.mockImplementation(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?main:args.name.includes('IMAGE')?'sha256:'+'e'.repeat(64):args.name.includes('HARNESS')?'f'.repeat(64):'true'}}));
- degrade(f,kind);await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.every(([args]:any[])=>args.conclusion==='failure')).toBe(true);});
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ try{
+  degrade(f,kind);await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.every(([args]:any[])=>args.conclusion==='failure')).toBe(true);
+  if(kind==='missing')expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Source qualification failed for PR #2454 at qualification: \S/));
+ }finally{warn.mockRestore();}
+});
 it('fails instead of neutral when a newer hosted attempt starts during the shadow Linux wait',async()=>{const f=completeFixture();degrade(f,'missing');
  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async()=>{f.github.rest.actions.listWorkflowRuns.mockImplementation(async(args?:unknown)=>({data:{workflow_runs:(args as {workflow_id:number}).workflow_id===98?[{...f.ci,run_attempt:2,status:'queued'}]:[f.controller]}}));return{data:{artifacts:[]}};});
  await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args.conclusion)).toEqual(['failure']);});
