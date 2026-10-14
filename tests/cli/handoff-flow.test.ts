@@ -40,7 +40,8 @@ let origin: string;
 let local: string;
 
 interface FakeState {
-  projects: MatrixProject[];
+  projects: (MatrixProject & { createdBy?: string })[];
+  failNextTurn?: boolean;
   githubAuth: boolean;
   chats: { id: string; body: unknown }[];
   turns: { chatId: string; body: Record<string, unknown> }[];
@@ -57,18 +58,19 @@ function fakeGateway(state: FakeState): HandoffGateway {
       state.calls.push(`createProject:${String(body.mode)}`);
       const slug = String(body.slug);
       const existing = state.projects.find((project) => project.slug === slug);
-      if (existing) return existing;
+      if (existing && existing.createdBy === body.clientRequestId) return existing;
+      if (existing) throw new HandoffApiError("conflict", 409, "slug_conflict");
       if (body.mode === "github") {
         if (!state.githubAuth) throw new HandoffApiError("auth", 424, "github_auth_required");
         const localPath = join(home, "projects", slug, "repo");
         await mkdir(join(home, "projects", slug), { recursive: true });
         await git(root, "clone", "-q", origin, localPath);
-        const project = { id: `proj_${slug}`, slug, name: String(body.name), kind: "github", localPath, github: { owner: "acme", repo: "app" } };
+        const project = { id: `proj_${slug}`, slug, name: String(body.name), kind: "github", localPath, github: { owner: "acme", repo: "app" }, createdBy: String(body.clientRequestId) };
         state.projects.push(project);
         return project;
       }
       const localPath = await realpath(join(home, String(body.path)));
-      const project = { id: `proj_${slug}`, slug, name: String(body.name), kind: "folder", localPath };
+      const project = { id: `proj_${slug}`, slug, name: String(body.name), kind: "folder", localPath, createdBy: String(body.clientRequestId) };
       state.projects.push(project);
       return project;
     },
@@ -96,6 +98,10 @@ function fakeGateway(state: FakeState): HandoffGateway {
       return { id, revision: 0 };
     },
     async startTurn(chatId, body) {
+      if (state.failNextTurn) {
+        state.failNextTurn = false;
+        throw new HandoffApiError("unavailable", 503, "request_failed");
+      }
       state.turns.push({ chatId, body });
     },
     async run(command) {
@@ -125,7 +131,7 @@ function deps(state: FakeState, extra: Partial<HandoffDeps> = {}): HandoffDeps {
 }
 
 function input(overrides: Partial<HandoffInput> = {}): HandoffInput {
-  return { cwd: local, agent: "codex", brief: "Finish the parser refactor.", history: "none", gatewayUrl: "https://app.matrix-os.com", ...overrides };
+  return { cwd: local, agent: "codex", brief: "Finish the parser refactor.", history: "none", gatewayUrl: "https://app.matrix-os.com", account: "user:user_1", ...overrides };
 }
 
 const yes = async () => true;
@@ -214,10 +220,12 @@ describe("runHandoff", () => {
   it("lands on a side branch when the Matrix worktree has uncommitted work", async () => {
     const state: FakeState = { projects: [], githubAuth: true, chats: [], turns: [], calls: [] };
     const first = await runHandoff(input(), deps(state), yes);
-    // first handoff left "v3 wip" uncommitted in the Matrix worktree
+    // Someone keeps working in the Matrix worktree without committing.
+    await writeFile(join(first.result!.checkoutPath, "parser.ts"), "edited on matrix\n");
     const second = await runHandoff(input(), deps(state, { now: () => new Date("2026-10-14T12:45:00Z") }), yes);
     expect(second.result).toMatchObject({ usedSideBranch: true, branch: "handoff/feat/parser-202610141245" });
-    expect(await readFile(join(first.result!.checkoutPath, "parser.ts"), "utf8")).toBe("v3 wip\n");
+    expect(await readFile(join(first.result!.checkoutPath, "parser.ts"), "utf8")).toBe("edited on matrix\n");
+    expect(await readFile(join(second.result!.checkoutPath, "parser.ts"), "utf8")).toBe("v3 wip\n");
     const text = (state.turns[1]!.body.parts as { text: string }[])[0]!.text;
     expect(text).toContain("landed on `handoff/feat/parser-202610141245`");
   });
@@ -249,6 +257,36 @@ describe("runHandoff", () => {
     }
   });
 
+  it("binds approval to the destination computer and account", async () => {
+    const state: FakeState = { projects: [], githubAuth: true, chats: [], turns: [], calls: [] };
+    const { preview } = await runHandoff(input(), deps(state), async () => false);
+    for (const other of [{ account: "user:user_2" }, { gatewayUrl: "https://app.matrix-os.com/vm/bob" }]) {
+      await expect(runHandoff(input({ ...other, approvalToken: preview.approvalToken }), deps(state), yes)).rejects.toMatchObject({ code: "scope_changed" });
+    }
+    expect(state.calls.some((call) => call.startsWith("createProject") || call === "upload")).toBe(false);
+  });
+
+  it("lets the same approval finish after a failure that followed project creation", async () => {
+    const state: FakeState = { projects: [], githubAuth: true, chats: [], turns: [], calls: [], failNextTurn: true };
+    const { preview } = await runHandoff(input(), deps(state), async () => false);
+    await expect(runHandoff(input({ approvalToken: preview.approvalToken }), deps(state), yes)).rejects.toBeInstanceOf(HandoffApiError);
+    expect(state.projects).toHaveLength(1);
+    const retry = await runHandoff(input({ approvalToken: preview.approvalToken }), deps(state), yes);
+    expect(retry.result).toMatchObject({ projectSlug: "app", branch: "feat/parser", usedSideBranch: false });
+    expect(await readFile(join(retry.result!.checkoutPath, "parser.ts"), "utf8")).toBe("v3 wip\n");
+    expect(state.turns).toHaveLength(1);
+  });
+
+  it("uploads instead when the fallback slug is needed and Matrix has no GitHub login", async () => {
+    const state: FakeState = {
+      projects: [{ id: "proj_other", slug: "app", name: "other", kind: "github", localPath: "/elsewhere", github: { owner: "someone", repo: "else" } }],
+      githubAuth: false, chats: [], turns: [], calls: [],
+    };
+    const { result } = await runHandoff(input(), deps(state), yes);
+    expect(state.calls.filter((call) => call.startsWith("createProject"))).toEqual(["createProject:github", "createProject:github", "createProject:folder"]);
+    expect(result!.projectSlug).toMatch(/^app-[a-f0-9]{7}$/);
+  });
+
   it("stops before uploading when the agent is not signed in on Matrix", async () => {
     const state: FakeState = { projects: [], githubAuth: true, chats: [], turns: [], calls: [] };
     await expect(runHandoff(input({ agent: "claude" }), deps(state), yes)).rejects.toMatchObject({
@@ -264,8 +302,9 @@ describe("runHandoff", () => {
     await writeFile(transcriptPath, "{}\n");
     const imported: string[] = [];
     const { preview, result } = await runHandoff(input({ history: "auto" }), deps(state, {
-      discoverTranscript: async () => ({ path: transcriptPath, harness: "claude", bytes: 3, modifiedMs: 1 }),
+      discoverTranscript: async () => ({ path: transcriptPath, harness: "claude", bytes: 3, modifiedMs: 1, capture: { size: 3, dev: 1n, ino: 2n } }),
       importTranscript: async (choice, title) => {
+        expect(choice.capture).toEqual({ size: 3, dev: 1n, ino: 2n });
         imported.push(`${choice.path}|${title}`);
         return { chatId: "chat_history" };
       },

@@ -185,6 +185,51 @@ describe("handoff remote scripts", () => {
     expect(await git(worktree, "log", "-1", "--format=%s")).toBe("matrix commit");
   });
 
+  it("treats Matrix-only uncommitted edits as foreign even when the local tree is clean", async () => {
+    const { local, matrixRepo } = await githubLikeSetup();
+    await git(local, "checkout", "-q", "-b", "feat/clean");
+    await writeFile(join(local, "app.ts"), "clean\n");
+    await git(local, "commit", "-qam", "clean");
+    const first = await prepare(local, true);
+    await integrate(first, matrixRepo);
+    const worktree = await addManagedWorktree(matrixRepo, "feat/clean");
+    await runRemote(cleanupCommand({ uploadId: first.id, repoPath: matrixRepo }));
+    await writeFile(join(worktree, "app.ts"), "matrix-only edit\n");
+
+    const second = await prepare(local, true);
+    expect(second.snapshot.commit).toBeNull();
+    expect((await integrate(second, matrixRepo)).branch).toBe("handoff/feat/clean-202610141200");
+    expect(await apply(second, matrixRepo, worktree)).toMatchObject({ result: "checkout_dirty" });
+    expect(await readFile(join(worktree, "app.ts"), "utf8")).toBe("matrix-only edit\n");
+  });
+
+  it("re-running the same handoff reuses its side branch and recognizes work it already applied", async () => {
+    const { local, matrixRepo } = await githubLikeSetup();
+    await git(local, "checkout", "-q", "-b", "feat/retry");
+    await writeFile(join(local, "app.ts"), "base\n");
+    await git(local, "commit", "-qam", "base");
+    const first = await prepare(local, true);
+    await integrate(first, matrixRepo);
+    const worktree = await addManagedWorktree(matrixRepo, "feat/retry");
+    await runRemote(cleanupCommand({ uploadId: first.id, repoPath: matrixRepo }));
+    await writeFile(join(worktree, "app.ts"), "matrix edit\n");
+
+    await writeFile(join(local, "app.ts"), "local wip\n");
+    const p = await prepare(local, true);
+    expect((await integrate(p, matrixRepo)).branch).toBe("handoff/feat/retry-202610141200");
+    const side = await addManagedWorktree(matrixRepo, "handoff/feat/retry-202610141200");
+    expect(await apply(p, matrixRepo, side)).toMatchObject({ result: "ok" });
+
+    // The Chat request failed; the same approved handoff runs again.
+    expect(await integrate(p, matrixRepo)).toMatchObject({ result: "ok", branch: "handoff/feat/retry-202610141200", checkout: side });
+    expect(await apply(p, matrixRepo, side)).toMatchObject({ result: "ok" });
+    expect(await readFile(join(side, "app.ts"), "utf8")).toBe("local wip\n");
+
+    // Anything else on the side branch is a conflict, never overwritten.
+    await writeFile(join(side, "app.ts"), "edited after handoff\n");
+    expect(await integrate(p, matrixRepo)).toMatchObject({ result: "side_branch_conflict" });
+  });
+
   it("reports that a full bundle is needed when Matrix lacks the thin bundle's base", async () => {
     const { local } = await githubLikeSetup();
     // A Matrix repository with unrelated history cannot use the thin bundle.

@@ -39,6 +39,7 @@ import {
   isDefinitiveCanonicalChatRejection,
 } from "@/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
+import { useLinkedChatSelection } from "@/hooks/useLinkedChatSelection";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -533,6 +534,13 @@ export function useCanonicalChatState({ initialDraft, initialChatId, initialColl
     setSelectedCollaborationView(null);
     leaveSharedChatPath();
   }, [setActiveChatId, isCurrent]);
+
+  useLinkedChatSelection({
+    chatId: initialChatId,
+    blocked: Boolean(initialDraft || initialCollaborationView),
+    activeChatId,
+    select: switchConversation,
+  });
 
   const openSharedChat = useCallback((scopeId: string) => {
     if (!isCurrent()) return;

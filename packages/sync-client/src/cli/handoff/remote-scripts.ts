@@ -56,6 +56,24 @@ if [ -n "$sha" ]; then
   [ "$actual" = "$sha" ] || { echo "result=bundle_corrupt"; exit 0; }
 fi
 inside_home() { case "$1" in "$home"/*) return 0;; *) return 1;; esac; }
+# Tree of a checkout's working state (tracked and untracked, not ignored),
+# built in a throwaway index so the checkout's own index is untouched.
+state_tree() {
+  tmp=$(mktemp -d "\${TMPDIR:-/tmp}/matrix-handoff-index.XXXXXX")
+  rc=0
+  { GIT_INDEX_FILE="$tmp/index" git -C "$1" read-tree HEAD &&
+    GIT_INDEX_FILE="$tmp/index" git -C "$1" add --all -- . &&
+    GIT_INDEX_FILE="$tmp/index" git -C "$1" write-tree; } || rc=$?
+  rm -rf "$tmp"
+  return $rc
+}
+# Uncommitted work that is not exactly this handoff's snapshot at its HEAD.
+foreign_dirty() {
+  [ -n "$(git -C "$1" status --porcelain)" ] || return 1
+  [ -n "\${snapshot:-}" ] || return 0
+  [ "$(git -C "$1" rev-parse HEAD)" = "$head" ] || return 0
+  [ "$(state_tree "$1")" != "$(git -C "$1" rev-parse "$snapshot^{tree}")" ]
+}
 `;
 
 function script(body: string, args: string[]): string[] {
@@ -168,14 +186,24 @@ fi
 if [ "$target" = "$branch" ]; then
   wt=$(checked_out_at "$branch")
   if [ -n "$wt" ]; then
-    if [ -n "$snapshot" ] && is_dirty "$wt"; then target="$side"; fi
+    if foreign_dirty "$wt"; then target="$side"; fi
     case "$wt" in
       "$repo"|"$home/worktrees/$slug/"*|"$home/projects/$slug/worktrees/"*) ;;
       *) target="$side" ;;
     esac
   fi
 fi
-[ "$target" = "$branch" ] || git branch "$target" "$head"
+if [ "$target" != "$branch" ]; then
+  # A retry of the same approved handoff reuses its side branch, but only
+  # while it still holds exactly the handed-off state.
+  if existing=$(git rev-parse -q --verify "refs/heads/$target^{commit}"); then
+    [ "$existing" = "$head" ] || { echo "result=side_branch_conflict"; exit 0; }
+    swt=$(checked_out_at "$target")
+    if [ -n "$swt" ] && foreign_dirty "$swt"; then echo "result=side_branch_conflict"; exit 0; fi
+  else
+    git branch "$target" "$head"
+  fi
+fi
 echo "result=ok"
 echo "branch=$target"
 echo "checkout=$(checked_out_at "$target")"
@@ -216,8 +244,12 @@ snapshot=$(v "$6")
 inside_home "$repo" && inside_home "$checkout" || { echo "result=invalid_path"; exit 0; }
 cd "$checkout"
 [ "$(git rev-parse HEAD)" = "$head" ] || { echo "result=checkout_moved"; exit 0; }
+if [ -n "$(git status --porcelain)" ]; then
+  # Already applied by an earlier attempt of this handoff: nothing to do.
+  if [ -n "$snapshot" ] && ! foreign_dirty "$checkout"; then echo "result=ok"; exit 0; fi
+  echo "result=checkout_dirty"; exit 0
+fi
 if [ -n "$snapshot" ]; then
-  [ -z "$(git status --porcelain)" ] || { echo "result=checkout_dirty"; exit 0; }
   git diff --binary "$head" "$snapshot" | git apply --whitespace=nowarn
 fi
 echo "result=ok"
