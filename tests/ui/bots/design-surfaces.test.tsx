@@ -134,14 +134,27 @@ it("anchors Details to the supplied Chat surface, responds to its width and rele
   } finally { view.unmount(); host.remove(); vi.unstubAllGlobals(); }
 });
 
-it("shows authenticated app access in Agent settings without adding grant or connection actions", async () => {
+it("shows branded connected accounts and clear Chat consent guidance in Agent settings", async () => {
   const client = clientFixture();
   const bot = { ...saved, recipeRef: { recipeId: "writer", version: "1" } };
   client.list.mockResolvedValue({ enabled: true, agents: [bot] });
-  client.bots = { recipes: vi.fn(async () => []), authority: vi.fn(async () => ({ grants: [], connections: [{ service: "gmail", state: "connected_not_granted" }], memory: { items: [] }, routines: [], pendingInteractions: [] })) } as never;
+  client.bots = { recipes: vi.fn(async () => []), authority: vi.fn(async () => ({ grants: [], connections: [{
+    service: "gmail", serviceName: "Gmail", logoUrl: "https://pipedream.com/s.v0/gmail/logo/48", state: "connected_not_granted",
+    accounts: [
+      { label: "Work", email: "work@example.test", state: "connected_not_granted" },
+      { label: "Personal", email: "personal@example.test", state: "connected_not_granted" },
+    ],
+  }], memory: { items: [] }, routines: [], pendingInteractions: [] })) } as never;
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: `Edit ${bot.name}` }));
-  expect(await screen.findByText("Permission required")).toBeTruthy();
+  expect(await screen.findByRole("img", { name: "Gmail" })).toBeTruthy();
+  expect(screen.getByText("Gmail")).toBeTruthy();
+  expect(screen.getByText("Work")).toBeTruthy();
+  expect(screen.getByText("work@example.test")).toBeTruthy();
+  expect(screen.getByText("Personal")).toBeTruthy();
+  expect(screen.getByText("personal@example.test")).toBeTruthy();
+  expect(screen.getAllByText("Permission required")).toHaveLength(2);
+  expect(screen.getByText(/Ask this bot to use Gmail in Chat/)).toBeTruthy();
   expect(client.bots!.authority).toHaveBeenCalledWith(bot.id);
   expect(screen.queryByRole("button", { name: /^Connect|^Grant/ })).toBeNull();
 });

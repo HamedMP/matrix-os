@@ -41,6 +41,7 @@ export interface BotIntegrationConnection {
   connectionId: string;
   service: string;
   label: string;
+  email?: string | null;
 }
 
 /** Sends one request for the owner and returns the upstream response. */
@@ -56,6 +57,7 @@ const InventorySchema = z.array(z.object({
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
   service: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
   account_label: z.string().min(1).max(120),
+  account_email: z.string().max(254).nullable().optional(),
   status: z.string().max(32),
 }).passthrough()).max(MAX_CONNECTIONS);
 
@@ -166,7 +168,7 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
         const rows = InventorySchema.safeParse(await readJson(response, MAX_LIST_BYTES, bounded));
         if (!rows.success) throw new BotIntegrationError("unavailable");
         return rows.data.filter((row) => row.status === "active")
-          .map((row) => ({ connectionId: row.id, service: row.service, label: row.account_label }));
+          .map((row) => ({ connectionId: row.id, service: row.service, label: row.account_label, email: row.account_email ?? null }));
       }, signal);
     },
     /** Owner-authenticated catalog, narrowed by the current server projection. */
