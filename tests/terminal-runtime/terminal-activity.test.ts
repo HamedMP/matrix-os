@@ -1,6 +1,8 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
 import { TerminalRuntime, type ZellijObserverEvent, type ZellijRuntimeAdapter } from "../../packages/terminal-runtime/src/runtime.js";
@@ -27,6 +29,26 @@ async function fixture() {
 const screen = { ansi: "ready$ ", viewport: ["ready$ "], scrollback: [] };
 
 describe("terminal activity timestamps", () => {
+  it("keeps the process alive while shutdown drains the last coalesced activity", async () => {
+    const recorderUrl = new URL("../../packages/terminal-runtime/src/input-activity-recorder.ts", import.meta.url).href;
+    const script = `
+      import { InputActivityRecorder } from ${JSON.stringify(recorderUrl)};
+      const written = [];
+      let sequence = 0;
+      const recorder = new InputActivityRecorder(() => String(++sequence), async (at) => { written.push(at); });
+      recorder.mark();
+      await recorder.flush();
+      recorder.mark();
+      await recorder.flush();
+      process.stdout.write(JSON.stringify(written));
+    `;
+    const { stdout } = await promisify(execFile)(process.execPath, ["--import=tsx", "--input-type=module", "-e", script], {
+      timeout: 5_000,
+      maxBuffer: 4_096,
+    });
+    expect(JSON.parse(stdout)).toEqual(["1", "2"]);
+  });
+
   it("delivers later input while activity persistence is blocked, and coalesces pending timestamps", async () => {
     const { store, ref, advance } = await fixture();
     await store.activateTab(ref, { tabId: 1, paneId: "terminal_1" });

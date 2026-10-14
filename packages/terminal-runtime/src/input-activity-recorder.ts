@@ -34,7 +34,8 @@ export class InputActivityRecorder {
   private async drain(): Promise<void> {
     while (this.latest) {
       const wait = Math.max(0, this.lastWrite + 250 - Date.now());
-      if (wait > 0) await delay(wait, undefined, { ref: false });
+      // Pending durable activity must keep Node alive after other service handles close.
+      if (wait > 0) await delay(wait);
       const at = this.latest;
       this.latest = undefined;
       try { await this.persist(at); }
