@@ -38,19 +38,25 @@ async function scanDisposableHome(root) {
   }
   await walk(root);return{markerPersisted,scannedFiles:files,scannedBytes:bytes};
 }
-let outcome;
+let outcome,stage="initialize";
 try {
   await request('initialize',{clientInfo:{name:'matrix_mcp_probe',version:'1'},capabilities:{experimentalApi:true}});
   client.notify('initialized',{});
+  stage='thread/start';
   const start=await request('thread/start',{cwd:scratch,config:config(markerA),sandbox:'read-only',approvalPolicy:'never'});
   const threadId=start.thread.id;
+  stage='first catalog';
   const first=marker(await catalog(threadId));
+  stage='thread/resume';
   const resume=await request('thread/resume',{threadId,config:config(markerB),excludeTurns:true});
+  stage='resumed catalog';
   const resumed=marker(await catalog(resume.thread.id));
+  stage='MCP reload';
   await request('config/mcpServer/reload',null);
+  stage='reloaded catalog';
   const reload=marker(await catalog(threadId));
   outcome={envVarsMode,first,resumed,reload,threadIdentityPreserved:resume.thread.id===threadId,noInference:true};
-} catch(error){process.stdout.write(JSON.stringify({probeFailed:true,reason:error.message,noInference:true})+'\n');process.exitCode=1;}
+} catch(error){process.stdout.write(JSON.stringify({probeFailed:true,stage,method:error.method??null,code:error.code??null,reason:error.message,noInference:true})+'\n');process.exitCode=1;}
 finally{
   child.kill('SIGTERM');const force=setTimeout(()=>child.kill('SIGKILL'),2000);let stopDeadline;
   try{await Promise.race([closed,new Promise((_,reject)=>{stopDeadline=setTimeout(()=>reject(new Error('Synthetic native cleanup unconfirmed')),5000);})]);

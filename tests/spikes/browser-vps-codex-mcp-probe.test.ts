@@ -29,3 +29,8 @@ it("bounds silent native requests and handles spawn errors",async()=>{
   const failed=fakeChild();const c=createProbeClient(failed,{requestTimeoutMs:50,totalTimeoutMs:100});
   const waiting=expect(c.request("initialize",{})).rejects.toThrow("Native probe unavailable");failed.emit("error",new Error("synthetic spawn failure"));await waiting;c.dispose();
 });
+it("reports the refused stage/method and safe numeric code without upstream text",async()=>{
+  const child=fakeChild();const client=createProbeClient(child,{requestTimeoutMs:50,totalTimeoutMs:100});
+  const waiting=expect(client.request("thread/start",{})).rejects.toMatchObject({message:"Native probe RPC refused",method:"thread/start",code:-32602});
+  child.stdout.write(JSON.stringify({id:1,error:{code:-32602,message:"synthetic private error detail"}})+"\n");await waiting;client.dispose();
+});
