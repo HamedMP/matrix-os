@@ -12,9 +12,10 @@ export function gateErrorLine(error){
   const status=Number.isSafeInteger(error.status)?` (status ${error.status})`:'';
   return `unexpected ${name}${status}`;
  }catch(formatError){
-  // Formatting must never stop the caller's failure write; only a hostile error object gets here.
-  if(formatError instanceof Error)return 'unexpected unformattable error';
-  throw formatError;
+  // Formatting must never stop the caller's failure write, whatever a hostile getter throws;
+  // the thrown value itself is never printed.
+  void formatError;
+  return 'unexpected unformattable error';
  }
 }
 // Shared line format for both gates; `event` names the gate and what happened.

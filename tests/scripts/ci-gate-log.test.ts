@@ -29,6 +29,14 @@ describe('gate error lines', () => {
     const hostile = new Error('x');
     Object.defineProperty(hostile, 'message', { get() { throw new TypeError('boom'); } });
     expect(gateErrorLine(hostile)).toBe('unexpected unformattable error');
+    for (const thrown of ['a string', { token: 'ghs_secret' }]) {
+      const getter = new Error('x');
+      Object.defineProperty(getter, 'message', { get() { throw thrown; } });
+      expect(gateErrorLine(getter)).toBe('unexpected unformattable error');
+      const status = Object.assign(new Error('bad: host.example.com'), {});
+      Object.defineProperty(status, 'status', { get() { throw thrown; } });
+      expect(gateErrorLine(status)).toBe('unexpected unformattable error');
+    }
     const named = Object.assign(new Error('Plain message'), { name: Symbol('weird') as unknown as string });
     expect(gateErrorLine(named)).toBe('Plain message');
   });
