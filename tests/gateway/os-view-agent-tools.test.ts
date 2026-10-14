@@ -87,7 +87,7 @@ describe("OS-view agent tools", () => {
     const apps = await tools.listPlaceableApps();
     expect(apps.map((app) => app.appId)).toEqual([
       "chat", "terminal", "files", "editor", "vscode",
-      "settings", "plugins", "browser", "notes", "whiteboard",
+      "settings", "plugins", "browser", "notes", "whiteboard", "cloud-desktop",
     ]);
   });
 
