@@ -78,6 +78,8 @@ grep "  ${NODE_ARCHIVE}$" "$DIST_DIR/SHASUMS256.txt" > "$DIST_DIR/${NODE_ARCHIVE
 (cd "$DIST_DIR" && sha256sum -c "${NODE_ARCHIVE}.sha256")
 tar -xJf "$DIST_DIR/$NODE_ARCHIVE" -C "$STAGE_DIR/runtime"
 mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
+mkdir -p "$STAGE_DIR/runtime/node/etc"
+printf 'prefix=/opt/matrix/runtime/node\n' > "$STAGE_DIR/runtime/node/etc/npmrc"
 
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
@@ -120,8 +122,8 @@ curl --fail --location --max-time 120 "$UV_INSTALLER_URL" -o "$DIST_DIR/uv-insta
 INSTALLER_NO_MODIFY_PATH=1 UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin" sh "$DIST_DIR/uv-install.sh"
 # Customer VPS terminals run as the matrix user. Keep the runtime prefix
 # group-writable so selectable boot-time tool packs can install in place.
-chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"
-find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
+chmod -R g+rwX "$STAGE_DIR/runtime/node/etc" "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"
+find "$STAGE_DIR/runtime/node/etc" "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 # Native Browser services live outside app/. Stage separate guarded Preview and
