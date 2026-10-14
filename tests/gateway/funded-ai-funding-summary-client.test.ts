@@ -77,14 +77,28 @@ describe("funded AI funding summary client", () => {
       updatedAt: NOW, validThrough: "2026-09-30T00:00:00.000Z" } as const;
     const fetchFn = vi.fn(async () => Response.json({ contractVersion: 1, preference }));
     const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
-    await expect(client.setUpstreamPreference!({ expectedRevision: 7, selectedUpstream: "aws_bedrock" }))
+    await expect(client.setUpstreamPreference!({ idempotencyKey: "upstream_1",
+      expectedRevision: 7, selectedUpstream: "aws_bedrock" }))
       .resolves.toEqual(preference);
     expect(fetchFn).toHaveBeenCalledWith(
       "https://platform.matrix-os.com/internal/containers/alice/ai/upstream-preference?runtimeSlot=primary",
       expect.objectContaining({ method: "POST", redirect: "error", signal: expect.any(AbortSignal),
-        body: JSON.stringify({ expectedRevision: 7, selectedUpstream: "aws_bedrock" }),
+        body: JSON.stringify({ idempotencyKey: "upstream_1", expectedRevision: 7,
+          selectedUpstream: "aws_bedrock" }),
         headers: expect.objectContaining({ authorization: `Bearer ${"p".repeat(64)}` }) }),
     );
+  });
+
+  it("preserves only the safe revision-conflict code from preference writes", async () => {
+    const fetchFn = vi.fn(async () => Response.json({
+      error: { code: "revision_conflict", message: "Policy changed; refresh and try again" },
+    }, { status: 409 }));
+    const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
+    const error = await client.setUpstreamPreference!({ idempotencyKey: "upstream_conflict",
+      expectedRevision: 7, selectedUpstream: "aws_bedrock" }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(FundedAiFundingSummaryClientError);
+    expect(error).toMatchObject({ code: "revision_conflict",
+      message: "Matrix AI usage is temporarily unavailable" });
   });
 
   it("reads opted-in Chat availability and rejects malformed or mismatched projections", async () => {

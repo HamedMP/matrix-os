@@ -124,6 +124,7 @@ export function createFundedRelayService(config: FundedRelayServiceConfig, optio
         return c.json({ ready: false }, 503);
       }
     }
+    if (query.data.upstream === "aws_bedrock") return c.json({ ready: false }, 503);
     if ((!model || !isManagedWorkersAiModel(model)) && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
     const priceValidThrough = fundedModelPriceValidThrough(model, config.pricingReviews);
     if (!priceValidThrough || !isFundedModelPriceCurrent(model, now(), config.pricingReviews)) {

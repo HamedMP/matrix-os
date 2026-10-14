@@ -626,6 +626,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
 
   it("settles an upstream 429 with zero usage after a usage-mode start", async () => {
     const events: string[] = [];
+    let finalizationBody: Record<string, unknown> | undefined;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -642,6 +643,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       if (url.endsWith("/release")) { events.push("release"); return json({}); }
       if (url.endsWith("/finalize")) {
         const body = JSON.parse(String(init?.body));
+        finalizationBody = body as Record<string, unknown>;
         events.push(`finalize:${body.mode}:${body.actualCostMicrousd}`);
         return json(finalizationResponse({
           requestId: "request_123", actualCostMicrousd: 0, finalizationMode: "exact",
@@ -658,6 +660,14 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
     await vi.waitFor(() => expect(events).toContain("finalize:exact:0"));
     expect(events).toEqual(["authorize", "start", "upstream_429", "finalize:exact:0"]);
+    expect(finalizationBody).toMatchObject({
+      upstreamProvenance: {
+        upstream: "cloudflare_anthropic",
+        routeId: "cloudflare-anthropic",
+        resolvedModel: expect.any(String),
+        pricingVersion: expect.any(String),
+      },
+    });
     expect(warn).toHaveBeenCalledWith("[proxy] Funded AI upstream rate limited", {
       retryAfterSeconds: 60, inputTokensRemaining: 0,
     });

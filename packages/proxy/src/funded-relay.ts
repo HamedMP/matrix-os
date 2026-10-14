@@ -642,10 +642,13 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       }
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
-        await enqueueFinalization(await classifyFundedUpstreamRejection({
+        const rejection = await classifyFundedUpstreamRejection({
           upstream, canonicalModelId: model.canonicalModelId,
           requestPath: c.req.path, signal: state.lifetimeSignal,
-        }));
+        });
+        await enqueueFinalization(rejection.mode === "exact" && upstreamProvenance
+          ? { ...rejection, upstreamProvenance }
+          : rejection);
         if (upstream.status === 429) {
           console.warn("[proxy] Funded AI upstream rate limited", {
             retryAfterSeconds: rateLimitHeader(upstream, "retry-after"),

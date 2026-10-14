@@ -158,7 +158,8 @@ describe("funded AI policy routes", () => {
       status: "running", imageVersion: "v1", provisionedAt: "2026-08-30T19:00:00.000Z", activationState: "authorized" });
     const hidden = await app.request("/internal/containers/bob/ai/upstream-preference?runtimeSlot=primary", {
       method: "POST", headers: { authorization: `Bearer ${bearerFor("bob", "machine_bob")}`, "content-type": "application/json" },
-      body: JSON.stringify({ expectedRevision: 0, selectedUpstream: "aws_bedrock" }),
+      body: JSON.stringify({ idempotencyKey: "hidden_preference", expectedRevision: 0,
+        selectedUpstream: "aws_bedrock" }),
     });
     expect(hidden.status).toBe(404);
     expect(JSON.stringify(await hidden.json())).not.toMatch(/bedrock|cloudflare|cohort|entitl/i);
@@ -173,7 +174,8 @@ describe("funded AI policy routes", () => {
     } });
     const updated = await app.request("/internal/containers/alice/ai/upstream-preference?runtimeSlot=primary", {
       method: "POST", headers: runtimeHeaders,
-      body: JSON.stringify({ expectedRevision: 0, selectedUpstream: "aws_bedrock" }),
+      body: JSON.stringify({ idempotencyKey: "upstream_preference_1", expectedRevision: 0,
+        selectedUpstream: "aws_bedrock" }),
     });
     expect(updated.status).toBe(200);
     expect(FundedAiUpstreamPreferenceResponseSchema.parse(await updated.json()).preference).toMatchObject({
