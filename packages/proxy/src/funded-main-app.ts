@@ -19,6 +19,12 @@ import { serializeFundedOpenAiRequest } from "./funded-relay-openai-request.js";
 import { createFundedUsageTracker } from "./funded-relay-usage.js";
 import type { FundedGenerationUpstream } from "./funded-relay-upstream.js";
 import type { FundedPlatformClient } from "./funded-relay-platform-client.js";
+import { z } from "zod/v4";
+
+const ReadinessQuerySchema = z.object({
+  model: z.string().min(1).max(256),
+  upstream: z.literal("aws_bedrock").optional(),
+}).strict();
 
 export interface FundedRelayService {
   app: Hono;
@@ -71,23 +77,27 @@ export function createFundedRelayService(config: FundedRelayServiceConfig, optio
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
       return c.json({ ready: false }, 401);
     }
-    const model = c.req.query("model");
+    const query = ReadinessQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+    if (!query.success) return c.json({ ready: false }, 400);
+    const { model } = query.data;
     const bedrockRoute = config.bedrockRoute;
-    if (bedrockRoute && model === bedrockRoute.clientModelId) {
+    if (query.data.upstream === "aws_bedrock"
+      && bedrockRoute && (model === bedrockRoute.clientModelId || model === bedrockRoute.canonicalModelId)) {
       if (!bedrockUpstream || !isBedrockPricingCurrent(bedrockRoute, now())) {
         return c.json({ ready: false }, 503);
       }
       const priceValidThrough = bedrockRoute.pricing.validThrough;
       try {
-        const request = serializeFundedOpenAiRequest({ model, messages: [{ role: "user", content: "ping" }],
-          max_tokens: 1, stream: true }, new Set([model])).request;
+        const request = serializeFundedOpenAiRequest({ model: bedrockRoute.clientModelId,
+          messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: true },
+        new Set([bedrockRoute.clientModelId])).request;
         const result = await bedrockUpstream.dispatch({ request, requestId: `readiness_${now().getTime()}`,
           signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs) });
         if (!result.response.ok || result.provenance.routeId !== bedrockRoute.routeId
           || result.provenance.pricingVersion !== bedrockRoute.pricing.version
           || !result.response.body) return c.json({ ready: false }, 503);
         const tracker = createFundedUsageTracker({ contentType: result.response.headers.get("content-type") ?? "",
-          nativeModelId: model, canonicalModelId: bedrockRoute.canonicalModelId,
+          nativeModelId: bedrockRoute.clientModelId, canonicalModelId: bedrockRoute.canonicalModelId,
           pricingVersion: bedrockRoute.pricing.version, maxCaptureBytes: 64 * 1024,
           priceUsage: (usage) => priceBedrockUsageMicrousd({ route: bedrockRoute,
             pricingVersion: bedrockRoute.pricing.version, usage }) });

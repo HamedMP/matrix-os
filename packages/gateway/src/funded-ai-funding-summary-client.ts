@@ -3,8 +3,11 @@ import {
   FundedAiSafeErrorSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiRuntimeChatFundingSummaryResponseSchema,
+  FundedAiUpstreamPreferenceResponseSchema,
   type FundedAiChatAvailability,
   type FundedAiRuntimeFundingSummaryResponse,
+  type FundedAiUpstreamPreferenceValue,
+  type FundedAiUpstreamPreferenceView,
 } from "@matrix-os/contracts";
 import type { FundedAiRuntimeConfig } from "./funded-ai-credential-manager.js";
 
@@ -13,8 +16,16 @@ const SAFE_MESSAGE = "Matrix AI usage is temporarily unavailable";
 
 export interface FundedAiFundingSummaryReader {
   getFundingSummary(options?: { signal?: AbortSignal }): Promise<
-    Pick<FundedAiRuntimeFundingSummaryResponse, "funding" | "policy"> & { chatAvailability?: FundedAiChatAvailability }
+    Pick<FundedAiRuntimeFundingSummaryResponse, "funding" | "policy"> & {
+      chatAvailability?: FundedAiChatAvailability;
+      upstreamPreference?: FundedAiUpstreamPreferenceView;
+    }
   >;
+  setUpstreamPreference?(input: {
+    expectedRevision: number;
+    selectedUpstream: FundedAiUpstreamPreferenceValue;
+    signal?: AbortSignal;
+  }): Promise<FundedAiUpstreamPreferenceView>;
 }
 
 export class FundedAiFundingSummaryClientError extends Error {
@@ -91,6 +102,8 @@ export function createFundedAiFundingSummaryClient(
   const scope = createCanonicalPhaseReadiness(config.isolatedChat, dependencies);
   const fetchFn = dependencies.fetchFn ?? fetch;
   const makeTimeoutSignal = dependencies.makeTimeoutSignal ?? AbortSignal.timeout;
+  const preferenceUrl = new URL(config.fundingSummaryUrl);
+  preferenceUrl.pathname = preferenceUrl.pathname.replace(/\/funding-summary$/, "/upstream-preference");
   return {
     async getFundingSummary(options = {}) {
       const phaseHeaders = scope.requestHeaders(config);
@@ -109,7 +122,7 @@ export function createFundedAiFundingSummaryClient(
           },
           body,
         });
-        let response = await request(JSON.stringify({ includeChatAvailability: true }));
+        let response = await request(JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }));
         // Older strict platforms reject the opt-in field. Retry only once,
         // sharing the original deadline and returning unknown Chat availability.
         if (response.status === 400 && !scope.canonical) {
@@ -128,7 +141,9 @@ export function createFundedAiFundingSummaryClient(
         if (typeof raw === "object" && raw !== null && "chatAvailability" in raw) {
           const parsed = FundedAiRuntimeChatFundingSummaryResponseSchema.safeParse(raw);
           if (!parsed.success) throw new FundedAiFundingSummaryClientError();
-          return { funding: parsed.data.funding, policy: parsed.data.policy, chatAvailability: parsed.data.chatAvailability };
+          return { funding: parsed.data.funding, policy: parsed.data.policy,
+            chatAvailability: parsed.data.chatAvailability,
+            ...(parsed.data.upstreamPreference ? { upstreamPreference: parsed.data.upstreamPreference } : {}) };
         }
         const parsed = FundedAiRuntimeFundingSummaryResponseSchema.safeParse(raw);
         if (!parsed.success) throw new FundedAiFundingSummaryClientError();
@@ -139,6 +154,36 @@ export function createFundedAiFundingSummaryClient(
           "[funded-ai-funding] Summary request failed:",
           error instanceof Error ? error.name : "UnknownError",
         );
+        throw new FundedAiFundingSummaryClientError();
+      }
+    },
+    async setUpstreamPreference(input) {
+      const timeout = makeTimeoutSignal(config.requestTimeoutMs);
+      const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
+      try {
+        const response = await fetchFn(preferenceUrl.toString(), {
+          method: "POST",
+          redirect: "error",
+          signal,
+          headers: {
+            authorization: `Bearer ${config.runtimeAuthToken}`,
+            "content-type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({ expectedRevision: input.expectedRevision,
+            selectedUpstream: input.selectedUpstream }),
+        });
+        if (!response.ok) {
+          await cancelResponse(response);
+          throw new FundedAiFundingSummaryClientError();
+        }
+        const parsed = FundedAiUpstreamPreferenceResponseSchema.safeParse(await readBoundedFundedJson(response));
+        if (!parsed.success) throw new FundedAiFundingSummaryClientError();
+        return parsed.data.preference;
+      } catch (error) {
+        if (error instanceof FundedAiFundingSummaryClientError) throw error;
+        console.warn("[funded-ai-funding] Preference request failed:",
+          error instanceof Error ? error.name : "UnknownError");
         throw new FundedAiFundingSummaryClientError();
       }
     },

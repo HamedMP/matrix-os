@@ -30,6 +30,7 @@ export async function readProviderSettingsEnrichment(input: {
           fundingSummary: FundedAiFundingSummarySchema.parse(state.funding),
           fundedPolicy: FundedAiEffectivePolicySchema.parse(state.policy),
           ...(chatAvailability ? { chatAvailability } : {}),
+          ...(state.upstreamPreference ? { upstreamPreference: state.upstreamPreference } : {}),
         };
       } catch (error) {
         console.warn("[provider-settings] Matrix funding summary unavailable:",

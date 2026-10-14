@@ -13,6 +13,8 @@ import {
   type FundedAiPolicyCheckResponse,
   type FundedAiReleaseResponse,
   type FundedAiStartResponse,
+  type FundedAiResolvedUpstream,
+  type FundedAiUpstreamSelection,
 } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 import {
@@ -92,6 +94,8 @@ export interface FundedPlatformClient {
     maxCostMicrousd: number;
     billingMode?: "usage";
     jevPricingVersion?: string;
+    upstream?: FundedAiResolvedUpstream;
+    upstreamSelection?: FundedAiUpstreamSelection;
   }, signal: AbortSignal): Promise<FundedAiAuthorizationResponse>;
   start(input: { reservationId: string; tokenId: string; executionId?: string }, signal: AbortSignal): Promise<FundedAiStartResponse>;
   release(input: {

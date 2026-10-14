@@ -5,6 +5,7 @@ import { buildProxyApiKey } from "../../packages/proxy/src/auth.js";
 import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/proxy/src/funded-relay.js";
 import { estimateWorstCaseMicrousd, mapFundedModel } from "../../packages/proxy/src/funded-relay-model.js";
 import { boundedBody } from "../../packages/proxy/src/funded-relay-stream.js";
+import { FUNDED_PRICING_VERSIONS } from "../../packages/proxy/src/funded-pricing-review.js";
 
 const GATEWAY_TOKEN = "cloudflare-unified-billing-token-123456789";
 const RELAY_TOKEN = "platform-relay-control-token-123456789";
@@ -207,6 +208,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
             credential: CREDENTIAL, requestId: "request_123",
             modelId: CANONICAL_MODEL, maxCostMicrousd: reservedMicrousd,
             ...(reservationMode === "usage" ? { billingMode: "usage" } : {}),
+            upstream: "cloudflare_anthropic",
           });
           const authorized = authorizationResponse("request_123");
           authorized.reservation.reservedMicrousd = reservedMicrousd;
@@ -227,6 +229,12 @@ describe("Cloudflare funded relay control-plane ordering", () => {
             tokenId: "credential_123",
             mode: "exact",
             actualCostMicrousd: 2_100,
+            upstreamProvenance: {
+              upstream: "cloudflare_anthropic",
+              routeId: "cloudflare-anthropic",
+              resolvedModel: NATIVE_MODEL,
+              pricingVersion: FUNDED_PRICING_VERSIONS[CANONICAL_MODEL],
+            },
           });
           return json(finalizationResponse({
             requestId: "request_123", actualCostMicrousd: 2_100, finalizationMode: "exact",

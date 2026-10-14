@@ -195,6 +195,7 @@ export function supportedProviderSettingsActions(input: {
   config: ProviderSettingsConfiguration;
   canonical: AiProviderSnapshotV3;
   gatewayPolicyAuthority?: "local" | "platform";
+  upstreamPreferenceMutable?: boolean;
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
   codexNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   claudeNativeSignedOut?: ClaudeNativeSignedOut | null;
@@ -225,5 +226,6 @@ export function supportedProviderSettingsActions(input: {
     actions.push("remove_account");
   }
   if (input.dependencies) actions.push("reassign_account");
+  if (input.upstreamPreferenceMutable) actions.push("set_gateway_upstream");
   return actions;
 }

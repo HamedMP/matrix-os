@@ -211,7 +211,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false,
     enrichment?: ProviderSettingsEnrichment, codexNativeAccountMetadata?: CodexNativeAccountMetadata | null, hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null, claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null, claudeNativeSignedOut?: ClaudeNativeSignedOut | null) {
     try {
-      const { fundingSummary, fundedPolicy, chatAvailability, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
+      const { fundingSummary, fundedPolicy, chatAvailability, upstreamPreference, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
         canonical, fundingSummary: this.#fundingSummary,
         genericModelCatalog: this.#genericModelCatalog, refresh,
         catalogFailureHarnesses: [...new Set(config.harnesses.flatMap((harness) =>
@@ -227,10 +227,12 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         hermesNativeAccountMetadata,
         now: this.#now(),
         dependencies: this.#dependencies,
-        supportedActions: this.#supportedActions(config, canonical, claudeNativeAccountMetadata, claudeNativeSignedOut, codexNativeAccountMetadata),
+        supportedActions: this.#supportedActions(config, canonical, claudeNativeAccountMetadata, claudeNativeSignedOut,
+          codexNativeAccountMetadata, upstreamPreference !== undefined),
         fundingSummary,
         chatAvailability,
         fundedPolicy,
+        upstreamPreference,
         fundedPolicyAuthoritative: Boolean(this.#fundingSummary),
         genericModelCatalog,
         configurationHarnessKinds: [...(this.#runtime?.supportedHarnessKinds ?? [])],
@@ -256,6 +258,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null,
     claudeNativeSignedOut?: ClaudeNativeSignedOut | null,
     codexNativeAccountMetadata?: CodexNativeAccountMetadata | null,
+    hasUpstreamPreference = false,
   ): ProviderSettingsSupportedAction[] {
     return supportedProviderSettingsActions({
       runtime: this.#runtime,
@@ -268,6 +271,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       claudeNativeAccountMetadata,
       claudeNativeSignedOut,
       codexNativeAccountMetadata,
+      upstreamPreferenceMutable: hasUpstreamPreference && this.#fundingSummary?.setUpstreamPreference !== undefined,
     });
   }
 
@@ -275,10 +279,11 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     type: ProviderSettingsMutation["type"],
     config: ProviderSettingsConfiguration,
     canonical: AiProviderSnapshotV3,
+    hasUpstreamPreference = false,
   ): void {
     assertProviderSettingsAction({
       type,
-      supportedActions: this.#supportedActions(config, canonical),
+      supportedActions: this.#supportedActions(config, canonical, undefined, undefined, undefined, hasUpstreamPreference),
       hasDependencies: this.#dependencies !== undefined,
       hasLifecycle: this.#lifecycle !== undefined,
     });
@@ -649,7 +654,28 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         if (revokesCodex) releaseRevocation = await this.#prepareNativeCodexRevocation?.();
       };
       try {
-      this.#assertSupported(claudeNativeCompletion || codexNativeCompletion || claudeKeyCompletion ? "set_harness_enabled" : mutation.type, config, canonical);
+      this.#assertSupported(claudeNativeCompletion || codexNativeCompletion || claudeKeyCompletion
+        ? "set_harness_enabled" : mutation.type, config, canonical,
+        enrichment.upstreamPreference !== undefined);
+      if (mutation.type === "set_gateway_upstream") {
+        const setPreference = this.#fundingSummary?.setUpstreamPreference;
+        if (!setPreference) throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+        try {
+          const upstreamPreference = await setPreference({
+            expectedRevision: mutation.expectedUpstreamRevision,
+            selectedUpstream: mutation.selectedUpstream,
+          });
+          return ProviderSettingsMutationResponseSchema.parse({
+            kind: "snapshot",
+            snapshot: await this.#project(canonical, config, false, { ...enrichment, upstreamPreference }),
+          });
+        } catch (error) {
+          if (error instanceof ProviderSettingsStoreError) throw error;
+          console.warn("[provider-settings] Matrix upstream preference update failed:",
+            error instanceof Error ? error.name : "UnknownError");
+          throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+        }
+      }
       // Read and revalidate the current native principal inside mutation admission.
       // The earlier UI snapshot is not authority for changing a saved route.
       const nativeClaudeLifecycle = (mutation.type === "logout_account" || mutation.type === "remove_account")

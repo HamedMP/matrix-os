@@ -68,8 +68,23 @@ describe("funded AI funding summary client", () => {
         authorization: `Bearer ${"p".repeat(64)}`,
         "content-type": "application/json",
       }),
-      body: JSON.stringify({ includeChatAvailability: true }),
+      body: JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
     }));
+  });
+
+  it("updates the entitled upstream preference through the derived authenticated route", async () => {
+    const preference = { selectedUpstream: "aws_bedrock", effectiveUpstream: "cloudflare", revision: 8,
+      updatedAt: NOW, validThrough: "2026-09-30T00:00:00.000Z" } as const;
+    const fetchFn = vi.fn(async () => Response.json({ contractVersion: 1, preference }));
+    const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
+    await expect(client.setUpstreamPreference!({ expectedRevision: 7, selectedUpstream: "aws_bedrock" }))
+      .resolves.toEqual(preference);
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://platform.matrix-os.com/internal/containers/alice/ai/upstream-preference?runtimeSlot=primary",
+      expect.objectContaining({ method: "POST", redirect: "error", signal: expect.any(AbortSignal),
+        body: JSON.stringify({ expectedRevision: 7, selectedUpstream: "aws_bedrock" }),
+        headers: expect.objectContaining({ authorization: `Bearer ${"p".repeat(64)}` }) }),
+    );
   });
 
   it("reads opted-in Chat availability and rejects malformed or mismatched projections", async () => {
