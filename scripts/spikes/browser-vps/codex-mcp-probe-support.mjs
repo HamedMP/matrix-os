@@ -42,3 +42,8 @@ export async function writeSyntheticRollout({homePath,threadId,cwd}) {
   const path=join(dir,`rollout-2026-10-14T00-00-00-${threadId}.jsonl`);
   await writeFile(path,records.map(row=>JSON.stringify(row)).join('\n')+'\n',{flag:'wx',mode:0o600});return path;
 }
+export async function confirmProbeChildStopped(child,closed,{forceMs=2000,deadlineMs=5000}={}) {
+  child.kill('SIGTERM');const force=setTimeout(()=>child.kill('SIGKILL'),forceMs);let deadline;
+  try{await Promise.race([closed,new Promise((_,reject)=>{deadline=setTimeout(()=>reject(new Error('Synthetic native cleanup unconfirmed')),deadlineMs);})]);}
+  finally{clearTimeout(force);clearTimeout(deadline);}
+}

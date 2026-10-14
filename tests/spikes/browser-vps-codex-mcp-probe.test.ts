@@ -51,3 +51,11 @@ it("writes only a new bounded synthetic rollout with the official session/messag
     await expect(writeSyntheticRollout({homePath:dir,threadId:id,cwd:dir})).rejects.toMatchObject({code:"EEXIST"});
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+it("requires confirmed native child exit before another process may start",async()=>{
+  const {confirmProbeChildStopped}=await import("../../scripts/spikes/browser-vps/codex-mcp-probe-support.mjs");
+  const child=fakeChild();let finish!:()=>void;const closed=new Promise<void>(resolve=>{finish=resolve;});let stopped=false;
+  const stopping=confirmProbeChildStopped(child,closed,{forceMs:100,deadlineMs:200}).then(()=>{stopped=true;});
+  await Promise.resolve();expect(child.kill).toHaveBeenCalledWith("SIGTERM");expect(stopped).toBe(false);finish();await stopping;expect(stopped).toBe(true);
+  const uncertain=fakeChild();await expect(confirmProbeChildStopped(uncertain,new Promise(()=>{}),{forceMs:1,deadlineMs:5})).rejects.toThrow("Synthetic native cleanup unconfirmed");
+  expect(uncertain.kill).toHaveBeenCalledWith("SIGKILL");
+});

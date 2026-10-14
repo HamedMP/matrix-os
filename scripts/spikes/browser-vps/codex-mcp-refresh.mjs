@@ -4,21 +4,26 @@ import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, rm, readdir, lstat, readFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { SYNTHETIC_MCP_SOURCE, createProbeClient, writeSyntheticRollout } from "./codex-mcp-probe-support.mjs";
+import { SYNTHETIC_MCP_SOURCE, createProbeClient, writeSyntheticRollout, confirmProbeChildStopped } from "./codex-mcp-probe-support.mjs";
 const executable = process.argv[2];
 if (!executable || process.argv[3] !== "--isolated-home") throw new Error("Pass the pinned executable and --isolated-home only inside a disposable-home sandbox");
 const flags=new Set(process.argv.slice(4));
-const envVarsMode = flags.has("--env-vars");
-const seedRollout = flags.has("--seed-rollout");
+const restartNative = flags.has("--restart-native");
+const envVarsMode = flags.has("--env-vars") || restartNative;
+const seedRollout = flags.has("--seed-rollout") || restartNative;
 const markerA = `matrix_probe_marker_${randomUUID()}`;
 const markerB = `matrix_probe_marker_${randomUUID()}`;
 const scratch = await mkdtemp(join(tmpdir(), "matrix-codex-mcp-probe-"));
 const mock = join(scratch, "mock.mjs");
 await writeFile(mock, SYNTHETIC_MCP_SOURCE, { mode: 0o600 });
 // HOME and credentials must be isolated by the caller. These flags do not read auth.
-const child = spawn(executable, ["-c", 'mcp_servers={}', "app-server"], { cwd: scratch, env: { PATH: process.env.PATH, ...(envVarsMode ? { MATRIX_SYNTHETIC_MARKER: markerA } : {}) }, stdio: ["pipe", "pipe", "ignore"] });
-const closed=new Promise(resolve=>child.once("close",resolve));
-const client=createProbeClient(child);const request=client.request;
+function startNative(value) {
+  const child=spawn(executable,["-c",'mcp_servers={}',"app-server"],{cwd:scratch,env:{PATH:process.env.PATH,...(envVarsMode?{MATRIX_SYNTHETIC_MARKER:value}:{})},stdio:["pipe","pipe","ignore"]});
+  const closed=new Promise(resolve=>child.once("close",resolve));const client=createProbeClient(child);return{child,closed,client};
+}
+let native=startNative(markerA);
+const request=(method,params)=>native.client.request(method,params);
+async function initialize(){await request('initialize',{clientInfo:{name:'matrix_mcp_probe',version:'1'},capabilities:{experimentalApi:true}});native.client.notify('initialized',{});}
 const config=marker=>({'mcp_servers.matrix_synthetic':{command:process.execPath,args:[mock],...(envVarsMode ? {env_vars:['MATRIX_SYNTHETIC_MARKER']} : {env:{MATRIX_SYNTHETIC_MARKER:marker}}),startup_timeout_sec:5}});
 const catalog=threadId=>request('mcpServerStatus/list',{threadId,serverName:'matrix_synthetic',limit:10});
 const marker=value=>JSON.stringify(value).includes(markerB)?'B':JSON.stringify(value).includes(markerA)?'A':'missing';
@@ -42,14 +47,17 @@ async function scanDisposableHome(root) {
 }
 let outcome,failure,stage="initialize",first="missing",resumed="missing",reload="missing";
 try {
-  await request('initialize',{clientInfo:{name:'matrix_mcp_probe',version:'1'},capabilities:{experimentalApi:true}});
-  client.notify('initialized',{});
+  await initialize();
   stage='thread/start';
   const start=await request('thread/start',{cwd:scratch,config:config(markerA),sandbox:'read-only',approvalPolicy:'never'});
   const threadId=start.thread.id;
   stage='first catalog';
   first=marker(await catalog(threadId));
   if(seedRollout){stage='seed synthetic rollout';await writeSyntheticRollout({homePath:join(homedir(),'.codex'),threadId,cwd:scratch});}
+  if(restartNative){
+    stage='confirmed native stop';await confirmProbeChildStopped(native.child,native.closed);native.client.dispose();
+    stage='fresh native initialize';native=startNative(markerB);await initialize();
+  }
   stage='thread/resume';
   const resume=await request('thread/resume',{threadId,config:config(markerB),excludeTurns:true});
   stage='resumed catalog';
@@ -58,14 +66,13 @@ try {
   await request('config/mcpServer/reload',null);
   stage='reloaded catalog';
   reload=marker(await catalog(threadId));
-  outcome={envVarsMode,seedRollout,first,resumed,reload,threadIdentityPreserved:resume.thread.id===threadId,noInference:true};
+  outcome={envVarsMode,seedRollout,restartNative,first,resumed,reload,threadIdentityPreserved:resume.thread.id===threadId,noInference:true};
 } catch(error){
   const safeNativeMessage=error.nativeMessage?.replaceAll(markerA,'[marker-A]').replaceAll(markerB,'[marker-B]').replaceAll(scratch,'[scratch]').replaceAll(homedir(),'[home]').slice(0,1024);
-  failure={probeFailed:true,stage,method:error.method??null,code:error.code??null,reason:error.message,safeNativeMessage,first,resumed,reload,envVarsMode,seedRollout,noInference:true};process.exitCode=1;
+  failure={probeFailed:true,stage,method:error.method??null,code:error.code??null,reason:error.message,safeNativeMessage,first,resumed,reload,envVarsMode,seedRollout,restartNative,noInference:true};process.exitCode=1;
 }
 finally{
-  child.kill('SIGTERM');const force=setTimeout(()=>child.kill('SIGKILL'),2000);let stopDeadline;
-  try{await Promise.race([closed,new Promise((_,reject)=>{stopDeadline=setTimeout(()=>reject(new Error('Synthetic native cleanup unconfirmed')),5000);})]);
+  try{await confirmProbeChildStopped(native.child,native.closed);
     const persistence=await scanDisposableHome(join(homedir(),'.codex'));process.stdout.write(JSON.stringify({...outcome,...failure,...persistence})+'\n');
-  }finally{clearTimeout(force);clearTimeout(stopDeadline);client.dispose();await rm(scratch,{recursive:true,force:true});}
+  }finally{native.client.dispose();await rm(scratch,{recursive:true,force:true});}
 }
