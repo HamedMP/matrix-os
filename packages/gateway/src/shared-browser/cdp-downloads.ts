@@ -117,7 +117,8 @@ export async function collectChromeDownload(options: {
   let finish!: () => void, fail!: (error: Error) => void;
   const completion = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
   // Setup/click may await commands while Chrome emits download events.
-  void completion.catch(() => undefined);
+  void completion.catch(error => console.warn('[shared-browser] Original download unavailable',
+    error instanceof SharedBrowserError ? error.code : 'operation_failed'));
   const onAbort = () => fail(unavailable());
   const recover = (reason: NonNullable<typeof recoveryReason>) => {
     recoveryReason ??= reason;
