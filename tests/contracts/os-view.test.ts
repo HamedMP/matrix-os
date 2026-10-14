@@ -97,7 +97,6 @@ describe("shared OS-view contract", () => {
       "__settings__",
       "__plugins__",
       "__browser__",
-      "__cloud-desktop__",
       "apps/notes/index.html",
       "apps/whiteboard/index.html",
     ]);
