@@ -28,7 +28,7 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
   const resolveClaudeCredentialLaunch = async (context?: { runId: string; instanceId?: string }) => {
     // Retired funded selections must never acquire a lease or fall back to a
     // different billing source. Existing transcripts and profiles stay intact.
-    if (context?.instanceId && context.instanceId !== "claude_code_default") {
+    if (context?.instanceId === "claude_code_matrix_included") {
       throw new Error("Selected AI access is unavailable");
     }
     const settings = await catalogOptions.harnessSettingsSource?.getSnapshot({ suppressFundedProbes: true });
