@@ -2,9 +2,12 @@ import { isManagedCustomBot, type ChatAgent, type ChatAgentRecipe } from "@matri
 
 /** Editable fields exclude broker-stamped authority; unchanged edits must not rebind it. */
 export function editableAgentRecipe(agent: ChatAgent): ChatAgentRecipe | undefined {
-  const recipe = agent.recipe;
-  return recipe ? { skills: [...recipe.skills], integrations: recipe.integrations.map(item => ({ ...item })), output: recipe.output,
-    ...(recipe.jevInboxLabeling !== undefined ? { jevInboxLabeling: recipe.jevInboxLabeling } : {}) } : undefined;
+  return agent.recipe ? copyEditableAgentRecipe(agent.recipe) : undefined;
+}
+
+export function copyEditableAgentRecipe(recipe: ChatAgentRecipe): ChatAgentRecipe {
+  return { skills: [...recipe.skills], integrations: recipe.integrations.map(item => ({ ...item })), output: recipe.output,
+    ...(recipe.jevInboxLabeling !== undefined ? { jevInboxLabeling: recipe.jevInboxLabeling } : {}) };
 }
 
 export function agentRecipePatch(agent: ChatAgent, draft: ChatAgentRecipe | null | undefined): { recipe?: ChatAgentRecipe | null } {
