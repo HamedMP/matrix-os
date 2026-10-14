@@ -164,11 +164,16 @@ export class DelegatedVerificationRegistry {
 
   revokeRun(runId: string) {
     this.generation += 1;
+    const removed: VerificationBinding[] = []; // bounded by the registry cap
     for (const [key, entry] of this.records) {
       if (entry.binding.runId === runId) {
         this.records.delete(key);
-        this.emit("revoked", entry.binding);
+        removed.push(entry.binding);
       }
+    }
+    for (const binding of removed) {
+      try { this.emit("revoked", binding); }
+      catch (error) { console.warn("[app-verification] audit unavailable", error instanceof Error ? error.name : "UnknownError"); }
     }
   }
 

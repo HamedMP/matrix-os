@@ -181,4 +181,20 @@ describe("delegated verification registry", () => {
     release(authority);
     expect(await pending).toBeNull();
   });
+
+  it("drains every run credential even when the audit sink fails", async () => {
+    const pending = await issue();
+    const session = await registry.redeem((await issue()).capability, binding);
+    audit.mockImplementation(() => { throw new Error("AuditUnavailable"); });
+    const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      registry.revokeRun(binding.runId);
+      expect(registry.size()).toBe(0);
+      expect(await registry.redeem(pending.capability, binding)).toBeNull();
+      expect(await registry.authorize(session!.credential, binding)).toBeNull();
+    } finally {
+      audit.mockReset();
+      log.mockRestore();
+    }
+  });
 });
