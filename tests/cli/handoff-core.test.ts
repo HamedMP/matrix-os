@@ -14,6 +14,7 @@ import {
   isSafeBranchName,
   parseGitHubRemote,
   remoteBranchName,
+  sanitizeRemoteUrl,
   sideBranchName,
   type MatrixProject,
 } from "../../packages/sync-client/src/cli/handoff/project-match.js";
@@ -75,6 +76,23 @@ describe("project matching", () => {
     for (const bad of ["-x", "a..b", "a/.hidden", "x.lock", "a//b", "trailing/", "dot.", "sp ace"]) {
       expect(isSafeBranchName(bad), bad).toBe(false);
     }
+  });
+});
+
+describe("sanitizeRemoteUrl", () => {
+  it.each([
+    ["https://user:ghp_secret@github.com/acme/app.git", "https://github.com/acme/app"],
+    ["https://oauth2:glpat-secret@gitlab.com/team/repo.git?x=1#y", "https://gitlab.com/team/repo.git"],
+    ["https://token@gitlab.com/team/repo.git", "https://gitlab.com/team/repo.git"],
+    ["ssh://git@gitlab.com/team/repo.git", "ssh://git@gitlab.com/team/repo.git"],
+    ["ssh://git:secret@gitlab.com/team/repo.git", "ssh://gitlab.com/team/repo.git"],
+    ["git@gitlab.com:team/repo.git", "git@gitlab.com:team/repo.git"],
+  ])("cleans %s", (input, expected) => {
+    expect(sanitizeRemoteUrl(input)).toBe(expected);
+  });
+
+  it.each([null, "/srv/git/repo.git", "file:///srv/git/repo.git", "../sibling", "ext::sh -c evil"])("drops %s", (input) => {
+    expect(sanitizeRemoteUrl(input)).toBeNull();
   });
 });
 

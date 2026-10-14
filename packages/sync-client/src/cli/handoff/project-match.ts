@@ -102,3 +102,32 @@ export function sideBranchName(branch: string, stamp: string): string {
   if (!isSafeBranchName(name)) throw new Error("Derived branch name is invalid");
   return name;
 }
+
+/**
+ * Origin URL that is safe to store in the Matrix checkout's git config:
+ * credentials, query and fragment are removed, and anything that cannot be
+ * cleaned (local paths, unknown schemes) is dropped rather than copied.
+ */
+export function sanitizeRemoteUrl(remote: string | null): string | null {
+  if (!remote) return null;
+  const trimmed = remote.trim();
+  const github = parseGitHubRemote(trimmed);
+  if (github) return githubHttpsUrl(github);
+  // scp-style `git@host:path` carries a login name, not a secret.
+  if (/^[A-Za-z0-9._-]{1,64}@[A-Za-z0-9.-]{1,253}:[A-Za-z0-9._~/-]{1,400}$/.test(trimmed) && !trimmed.includes("..")) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (!["https:", "http:", "ssh:", "git:"].includes(url.protocol) || !url.hostname) return null;
+    const user = url.protocol === "ssh:" && !url.password ? url.username : "";
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    if (user) url.username = user;
+    const cleaned = url.toString();
+    return cleaned.length <= 512 && !/[\u0000-\u001f\u007f]/.test(cleaned) ? cleaned : null;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return null;
+    throw error;
+  }
+}

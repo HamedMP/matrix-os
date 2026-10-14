@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { stat, readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
@@ -6,7 +7,7 @@ import { createLocalChatHttpTransport, uploadLocalChatArchive } from "@matrix-os
 import { openBrowser } from "../../auth/oauth.js";
 import { discoverLocalChatFiles } from "../../import/discovery.js";
 import { openLocalChatSource } from "../../import/local-chat-source.js";
-import { requireCliAuthToken } from "../auth-state.js";
+import { requireCliAuthToken, resolveCliAuthStatus } from "../auth-state.js";
 import { expandLocalPath } from "../file-transfer-client.js";
 import { HandoffApiError, createHandoffGateway } from "../handoff/gateway-api.js";
 import { HandoffGitError } from "../handoff/git-local.js";
@@ -91,8 +92,12 @@ async function discoverTranscript(root: string): Promise<TranscriptChoice | null
   let best: TranscriptChoice | null = null;
   for (const file of candidates) {
     try {
-      const info = await stat(file.path);
-      if (!best || info.mtimeMs > best.modifiedMs) best = { path: file.path, harness: file.harness, bytes: info.size, modifiedMs: info.mtimeMs };
+      const info = await stat(file.path, { bigint: true });
+      const modifiedMs = Number(info.mtimeMs);
+      if (!best || modifiedMs > best.modifiedMs) {
+        const size = Number(info.size);
+        best = { path: file.path, harness: file.harness, bytes: size, modifiedMs, capture: { size, dev: info.dev, ino: info.ino } };
+      }
     } catch (error: unknown) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
@@ -167,7 +172,11 @@ export const handoffCommand = defineCommand({
         ? await readFile(expandLocalPath(args.brief), "utf8")
         : typeof args.message === "string" ? args.message : null;
       const profile = await resolveCliProfile(args);
+      const authStatus = await resolveCliAuthStatus(profile);
       const token = await requireCliAuthToken(profile);
+      const account = authStatus.status === "authenticated" && authStatus.auth
+        ? `user:${authStatus.auth.userId ?? authStatus.auth.handle ?? "unknown"}`
+        : `token:${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
       const gateway = createHandoffGateway({ gatewayUrl: profile.gatewayUrl, token });
       const log = (line: string) => {
         if (!json) console.error(line);
@@ -183,12 +192,15 @@ export const handoffCommand = defineCommand({
           ...(typeof args.model === "string" ? { model: args.model } : {}),
           ...(typeof args.approve === "string" ? { approvalToken: args.approve } : {}),
           gatewayUrl: profile.gatewayUrl,
+          account,
         },
         {
           gateway,
           discoverTranscript,
           importTranscript: async (choice, title) => {
-            const source = await openLocalChatSource(choice.path);
+            // Import exactly the bytes approved in the preview, even if the
+            // session has appended messages since.
+            const source = await openLocalChatSource(choice.path, choice.capture);
             try {
               const signal = AbortSignal.timeout(10 * 60_000);
               const transcript = await source.preview(choice.harness, signal);

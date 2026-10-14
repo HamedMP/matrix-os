@@ -17,6 +17,7 @@ import {
   findMatchingProject,
   githubHttpsUrl,
   remoteBranchName,
+  sanitizeRemoteUrl,
   sideBranchName,
   slugBase,
   type MatrixProject,
@@ -50,6 +51,8 @@ export interface TranscriptChoice {
   harness: "codex" | "claude";
   bytes: number;
   modifiedMs: number;
+  /** File identity at preview time; the import reads exactly these bytes. */
+  capture: { size: number; dev: bigint; ino: bigint };
 }
 
 export interface HandoffInput {
@@ -62,6 +65,8 @@ export interface HandoffInput {
   model?: string;
   approvalToken?: string;
   gatewayUrl: string;
+  /** Stable identity of the signed-in account; approval is bound to it. */
+  account: string;
 }
 
 export interface HandoffDeps {
@@ -104,6 +109,11 @@ export interface HandoffResult {
   chatId: string;
   transcriptChatId: string | null;
   url: string;
+}
+
+function normalizeGateway(gatewayUrl: string): string {
+  const url = new URL(gatewayUrl);
+  return `${url.protocol}//${url.host.toLowerCase()}${url.pathname.replace(/\/+$/, "")}`;
 }
 
 function stampOf(date: Date): string {
@@ -229,9 +239,16 @@ async function resolveTranscript(
 ): Promise<TranscriptChoice | null> {
   if (history === "none") return null;
   if (history === "auto") return await deps.discoverTranscript(root);
-  const info = await stat(history.path);
+  const info = await stat(history.path, { bigint: true });
   if (!info.isFile()) throw new HandoffError("The transcript path is not a file.", "invalid_transcript");
-  return { path: history.path, harness: history.harness, bytes: info.size, modifiedMs: info.mtimeMs };
+  const size = Number(info.size);
+  return {
+    path: history.path,
+    harness: history.harness,
+    bytes: size,
+    modifiedMs: Number(info.mtimeMs),
+    capture: { size, dev: info.dev, ino: info.ino },
+  };
 }
 
 export async function runHandoff(
@@ -268,19 +285,24 @@ export async function runHandoff(
     const unpushedCommits = await countUnpushedCommits(repo);
     const title = safeTitle(input.title, `${repo.name} · ${branch}`);
     const scope = {
-      version: 1,
+      version: 2,
+      destination: { gateway: normalizeGateway(input.gatewayUrl), account: input.account },
       root: repo.root,
       head: repo.head,
       branch,
       snapshot: snapshot.commit,
       withheld: snapshot.withheldPaths,
-      project: project.action === "reuse" ? { reuse: project.project.id } : project,
+      // The project's identity, not the reuse/create decision, so a retry after
+      // this handoff created the project still matches the approval.
+      project: { github: repo.github ? githubHttpsUrl(repo.github).toLowerCase() : null, fallbackSlug },
       agent: input.agent,
       selection,
       permissionMode,
       brief: input.brief ?? "",
       title,
-      transcript: transcript ? { path: transcript.path, bytes: transcript.bytes, modifiedMs: transcript.modifiedMs } : null,
+      transcript: transcript
+        ? { path: transcript.path, bytes: transcript.bytes, dev: String(transcript.capture.dev), ino: String(transcript.capture.ino) }
+        : null,
     };
     const digest = digestOf(scope);
     const preview: HandoffPreview = {
@@ -346,33 +368,33 @@ async function execute(preview: HandoffPreview, input: HandoffInput, deps: Hando
     } else {
       let created: MatrixProject | null = null;
       if (preview.project.action === "create_github") {
-        deps.log(`Cloning ${preview.project.url} into a new Matrix project…`);
-        try {
-          created = await gateway.createProject({
-            mode: "github",
-            url: preview.project.url,
-            slug: preview.project.slug,
-            name: repo.github?.repo ?? repo.name,
-            clientRequestId: requestId("project"),
-          });
-        } catch (error: unknown) {
-          if (!(error instanceof HandoffApiError)) throw error;
-          if (error.code === "slug_conflict") {
-            created = await gateway.createProject({
+        const { url } = preview.project;
+        deps.log(`Cloning ${url} into a new Matrix project…`);
+        // Returns null when Matrix cannot clone (no GitHub login, private or
+        // unreachable repository) so the caller seeds from a bundle instead.
+        const clone = async (slug: string, suffix: string): Promise<MatrixProject | null | "slug_conflict"> => {
+          try {
+            return await gateway.createProject({
               mode: "github",
-              url: preview.project.url,
-              slug: fallbackProjectSlug(repo.name, repo.rootCommit),
+              url,
+              slug,
               name: repo.github?.repo ?? repo.name,
-              clientRequestId: requestId("project_alt"),
+              clientRequestId: requestId(suffix),
             });
-          } else if (error.code === "github_auth_required" || error.code === "clone_failed") {
-            // GitHub is not connected on Matrix or cannot reach this repository:
-            // seed the project from a full bundle instead.
-            deps.log("Matrix cannot clone this repository from GitHub; uploading it instead.");
-          } else {
+          } catch (error: unknown) {
+            if (!(error instanceof HandoffApiError)) throw error;
+            if (error.code === "slug_conflict") return "slug_conflict";
+            if (error.code === "github_auth_required" || error.code === "clone_failed") return null;
             throw error;
           }
+        };
+        let attempt = await clone(preview.project.slug, "project");
+        if (attempt === "slug_conflict") attempt = await clone(fallbackProjectSlug(repo.name, repo.rootCommit), "project_alt");
+        if (attempt === "slug_conflict") {
+          throw new HandoffError("A different Matrix project already uses this repository's name. Rename or archive it, then retry.", "slug_conflict");
         }
+        created = attempt;
+        if (!created) deps.log("Matrix cannot clone this repository from GitHub; uploading it instead.");
       }
       if (created) {
         project = created;
@@ -386,7 +408,7 @@ async function execute(preview: HandoffPreview, input: HandoffInput, deps: Hando
           slug,
           branch: preview.branch,
           head: repo.head,
-          originUrl: repo.github ? githubHttpsUrl(repo.github) : repo.originUrl,
+          originUrl: sanitizeRemoteUrl(repo.originUrl),
         }), "create the project folder");
         if (seeded.result !== "ok" && seeded.result !== "destination_exists") {
           throw new HandoffError("Matrix could not create the project folder.", "seed_failed");

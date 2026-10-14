@@ -86,9 +86,16 @@ users on their own laptops do not have it.
   - the transcript path;
   - the agent and its readiness;
   - an approval token.
-- `--approve <token>` runs exactly the previewed scope. The token is a hash of
-  the plan and the bundle bytes. In an interactive terminal, the CLI can ask
-  instead of requiring the token.
+- `--approve <token>` runs exactly the previewed scope. The token is a hash of:
+  - the repository state and snapshot;
+  - the project identity (not the create-or-reuse decision, so a retry after
+    creation still matches);
+  - the agent selection and the brief;
+  - the transcript's file identity;
+  - the destination gateway and account. A token previewed for one computer
+    or account is rejected on another.
+
+  In an interactive terminal, the CLI can ask instead of requiring the token.
 - Nothing is pushed to any git remote. Credentials are never uploaded; the
   agent signs in again inside Matrix.
 - Remote scripts are built only from validated identifiers (slug, branch,
@@ -105,6 +112,113 @@ users on their own laptops do not have it.
   `plugins/matrix-os`, so Codex and Claude Code on any laptop can install it
   without this repository.
 - The old script stays as a compatibility shim that forwards to the CLI.
+
+
+## Security architecture
+
+**Auth matrix.** Every call is made by the CLI with the owner's bearer JWT from
+`matrix login`. No route is added or changed on the gateway.
+
+| Route | Auth | Purpose |
+| --- | --- | --- |
+| `GET /api/workspace/projects`, `POST /api/projects` | Bearer JWT (owner scope) | Find or create the project |
+| `POST /api/projects/:slug/worktrees` | Bearer JWT | Create or reuse the branch worktree |
+| `PUT /api/files/blob` | Bearer JWT | Stage bundle parts (8 MiB each; the route caps bodies at 10 MiB) |
+| `POST /api/terminal/run` | Bearer JWT | Run the seed, integrate, apply and cleanup scripts |
+| `GET /api/chat-providers`, `POST /api/chats`, `POST /api/chats/:id/turns` | Bearer JWT | Check agent readiness, create the Chat, start the turn |
+| `POST /api/chats/imports/local*` | Bearer JWT | Optional transcript import (existing pipeline) |
+| Shell `?chat=<id>` | Existing shell session | Opens the Chat only if the owner can read it |
+
+**Input validation.**
+- The CLI validates every value it sends to a remote script against strict
+  patterns: the upload id, 40-hex commits, 64-hex digests, the project slug,
+  branch names (the intersection of the gateway's branch rules), and absolute
+  paths without `..`.
+- Values travel as `sh -c` positional arguments, never inside the script
+  text. Empty values become `-`, because the run API rejects empty arguments.
+- The scripts also refuse paths outside the Matrix home.
+- The shell accepts `chat` only as one parameter that matches
+  `CanonicalChatIdSchema`.
+
+**Error policy.**
+- Gateway errors are reduced to an allowlisted code. The CLI shows a fixed
+  message per code and never echoes server text.
+- Debug detail appears only with `MATRIX_CLI_DEBUG=1`.
+
+**Credential handling.**
+- Nothing credential-like leaves the laptop:
+  - the working-tree snapshot withholds `.env*`, keys, `.npmrc`, `.netrc`,
+    `auth.json` and similar files;
+  - the origin URL is stripped of userinfo, query and fragment, or dropped if
+    it cannot be cleaned;
+  - agent logins and GitHub tokens are never copied.
+- Nothing is pushed to any git remote.
+
+## Integration wiring
+
+- No new gateway or shell runtime components.
+- The CLI registers `handoff` in `src/cli/index.ts` and in shell completion.
+- `runHandoff` takes its gateway client, transcript discovery and import, and
+  clock by dependency injection, so tests replace them with no global state.
+- The shell reads `?chat=` through `useSyncExternalStore`. Because the
+  server-rendered snapshot of the URL is empty, `useLinkedChatSelection`
+  applies the id once after hydration and never overrides a later choice.
+
+## Failure modes
+
+- **Timeouts.**
+  - API calls: 30 s.
+  - Each part upload: 180 s.
+  - Project create (which may clone): 10 min.
+  - Worktree: 5 min.
+  - Remote scripts: the run API's per-call limits (60 s to 10 min).
+  - Transcript discovery: 60 s; transcript import: 10 min.
+- **Concurrent access.**
+  - Project and worktree creation rely on the gateway's existing per-project
+    locks.
+  - Remote branches are never rewritten. A divergent or foreign-dirty
+    checkout produces a side branch.
+  - A side branch is reused only when it still holds exactly the handed-off
+    state; otherwise the handoff reports `side_branch_conflict`.
+- **Crash recovery and retries.**
+  - Re-running the approved command is safe:
+    - `clientRequestId`s and the upload id derive from the token;
+    - the project create is idempotent;
+    - an already-applied snapshot is recognised by comparing working-state
+      trees;
+    - integrate is idempotent.
+  - On any failure the CLI removes the staging directory and
+    `refs/matrix-handoff/<id>/*`. Failing that, the next run with the same
+    token reuses them.
+- **Transcript.** The preview pins the file's device, inode and size. The
+  import reads exactly those bytes and fails with `source_changed` if the file
+  was replaced.
+
+## Resource management
+
+- **Bundles.** Bundles are capped at 1 GiB and split into 8 MiB parts on disk.
+  Only one part is in memory at a time.
+- **Local staging.** Local scratch lives in a `mkdtemp` directory that is
+  removed after every run.
+- **Remote staging.** Remote staging is
+  `~/data/matrix-handoff/<id>/` (parts, then the assembled bundle). It is
+  deleted on success and on failure.
+- **Throwaway indexes.** The temporary index used to compare working states
+  lives in `mktemp -d` and is removed immediately.
+- **Third-party data flow.** The repository content (minus withheld paths), the
+  brief and the optional transcript go only to the owner's own Matrix
+  computer.
+
+## Public docs deliverable
+
+Open a separate PR in `FinnaAI/matrix-os-site` (`content/docs/`) documenting
+`matrix handoff`:
+
+- the preview and approval flow;
+- what is and is not transferred;
+- the side-branch behaviour;
+- the `--model`, `--history` and `--permission` options;
+- the `?chat=` link.
 
 ## Done when
 

@@ -26,7 +26,7 @@ It never pushes to GitHub and never uploads `.env` files, keys, or credentials.
 ## Readiness
 
 1. `matrix handoff --help` must work. If it does not, tell the user to update
-   the CLI with `npm i -g @finnaai/matrix`, and stop.
+   the CLI with `pnpm add -g @finnaai/matrix`, and stop.
 2. `matrix whoami` must name the intended owner. If it does not, tell the user
    to run `matrix login`, and stop. Never pass tokens in arguments.
 
