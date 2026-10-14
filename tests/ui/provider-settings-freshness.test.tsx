@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React from "react";
+import React, { useLayoutEffect } from "react";
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -39,6 +39,25 @@ function snapshotWithPiCredit(saved: boolean) {
   snapshot.harnesses = [{ ...snapshot.harnesses[0]!, id: "pi_default", harness: "pi", displayName: "Pi", enabled: true,
     accessSourceId: saved ? "matrix_included" : null,
     route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" } }];
+  return snapshot;
+}
+
+function snapshotWithTwoGatewayRoutes() {
+  const snapshot = snapshotWithPiCredit(false);
+  snapshot.supportedActions.push("set_gateway_budget");
+  const reserved = snapshot.accessSources[0]!;
+  if (reserved.usage.kind !== "managed_credit" || !reserved.usage.chatAvailability) throw new Error("fixture must provide credit");
+  const cloudflare = structuredClone(reserved);
+  cloudflare.id = "matrix_cloudflare";
+  cloudflare.providerId = "cloudflare";
+  cloudflare.eligibleModelIds = ["@cf/zai-org/glm-5.3-flash"];
+  snapshot.modelProviders.push({ id: "cloudflare", displayName: "Cloudflare", models: [{ id: "@cf/zai-org/glm-5.3-flash", displayName: "GLM", enabled: true }] });
+  snapshot.gatewayPolicy!.allowedModelIds.push("@cf/zai-org/glm-5.3-flash");
+  reserved.readiness = { ...reserved.readiness, state: "unavailable", action: "retry", safeReason: "credit_reserved" };
+  reserved.usage.chatAvailability.availableBalanceMicrousd = 0;
+  reserved.usage.credit.reservedMicrousd = 4_980_000;
+  reserved.usage.budget.remainingBudgetMicrousd = 0;
+  snapshot.accessSources = [cloudflare, reserved];
   return snapshot;
 }
 
@@ -193,9 +212,10 @@ it("synchronizes replacement clock once even when successive wall-clock reads ad
   }, { initialProps: { deadline: new Date(start + 10_000).toISOString() } });
   await act(async () => {});
   const initialClock = view.result.current;
+  const initialRenders = renders;
   await act(async () => { view.rerender({ deadline: new Date(start + 20_000).toISOString() }); });
   expect(view.result.current).toBeGreaterThan(initialClock);
-  expect(renders).toBe(3);
+  expect(renders).toBe(initialRenders + 2);
   expect(vi.getTimerCount()).toBe(1);
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
@@ -256,4 +276,147 @@ it("cancels the pending replacement synchronization on disposal", async () => {
   view.unmount();
   await act(async () => {});
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([300_000, 300_001])("expires credit and connection eligibility when effect setup reaches deadline %d", async (effectTime) => {
+  const snapshot = snapshotWithPiCredit(false);
+  const onRefresh = vi.fn();
+  const onMutate = vi.fn();
+  vi.setSystemTime(Date.parse(observedAt) + 299_999);
+  function CrossDeadline() {
+    useLayoutEffect(() => { vi.setSystemTime(Date.parse(observedAt) + effectTime); }, []);
+    return <AgentsProvidersView snapshot={snapshot} selectedHarnessId={snapshot.harnesses[0]!.id}
+      onSelectHarness={vi.fn()} onRefresh={onRefresh} onMutate={onMutate}
+      onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />;
+  }
+  render(<CrossDeadline />);
+  await act(async () => {});
+  if (effectTime === 300_000) {
+    expect(screen.getByText("$4.98")).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  }
+  expect(screen.getByText("Chat credit unavailable")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /^Pi/ }));
+  const connection = screen.getByRole("group", { name: "Pi connection" });
+  const choice = within(connection).getByRole("button", { name: /Use Matrix AI/ });
+  expect(choice).toBeDisabled();
+  expect(vi.getTimerCount()).toBe(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  expect(screen.getByText("Chat credit unavailable")).toBeVisible();
+  expect(choice).toBeDisabled();
+  expect(onRefresh).not.toHaveBeenCalled();
+  expect(onMutate).not.toHaveBeenCalled();
+});
+
+it.each([0, 1])("retains the preferred source and budget draft while replacement clock eligibility synchronizes (usage ahead of projection: %dms)", async (usageAheadMs) => {
+  const view = show(snapshotWithTwoGatewayRoutes());
+  fireEvent.click(screen.getByRole("button", { name: /^Pi/ }));
+  const connection = screen.getByRole("group", { name: "Pi connection" });
+  const choice = within(connection).getByRole("button", { name: /Use Matrix AI/ });
+  expect(choice).toBeEnabled();
+  const gateway = screen.getByRole("region", { name: "Matrix AI" });
+  expect(within(gateway).getByText("GLM")).toBeVisible();
+  const summary = within(gateway).getByText("Advanced Matrix AI settings");
+  fireEvent.click(summary);
+  const advanced = summary.closest("details")!;
+  expect(advanced).toHaveAttribute("open");
+  const budget = screen.getByLabelText("Monthly budget in USD");
+  fireEvent.change(budget, { target: { value: "2.5" } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  const next = snapshotWithTwoGatewayRoutes();
+  next.refreshedAt = new Date(Date.now() - usageAheadMs).toISOString();
+  for (const source of next.accessSources) {
+    if (source.usage.kind !== "managed_credit" || !source.usage.chatAvailability) throw new Error("fixture must provide credit");
+    source.usage.asOf = new Date().toISOString();
+    source.usage.chatAvailability.asOf = source.usage.asOf;
+  }
+  view.replaceSnapshot(next);
+  expect(screen.getByRole("region", { name: "Matrix AI" })).toBe(gateway);
+  expect(screen.getByLabelText("Monthly budget in USD")).toBe(budget);
+  expect(budget).toHaveValue("2.5");
+  expect(advanced).toHaveAttribute("open");
+  expect(within(gateway).getByText("GLM")).toBeVisible();
+  expect(choice).toBeDisabled();
+  fireEvent.click(choice);
+  expect(view.onMutate).not.toHaveBeenCalled();
+  await act(async () => {});
+  expect(screen.getByRole("region", { name: "Matrix AI" })).toBe(gateway);
+  expect(screen.getByLabelText("Monthly budget in USD")).toBe(budget);
+  expect(budget).toHaveValue("2.5");
+  expect(advanced).toHaveAttribute("open");
+  expect(choice).toBeEnabled();
+  expect(view.onRefresh).not.toHaveBeenCalled();
+  expect(view.onMutate).not.toHaveBeenCalled();
+});
+
+it("does not temporarily prefer an unchanged expired source when a reserved sibling observation updates", async () => {
+  const snapshot = snapshotWithTwoGatewayRoutes();
+  const stalePreferred = snapshot.accessSources[0]!;
+  if (stalePreferred.usage.kind !== "managed_credit" || !stalePreferred.usage.chatAvailability) throw new Error("fixture must provide credit");
+  stalePreferred.usage.asOf = new Date(Date.parse(observedAt) - 300_001).toISOString();
+  stalePreferred.usage.chatAvailability.asOf = stalePreferred.usage.asOf;
+  const view = show(snapshot);
+  const gateway = screen.getByRole("region", { name: "Matrix AI" });
+  expect(within(gateway).getByText("Credit reserved")).toBeVisible();
+  expect(within(gateway).queryByText("GLM")).not.toBeInTheDocument();
+  const summary = within(gateway).getByText("Advanced Matrix AI settings");
+  fireEvent.click(summary);
+  const advanced = summary.closest("details")!;
+  const budget = screen.getByLabelText("Monthly budget in USD");
+  fireEvent.change(budget, { target: { value: "2.5" } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  const next = structuredClone(snapshot);
+  next.refreshedAt = new Date().toISOString();
+  const reserved = next.accessSources[1]!;
+  if (reserved.usage.kind !== "managed_credit" || !reserved.usage.chatAvailability) throw new Error("fixture must provide credit");
+  reserved.usage.asOf = next.refreshedAt;
+  reserved.usage.chatAvailability.asOf = next.refreshedAt;
+  view.replaceSnapshot(next);
+  expect(screen.getByRole("region", { name: "Matrix AI" })).toBe(gateway);
+  expect(screen.getByLabelText("Monthly budget in USD")).toBe(budget);
+  expect(budget).toHaveValue("2.5");
+  expect(advanced).toHaveAttribute("open");
+  expect(within(gateway).getByText("Credit reserved")).toBeVisible();
+  expect(within(gateway).queryByText("GLM")).not.toBeInTheDocument();
+  await act(async () => {});
+  expect(screen.getByRole("region", { name: "Matrix AI" })).toBe(gateway);
+  expect(screen.getByLabelText("Monthly budget in USD")).toBe(budget);
+  expect(budget).toHaveValue("2.5");
+  expect(advanced).toHaveAttribute("open");
+  expect(within(gateway).getByText("Credit reserved")).toBeVisible();
+  expect(view.onRefresh).not.toHaveBeenCalled();
+  expect(view.onMutate).not.toHaveBeenCalled();
+});
+
+it.each(["removed", "saved_binding"] as const)("does not retain the previous unbound panel when its source is %s", async (change) => {
+  const snapshot = snapshotWithTwoGatewayRoutes();
+  const view = show(snapshot);
+  fireEvent.click(screen.getByRole("button", { name: /^Pi/ }));
+  const oldGateway = screen.getByRole("region", { name: "Matrix AI" });
+  expect(within(oldGateway).getByText("GLM")).toBeVisible();
+  fireEvent.click(within(oldGateway).getByText("Advanced Matrix AI settings"));
+  fireEvent.change(screen.getByLabelText("Monthly budget in USD"), { target: { value: "2.5" } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  const next = structuredClone(snapshot);
+  next.refreshedAt = new Date().toISOString();
+  for (const source of next.accessSources) {
+    if (source.usage.kind !== "managed_credit" || !source.usage.chatAvailability) throw new Error("fixture must provide credit");
+    source.usage.asOf = next.refreshedAt;
+    source.usage.chatAvailability.asOf = next.refreshedAt;
+  }
+  if (change === "removed") next.accessSources.splice(0, 1);
+  else next.harnesses[0]!.accessSourceId = "matrix_included";
+  view.replaceSnapshot(next);
+  const gateway = screen.getByRole("region", { name: "Matrix AI" });
+  expect(gateway).not.toBe(oldGateway);
+  expect(within(gateway).getByText("Credit reserved")).toBeVisible();
+  expect(within(gateway).queryByText("GLM")).not.toBeInTheDocument();
+  const connection = screen.getByRole("group", { name: "Pi connection" });
+  expect(within(connection).getByRole("button", { name: /Use Matrix AI/ })).toBeDisabled();
+  await act(async () => {});
+  expect(screen.getByRole("region", { name: "Matrix AI" })).toBe(gateway);
+  expect(within(gateway).getByText("Credit reserved")).toBeVisible();
+  expect(within(connection).getByRole("button", { name: /Use Matrix AI/ })).toBeDisabled();
+  expect(view.onRefresh).not.toHaveBeenCalled();
+  expect(view.onMutate).not.toHaveBeenCalled();
 });
