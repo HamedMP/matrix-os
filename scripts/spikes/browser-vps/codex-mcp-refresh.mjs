@@ -4,10 +4,12 @@ import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, rm, readdir, lstat, readFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { SYNTHETIC_MCP_SOURCE, createProbeClient } from "./codex-mcp-probe-support.mjs";
+import { SYNTHETIC_MCP_SOURCE, createProbeClient, writeSyntheticRollout } from "./codex-mcp-probe-support.mjs";
 const executable = process.argv[2];
 if (!executable || process.argv[3] !== "--isolated-home") throw new Error("Pass the pinned executable and --isolated-home only inside a disposable-home sandbox");
-const envVarsMode = process.argv[4] === "--env-vars";
+const flags=new Set(process.argv.slice(4));
+const envVarsMode = flags.has("--env-vars");
+const seedRollout = flags.has("--seed-rollout");
 const markerA = `matrix_probe_marker_${randomUUID()}`;
 const markerB = `matrix_probe_marker_${randomUUID()}`;
 const scratch = await mkdtemp(join(tmpdir(), "matrix-codex-mcp-probe-"));
@@ -47,6 +49,7 @@ try {
   const threadId=start.thread.id;
   stage='first catalog';
   first=marker(await catalog(threadId));
+  if(seedRollout){stage='seed synthetic rollout';await writeSyntheticRollout({homePath:join(homedir(),'.codex'),threadId,cwd:scratch});}
   stage='thread/resume';
   const resume=await request('thread/resume',{threadId,config:config(markerB),excludeTurns:true});
   stage='resumed catalog';
@@ -55,10 +58,10 @@ try {
   await request('config/mcpServer/reload',null);
   stage='reloaded catalog';
   reload=marker(await catalog(threadId));
-  outcome={envVarsMode,first,resumed,reload,threadIdentityPreserved:resume.thread.id===threadId,noInference:true};
+  outcome={envVarsMode,seedRollout,first,resumed,reload,threadIdentityPreserved:resume.thread.id===threadId,noInference:true};
 } catch(error){
   const safeNativeMessage=error.nativeMessage?.replaceAll(markerA,'[marker-A]').replaceAll(markerB,'[marker-B]').replaceAll(scratch,'[scratch]').replaceAll(homedir(),'[home]').slice(0,1024);
-  failure={probeFailed:true,stage,method:error.method??null,code:error.code??null,reason:error.message,safeNativeMessage,first,resumed,reload,envVarsMode,noInference:true};process.exitCode=1;
+  failure={probeFailed:true,stage,method:error.method??null,code:error.code??null,reason:error.message,safeNativeMessage,first,resumed,reload,envVarsMode,seedRollout,noInference:true};process.exitCode=1;
 }
 finally{
   child.kill('SIGTERM');const force=setTimeout(()=>child.kill('SIGKILL'),2000);let stopDeadline;

@@ -28,3 +28,17 @@ export function createProbeClient(child,{requestTimeoutMs=10000,totalTimeoutMs=4
     dispose(){clearTimeout(deadline);fail();lines.close();},
   };
 }
+/** Adapted from the pinned public app-server test fixture, not owner history.
+ * https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/app-server/tests/common/rollout.rs
+ */
+export async function writeSyntheticRollout({homePath,threadId,cwd}) {
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(threadId))throw new Error('Invalid synthetic thread');
+  const {mkdir,writeFile}=await import('node:fs/promises');const {join}=await import('node:path');
+  const timestamp='2026-10-14T00:00:00Z';
+  const payload={id:threadId,session_id:threadId,timestamp,cwd,originator:'codex',cli_version:'0.162.1',source:'cli',model_provider:'openai',selected_capability_roots:[],history_mode:'legacy'};
+  const text='Synthetic MCP lifecycle fixture. No model turn was executed.';
+  const records=[{timestamp,type:'session_meta',payload},{timestamp,type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}},{timestamp,type:'event_msg',payload:{type:'user_message',message:text,kind:'plain'}}];
+  const dir=join(homePath,'sessions','2026','10','14');await mkdir(dir,{recursive:true,mode:0o700});
+  const path=join(dir,`rollout-2026-10-14T00-00-00-${threadId}.jsonl`);
+  await writeFile(path,records.map(row=>JSON.stringify(row)).join('\n')+'\n',{flag:'wx',mode:0o600});return path;
+}

@@ -40,3 +40,14 @@ it("caps synthetic diagnostic details to 1024 characters",async()=>{
   child.stdout.write(JSON.stringify({id:1,error:{code:-32600,message:"synthetic "+"x".repeat(2048)}})+"\n");
   const error=await request;expect(error.message).toBe("Native probe RPC refused");expect(error.nativeMessage).toHaveLength(1024);client.dispose();
 });
+it("writes only a new bounded synthetic rollout with the official session/message envelope",async()=>{
+  const { writeSyntheticRollout }=await import("../../scripts/spikes/browser-vps/codex-mcp-probe-support.mjs");
+  const { readFile }=await import("node:fs/promises");const dir=await mkdtemp(join(tmpdir(),"matrix-rollout-source-"));
+  try{const id="123e4567-e89b-42d3-a456-426614174000";const path=await writeSyntheticRollout({homePath:dir,threadId:id,cwd:dir});
+    const records=(await readFile(path,"utf8")).trim().split("\n").map(line=>JSON.parse(line));
+    expect(records.map(row=>row.type)).toEqual(["session_meta","response_item","event_msg"]);
+    expect(records[0].payload).toMatchObject({id,session_id:id,source:"cli",history_mode:"legacy",cli_version:"0.162.1"});
+    expect(records[1].payload).toMatchObject({type:"message",role:"user",content:[{type:"input_text",text:"Synthetic MCP lifecycle fixture. No model turn was executed."}]});
+    await expect(writeSyntheticRollout({homePath:dir,threadId:id,cwd:dir})).rejects.toMatchObject({code:"EEXIST"});
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
