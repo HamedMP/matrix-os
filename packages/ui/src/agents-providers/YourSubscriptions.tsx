@@ -29,10 +29,10 @@ export function YourSubscriptions({snapshot, capabilities, client, localChatgptC
   const title = matrixAnthropicClient ? "Your connections" : "Your subscriptions";
   return <section className="matrix-ap-subscriptions" aria-label={title}>
     <h3>{title}</h3>
-    <p className="matrix-ap-help">{matrixAnthropicClient ? "Connect ChatGPT or add a Claude API key for chats and Matrix Bots."
+    <p className="matrix-ap-help">{matrixAnthropicClient ? localChatgptClient ? "Connect ChatGPT or add a Claude API key for chats and Matrix Bots." : "Add a Claude API key for chats and Matrix Bots. Manage ChatGPT subscriptions in Electron Desktop."
       : "Connect your accounts on this Computer. Subscription usage is separate from Matrix AI credit."}</p>
     <div className="matrix-ap-subscription-list">
-      <LocalChatgptSubscription client={localChatgptClient} refreshRevision={localChatgptRefreshRevision} disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/>
+      <LocalChatgptSubscription client={localChatgptClient} runtimeSource={snapshot.accessSources.find(source => source.id === "matrix_chatgpt_plan")} refreshRevision={localChatgptRefreshRevision} disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/>
       {matrixAnthropicClient ? <MatrixAnthropicConnectionCard client={matrixAnthropicClient} initialStatus={snapshot.matrixAnthropicConnection ?? null} refreshRevision={localChatgptRefreshRevision}
         disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/> : null}
       {(["codex"] as const).flatMap(kind => {

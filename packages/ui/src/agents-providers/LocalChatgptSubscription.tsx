@@ -1,11 +1,13 @@
+import type { ProviderAccessSource } from "@matrix-os/contracts";
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import { useEffect, useRef, useState } from "react";
 import type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./local-chatgpt-plan-client.js";
 
 const ACTION_ERROR = "ChatGPT connection could not be updated. Check again.";
 
 /** This source is independent of the selected Computer's native Codex/API-key accounts. */
-export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRevision = 0, onChanged }: {
-  client?: LocalChatgptPlanClient; disabled: boolean; readOnly: boolean; refreshRevision?: number; onChanged(): void;
+export function LocalChatgptSubscription({ client, runtimeSource, disabled, readOnly, refreshRevision = 0, onChanged }: {
+  client?: LocalChatgptPlanClient; runtimeSource?: ProviderAccessSource; disabled: boolean; readOnly: boolean; refreshRevision?: number; onChanged(): void;
 }) {
   const [receipt, setReceipt] = useState<{ client: LocalChatgptPlanClient; status: LocalChatgptPlanStatus } | null>(null);
   const [error, setError] = useState<{ client: LocalChatgptPlanClient; text: string; recovery?: boolean } | null>(null);
@@ -107,14 +109,23 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
   }
   const connected = status?.state === "connected" && !!status.account;
   const blocked = disabled || readOnly || busy;
-  const label = !client ? "Unavailable on this surface" : !status ? error && error.client === client ? "Unavailable" : "Checking connection…"
+  // The validated V3 projection owns remote readiness. Native IPC owns only
+  // management on this device; neither receipt nor client presence grants a run.
+  useLocalObservationExpiry([runtimeSource?.readiness.staleAfter]);
+  const checkedAt = Date.parse(runtimeSource?.readiness.checkedAt ?? "");
+  const staleAfter = Date.parse(runtimeSource?.readiness.staleAfter ?? "");
+  const runtimeReady = runtimeSource?.id === "matrix_chatgpt_plan"
+    && runtimeSource.readiness.state === "ready" && !!runtimeSource.accountId
+    && runtimeSource.eligibleModelIds.length > 0 && checkedAt <= Date.now() && staleAfter > Date.now();
+  const label = !client ? runtimeReady ? "Available on this Computer" : "Electron Desktop required" : !status ? error && error.client === client ? "Unavailable" : "Checking connection…"
     : connecting ? "Connecting" : connected ? "Connected on this device" : "Not connected";
   return <article className="matrix-ap-subscription" aria-label="ChatGPT subscription">
     <div className="matrix-ap-subscription-head"><strong>Codex · ChatGPT subscription</strong>
-      <span className="matrix-ap-status-chip" data-state={connected ? "ready" : "attention"}><i aria-hidden="true"/>{label}</span>
+      <span className="matrix-ap-status-chip" data-state={(client ? connected : runtimeReady) ? "ready" : "attention"}><i aria-hidden="true"/>{label}</span>
     </div>
     <p className="matrix-ap-help">Use your ChatGPT plan for chats and Matrix Bots. Keep this device connected while they run.</p>
-    {!client ? <p className="matrix-ap-help">Available in Electron Desktop on your personal device. Native Codex login and API keys are managed separately.</p> : null}
+    {!client ? <p className="matrix-ap-help">Available in Electron Desktop on your personal device. ChatGPT subscription management requires Electron Desktop on the owner’s device. The paired device must stay connected while chats and Matrix Bots run. Native Codex login and API keys are managed separately.</p> : null}
+    {!client && runtimeReady ? <p className="matrix-ap-help">Available for chats and interactive Matrix Bots on this Computer.</p> : null}
     {connected ? <><p className="matrix-ap-help">{status.account!.label}</p>
       <p className="matrix-ap-help">{status.bridgeConnected ? !status.models.length ? "No subscription models are available. Check subscription models." : status.grant.enabled ? "Available for chats and interactive Matrix Bots on this Computer." : "Reconnect ChatGPT to resume chats and interactive Matrix Bots on this Computer." : status.bridgeFailure === "device_conflict" ? "Another device is connected to this Computer. Using this device will replace that connection and stop its active Chat and Bot requests." : "Device connection to this Computer is unavailable. Chat and Bot requests cannot start."}</p>
     </> : null}

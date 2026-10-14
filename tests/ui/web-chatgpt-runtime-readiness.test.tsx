@@ -25,9 +25,10 @@ async function renderPeer(observation?: BotProviderConnection) {
   const snapshot = await projectProviderSettings({ canonical,
     config: initialProviderSettingsConfiguration(canonical, undefined, now), now, supportedActions: ["start_login"] });
   const refresh = vi.fn();
-  render(<YourSubscriptions snapshot={snapshot} capabilities={[]} operationIds={{}} workflowStatus={{}}
-    forbidden={false} disabled={false} onOpen={vi.fn()} onRefresh={refresh} />);
-  return { canonical, snapshot, refresh, card: screen.getByRole("article", { name: "ChatGPT subscription" }) };
+  const element = <YourSubscriptions snapshot={snapshot} capabilities={[]} operationIds={{}} workflowStatus={{}}
+    forbidden={false} disabled={false} onOpen={vi.fn()} onRefresh={refresh} />;
+  const view = render(element);
+  return { view, element, canonical, snapshot, refresh, card: screen.getByRole("article", { name: "ChatGPT subscription" }) };
 }
 
 it("does not override healthy Provider V3 runtime readiness when browser management transport is absent", async () => {
@@ -48,4 +49,13 @@ it("does not fabricate runtime readiness when no subscription peer is observed",
   expect(projectChatGptPlanAppRoutes(canonical, true, +now).every(route => route.availability === "unavailable")).toBe(true);
   expect(card.querySelector(".matrix-ap-status-chip")).not.toHaveAttribute("data-state", "ready");
   expect(within(card).queryByRole("button", { name: "Continue with ChatGPT" })).toBeNull();
+});
+
+it("withdraws displayed runtime availability when the V3 observation expires", async () => {
+  const { view, element, card } = await renderPeer(peer);
+  expect(card.querySelector(".matrix-ap-status-chip")).toHaveAttribute("data-state", "ready");
+  vi.mocked(Date.now).mockReturnValue(+now + 30_001);
+  view.rerender(React.cloneElement(element));
+  expect(card.querySelector(".matrix-ap-status-chip")).not.toHaveAttribute("data-state", "ready");
+  expect(within(card).queryByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeNull();
 });
