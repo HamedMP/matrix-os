@@ -39,8 +39,10 @@ export function useOnboardingSupportDock({ size, position, widgetSize, visible =
   const sharesCorner = corner === "right";
   const lift = sharesCorner ? Math.round(gaps.bottom) + BUBBLE_HEIGHT_PX + LAUNCHER_GAP_PX : null;
   const supportOpenRef = useRef(supportOpen);
+  const sharesCornerRef = useRef(sharesCorner);
   useEffect(() => {
     supportOpenRef.current = supportOpen;
+    sharesCornerRef.current = sharesCorner;
   });
 
   useEffect(() => {
@@ -54,9 +56,14 @@ export function useOnboardingSupportDock({ size, position, widgetSize, visible =
     };
   }, [corner, expanded, lift, visible]);
 
+  // Only the act of opening support shrinks the widget. When the widget comes to share the corner
+  // any other way (expanding, a move, a resize, mounting), the widget wins and support closes below.
+  const supportWasOpenRef = useRef(supportOpen);
   useEffect(() => {
-    if (supportOpen && sharesCorner) dispatch({ type: "size.changed", size: "bubble" });
-  }, [dispatch, sharesCorner, supportOpen]);
+    const opened = supportOpen && !supportWasOpenRef.current;
+    supportWasOpenRef.current = supportOpen;
+    if (opened && sharesCornerRef.current) dispatch({ type: "size.changed", size: "bubble" });
+  }, [dispatch, supportOpen]);
 
   useEffect(() => {
     if (expanded && sharesCorner && supportOpenRef.current) closeSupport();

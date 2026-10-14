@@ -93,6 +93,40 @@ describe("onboarding widget support dock", () => {
     }
   });
 
+  it("keeps the card and closes support when expanding fits the card into the support corner", () => {
+    const high = { x: "right", y: "top", dx: 24, dy: 500 } as const;
+    const bubble = { width: 260, height: 52 };
+    const card = { width: 392, height: 624 };
+    const start = { width: window.innerWidth, height: window.innerHeight };
+    const resizeTo = (width: number, height: number) => act(() => {
+      window.innerWidth = width;
+      window.innerHeight = height;
+      window.dispatchEvent(new Event("resize"));
+    });
+    try {
+      resizeTo(1024, 768);
+      const { rerender, dispatch, closeSupport } = renderDock({ size: "bubble", position: high, widgetSize: bubble });
+      act(() => useUi.getState().setSupportPanelOpen(true));
+      expect(document.documentElement.dataset.mxoOnboarding).toBe("bubble-away");
+
+      rerender({ size: "corner", position: high, widgetSize: bubble });
+      rerender({ size: "corner", position: high, widgetSize: card });
+
+      expect(document.documentElement.dataset.mxoOnboarding).toBe("card-right");
+      expect(closeSupport).toHaveBeenCalledTimes(1);
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      resizeTo(start.width, start.height);
+    }
+  });
+
+  it("keeps a card that shows up in the support corner while support is already open, and closes support", () => {
+    act(() => useUi.getState().setSupportPanelOpen(true));
+    const { dispatch, closeSupport } = renderDock({ size: "corner" });
+    expect(closeSupport).toHaveBeenCalledTimes(1);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("releases the corner while the widget is hidden behind a maximized Chat", () => {
     const { rerender } = renderDock({ size: "bubble" });
     expect(document.documentElement.dataset.mxoOnboarding).toBe("bubble-right");
