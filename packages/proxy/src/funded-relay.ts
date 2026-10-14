@@ -352,8 +352,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let requestBody: string;
     let anthropicBeta: string | null;
     let model: ReturnType<typeof mapFundedModel>;
+    let cloudflareModel: ReturnType<typeof mapFundedModel> | null = null;
     const isOpenAi = c.req.path === CHAT_COMPLETIONS_PATH;
     let isBedrock = false;
+    let isBedrockCandidate = false;
     const requestSearch = new URL(c.req.url).search;
     try {
       const body: unknown = JSON.parse(await c.req.text());
@@ -368,14 +370,16 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       requestBody = serialized.body;
       anthropicBeta = resolveRequestedBetas(c.req.header("anthropic-beta"), config.allowedBetas);
       if (!isOpenAi) assertFundedSystemMessageBeta(parsedBody as FundedRequest, anthropicBeta);
-      isBedrock = isOpenAi && config.bedrockRoute?.clientModelId === parsedBody.model;
-      if (isBedrock && parsedBody.stream !== true) {
+      isBedrockCandidate = isOpenAi && config.bedrockRoute?.clientModelId === parsedBody.model;
+      if (isBedrockCandidate && parsedBody.stream !== true) {
         throw new Error("Bedrock funded requests require streaming");
       }
-      model = isBedrock
+      try { cloudflareModel = mapFundedModel(parsedBody.model); }
+      catch (error) { if (!isBedrockCandidate) throw error; }
+      model = isBedrockCandidate
         ? { nativeModelId: config.bedrockRoute!.clientModelId, canonicalModelId: config.bedrockRoute!.canonicalModelId }
-        : mapFundedModel(parsedBody.model);
-      if ((model.nativeModelId === FUNDED_GLM_FLASH || isBedrock) !== isOpenAi) {
+        : cloudflareModel!;
+      if ((model.nativeModelId === FUNDED_GLM_FLASH || isBedrockCandidate) !== isOpenAi) {
         throw new Error("Unsupported funded AI model");
       }
     } catch (error) {
@@ -389,21 +393,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     if (c.req.path === MESSAGES_PATH && parsedBody.max_tokens === undefined) {
       return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
     }
-    if (isBedrock) {
-      try {
-        // Validate provider translation and its conservative input ceiling
-        // before an owner hold is reserved or a request is started.
-        assertBedrockInputWithinRoute(
-          parsedBody as ReturnType<typeof serializeFundedOpenAiRequest>["request"],
-          config.bedrockRoute!,
-        );
-      } catch (error) {
-        console.warn("[proxy] Funded AI request rejected", requestRejectionDiagnostic(error));
-        return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
-      }
-    }
-    if (isOpenAi && (config.reservationMode !== "usage"
-      || (isBedrock ? !bedrockUpstream : !config.workersAiToken))) {
+    if (isOpenAi && config.reservationMode !== "usage") {
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
 
@@ -418,6 +408,30 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       checked = await platform.check(checkInput.data, state.lifetimeSignal);
     } catch (error) {
       return controlPlaneError(c, error);
+    }
+    isBedrock = isBedrockCandidate && checked.upstreamSelection?.upstream === "aws_bedrock";
+    if (isBedrockCandidate && !isBedrock) {
+      if (!cloudflareModel || cloudflareModel.canonicalModelId !== model.canonicalModelId) {
+        return errorResponse(c, 403, "permission_error", "This model is not enabled");
+      }
+      model = cloudflareModel;
+    }
+    if (isBedrock) {
+      try {
+        // Validate provider translation and its conservative input ceiling
+        // only after the platform has bound this request to Bedrock, but still
+        // before an owner hold is reserved or a request is started.
+        assertBedrockInputWithinRoute(
+          parsedBody as ReturnType<typeof serializeFundedOpenAiRequest>["request"],
+          config.bedrockRoute!,
+        );
+      } catch (error) {
+        console.warn("[proxy] Funded AI request rejected", requestRejectionDiagnostic(error));
+        return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
+      }
+    }
+    if (isOpenAi && (isBedrock ? !bedrockUpstream : !config.workersAiToken)) {
+      return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
     const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
     const runtimeAttempt = admission.beginRuntimeAttempt(runtimeRef);
@@ -499,6 +513,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         modelId: model.canonicalModelId,
         maxCostMicrousd,
         ...(config.reservationMode === "usage" ? { billingMode: "usage" as const } : {}),
+        upstream: isBedrock ? "aws_bedrock" : isOpenAi ? "cloudflare_workers_ai" : "cloudflare_anthropic",
+        ...(isBedrock && checked.upstreamSelection ? { upstreamSelection: checked.upstreamSelection } : {}),
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
@@ -508,6 +524,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const reservation = authorization.reservation;
     if (!identitiesMatch(checked.identity, authorization.identity)
       || reservation.requestId !== requestId || reservation.modelId !== model.canonicalModelId
+      || (reservation.upstream !== undefined && reservation.upstream !== (isBedrock
+        ? "aws_bedrock" : isOpenAi ? "cloudflare_workers_ai" : "cloudflare_anthropic"))
       || (config.reservationMode === "usage"
         ? reservation.billingMode !== "usage" || reservation.reservedMicrousd <= 0 || reservation.reservedMicrousd > maxCostMicrousd
         : reservation.billingMode === "usage" || reservation.reservedMicrousd !== maxCostMicrousd)) {
@@ -598,6 +616,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         upstreamProvenance = dispatchedResult.provenance;
       } else {
         const fetched = await fetchImpl(generationUrl, generationInit);
+        upstreamProvenance = {
+          upstream: isOpenAi ? "cloudflare_workers_ai" : "cloudflare_anthropic",
+          routeId: isOpenAi ? "cloudflare-workers-ai" : "cloudflare-anthropic",
+          resolvedModel: model.nativeModelId,
+          pricingVersion: estimate.pricingVersion,
+        };
         upstream = isOpenAi && fetched.ok
           ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       }

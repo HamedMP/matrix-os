@@ -81,6 +81,11 @@ import {
 import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
 import { createFundedModelProbeService, loadFundedModelProbeLimits, type FundedModelProbeService } from './ai-funded-model-probes.js';
 import {
+  createAiFundedUpstreamPreferenceRepository,
+  loadAiFundedUpstreamPreferenceConfig,
+  type AiFundedUpstreamPreferenceRepository,
+} from './ai-funded-upstream-preference.js';
+import {
   createR2CapabilityGate,
   createStorageGatedHetznerClient,
   type R2CapabilityGate,
@@ -353,13 +358,16 @@ async function startPlatformServerWithCleanup(
     : undefined;
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
+  let fundedUpstreamPreferences: AiFundedUpstreamPreferenceRepository | undefined;
   if (fundedAiConfig.enabled) {
+    const upstreamPreferenceConfig = loadAiFundedUpstreamPreferenceConfig(process.env);
     fundedAiRepository = createAiFundedPolicyRepository({
       db,
       credentialHashSecret: fundedAiConfig.credentialHashSecret,
       credentialTtlMs: fundedAiConfig.credentialTtlMs,
       issueCooldownMs: fundedAiConfig.issueCooldownMs,
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
+      verifyUpstream: input => fundedUpstreamPreferences?.verifyUpstream(input) ?? Promise.resolve(false),
     });
     const probeLimits = loadFundedModelProbeLimits(process.env);
     fundedModelProbes = createFundedModelProbeService({
@@ -369,6 +377,14 @@ async function startPlatformServerWithCleanup(
       relayControlToken: fundedAiConfig.relayControlToken,
       ...probeLimits,
     });
+    if (upstreamPreferenceConfig.enabled) {
+      fundedUpstreamPreferences = createAiFundedUpstreamPreferenceRepository({
+        db,
+        config: upstreamPreferenceConfig,
+        selectionSecret: process.env.AI_FUNDED_UPSTREAM_SELECTION_SECRET ?? "",
+        probeBedrock: modelId => fundedModelProbes!.probe(modelId, { upstream: "aws_bedrock" }),
+      });
+    }
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
       platformSecret: fundedAiConfig.platformSecret,
@@ -377,10 +393,12 @@ async function startPlatformServerWithCleanup(
       promotionalGrant: fundedAiConfig.promotionalGrant,
       routeProbes: fundedModelProbes,
       isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
+      upstreamPreferences: fundedUpstreamPreferences,
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
       repository: fundedAiRepository,
+      upstreamPreferences: fundedUpstreamPreferences,
     });
     internalFundedAiOperatorRoutes = createAiFundedOperatorRoutes({
       db,

@@ -6,6 +6,47 @@ export * from "#funded-ai-execution-recovery";
 
 export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;
+export const FundedAiUpstreamPreferenceValueSchema = z.enum(["cloudflare", "aws_bedrock"]);
+export const FundedAiResolvedUpstreamSchema = z.enum([
+  "cloudflare_anthropic",
+  "cloudflare_workers_ai",
+  "aws_bedrock",
+]);
+
+export const FundedAiUpstreamSelectionSchema = z.object({
+  upstream: FundedAiUpstreamPreferenceValueSchema,
+  preferenceRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  checkedAt: IsoTimestampSchema,
+  staleAfter: IsoTimestampSchema,
+  proof: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict().superRefine((value, ctx) => {
+  const checked = Date.parse(value.checkedAt);
+  const stale = Date.parse(value.staleAfter);
+  if (stale <= checked || stale - checked > 30_000) {
+    ctx.addIssue({ code: "custom", path: ["staleAfter"], message: "Upstream selection freshness is invalid" });
+  }
+});
+
+export const FundedAiUpstreamPreferenceSchema = z.object({
+  selectedUpstream: FundedAiUpstreamPreferenceValueSchema,
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  updatedAt: IsoTimestampSchema.nullable(),
+  validThrough: IsoTimestampSchema,
+}).strict();
+
+export const FundedAiUpstreamPreferenceViewSchema = FundedAiUpstreamPreferenceSchema.extend({
+  effectiveUpstream: FundedAiUpstreamPreferenceValueSchema,
+}).strict();
+
+export const FundedAiUpstreamPreferenceUpdateRequestSchema = z.object({
+  expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1),
+  selectedUpstream: FundedAiUpstreamPreferenceValueSchema,
+}).strict();
+
+export const FundedAiUpstreamPreferenceResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  preference: FundedAiUpstreamPreferenceViewSchema,
+}).strict();
 
 // Generic relay readiness includes scale-from-zero startup and the relay's
 // bounded 8s generation. Keep 2s for relay transport/startup, then leave time
@@ -185,10 +226,18 @@ export const FundedAiAuthorizationRequestSchema = z.object({
   jevPricingVersion: z.literal(JEV_PRICING_VERSION).optional(),
   /** Gateway-supplied turn identity for interactive priority ordering; never authority. */
   claimKey: FundedAiClaimKeySchema.optional(),
+  upstream: FundedAiResolvedUpstreamSchema.optional(),
+  upstreamSelection: FundedAiUpstreamSelectionSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.jevPricingVersion !== undefined
     && (value.modelId !== JEV_MODEL_ID || value.billingMode !== "usage")) {
     ctx.addIssue({ code: "custom", path: ["jevPricingVersion"], message: "Jev pricing requires Jev usage authorization" });
+  }
+  if (value.upstream === "aws_bedrock" && value.upstreamSelection?.upstream !== "aws_bedrock") {
+    ctx.addIssue({ code: "custom", path: ["upstreamSelection"], message: "Bedrock authorization requires its platform selection" });
+  }
+  if (value.upstream !== "aws_bedrock" && value.upstreamSelection?.upstream === "aws_bedrock") {
+    ctx.addIssue({ code: "custom", path: ["upstream"], message: "Bedrock selection cannot authorize another upstream" });
   }
 });
 
@@ -207,6 +256,7 @@ export const FundedAiPolicyCheckResponseSchema = z.object({
     expiresAt: IsoTimestampSchema,
   }).strict(),
   policy: FundedAiEffectivePolicySchema,
+  upstreamSelection: FundedAiUpstreamSelectionSchema.optional(),
 }).strict();
 
 export const FundedAiFundingSummarySchema = z.object({
@@ -281,6 +331,7 @@ export const FundedAiChatAvailabilitySchema = z.object({
 /** Negotiated separately: the legacy v1 response remains strict and unchanged. */
 export const FundedAiRuntimeChatFundingSummaryResponseSchema = FundedAiRuntimeFundingSummaryResponseSchema.safeExtend({
   chatAvailability: FundedAiChatAvailabilitySchema,
+  upstreamPreference: FundedAiUpstreamPreferenceViewSchema.optional(),
 }).superRefine((value, ctx) => {
   if (value.chatAvailability.asOf !== value.funding.asOf) {
     ctx.addIssue({ code: "custom", path: ["chatAvailability", "asOf"], message: "Chat and funding observations must match" });
@@ -290,7 +341,14 @@ export const FundedAiRuntimeChatFundingSummaryResponseSchema = FundedAiRuntimeFu
     ctx.addIssue({ code: "custom", path: ["chatAvailability"], message: "Chat availability must respect aggregate financial protection" });
   }
 });
-export const FundedAiRuntimeFundingSummaryRequestSchema = z.object({ includeChatAvailability: z.literal(true).optional() }).strict();
+export const FundedAiRuntimeFundingSummaryRequestSchema = z.object({
+  includeChatAvailability: z.literal(true).optional(),
+  includeUpstreamPreference: z.literal(true).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.includeUpstreamPreference && !value.includeChatAvailability) {
+    ctx.addIssue({ code: "custom", path: ["includeChatAvailability"], message: "Preference projection requires the current settings contract" });
+  }
+});
 export type FundedAiChatAvailability = z.infer<typeof FundedAiChatAvailabilitySchema>;
 
 /** Separate from the v1 funding summary so older strict clients keep working. */
@@ -312,6 +370,11 @@ export const FundedAiRouteReadinessReceiptSchema = z.object({
 });
 
 export type FundedAiRouteReadinessReceipt = z.infer<typeof FundedAiRouteReadinessReceiptSchema>;
+export type FundedAiUpstreamPreferenceValue = z.infer<typeof FundedAiUpstreamPreferenceValueSchema>;
+export type FundedAiResolvedUpstream = z.infer<typeof FundedAiResolvedUpstreamSchema>;
+export type FundedAiUpstreamSelection = z.infer<typeof FundedAiUpstreamSelectionSchema>;
+export type FundedAiUpstreamPreference = z.infer<typeof FundedAiUpstreamPreferenceSchema>;
+export type FundedAiUpstreamPreferenceView = z.infer<typeof FundedAiUpstreamPreferenceViewSchema>;
 
 export const FundedAiAuthorizationResponseSchema = z.object({
   contractVersion: z.literal(1),
@@ -337,6 +400,7 @@ export const FundedAiAuthorizationResponseSchema = z.object({
     periodStart: IsoTimestampSchema,
     expiresAt: IsoTimestampSchema,
     status: z.literal("reserved"),
+    upstream: FundedAiResolvedUpstreamSchema.optional(),
   }).strict(),
 }).strict().superRefine((value, ctx) => {
   const reservation = value.reservation;

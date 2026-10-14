@@ -42,6 +42,41 @@ describe("source-aware Chat credit", () => {
   });
 });
 
+describe("Matrix AI upstream preference", () => {
+  it("exposes a bounded shared preference only when platform truth supplies it", () => {
+    const value = makeSnapshot();
+    value.upstreamPreference = {
+      selectedUpstream: "aws_bedrock",
+      effectiveUpstream: "cloudflare",
+      revision: 3,
+      updatedAt: now,
+      validThrough: later,
+    };
+    value.supportedActions.push("set_gateway_upstream");
+    expect(ProviderSettingsSnapshotSchema.parse(value).upstreamPreference).toEqual(value.upstreamPreference);
+    expect(ProviderSettingsMutationSchema.parse({
+      type: "set_gateway_upstream",
+      expectedRevision: value.revision,
+      expectedUpstreamRevision: 3,
+      idempotencyKey: "upstream_1",
+      selectedUpstream: "cloudflare",
+    })).toMatchObject({ type: "set_gateway_upstream", selectedUpstream: "cloudflare" });
+  });
+
+  it("rejects discovery/action inconsistencies and unknown upstreams", () => {
+    const value = makeSnapshot();
+    value.supportedActions.push("set_gateway_upstream");
+    expect(ProviderSettingsSnapshotSchema.safeParse(value).success).toBe(false);
+    expect(ProviderSettingsMutationSchema.safeParse({
+      type: "set_gateway_upstream",
+      expectedRevision: 0,
+      expectedUpstreamRevision: 0,
+      idempotencyKey: "upstream_2",
+      selectedUpstream: "provider_from_header",
+    }).success).toBe(false);
+  });
+});
+
 function readiness(state: "ready" | "stale" = "ready") {
   return {
     state,

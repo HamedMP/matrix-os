@@ -1,6 +1,6 @@
 # AWS Bedrock funded inference upstream
 
-**Linear:** ENG-150
+**Linear:** ENG-150, ENG-297
 
 **Parent:** ENG-182
 
@@ -25,6 +25,15 @@ allowlists.
 - Platform PostgreSQL/Kysely remains authoritative for owner identity, model
   policy, monthly budget, credit grants, reservations, and the append-only
   ledger. AWS budgets and quotas are defense-in-depth controls only.
+- A bounded, owner-scoped `cloudflare | aws_bedrock` preference is available
+  only to the four immutable owner IDs in the operator-managed developer
+  cohort. The expiring cohort configuration, exact Bedrock model list, current
+  price review, and authenticated readiness result are all required before the
+  platform can resolve Bedrock. Missing, invalid, stale, unauthorized, or
+  unhealthy state resolves to Cloudflare.
+- Preference writes use optimistic revision checks and persist the preference
+  and its content-free audit event in one transaction. Renderers receive only
+  the platform projection; they never derive cohort membership or readiness.
 - The relay route JSON is operator configuration. It binds one client model ID
   to one canonical Matrix model, resolved Bedrock model/inference profile,
   region, context/output ceilings, and a time-bounded reviewed integer price
@@ -50,23 +59,32 @@ allowlists.
 | Route | Caller authentication | Additional authorization | Public |
 |---|---|---|---|
 | `POST /v1/chat/completions` | short-lived platform-issued funded credential | platform policy check, atomic usage reservation, model allowlists | No |
-| `GET /ready?model=<configured-client-id>` | constant-time relay control bearer | exact configured route, current price review, bounded live inference probe with exact usage | No |
+| `GET /ready?model=<configured-client-id>&upstream=aws_bedrock` | constant-time relay control bearer | exact configured route, current price review, bounded live inference probe with exact usage | No |
+| `POST /internal/containers/:handle/ai/funding-summary?runtimeSlot=...` | exact runtime verification token | preference is returned only on an explicit opt-in and only for an entitled owner | No |
+| `POST /internal/containers/:handle/ai/upstream-preference?runtimeSlot=...` | exact runtime verification token | immutable owner entitlement plus optimistic preference revision | No |
+| `POST /internal/ai/funded/check` | constant-time relay control bearer | live owner/model policy; returns a short-lived HMAC-bound upstream selection | No |
+| `POST /internal/ai/funded/authorize` | constant-time relay control bearer | re-verifies the same selection and binds it to the atomic reservation | No |
 | `GET /health` | none | liveness only; exposes no provider state | Yes |
 
-No new customer-facing endpoint is introduced. Caller-supplied identity,
-provider headers, route URLs, AWS account data, and model aliases are ignored.
+No public endpoint is introduced. Unentitled owners receive no preference field
+and preference mutation returns the same generic not-found shape. Caller-supplied
+identity, provider headers, route URLs, AWS account data, and display names are
+never authority.
 
 ## Runtime wiring
 
 1. The dedicated relay validates and reconstructs a bounded OpenAI-compatible
    request. Remote media and server-side fetching remain disallowed.
 2. The configured client ID resolves to a canonical policy model and a single
-   Bedrock inference profile. The platform checks owner/runtime policy.
+   Bedrock inference profile. The platform checks owner/runtime policy, resolves
+   the authoritative upstream before reservation, and signs a selection bound
+   to owner, exact model, preference revision, and a maximum 30-second lifetime.
 3. The relay calculates a conservative liability ceiling using the maximum
    configured input and requested output bounds plus a 20% margin. Pricing must
    be inside its reviewed time window.
-4. Platform authorization atomically reserves only the affordable owner funds
-   while retaining the full liability ceiling, then `start` moves the row to
+4. Platform authorization verifies the selection again and atomically reserves
+   only the affordable owner funds while retaining the full liability ceiling.
+   The reservation records that same upstream; `start` then moves the row to
    `in_flight`.
 5. The provider-neutral dispatch seam calls AWS SDK v3 `ConverseStream`. The
    SDK uses the relay workload's default AWS credential provider chain; no AWS
@@ -82,6 +100,9 @@ provider headers, route URLs, AWS account data, and model aliases are ignored.
 
 - Platform authorization retains the existing owner advisory lock and database
   transaction for balance checks, reservation allocation, and ledger safety.
+- The selected upstream is included in the authorization idempotency hash and
+  reservation row. Exact settlement provenance must match it; a mismatched
+  provider receipt is an idempotency conflict.
 - Settlement retains the owner advisory lock plus reservation `FOR UPDATE` row
   lock through source reconciliation, debit ledger writes, provenance write,
   hold release, and receipt persistence.
@@ -128,18 +149,28 @@ destination region returned by the profile must satisfy the approved policy.
 
 ## Rollout and rollback
 
-1. Confirm credits/expiry, target region and allowed residency destinations,
+1. Configure the preference feature only with the reviewed immutable owner IDs,
+   exact canonical Bedrock model IDs, an expiring validity timestamp, and a
+   dedicated HMAC selection secret. Display names and runtime headers are not
+   accepted as cohort authority. The bounded configuration is
+   `AI_FUNDED_UPSTREAM_PREFERENCE_ENABLED`,
+   `AI_FUNDED_UPSTREAM_PREFERENCE_OWNER_IDS` (exactly four immutable owner
+   IDs), `AI_FUNDED_BEDROCK_MODEL_IDS` (a JSON array of at most eight canonical
+   model IDs), `AI_FUNDED_UPSTREAM_PREFERENCE_VALID_THROUGH` (at most 30 days),
+   and `AI_FUNDED_UPSTREAM_SELECTION_SECRET`.
+2. Confirm credits/expiry, target region and allowed residency destinations,
    model access, inference profile, service quotas, exact prices, and workload
    identity in the real AWS account.
-2. Run one explicitly approved, bounded live smoke request and record only
+3. Run one explicitly approved, bounded live smoke request and record only
    content-free evidence. Do not make a paid call without operator approval.
-3. Deploy the route configuration with a short price-review window. Verify
+4. Deploy the route configuration with a short price-review window. Verify
    `/ready` before adding the canonical model to platform global/runtime
    allowlists.
-4. Observe readiness failures, throttling, unresolved holds, exact settlement,
+5. Observe readiness failures, throttling, unresolved holds, exact settlement,
    Matrix-absorbed overruns, and provider request IDs. No prompt/content logging
    is allowed.
-5. Roll back immediately by removing the route and policy allowlist entry.
+6. Roll back immediately by disabling the expiring preference cohort or removing
+   the route and policy allowlist entry.
    Existing exact settlement retries remain valid because each queued task
    carries its pricing version and provenance. Unresolved holds require evidence
    reconciliation, not deletion.
@@ -152,8 +183,10 @@ destination region returned by the profile must satisfy the approved policy.
 - Relay integration tests cover policy-before-provider ordering, reservation and
   start ordering, current pricing, exact settlement/provenance, readiness,
   policy rejection, throttling, and no fallback.
-- Contract/platform tests cover bounded provenance, atomic persistence,
-  idempotent replay, conflicting evidence, and legacy Jev/Cloudflare behavior.
+- Contract/platform tests cover cohort hiding, optimistic transactional
+  preference/audit persistence, signed resolution, reservation binding, bounded
+  provenance, idempotent replay, conflicting evidence, and legacy
+  Jev/Cloudflare behavior.
 - Full repository typecheck, pattern checks, unit/integration tests, current-head
   Greptile 5/5, and CI are required before merge.
 

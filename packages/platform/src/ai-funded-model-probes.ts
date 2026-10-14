@@ -17,7 +17,13 @@ const pendingBudgetOperations = new Set<Promise<boolean>>();
 const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough: IsoTimestampSchema }).strict();
 
 export interface FundedModelProbeResult { ready: boolean; checkedAt: string; staleAfter: string; priceValidThrough?: string }
-export interface FundedModelProbeCall { receiptId?: string; signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime }
+export interface FundedModelProbeCall {
+  receiptId?: string;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
+  runtime?: JevProbeRuntime;
+  upstream?: "aws_bedrock";
+}
 export interface FundedModelProbeService { readCached?(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>; probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
 
 export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit: number; minuteLimit: number } | undefined {
@@ -214,7 +220,8 @@ export function createFundedModelProbeService(input: {
         : !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel))) return unavailable();
       if (call.signal?.aborted || (call.deadlineAtMs !== undefined && call.deadlineAtMs <= Date.now())) return unavailable();
       const model = runtime ? JSON.stringify([JEV_MODEL_ID, runtime.identity.ownerId, runtime.identity.machineId,
-        runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision]) : modelId;
+        runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision])
+        : call.upstream === "aws_bedrock" ? `aws_bedrock:${modelId}` : modelId;
       const windowMs = runtime ? FUNDED_AI_READINESS_TIMEOUTS.jevRouteMs : FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs;
       const cached = runtime ? cache.get(model) : undefined;
       if (cached && Date.parse(cached.staleAfter) > now().getTime()) return cached;
@@ -246,20 +253,23 @@ export function createFundedModelProbeService(input: {
             } else {
               const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs)]);
               entry.probeId = probeId;
-              const url = new URL(`/ready?model=${encodeURIComponent(model)}`, base!);
-              console.info(JSON.stringify({ event: "funded_readiness_dispatch", probeId, modelId: model }));
+              const url = new URL(`/ready?model=${encodeURIComponent(modelId)}${call.upstream ? `&upstream=${call.upstream}` : ""}`, base!);
+              console.info(JSON.stringify({ event: "funded_readiness_dispatch", probeId, modelId,
+                ...(call.upstream ? { upstream: call.upstream } : {}) }));
               const response = await (input.fetchFn ?? fetch)(url.toString(), {
                 headers: { authorization: `Bearer ${input.relayControlToken}`, "x-matrix-readiness-probe-id": probeId! },
                 redirect: "error", signal,
               });
               priceValidThrough = await readPriceValidThrough(response, signal);
-              console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId: model,
+              console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId,
+                ...(call.upstream ? { upstream: call.upstream } : {}),
                 relayStatus: response.status, pricedReady: priceValidThrough !== undefined }));
             }
           } catch (error) {
             const errorName = error instanceof Error && ["TimeoutError", "AbortError", "SyntaxError"].includes(error.name) ? error.name : "UnknownError";
             console.warn("[funded-ai] Model probe unavailable:", errorName);
-            if (probeId) console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId: model,
+            if (probeId) console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId,
+              ...(call.upstream ? { upstream: call.upstream } : {}),
               outcome: errorName === "TimeoutError" ? "timeout" : errorName === "AbortError" ? "aborted" : "unavailable" }));
           }
           const checked = now().getTime();

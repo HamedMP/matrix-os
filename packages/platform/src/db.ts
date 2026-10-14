@@ -109,6 +109,24 @@ export interface AiFundedGlobalPolicyTable {
   updated_at: string;
 }
 
+export interface AiFundedUpstreamPreferencesTable {
+  owner_id: string;
+  selected_upstream: "cloudflare" | "aws_bedrock";
+  revision: number;
+  updated_at: string;
+}
+
+export interface AiFundedUpstreamPreferenceAuditTable {
+  event_id: string;
+  owner_id: string;
+  actor_owner_id: string;
+  previous_upstream: "cloudflare" | "aws_bedrock";
+  selected_upstream: "cloudflare" | "aws_bedrock";
+  previous_revision: number;
+  revision: number;
+  created_at: string;
+}
+
 export interface AiFundedRuntimePoliciesTable {
   machine_id: string;
   owner_id: string;
@@ -173,6 +191,7 @@ export interface AiFundedUsageReservationsTable {
   promotional_reserved_microusd: number | null;
   addon_reserved_microusd: number | null;
   actual_microusd: number | null;
+  selected_upstream: "cloudflare_anthropic" | "cloudflare_workers_ai" | "aws_bedrock" | null;
   upstream: Generated<string | null>;
   route_id: Generated<string | null>;
   resolved_model: string | null;
@@ -817,6 +836,8 @@ export interface PlatformDatabase {
   containers: ContainersTable;
   user_machines: UserMachinesTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
+  ai_funded_upstream_preferences: AiFundedUpstreamPreferencesTable;
+  ai_funded_upstream_preference_audit: AiFundedUpstreamPreferenceAuditTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
   ai_funded_priority_claims: AiFundedPriorityClaimsTable;
