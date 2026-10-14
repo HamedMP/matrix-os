@@ -16,19 +16,19 @@ import {
   type OnboardingWidgetBox,
 } from "@matrix-os/ui";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { useChatProviderState } from "@/components/chat-app-provider-setup";
 import { useWindowManager } from "@/hooks/useWindowManager";
+import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 import { createCanonicalShellChatClient } from "@/lib/canonical-chat-client";
 import { getGatewayUrl } from "@/lib/gateway";
 import { closeShellSupport, isShellSupportOpen, subscribeShellSupportPanel } from "@/lib/posthog-client";
+import { createWebProviderWorkflowClient, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
-  createShellOnboardingAiPort,
   createShellOnboardingChatPort,
   createShellOnboardingRepoSource,
   shellOnboardingIdentity,
-  shellOnboardingTransportKey,
   type ShellOnboardingIdentity,
 } from "./shell-onboarding-ports";
 import { useShellOnboardingIntegrations } from "./use-shell-onboarding-integrations";
@@ -49,7 +49,6 @@ type SessionProps = Omit<OnboardingWidgetHostProps, "accountId"> & {
   prefsKey: string;
   displayName: string | null;
   gatewayUrl: string;
-  transportKey: string;
 };
 
 class IdentityRequestError extends Error {
@@ -76,9 +75,9 @@ async function readOptionalJson(gatewayUrl: string, path: string): Promise<unkno
 }
 
 /** Keyed by account and computer so a cached identity never outlives a sign-in or computer switch. */
-function useShellOnboardingIdentity(account: string, gatewayUrl: string, transportKey: string): ShellOnboardingIdentity | null {
+function useShellOnboardingIdentity(account: string, gatewayUrl: string): ShellOnboardingIdentity | null {
   const { data } = useQuery({
-    queryKey: ["onboarding-widget", "identity", account, transportKey],
+    queryKey: ["onboarding-widget", "identity", account, gatewayUrl],
     queryFn: async () => {
       const [owner, system] = await Promise.all([readOptionalJson(gatewayUrl, "/api/identity"), readOptionalJson(gatewayUrl, "/api/system/info")]);
       return shellOnboardingIdentity(owner, system);
@@ -105,15 +104,13 @@ export function OnboardingWidgetHost({ accountId, ...props }: OnboardingWidgetHo
   // Held before identity loads so the checklist can't auto-open over the widget in the meantime.
   useGettingStartedAutoOpenSuppression();
   const account = accountId || SIGNED_OUT_ACCOUNT;
-  const gatewayUrl = getGatewayUrl();
-  const transportKey = shellOnboardingTransportKey();
-  const identity = useShellOnboardingIdentity(account, gatewayUrl, transportKey);
+  // Read once: in-app routes such as /shared rewrite the URL without leaving this computer,
+  // and switching computers reloads the page.
+  const [gatewayUrl] = useState(getGatewayUrl);
+  const identity = useShellOnboardingIdentity(account, gatewayUrl);
   if (!identity) return null;
   const prefsKey = onboardingPrefsKey(identity.handle, identity.runtimeSlot, account);
-  return (
-    <OnboardingWidgetLoader key={`${prefsKey}|${transportKey}`} prefsKey={prefsKey} displayName={identity.displayName}
-      gatewayUrl={gatewayUrl} transportKey={transportKey} {...props} />
-  );
+  return <OnboardingWidgetLoader key={prefsKey} prefsKey={prefsKey} displayName={identity.displayName} gatewayUrl={gatewayUrl} {...props} />;
 }
 
 function OnboardingWidgetLoader(props: SessionProps) {
@@ -121,19 +118,20 @@ function OnboardingWidgetLoader(props: SessionProps) {
   return <OnboardingWidgetSession {...props} initialPrefs={prefs} />;
 }
 
-function OnboardingWidgetSession({ prefsKey, displayName, gatewayUrl, transportKey, initialPrefs, onOpenChat, onOpenSettings }: SessionProps & {
+function OnboardingWidgetSession({ prefsKey, displayName, gatewayUrl, initialPrefs, onOpenChat, onOpenSettings }: SessionProps & {
   initialPrefs: OnboardingStoredPrefs;
 }) {
   const { state, dispatch, prefs, setPrefs } = useOnboardingWidgetState(initialPrefs);
   const provider = useChatProviderState();
-  const isCurrent = useCallback(() => shellOnboardingTransportKey() === transportKey, [transportKey]);
-  const chatPort = useMemo(
-    () => createShellOnboardingChatPort(createCanonicalShellChatClient({ gatewayUrl }), isCurrent),
-    [gatewayUrl, isCurrent],
-  );
-  const repoSource = useMemo(() => createShellOnboardingRepoSource(gatewayUrl, fetch, isCurrent), [gatewayUrl, isCurrent]);
-  const aiPort = useMemo<OnboardingAiConnectPort>(() => createShellOnboardingAiPort(isCurrent), [isCurrent]);
-  const integrations = useShellOnboardingIntegrations(dispatch, { gatewayUrl, isCurrent });
+  const chatPort = useMemo(() => createShellOnboardingChatPort(createCanonicalShellChatClient({ gatewayUrl })), [gatewayUrl]);
+  const repoSource = useMemo(() => createShellOnboardingRepoSource(gatewayUrl), [gatewayUrl]);
+  const aiPort = useMemo<OnboardingAiConnectPort>(() => ({
+    client: createWebProviderWorkflowClient(),
+    openAuthorization: openWebProviderWorkflowAuthorization,
+    isIdentityCurrent: () => true,
+    onConnected: () => window.dispatchEvent(new Event(PROVIDER_SETTINGS_CHANGED_EVENT)),
+  }), []);
+  const integrations = useShellOnboardingIntegrations(dispatch, { gatewayUrl });
 
   const widget = useOnboardingWidgetSession({
     prefsKey, state, dispatch, prefs, setPrefs, displayName,

@@ -10,7 +10,6 @@ import {
 import { activeConnectionIds, hasNewActiveConnection, startConnectPoll, type OnboardingAppConnect } from "@matrix-os/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
-import { ShellOnboardingComputerChangedError } from "./shell-onboarding-ports";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const LIST_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
@@ -18,8 +17,6 @@ const LIST_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
 interface Options {
   gatewayUrl?: string;
   fetchFn?: typeof fetch;
-  /** False once the page talks to another computer; requests stop instead of reaching it. */
-  isCurrent?: () => boolean;
   /** Overrides the connect poll backoff; tests only. */
   pollIntervals?: number[];
   /** Overrides the delays before re-reading lists that failed to load; tests only. */
@@ -87,10 +84,9 @@ function loadIntegrationLists({ gatewayUrl, fetchFn, retryDelays, connectionsRev
         onServiceMissing();
         return;
       }
-      const stale = [availableResult, connectionsResult].some((result) => result.status === "rejected" && result.reason instanceof ShellOnboardingComputerChangedError);
       const retryAvailable = needAvailable && availableResult.status === "rejected";
       const retryConnections = needConnections && connectionsResult.status === "rejected" && !isIntegrationServiceMissing(connectionsResult.reason);
-      if (stale || (!retryAvailable && !retryConnections) || attempt >= retryDelays.length) return;
+      if ((!retryAvailable && !retryConnections) || attempt >= retryDelays.length) return;
       retryTimer = setTimeout(() => load(attempt + 1, retryAvailable, retryConnections), retryDelays[attempt]);
     });
   };
@@ -120,15 +116,10 @@ export function useShellOnboardingIntegrations(
     optionsRef.current = options;
   });
 
-  const isComputerCurrent = useCallback(() => optionsRef.current.isCurrent?.() !== false, []);
-
-  const transport = useCallback(() => {
-    const fetchFn = optionsRef.current.fetchFn ?? fetch;
-    const guardedFetch: typeof fetch = (input, init) => (isComputerCurrent()
-      ? fetchFn(input, init)
-      : Promise.reject(new ShellOnboardingComputerChangedError()));
-    return { gatewayUrl: optionsRef.current.gatewayUrl ?? getGatewayUrl(), fetchFn: guardedFetch };
-  }, [isComputerCurrent]);
+  const transport = useCallback(() => ({
+    gatewayUrl: optionsRef.current.gatewayUrl ?? getGatewayUrl(),
+    fetchFn: optionsRef.current.fetchFn ?? fetch,
+  }), []);
 
   const applyConnections = useCallback((next: ConnectedIntegration[]) => {
     connectionsRevisionRef.current += 1;
@@ -169,7 +160,7 @@ export function useShellOnboardingIntegrations(
       dispatch({ type: "connect.unavailable", service: serviceId });
       return;
     }
-    if (!isValidServiceId(serviceId) || !isComputerCurrent()) {
+    if (!isValidServiceId(serviceId)) {
       setConnectingService(null);
       dispatch({ type: "connect.failed", service: serviceId });
       return;
@@ -196,7 +187,7 @@ export function useShellOnboardingIntegrations(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ service: serviceId }),
       }));
-      if (!isCurrent() || !isComputerCurrent()) { popup.close(); return; }
+      if (!isCurrent()) { popup.close(); return; }
       if (!url) throw new Error("InvalidConsentUrl");
       popup.opener = null;
       popup.location.href = url;
@@ -225,7 +216,7 @@ export function useShellOnboardingIntegrations(
       setConnectingService(null);
       dispatch({ type: "connect.unavailable", service: serviceId });
     });
-  }, [applyConnections, dispatch, isComputerCurrent, markAppsUnavailable, transport]);
+  }, [applyConnections, dispatch, markAppsUnavailable, transport]);
 
   return { available, connections, connectingService, connectApp, appsUnavailable };
 }

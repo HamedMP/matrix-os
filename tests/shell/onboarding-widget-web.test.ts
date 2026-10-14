@@ -10,14 +10,10 @@ import { useWindowManager } from "@/hooks/useWindowManager";
 import { CanonicalShellChatRequestError } from "@/lib/canonical-chat-client";
 import { isShellSupportOpen, subscribeShellSupportPanel } from "@/lib/posthog-client";
 import {
-  createShellOnboardingAiPort,
-  createShellOnboardingChatPort,
   createShellOnboardingRepoSource,
   isShellComputerStarting,
   isShellNotFound,
-  ShellOnboardingComputerChangedError,
   shellOnboardingIdentity,
-  shellOnboardingTransportKey,
 } from "@/components/onboarding-widget/shell-onboarding-ports";
 import { useShellOnboardingIntegrations } from "@/components/onboarding-widget/use-shell-onboarding-integrations";
 
@@ -83,18 +79,21 @@ describe("web onboarding widget host", () => {
     ]));
   });
 
-  it("follows the computer the page moves to instead of the one it first loaded on", async () => {
+  it("stays on the computer the page loaded on when Shared with me changes the URL", async () => {
     stubGateway();
     window.history.replaceState({}, "", "/vm/alice");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = render(hostScene(client));
     await screen.findByText(/Sahar/);
+    const greeting = screen.getByText(/Sahar/);
 
-    window.history.replaceState({}, "", "/vm/bob");
+    window.history.replaceState({}, "", "/shared");
     view.rerender(hostScene(client));
-    const reads = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-    await waitFor(() => expect(reads()).toContain(`${window.location.origin}/vm/bob/api/identity`));
-    expect(reads()).toContain(`${window.location.origin}/vm/alice/api/identity`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const identityReads = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((url) => url.endsWith("/api/identity"));
+    expect(identityReads).toEqual([`${window.location.origin}/vm/alice/api/identity`]);
+    expect(screen.getByText(/Sahar/)).toBe(greeting);
   });
 
   it("greets the owner on first visit and docks support above it", async () => {
@@ -225,45 +224,6 @@ describe("web onboarding chat port", () => {
     expect(isShellNotFound(new CanonicalShellChatRequestError(403))).toBe(false);
     expect(isShellNotFound(new TypeError("Failed to fetch"))).toBe(false);
   });
-
-  it("sends nothing once the page is on another computer, and does not retry", async () => {
-    const client = { create: vi.fn(), detail: vi.fn(), admitTurn: vi.fn(), openEventStream: vi.fn() };
-    const port = createShellOnboardingChatPort(client as never, () => false);
-
-    await expect(port.create({ clientRequestId: "req_1", title: "Chat" } as never)).rejects.toBeInstanceOf(ShellOnboardingComputerChangedError);
-    await expect(port.detail("chat_1")).rejects.toBeInstanceOf(ShellOnboardingComputerChangedError);
-    await expect(port.admitTurn("chat_1", {} as never)).rejects.toBeInstanceOf(ShellOnboardingComputerChangedError);
-    port.watch("chat_1", vi.fn())();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(client.create).not.toHaveBeenCalled();
-    expect(client.detail).not.toHaveBeenCalled();
-    expect(client.admitTurn).not.toHaveBeenCalled();
-    expect(client.openEventStream).not.toHaveBeenCalled();
-    expect(isShellComputerStarting(new ShellOnboardingComputerChangedError())).toBe(false);
-    expect(isShellNotFound(new ShellOnboardingComputerChangedError())).toBe(false);
-  });
-});
-
-describe("web onboarding transport binding", () => {
-  it("names the computer and runtime the page is on", () => {
-    window.history.replaceState({}, "", "/vm/alice");
-    const alice = shellOnboardingTransportKey();
-    window.history.replaceState({}, "", "/vm/bob");
-    expect(shellOnboardingTransportKey()).not.toBe(alice);
-    window.history.replaceState({}, "", "/vm/alice?runtime=staging");
-    expect(shellOnboardingTransportKey()).not.toBe(alice);
-    window.history.replaceState({}, "", "/vm/alice");
-    expect(shellOnboardingTransportKey()).toBe(alice);
-  });
-
-  it("treats an AI sign-in as stale once the page moves to another computer", () => {
-    let current = true;
-    const port = createShellOnboardingAiPort(() => current);
-    expect(port.isIdentityCurrent()).toBe(true);
-    current = false;
-    expect(port.isIdentityCurrent()).toBe(false);
-  });
 });
 
 describe("web onboarding repo source", () => {
@@ -286,16 +246,6 @@ describe("web onboarding repo source", () => {
   it("rejects failed reads instead of parsing error bodies", async () => {
     const source = createShellOnboardingRepoSource(GATEWAY, vi.fn().mockResolvedValue(json({ error: "nope" }, 502)));
     await expect(source.listComputerRepos(20, new AbortController().signal)).rejects.toThrow();
-  });
-
-  it("reads nothing once the page is on another computer", async () => {
-    const fetchFn = vi.fn();
-    const source = createShellOnboardingRepoSource(GATEWAY, fetchFn, () => false);
-    const signal = new AbortController().signal;
-    const request = { service: "github", action: "list_repos", label: "sahar", connectionId: "conn_1", params: { sort: "updated", per_page: 20 } } as const;
-    await expect(source.readGithubApp(request, signal)).rejects.toBeInstanceOf(ShellOnboardingComputerChangedError);
-    await expect(source.listComputerRepos(20, signal)).rejects.toBeInstanceOf(ShellOnboardingComputerChangedError);
-    expect(fetchFn).not.toHaveBeenCalled();
   });
 });
 
@@ -373,22 +323,6 @@ describe("web onboarding app connect", () => {
     expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "../admin" });
     expect(window.open).not.toHaveBeenCalled();
     expect(fetchFn).toHaveBeenCalledTimes(2);
-  });
-
-  it("stops connecting once the page is on another computer", async () => {
-    vi.spyOn(window, "open");
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    let current = true;
-    const fetchFn = vi.fn(async (url: string) => (url.endsWith("/api/integrations/available") ? json(services) : json([])));
-    const dispatch = vi.fn();
-    const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0], isCurrent: () => current }));
-    await waitFor(() => expect(result.current.available).toHaveLength(1));
-
-    current = false;
-    act(() => result.current.connectApp("github"));
-    expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "github" });
-    expect(window.open).not.toHaveBeenCalled();
-    expect(fetchFn.mock.calls.map(([url]) => url)).not.toContain(`${GATEWAY}/api/integrations/connect`);
   });
 
   it("closes the popup and fails when the consent URL is not HTTPS", async () => {
