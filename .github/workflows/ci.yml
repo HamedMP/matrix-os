@@ -42,6 +42,12 @@ jobs:
     name: Detect CI-relevant changes
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    # checks: read lets a main push verify the merged PR's qualification proof.
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
     outputs:
       source_sha: ${{ steps.refresh.outputs.sourceSha || github.sha }}
       # Exact-source refresh dispatches run on main but check out a PR merge. They may restore
@@ -59,6 +65,8 @@ jobs:
       dedicated_eligible: ${{ steps.route.outputs.eligible }}
       dedicated_mode: ${{ steps.route.outputs.mode }}
       dedicated_required: ${{ steps.route.outputs.required }}
+      # A main push whose tree the merged PR's qualified CI already tested skips heavy lanes.
+      reused: ${{ steps.reuse.outputs.reused == 'true' && 'true' || 'false' }}
     steps:
       - name: Checkout trusted main refresh helpers
         if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
@@ -148,6 +156,27 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/dedicated-changes.mjs
 
+      - name: Resolve reusable PR coverage
+        id: reuse
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.MATRIX_CI_MAIN_REUSE == 'true' && steps.changed.outputs.should_run == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');const {resolve}=require('node:path');
+            const {resolveReusablePrCoverage}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/main-ci-reuse.mjs')).href);
+            try{
+              const result=await resolveReusablePrCoverage(github,context.repo,context.sha);
+              if(result.reused){
+                const from=result.reusedFrom;
+                core.notice(`Reusing PR #${from.prNumber} CI run ${from.requestingRunId} attempt ${from.requestingRunAttempt}: tree ${from.tree} was already tested`);
+                core.setOutput('reused','true');core.setOutput('reused_from',JSON.stringify(from));
+              }else{core.notice(`Running full main CI: ${result.reason}`);core.setOutput('reused','false');}
+            }catch(error){
+              // Reuse is an optimization: any doubt runs the full main CI.
+              core.warning(`PR coverage reuse unavailable, running full main CI: ${error instanceof Error ? error.message : 'unknown error'}`);
+              core.setOutput('reused','false');
+            }
+
       - name: Select guarded Linux delegation
         id: route
         env:
@@ -156,9 +185,12 @@ jobs:
           MATRIX_CI_DEDICATED_SHADOW: ${{ vars.MATRIX_CI_DEDICATED_SHADOW }}
           SHOULD_RUN: ${{ steps.changed.outputs.should_run }}
           REFRESH_SNAPSHOT: ${{ steps.refresh.outputs.snapshot }}
+          REUSED: ${{ steps.reuse.outputs.reused }}
         run: |
           node --input-type=module <<'NODE'
           import {readFileSync, appendFileSync} from 'node:fs';
+          // Reused coverage needs no Linux qualification or hosted heavy lanes.
+          if(process.env.REUSED==='true'){appendFileSync(process.env.GITHUB_OUTPUT,'eligible=false\nrequired=false\nmode=shadow\n');process.exit(0);}
           const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
           const {selectDedicatedRoute}=await import('./scripts/ci/dedicated-admission.mjs');
           const refresh=process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null;
@@ -186,6 +218,7 @@ jobs:
           OS_VIEW_PARITY_TESTS: ${{ steps.changed.outputs.os_view_parity_tests }}
           DEDICATED_ELIGIBLE: ${{ steps.route.outputs.eligible }}
           DEDICATED_REQUIRED: ${{ steps.route.outputs.required }}
+          REUSED_FROM: ${{ steps.reuse.outputs.reused == 'true' && steps.reuse.outputs.reused_from || '' }}
         run: node scripts/ci/main-ci-decision.mjs
 
       - name: Upload exact main coverage decision
@@ -204,7 +237,7 @@ jobs:
   ci-backend:
     name: CI Backend Decision
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.reused != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 70
     permissions:
@@ -245,7 +278,7 @@ jobs:
   typecheck:
     name: Type Check
     needs: [changes, ci-backend]
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && needs.changes.outputs.reused != 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -282,7 +315,7 @@ jobs:
   shell-production-build:
     name: Shell Production Build
     needs: [changes, ci-backend]
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && needs.changes.outputs.reused != 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -513,7 +546,7 @@ jobs:
   agent-sdk-compatibility:
     name: Agent SDK 0.3.251 Compatibility
     needs: [changes, ci-backend]
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && needs.changes.outputs.reused != 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -553,7 +586,7 @@ jobs:
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, ci-backend]
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && needs.changes.outputs.reused != 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
     # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
@@ -680,7 +713,7 @@ jobs:
   docs-contract:
     name: Docs Contract Tests
     needs: [changes, ci-backend]
-    if: always() && needs.changes.result == 'success' && (needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.reused != 'true' && (needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -712,7 +745,7 @@ jobs:
   os-view-parity:
     name: OS View Parity
     needs: [changes, ci-backend]
-    if: always() && needs.changes.result == 'success' && (needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.reused != 'true' && (needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -755,7 +788,7 @@ jobs:
   e2e:
     name: E2E Tests (${{ matrix.lane }})
     needs: [changes, ci-backend]
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && needs.changes.outputs.reused != 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -998,7 +1031,7 @@ jobs:
     needs: changes
     # Only delegated routing waits on Linux here. In shadow mode CI Results would otherwise wait up to
     # 70 minutes for a non-blocking result; the controller check and source gates record shadow outcomes.
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && needs.changes.outputs.dedicated_mode == 'delegated'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.reused != 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && needs.changes.outputs.dedicated_mode == 'delegated'
     runs-on: ubuntu-latest
     # Shadow observes Linux qualification; checkout failures and timeouts must not fail the run either.
     continue-on-error: ${{ needs.changes.outputs.dedicated_mode != 'delegated' }}

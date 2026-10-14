@@ -7,6 +7,7 @@ import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {readReviewedConfiguration} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
 import {reconcileMainSourceQualification} from './dedicated-main-source-gate.mjs';
+import {recordMergeQualification} from './main-ci-reuse.mjs';
 const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const sha=/^[a-f0-9]{40}$/;
@@ -162,6 +163,11 @@ export async function reconcileSourceQualification(github,repo,controller,option
    if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
    if(recovery){const newest=await currentRequester(github,repo,snapshot,{allModes:true});if(newest?.id!==requester.id||newest.run_attempt!==requester.run_attempt)throw new Error('A newer admission superseded hosted recovery');}
    await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
+   // Main reuses this exact merge's result after the PR lands; the proof is an
+   // optimization, so failing to record it never turns a qualified PR red.
+   try{await recordMergeQualification({github,gateGithub:options.gateGithub,repo,snapshot,requester,controllerSha:controller.sha,gateAppId:options.gateAppId,
+    coverage:recovery?'hosted-recovery':evidence.infrastructureFallback?'infrastructure-hosted':'linux'});}
+   catch(proofError){if(!(proofError instanceof Error))throw proofError;logGateError(pull.number,'merge-qualification',proofError);}
   }catch(error){await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;logGateError(pull.number,'qualification',error);}
  }
  if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,{...config,mode:config.mainMode},workflow,{ownedGate,currentRequester});

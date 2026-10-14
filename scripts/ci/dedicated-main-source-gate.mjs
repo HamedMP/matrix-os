@@ -5,6 +5,7 @@ import {resolveMainSource,verifyMainSource} from './dedicated-main.mjs';
 import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {verifyFullHostedCoverage} from './dedicated-hosted.mjs';
 import {verifyMainCiDecision,authenticatedMainDecisionProof} from './main-ci-decision.mjs';
+import {resolveReusablePrCoverage} from './main-ci-reuse.mjs';
 const request={timeout:10000};
 export async function reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester}){
  const source=await readCurrentBranchSha(github,repo,'main',request);
@@ -40,7 +41,13 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   }
   const decision=await verifyMainCiDecision(github,repo,requester,{prior,snapshot,controller,config,mode});
   let result;
-  try{result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};}
+  // Reused coverage is re-derived here with the exact gate App id; any difference fails closed.
+  if(decision.reusedFrom){
+   const again=await resolveReusablePrCoverage(github,repo,snapshot.sourceSha,{gateAppId:options.gateAppId});
+   if(!again.reused||JSON.stringify(again.reusedFrom)!==JSON.stringify(decision.reusedFrom))throw new Error(`Reused PR coverage did not re-verify: ${again.reason??'proof changed'}`);
+   result={reusedFrom:decision.reusedFrom};
+  }
+  else try{result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};}
   catch(error){
    if(!(error instanceof Error))throw error;
    // Delegated main runs full hosted CI whenever Linux does not verify; that hosted coverage qualifies main.
@@ -66,7 +73,8 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   const latest=await currentRequester(github,repo,snapshot);
   if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.status!=='completed'||latest.conclusion!=='success')throw new Error('New main requesting attempt superseded coverage');
   Object.assign(evidence,{coverageProof:decision.coverageProof});
-  await write('success',result.docsOnly?'Current exact-main selected documentation coverage passed':result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':result.linuxFallback?'Current exact-main full hosted fallback coverage passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
+  if(result.reusedFrom)Object.assign(evidence,{reusedFrom:result.reusedFrom});
+  await write('success',result.reusedFrom?'Current exact-main reused PR qualification passed':result.docsOnly?'Current exact-main selected documentation coverage passed':result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':result.linuxFallback?'Current exact-main full hosted fallback coverage passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
  }catch(error){
   if(!(error instanceof Error))throw error;
   // The check title stays generic; the controller log keeps the reason for operators.

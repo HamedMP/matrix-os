@@ -124,6 +124,16 @@ OTA payloads.
 | `mobile-ota-update.yml` | Mobile app tests and EAS Update releases | Mobile-app PRs (tests and bundle check), `main` when the mobile app changes (publish to `preview`), manual (promote to `production` or roll back) | Required for mobile OTA publishing; path-filtered, so not a required PR check |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 
+Main reuses a merged PR's result when nothing changed: under the strict up-to-date ruleset the
+squash commit on `main` has the same tree as the PR merge commit that PR CI tested. When the pinned
+PR source gate qualifies an open PR it records an immutable `CI Merge Qualification` check on the PR
+head, bound to that merge and CI attempt. With `MATRIX_CI_MAIN_REUSE=true`, a main push whose single
+parent and tree match a recorded proof skips the heavy lanes and the main Linux controller, records
+`reusedFrom` in its decision receipt, and the pinned main gate re-derives the same proof before
+writing `CI Source Qualification`. Any mismatch, missing proof, or API error runs full main CI.
+Roll out in order: merge, main CI green, move `MATRIX_CI_CONTROLLER_SHA` to a commit that contains
+`scripts/ci/main-ci-reuse.mjs`, let PRs record proofs, then set `MATRIX_CI_MAIN_REUSE=true`.
+
 The `ready-for-ci` label is sticky: applying it starts full PR validation, and every later PR
 head or label event reruns core CI while the label remains; each later head also reruns Docker
 classification. Reviewers must use

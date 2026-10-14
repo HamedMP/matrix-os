@@ -4,14 +4,21 @@ import {join,isAbsolute} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {downloadControllerReceipt} from './dedicated-artifact.mjs';
 import {HOSTED_LANES} from './dedicated-hosted.mjs';
+import {assertReusedFrom} from './main-ci-reuse.mjs';
 const request={timeout:10000},sha=/^[a-f0-9]{40}$/;
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const bool=value=>{if(!['true','false'].includes(value))throw new Error('Invalid main coverage decision boolean');return value==='true';};
 const keys=['schemaVersion','sourceKind','repository','workflowRef','sourceSha','requestingRunId','requestingRunAttempt','coverageBaseSha','bootstrap','shouldRun','docsContractTests','osViewParityTests','dedicatedEligible','dedicatedRequired'];
+// Schema 2 adds the merged PR coverage a main push reused instead of running heavy lanes.
 function assertDecision(value,repo,run){
- if(!value||typeof value!=='object'||Object.keys(value).length!==keys.length||keys.some(key=>!Object.hasOwn(value,key))||value.schemaVersion!==1||value.sourceKind!=='main'||value.repository!==`${repo.owner}/${repo.repo}`||value.workflowRef!==`${repo.owner}/${repo.repo}/.github/workflows/ci.yml@refs/heads/main`||value.sourceSha!==run.head_sha||!sha.test(value.sourceSha||'')||value.requestingRunId!==run.id||value.requestingRunAttempt!==run.run_attempt||!sha.test(value.coverageBaseSha||''))throw new Error('Main coverage decision identity mismatch');
+ const wanted=value?.schemaVersion===2?[...keys,'reusedFrom']:keys;
+ if(!value||typeof value!=='object'||Object.keys(value).length!==wanted.length||wanted.some(key=>!Object.hasOwn(value,key))||![1,2].includes(value.schemaVersion)||value.sourceKind!=='main'||value.repository!==`${repo.owner}/${repo.repo}`||value.workflowRef!==`${repo.owner}/${repo.repo}/.github/workflows/ci.yml@refs/heads/main`||value.sourceSha!==run.head_sha||!sha.test(value.sourceSha||'')||value.requestingRunId!==run.id||value.requestingRunAttempt!==run.run_attempt||!sha.test(value.coverageBaseSha||''))throw new Error('Main coverage decision identity mismatch');
  for(const key of keys.slice(8))if(typeof value[key]!=='boolean')throw new Error('Invalid main coverage decision boolean');
  if(!value.osViewParityTests||(!value.shouldRun&&(value.dedicatedEligible||value.dedicatedRequired)))throw new Error('Main coverage routing contradicts selected scope');
+ if(value.schemaVersion===2){
+  assertReusedFrom(value.reusedFrom);
+  if(!value.shouldRun||value.dedicatedEligible||value.dedicatedRequired)throw new Error('Reused main coverage contradicts selected scope');
+ }
 }
 function artifactDirectory(env){
  if(!isAbsolute(env.RUNNER_TEMP||''))throw new Error('Missing bounded main coverage temp directory');
@@ -19,7 +26,8 @@ function artifactDirectory(env){
 }
 export async function writeMainCiDecision(env){
  if(env.GITHUB_EVENT_NAME!=='push'||env.GITHUB_REF!=='refs/heads/main'||!/^([1-9][0-9]{0,15})$/.test(env.GITHUB_RUN_ID||'')||!/^([1-9][0-9]{0,8})$/.test(env.GITHUB_RUN_ATTEMPT||''))throw new Error('Main coverage proof requires an exact main push');
- const value={schemaVersion:1,sourceKind:'main',repository:env.GITHUB_REPOSITORY,workflowRef:env.GITHUB_WORKFLOW_REF,sourceSha:env.GITHUB_SHA,requestingRunId:Number(env.GITHUB_RUN_ID),requestingRunAttempt:Number(env.GITHUB_RUN_ATTEMPT),coverageBaseSha:env.COVERAGE_BASE_SHA,bootstrap:bool(env.COVERAGE_BOOTSTRAP),shouldRun:bool(env.SHOULD_RUN),docsContractTests:bool(env.DOCS_CONTRACT_TESTS),osViewParityTests:bool(env.OS_VIEW_PARITY_TESTS),dedicatedEligible:bool(env.DEDICATED_ELIGIBLE),dedicatedRequired:bool(env.DEDICATED_REQUIRED)};
+ const reused=env.REUSED_FROM?JSON.parse(env.REUSED_FROM):null;
+ const value={schemaVersion:reused?2:1,sourceKind:'main',repository:env.GITHUB_REPOSITORY,workflowRef:env.GITHUB_WORKFLOW_REF,sourceSha:env.GITHUB_SHA,requestingRunId:Number(env.GITHUB_RUN_ID),requestingRunAttempt:Number(env.GITHUB_RUN_ATTEMPT),coverageBaseSha:env.COVERAGE_BASE_SHA,bootstrap:bool(env.COVERAGE_BOOTSTRAP),shouldRun:bool(env.SHOULD_RUN),docsContractTests:bool(env.DOCS_CONTRACT_TESTS),osViewParityTests:bool(env.OS_VIEW_PARITY_TESTS),dedicatedEligible:bool(env.DEDICATED_ELIGIBLE),dedicatedRequired:bool(env.DEDICATED_REQUIRED),...(reused?{reusedFrom:reused}:{})};
  const [owner,repo,...extra]=(env.GITHUB_REPOSITORY||'').split('/');if(!owner||!repo||extra.length||!id(value.requestingRunId)||!id(value.requestingRunAttempt))throw new Error('Invalid main coverage repository/run');
  assertDecision(value,{owner,repo},{id:value.requestingRunId,run_attempt:value.requestingRunAttempt,head_sha:env.GITHUB_SHA});
  const directory=artifactDirectory(env);await mkdir(directory,{mode:0o700,recursive:true});const stat=await lstat(directory);
@@ -85,6 +93,10 @@ export async function verifyMainCiDecision(github,repo,run,context){
  // Only absence/explicit expiry can reuse previously verified bytes, never an API failure.
  const reused=!artifact||artifact.expired;
  const decision=reused?cached.decision:await downloadControllerReceipt(github,repo,artifact);assertDecision(decision,repo,run);
+ if(decision.reusedFrom){
+  const matches=detector.steps?.filter(step=>step.name==='Resolve reusable PR coverage');
+  if(matches?.length!==1||matches[0].status!=='completed'||matches[0].conclusion!=='success')throw new Error('Actual main reuse detector step missing');
+ }
  const coverageProof=context?(cached??verifiedProof(decision,artifact,context)):undefined;
  if(decision.shouldRun)return{...decision,coverageProof};
  for(const job of data.jobs){

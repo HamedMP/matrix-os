@@ -45,6 +45,23 @@ function completeFixture(){
  const github={rest:{...f.github.rest,actions:{...f.github.rest.actions,listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${head}-${merge}-${base}-pr2454-request321-1-attempt1`,id:55,expired:false,size_in_bytes:2000,workflow_run:{id:124}}]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{jobs:[{name:'benchmark',status:'completed',conclusion:'success'}]}}))}}};
  pinArtifactFixture(github,check,controller);return{...f,github,ci,controller,check};
 }
+it('records an immutable merge qualification for main reuse after qualifying the exact merge',async()=>{
+ const f=completeFixture();await reconcile(f);
+ const proof=f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args).find((args:any)=>args.name==='CI Merge Qualification');
+ expect(proof).toMatchObject({head_sha:head,status:'completed',conclusion:'success',external_id:`merge-qualification-${merge}-321-1`});
+ expect(JSON.parse(proof.output.summary)).toMatchObject({kind:'merge-qualification',prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,requestingRunId:321,requestingRunAttempt:1});
+});
+it('keeps a qualified PR green when recording the merge qualification fails',async()=>{
+ const f=completeFixture();
+ const create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+ f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{if(args.name==='CI Merge Qualification')throw new Error('proof write failed');return create(args);});
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ try{
+  await reconcile(f);
+  expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',conclusion:'success'}));
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('merge-qualification: proof write failed'));
+ }finally{warn.mockRestore();}
+});
 it('restores only the distinct gate after real-shaped fresh hosted and complete dedicated evidence',async()=>{const f=completeFixture();await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',conclusion:'success'}));expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();});
 const degrade=(f:ReturnType<typeof completeFixture>,kind:string)=>{if(kind==='failed')f.ci.conclusion='failure';if(kind==='pending')f.ci.status='queued';if(kind==='attempt')f.ci.run_attempt=2;if(kind==='missing')f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[]}});if(kind==='stale')f.pull.merge_commit_sha=main;};
 it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshness from %s coverage',async kind=>{const f=completeFixture();degrade(f,kind);await reconcile(f);
