@@ -857,6 +857,11 @@ export function createClaudeChatProviderAdapter(options: {
         }),
       }));
       queue.finish();
+    }).catch((error: unknown) => {
+      // Replacement executions can fail while draining their browser after
+      // terminal events. Finish the forwarding stream with that failure too.
+      releaseActiveRun();
+      queue.finish(error instanceof Error ? error : new Error("Claude execution unavailable"));
     }).finally(() => { if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
       capability?.revoke(); approvalControl?.close(); integrationApproval?.close();
     } else revokeApproval(); });

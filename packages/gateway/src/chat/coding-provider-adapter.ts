@@ -497,27 +497,28 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let terminalObserved = false;
       let releaseSteerRun: (() => void) | undefined;
       const browserAttempt = browsers.open(input);
-      const sink = options.threads.registerEventSink((published) => {
-        if (published.ownerId !== input.owner.ownerId) return;
-        if (targetThreadId === undefined) {
-          const incomingBytes = Buffer.byteLength(JSON.stringify(published.events), "utf8");
-          if (bufferedEventCount + published.events.length > MAX_BUFFERED_EVENTS
-            || bufferedEventBytes + incomingBytes > MAX_BUFFERED_EVENT_BYTES) {
-            inbox.fail(new Error("Canonical coding Provider event buffer exceeded"));
-            return;
-          }
-          bufferedEventCount += published.events.length;
-          bufferedEventBytes += incomingBytes;
-          buffered.push({
-            threadId: published.threadId,
-            events: published.events,
-            ...(published.tokenUsage ? { tokenUsage: published.tokenUsage } : {}),
-          });
-        } else if (published.threadId === targetThreadId) {
-          inbox.push(published.events, published.tokenUsage);
-        }
-      });
+      let sink: { dispose(): void } | undefined;
       try {
+        sink = options.threads.registerEventSink((published) => {
+          if (published.ownerId !== input.owner.ownerId) return;
+          if (targetThreadId === undefined) {
+            const incomingBytes = Buffer.byteLength(JSON.stringify(published.events), "utf8");
+            if (bufferedEventCount + published.events.length > MAX_BUFFERED_EVENTS
+              || bufferedEventBytes + incomingBytes > MAX_BUFFERED_EVENT_BYTES) {
+              inbox.fail(new Error("Canonical coding Provider event buffer exceeded"));
+              return;
+            }
+            bufferedEventCount += published.events.length;
+            bufferedEventBytes += incomingBytes;
+            buffered.push({
+              threadId: published.threadId,
+              events: published.events,
+              ...(published.tokenUsage ? { tokenUsage: published.tokenUsage } : {}),
+            });
+          } else if (published.threadId === targetThreadId) {
+            inbox.push(published.events, published.tokenUsage);
+          }
+        });
         const requestId = legacyRequestId(input.continuationId ?? input.runId);
         const created = await browserAttempt.withContext(() => options.threads.createThread(principal(input.owner.ownerId), {
           providerId: options.providerId,
@@ -555,7 +556,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         }
       } finally {
         releaseSteerRun?.();
-        sink.dispose();
+        sink?.dispose();
         // for-await consumer failures call return(), not throw(). Settle the
         // accepted native run before returning control to Chat's failure path.
         try {
@@ -575,12 +576,13 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let terminalObserved = false;
       let restartFresh = false;
       const browserAttempt = browsers.open(input);
-      const sink = options.threads.registerEventSink((published) => {
-        if (published.ownerId === input.owner.ownerId && published.threadId === targetThreadId) {
-          inbox.push(published.events, published.tokenUsage);
-        }
-      });
+      let sink: { dispose(): void } | undefined;
       try {
+        sink = options.threads.registerEventSink((published) => {
+          if (published.ownerId === input.owner.ownerId && published.threadId === targetThreadId) {
+            inbox.push(published.events, published.tokenUsage);
+          }
+        });
         const requestId = legacyRequestId(input.continuationId ?? input.runId);
         const accepted = await browserAttempt.withContext(() => options.threads.acceptTurn(principal(input.owner.ownerId), targetThreadId, {
           message: input.prompt,
@@ -623,7 +625,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         }
       } finally {
         releaseSteerRun?.();
-        sink.dispose();
+        sink?.dispose();
         try {
           if (options.providerId === "codex" && admittedTurnId && !terminalObserved && !(input.signal.reason instanceof BackgroundProjectionDetached)) {
             await stopUnprojectedRun(input, targetThreadId, { turnId: admittedTurnId });

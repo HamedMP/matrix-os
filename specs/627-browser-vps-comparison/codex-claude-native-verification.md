@@ -20,7 +20,11 @@ Production background execution uses the existing user `systemd-run` service and
 
 Node 24.13.1 and pnpm 10.33.4: frozen installation and gateway build succeeded. The focused verification set passed 264 tests across 23 files, covering lease admission and exact-row drain, Claude strict MCP configuration and Steer drain, Codex private bootstrap and lost acknowledgements, canonical delayed dispatch, renewal and restricted transitions, readiness refusal, native reliability, launcher pinning and public probe bounds. Native/socket tests require permission to create disposable local sockets in restricted execution environments.
 
-The native probe confirms supported no-inference lifecycle behavior. Synthetic subprocess regressions confirm Matrix wiring. Actual model use of the shared Chrome, owner Take over/Resume and account workflows remain separate required preview qualification; no success is claimed for them here. Claude 2.1.300 native startup/tool catalog also remains a separate required preview check.
+After review fixes, the extended native/browser regression set passed 622 tests and the gateway build passed on Node 24.13.1. Regressions cover a steered Claude replacement failing during browser cleanup, rejected Codex event-sink registration on start/resume, and oversized newline-free native probe output.
+
+Claude Code 2.1.300 also passed a no-inference MCP connection check in a disposable home with owner files inaccessible and network isolated. A synthetic stdio server advertised `shared_browser`; token/port environment interpolation expanded and the 390,000 ms timeout configuration was accepted. This used the `mcp list` health command and a disposable user configuration. That subcommand does not observe `--mcp-config`, so this checks native transport and catalog compatibility rather than the production Chat launch configuration.
+
+The native probes confirm supported no-inference lifecycle behavior. Synthetic subprocess regressions confirm Matrix wiring. Actual model use of the shared Chrome, owner Take over/Resume and account workflows remain separate required preview qualification; no success is claimed for them here. Claude 2.1.300 production Chat startup/tool catalog also remains a separate required preview check.
 
 ## Composition extraction boundary
 

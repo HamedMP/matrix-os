@@ -19,6 +19,34 @@ it("carries canonical owner authority into delayed durable initial and successor
  }finally{await rm(home,{recursive:true,force:true});}
 });
 
+it.each(["start", "resume"])("releases browser admission when %s event-sink registration is rejected", async (phase) => {
+  const live = new Set<string>();
+  const close = vi.fn(async (token: string) => { live.delete(token); });
+  const broker = {
+    openRun: (_binding, signal) => {
+      const token = randomBytes(32).toString("base64url"); live.add(token);
+      signal.addEventListener("abort", () => live.delete(token));
+      return { token, expiresAt: 1, close: () => close(token) };
+    },
+    resolveCapability: token => live.has(token) ? {} : null,
+  } as never;
+  const threads = {
+    registerEventSink: () => { throw new Error("Synthetic sink capacity exceeded"); },
+  } as never;
+  const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads, sharedBrowser: broker, gatewayPort: 4000 });
+  const input = { owner: { type: "personal" as const, ownerId: "owner_sink_rejected" }, chatId: "chat_sink_rejected",
+    turnId: "cturn_sink_rejected", runId: `run_sink_rejected_${phase}`, prompt: "Synthetic",
+    parts: [{ type: "text" as const, text: "Synthetic" }], selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+    interactionMode: "default", permissionMode: "full_access", signal: new AbortController().signal };
+  const execution = phase === "start" ? adapter.start!(input) : adapter.resume!({ ...input,
+    resumeState: { conversationId: "thread_sink_rejected", runId: "run_previous" } });
+  await expect(execution.next()).rejects.toThrow("Synthetic sink capacity exceeded");
+  expect(close).toHaveBeenCalledOnce();
+  expect(live.size).toBe(0);
+  await expect(adapter.start!(input).next()).rejects.toThrow("Synthetic sink capacity exceeded");
+  expect(close).toHaveBeenCalledTimes(2);
+});
+
 
 it.each(["initial", "successor"])("retains an unconfirmed physical cleanup through durable %s failure projection", async (phase) => {
   const home = await mkdtemp("/tmp/mx-browser-unconfirmed-");

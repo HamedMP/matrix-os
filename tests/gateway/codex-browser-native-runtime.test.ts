@@ -45,7 +45,7 @@ for await(const line of createInterface({input:process.stdin})){
  const config=Buffer.from(JSON.stringify({prompt:'Synthetic',approvalPolicy:'never',sandbox:'danger-full-access',writableRoots:[],...(mode!=="restricted"?{browserAttemptId:nonce}:{})})).toString('base64');
  const child=spawn(process.execPath,[join(process.cwd(),'packages/gateway/src/coding-agents/codex-app-server-runner.mjs'),event,process.version.slice(1),process.execPath,fake,config],{cwd:home,env:{...process.env,SYNTHETIC_TRACE:trace,SYNTHETIC_MCP_CLIENT:clientModule,SYNTHETIC_MCP_TRANSPORT:transportModule,SYNTHETIC_MCP_CLI:mcpCli,SYNTHETIC_TSX:pathToFileURL(require.resolve("tsx")).href,...(mode==='catalog_failed'?{SYNTHETIC_CATALOG_FAILED:'1'}:{}),MATRIX_BACKGROUND_AGENT:'1'},stdio:['ignore','pipe','pipe']});
  let diagnostics='';child.stderr?.on('data',chunk=>{diagnostics+=chunk});child.stdout?.resume();
- const readTrace=async()=>{try{return(await readFile(trace,'utf8')).trim().split('\n').map(x=>JSON.parse(x));}catch{return[];}};
+ const readTrace=async()=>{let text:string;try{text=await readFile(trace,'utf8');}catch(error:unknown){if(error&&typeof error==='object'&&'code' in error&&error.code==='ENOENT')return[];throw error;}return text.trim().split('\n').map(x=>JSON.parse(x));};
  try{
   const control=createCodexControlClient({homePath:home});
   if(mode==='restricted'){

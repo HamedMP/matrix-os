@@ -40,6 +40,21 @@ it("caps synthetic diagnostic details to 1024 characters",async()=>{
   child.stdout.write(JSON.stringify({id:1,error:{code:-32600,message:"synthetic "+"x".repeat(2048)}})+"\n");
   const error=await request;expect(error.message).toBe("Native probe RPC refused");expect(error.nativeMessage).toHaveLength(1024);client.dispose();
 });
+it("rejects oversized newline-free native output before buffering past one MiB",async()=>{
+  const child=fakeChild();const client=createProbeClient(child,{requestTimeoutMs:500,totalTimeoutMs:1000});
+  const waiting=expect(client.request("thread/start",{})).rejects.toThrow("Native probe unavailable");
+  child.stdout.write(Buffer.alloc(1024*1024+1,0x78));await waiting;
+  await expect(client.request("thread/start",{})).rejects.toThrow("Native probe unavailable");client.dispose();
+});
+it("classifies malformed native JSON without logging provider-controlled text",async()=>{
+  const warning=vi.spyOn(console,"warn").mockImplementation(()=>{});
+  try{
+    const child=fakeChild();const client=createProbeClient(child,{requestTimeoutMs:500,totalTimeoutMs:1000});
+    const waiting=expect(client.request("thread/start",{})).rejects.toThrow("Native probe unavailable");
+    child.stdout.write("{private malformed native output}\n");await waiting;
+    expect(warning).toHaveBeenCalledWith("[browser-vps-probe] Native transport rejected", "SyntaxError");client.dispose();
+  }finally{warning.mockRestore();}
+});
 it("writes only a new bounded synthetic rollout with the official session/message envelope",async()=>{
   const { writeSyntheticRollout }=await import("../../scripts/spikes/browser-vps/codex-mcp-probe-support.mjs");
   const { readFile }=await import("node:fs/promises");const dir=await mkdtemp(join(tmpdir(),"matrix-rollout-source-"));

@@ -1,4 +1,3 @@
-import { createInterface } from "node:readline";
 export const SYNTHETIC_MCP_SOURCE = String.raw`import {createInterface} from 'node:readline';
 const label=process.env.MATRIX_SYNTHETIC_MARKER;
 createInterface({input:process.stdin}).on('line',line=>{
@@ -12,20 +11,22 @@ const CODES=new Set([-32700,-32600,-32601,-32602,-32603,-32000,-32001,-32002]);
 function refused(method,code,message){const error=new Error('Native probe RPC refused');error.method=method;error.code=CODES.has(code)?code:'unclassified';error.nativeMessage=typeof message==='string'?message.slice(0,1024):undefined;return error;}
 export function createProbeClient(child,{requestTimeoutMs=10000,totalTimeoutMs=45000}={}) {
   let next=0,unavailable=false;const pending=new Map();
-  function fail(){unavailable=true;for(const value of pending.values()){clearTimeout(value.timer);value.reject(new Error('Native probe unavailable'));}pending.clear();}
-  child.on('error',fail);child.on('close',fail);child.stdin.on('error',fail);child.stdout.on('error',fail);
+  function fail(error){if(unavailable)return;unavailable=true;if(error)console.warn('[browser-vps-probe] Native transport rejected',error instanceof Error?error.name:'UnknownError');for(const value of pending.values()){clearTimeout(value.timer);value.reject(new Error('Native probe unavailable'));}pending.clear();}
+  child.on('error',fail);child.on('close',()=>fail());child.stdin.on('error',fail);child.stdout.on('error',fail);
   const deadline=setTimeout(()=>{fail();child.kill('SIGKILL');},totalTimeoutMs);
-  const lines=createInterface({input:child.stdout});
-  lines.on('line',line=>{try{if(Buffer.byteLength(line)>1024*1024)throw new Error('limit');const value=JSON.parse(line);const wait=pending.get(value.id);if(!wait)return;pending.delete(value.id);clearTimeout(wait.timer);value.error?wait.reject(refused(wait.method,value.error.code,value.error.message)):wait.resolve(value.result);}catch{fail();}});
-  function notify(method,params){if(unavailable)throw new Error('Native probe unavailable');child.stdin.write(JSON.stringify({method,params})+'\n',error=>{if(error)fail();});}
+  const maxLineBytes=1024*1024;let buffered=Buffer.alloc(0);
+  function acceptLine(line){try{if(line.at(-1)===13)line=line.subarray(0,-1);const value=JSON.parse(line.toString('utf8'));const wait=pending.get(value.id);if(!wait)return;pending.delete(value.id);clearTimeout(wait.timer);value.error?wait.reject(refused(wait.method,value.error.code,value.error.message)):wait.resolve(value.result);}catch(error){fail(error);}}
+  function onData(value){if(unavailable)return;const chunk=Buffer.isBuffer(value)?value:Buffer.from(value);let offset=0;while(offset<chunk.length&&!unavailable){const newline=chunk.indexOf(10,offset);const end=newline<0?chunk.length:newline;const size=end-offset;if(buffered.length+size>maxLineBytes){fail(new Error('Native probe output limit exceeded'));return;}if(size>0)buffered=buffered.length===0?Buffer.from(chunk.subarray(offset,end)):Buffer.concat([buffered,chunk.subarray(offset,end)],buffered.length+size);if(newline<0)return;acceptLine(buffered);buffered=Buffer.alloc(0);offset=newline+1;}}
+  child.stdout.on('data',onData);
+  function notify(method,params){if(unavailable)throw new Error('Native probe unavailable');child.stdin.write(JSON.stringify({method,params})+'\n',error=>{if(error)fail(error);});}
   return{
     notify,
     request(method,params){return new Promise((resolve,reject)=>{
       if(unavailable || !METHODS.has(method) || pending.size>=8){reject(new Error('Native probe unavailable'));return;}
       const id=++next;const timer=setTimeout(()=>{pending.delete(id);reject(new Error('Native probe request timed out'));},requestTimeoutMs);
-      pending.set(id,{resolve,reject,timer,method});child.stdin.write(JSON.stringify({id,method,params})+'\n',error=>{if(error)fail();});
+      pending.set(id,{resolve,reject,timer,method});child.stdin.write(JSON.stringify({id,method,params})+'\n',error=>{if(error)fail(error);});
     });},
-    dispose(){clearTimeout(deadline);fail();lines.close();},
+    dispose(){clearTimeout(deadline);fail();child.stdout.off('data',onData);buffered=Buffer.alloc(0);},
   };
 }
 /** Adapted from the pinned public app-server test fixture, not owner history.

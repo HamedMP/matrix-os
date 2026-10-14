@@ -117,6 +117,54 @@ describe("Claude same Chrome execution", () => {
     await broker.close();
   });
 
+  it("finishes the outer stream with the replacement's cleanup failure after Steer", async () => {
+    const { createSharedBrowserBroker } = await import("../../packages/gateway/src/shared-browser/broker.js");
+    const detach = vi.fn(async () => {}).mockImplementationOnce(async () => {}).mockImplementationOnce(async () => {
+      throw new Error("Synthetic replacement detach refusal");
+    });
+    const broker = createSharedBrowserBroker({ ownerId: "owner_claude",
+      driver: { execute: async () => ({ success: true, observationId: "obs", content: "Page" }), detach, invalidateObservation() {} },
+      setHumanControl: async () => {},
+    });
+    const first = new EventEmitter() as EventEmitter & { stdout: FakeStream; stderr: FakeStream; kill: ReturnType<typeof vi.fn> };
+    Object.assign(first, { stdin: { write: (_frame: string, callback?: () => void) => { callback?.(); return true; } },
+      stdout: new FakeStream(), stderr: new FakeStream(), kill: vi.fn(() => queueMicrotask(() => first.emit("exit", null, "SIGTERM"))),
+    });
+    const tokens: string[] = [];
+    const spawnFn = vi.fn<CanonicalCliSpawn>((_command, _args, options) => {
+      const token = options.env.MATRIX_SHARED_BROWSER_TOKEN!; tokens.push(token);
+      const native = tokens.length === 1 ? first : Object.assign(new EventEmitter(), {
+        stdin: { write: (_frame: string, callback?: () => void) => { callback?.(); return true; } },
+        stdout: new FakeStream(), stderr: new FakeStream(), kill: vi.fn(),
+      });
+      void broker.execute(broker.resolveCapability(token)!, { action: "snapshot" }, new AbortController().signal).then(() => {
+        native.stdout.emit("data", Buffer.from(JSON.stringify({ type: "system", subtype: "init", session_id: "native_replacement" }) + "\n"));
+        if (tokens.length === 2) {
+          native.stdout.emit("data", Buffer.from(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "native_replacement" }) + "\n"));
+          native.emit("exit", 0, null);
+        }
+      });
+      return native;
+    });
+    const onCleanupUnconfirmed = vi.fn();
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", sharedBrowser: broker, spawnFn });
+    const events: unknown[] = [];
+    const settled = (async () => { for await (const event of adapter.start({ ...baseInput, permissionMode: "full_access", onCleanupUnconfirmed })) events.push(event); })()
+      .then(() => ({ kind: "completed" as const }), (error: unknown) => ({ kind: "failed" as const, error }));
+    try {
+      await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "state.updated" })));
+      await adapter.steer!({ owner: baseInput.owner, chatId: baseInput.chatId, runId: baseInput.runId, turnId: baseInput.turnId,
+        prompt: "Continue", parts: [{ type: "text", text: "Continue" }], clientRequestId: "steer-replacement-cleanup" });
+      const result = await Promise.race([settled, new Promise<{ kind: "timeout" }>(resolve => setTimeout(() => resolve({ kind: "timeout" }), 500))]);
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error).toEqual(new Error("Browser cleanup unconfirmed"));
+      expect(onCleanupUnconfirmed).toHaveBeenCalledOnce();
+      expect(tokens).toHaveLength(2);
+      expect(tokens.map(token => broker.resolveCapability(token))).toEqual([null, null]);
+      expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+    } finally { await broker.close(); }
+  });
+
   it("revokes browser authority immediately when the owner cancels the native Run", async () => {
     const { createSharedBrowserBroker } = await import("../../packages/gateway/src/shared-browser/broker.js");
     const broker = createSharedBrowserBroker({ ownerId: "owner_claude", driver: { execute: async () => ({ success: true }), detach: async () => {}, invalidateObservation() {} }, setHumanControl: async () => {} });
