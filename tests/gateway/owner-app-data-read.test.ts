@@ -85,7 +85,7 @@ describe("ENG-289 dedicated owner app-data read boundary", () => {
     if (scenario === "revoked") f.grant.revoke();
     if (scenario === "expired") f.expire();
     const unscoped = scenario === "unscoped-run" ? f.capabilities.issue({ owner: OWNER, runId: "run_no_read", scope: "chat_call" })! : null;
-    const extra = scenario === "identity-forgery"
+    const extra: Record<string, string> = scenario === "identity-forgery"
       ? { "x-platform-user-id": "owner_other", "x-platform-verified": "forged" }
       : scenario === "machine-token" ? { authorization: `Bearer ${MACHINE_SECRET}` }
       : unscoped ? { authorization: `Bearer ${unscoped.token}` }

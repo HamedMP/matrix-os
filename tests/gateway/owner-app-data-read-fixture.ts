@@ -17,7 +17,7 @@ import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 // for real. Only audit collection/observability spies and transport are fake.
 export const READ_PATH = "/api/agent/app-data/read";
 export const READ_TOOL = "read_app_data";
-export const OWNER = { type: "personal", ownerId: "owner_app_read" };
+export const OWNER = { type: "personal", ownerId: "owner_app_read" } as const;
 export const RUN = "run_app_read";
 export const RUNTIME = "runtime_owner_a";
 export const DEFAULT_ROWS = 50;
