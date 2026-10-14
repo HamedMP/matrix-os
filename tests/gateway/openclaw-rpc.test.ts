@@ -100,6 +100,36 @@ describe("OpenClaw gateway RPC", () => {
     expect(socketFactory).not.toHaveBeenCalled();
   });
 
+  it("accepts bounded Matrix browser lease methods and a 30 minute agent run", async () => {
+    const active = await beginCall();
+    active.socket.receive({ type: "res", id: active.request.id, ok: true, payload: { ok: true } });
+    await active.call;
+    const bind = active.client.call("matrix.browser.bind", {
+      runId: "run_qa", sessionKey: "agent:main:qa", token: "a".repeat(43), expiresAt: Date.now() + 60_000,
+    }, new AbortController().signal);
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(3));
+    const bindRequest = JSON.parse(active.socket.sent[2]!);
+    expect(bindRequest.method).toBe("matrix.browser.bind");
+    active.socket.receive({ type: "res", id: bindRequest.id, ok: true, payload: { bound: true } });
+    await expect(bind).resolves.toEqual({ bound: true });
+
+    const agent = active.client.call("agent", {
+      message: "Use the shared browser", idempotencyKey: "run_qa", timeout: 1800,
+    }, new AbortController().signal, { timeoutMs: 1_800_000 });
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(4));
+    const agentRequest = JSON.parse(active.socket.sent[3]!);
+    expect(agentRequest.params.timeout).toBe(1800);
+    active.socket.receive({ type: "res", id: agentRequest.id, ok: true, payload: { status: "ok" } });
+    await expect(agent).resolves.toEqual({ status: "ok" });
+    const revoke = active.client.call("matrix.browser.revoke", { runId: "run_qa" }, new AbortController().signal);
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(5));
+    const revokeRequest = JSON.parse(active.socket.sent[4]!);
+    expect(revokeRequest.method).toBe("matrix.browser.revoke");
+    active.socket.receive({ type: "res", id: revokeRequest.id, ok: true, payload: { revoked: true } });
+    await expect(revoke).resolves.toEqual({ revoked: true });
+    await active.client.close();
+  });
+
   it("rejects oversized and malformed method requests before connecting", async () => {
     const socketFactory = vi.fn(() => new FakeSocket());
     const client = createOpenClawRpcClient({

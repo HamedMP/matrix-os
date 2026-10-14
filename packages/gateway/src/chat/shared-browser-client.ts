@@ -1,4 +1,4 @@
-import { SHARED_BROWSER_ACTION_MAX_BYTES, SharedBrowserActionSchema, SharedBrowserActionResultSchema, type SharedBrowserAction, type SharedBrowserActionResult } from "@matrix-os/contracts";
+import { SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES, SharedBrowserActionSchema, SharedBrowserActionResultSchema, type SharedBrowserAction, type SharedBrowserActionResult } from "@matrix-os/contracts";
 const MAX_BYTES = 192 * 1024;
 export function sharedBrowserEndpoint(port: number): string {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Browser connection unavailable");
@@ -9,7 +9,7 @@ export async function callSharedBrowser(options: { gatewayPort: number; token: s
   if (!/^[A-Za-z0-9_-]{43}$/.test(options.token)) throw new Error("Browser connection unavailable");
   const body = JSON.stringify(SharedBrowserActionSchema.parse(options.action));
   if (Buffer.byteLength(body, "utf8") > SHARED_BROWSER_ACTION_MAX_BYTES) throw new Error("Browser action unavailable");
-  const signal = AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(310_000)]);
+  const signal = AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(SHARED_BROWSER_ACTION_DEADLINE_MS)]);
   const response = await (options.fetcher ?? fetch)(sharedBrowserEndpoint(options.gatewayPort), { method: "POST", redirect: "error", signal,
     headers: { authorization: `Bearer ${options.token}`, "content-type": "application/json" }, body });
   if (!response.ok || !response.body || Number(response.headers.get("content-length")) > MAX_BYTES) { await response.body?.cancel(); throw new Error("Browser action unavailable"); }

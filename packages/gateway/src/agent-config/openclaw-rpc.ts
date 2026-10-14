@@ -6,7 +6,8 @@ import { AgentConfigError } from "./errors.js";
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_REQUEST_BYTES = 16 * 1024;
 const MAX_AGENT_REQUEST_BYTES = 128 * 1024;
-const MAX_AGENT_TIMEOUT_MS = 5 * 60_000;
+const MAX_AGENT_TIMEOUT_MS = 30 * 60_000;
+const MAX_AGENT_WAIT_TIMEOUT_MS = 5 * 60_000;
 const MAX_EVENT_LISTENERS = 32;
 const MAX_CANCELLATION_CORRELATIONS = 8;
 const CONFIG_PATCH_LIMIT = 3;
@@ -22,6 +23,8 @@ const ALLOWED_METHODS = new Set([
   "agent.wait",
   "chat.abort",
   "sessions.steer",
+  "matrix.browser.bind",
+  "matrix.browser.revoke",
 ]);
 
 const ChallengeSchema = z.object({
@@ -80,12 +83,12 @@ const AgentParamsSchema = z.object({
   sessionKey: SafeRpcReferenceSchema.optional(),
   thinking: z.string().min(1).max(64).optional(),
   deliver: z.boolean().optional(),
-  timeout: z.number().int().positive().max(300).optional(),
+  timeout: z.number().int().positive().max(1800).optional(),
   idempotencyKey: SafeRpcReferenceSchema,
 }).strict();
 const AgentWaitParamsSchema = z.object({
   runId: SafeRpcReferenceSchema,
-  timeoutMs: z.number().int().positive().max(MAX_AGENT_TIMEOUT_MS).optional(),
+  timeoutMs: z.number().int().positive().max(MAX_AGENT_WAIT_TIMEOUT_MS).optional(),
 }).strict();
 const ChatAbortParamsSchema = z.object({
   sessionKey: SafeRpcReferenceSchema,
@@ -99,6 +102,14 @@ const SessionSteerParamsSchema = z.object({
   message: z.string().min(1).max(96 * 1024),
   idempotencyKey: SafeRpcReferenceSchema,
 }).strict();
+const BrowserRunIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const BrowserBindParamsSchema = z.object({
+  runId: BrowserRunIdSchema,
+  sessionKey: SafeRpcReferenceSchema,
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  expiresAt: z.number().int(),
+}).strict();
+const BrowserRevokeParamsSchema = z.object({ runId: BrowserRunIdSchema }).strict();
 const MethodParamsSchemas: Record<string, z.ZodType> = {
   health: EmptyParamsSchema,
   "channels.status": EmptyParamsSchema,
@@ -110,6 +121,8 @@ const MethodParamsSchemas: Record<string, z.ZodType> = {
   "agent.wait": AgentWaitParamsSchema,
   "chat.abort": ChatAbortParamsSchema,
   "sessions.steer": SessionSteerParamsSchema,
+  "matrix.browser.bind": BrowserBindParamsSchema,
+  "matrix.browser.revoke": BrowserRevokeParamsSchema,
 };
 
 const HelloSchema = z.object({

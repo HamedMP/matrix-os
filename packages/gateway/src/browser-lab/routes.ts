@@ -7,7 +7,7 @@ import { verifyAppSession, type AppSessionPayloadType } from "../app-runtime/app
 import { hasPlatformAssetAuthorization } from "../app-runtime/platform-asset-authorization.js";
 import { createViewerSockets } from "./viewer-sockets.js";
 import { VIEWER_BRIDGE_SCRIPT, injectViewerBridge } from "./viewer-bridge.js";
-import { SHARED_BROWSER_ACTION_MAX_BYTES, SharedBrowserActionSchema, SharedBrowserControlSchema } from "@matrix-os/contracts";
+import { SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES, SharedBrowserActionSchema, SharedBrowserControlSchema } from "@matrix-os/contracts";
 import { SharedBrowserError, type SharedBrowserBroker } from "../shared-browser/broker.js";
 
 const PREFIX = "/apps/browser-lab";
@@ -200,7 +200,7 @@ export function registerBrowserLabRoutes(app: Hono, options: BrowserLabOptions):
     activeAgent++;
     try {
       const value = await options.sharedBrowser.broker.execute(grant.binding, parsed.data,
-        AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(310_000)]));
+        AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(SHARED_BROWSER_ACTION_DEADLINE_MS)]));
       if (Buffer.byteLength(JSON.stringify(value)) > 192 * 1024) return unavailable(c);
       return c.json(value, 200, { "Cache-Control": "no-store" });
     } catch (error) {
