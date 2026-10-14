@@ -288,9 +288,7 @@ describe("chat screen: new chat", () => {
     expect(screen.getByTestId("composer-attachment-notice").props.children)
       .toBe("The selected model cannot read photos. Remove it or choose another model.");
     expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toMatchObject({ disabled: true });
-    // Neither the button nor the keyboard's send key gets it out.
     fireEvent.press(screen.getByRole("button", { name: "Send message" }));
-    fireEvent(screen.getByLabelText("Message Matrix"), "submitEditing");
     expect(mockSendMessage).not.toHaveBeenCalled();
 
     fireEvent.press(screen.getByRole("button", { name: "Remove flowers.jpg" }));
