@@ -45,6 +45,7 @@ concurrency:
 
 jobs:
   benchmark:
+    # The main-delegation guard here must match the run-name execution flag; both are evaluated in tests.
     if: (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && github.ref == 'refs/heads/main' && ((github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'fast-ci')) || (github.event_name == 'workflow_run' && (github.event.workflow_run.event != 'push' || (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && vars.MATRIX_CI_DEDICATED_MAIN == 'true')) && (((startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ') || startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ')) && ((github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1))) || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1))))
     runs-on: ubuntu-latest
     environment: matrix-ci
@@ -113,7 +114,8 @@ jobs:
             }
             if (!admission) { core.setOutput('admitted','false'); return; }
             const {sourceSha:sha,headSha,baseSha,baseRef,prNumber}=admission;
-            const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'&&(admission.sourceKind!=='main'||process.env.MATRIX_CI_DEDICATED_MAIN==='true')?'delegated':'shadow';
+            // The job condition admits main only when ENABLED and MAIN are both on, so main is always delegated here.
+            const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow';
             const requesting=prNumber>0||admission.sourceKind==='main'?await newestRequestingCiRun(github,context.repo,admission,mode):null;
             const summary={schemaVersion:3,suite:context.payload.inputs?.suite || 'qualification',
               ...(requesting?{requestingRunId:requesting.runId,requestingRunAttempt:requesting.runAttempt}:{}),
