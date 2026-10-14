@@ -100,7 +100,12 @@ async function open(value: Grant) {
   expect(response.status).toBe(302);
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect(response.headers.get("location")).toBe("/apps/notes/");
-  const cookie = response.headers.get("set-cookie")?.split(";")[0];
+  const setCookie = response.headers.get("set-cookie");
+  expect(setCookie).toContain("HttpOnly");
+  expect(setCookie).toContain("Secure");
+  expect(setCookie).toContain("SameSite=Strict");
+  expect(setCookie).toContain("Path=/apps/notes/");
+  const cookie = setCookie?.split(";")[0];
   expect(cookie).toBeTruthy();
   expect(cookie).not.toContain(CONTROL_SECRET);
   expect(cookie).not.toContain("__session=");
@@ -241,6 +246,19 @@ describe("ENG-290 delegated app verification (intentionally RED)", () => {
     if (boundary === "owner") run.ownerId = "user_other";
     if (boundary === "runtime") run.runtimeId = "runtime_other";
     expect((await redeem(value)).status).toBe(401);
+  });
+
+  it("denies an earlier approval deadline after opening while the session is still unexpired", async () => {
+    const value = await grant();
+    const cookie = await open(value);
+    run.approval!.expiresAt = NOW + 1;
+    vi.setSystemTime(NOW + 1);
+    expect(Date.now()).toBeLessThan(value.expiresAt);
+    expect((await app.request("/apps/notes/", { headers: { Cookie: cookie } })).status).toBe(401);
+    expect((await app.request("/apps/notes/__matrix/bridge/query", {
+      method: "POST", headers: { Cookie: cookie }, body: "{}",
+    })).status).toBe(401);
+    expect(bridgeQuery).not.toHaveBeenCalled();
   });
 
   it("rejects caller-authored owner/runtime/approval hints", async () => {
