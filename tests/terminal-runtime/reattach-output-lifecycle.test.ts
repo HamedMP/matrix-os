@@ -7,6 +7,7 @@ import { TerminalRuntime, type ZellijRuntimeAdapter } from "../../packages/termi
 import { TerminalRuntimeSocketServer } from "../../packages/terminal-runtime/src/socket-server.js";
 import { TerminalRuntimeSocketClient, type TerminalRuntimeSocketStream } from "../../packages/terminal-runtime/src/socket-client.js";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
+import { terminalTabIncarnation } from "../../packages/terminal-runtime/src/incarnation.js";
 
 type Frame = z.infer<typeof TerminalTabServerFrameSchema>;
 
@@ -115,7 +116,7 @@ it("makes an expired viewer unavailable instead of ponging while unsubscribed, t
     expect(resumed.onClose).not.toHaveBeenCalled();
     expect(resumed.frames).toContainEqual(expect.objectContaining({ type: "attached", terminalRef: f.ref }));
     const current = await f.store.getRuntimeWorkspace(f.ref.workspaceId);
-    expect(current?.tabs[f.ref.tabId].incarnation).toBe(f.tab.incarnation);
+    expect(current && terminalTabIncarnation(current.tabs[f.ref.tabId])).toBe(f.tab.incarnation);
     expect(current?.tabs[f.ref.tabId].zellijPaneId).toBe("terminal_1");
     expect(f.createTab).toHaveBeenCalledTimes(1);
     expect(f.closeTab).not.toHaveBeenCalled();
