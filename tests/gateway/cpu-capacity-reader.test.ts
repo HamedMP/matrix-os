@@ -1,4 +1,17 @@
 import { describe, expect, it } from "vitest";
+import { beforeEach, vi } from "vitest";
+
+const namespace = vi.hoisted(() => ({ inode: 0xEFFFFFFB, unavailable: false }));
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return { ...fs, statSync: (path: string, ...args: unknown[]) => {
+    if (path !== "/proc/self/ns/cgroup") return Reflect.apply(fs.statSync, fs, [path, ...args]);
+    if (namespace.unavailable) throw new Error("namespace denied");
+    return { ino: namespace.inode };
+  } };
+});
+beforeEach(() => { namespace.inode = 0xEFFFFFFB; namespace.unavailable = false; });
+
 import * as reader from "../../packages/gateway/src/cpu-capacity.js";
 import { deriveCpuCapacity } from "../../packages/contracts/src/cpu-capacity.js";
 
@@ -7,8 +20,10 @@ function fixture(overrides: Record<string, string | Error> = {}) {
     "/proc/self/status": "Cpus_allowed_list:\t0-7\n",
     "/proc/self/cgroup": "0::/tenant/task\n",
     "/proc/self/mountinfo": "31 23 0:28 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+    "/sys/fs/cgroup/cgroup.controllers": "cpu cpuset",
     ...Object.fromEntries(["", "/tenant", "/tenant/task"].flatMap(path => [
-      [`/sys/fs/cgroup${path}/cpu.max`, "max 100000\n"],
+      ...(path ? [[`/sys/fs/cgroup${path}/cpu.max`, "max 100000\n"]] : []),
+      [`/sys/fs/cgroup${path}/cgroup.subtree_control`, "cpu cpuset"],
       [`/sys/fs/cgroup${path}/cpuset.cpus.effective`, "0-7\n"],
     ])),
     ...overrides,
@@ -28,6 +43,27 @@ function capacity(overrides: Record<string, string | Error> = {}) {
 }
 
 describe("ENG-288 Linux CPU constraint collection", () => {
+  it("does not read cpu.max on the real v2 hierarchy root", () => {
+    expect(capacity({ "/sys/fs/cgroup/cpu.max": new Error("real root has no cpu.max") }).effectiveCpuCapacity).toBe(8);
+  });
+  it("does not call a private cgroup namespace complete, even with slash mount roots", () => {
+    namespace.inode = 4026532204;
+    expect(capacity({ "/sys/fs/cgroup/cpu.max": "max 100000" }).constraintStatus).toBe("unavailable");
+  });
+  it("keeps namespace inspection failures unknown", () => {
+    namespace.unavailable = true;
+    expect(capacity({ "/sys/fs/cgroup/cpu.max": "max 100000" }).effectiveCpuCapacity).toBeNull();
+  });
+  it("distinguishes disabled controllers from unreadable active constraints", () => {
+    expect(capacity({
+      "/sys/fs/cgroup/cgroup.subtree_control": "",
+      "/sys/fs/cgroup/tenant/cgroup.subtree_control": "",
+      "/sys/fs/cgroup/tenant/task/cpu.max": new Error("absent disabled interface"),
+      "/sys/fs/cgroup/tenant/cpu.max": new Error("absent disabled interface"),
+      "/sys/fs/cgroup/tenant/cpuset.cpus.effective": new Error("absent disabled interface"),
+      "/sys/fs/cgroup/tenant/task/cpuset.cpus.effective": new Error("absent disabled interface"),
+    }).effectiveCpuCapacity).toBe(8);
+  });
   it("honors a fractional ancestor quota even when the leaf is unlimited", () => {
     expect(capacity({ "/sys/fs/cgroup/tenant/cpu.max": "150000 100000\n" }).effectiveCpuCapacity).toBe(1.5);
   });

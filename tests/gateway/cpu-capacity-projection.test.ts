@@ -6,12 +6,15 @@ import * as contracts from "@matrix-os/contracts";
 
 const fixture = vi.hoisted(() => ({ affinity: 4, quota: "max 100000\n", quotaUnavailable: false }));
 const constraints = vi.hoisted(() => ({
-  "/proc/self/cgroup": "0::/\n",
+  "/proc/self/cgroup": "0::/fixture\n",
   "/proc/self/status": "Cpus_allowed_list:\t0-3\n",
   "/proc/self/mountinfo": "31 23 0:28 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
-  "/sys/fs/cgroup/cpu.max": "max 100000\n",
+  "/sys/fs/cgroup/fixture/cpu.max": "max 100000\n",
   "/sys/fs/cgroup/cpuset.cpus": "0-3\n",
-  "/sys/fs/cgroup/cpuset.cpus.effective": "0-3\n",
+  "/sys/fs/cgroup/cpuset.cpus.effective": "0-7\n",
+  "/sys/fs/cgroup/fixture/cpuset.cpus.effective": "0-3\n",
+  "/sys/fs/cgroup/cgroup.controllers": "cpu cpuset",
+  "/sys/fs/cgroup/cgroup.subtree_control": "cpu cpuset",
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -20,8 +23,9 @@ vi.mock("node:fs", async (importOriginal) => {
   let nextHandle = -100;
   return {
     ...fs,
+    statSync: (path: string) => path === "/proc/self/ns/cgroup" ? { ino: 0xEFFFFFFB } : fs.statSync(path),
     openSync: (path: string, flags: string) => {
-      if (path === "/sys/fs/cgroup/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("denied"), { code: "EACCES" });
+      if (path === "/sys/fs/cgroup/fixture/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("denied"), { code: "EACCES" });
       const content = constraints[path as keyof typeof constraints];
       if (content === undefined) return fs.openSync(path, flags);
       const fd = nextHandle--;
@@ -38,7 +42,7 @@ vi.mock("node:fs", async (importOriginal) => {
     },
     closeSync: (fd: number) => { if (!handles.delete(fd)) fs.closeSync(fd); },
     readFileSync: (path: Parameters<typeof fs.readFileSync>[0], ...args: unknown[]) => {
-      if (String(path) === "/sys/fs/cgroup/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("fixture unavailable"), { code: "EACCES" });
+      if (String(path) === "/sys/fs/cgroup/fixture/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("fixture unavailable"), { code: "EACCES" });
       const content = constraints[String(path) as keyof typeof constraints];
       if (content !== undefined) return content;
       return Reflect.apply(fs.readFileSync, fs, [path, ...args]);
@@ -50,7 +54,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...fs,
     readFile: async (path: Parameters<typeof fs.readFile>[0], ...args: unknown[]) => {
-      if (String(path) === "/sys/fs/cgroup/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("fixture unavailable"), { code: "EACCES" });
+      if (String(path) === "/sys/fs/cgroup/fixture/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("fixture unavailable"), { code: "EACCES" });
       const content = constraints[String(path) as keyof typeof constraints];
       if (content !== undefined) return content;
       return Reflect.apply(fs.readFile, fs, [path, ...args]);
@@ -88,8 +92,8 @@ beforeEach(() => {
   fixture.quota = "max 100000\n";
   fixture.quotaUnavailable = false;
   constraints["/proc/self/status"] = "Cpus_allowed_list:\t0-3\n";
-  constraints["/sys/fs/cgroup/cpu.max"] = fixture.quota;
-  constraints["/sys/fs/cgroup/cpuset.cpus.effective"] = "0-3\n";
+  constraints["/sys/fs/cgroup/fixture/cpu.max"] = fixture.quota;
+  constraints["/sys/fs/cgroup/fixture/cpuset.cpus.effective"] = "0-3\n";
 });
 
 let home: string | undefined;
@@ -124,8 +128,8 @@ describe("ENG-288 system info and activity CPU projections", () => {
     fixture.affinity = affinity;
     fixture.quotaUnavailable = unavailable;
     constraints["/proc/self/status"] = `Cpus_allowed_list:\t0-${affinity - 1}\n`;
-    constraints["/sys/fs/cgroup/cpuset.cpus.effective"] = `0-${affinity - 1}\n`;
-    constraints["/sys/fs/cgroup/cpu.max"] = quota;
+    constraints["/sys/fs/cgroup/fixture/cpuset.cpus.effective"] = `0-${affinity - 1}\n`;
+    constraints["/sys/fs/cgroup/fixture/cpu.max"] = quota;
     home = mkdtempSync(join(tmpdir(), "eng-288-"));
     const info = getSystemInfo(home);
     const activity = await collectSystemActivity({

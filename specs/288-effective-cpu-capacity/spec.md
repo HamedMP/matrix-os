@@ -23,3 +23,9 @@ Red tests cover affinity/cpuset-only, quota-only, tighter ancestors, fractions, 
 Affected surfaces: Electron System, Web Canvas/Web Desktop/Web Mobile when hosting Resource Manager, web Activity Monitor and web runtime banner. Native Mobile System has no CPU display; review architectural non-applicability rather than adding a new feature. Test rendering is not live qualification. Current-build screenshots and recordings for each applicable surface, plus evidence sharing through the repository workflow, remain required for merge readiness. No deployment is authorized by this work.
 
 Recommend engineering/product review of scope and vocabulary. Public documentation is a separate PR in FinnaAI/matrix-os-site explaining topology, effective CPU-time capacity and unknown release-skew states. No resize, plan/billing mutation, Hetzner operation or unrelated information redesign.
+
+## Hierarchy provenance
+
+Linux reports complete ancestry only in its initial cgroup namespace, identified by the kernel UAPI CGROUP_NS_INIT_INO (0xEFFFFFFB). Private namespaces and unreadable namespace identity yield unknown even when proc membership and mount roots both read `/`. The real v2 root has no CPU bandwidth quota; exclude it from quota reads while retaining every enforceable parent. Explicit controller availability/delegation distinguishes disabled interfaces from unreadable active constraints. Shared presentation code participates in Resource Manager's incremental source hash.
+
+References: [Linux namespace UAPI](https://github.com/torvalds/linux/blob/master/include/uapi/linux/nsfs.h), [cgroup v2 CPU controller](https://docs.kernel.org/admin-guide/cgroup-v2.html#cpu), [systemd namespace identity](https://github.com/systemd/systemd/blob/main/src/basic/namespace-util.c).

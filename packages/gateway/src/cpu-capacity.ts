@@ -1,4 +1,4 @@
-import { openSync, readSync, closeSync } from "node:fs";
+import { openSync, readSync, closeSync, statSync } from "node:fs";
 import { cpus, availableParallelism, platform } from "node:os";
 import { posix } from "node:path";
 import type { CpuObservation, CpuObservations } from "@matrix-os/contracts";
@@ -6,6 +6,9 @@ import type { CpuObservation, CpuObservations } from "@matrix-os/contracts";
 const MAX_BYTES = 65_536;
 const MAX_ANCESTORS = 64;
 const MAX_CPU_ID = 1_048_575;
+// Linux UAPI include/uapi/linux/nsfs.h: CGROUP_NS_INIT_INO. Dynamic
+// namespace inode numbers cannot prove that host ancestry is visible.
+const INITIAL_CGROUP_NAMESPACE_INODE = 0xEFFFFFFB;
 const unknown = { status: "unavailable" } as const;
 const known = <T>(value: T): CpuObservation<T> => ({ status: "known", value });
 
@@ -118,20 +121,37 @@ export function readCpuObservations(options: { visibleLogicalCpuCount?: number; 
     let eligible = intervals(status[1]!);
     if (!eligible.length) throw new Error("Affinity unavailable");
     result.affinity = known(count(eligible));
+    if (statSync("/proc/self/ns/cgroup").ino !== INITIAL_CGROUP_NAMESPACE_INODE) throw new Error("Cgroup namespace ancestry unavailable");
     const membership = read("/proc/self/cgroup"), mountinfo = read("/proc/self/mountinfo");
     if (!membership || !mountinfo) throw new Error("Cgroup discovery unavailable");
     const v2 = membership.split("\n").some(line => line.startsWith("0::"));
-    const quotaPaths = ancestors(membership, mountinfo, v2 ? "v2" : "cpu");
-    const cpusetPaths = v2 ? quotaPaths : ancestors(membership, mountinfo, "cpuset");
+    const v2Paths = v2 ? ancestors(membership, mountinfo, "v2") : [];
+    const root = v2Paths.at(-1);
+    const usesV1 = (controller: string) => membership.split("\n").some(line => line.split(":")[1]?.split(",").includes(controller));
+    const cpuV2 = v2 && !usesV1("cpu"), cpusetV2 = v2 && !usesV1("cpuset");
+    // CPU bandwidth has no interface on the real v2 root. Namespace identity
+    // was checked above: a namespace root is not interchangeable with it.
+    const quotaPaths = cpuV2 ? v2Paths.slice(0, -1) : ancestors(membership, mountinfo, "cpu");
+    const cpusetPaths = cpusetV2 ? v2Paths : ancestors(membership, mountinfo, "cpuset");
+    const controllers = (path: string) => {
+      const words = read(path).split(/\s+/).filter(Boolean);
+      if (words.some(word => !/^[a-z0-9_]+$/.test(word))) throw new Error("Invalid controller record");
+      return words;
+    };
+    const controllerActive = (path: string, controller: string) => root === path
+      ? controllers(`${path}/cgroup.controllers`).includes(controller)
+      : controllers(`${posix.dirname(path)}/cgroup.subtree_control`).includes(controller);
     result.quotas = quotaPaths.length ? quotaPaths.map(path => {
-      const parts = v2 ? read(`${path}/cpu.max`).split(/\s+/) : [read(`${path}/cpu.cfs_quota_us`), read(`${path}/cpu.cfs_period_us`)];
+      if (cpuV2 && !controllerActive(path, "cpu")) return known(null);
+      const parts = cpuV2 ? read(`${path}/cpu.max`).split(/\s+/) : [read(`${path}/cpu.cfs_quota_us`), read(`${path}/cpu.cfs_period_us`)];
       if (parts.length !== 2) throw new Error("Invalid CPU quota");
       const periodMicros = positiveInteger(parts[1]!);
-      return known(parts[0] === (v2 ? "max" : "-1") ? null : { quotaMicros: positiveInteger(parts[0]!), periodMicros });
+      return known(parts[0] === (cpuV2 ? "max" : "-1") ? null : { quotaMicros: positiveInteger(parts[0]!), periodMicros });
     }) : [known(null)];
     result.cpusets = cpusetPaths.length ? cpusetPaths.map(path => {
-      const set = intervals(read(`${path}/${v2 ? "cpuset.cpus.effective" : "cpuset.cpus"}`));
-      if (!set.length && v2) throw new Error("Effective cpuset unavailable");
+      if (cpusetV2 && !controllerActive(path, "cpuset")) return known(null);
+      const set = intervals(read(`${path}/${cpusetV2 ? "cpuset.cpus.effective" : "cpuset.cpus"}`));
+      if (!set.length && cpusetV2) throw new Error("Effective cpuset unavailable");
       if (!set.length) return known(null); // v1 empty configuration inherits parent
       eligible = intersect(eligible, set);
       return known(count(eligible));
