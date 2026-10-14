@@ -20,9 +20,13 @@ describe("cli/file-transfer-client", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  it.each(["https://app.matrix-os.com/vm/pr-2526", "https://app.matrix-os.com/vm/pr-2526/"])(
+  it.each([
+    ["https://app.matrix-os.com/vm/pr-2526", null],
+    ["https://app.matrix-os.com/vm/pr-2526/", null],
+    ["https://app.matrix-os.com/vm/pr-2526?runtime=review&irrelevant=discarded", "review"],
+  ])(
     "keeps configured runtime %s for uploads, downloads, and remote completion",
-    async (gatewayUrl) => {
+    async (gatewayUrl, expectedRuntime) => {
       const client = { gatewayUrl, token: "test-token" };
       const source = join(tempDir, "fixture.txt");
       const destination = join(tempDir, "download.txt");
@@ -39,6 +43,8 @@ describe("cli/file-transfer-client", () => {
       expect(urls.map((url) => url.pathname)).toEqual([
         "/vm/pr-2526/api/files/blob", "/vm/pr-2526/api/files/blob", "/vm/pr-2526/api/files/list",
       ]);
+      expect(urls.map((url) => url.searchParams.get("runtime"))).toEqual(Array(3).fill(expectedRuntime));
+      expect(urls.some((url) => url.searchParams.has("irrelevant"))).toBe(false);
       expect(urls[0].searchParams.get("path")).toBe("lab/fixture.txt");
       expect(urls[0].searchParams.get("filename")).toBe("fixture.txt");
       expect(urls[0].searchParams.get("force")).toBe("true");

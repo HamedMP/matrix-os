@@ -66,8 +66,10 @@ export function normalizeMatrixPath(remotePath: string): string {
 // URL reference would silently discard that selection and target the primary.
 function fileApiUrl(client: FileTransferClient, route: "blob" | "list"): URL {
   const url = new URL(client.gatewayUrl);
+  const runtime = url.searchParams.get("runtime");
   url.pathname = `${url.pathname.replace(/\/+$/, "")}/api/files/${route}`;
   url.search = "";
+  if (runtime !== null) url.searchParams.set("runtime", runtime);
   url.hash = "";
   return url;
 }
