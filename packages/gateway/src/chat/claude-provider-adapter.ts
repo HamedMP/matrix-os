@@ -827,7 +827,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       const classifiedFailure = usageFailure ?? classifiedClaudeFailureEvidence(`${resultText}\n${stderrEvidence}`)
         ?? classifiedClaudeCliFailure(error);
-      if (!input.signal.aborted) {
+      if (!input.signal.aborted && !cancellationRequested) {
         console.warn("[chat-claude] Claude CLI Run failed", {
           category: classifiedFailure?.category ?? "provider_exit",
           cliFailureKind: error instanceof CanonicalCliError ? error.kind : "unknown",
@@ -838,8 +838,8 @@ export function createClaudeChatProviderAdapter(options: {
       }
       queue.push(CanonicalProviderRunEventSchema.parse({
         type: "run.completed",
-        outcome: input.signal.aborted ? "aborted" : "failed",
-        ...(input.signal.aborted ? {} : {
+        outcome: input.signal.aborted || cancellationRequested ? "aborted" : "failed",
+        ...(input.signal.aborted || cancellationRequested ? {} : {
           error: classifiedFailure?.safeError ?? {
             code: "run_failed",
             safeMessage: "Claude could not complete this Run. Check its connection and retry.",

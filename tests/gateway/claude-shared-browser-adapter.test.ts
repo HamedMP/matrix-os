@@ -116,4 +116,22 @@ describe("Claude same Chrome execution", () => {
     expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
     await broker.close();
   });
+
+  it("revokes browser authority immediately when the owner cancels the native Run", async () => {
+    const { createSharedBrowserBroker } = await import("../../packages/gateway/src/shared-browser/broker.js");
+    const broker = createSharedBrowserBroker({ ownerId: "owner_claude", driver: { execute: async () => ({ success: true }), detach: async () => {}, invalidateObservation() {} }, setHumanControl: async () => {} });
+    const native = new EventEmitter() as EventEmitter & { stdout: FakeStream; stderr: FakeStream; kill: ReturnType<typeof vi.fn> };
+    Object.assign(native, { stdin: { write: (_frame: string, callback?: () => void) => { callback?.(); return true; } }, stdout: new FakeStream(), stderr: new FakeStream(), kill: vi.fn(() => queueMicrotask(() => native.emit("exit", null, "SIGTERM"))) });
+    let token = "";
+    const spawnFn = vi.fn<CanonicalCliSpawn>((_command, _args, options) => { token = options.env.MATRIX_SHARED_BROWSER_TOKEN!; queueMicrotask(() => native.stdout.emit("data", Buffer.from(JSON.stringify({ type: "system", subtype: "init", session_id: "native_cancel" }) + "\n"))); return native; });
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", sharedBrowser: broker, spawnFn });
+    const events: unknown[] = [];
+    const running = (async () => { for await (const event of adapter.start({ ...baseInput, permissionMode: "full_access" })) events.push(event); })();
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "state.updated" })));
+    expect(broker.resolveCapability(token)).not.toBeNull();
+    await adapter.cancel!({ owner: baseInput.owner, chatId: baseInput.chatId, runId: baseInput.runId });
+    expect(broker.resolveCapability(token)).toBeNull(); await running;
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "aborted" });
+    expect(JSON.stringify(events)).not.toContain(token); await broker.close();
+  });
 });
