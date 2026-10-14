@@ -1,3 +1,6 @@
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { runCommandFromSpec } from "../../../packages/bot-runtime/src/worker.js";
+import { runBotTurn } from "../../../packages/bot-runtime/src/loop.js";
 import type { CanonicalChatModelSelection, BotModelRoute } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -38,7 +41,7 @@ beforeEach(async () => {
   await insertChat(db, CHAT);
   await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: "2026-09-27T12:00:00.000Z" });
 });
-afterEach(async () => destroy());
+afterEach(async () => { vi.unstubAllEnvs(); await destroy(); });
 
 function setup(options: {
   worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
@@ -121,6 +124,40 @@ async function tasks() {
 }
 
 describe("bot turns through the matrix_bot adapter", () => {
+  it("enforces the trusted runtime generation ceiling through normal canonical Bot admission", async () => {
+    vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", "12");
+    const provider = fauxProvider({ models: [{ id: "faux-budget", input: ["text"], contextWindow: 128_000, maxTokens: 8192 }] });
+    provider.setResponses([
+      ...Array.from({ length: 14 }, (_, index) => fauxAssistantMessage(fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" })),
+      fauxAssistantMessage(fauxText("Must not run.")),
+    ]);
+    const stream = vi.spyOn(provider.provider, "streamSimple");
+    const broker = {
+      loadSession: async () => ({ revision: 1, needsRecompaction: false, messages: [{ role: "user", content: "Remember the first stage.", timestamp: 1 }] }),
+      saveSession: async () => ({ revision: 2 }),
+      tool: async () => ({ ok: true as const, content: [{ type: "text" as const, text: "ok" }] }),
+      event: async () => {},
+    };
+    const context = setup({ worker: async input => {
+      const binding = context.registry.lookupRun({ ...input, runId: input.command.runId })!;
+      const spec = await context.orchestrator.runSource.loadRunSpec(binding);
+      expect(spec.limits).toEqual({ maxToolActions: 60, maxInferenceCalls: 12 });
+      expect(spec.route.maxOutputTokens).toBe(8192);
+      expect(spec.capabilities).toContain("artifact.write");
+      const command = runCommandFromSpec(input.command.runId, spec, []);
+      return runBotTurn({ command, broker, bridgeOrigin: "http://127.0.0.1:41000", route: { provider: provider.provider, model: provider.getModel() } });
+    } });
+    const events = await collect(context.adapter.start(turn()));
+    expect(stream).toHaveBeenCalledTimes(12);
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0 && options?.maxTokens === 8192)).toBe(true);
+  });
+
+  it.each(["", "0", "-1", "1.5", "64", "12oops", " 12", "01"])("refuses invalid trusted inference configuration %j before admitting a run", value => {
+    vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", value);
+    expect(() => setup()).toThrow();
+  });
+
   it("preserves the owner API binding through recipe task admission and broker inference", async () => {
     const generation = "e16625fe-cad7-4983-a9db-e808bbf104cc";
     const selection = { instanceId: "matrix_anthropic_api", model: ROUTE.modelId,
@@ -165,6 +202,17 @@ describe("bot turns through the matrix_bot adapter", () => {
     expect(await tasks()).toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "model_unavailable", run_id: "run_invalid_coordinator" })]);
     expect(resolveRoute).not.toHaveBeenCalled();
     expect(admission.admit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the normal sixty-tool spec when no runtime generation ceiling is configured", async () => {
+    vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", undefined);
+    const context = setup({ worker: async input => {
+      const spec = await context.orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      expect(spec.limits).toEqual({ maxToolActions: 60 });
+      expect(spec.route.maxOutputTokens).toBe(8192);
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    expect((await collect(context.adapter.start(turn()))).at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
   });
 
   it("keeps legacy Automatic routing when an internal caller omits selection", async () => {

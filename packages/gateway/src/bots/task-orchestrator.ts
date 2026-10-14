@@ -29,6 +29,7 @@ import type { ChatAgentStore } from "../chat/agent-store.js";
 import { createCanonicalCliEventQueue, type CanonicalCliEventQueue } from "../chat/cli-process.js";
 import type { ScopeRuntimeHostClient } from "../scope-runtime-host/index.js";
 import { BotAdmissionError, type PrivateBotAdmission } from "./admission.js";
+import { readTrustedBotRunLimits } from "./trusted-inference-limits.js";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "./broker-actions.js";
 import { BotRecipeCatalogError, type BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotBindingsRepository } from "./repositories/bindings.js";
@@ -44,7 +45,6 @@ import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
 const ACTIVE_DEADLINE_MS = 10 * 60_000;
 /** How long a worker that took the cancel has to end its run before its runtime is stopped. */
 const CANCEL_GRACE_MS = 10_000;
-const MAX_TOOL_ACTIONS = 60;
 const MAX_QUEUED_EVENTS = 1_000;
 /** Tools the broker serves today; the rest of a recipe's set arrives with later layers. */
 const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
@@ -112,6 +112,7 @@ export function createBotTaskOrchestrator(deps: {
   /** Test hook; 10 seconds, and never longer. */
   cancelGraceMs?: number;
 }) {
+  const limits = readTrustedBotRunLimits();
   const now = () => (deps.now?.() ?? new Date()).toISOString();
   const activeDeadlineMs = Math.max(1, Math.min(Math.trunc(deps.activeDeadlineMs ?? ACTIVE_DEADLINE_MS), ACTIVE_DEADLINE_MS));
   const cancelGraceMs = Math.max(1, Math.min(Math.trunc(deps.cancelGraceMs ?? CANCEL_GRACE_MS), CANCEL_GRACE_MS));
@@ -277,7 +278,7 @@ export function createBotTaskOrchestrator(deps: {
         route: resolved.route,
         systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, now: new Date(now()) }),
         capabilities,
-        limits: { maxToolActions: isolatedModel ? 1 : MAX_TOOL_ACTIONS },
+        limits: isolatedModel ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         turn: { kind: "prompt", text: input.text },
       });
     } catch (error: unknown) {
