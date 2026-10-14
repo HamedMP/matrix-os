@@ -2,7 +2,7 @@
   "expo": {
     "name": "Matrix OS",
     "slug": "matrix-os-mobile",
-    "version": "0.2.6",
+    "version": "0.2.7",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
@@ -37,7 +37,9 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#EEEEE2"
+        "backgroundImage": "./assets/adaptive-icon-background.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png",
+        "backgroundColor": "#13492F"
       },
       "package": "com.matrixos.mobile",
       "permissions": [
@@ -85,8 +87,13 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
           "resizeMode": "contain",
-          "backgroundColor": "#FAFAF9"
+          "backgroundColor": "#FAFAFA",
+          "dark": {
+            "image": "./assets/splash-icon-dark.png",
+            "backgroundColor": "#0E3422"
+          }
         }
       ],
       "expo-status-bar",
