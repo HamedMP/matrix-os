@@ -20,6 +20,7 @@ export interface ShellSessionSummary {
   placement?: ShellSessionPlacement;
   createdAt?: string;
   updatedAt?: string;
+  activityAt?: string;
   attachedClients?: number;
   latestSeq?: number | null;
   lastSeenSeq?: number | null;
@@ -135,6 +136,7 @@ function asShellSession(value: unknown, workspace: { id: string; revision: numbe
   if (uiState?.placement === "active" || uiState?.placement === "background") shell.placement = uiState.placement;
   if (typeof record.createdAt === "string") shell.createdAt = record.createdAt;
   if (typeof record.updatedAt === "string") shell.updatedAt = record.updatedAt;
+  if (typeof record.activityAt === "string") shell.activityAt = record.activityAt;
   if (typeof record.attachedClients === "number" && Number.isFinite(record.attachedClients)) shell.attachedClients = record.attachedClients;
   if (typeof record.latestSeq === "number" && Number.isFinite(record.latestSeq)) shell.latestSeq = record.latestSeq;
   else if (record.latestSeq === null) shell.latestSeq = null;

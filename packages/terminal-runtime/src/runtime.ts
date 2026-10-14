@@ -69,7 +69,7 @@ export interface ZellijAttachment {
   close(): Promise<void>;
 }
 export type ZellijObserverEvent =
-  | { type: "pane-update"; paneId: string; ansi: string; viewport: string[]; scrollback: string[] }
+  | { type: "pane-update"; paneId: string; ansi: string; viewport: string[]; scrollback: string[]; isInitial?: boolean }
   | { type: "pane-closed"; paneId: string };
 export interface ZellijObserver {
   close(): Promise<void>;
@@ -975,11 +975,15 @@ export class TerminalRuntime {
     }
     queue.pendingBytes += data.byteLength;
     queue.lastTouched = Date.now();
-    const write = queue.chain.then(() => {
+    const write = queue.chain.then(async () => {
       // Admission gates are checked before the write joins this queue. Once
       // admitted, the write must drain before termination, deletion, or
       // shutdown closes the underlying runtime resource.
-      return writer(data);
+      await writer(data);
+      // Input has already reached the process: a metadata failure must not invite a duplicate write.
+      await this.store.recordInputActivity(ref).catch((error: unknown) => {
+        console.error("[terminal-runtime] failed to record input activity", error instanceof Error ? error.name : "unknown_error");
+      });
     });
     queue.chain = write.catch((error: unknown) => {
       console.error(

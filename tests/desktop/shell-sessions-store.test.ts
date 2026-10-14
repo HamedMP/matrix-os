@@ -58,6 +58,16 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("useShellSessions workspace/tab contract", () => {
+  it("retains activity timestamps separately from metadata updates after a refresh", async () => {
+    const activityAt = "2026-10-14T10:00:00.000Z";
+    const metadataTime = "2026-10-14T12:00:00.000Z";
+    const response = workspaces([{ ...tab(TAB_ONE, "idle"), activityAt, updatedAt: metadataTime }]);
+    const api = makeApi({ get: vi.fn().mockResolvedValue(response) });
+    await useShellSessions.getState().load(api);
+    expect(useShellSessions.getState().sessions[0]).toMatchObject({ activityAt, updatedAt: metadataTime });
+    await useShellSessions.getState().load(api);
+    expect(useShellSessions.getState().sessions[0]?.activityAt).toBe(activityAt);
+  });
   it("accepts only stable terminal ref keys", () => {
     expect(isValidShellSessionName(REF_ONE)).toBe(true);
     expect(isValidShellSessionName("main")).toBe(false);

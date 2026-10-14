@@ -17,6 +17,7 @@ import {
 import { z } from "zod/v4";
 import { TerminalRuntimeError } from "./errors.js";
 import { terminalTabIncarnation } from "./incarnation.js";
+import { isTerminalOutputActivity } from "./terminal-activity.js";
 import { TerminalEndedTabArchiveInputSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import {
   MAX_TERMINAL_SNAPSHOT_ANSI_BYTES,
@@ -171,6 +172,7 @@ export class TerminalWorkspaceStore {
         ...(input.git ? { git: input.git } : {}),
         createdAt: now,
         updatedAt: now,
+        activityAt: now,
         zellijTabName: zellijTabName(),
         zellijTabId: null,
         zellijPaneId: null,
@@ -322,6 +324,7 @@ export class TerminalWorkspaceStore {
     ansi: string;
     viewport: string[];
     scrollback: string[];
+    isInitial?: boolean;
   }): Promise<TerminalSnapshot> {
     const ref = TerminalRefSchema.parse(refInput);
     return this.mutate(async (state) => {
@@ -330,6 +333,7 @@ export class TerminalWorkspaceStore {
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       const previous = await this.readSnapshot(ref);
       const now = this.now().toISOString();
+      if (isTerminalOutputActivity(previous, input)) tab.activityAt = now;
       tab.revision = Math.max(tab.revision, previous?.revision ?? 0) + 1;
       tab.updatedAt = now;
       workspace.revision += 1;
@@ -391,6 +395,21 @@ export class TerminalWorkspaceStore {
       });
       await this.persistSnapshot(snapshot);
       return snapshot;
+    });
+  }
+
+  async recordInputActivity(refInput: TerminalRef): Promise<void> {
+    const ref = TerminalRefSchema.parse(refInput);
+    await this.mutate((state) => {
+      const workspace = state.workspaces[ref.workspaceId];
+      const tab = workspace?.tabs[ref.tabId];
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
+      tab.activityAt = this.now().toISOString();
+      tab.updatedAt = tab.activityAt;
+      tab.revision += 1;
+      workspace.updatedAt = tab.activityAt;
+      workspace.revision += 1;
+      state.revision += 1;
     });
   }
 
