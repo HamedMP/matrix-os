@@ -14,6 +14,7 @@ import {
   FundedAiRouteReadinessReceiptSchema,
   FundedAiSettlementResponseSchema,
   FundedAiStartResponseSchema,
+  FundedAiUpstreamPreferenceResponseSchema,
 } from "@matrix-os/contracts";
 import { AiFundedPolicyError, createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import {
@@ -35,6 +36,7 @@ import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "../../packages/gateway/src/funded-ai-readiness.js";
+import { createAiFundedUpstreamPreferenceRepository } from "../../packages/platform/src/ai-funded-upstream-preference.js";
 
 const platformSecret = "platform-secret-for-tests-123456789";
 const relayControlToken = "relay-control-token-for-tests-123456";
@@ -80,11 +82,24 @@ describe("funded AI policy routes", () => {
     topUpEnabled?: boolean;
     routeProbes?: FundedModelProbeService;
     tokenIdFactory?: () => string;
+    upstreamPreferences?: boolean;
   } = {}) {
+    const upstreamPreferences = options.upstreamPreferences
+      ? createAiFundedUpstreamPreferenceRepository({
+          db,
+          config: { enabled: true, ownerIds: ["user_alice", "user_hamed", "user_stefan", "user_yuhan"],
+            bedrockModelIds: [modelId], validThrough: "2026-09-30T20:00:00.000Z" },
+          selectionSecret: "upstream-selection-secret-for-tests-123",
+          probeBedrock: vi.fn(async () => ({ ready: true, checkedAt: now,
+            staleAfter: "2026-08-30T20:00:30.000Z", priceValidThrough: "2026-09-30T20:00:00.000Z" })),
+          now: () => new Date(now), eventIdFactory: () => "event_upstream_1",
+        })
+      : undefined;
     const repository = createAiFundedPolicyRepository({
       db, credentialHashSecret: hashSecret, now: () => new Date(now),
       tokenIdFactory: options.tokenIdFactory ?? (() => "credential_123"), tokenSecretFactory: () => "s".repeat(43),
       issueCooldownMs: 60_000,
+      verifyUpstream: upstreamPreferences?.verifyUpstream,
     });
     await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
     await repository.setRuntimePolicy({
@@ -121,9 +136,10 @@ describe("funded AI policy routes", () => {
           topUpEnabled: options.topUpEnabled,
           promotionalGrant,
           routeProbes: options.routeProbes,
+          upstreamPreferences,
           now: () => new Date(now),
         }),
-        internalFundedAiRelayRoutes: createAiFundedRelayRoutes({ relayControlToken, repository }),
+        internalFundedAiRelayRoutes: createAiFundedRelayRoutes({ relayControlToken, repository, upstreamPreferences }),
         internalFundedAiOperatorRoutes: createAiFundedOperatorRoutes({
           db,
           operatorSecret: platformSecret,
@@ -132,8 +148,54 @@ describe("funded AI policy routes", () => {
           promotionalGrant,
         }),
       }),
+      upstreamPreferences,
     };
   }
+
+  it("hides the cohort preference unless entitled and binds the resolved upstream through authorization", async () => {
+    const { app } = await createTestApp({ upstreamPreferences: true });
+    await insertUserMachine(db, { machineId: "machine_bob", clerkUserId: "user_bobby", handle: "bob", runtimeSlot: "primary",
+      status: "running", imageVersion: "v1", provisionedAt: "2026-08-30T19:00:00.000Z", activationState: "authorized" });
+    const hidden = await app.request("/internal/containers/bob/ai/upstream-preference?runtimeSlot=primary", {
+      method: "POST", headers: { authorization: `Bearer ${bearerFor("bob", "machine_bob")}`, "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision: 0, selectedUpstream: "aws_bedrock" }),
+    });
+    expect(hidden.status).toBe(404);
+    expect(JSON.stringify(await hidden.json())).not.toMatch(/bedrock|cloudflare|cohort|entitl/i);
+    const runtimeHeaders = { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" };
+    const summary = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST", headers: runtimeHeaders,
+      body: JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
+    });
+    expect(summary.status).toBe(200);
+    expect(await summary.json()).toMatchObject({ upstreamPreference: {
+      selectedUpstream: "cloudflare", effectiveUpstream: "cloudflare", revision: 0,
+    } });
+    const updated = await app.request("/internal/containers/alice/ai/upstream-preference?runtimeSlot=primary", {
+      method: "POST", headers: runtimeHeaders,
+      body: JSON.stringify({ expectedRevision: 0, selectedUpstream: "aws_bedrock" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(FundedAiUpstreamPreferenceResponseSchema.parse(await updated.json()).preference).toMatchObject({
+      selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock", revision: 1,
+    });
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await (await app.request(fundedCredentialPath(), {
+      method: "POST", headers: runtimeHeaders, body: "{}",
+    })).json());
+    const check = await app.request("/internal/ai/funded/check", {
+      method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, modelId }),
+    });
+    const selection = FundedAiPolicyCheckResponseSchema.parse(await check.json()).upstreamSelection;
+    expect(selection).toMatchObject({ upstream: "aws_bedrock", preferenceRevision: 1 });
+    const authorized = await app.request("/internal/ai/funded/authorize", {
+      method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, requestId: "request_upstream_1", modelId,
+        maxCostMicrousd: 100, upstream: "aws_bedrock", upstreamSelection: selection }),
+    });
+    expect(authorized.status).toBe(200);
+    expect(FundedAiAuthorizationResponseSchema.parse(await authorized.json()).reservation.upstream).toBe("aws_bedrock");
+  });
 
   it("returns a model receipt only for healthy eligible models without claiming promotion credit", async () => {
     const probe = vi.fn(async (model: string) => ({

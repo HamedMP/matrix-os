@@ -13,7 +13,7 @@
 - Funded relay availability and safety limits are validated process configuration.
 - Cloudflare native-to-canonical model maps are exact and code-versioned. An optional strict Bedrock route binds one client ID to one canonical ID, inference profile, region, resource ceilings, and expiring reviewed price table. It cannot contain endpoints or credentials; remote/client values cannot expand either map.
 - Runtime identity comes only from the platform's short-lived opaque credential check. Legacy indefinite handle-HMAC credentials are not verified locally and fail platform authorization. Caller identity headers are ignored.
-- Matrix PostgreSQL/Kysely policy, monthly budgets, reservations, and credit ledger are authoritative. Cloudflare spend limits remain only a defense-in-depth fuse.
+- Matrix PostgreSQL/Kysely policy, owner-scoped upstream preference, monthly budgets, reservations, and credit ledger are authoritative. Cloudflare spend limits remain only a defense-in-depth fuse.
 - Chat content remains in the owner runtime and is never persisted by this package.
 
 ## Public API
@@ -27,6 +27,7 @@
 ## Auth And Trust Boundaries
 
 - The customer runtime sends a short-lived platform-issued credential in the Anthropic SDK `x-api-key` field. The relay sends it only to the dedicated platform policy/reservation API over service authentication.
+- Before reserving, the relay consumes the platform's short-lived HMAC-bound upstream selection. Platform authorization re-verifies and records that exact upstream; the relay rejects any mismatched authorization response and never infers owner eligibility.
 - Platform-verified owner/runtime identity is HMAC-projected into exactly five primitive, content-free Cloudflare metadata fields. The relay does not trust `x-matrix-user`, forwarded headers, Cloudflare metadata/auth headers, target URLs, or model policy from the caller.
 - Cloudflare is always the fixed official `gateway.ai.cloudflare.com/.../anthropic` endpoint. Redirects are rejected. Bedrock uses the AWS SDK default credential provider chain in the relay workload and the exact configured region/profile; callers cannot supply AWS credentials, endpoints, account IDs, or regions.
 - The central Cloudflare gateway token is replaced server-side and never returned or forwarded from a customer runtime.

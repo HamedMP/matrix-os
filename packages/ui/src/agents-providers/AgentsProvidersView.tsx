@@ -181,6 +181,7 @@ export function AgentsProvidersView({
           onUsageHistory={onLoadUsageHistory ? () => setHistoryLoader(() => onLoadUsageHistory) : undefined}
           disabled={mutationsDisabled} canSetBudget={supports("set_gateway_budget")}
           canSetAllowlist={supports("set_gateway_allowlist")} canAddCredit={supports("add_credit")}
+          canSetUpstream={supports("set_gateway_upstream")} upstreamPreference={snapshot.upstreamPreference}
           onMutate={onMutate} onAddCredit={onAddCredit} onRefresh={refreshSettings}
           selectedAgentName={harness?.displayName ?? null}
           selectedAgentEnabled={harness?.enabled ?? false}

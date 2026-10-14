@@ -415,6 +415,7 @@ export async function projectProviderSettings(input: {
   fundingSummary?: FundedAiFundingSummary;
   chatAvailability?: FundedAiChatAvailability;
   fundedPolicy?: FundedAiEffectivePolicy;
+  upstreamPreference?: import("@matrix-os/contracts").FundedAiUpstreamPreferenceView;
   fundedPolicyAuthoritative?: boolean;
   genericModelCatalog?: GenericHarnessModelCatalog;
   configurationHarnessKinds?: ProviderHarnessKind[];
@@ -602,6 +603,7 @@ export async function projectProviderSettings(input: {
     accounts,
     harnesses,
     gatewayPolicy,
+    ...(input.upstreamPreference ? { upstreamPreference: input.upstreamPreference } : {}),
   });
 }
 

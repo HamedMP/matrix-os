@@ -8,6 +8,7 @@ import type {
   ProviderGatewayPolicy,
   ProviderModelProvider,
   ProviderSettingsSnapshot,
+  FundedAiUpstreamPreferenceView,
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, gatewayPolicyAllowsModel, money, shortDate, titleCase } from "./utils.js";
@@ -79,6 +80,8 @@ export function GatewayPanel({
   modelInventory,
   canSetAllowlist,
   canAddCredit,
+  canSetUpstream = false,
+  upstreamPreference,
   onMutate,
   onAddCredit,
   onRefresh,
@@ -101,6 +104,8 @@ export function GatewayPanel({
   canSetBudget: boolean;
   canSetAllowlist: boolean;
   canAddCredit: boolean;
+  canSetUpstream?: boolean;
+  upstreamPreference?: FundedAiUpstreamPreferenceView;
   onMutate: (intent: ProviderSettingsMutationIntent) => void;
   onAddCredit: (
     sourceId: string,
@@ -403,6 +408,27 @@ export function GatewayPanel({
 
 
           <div className="matrix-ap-policy-grid">
+            {upstreamPreference ? (
+              <label className="matrix-ap-field">
+                <span>Matrix AI upstream</span>
+                <select
+                  aria-label="Matrix AI upstream"
+                  value={upstreamPreference.selectedUpstream}
+                  disabled={disabled || !canSetUpstream}
+                  onChange={(event) => onMutate({
+                    type: "set_gateway_upstream",
+                    expectedUpstreamRevision: upstreamPreference.revision,
+                    selectedUpstream: event.target.value === "aws_bedrock" ? "aws_bedrock" : "cloudflare",
+                  })}
+                >
+                  <option value="cloudflare">Cloudflare</option>
+                  <option value="aws_bedrock">AWS Bedrock</option>
+                </select>
+                {upstreamPreference.selectedUpstream !== upstreamPreference.effectiveUpstream ? (
+                  <span>Cloudflare remains active until the selected route is available.</span>
+                ) : null}
+              </label>
+            ) : null}
             {canSetBudget ? (
               <>
                 <label className="matrix-ap-field">
