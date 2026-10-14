@@ -7,6 +7,26 @@ import { observation, snapshot, start } from "./provider-managed-credit-fixture"
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(start); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
+it("removes its exact four wake listeners and timer when Settings unmounts", async () => {
+  const addWindow = vi.spyOn(window, "addEventListener");
+  const removeWindow = vi.spyOn(window, "removeEventListener");
+  const addDocument = vi.spyOn(document, "addEventListener");
+  const removeDocument = vi.spyOn(document, "removeEventListener");
+  const transport = { getSnapshot: vi.fn().mockResolvedValue(snapshot()), getManagedCredit: vi.fn(async () => observation()), mutate: vi.fn() };
+  const view = renderHook(() => useProviderSettingsController({ identityKey: "teardown", transport, automaticCreditRefreshEnabled: true }));
+  await act(async () => {});
+  const listeners = ["focus", "online", "offline"].map(event => [event, addWindow.mock.calls.find(([name]) => name === event)?.[1]] as const);
+  const visibility = addDocument.mock.calls.find(([name]) => name === "visibilitychange")?.[1];
+  view.unmount(); await act(async () => {});
+  for (const [event, handler] of listeners) {
+    expect(handler).toBeDefined(); expect(removeWindow).toHaveBeenCalledWith(event, handler);
+  }
+  expect(visibility).toBeDefined(); expect(removeDocument).toHaveBeenCalledWith("visibilitychange", visibility);
+  expect(vi.getTimerCount()).toBe(0);
+  await act(async () => { await vi.advanceTimersByTimeAsync(360_000); window.dispatchEvent(new Event("focus")); });
+  expect(transport.getManagedCredit).not.toHaveBeenCalled();
+});
+
 it("does not start a queued transport after its owner already cancelled it", async () => {
   const getManagedCredit = vi.fn(async () => observation());
   const controller = new ProviderSettingsController({ identityKey: "cancel-before-start", transport: {
