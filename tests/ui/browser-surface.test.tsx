@@ -49,7 +49,7 @@ describe("shared Chrome-first surface", () => {
     const hook = renderHook(() => useBrowserSurface({ gatewayUrl, surface: "desktop", ensureSession }));
     await waitFor(() => expect(hook.result.current.state.viewerUrl).not.toBe(""));
     await act(async () => expect(await hook.result.current.control("open-files")).toBe(false));
-    const element = document.createElement("iframe"); document.body.append(element);
+    const element = document.createElement("iframe"); element.src = hook.result.current.state.viewerUrl; document.body.append(element);
     hook.result.current.iframe.current = element;
     try {
       message(element); await waitFor(() => expect(hook.result.current.state.connection).toBe("connected"));
@@ -212,5 +212,123 @@ describe("shared Chrome-first surface", () => {
     }
     expect(calls.find(call => call.url.endsWith("/browser-session"))?.init?.body).toBe('{"surface":"desktop"}');
     expect(screen.queryByText("Run comparison")).toBeNull();
+  });
+});
+
+
+describe("long-lived browser viewer renewal", () => {
+  const gatewayUrl = "https://app.matrix-os.com/vm/pr-2526";
+  const ready = { available: true, chrome: { present: true, minimized: false }, humanControlAvailable: true };
+  let ensureSession: ReturnType<typeof vi.fn>;
+  let claims: number;
+  const flush = () => act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  function message(frame: HTMLIFrameElement, source: MessageEventSource | null = frame.contentWindow) {
+    act(() => { window.dispatchEvent(new MessageEvent("message", { origin: "https://app.matrix-os.com", source,
+      data: { type: "matrix-browser-viewer", connected: true } })); });
+  }
+  function mount(surface: "browser" | "desktop" = "browser") {
+    return render(<BrowserSurface gatewayUrl={gatewayUrl} surface={surface} ensureSession={ensureSession} />);
+  }
+  const frame = (surface: "browser" | "desktop" = "browser") => screen.getByTitle(surface === "browser" ? "Chrome on your Matrix computer" : "Your Matrix cloud desktop") as HTMLIFrameElement;
+  beforeEach(() => {
+    vi.useFakeTimers({ now: 1_000_000 }); claims = 0; ensureSession = vi.fn(async () => {});
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async url => {
+      if (String(url).endsWith("/browser-status")) return Response.json(ready);
+      if (String(url).endsWith("/browser-session")) return Response.json({ ticket: (++claims).toString(16).padStart(48, "a"), expiresAt: Date.now() + 60_000 });
+      if (String(url).endsWith("/browser-control")) return Response.json(ready);
+      throw new Error("Unexpected request");
+    }));
+  });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it.each(["browser", "desktop"] as const)("renews the %s stream before ten minutes and waits for a new handshake", async surface => {
+    mount(surface); await flush(); const previous = frame(surface); message(previous);
+    const retiredSource = previous.contentWindow;
+    await advance(8 * 60_000);
+    expect(claims).toBe(2);
+    const renewed = frame(surface); expect(renewed).not.toBe(previous);
+    expect(renewed.hasAttribute("inert")).toBe(true);
+    expect(ensureSession.mock.calls.filter(call => call[1]?.force === true)).toHaveLength(2);
+    message(renewed, retiredSource); expect(renewed.hasAttribute("inert")).toBe(true);
+    message(renewed); expect(renewed.hasAttribute("inert")).toBe(false);
+    await advance(3 * 60_000); expect(screen.getByText("Connected")).toBeTruthy();
+    await advance(5 * 60_000); expect(claims).toBe(3);
+    expect(frame(surface).hasAttribute("inert")).toBe(true);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/browser-control") || String(url).endsWith("/browser-automation"))).toBe(false);
+  });
+  it("forces renewal before opening a stream even when a cached owner session was just checked", async () => {
+    mount(); await flush(); message(frame());
+    ensureSession.mockClear();
+    await advance(8 * 60_000);
+    expect(ensureSession).toHaveBeenLastCalledWith(expect.any(AbortSignal), { force: true });
+    expect(claims).toBe(2);
+  });
+  it("keeps input blocked and stops automatic claims after a failed replacement", async () => {
+    const normal = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => String(url).endsWith("/browser-session") && claims === 1
+      ? new Response("private failure", { status: 503 }) : normal(url, init));
+    mount(); await flush(); message(frame());
+    await advance(8 * 60_000);
+    expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
+    expect(screen.getByText("Browser unavailable")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).not.toContain("private");
+    const requestCount = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/browser-session")).length;
+    await advance(3 * 60_000);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/browser-session"))).toHaveLength(requestCount);
+  });
+  it("retires the old stream when forced authentication renewal fails", async () => {
+    mount(); await flush(); const retired = frame(); message(retired);
+    ensureSession.mockImplementation(async (_signal, options) => {
+      if (options?.force) throw new Error("private authentication failure");
+    });
+    await advance(8 * 60_000);
+    expect(claims).toBe(1);
+    expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
+    expect(screen.getByText("Browser unavailable")).toBeTruthy();
+    message(retired); expect(screen.queryByText("Connected")).toBeNull();
+  });
+  it("periodically observes an ongoing Chat without taking over or granting human input", async () => {
+    const normal = vi.mocked(fetch).getMockImplementation()!;
+    const agent = { ...ready, humanControlAvailable: false, automation: {
+      phase: "agent", revision: 4, run: { chatId: "chat_qa", runId: "run_qa", harness: "pi" }, needsObservation: false,
+    } };
+    vi.mocked(fetch).mockImplementation(async (url, init) => String(url).endsWith("/browser-status") ? Response.json(agent) : normal(url, init));
+    mount(); await flush(); message(frame());
+    await advance(8 * 60_000); expect(claims).toBe(2);
+    const renewed = frame(); message(renewed);
+    expect(renewed.hasAttribute("inert")).toBe(true);
+    expect(screen.getByText("Agent is working")).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/browser-control") || String(url).endsWith("/browser-automation"))).toBe(false);
+  });
+  it("aborts a pending replacement when hidden and ignores its late admission", async () => {
+    const normal = vi.mocked(fetch).getMockImplementation()!;
+    let release!: (response: Response) => void; let signal!: AbortSignal;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/browser-session") && claims === 1) {
+        signal = init!.signal!; return await new Promise<Response>(resolve => { release = resolve; });
+      }
+      return normal(url, init);
+    });
+    const view = mount(); await flush(); message(frame());
+    await advance(8 * 60_000); expect(release).toBeTypeOf("function");
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
+    expect(signal.aborted).toBe(true);
+    await act(async () => { release(Response.json({ ticket: "b".repeat(48), expiresAt: Date.now() + 60_000 })); });
+    expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
+    await advance(10 * 60_000); expect(claims).toBe(1);
+  });
+  it("defers stream replacement until an in-flight owner mutation settles", async () => {
+    const normal = vi.mocked(fetch).getMockImplementation()!;
+    let release!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(async (url, init) => String(url).endsWith("/browser-control")
+      ? new Promise<Response>(resolve => { release = resolve; }) : normal(url, init));
+    mount("desktop"); await flush(); message(frame("desktop"));
+    await advance(8 * 60_000 - 4000);
+    fireEvent.click(screen.getByRole("button", { name: "Files" })); await flush();
+    await advance(4000); expect(claims).toBe(1);
+    await act(async () => { release(Response.json(ready)); });
+    await advance(4000); expect(claims).toBe(2);
+    expect(frame("desktop").hasAttribute("inert")).toBe(true);
   });
 });

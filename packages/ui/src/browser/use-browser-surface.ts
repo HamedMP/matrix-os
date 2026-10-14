@@ -10,6 +10,7 @@ const report = (error: unknown) => console.warn("[browser] Request unavailable",
 
 export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSession }: BrowserSurfaceProps) {
   const [revision, setRevision] = useState(0);
+  const [viewerRevision, setViewerRevision] = useState(0);
   const scope = JSON.stringify([gatewayUrl, surface, revision]);
   const [state, setState] = useState<BrowserSurfaceState>(() => empty(scope, active));
   const iframe = useRef<HTMLIFrameElement>(null);
@@ -24,6 +25,8 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
     let connectionTimer: ReturnType<typeof setTimeout> | undefined;
     let refreshAt = 0;
     let admitted = false;
+    let expectedViewerUrl = "";
+    let viewerRefreshAt = 0;
     let endpoint: ReturnType<typeof browserEndpoint>;
     const current = () => !controller.signal.aborted && lifetime.current === owner;
     const update = (patch: Partial<BrowserSurfaceState>) => {
@@ -35,15 +38,49 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
     const session = async () => {
       if (Date.now() < refreshAt) return;
       await ensureSession(controller.signal);
-      // Hosted callers may skip renewal when their existing cookie is still valid.
-      // Recheck soon enough to reach their original renewal boundary after reactivation.
       controller.signal.throwIfAborted(); refreshAt = Date.now() + 60_000;
     };
-    const fail = () => update({ connection: "unavailable", viewerUrl: "", error: "Your Matrix computer’s browser is unavailable. Reconnect to try again." });
+    const fail = () => {
+      expectedViewerUrl = ""; viewerRefreshAt = 0;
+      if (connectionTimer) clearTimeout(connectionTimer);
+      update({ connection: "unavailable", viewerUrl: "", error: "Your Matrix computer’s browser is unavailable. Reconnect to try again." });
+    };
+    const openViewer = async () => {
+      expectedViewerUrl = ""; viewerRefreshAt = 0; admitted = false;
+      if (connectionTimer) clearTimeout(connectionTimer);
+      update({ connection: "connecting", viewerUrl: "", error: "" });
+      setViewerRevision(value => value + 1);
+      // Stream authority is fixed at admission. A cached cookie may be near
+      // expiry, so every claim starts with a freshly renewed owner session.
+      await ensureSession(controller.signal, { force: true });
+      if (!current()) return;
+      refreshAt = Date.now() + 60_000;
+      const initial = browserStatus(await browserRequest(endpoint.appBase, "browser-status", controller.signal));
+      if (!current()) return;
+      if (!initial.available || !browserStatusIsCurrent(initial, owner.status)) { fail(); return; }
+      update({ status: initial });
+      const ticket = await browserRequest(endpoint.appBase, "browser-session", controller.signal, { surface });
+      if (!current()) return;
+      const status = browserStatus(await browserRequest(endpoint.appBase, "browser-status", controller.signal));
+      if (!current()) return;
+      if (!status.available || !browserStatusIsCurrent(status, owner.status)) { fail(); return; }
+      expectedViewerUrl = productViewerUrl(endpoint, ticket);
+      update({ status, viewerUrl: expectedViewerUrl });
+      // Reclaim before the ten-minute cookie/stream expiry, not the ticket's
+      // shorter handshake window. Only a fresh RFB acknowledgement allows input.
+      viewerRefreshAt = Date.now() + 8 * 60_000;
+      connectionTimer = setTimeout(() => {
+        expectedViewerUrl = ""; viewerRefreshAt = 0;
+        update({ connection: "disconnected", viewerUrl: "" });
+      }, 15_000);
+    };
     const poll = async () => {
       const mutationRevision = owner.mutationRevision;
       try {
         if (owner.mutation) return;
+        if (owner.connection === "connected" && viewerRefreshAt && Date.now() >= viewerRefreshAt) {
+          await openViewer(); return;
+        }
         await session(); if (!current()) return;
         const status = browserStatus(await browserRequest(endpoint.appBase, "browser-status", controller.signal));
         if (current() && !owner.mutation && mutationRevision === owner.mutationRevision && browserStatusIsCurrent(status, owner.status)) {
@@ -53,30 +90,20 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
       finally { if (current()) pollTimer = setTimeout(() => { void poll(); }, 4000); }
     };
     const onMessage = (event: MessageEvent) => {
-      if (!current() || !endpoint || event.origin !== endpoint.origin || !iframe.current || event.source !== iframe.current.contentWindow) return;
+      if (!current() || !endpoint || event.origin !== endpoint.origin || !iframe.current || !expectedViewerUrl || iframe.current.src !== expectedViewerUrl || event.source !== iframe.current.contentWindow) return;
       const connected = browserViewerMessage(event.data); if (connected === null) return;
       // The installed client announces its initial state before the RFB handshake.
       if (!connected && !admitted) return;
       if (connected) admitted = true;
       if (connectionTimer) clearTimeout(connectionTimer);
+      if (!connected) { expectedViewerUrl = ""; viewerRefreshAt = 0; }
       update(connected ? { connection: "connected", error: "" } : { connection: "disconnected", viewerUrl: "" });
     };
     window.addEventListener("message", onMessage);
     void (async () => {
       try {
         endpoint = browserEndpoint(gatewayUrl);
-        await session(); if (!current()) return;
-        const initial = browserStatus(await browserRequest(endpoint.appBase, "browser-status", controller.signal));
-        update({ status: initial });
-        if (!current()) return;
-        if (!initial.available) { fail(); return; }
-        const ticket = await browserRequest(endpoint.appBase, "browser-session", controller.signal, { surface });
-        if (!current()) return;
-        const status = browserStatus(await browserRequest(endpoint.appBase, "browser-status", controller.signal));
-        if (!current()) return;
-        if (!status.available || !browserStatusIsCurrent(status, owner.status)) { fail(); return; }
-        update({ status, viewerUrl: productViewerUrl(endpoint, ticket) });
-        connectionTimer = setTimeout(() => update({ connection: "disconnected", viewerUrl: "" }), 15_000);
+        await openViewer(); if (!current()) return;
         pollTimer = setTimeout(() => { void poll(); }, 4000);
       } catch (error) { if (current()) { report(error); fail(); } }
     })();
@@ -85,7 +112,7 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
       window.removeEventListener("message", onMessage);
       if (lifetime.current === owner) lifetime.current = null;
     };
-  }, [gatewayUrl, surface, active, scope, ensureSession]);
+  }, [gatewayUrl, surface, active, scope, revision, ensureSession]);
 
   const control = async (action: BrowserControlAction): Promise<boolean> => {
     const owner = lifetime.current;
@@ -141,5 +168,5 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
     }
   };
   return { state: state.scope === scope && active ? state : empty(scope, active), iframe,
-    viewerKey: scope, reconnect: () => { if (active) setRevision(value => value + 1); }, control, automationControl };
+    viewerKey: `${scope}:${viewerRevision}`, reconnect: () => { if (active) setRevision(value => value + 1); }, control, automationControl };
 }

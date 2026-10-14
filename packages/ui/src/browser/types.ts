@@ -4,6 +4,7 @@ export type BrowserSurfaceKind = "browser" | "desktop";
 export type BrowserControlAction = "restore-chrome" | "show-desktop" | "open-files" | "open-terminal";
 export type BrowserAutomationAction = SharedBrowserControl["action"];
 export type BrowserAutomationStatus = SharedBrowserState;
+export interface BrowserSessionOptions { force?: boolean }
 export interface BrowserStatus {
   available: boolean;
   chrome: { present: boolean; minimized: boolean };
@@ -14,7 +15,7 @@ export interface BrowserSurfaceProps {
   gatewayUrl: string;
   surface: BrowserSurfaceKind;
   active?: boolean;
-  ensureSession(signal: AbortSignal): Promise<void>;
+  ensureSession(signal: AbortSignal, options?: BrowserSessionOptions): Promise<void>;
   onOpenCloudDesktop?: () => void;
   onOpenBrowser?: () => void;
 }

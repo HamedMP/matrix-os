@@ -125,7 +125,7 @@ describe("shared Chrome owner handoff", () => {
   it("abandons an automation action during session renewal after deactivation", async () => {
     const hook = renderHook(({ active }) => useBrowserSurface({ gatewayUrl, surface: "browser", ensureSession, active }), { initialProps: { active: true } });
     await waitFor(() => expect(hook.result.current.state.viewerUrl).not.toBe(""));
-    const viewer = document.createElement("iframe"); document.body.append(viewer); hook.result.current.iframe.current = viewer;
+    const viewer = document.createElement("iframe"); viewer.src = hook.result.current.state.viewerUrl; document.body.append(viewer); hook.result.current.iframe.current = viewer;
     try {
       message(viewer);
       let release!: () => void;
@@ -142,7 +142,7 @@ describe("shared Chrome owner handoff", () => {
     let finish!: (response: Response) => void; mutate = async () => new Promise<Response>(resolve => { finish = resolve; });
     const hook = renderHook(() => useBrowserSurface({ gatewayUrl, surface: "browser", ensureSession }));
     await waitFor(() => expect(hook.result.current.state.viewerUrl).not.toBe(""));
-    const viewer = document.createElement("iframe"); document.body.append(viewer); hook.result.current.iframe.current = viewer;
+    const viewer = document.createElement("iframe"); viewer.src = hook.result.current.state.viewerUrl; document.body.append(viewer); hook.result.current.iframe.current = viewer;
     try {
       message(viewer); let pending!: Promise<boolean>;
       act(() => { pending = hook.result.current.automationControl("takeover"); });
