@@ -121,7 +121,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
   }
   if(admitted&&(!sha.test(config.controllerSha||'')||config.controllerSha!==controller.sha||!/^sha256:[a-f0-9]{64}$/.test(config.imageDigest||'')||!/^[a-f0-9]{64}$/.test(config.harnessDigest||''))){await write('failure','Reviewed execution configuration is incomplete');continue;}
   try{const current=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);snapshot.mergeParents=current.mergeParents;evidence.mergeParents=current.mergeParents;}
-  catch(error){logGateError(pull.number,'current-source',error);await write('failure','Current source candidate is not available');if(!(error instanceof Error))throw error;continue;}
+  catch(error){if(error instanceof Error)logGateError(pull.number,'current-source',error);await write('failure','Current source candidate is not available');if(!(error instanceof Error))throw error;continue;}
   let requester;
   try{
    if(recovery){
@@ -131,7 +131,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
     evidence.recoveryAfterRunId=sameRecovery&&!delegatedAgain?old.recoveryAfterRunId:latest?.id??0;
    }
    requester=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});
-  }catch(error){logGateError(pull.number,'requester-discovery',error);await write('failure','Fresh requesting CI discovery failed');if(!(error instanceof Error))throw error;continue;}
+  }catch(error){if(error instanceof Error)logGateError(pull.number,'requester-discovery',error);await write('failure','Fresh requesting CI discovery failed');if(!(error instanceof Error))throw error;continue;}
   if(!requester){
    const duplicate=prior?.evidence.refreshDispatchedAt&&prior.evidence.executionMode===snapshot.executionMode&&prior.evidence.sourceSha===snapshot.sourceSha&&prior.evidence.baseSha===snapshot.baseSha&&(!recovery||(prior.evidence.recoveryStartedAt===evidence.recoveryStartedAt&&prior.evidence.recoveryAfterRunId===evidence.recoveryAfterRunId))&&Date.now()-Date.parse(prior.evidence.refreshDispatchedAt)<30*60*1000;
    await write('failure',recovery?'Fresh exact-source hosted replacement required':'Fresh exact-source hosted and Linux coverage required',duplicate?{refreshDispatchedAt:prior.evidence.refreshDispatchedAt}:{refreshDispatchedAt:new Date().toISOString()});
@@ -139,6 +139,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
    continue;
   }
   if(requester.status!=='completed'||requester.conclusion!=='success'){await write('failure','Current requesting CI is pending or failed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
+  let phase='qualification';
   try{
    if(recovery)await verifyHostedReplacement(github,repo,requester);
    else {
@@ -147,9 +148,11 @@ export async function reconcileSourceQualification(github,repo,controller,option
     catch(error){
      // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block the PR.
      if(config.mode!=='shadow'||!(error instanceof Error))throw error;
+     logGateError(pull.number,'shadow-linux',error);
      await verifyCurrentDedicatedSource(github,repo,snapshot);
      const latest=await currentRequester(github,repo,snapshot,{});
      if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
+     phase='write';
      await write('neutral','Shadow Linux qualification not verified; hosted CI passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,shadowUnverified:true});
      continue;
     }
@@ -160,8 +163,9 @@ export async function reconcileSourceQualification(github,repo,controller,option
    const latest=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});
    if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
    if(recovery){const newest=await currentRequester(github,repo,snapshot,{allModes:true});if(newest?.id!==requester.id||newest.run_attempt!==requester.run_attempt)throw new Error('A newer admission superseded hosted recovery');}
+   phase='write';
    await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
-  }catch(error){logGateError(pull.number,'qualification',error);await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
+  }catch(error){if(error instanceof Error)logGateError(pull.number,phase,error);await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
  }
  if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,{...config,mode:config.mainMode},workflow,{ownedGate,currentRequester});
  return{examined,dispatched};

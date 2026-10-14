@@ -26,6 +26,13 @@ describe('always-required default-controller source gate',()=>{
    expect(warn).toHaveBeenCalledWith('Source qualification failed for PR #2454 at current-source: commit lookup exploded');
   }finally{warn.mockRestore();}
  });
+ it('labels a failing gate write as the write stage, not as qualification',async()=>{
+  const f=completeFixture();
+  const create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+  f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{if(args.conclusion==='success')throw new Error('gate write rejected');return create(args);});
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{await reconcile(f);expect(warn).toHaveBeenCalledWith('Source qualification failed for PR #2454 at write: gate write rejected');}finally{warn.mockRestore();}
+ });
  it('logs why requesting CI discovery failed',async()=>{
   const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
   f.github.rest.actions.listWorkflowRuns.mockRejectedValue(new Error('runs unavailable'));
@@ -57,7 +64,9 @@ function completeFixture(){
 }
 it('restores only the distinct gate after real-shaped fresh hosted and complete dedicated evidence',async()=>{const f=completeFixture();await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',conclusion:'success'}));expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();});
 const degrade=(f:ReturnType<typeof completeFixture>,kind:string)=>{if(kind==='failed')f.ci.conclusion='failure';if(kind==='pending')f.ci.status='queued';if(kind==='attempt')f.ci.run_attempt=2;if(kind==='missing')f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[]}});if(kind==='stale')f.pull.merge_commit_sha=main;};
-it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshness from %s coverage',async kind=>{const f=completeFixture();degrade(f,kind);await reconcile(f);
+it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshness from %s coverage',async kind=>{const f=completeFixture();degrade(f,kind);const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ // Shadow mode swallows the Linux error to write neutral; the reason still reaches the controller log.
+ try{await reconcile(f);if(kind==='missing')expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Source qualification failed for PR #2454 at shadow-linux: /));}finally{warn.mockRestore();}
  const written=f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args);expect(written.length).toBeGreaterThan(0);expect(written.every(args=>args.conclusion!=='success')).toBe(true);
  // Shadow observes: hosted success with missing Linux evidence is neutral; hosted failure or stale source still fails.
  expect(written.every(args=>args.conclusion===(['attempt','missing'].includes(kind)?'neutral':'failure'))).toBe(true);});
