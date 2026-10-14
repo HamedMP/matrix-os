@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { SharedBrowserActionSchema, type SharedBrowserAction, type SharedBrowserActionResult } from '@matrix-os/contracts';
 import { SharedBrowserError, type SharedBrowserDriver } from './broker.js';
 import { BrowserCdpMissingTargetError, connectBrowserCdp, type BrowserCdpClient, type CdpConnectOptions, type CdpEvent } from './cdp-client.js';
+import { CURSOR_ACTION_FUNCTION, CLEAR_CURSOR_FUNCTION } from './cdp-cursor.js';
 import { ACTION_FUNCTION, SNAPSHOT_FUNCTION } from './cdp-dom.js';
 import { collectChromeDownload, cleanupDownloadTemps } from './cdp-downloads.js';
 import { validateBrowserUrl, type BrowserResolver } from './url-policy.js';
@@ -23,10 +24,24 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   // Only agent-owned targets reach this helper. A new visible tab must be
   // observable before its first navigation; arbitrary schemes remain denied.
   const ownedUrl = (url:string) => url === 'about:blank' ? Promise.resolve({url,sourceUrl:url}) : validateBrowserUrl(url,options.resolveHost);
-  const invalidateObservation = () => { generation++; observation = undefined; };
+  let cursorDocument: { document:string; session:string; target:string } | undefined;
+  let clearingCursor: Promise<void> = Promise.resolve();
+  const clearCursor = () => {
+    const cursor=cursorDocument;
+    if (!cursor || !client?.available) return clearingCursor;
+    cursorDocument=undefined;
+    const transport=client;
+    clearingCursor=clearingCursor.catch(report).then(async()=>{
+      try { await transport.request('Runtime.callFunctionOn',{objectId:cursor.document,functionDeclaration:CLEAR_CURSOR_FUNCTION,arguments:[],
+        returnByValue:true,awaitPromise:false},cursor.session,AbortSignal.timeout(2000)); }
+      catch(error) { if (!cursorDocument && owned.has(cursor.target)) cursorDocument=cursor; throw error; }
+    });
+    void clearingCursor.catch(report);return clearingCursor;
+  };
+  const invalidateObservation = () => { generation++; observation = undefined; void clearCursor(); };
   const forgetTarget = (id: string) => {
     if (!owned.delete(id)) return;
-    if (targetId === id) { targetId = undefined; sessionId = undefined; invalidateObservation(); }
+    if (targetId === id) { cursorDocument=undefined;clearingCursor=clearingCursor.catch(report);targetId = undefined; sessionId = undefined; invalidateObservation(); }
   };
   const handoff = (): SharedBrowserActionResult & { handoffRequested: true } => ({ success: false, handoffRequested: true, targetId, elements: [], content: 'The owner must take over Chrome and review this page before automation continues. A related browser target could not be safely controlled.' });
   const expireTargets = () => {
@@ -128,7 +143,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     }
     if (event.method === 'Fetch.requestPaused' && knownSession) { void network(event).catch(report); return; }
     if (event.method === 'Target.detachedFromTarget' && event.params.sessionId === sessionId) {
-      if (!intentionalDetach.has(sessionId!) && targetId) forgetTarget(targetId);
+      if (!intentionalDetach.has(sessionId!)) { recoveryRequired=true;void client?.close().catch(report); }
       invalidateObservation(); sessionId = undefined; return;
     }
     if (event.sessionId !== sessionId) return;
@@ -187,12 +202,12 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   }
   async function call(document: string, declaration: string, args: unknown[], signal: AbortSignal) {
     const result = await request('Runtime.callFunctionOn', { objectId: document, functionDeclaration: declaration,
-      arguments: args.map(value => ({ value })), returnByValue: true, awaitPromise: false, userGesture: true }, signal);
+      arguments: args.map(value => ({ value })), returnByValue: true, awaitPromise: declaration === CURSOR_ACTION_FUNCTION, userGesture: true }, signal);
     if (result.exceptionDetails || !result.result?.value || typeof result.result.value !== 'object') throw new SharedBrowserError('browser_unavailable');
     return result.result.value as Record<string, any>;
   }
   async function snapshot(signal: AbortSignal): Promise<SharedBrowserActionResult> {
-    invalidateObservation(); const current = await frame(signal); const snapshotGeneration = generation;
+    invalidateObservation(); await clearingCursor.catch(report); const current = await frame(signal); const snapshotGeneration = generation;
     const world = await request('Page.createIsolatedWorld', { frameId: current.id, worldName: 'matrix-shared-browser' }, signal);
     if (!Number.isSafeInteger(world.executionContextId)) throw new SharedBrowserError('browser_unavailable');
     await request('Runtime.releaseObjectGroup', { objectGroup: 'matrix-observation' }, signal);
@@ -279,21 +294,23 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     if (!inspected.ok) { invalidateObservation(); throw new SharedBrowserError('observe_again'); }
     if (inspected.href) await validateBrowserUrl(inspected.href, options.resolveHost);
     if (observed.generation !== generation) throw new SharedBrowserError('observe_again');
+    const decorate = () => { if (sessionId && targetId) cursorDocument={document:observed.document,session:sessionId,target:targetId}; };
     if (input.action === 'download') {
       if (typeof inspected.href !== 'string') throw new SharedBrowserError('invalid_action');
       const artifact = await collectChromeDownload({ homePath: options.homePath, client: client!, frameId: observed.frameId, sourceUrl: inspected.href,
         documentId: input.documentId, signal, resolveHost: options.resolveHost,
-        trigger: async () => { const result = await call(observed.document, ACTION_FUNCTION, [observed.id, input.ref, 'click', null], signal); if (!result.ok) throw new SharedBrowserError('observe_again'); } });
+        trigger: async () => { decorate(); const result = await call(observed.document, CURSOR_ACTION_FUNCTION, [observed.id, input.ref, 'click', null], signal); if (!result.ok) throw new SharedBrowserError('observe_again'); } });
       if ('recoveryPath' in artifact) return { ...handoff(), content: `Chrome started additional downloads. Its files were preserved for owner review in ${artifact.recoveryPath}. Automation must stop until the owner reviews this recovery folder.` };
       return { success: true, targetId, artifact };
     }
-    const result = await call(observed.document, ACTION_FUNCTION, [observed.id, input.ref, input.action, input.action === 'type' ? input.text : input.action === 'select' ? input.value : null], signal);
+    decorate();
+    const result = await call(observed.document, CURSOR_ACTION_FUNCTION, [observed.id, input.ref, input.action, input.action === 'type' ? input.text : input.action === 'select' ? input.value : null], signal);
     if (!result.ok) { invalidateObservation(); throw new SharedBrowserError('observe_again'); }
     if (handoffRequired) return handoff();
     return { success: true, targetId };
   }
   async function detach() {
-    detaching = true; invalidateObservation();
+    detaching = true; invalidateObservation(); await clearingCursor.catch(error=>{if(client?.available)throw error;report(error);});
     clearInterval(maintenance); maintenance = undefined;
     if (connecting) { try { client = await connecting; } catch (error) { report(error); } }
     if (client && !client.available) {
@@ -305,7 +322,25 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
       // A fresh fixed transport must acknowledge cleanup before owner input
       // can be enabled after an uncertain disconnect. Never close Chrome.
       const recovery=await connectBrowserCdp(options);
-      try{await recovery.request('Browser.setDownloadBehavior',{behavior:'default',eventsEnabled:false});recoveryRequired=false;}
+      try{
+        const cursor=cursorDocument;
+        if(cursor && owned.has(cursor.target)) {
+          let cleanupSession:string|undefined;
+          try {
+            const attached=await recovery.request('Target.attachToTarget',{targetId:cursor.target,flatten:true});
+            if(typeof attached.sessionId!=='string')throw new SharedBrowserError('browser_unavailable');cleanupSession=attached.sessionId;
+            const tree=await recovery.request('Page.getFrameTree',{},cleanupSession);
+            if(typeof tree.frameTree?.frame?.id!=='string')throw new SharedBrowserError('browser_unavailable');
+            const world=await recovery.request('Page.createIsolatedWorld',{frameId:tree.frameTree.frame.id,worldName:'matrix-shared-browser'},cleanupSession);
+            if(!Number.isSafeInteger(world.executionContextId))throw new SharedBrowserError('browser_unavailable');
+            const cleared=await recovery.request('Runtime.evaluate',{expression:`(${CLEAR_CURSOR_FUNCTION}).call(document)`,contextId:world.executionContextId,returnByValue:true},cleanupSession);
+            if(cleared.exceptionDetails || cleared.result?.value?.ok!==true)throw new SharedBrowserError('browser_unavailable');
+          } catch(error) { if(!(error instanceof BrowserCdpMissingTargetError))throw error;forgetTarget(cursor.target); }
+          finally { if(cleanupSession)await recovery.request('Target.detachFromTarget',{sessionId:cleanupSession}); }
+          cursorDocument=undefined;
+        }
+        await recovery.request('Browser.setDownloadBehavior',{behavior:'default',eventsEnabled:false});recoveryRequired=false;
+      }
       finally{await recovery.close();paused.clear();children.clear();childJobs.clear();handoffRequired=false;}
       return;
     }

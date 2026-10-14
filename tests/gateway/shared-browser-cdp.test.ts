@@ -34,7 +34,7 @@ function chrome() {
       if (packet.method === 'Page.navigate') { url = packet.params.url; result = navigationError ? { errorText: 'net::ERR_CONNECTION_REFUSED' } : { frameId: 'agent-frame' }; }
       if (packet.method === 'Page.getFrameTree') result = { frameTree: { frame: { id: 'agent-frame', url } } };
       if (packet.method === 'Page.createIsolatedWorld') result = { executionContextId: 9 };
-      if (packet.method === 'Runtime.evaluate') result = { result: { objectId: 'document-handle' } };
+      if (packet.method === 'Runtime.evaluate') result = packet.params.expression.includes('MATRIX_CLEAR_CURSOR') ? {result:{value:{ok:true}}} : { result: { objectId: 'document-handle' } };
       if (packet.method === 'Runtime.callFunctionOn') {
         const args = packet.params.arguments.map((entry: any) => entry.value);
         if (packet.params.functionDeclaration.includes('MATRIX_SNAPSHOT')) {
@@ -60,12 +60,43 @@ function chrome() {
     setUrl(value: string) { url = value; }, setHandoff(value: boolean) { handoff = value; }, skip(value: string) { skip = value; }, enableDownloads() { downloads = true; return original; },
     closeTarget(id: string) { missing.add(id); }, failLookup(error?: { code: number; message: string }) { lookupError = error; }, failNavigation() { navigationError = true; }, disconnect() { socket.close(); } };
 }
-async function rig() {
+async function rig(commandTimeoutMs?:number) {
   const homePath = await mkdtemp(join(tmpdir(), 'shared-cdp-')); homes.push(homePath);
-  const fake = chrome(); const driver = createSharedBrowserCdpDriver({ homePath, ...fake });
+  const fake = chrome(); const driver = createSharedBrowserCdpDriver({ homePath, ...fake, commandTimeoutMs });
   return { driver, fake, homePath, signal: new AbortController().signal };
 }
 describe('shared owner Chrome CDP driver', () => {
+  it('retains cursor cleanup authority across direct transport disconnect',async()=>{
+    const {driver,fake,signal}=await rig();const observed=await driver.execute({action:'snapshot'},signal);
+    await driver.execute({action:'click',observationId:observed.observationId!,ref:'r1'},signal);
+    fake.disconnect();await driver.detach();
+    expect(fake.messages.some(row=>row.method==='Runtime.evaluate' && row.params.expression.includes('MATRIX_CLEAR_CURSOR'))).toBe(true);
+  });
+  it.each([['Page.frameNavigated',{frame:{id:'other-frame'}}],['Runtime.executionContextDestroyed',{executionContextId:99}]])('preserves main cursor cleanup on unrelated %s',async(method,params)=>{
+    const {driver,fake,signal}=await rig();const observed=await driver.execute({action:'snapshot'},signal);
+    await driver.execute({action:'click',observationId:observed.observationId!,ref:'r1'},signal);
+    fake.event(method,params);await driver.detach();
+    expect(fake.messages.some(row=>row.method==='Runtime.callFunctionOn' && row.params.functionDeclaration.startsWith('function MATRIX_CLEAR_CURSOR'))).toBe(true);
+  });
+  it('does not replay an acknowledged click when cursor cleanup times out',async()=>{
+    const {driver,fake,signal}=await rig(20);const observed=await driver.execute({action:'snapshot'},signal);
+    expect(await driver.execute({action:'click',observationId:observed.observationId!,ref:'r1'},signal)).toMatchObject({success:true});
+    fake.skip('Runtime.callFunctionOn');driver.invalidateObservation();
+    await driver.detach();
+    expect(fake.messages.some(row=>row.method==='Runtime.evaluate' && row.params.expression.includes('MATRIX_CLEAR_CURSOR'))).toBe(true);
+    expect(fake.messages.filter(row=>row.method==='Runtime.callFunctionOn' && row.params.arguments?.[2]?.value==='click')).toHaveLength(1);
+    fake.skip('');await driver.detach();
+  });
+  it('clears the painted agent pointer on observation invalidation before detaching for owner input',async()=>{
+    const {driver,fake,signal}=await rig();const observed=await driver.execute({action:'snapshot'},signal);
+    await driver.execute({action:'click',observationId:observed.observationId!,ref:'r1'},signal);
+    const draw=fake.messages.find(row=>row.method==='Runtime.callFunctionOn' && row.params.functionDeclaration.includes('data-matrix-agent-cursor'));
+    expect(draw.params.awaitPromise).toBe(true);expect(draw.sessionId).toBe('agent-session');
+    driver.invalidateObservation();await driver.detach();
+    const cleared=fake.messages.findIndex(row=>row.method==='Runtime.callFunctionOn' && row.params.functionDeclaration.startsWith('function MATRIX_CLEAR_CURSOR'));
+    const detached=fake.messages.findIndex(row=>row.method==='Target.detachFromTarget');
+    expect(cleared).toBeGreaterThan(-1);expect(cleared).toBeLessThan(detached);
+  });
   it('recovers a closed selected tab on fresh snapshot after owner takeover without replaying mutations', async () => {
     const { driver, fake, signal } = await rig();
     const observed = await driver.execute({ action: 'snapshot' }, signal);
