@@ -258,7 +258,11 @@ export function registerBrowserLabRoutes(app: Hono, options: BrowserLabOptions):
     tickets.set(ticket, { expiresAt, session });
     return c.json({ ticket, expiresAt }, 200, { "Cache-Control": "no-store" });
   });
-  app.get(`${PREFIX}/api/status`, (c) => proxy(c, "http://127.0.0.1:8730/status"));
+  app.get(`${PREFIX}/api/status`, async (c) => {
+    const response = await proxy(c, "http://127.0.0.1:8730/status");
+    if (response.ok) response.headers.set("x-matrix-browser-lab-comparison", options.sharedBrowser ? "disabled" : "enabled");
+    return response;
+  });
   app.post(`${PREFIX}/api/control`, bodyLimit({ maxSize: 4096 }), async (c) => {
     // The diagnostic supervisor is a separate legacy controller. Once Chat
     // owns the shared broker, it must never independently enable viewer input.

@@ -11,19 +11,28 @@ function cookie(exp = Math.floor(Date.now() / 1000) + 600, slug = "browser-lab")
 }
 const cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.splice(0).forEach((close) => close()); vi.restoreAllMocks(); });
-function setup(enabled = true, response = new Response("ok")) {
+function setup(enabled = true, response = new Response("ok"), sharedBrowser?: { broker: never; ownerId: string }) {
   const app = new Hono();
   const fetcher = vi.fn(async () => response);
   const upgradeWebSocket = vi.fn(() => async (c: any) => c.text("upgraded"));
   cleanup.push(registerBrowserLabRoutes(app, {
     enabled, deriveKey: () => deriveAppSessionKey(master, "browser-lab"),
     isAllowedOrigin: (origin) => origin === "https://app.matrix-os.com", fetcher,
-    upgradeWebSocket, viewerAuthorization: "Basic c3ludGhldGljOm9ubHk=",
+    upgradeWebSocket, viewerAuthorization: "Basic c3ludGhldGljOm9ubHk=", sharedBrowser,
   }).close);
   return { app, fetcher, upgradeWebSocket };
 }
 
 describe("browser lab owner session proxy", () => {
+  it("advertises when the comparison controller is disabled by shared Chat", async () => {
+    const payload = { phase: "idle", engine: null, generation: 0, checkpoint: 0, workCompleted: 0, humanControlAvailable: true };
+    const plain = setup(true, Response.json(payload));
+    const plainStatus = await plain.app.request("/apps/browser-lab/api/status", { headers: { cookie: cookie() } });
+    expect(plainStatus.headers.get("x-matrix-browser-lab-comparison")).toBe("enabled");
+    const shared = setup(true, Response.json(payload), { broker: {} as never, ownerId: "owner" });
+    const sharedStatus = await shared.app.request("/apps/browser-lab/api/status", { headers: { cookie: cookie() } });
+    expect(sharedStatus.headers.get("x-matrix-browser-lab-comparison")).toBe("disabled");
+  });
   it('adds exact coarse product status and strict product control routes', async () => {
     const state = { available: true, chrome: { present: true, minimized: false }, humanControlAvailable: true };
     const { app, fetcher } = setup(true, Response.json(state));
