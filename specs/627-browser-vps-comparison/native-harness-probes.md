@@ -8,7 +8,7 @@ The gateway registers `{ownerId, chatId, runId, harness}` from canonical admissi
 
 ## Matrix Pi
 
-Use a personal full-access Chat with the shared-browser dependency configured. The bot worker catalog must contain `shared_browser` mapped to `browser.action`; the existing gateway broker resolves exact runtime/generation/owner/Chat/run before dispatch. Verify a real worker model call to snapshot the synthetic invoice fixture, download observed invoice links, and report only hash/provenance-confirmed artifacts. Pause/takeover must leave queued mutations undispatched, permit fresh observation after Resume, and not turn a known no-effect refusal into an unknown-effect checkpoint. Stop must revoke the binding and keep visible Chrome running. Browser transport/dispatch allow a bounded 310-second human wait; other tool deadlines remain unchanged.
+Use a personal full-access Chat with the shared-browser dependency configured. The bot worker catalog must contain `shared_browser` mapped to `browser.action`; the existing gateway broker resolves exact runtime/generation/owner/Chat/run before dispatch. Verify a real worker model call to snapshot the synthetic invoice fixture, download observed invoice links, and report only hash/provenance-confirmed artifacts. Pause/takeover must leave queued mutations undispatched, permit fresh observation after Resume, and not turn a known no-effect refusal into an unknown-effect checkpoint. Stop must revoke the binding and keep visible Chrome running. Each owner wait is capped at 300 seconds or the remaining run lifetime. Browser actions have a 360-second shared deadline; outer Pi/Hermes transports allow 390 seconds for the response. Other tool deadlines remain unchanged.
 
 ## Hermes
 
