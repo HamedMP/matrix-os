@@ -370,6 +370,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             ),
             nextZ: zState.nextZ + 1,
             focusedWindowId: existing.id,
+            fullscreenWindowId: state.fullscreenWindowId === existing.id ? existing.id : null,
             appLaunchTimes: launchTimes,
           };
         }
@@ -409,6 +410,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           windows: [...zState.windows, nextWindow],
           nextZ: zState.nextZ + 1,
           focusedWindowId: nextWindow.id,
+          fullscreenWindowId: null,
           appLaunchTimes: launchTimes,
         };
       });
@@ -512,6 +514,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     restoreAndFocusWindow: (id) => {
       markUserLayoutMutation();
       set((state) => {
+        if (!state.windows.some(window => window.id === id)) return state;
         const zState = normalizeWindowZOrder(state.windows, state.nextZ);
         return {
           windows: zState.windows.map((w) =>
@@ -519,6 +522,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           ),
           nextZ: zState.nextZ + 1,
           focusedWindowId: id,
+          fullscreenWindowId: state.fullscreenWindowId === id ? id : null,
         };
       });
     },
