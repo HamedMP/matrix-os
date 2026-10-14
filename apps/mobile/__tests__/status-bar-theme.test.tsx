@@ -47,7 +47,7 @@ jest.mock("react-native-webview", () => {
 
 import React, { type ReactNode, useSyncExternalStore } from "react";
 import { act, render, screen, type RenderAPI } from "@testing-library/react-native";
-import { Appearance, NativeModules, type ColorSchemeName } from "react-native";
+import { Appearance, NativeModules, useColorScheme, type ColorSchemeName } from "react-native";
 import type { UnistylesThemes } from "react-native-unistyles";
 import * as SecureStore from "expo-secure-store";
 
@@ -89,6 +89,14 @@ function subscribeToTheme(notify: () => void) {
   themeReaders.add(notify);
   return () => {
     themeReaders.delete(notify);
+  };
+}
+
+function subscribeToAppearance(notify: () => void) {
+  const listener: AppearanceListener = () => notify();
+  appearanceListeners.add(listener);
+  return () => {
+    appearanceListeners.delete(listener);
   };
 }
 
@@ -167,6 +175,12 @@ describe("status bar content", () => {
       appearanceListeners.add(listener);
       return { remove: () => appearanceListeners.delete(listener) } as ReturnType<typeof Appearance.addChangeListener>;
     });
+
+    // React Native's jest preset pins useColorScheme to light. Serve the
+    // device appearance set here, and re-render its readers when it changes.
+    jest.mocked(useColorScheme).mockImplementation(
+      () => useSyncExternalStore(subscribeToAppearance, () => systemAppearance) ?? "light",
+    );
 
     // The Unistyles jest mock always serves the first registered theme and
     // ignores setTheme. Serve the theme that was last set, and re-render its
@@ -258,7 +272,7 @@ describe("status bar content", () => {
       expect(await statusBarContent()).toBe("light-content");
     });
 
-    it("is themed on the launch screens shown before the shell is up", async () => {
+    it("contrasts with the launch screens, which are drawn for the device like the native splash", async () => {
       // Clerk has not loaded, so the app is still on its startup screen.
       mockUseAuth.mockReturnValue({
         isLoaded: false,
@@ -270,6 +284,11 @@ describe("status bar content", () => {
 
       await launchApp();
 
+      // Dark is saved in Settings, but the device is in light appearance, so
+      // the startup screen is the light splash and needs dark content.
+      expect(await statusBarContent()).toBe("dark-content");
+
+      setSystemAppearance("dark");
       expect(await statusBarContent()).toBe("light-content");
     });
   });
