@@ -30,7 +30,12 @@ function mergeCredit(snapshot: ProviderSettingsSnapshot, observation: ProviderMa
           safeReason: "policy" as const }
         : source.readiness };
   });
-  return { ...snapshot, accessSources, gatewayPolicy: snapshot.gatewayPolicy ? {
+  const purchaseEnabled = snapshot.gatewayPolicy !== null && observation.topUpEnabled;
+  return { ...snapshot, accessSources,
+    supportedActions: purchaseEnabled || !snapshot.supportedActions.includes("add_credit")
+      ? snapshot.supportedActions
+      : snapshot.supportedActions.filter(action => action !== "add_credit"),
+    gatewayPolicy: snapshot.gatewayPolicy ? {
     ...snapshot.gatewayPolicy,
     monthlyBudgetMicrousd: observation.policy.monthlyBudgetMicrousd,
     topUpEnabled: observation.topUpEnabled,
