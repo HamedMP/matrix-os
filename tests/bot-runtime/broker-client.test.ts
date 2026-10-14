@@ -44,7 +44,7 @@ describe("bot broker client", () => {
     try {
       const defaultClient = createBotBrokerClient({ socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc", requestIdFactory: () => REQUEST_ID });
       await defaultClient.tool({ toolCallId: "call_browser", capability: "browser.action", args: { action: "snapshot" } });
-      expect(timeout.mock.calls.at(-1)?.[0]).toBe(310_000);
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(390_000);
       await defaultClient.tool({ toolCallId: "call_read", capability: "artifact.read", args: { relPath: "fixture.txt" } });
       expect(timeout.mock.calls.at(-1)?.[0]).toBe(30_000);
       await client(socketPath, 1000).tool({ toolCallId: "call_override", capability: "browser.action", args: { action: "status" } });
