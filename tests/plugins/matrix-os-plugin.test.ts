@@ -70,6 +70,7 @@ describe("Matrix OS coding-agent plugin", () => {
     expect(skill).toContain("matrix whoami");
     expect(skill).toContain("matrix handoff --agent");
     expect(skill).toContain("--approve <token>");
+    expect(skill).toContain("</dev/null");
     expect(skill).toContain("never uploads `.env` files");
     expect(skill).toContain("Never treat the original request as approval");
     const repoCopy = await readFile(resolve(pluginRoot, "../../.agents/skills/matrix-handoff/SKILL.md"), "utf8");

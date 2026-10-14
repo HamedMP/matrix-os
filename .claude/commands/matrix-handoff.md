@@ -9,7 +9,7 @@ Follow the `matrix-handoff` skill exactly. Use `.agents/skills/matrix-handoff/SK
 Before anything is uploaded:
 
 1. Write a continuation brief for the current task, with no secrets in it.
-2. Run `matrix handoff --agent <agent> --brief <file>` and show the user its exact preview.
+2. Run `matrix handoff --agent <agent> --brief <file> </dev/null` and show the user its exact preview. Stdin comes from `/dev/null` so the command prints the approval command instead of asking an interactive question.
 3. If a transcript is listed, warn the user that it may contain anything pasted into this conversation.
 4. Ask the user to approve that exact project action, branch, set of changes, transcript and agent.
 
