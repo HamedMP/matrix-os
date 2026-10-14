@@ -301,7 +301,7 @@ it("resolves a canonical Anthropic phase through the actual Provider V3 model ca
 it("constrains the actual canonical Bot run and preserves its genuine first-turn session on the second phase", async () => {
   const f = await fixture({ isolated: true });
   await f.turn("Who are you?"); await f.wait();
-  expect(f.specs[0]).toMatchObject({ route: { maxOutputTokens: 256 }, capabilities: [], limits: { maxToolActions: 1 },
+  expect(f.specs[0]).toMatchObject({ route: { maxOutputTokens: 256 }, capabilities: [], limits: { maxToolActions: 1, maxInferenceCalls: 1 },
     isolatedTurn: { phaseId: "phase_canonical_1", target: { kind: "canonical_bot", botId: f.created.agent.id,
       chatId: f.created.chatId, recipeRef: { recipeId: "matrix-bot", version: "2026-10-10.1" } } } });
   await f.turn("How will you help me?"); await f.wait();

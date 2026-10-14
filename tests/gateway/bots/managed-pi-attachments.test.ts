@@ -36,7 +36,10 @@ import type { ChatGptPlanAuthority } from "../../../packages/gateway/src/bots/ch
 import { makeAiProviderSnapshot } from "../../fixtures/ai-provider-snapshot.js";
 import { BOT, OWNER, createBotStateDatabase } from "./bot-state-support.js";
 const cleanup: Array<() => Promise<unknown>> = [];
-afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
+afterEach(async () => {
+  try { for (const fn of cleanup.splice(0).reverse()) await fn(); }
+  finally { vi.unstubAllEnvs(); }
+});
 // Valid equal-size 1x1 PNGs with red, blue and green pixels. Later turns must
 // observe newly stored bytes, never reuse the previous run's image/session.
 const IMAGES = [
@@ -46,6 +49,7 @@ const IMAGES = [
 ].map(value => Buffer.from(value, "base64"));
 const PNG = IMAGES[0]!;
 it.each([{ mode: "Chat", revoke: false }, { mode: "Bot", revoke: false }, { mode: "Chat", revoke: true }, { mode: "Bot", revoke: true }])("rehydrates original $mode bytes through canonical broker and Pi worker (revoke during history=$revoke)", async ({ mode, revoke }) => {
+  vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", "2");
   const { db, destroy } = await createBotStateDatabase(); cleanup.push(destroy);
   const home = await mkdtemp(join(tmpdir(), "managed-inputs-")); cleanup.push(() => rm(home, { recursive: true, force: true }));
   await mkdir(join(home, "temporary/desktop-chat"), { recursive: true });
@@ -86,7 +90,11 @@ it.each([{ mode: "Chat", revoke: false }, { mode: "Bot", revoke: false }, { mode
         const reply = await actions.handleFrame({ version: 1, requestId: randomUUID(), runtimeHandle: request.runtimeHandle, executionGeneration: request.executionGeneration, runId: request.command.runId, ...body });
         if (!reply?.ok) throw new BotBrokerError((reply?.code ?? "unavailable") as never); return reply.result;
       };
-      const broker: BotWorkerBrokerClient = { loadRun: () => call({ action: "bot.run.load" }) as never,
+      const broker: BotWorkerBrokerClient = { loadRun: async () => {
+        const spec = await call({ action: "bot.run.load" });
+        if (mode === "Bot") expect(spec).toMatchObject({ limits: { maxToolActions: 60, maxInferenceCalls: 2 }, turn: { imageCount: 1 } });
+        return spec as never;
+      },
         readImageChunk: image => call({ action: "bot.input.image", image }) as never,
         loadSession: () => call({ action: "bot.session.load" }) as never, saveSession: session => call({ action: "bot.session.save", session }) as never,
         tool: tool => call({ action: "bot.tool", tool }) as never, event: async event => { await call({ action: "bot.event", event }); } };
