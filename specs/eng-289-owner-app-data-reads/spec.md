@@ -24,3 +24,5 @@ Read-only query transaction owns statement timeout; no network inside. Audit suc
 Red→Green real MCP/Hono/capability/Kysely/Postgres fixtures: five sorted records, schema grant intersection, default/max/pagination, byte/body caps, forged identity, cross owner/runtime/app/table, SQL/write rejection, no provisioning, safe unavailable errors, audit, expiry/revocation including in-flight reads. Add registration/startup wiring and dependency validation tests. Run typecheck, patterns and affected suites; Greptile 5/5 then ready-for-ci and passing triggered CI; never merge without authorization.
 
 Public docs deliverable: separate PR in FinnaAI/matrix-os-site under content/docs documenting read tool availability, scopes/limits, errors and exclusions. No public credentials/private runtime evidence. Implementation readiness and live evidence gaps remain explicit.
+
+Public docs draft: https://github.com/FinnaAI/matrix-os-site/pull/241 (site build/responsive checks pending; no deployment).
