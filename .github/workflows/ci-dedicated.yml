@@ -112,6 +112,9 @@ jobs:
               if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('admitted','false');return;
             }
             if (!admission) { core.setOutput('admitted','false'); return; }
+            // Main runs hosted while its delegation switch is off; a shadow Linux run would still hold
+            // the single host lease that fast-ci PRs queue behind.
+            if(admission.sourceKind==='main'&&process.env.MATRIX_CI_DEDICATED_MAIN!=='true'){core.notice('Standing down: main runs hosted while MATRIX_CI_DEDICATED_MAIN is off');core.setOutput('admitted','false');return;}
             const {sourceSha:sha,headSha,baseSha,baseRef,prNumber}=admission;
             const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'&&(admission.sourceKind!=='main'||process.env.MATRIX_CI_DEDICATED_MAIN==='true')?'delegated':'shadow';
             const requesting=prNumber>0||admission.sourceKind==='main'?await newestRequestingCiRun(github,context.repo,admission,mode):null;
