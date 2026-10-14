@@ -39,7 +39,6 @@ import {
   isDefinitiveCanonicalChatRejection,
 } from "@/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
-import { useLinkedChatSelection } from "@/hooks/useLinkedChatSelection";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -82,9 +81,8 @@ function leaveSharedChatPath(): void {
   }
 }
 
-export function useCanonicalChatState({ initialDraft, initialChatId, initialCollaborationView, navigationScope,navigationGeneration }: {
+export function useCanonicalChatState({ initialDraft, initialCollaborationView, navigationScope,navigationGeneration }: {
   initialDraft?: string | null;
-  initialChatId?: string | null;
   navigationScope?:string;
   navigationGeneration?:string;
   initialCollaborationView?: ChatCollaborationView;
@@ -125,8 +123,7 @@ export function useCanonicalChatState({ initialDraft, initialChatId, initialColl
     scope: composerIdentity, candidates: records, authoritativeItems: navigation.items,
     fresh: navigation.fresh, truncated: navigation.truncated,
     missingId: detailError?.scope === navigationIdentity && detailError.notFound ? detailError.chatId : undefined,
-    initialExplicit: Boolean(initialDraft || initialChatId || initialCollaborationView),
-    initialId: !initialDraft && !initialCollaborationView ? initialChatId ?? undefined : undefined,
+    initialExplicit: Boolean(initialDraft || initialCollaborationView),
   });
   const [selectedCollaborationView, setSelectedCollaborationView] = useState<ChatCollaborationView | null>(
     initialCollaborationView ?? null,
@@ -534,13 +531,6 @@ export function useCanonicalChatState({ initialDraft, initialChatId, initialColl
     setSelectedCollaborationView(null);
     leaveSharedChatPath();
   }, [setActiveChatId, isCurrent]);
-
-  useLinkedChatSelection({
-    chatId: initialChatId,
-    blocked: Boolean(initialDraft || initialCollaborationView),
-    activeChatId,
-    select: switchConversation,
-  });
 
   const openSharedChat = useCallback((scopeId: string) => {
     if (!isCurrent()) return;

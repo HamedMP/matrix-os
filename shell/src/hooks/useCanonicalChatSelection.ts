@@ -5,7 +5,7 @@ import type { ChatNavigationRecord } from "@matrix-os/ui";
 type Selection = { scope: object; id?: string; explicit: boolean; rejected: string[] };
 /** Stable owner/runtime scope preserves intent through token/epoch recovery.
  * Cache restoration is provisional; explicit choices never follow list membership. */
-export function useCanonicalChatSelection({ scope, candidates, authoritativeItems, fresh, truncated, missingId, initialExplicit, initialId }: {
+export function useCanonicalChatSelection({ scope, candidates, authoritativeItems, fresh, truncated, missingId, initialExplicit }: {
   scope: object;
   candidates: readonly ChatNavigationRecord[];
   authoritativeItems: readonly ChatNavigationRecord[];
@@ -13,11 +13,9 @@ export function useCanonicalChatSelection({ scope, candidates, authoritativeItem
   truncated: boolean;
   missingId?: string;
   initialExplicit: boolean;
-  /** A deep-linked Chat; it is kept even before navigation lists it. */
-  initialId?: string;
 }) {
-  const [selection, setSelection] = useState<Selection>({ scope, id: initialId, explicit: initialExplicit, rejected: [] });
-  const current: Selection = selection.scope === scope ? selection : { scope, id: initialId, explicit: initialExplicit, rejected: [] };
+  const [selection, setSelection] = useState<Selection>({ scope, explicit: initialExplicit, rejected: [] });
+  const current: Selection = selection.scope === scope ? selection : { scope, explicit: initialExplicit, rejected: [] };
   // Bound rejected cache entries to the same 1,000-row navigation window.
   const rejected = missingId && !current.rejected.includes(missingId)
     ? [...current.rejected.slice(-999), missingId] : current.rejected;
