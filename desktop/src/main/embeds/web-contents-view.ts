@@ -2,14 +2,16 @@
 // in its own isolated partition. Hosted-shell views have no preload/IPC
 // exposure; app views may receive the narrow app-scoped preload. Navigation
 // is gated by an origin allowlist; external links open in the system browser.
-import { WebContentsView, shell, type BaseWindow, type NativeImage } from "electron";
+import { WebContentsView, shell, type BaseWindow, type NativeImage, type WebContents } from "electron";
 import { isNavigationAllowed } from "./origin-policy";
 import type { Bounds, EmbedViewLike } from "./embed-manager";
 import { safeExternalHttpUrl } from "../external-url";
 import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
 import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
 import { isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
-import { NATIVE_APP_GALLERY_BRIDGE_ARG, NATIVE_APP_INTEGRATIONS_BRIDGE_ARG, NATIVE_APP_ACTIVITY_BRIDGE_ARG, isNativeAppActivityIdentity } from "../../shared/native-app-gateway";
+import { NATIVE_APP_GALLERY_BRIDGE_ARG, NATIVE_APP_INTEGRATIONS_BRIDGE_ARG, NATIVE_APP_ACTIVITY_BRIDGE_ARG, NATIVE_APP_BROWSER_BRIDGE_ARG, isNativeAppActivityIdentity } from "../../shared/native-app-gateway";
+import { nativeBrowserProduct } from "../../shared/browser-products";
+import { createBrowserProductLifecycle } from "./browser-product-lifecycle";
 
 const MAX_PUBLIC_BROWSER_ORIGINS = 64;
 const MAX_EMBED_SNAPSHOT_BYTES = 3_000_000;
@@ -44,6 +46,8 @@ function encodeBoundedSnapshot(source: NativeImage): string | null {
 }
 
 export function createWebContentsView(options: {
+  registerViewerTransport?: (contents: WebContents) => () => void;
+  browserProduct?: { origin: string; renew: () => Promise<unknown> };
   window: BaseWindow;
   partition: string;
   allowedOrigins: string[];
@@ -69,6 +73,7 @@ export function createWebContentsView(options: {
         preload: options.appBridge.preloadPath,
         additionalArguments: [
           "--matrix-app-bridge",
+          ...(nativeBrowserProduct(options.appBridge.appIdentity, options.appBridge.routeSlug) ? [NATIVE_APP_BROWSER_BRIDGE_ARG] : []),
           ...(isNativeAppActivityIdentity(options.appBridge.appIdentity, options.appBridge.routeSlug)
             ? [NATIVE_APP_ACTIVITY_BRIDGE_ARG] : []),
           ...(isAppGalleryIdentity(options.appBridge.appIdentity, options.appBridge.routeSlug) ? [NATIVE_APP_GALLERY_BRIDGE_ARG] : []),
@@ -79,6 +84,16 @@ export function createWebContentsView(options: {
   });
 
   const contents = view.webContents;
+  let revokeViewerTransport = options.registerViewerTransport?.(contents);
+  const product = options.browserProduct ? createBrowserProductLifecycle({
+    contents, ...options.browserProduct,
+    refreshAdmission: () => {
+      revokeViewerTransport?.();
+      revokeViewerTransport = options.registerViewerTransport?.(contents);
+      if (options.appBridge) options.appBridge.register(contents.id, options.appBridge.appIdentity, options.appBridge.routeSlug);
+    },
+    revokeAdmission: () => { revokeViewerTransport?.(); },
+  }) : undefined;
   let retainedSnapshotDataUrl: string | null = null;
   let snapshotContentGeneration = 0;
   let snapshotCaptureInFlight: {
@@ -211,6 +226,7 @@ export function createWebContentsView(options: {
     options.onState("loading");
   });
   contents.on("did-finish-load", () => {
+    product?.ready();
     options.onState("ready");
     // Warm the first retained frame while the view is definitely paintable so
     // an immediate z-order change can fall back if the next capture is late.
@@ -251,18 +267,23 @@ export function createWebContentsView(options: {
       contents.setZoomFactor(factor);
     },
     async loadUrl(url: string) {
-      await contents.loadURL(url);
+      if (product) await product.loadUrl(url);
+      else await contents.loadURL(url);
     },
     captureSnapshot,
     attach() {
       if (attached) return;
       options.window.contentView.addChildView(view);
       attached = true;
+      product?.setActive(true);
     },
     detach() {
+      product?.setActive(false);
       detachFromWindow();
     },
     destroy() {
+      product?.close();
+      revokeViewerTransport?.();
       options.appBridge?.unregister(contents.id);
       detachFromWindow();
       // WebContentsView is GC'd once detached and dereferenced; closing the

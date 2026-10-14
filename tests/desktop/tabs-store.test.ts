@@ -6,6 +6,18 @@ beforeEach(() => {
 });
 
 describe("tabs store", () => {
+  it("keeps Browser, Cloud desktop and diagnostics distinct while reusing each exact app identity", () => {
+    const state = useTabs.getState();
+    const browser = state.openTab({ kind: "app", slug: "browser-lab", appIdentity: "matrix-browser", title: "Browser" });
+    const desktop = state.openTab({ kind: "app", slug: "browser-lab", appIdentity: "matrix-cloud-desktop", title: "Cloud desktop" });
+    const diagnostic = state.openTab({ kind: "app", slug: "browser-lab", title: "Browser Lab" });
+    expect(new Set([browser, desktop, diagnostic]).size).toBe(3);
+    expect(state.openTab({ kind: "app", slug: "browser-lab", appIdentity: "matrix-browser", title: "Browser" })).toBe(browser);
+  });
+  it("treats an ordinary app's implicit identity as its route slug", () => {
+    const first = useTabs.getState().openTab({ kind: "app", slug: "notes", title: "Notes" });
+    expect(useTabs.getState().openTab({ kind: "app", slug: "notes", appIdentity: "notes", title: "Notes" })).toBe(first);
+  });
   it("clears pending terminal navigation when the runtime changes", () => {
     useTabs.getState().ensureNavigationScope("runtime-a");
     useTabs.getState().requestTerminalSession("old-runtime-session");

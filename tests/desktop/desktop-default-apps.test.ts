@@ -3,7 +3,7 @@ import { DEFAULT_OS_VIEW_DESKTOP_APP_PATHS } from "@matrix-os/contracts";
 import { FIXED_DESKTOP_APPS } from "@desktop/renderer/src/features/desktop-shell/desktop-apps";
 
 describe("native desktop default apps", () => {
-  it("ships Chat first with the ten canonical desktop destinations in product order", () => {
+  it("ships Chat first with the eleven canonical desktop destinations in product order", () => {
     expect(FIXED_DESKTOP_APPS.map((app) => app.id)).toEqual([
       "work",
       "terminal",
@@ -13,6 +13,7 @@ describe("native desktop default apps", () => {
       "settings",
       "plugins",
       "browser",
+      "cloud-desktop",
       "notes",
       "whiteboard",
     ]);

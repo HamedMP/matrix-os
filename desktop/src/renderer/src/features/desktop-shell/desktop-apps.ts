@@ -5,6 +5,7 @@ import {
   FilePenLine,
   FolderTree,
   Globe2,
+  Monitor,
   MessageSquare,
   Notebook,
   Settings,
@@ -27,6 +28,7 @@ export type DesktopAppId =
   | "settings"
   | "plugins"
   | "browser"
+  | "cloud-desktop"
   | "notes"
   | "whiteboard";
 
@@ -119,11 +121,16 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     id: "browser",
     path: "__browser__",
     iconUrl: bundledDesktopIconForPath("__browser__"),
-    kind: "browser",
+    kind: "app",
     icon: Globe2,
     name: "Browser",
     color: APPEARANCE.browser.background,
     iconColor: APPEARANCE.browser.foreground,
+  },
+  {
+    id: "cloud-desktop", path: "__cloud-desktop__", kind: "app", icon: Monitor,
+    name: "Cloud desktop", iconUrl: bundledDesktopIconForPath("__cloud-desktop__"),
+    color: APPEARANCE.browser.background, iconColor: APPEARANCE.browser.foreground,
   },
   {
     id: "notes",

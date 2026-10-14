@@ -4,6 +4,7 @@ import { invoke, onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 import { readNativeEmbedBounds } from "./embed-bounds";
+import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -42,6 +43,8 @@ export default function EmbedHost({
   const appIdentity = props.kind === "app" ? props.appIdentity : undefined;
   const url = props.kind === "browser" ? props.url : undefined;
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
+  const product = nativeBrowserProduct(appIdentity ?? "", slug ?? "");
+  const authGeneration = useConnection((connection) => product ? connection.authGeneration : 0);
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
@@ -130,7 +133,7 @@ export default function EmbedHost({
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appIdentity, kind, retryRevision, runtimeSlot, slug, url]);
+  }, [appIdentity, kind, retryRevision, runtimeSlot, slug, url, authGeneration]);
 
   // Native views always paint above renderer windows. Keep a bounded local
   // frame under the detached view so obscured Matrix windows do not go blank.
@@ -243,7 +246,7 @@ export default function EmbedHost({
       {state === "failed" ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
           <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            Couldn't load this surface.
+            {product ? `${product.name} is unavailable on this computer.` : "Couldn't load this surface."}
           </span>
           <Button
             variant="primary"

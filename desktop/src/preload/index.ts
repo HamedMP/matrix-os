@@ -19,6 +19,7 @@ import {
   NATIVE_APP_ACTIVITY_BRIDGE_ARG,
   NATIVE_APP_GALLERY_BRIDGE_ARG,
   NATIVE_APP_INTEGRATIONS_BRIDGE_ARG,
+  NATIVE_APP_BROWSER_BRIDGE_ARG,
   createNativeAppIntegrations,
   NATIVE_APP_GATEWAY_CHANNEL,
   createNativeAppGatewayFetch,
@@ -64,7 +65,7 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
     ai: createAppAiClient((input) => ipcRenderer.invoke(APP_AI_CHANNEL, input), () => ipcRenderer.invoke(APP_AI_ROUTES_CHANNEL, {})),
     // Advertise only capabilities this view can use. Other apps retain the
     // pre-#1624 surface so feature detection does not select an unusable API.
-    ...((process.argv.includes(NATIVE_APP_ACTIVITY_BRIDGE_ARG) || process.argv.includes(NATIVE_APP_GALLERY_BRIDGE_ARG)) ? {
+    ...((process.argv.includes(NATIVE_APP_ACTIVITY_BRIDGE_ARG) || process.argv.includes(NATIVE_APP_GALLERY_BRIDGE_ARG) || process.argv.includes(NATIVE_APP_BROWSER_BRIDGE_ARG)) ? {
       gatewayFetch: createNativeAppGatewayFetch((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
     } : {}),
     ...(process.argv.includes(NATIVE_APP_INTEGRATIONS_BRIDGE_ARG) ? {
