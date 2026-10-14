@@ -6,7 +6,7 @@ export const NATIVE_SHARED_BROWSER_SERVER = "matrix_shared_browser";
 export const NATIVE_SHARED_BROWSER_TOOL = "mcp__matrix_shared_browser__shared_browser";
 export interface NativeBrowserRunInput {
   owner: { type: string; ownerId: string }; chatId: string; runId: string;
-  permissionMode: string; interactionMode: string; sharedScopeId?: string; signal: AbortSignal;
+  permissionMode: string; interactionMode: string; sharedScopeId?: string; signal: AbortSignal; onCleanupUnconfirmed?: () => void;
 }
 /** An execution-only lease. Never put this value in a persisted Chat or session. */
 export function openNativeSharedBrowserRun(options: {

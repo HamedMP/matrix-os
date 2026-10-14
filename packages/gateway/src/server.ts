@@ -595,6 +595,7 @@ export async function createGateway(config: GatewayConfig) {
       homePath,
       codexEvents: codexEventBridge,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
+      sharedBrowserEnabled: !!sharedBrowserRuntime && !!codexExecutable,
       pi: {
         resolveCredentialLaunch: createCodingHarnessCredentialResolver({
           harness: "pi",
@@ -1600,6 +1601,7 @@ export async function createGateway(config: GatewayConfig) {
       if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
+          ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port,
           threads: codingAgentThreadStore,
           homePath,
           toolOutputKey,

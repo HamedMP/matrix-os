@@ -1,3 +1,4 @@
+import { CodexBrowserLeaseSchema } from "./codex-browser-bootstrap.mjs";
 import { z } from "zod/v4";
 import { isAbsolute } from "node:path";
 const NativeReferenceSchema = z.string().min(1).max(512);
@@ -11,6 +12,7 @@ const ProviderModelReferenceSchema = z.string()
 export const RunnerConfigSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
   providerThreadId: NativeReferenceSchema.optional(),
+  browserAttemptId: z.uuid().optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
@@ -29,6 +31,7 @@ export const PendingTurnSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
   model: RunnerConfigSchema.shape.model,
   modelOptions: z.array(ModelOptionSchema).max(32).default([]),
+  browser: CodexBrowserLeaseSchema.nullable().optional(),
 }).strict();
 export const EffortSchema = RunnerConfigSchema.shape.effort;
 export const ServiceTierSchema = RunnerConfigSchema.shape.serviceTier;
