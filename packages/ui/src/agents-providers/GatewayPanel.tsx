@@ -126,6 +126,7 @@ export function GatewayPanel({
     ?? provider?.models.filter(model => model.enabled
     && source?.eligibleModelIds.includes(model.id) && policy?.allowedModelIds.includes(model.id)) ?? [];
   const budget = policy?.monthlyBudgetMicrousd ?? null;
+  const previousBudget = useRef(budget);
   const [budgetUsd, setBudgetUsd] = useState(
     budget === null ? "" : String(budget / 1_000_000),
   );
@@ -147,11 +148,18 @@ export function GatewayPanel({
     return () => { checkoutScope.current = null; };
   }, [onAddCredit, source?.id]);
   useEffect(() => {
-    setBudgetUsd(budget === null ? "" : String(budget / 1_000_000));
+    const previous = previousBudget.current;
+    previousBudget.current = budget;
+    // An authoritative renewal must not discard an unsaved local edit.
+    setBudgetUsd(draft => draft === (previous === null ? "" : String(previous / 1_000_000))
+      ? budget === null ? "" : String(budget / 1_000_000)
+      : draft);
   }, [budget]);
   const now = useLocalObservationExpiry([gatewayCreditStaleAfter(source)]) ?? Number.NaN;
   const credit = source
-    ? gatewayCreditLines(source, now)
+    // Display samples the real clock during deadline synchronization; actions
+    // retain the conservative NaN clock until the expiry effect is synchronized.
+    ? gatewayCreditLines(source, Number.isNaN(now) ? Date.now() : now)
     : { primary: "Chat credit unavailable", secondary: null, stale: false };
   const usageAsOf = source?.usage.asOf ?? null;
   const ready = isMatrixGatewaySourceReady(source, policy, provider, now);
@@ -250,7 +258,7 @@ export function GatewayPanel({
 
       <div className="matrix-ap-credit-row">
         <div>
-          <span>Chat credit available</span>
+          <span>Chat credit</span>
           <strong>{credit.primary}</strong>
           {credit.secondary ? <span>{credit.secondary}</span> : null}
           {reservedCredit ? <span>{reservedCredit}</span> : null}

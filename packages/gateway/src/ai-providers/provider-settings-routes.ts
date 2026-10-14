@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import {
   ProviderDependencyCountsSchema,
+  ProviderManagedCreditObservationSchema,
   ProviderSettingsMutationSchema,
   type ProviderSettingsMutation,
   type ProviderSettingsSnapshot,
@@ -13,6 +14,7 @@ import {
 } from "./provider-settings-store.js";
 
 const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
+const ManagedCreditQuerySchema = z.object({}).strict();
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
 function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeModels = false,
@@ -66,6 +68,7 @@ const DeleteAccountBodySchema = z.object({
 
 export interface ProviderSettingsRouteOptions {
   store: ProviderSettingsStoreWriter;
+  canReadManagedCredit?: (context: Context) => boolean;
   canReadNativeAccountMetadata?: (context: Context) => boolean;
   getPrincipal: (context: Context) => unknown;
 }
@@ -176,6 +179,25 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
   const mutationBodyLimit = bodyLimit({
     maxSize: PROVIDER_SETTINGS_BODY_LIMIT,
     onError: bodyTooLarge,
+  });
+
+  app.get("/provider-settings/managed-credit", async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    const authError = authorize(context, options);
+    if (authError) return authError;
+    if (!ManagedCreditQuerySchema.safeParse(context.req.query()).success) return invalidRequest(context);
+    try {
+      if (!options.canReadManagedCredit || !options.store.getManagedCreditObservation) {
+        throw new ProviderSettingsStoreError("projection_unavailable", 503);
+      }
+      if (!options.canReadManagedCredit(context)) return context.json({ error: { code: "forbidden", message: "Access is denied." } }, 403);
+      const observed = await options.store.getManagedCreditObservation({ signal: context.req.raw.signal });
+      const validated = ProviderManagedCreditObservationSchema.parse(observed);
+      if (new TextEncoder().encode(JSON.stringify(validated)).byteLength > 16 * 1024) {
+        throw new ProviderSettingsStoreError("projection_unavailable", 503);
+      }
+      return context.json(validated);
+    } catch (error) { return handleStoreError(context, error); }
   });
 
   app.get("/provider-settings", async (context) => {
