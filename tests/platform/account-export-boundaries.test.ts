@@ -1,7 +1,9 @@
+import { sql } from 'kysely';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/v4';
 import { decodeExportCursor, encodeExportCursor } from '../../packages/platform/src/account-deletion/export-cursor.js';
-import { listAccountExportFiles } from '../../packages/platform/src/account-deletion/export.js';
+import { exportOwnerPlatformData, listAccountExportFiles } from '../../packages/platform/src/account-deletion/export.js';
+import { createTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const secret='fixture-export-secret-that-is-stable';
 const schema=z.object({ after:z.string() }).strict();
@@ -21,6 +23,16 @@ describe('account export continuation boundaries',()=>{
       getPresignedGetUrl:async()=> 'https://storage.example.test/notes',deleteObject:async()=>{},abortOwnerMultipartUploads:async()=>{}},'user_a','matrixos-sync');
     expect(result.files[0]).toMatchObject({lastModified:null,sizeBytes:null,expiresIn:900});
   });
+  it('reauthorizes a relisted object instead of persisting its bearer URL',async()=>{
+    let issuance=0;
+    const store={listObjects:async(prefix:string)=>({keys:[prefix+'notes.txt'],nextCursor:null}),
+      getPresignedGetUrl:async()=>`https://storage.example.test/notes?issuance=${++issuance}`,
+      deleteObject:async()=>{},abortOwnerMultipartUploads:async()=>{}};
+    const first=await listAccountExportFiles(store,'user_a','matrixos-sync');
+    const refreshed=await listAccountExportFiles(store,'user_a','matrixos-sync');
+    expect(first.files[0].downloadUrl).not.toBe(refreshed.files[0].downloadUrl);
+    expect(Date.parse(first.files[0].expiresAt)-Date.now()).toBeGreaterThan(899_000);
+  });
   it('carries previous nonempty pages across an empty final runtime prefix',async()=>{
     const store={listObjects:async(prefix:string)=>({keys:prefix==='matrixos-sync/user_a/'?[prefix+'notes.txt']:[],nextCursor:null}),
       getPresignedGetUrl:async()=> 'https://storage.example.test/notes',deleteObject:async()=>{},abortOwnerMultipartUploads:async()=>{}};
@@ -32,11 +44,23 @@ describe('account export continuation boundaries',()=>{
     await expect(listAccountExportFiles({listObjects:async()=>{throw new Error('fixture unavailable');},
       getPresignedGetUrl:async()=> 'https://storage.example.test/notes',deleteObject:async()=>{},abortOwnerMultipartUploads:async()=>{}},'user_a','matrixos-sync')).rejects.toThrow('fixture unavailable');
   });
+
+  it('fails the current page instead of issuing a continuation it cannot decode',async()=>{
+    const {db}=await createTestPlatformDb();
+    const owner='user_long_cursor';
+    const ownerId='33333333-3333-4333-8333-333333333333';
+    try{
+      await sql`INSERT INTO users(id,clerk_id,handle,display_name,email,container_id)
+        VALUES(${ownerId},${owner},'long-cursor','Long Cursor','cursor@example.test','long-cursor-container')`.execute(db.executor);
+      await sql`INSERT INTO social_posts(id,author_id,content,type,created_at)
+        SELECT repeat('x', 600) || lpad(n::text, 3, '0'), ${ownerId}, 'owner-' || n, 'text', '2026-10-01T12:00:00Z'
+        FROM generate_series(1,101) n`.execute(db.executor);
+
+      await expect(exportOwnerPlatformData(db,owner,{secret})).rejects.toThrow('Export record capacity exceeded');
+    }finally{await db.destroy();}
+  });
 });
 
-import { sql } from 'kysely';
-import { createTestPlatformDb } from './native-platform-db-test-helper.js';
-import { exportOwnerPlatformData } from '../../packages/platform/src/account-deletion/export.js';
 it('preserves exact owner credit amounts outside JavaScript safe integer precision',async()=>{
   const {db}=await createTestPlatformDb();
   try{

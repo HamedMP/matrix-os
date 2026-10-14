@@ -6,6 +6,7 @@ import { decodeExportCursor, encodeExportCursor } from './export-cursor.js';
 const ROWS_PER_GROUP = 100;
 const MAX_RECORD_BYTES = 256 * 1024;
 const MAX_PAGE_BYTES = 4 * 1024 * 1024;
+const MAX_CURSOR_POSITION_BYTES = 512;
 const GROUPS = ['profile','posts','comments','likes','follows','machines','billing','onboarding',
   'apps','appRatings','appInstalls','creditLedger','onboardingJourney'] as const;
 type Group = typeof GROUPS[number];
@@ -77,6 +78,9 @@ export async function exportOwnerPlatformData(db:PlatformDB,owner:string,
       let last=position.after;
       for(const row of response.rows.slice(0,ROWS_PER_GROUP)){
         if(row.data===null)throw new Error('Export record capacity exceeded');
+        // Do not return a page whose continuation cannot pass the bounded
+        // cursor schema on the next request.
+        if(Buffer.byteLength(row.export_key,'utf8')>MAX_CURSOR_POSITION_BYTES)throw new Error('Export record capacity exceeded');
         const size=Buffer.byteLength(JSON.stringify(row.data),'utf8');
         if(bytes+size>MAX_PAGE_BYTES)break;
         result[group].push(row.data);bytes+=size;last=row.export_key;accepted++;

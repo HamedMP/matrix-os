@@ -20,6 +20,22 @@ Return the exact source LastModified ISO instant and object Size, or null when u
 
 Version 2 JSON keeps the existing groups and adds apps, appRatings, appInstalls, creditLedger, onboardingJourney. Only owner-authored apps and owner edges are included; private collaborators' rows are excluded. Explicit column allowlists omit runtime/operator provisioning details, integration credentials, billing keys/provider references, and access tokens. App source/config is owner-authored data, not a platform credential projection. Credit export includes amounts, kind, scope and timestamps, not source/reservation identifiers. Amounts outside JavaScript safe integer precision are decimal strings to preserve exact values. Onboarding exports phase/time, not internal detail payloads.
 
+| Group | Owner boundary | Portable fields | Deliberate exclusions |
+| --- | --- | --- | --- |
+| profile | verified Clerk subject | IDs, handle, display name, email, plan/status, timestamps | container and integration identifiers |
+| posts | owner platform user ID or Clerk subject | content/type, media/app references, counters, timestamp | other authors' posts |
+| comments | owner platform user ID or Clerk subject | post/author IDs, content, timestamp | comments authored by other people |
+| likes | owner platform user ID or Clerk subject | post/user IDs, timestamp | other people's edges |
+| follows | owner platform user ID or Clerk subject | follower/following IDs and type, timestamp | edges created by other people |
+| machines | verified Clerk subject, including historical rows | machine ID, handle/slot, status, provisioned/deleted times | registration tokens, provider IDs, networking and provisioning details |
+| billing | verified Clerk subject | slot, plan, status, interval and period end | customer/subscription/price/invoice/provider IDs |
+| onboarding | verified Clerk subject | completion time, goal, steps and source | none beyond the explicit row projection |
+| apps | owner platform user ID or Clerk subject | authored metadata, source/config, visibility and timestamps | counters derived from other people; foreign-authored apps |
+| appRatings | owner platform user ID or Clerk subject | app/user IDs, rating, review and timestamp | ratings authored by other people |
+| appInstalls | owner platform user ID or Clerk subject | app/user IDs and install time | installs by other people |
+| creditLedger | verified Clerk subject | entry ID, slot, kind, exact amount, period/expiry/create times | source references, reservations and payment/provider identifiers |
+| onboardingJourney | verified Clerk subject | event ID, phase transition and timestamp | internal detail payloads |
+
 Each page reads bounded ordered batches within a database transaction containing only export reads, with a 10-second statement timeout. Per-group keyset continuations avoid OFFSET and the old total-count cap. Creation-time cutoff applies where a creation timestamp exists; subscription summaries are live, and updates/deletions may change later pages. This is a resumable live export, not an MVCC snapshot across requests. Repeat a cursor safely; commit continuation only after saving its page. Clients download separate numbered JSON pages with explicit completion and can retry the same failed page without retaining the entire dataset in memory. Resource limits bound rows and bytes; oversized records fail explicitly/generically without silently truncating data. No new persistent export jobs or orphan artifacts.
 
 ## Validation and remaining qualification

@@ -2,6 +2,7 @@ import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { sql } from 'kysely';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTestPlatformDb } from './native-platform-db-test-helper.js';
+import { exportOwnerPlatformData } from '../../packages/platform/src/account-deletion/export.js';
 import { createConfiguredAccountDeletionRuntime } from '../../packages/platform/src/account-deletion/wiring.js';
 import { createAccountDeletionRoutes } from '../../packages/platform/src/account-deletion/routes.js';
 import type { PlatformDB } from '../../packages/platform/src/db.js';
@@ -83,8 +84,11 @@ describe('ENG-287 export contract (approved contract)', () => {
       const absent = await inventory();
       await seedMachine(db);
       const empty = await inventory();
+      await sql`UPDATE user_machines SET status='deleted',deleted_at=${timestamp} WHERE machine_id='export-machine'`.execute(db.executor);
+      const historical = await inventory();
       expect.soft(absent.inventoryStatus).toBe('no_computer');
       expect.soft(empty.inventoryStatus).toBe('missing_backups');
+      expect.soft(historical.inventoryStatus).toBe('missing_backups');
       expect.soft(empty.instructions).not.toEqual(absent.instructions);
     } finally { runtime.close(); await db.destroy(); }
   });
@@ -155,6 +159,39 @@ describe('ENG-287 export contract (approved contract)', () => {
       expect(ids).not.toContain('foreign-post');
       expect(schedule).not.toHaveBeenCalled(); expect(cancel).not.toHaveBeenCalled();
     } finally { runtime.close(); await db.destroy(); }
+  });
+
+  it('keeps a stable cutoff while later pages reflect documented live updates and deletes', async () => {
+    const { db } = await createTestPlatformDb();
+    await seedOwners(db);
+    await sql`INSERT INTO social_posts (id,author_id,content,type,created_at)
+      SELECT 'live-post-' || lpad(n::text,3,'0'),${ownerId},'original-' || n,'text',${timestamp}
+      FROM generate_series(1,205) n`.execute(db.executor);
+    try {
+      const first = await exportOwnerPlatformData(db, owner, { secret: env.ACCOUNT_DELETION_SECRET });
+      expect(first.posts).toHaveLength(100);
+      expect(first.nextCursor).toEqual(expect.any(String));
+
+      await sql`UPDATE social_posts SET content='updated-after-first-page' WHERE id='live-post-150'`.execute(db.executor);
+      await sql`DELETE FROM social_posts WHERE id='live-post-175'`.execute(db.executor);
+      await sql`INSERT INTO social_posts (id,author_id,content,type,created_at)
+        VALUES ('live-post-999',${ownerId},'created-after-cutoff','text','2999-01-01T00:00:00Z')`.execute(db.executor);
+
+      const rows = [...first.posts] as Array<{ id: string; content: string }>;
+      let cursor = first.nextCursor;
+      for (let requests = 0; cursor && requests < 10; requests += 1) {
+        const page = await exportOwnerPlatformData(db, owner, { cursor, secret: env.ACCOUNT_DELETION_SECRET });
+        rows.push(...page.posts as Array<{ id: string; content: string }>);
+        cursor = page.nextCursor;
+      }
+
+      expect(cursor).toBeNull();
+      expect(rows).toHaveLength(204);
+      expect(new Set(rows.map(row => row.id)).size).toBe(204);
+      expect(rows.find(row => row.id === 'live-post-150')?.content).toBe('updated-after-first-page');
+      expect(rows.some(row => row.id === 'live-post-175')).toBe(false);
+      expect(rows.some(row => row.id === 'live-post-999')).toBe(false);
+    } finally { await db.destroy(); }
   });
 
   it('allows both exports without scheduling deletion and after cancellation', async () => {

@@ -333,6 +333,42 @@ describe("useAccountExport", () => {
     expect(result.current.hasMoreFiles).toBe(true);
   });
 
+  it("does not expose signed file links after the active account changes", async () => {
+    mockFetchExportFiles.mockResolvedValueOnce(firstPage);
+    const { result, rerender } = renderHook(() => useAccountExport(), { wrapper });
+
+    await act(async () => {
+      await result.current.loadFiles();
+    });
+    expect(result.current.files).toEqual(firstPage.files);
+
+    mockSession = { isSignedIn: true, userId: "user_b", token: "other-session-token" };
+    rerender(undefined);
+
+    expect(result.current.files).toBeNull();
+    expect(result.current.instructions).toEqual([]);
+    expect(result.current.hasMoreFiles).toBe(false);
+  });
+
+  it("discards a signed file response that settles after an account change", async () => {
+    let resolvePage!: (page: typeof firstPage) => void;
+    mockFetchExportFiles.mockReturnValueOnce(new Promise((resolve) => { resolvePage = resolve; }));
+    const { result, rerender } = renderHook(() => useAccountExport(), { wrapper });
+
+    let request!: Promise<unknown>;
+    act(() => { request = result.current.loadFiles(); });
+    await waitFor(() => expect(result.current.isLoadingFiles).toBe(true));
+
+    mockSession = { isSignedIn: true, userId: "user_b", token: "other-session-token" };
+    rerender(undefined);
+    await act(async () => {
+      resolvePage(firstPage);
+      await expect(request).rejects.toMatchObject({ reason: "unavailable" });
+    });
+
+    expect(result.current.files).toBeNull();
+  });
+
   it("fetches the account records with the session token", async () => {
     mockFetchRecords.mockResolvedValue('{"version":1}');
     const { result } = renderHook(() => useAccountExport(), { wrapper });

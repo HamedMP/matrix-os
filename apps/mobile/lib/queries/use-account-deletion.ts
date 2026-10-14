@@ -96,7 +96,14 @@ export function useAccountExport() {
     pendingRecords.current = null;
     return () => { currentOwner.current = undefined; pendingRecords.current = null; };
   }, [userId]);
-  const [page, setPage] = useState<AccountExportPage | null>(null);
+  const [fileState, setFileState] = useState<{
+    owner: string | null | undefined;
+    page: AccountExportPage;
+  } | null>(null);
+  // Signed download URLs are bearer capabilities. Never project one owner's
+  // cached links into another owner's render, even for the render before an
+  // account-change effect can run.
+  const page = fileState !== null && fileState.owner === userId ? fileState.page : null;
 
   async function requireToken(): Promise<string> {
     const token = await getToken();
@@ -106,19 +113,23 @@ export function useAccountExport() {
 
   const files = useMutation({
     mutationFn: async (cursor: string | undefined) => {
-      let next = await fetchAccountExportFiles(await requireToken(), cursor);
+      const owner = userId;
+      const token = await requireToken();
+      let next = await fetchAccountExportFiles(token, cursor);
       for (
         let requests = 1;
         next.files.length === 0 && next.nextCursor && requests < MAX_EXPORT_PAGE_REQUESTS;
         requests += 1
       ) {
-        next = await fetchAccountExportFiles(await requireToken(), next.nextCursor);
+        next = await fetchAccountExportFiles(token, next.nextCursor);
       }
-      return next;
+      if (currentOwner.current !== owner) throw new AccountDeletionRequestError("unavailable");
+      return { owner, page: next };
     },
     onSuccess: (next, cursor) => {
-      setPage((current) => cursor && current
-        ? { ...next, files: [...current.files, ...next.files] }
+      if (currentOwner.current !== next.owner) return;
+      setFileState((current) => cursor && current !== null && current.owner === next.owner
+        ? { owner: next.owner, page: { ...next.page, files: [...current.page.files, ...next.page.files] } }
         : next);
     },
   });
