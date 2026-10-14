@@ -46,7 +46,7 @@ export interface TerminalRuntimeControlApi {
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab>;
   getSnapshot(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<TerminalSnapshot | undefined>;
-  renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab>;
+  renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number; expectedName?: string }): Promise<TerminalTab>;
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace>;
   terminateTab(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<void>;
   deleteTab(ref: { workspaceId: string; tabId: string }): Promise<void>;
@@ -376,7 +376,7 @@ export class TerminalRuntimeSocketServer {
       }
       case "RenameTab": return this.options.runtime.renameTab(
         { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
-        { name: request.input.name, baseRevision: request.input.baseRevision },
+        { name: request.input.name, baseRevision: request.input.baseRevision, expectedName: request.input.expectedName },
       );
       case "ReorderTabs": return this.options.runtime.reorderTabs(request.input.workspaceId, request.input);
       case "TerminateTab": {

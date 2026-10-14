@@ -8,10 +8,12 @@ import {
   TerminalRefSchema,
   TerminalTabIdSchema,
   TerminalTabSchema,
+  TerminalTabRenameInputSchema,
   TerminalWorkspaceIdSchema,
   TerminalWorkspaceSchema,
   type TerminalRef,
   type TerminalTab,
+  type TerminalTabRenameInput,
   type TerminalWorkspace,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -437,16 +439,18 @@ export class TerminalWorkspaceStore {
     });
   }
 
-  async renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
+  async renameTab(refInput: TerminalRef, inputRaw: TerminalTabRenameInput): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
-    const name = SafeDisplayStringSchema.parse(input.name);
-    const baseRevision = z.number().int().min(0).parse(input.baseRevision);
+    const input = TerminalTabRenameInputSchema.parse(inputRaw);
+    const { name, baseRevision, expectedName } = input;
     const now = this.now().toISOString();
     return this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
-      if (tab.revision !== baseRevision) throw new TerminalRuntimeError("conflict");
+      if (expectedName === undefined ? tab.revision !== baseRevision : (
+        tab.name !== expectedName || baseRevision > tab.revision
+      )) throw new TerminalRuntimeError("conflict");
       tab.name = name;
       tab.revision += 1;
       tab.updatedAt = now;

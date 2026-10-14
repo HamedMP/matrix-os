@@ -434,7 +434,7 @@ export function LocalTerminalSidebar({
       const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${shell.workspaceId}/tabs/${shell.tabId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nextName, baseRevision: shell.revision }),
+        body: JSON.stringify({ name: nextName, baseRevision: shell.revision, expectedName: shell.subtitle }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {

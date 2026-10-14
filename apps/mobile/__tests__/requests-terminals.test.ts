@@ -228,6 +228,16 @@ describe("terminal requests", () => {
     );
   });
 
+  it("uses the displayed name as the rename precondition when the list provides it", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({
+      tab: tab(TAB_A, MAIN_WORKSPACE, { name: "handoff-skill", revision: 8 }),
+    }));
+    await renameTerminalSession("clerk-token", GATEWAY_URL,
+      { workspaceId: MAIN_WORKSPACE, tabId: TAB_A, revision: 3, name: "spry-pine" }, "handoff-skill");
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toEqual({ name: "handoff-skill", baseRevision: 3, expectedName: "spry-pine" });
+  });
+
   it("fails a rename the computer refuses as out of date", async () => {
     jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({ error: "terminal_revision_conflict" }, 409));
 

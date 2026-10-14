@@ -212,6 +212,7 @@ describe("useShellSessions workspace/tab contract", () => {
     expect(patch).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ONE}`, {
       name: "compile",
       baseRevision: 3,
+      expectedName: "build",
     });
     expect(useShellSessions.getState().sessions[0]?.subtitle).toBe("build");
   });

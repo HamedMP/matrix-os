@@ -2,7 +2,7 @@
 
 ## Problem and evidence
 
-Hamed reported that nearly every unused terminal showed "2 mins ago" in the Terminal list ([Slack source](https://matrixos.slack.com/archives/C0C3ZFXQ83W/p1791983387084899)). This repair excludes grouping, ordering and search.
+Hamed reported that nearly every unused terminal showed "2 mins ago" in the Terminal list ([Slack source](https://matrixos.slack.com/archives/C0C3ZFXQ83W/p1791983387084899)). The user subsequently added the `handoff-skill` rename failure to the same bugfix scope ([rename evidence](https://matrixos.slack.com/archives/C0C459830FJ/p1791985287358939)). Grouping, ordering and search remain a separate UI change.
 
 At main `0348437bc120a37d861904fa7969066e8bbe9222`, Desktop renders `TerminalTab.updatedAt`. `TerminalRuntime.restoreAll()` reconciles every live tab through `activateTab()`, which advances that field regardless of activity. Initial observer frames and unchanged checkpoints also advance it. UI bookkeeping uses the same field. Read-only list polling and viewer heartbeats themselves do not write activity.
 
@@ -36,6 +36,16 @@ At main `0348437bc120a37d861904fa7969066e8bbe9222`, Desktop renders `TerminalTab
 The owner-local `terminal-workspaces.json` remains canonical. Activity updates use the existing serialized, atomic store mutation path. Input stays in its existing per-tab queue; bookkeeping failure is logged after successful delivery rather than turning it into a failed command. No auth, endpoint, secret or control policy changes. No new timers or registries.
 
 Output classification is extracted into `terminal-activity.ts`. The large runtime entrypoint receives only the observer flag and one queue completion hook; broader runtime/contract refactoring is deferred to avoid changing unrelated behavior.
+
+## Rename defect and repair
+
+The screenshot shows a valid `handoff-skill` label and `Could not rename shell`. Local source reproductions establish two independent defects: output/checkpoint revisions reject an otherwise unchanged display name, and runtime rename changes the Zellij internal discovery name before the metadata compare-and-swap. After that side effect, restoration cannot discover the original tab; a failed CAS can therefore still damage runtime identity.
+
+Rename now atomically changes durable display metadata only. It preserves the physical tab name, stable ref, incarnation, process and I/O. New Desktop, Web and Mobile callers send optional `expectedName`; the store compares that field under its existing write serialization and rejects an actual competing rename or future revision. Older callers keep the full-revision guard. HTTP and owner-only socket schemas validate/forward the same precondition. Staged/exited metadata can be renamed without a live Zellij command. Existing owner and project admission remain unchanged.
+
+The upstream 0.44.3 CLI supports `rename-tab --tab-id`; parameter mismatch is excluded ([version-pinned CLI source](https://raw.githubusercontent.com/zellij-org/zellij/v0.44.3/zellij-utils/src/cli.rs)). These are source/runtime reproductions; no read of Hamed's Main or claim about its exact network error status was made.
+
+Tests cover rename after output, persisted label after restart, continued process input, no identity mutation on conflict, legacy strict revision guards, future revision rejection, retained exited metadata, HTTP→socket precondition forwarding, and unchanged owner-denial behavior. The bugfix does not create, terminate or recreate any customer process.
 
 ## Qualification and delivery
 

@@ -453,6 +453,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       const response = await api.patch<{ tab?: unknown }>(`/api/terminal/workspaces/${original.workspaceId}/tabs/${original.tabId}`, {
         name: nextName,
         baseRevision: original.revision,
+        expectedName: original.subtitle,
       });
       if (!isCurrentRuntimeGeneration(generation)) return false;
       const renamed = asShellSession(response.tab, {

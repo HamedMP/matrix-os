@@ -363,14 +363,9 @@ export class TerminalRuntime {
     });
   }
 
-  async renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
-    const ref = TerminalRefSchema.parse(refInput);
-    const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-    const tab = workspace.tabs[ref.tabId];
-    if (!tab || tab.zellijTabId === null) throw new TerminalRuntimeError("not_found");
-    if (!this.zellij.renameTab) throw new TerminalRuntimeError("unavailable");
-    await this.zellij.renameTab(workspace.zellijSessionName, tab.zellijTabId, input.name);
-    return this.store.renameTab(ref, input);
+  async renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number; expectedName?: string }): Promise<TerminalTab> {
+    // Display labels belong to durable metadata; Zellij names are immutable recovery identities.
+    return this.store.renameTab(refInput, input);
   }
 
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace> {

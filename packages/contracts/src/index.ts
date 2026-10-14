@@ -154,6 +154,14 @@ export function createShellSessionName(): string {
 }
 export const SafeDisplayStringSchema = boundedDisplayText(120, 512);
 
+export const TerminalTabRenameInputSchema = z.object({
+  name: SafeDisplayStringSchema,
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  /** Compare the edited field instead of rejecting unrelated terminal output revisions. */
+  expectedName: SafeDisplayStringSchema.optional(),
+}).strict();
+export type TerminalTabRenameInput = z.infer<typeof TerminalTabRenameInputSchema>;
+
 export const TerminalRefSchema = z.object({
   workspaceId: TerminalWorkspaceIdSchema,
   tabId: TerminalTabIdSchema,
