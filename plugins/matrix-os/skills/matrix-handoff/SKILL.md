@@ -44,14 +44,15 @@ It never pushes to GitHub and never uploads `.env` files, keys, or credentials.
    content into it.
 2. Choose the agent: whatever the user asked for, otherwise the agent running
    this skill (`claude` for Claude Code, `codex` for Codex).
-3. Preview from inside the repository:
+3. Preview from inside the repository. Keep stdin redirected from `/dev/null`,
+   so the CLI prints the approval command instead of asking a y/N question:
 
    ```bash
-   matrix handoff --agent claude --brief /tmp/matrix-handoff-brief.md
+   matrix handoff --agent claude --brief /tmp/matrix-handoff-brief.md </dev/null
    ```
 
    Pass on any options the user asked for: `--history none`, `--title`,
-   `--permission`, `--profile`.
+   `--model`, `--permission`, `--profile`.
 4. Show the preview to the user, in particular:
    - the project action;
    - the branch;
