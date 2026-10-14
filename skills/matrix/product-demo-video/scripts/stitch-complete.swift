@@ -136,6 +136,12 @@ func writeCardClip(title: String, subtitle: String, seconds: Double, url: URL, w
   guard writer.status == .completed else { throw writer.error ?? NSError(domain: "stitch", code: 4) }
 }
 
+func fadeOverlap(fade: CMTime, incoming: CMTime, previous: CMTime?) -> CMTime {
+  guard let previous, fade.seconds > 0 else { return .zero }
+  let seconds = max(0, min(fade.seconds, incoming.seconds / 2, previous.seconds / 2))
+  return CMTime(seconds: seconds, preferredTimescale: fade.timescale)
+}
+
 func letterbox(_ size: CGSize, into canvas: CGSize) -> CGAffineTransform {
   let scale = min(canvas.width / size.width, canvas.height / size.height)
   let tx = (canvas.width - size.width * scale) / 2
@@ -171,7 +177,7 @@ func stitch(_ recipePath: String) async throws {
   struct Piece { let url: URL; let card: Bool }
   var pieces: [Piece] = []
   for (index, chapter) in recipe.chapters.enumerated() {
-    let seconds = chapter.cardSeconds ?? 2.4
+    let seconds = chapter.cardSeconds ?? 1.6
     let cardURL = tmp.appendingPathComponent(String(format: "card-%02d.mp4", index))
     try writeCardClip(title: chapter.title, subtitle: chapter.subtitle, seconds: seconds, url: cardURL, width: recipe.width, height: recipe.height)
     pieces.append(Piece(url: cardURL, card: true))
@@ -198,7 +204,7 @@ func stitch(_ recipePath: String) async throws {
       ?? asset.tracks(withMediaType: .video).first
     guard let videoTrack else { throw NSError(domain: "stitch", code: 6) }
     let dest = index % 2 == 0 ? trackA : trackB
-    let overlap = (previous != nil && fade.seconds > 0) ? fade : .zero
+    let overlap = fadeOverlap(fade: fade, incoming: pieceDuration, previous: previous?.duration)
     let start = CMTimeSubtract(cursor, overlap)
     try dest.insertTimeRange(CMTimeRange(start: .zero, duration: pieceDuration), of: videoTrack, at: start)
 
@@ -206,9 +212,11 @@ func stitch(_ recipePath: String) async throws {
       let fadeStart = start
       let fadeRange = CMTimeRange(start: fadeStart, duration: overlap)
       if let last = instructions.last {
-        let trimmed = CMTimeSubtract(last.timeRange.end, fadeStart)
-        if trimmed.seconds > 0 {
-          last.timeRange = CMTimeRange(start: last.timeRange.start, duration: CMTimeSubtract(last.timeRange.duration, overlap))
+        let remaining = CMTimeSubtract(last.timeRange.duration, overlap)
+        if remaining.seconds > 0 {
+          last.timeRange = CMTimeRange(start: last.timeRange.start, duration: remaining)
+        } else {
+          instructions.removeLast()
         }
       }
       let fadeInstruction = AVMutableVideoCompositionInstruction()

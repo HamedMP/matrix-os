@@ -170,7 +170,17 @@ function caption(session, text, place = BAND, at = now()) {
   });
 }
 
-async function startCapture(session, page) {
+async function drainWrites(session) {
+  const pending = session.writes.splice(0, session.writes.length);
+  await Promise.all(pending);
+}
+
+function fadeOverlapSeconds(fade, incoming, previous) {
+  if (!(previous > 0) || !(fade > 0)) return 0;
+  return Math.max(0, Math.min(fade, incoming / 2, previous / 2));
+}
+
+async function startCapture(session, page, options = {}) {
   if (!session.cdp) {
     session.cdp = await page.context().newCDPSession(page);
     session.cdp.on("Page.screencastFrame", ({ data, metadata, sessionId }) => {
@@ -184,7 +194,14 @@ async function startCapture(session, page) {
   await session.cdp.send("Page.startScreencast", {
     format: "jpeg", quality: 88, maxWidth: session.css.w * 2, maxHeight: session.css.h * 2, everyNthFrame: 2,
   });
-  while (session.timeline.frames.length === before) await hold(page, 20);
+  const deadline = Date.now() + (options.timeoutMs ?? 8_000);
+  while (session.timeline.frames.length === before) {
+    if (Date.now() >= deadline) {
+      await session.cdp.send("Page.stopScreencast").catch((error) => console.warn("stop screencast failed:", error.message));
+      throw new Error("screencast produced no frames");
+    }
+    await hold(page, 20);
+  }
   const first = session.timeline.frames[before];
   if (first.w !== session.css.w || first.h !== session.css.h) {
     throw new Error(`screencast frame is ${first.w}x${first.h}, expected ${session.css.w}x${session.css.h}`);
@@ -196,6 +213,7 @@ async function startCapture(session, page) {
 async function stopCapture(session) {
   await session.cdp.send("Page.stopScreencast");
   session.timeline.segments.at(-1).end = now();
+  await drainWrites(session);
 }
 
 function insideSkill(target) {
@@ -357,6 +375,9 @@ async function launchWeb(chromium, session) {
 }
 
 async function launchElectron(electron, { repo, profile, rendererUrl = "http://127.0.0.1:5173/", size = EL }) {
+  if (typeof profile !== "string" || profile.trim() === "") {
+    throw new Error("launchElectron needs an isolated profile path; refusing an empty profile");
+  }
   const executablePath = createRequire(path.join(repo, "desktop/package.json"))("electron");
   const app = await electron.launch({
     executablePath,
@@ -395,7 +416,9 @@ async function snapshotFrame(session) {
   const { data } = await session.cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 85 });
   const file = path.join(session.timeline.framesDir, `${String(session.timeline.frames.length).padStart(6, "0")}.jpg`);
   session.timeline.frames.push({ t: now(), file, w: session.css.w, h: session.css.h });
-  session.writes.push(fsp.writeFile(file, Buffer.from(data, "base64")));
+  const write = fsp.writeFile(file, Buffer.from(data, "base64"));
+  session.writes.push(write);
+  await write;
 }
 
 async function wheelScroll(page, deltaY, steps, ms) {
@@ -436,7 +459,7 @@ function stitch(recipe) {
 
 module.exports = {
   SKILL, TOOLS_DIR, ENCODER_BIN, STITCH_BIN, WEB, EL, OUT, FPS, BAND, WARP,
-  ease, hold, now, cursorOverlay, makeSession, glide, boxOf, hover, click,
+  ease, hold, now, fadeOverlapSeconds, cursorOverlay, makeSession, glide, boxOf, hover, click,
   focusFor, camera, caption, startCapture, stopCapture, dragHandle,
   dismissUpdate, assertCssSize, launchWeb, launchElectron, releaseElectron, hideOpenChat,
   snapshotFrame, wheelScroll, trimTail,

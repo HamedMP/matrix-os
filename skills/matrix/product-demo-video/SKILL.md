@@ -77,7 +77,7 @@ Motion that changes nothing on screen is a bug. Do not slow the mouse down, put 
 ## Launching Surfaces
 
 - **Web Desktop / Web Canvas:** `launchWeb(chromium, session)` opens headless Chrome with a 1440×897 window, DPR 2, `viewport: null`, and the cursor overlay preinstalled. Call `assertCssSize(page, lib.WEB)` before recording.
-- **Electron Desktop:** `launchElectron(electron, { repo, profile, rendererUrl })` starts the desktop app with `OPERATOR_USER_DATA_DIR` set to the isolated profile, sizes content to 1440×810, keeps the window on top, and disables background throttling. Call `releaseElectron(app)` before closing it.
+- **Electron Desktop:** `launchElectron(electron, { repo, profile, rendererUrl })` starts the desktop app with `OPERATOR_USER_DATA_DIR` set to the isolated profile, sizes content to 1440×810, keeps the window on top, and disables background throttling. An empty profile is refused so the everyday app data is never used. Call `releaseElectron(app)` before closing it.
 - `dismissUpdate(page)` closes the "Update Matrix OS" dialog. Run it after launch and after any reload.
 - `hideOpenChat(page)` minimizes a leftover Chat window before a tour.
 
@@ -96,7 +96,7 @@ Motion that changes nothing on screen is a bug. Do not slow the mouse down, put 
 ## QA
 
 ```bash
-mkdir -p "$TMPDIR/mxo-demo-tools"
+mkdir -p "$TMPDIR/mxo-demo-tools" "$TMPDIR/mxo-demo-qa"
 swiftc -O scripts/encode-demo.swift -o "$TMPDIR/mxo-demo-tools/encode-demo"
 "$TMPDIR/mxo-demo-tools/encode-demo" sheet "$HOME/Desktop/demo videos/<slug>.mp4" "$TMPDIR/mxo-demo-qa/all" 0.3 <duration> 1 4 24
 ```

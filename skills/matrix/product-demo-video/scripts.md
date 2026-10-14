@@ -5,7 +5,7 @@ Paths are relative to this skill directory. `record-lib.cjs` compiles both Swift
 ## encode-demo.swift
 
 ```bash
-mkdir -p "$TMPDIR/mxo-demo-tools"
+mkdir -p "$TMPDIR/mxo-demo-tools" "$TMPDIR/mxo-demo-qa"
 swiftc -O scripts/encode-demo.swift -o "$TMPDIR/mxo-demo-tools/encode-demo"
 "$TMPDIR/mxo-demo-tools/encode-demo" encode <manifest.json>
 "$TMPDIR/mxo-demo-tools/encode-demo" frames <video.mp4> <out-dir> <seconds...>
@@ -57,7 +57,7 @@ The stitcher does not expand `~` or `$HOME`, so pass absolute paths. A chapter w
 const lib = require("./scripts/record-lib.cjs");
 ```
 
-Exports: `SKILL`, `TOOLS_DIR`, `ENCODER_BIN`, `STITCH_BIN`, `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `WARP`, `ease`, `hold`, `now`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `dragHandle`, `dismissUpdate`, `assertCssSize`, `launchWeb`, `launchElectron`, `releaseElectron`, `hideOpenChat`, `snapshotFrame`, `wheelScroll`, `trimTail`, `compileEncoder`, `compileStitcher`, `encodeTimeline`, `stitch`.
+Exports: `SKILL`, `TOOLS_DIR`, `ENCODER_BIN`, `STITCH_BIN`, `WEB`, `EL`, `OUT`, `FPS`, `BAND`, `WARP`, `ease`, `hold`, `now`, `fadeOverlapSeconds`, `cursorOverlay`, `makeSession`, `glide`, `boxOf`, `hover`, `click`, `focusFor`, `camera`, `caption`, `startCapture`, `stopCapture`, `dragHandle`, `dismissUpdate`, `assertCssSize`, `launchWeb`, `launchElectron`, `releaseElectron`, `hideOpenChat`, `snapshotFrame`, `wheelScroll`, `trimTail`, `compileEncoder`, `compileStitcher`, `encodeTimeline`, `stitch`.
 
 - `makeSession(css)` returns a session whose `timeline.framesDir` is a new `$TMPDIR/mxo-demo-frames-*` folder.
 - `encodeTimeline(timeline, css, output, segmentIndex?)` writes `<output>.manifest.json` and the MP4. Optional `segment.fastForward` and `caption.maxSpeed` control pacing.
