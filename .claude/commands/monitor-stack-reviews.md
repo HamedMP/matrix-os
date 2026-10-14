@@ -34,6 +34,13 @@ final human review.
   existing PR/stack. Use `/worktree-pr-monitor` for the implementation stage.
 - Do not add `ready-for-ci` before the latest trusted Greptile review for that
   PR is `5/5`. There is no command-level override for this gate.
+- In this command, a *current-head* `5/5` also includes a `5/5` on an earlier
+  head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0;
+  exit 1 needs a fresh review, exit 3 means the check could not decide: fix
+  `gh`/git access and rerun). Restacks, retargets, and
+  base merges keep the PR's own diff, so they keep the review; do not request a
+  re-review for them. New PR work or conflict resolutions fail the check and
+  need a fresh review.
 - If the `ready-for-ci` label is missing from the repository, stop and report
   the blocker instead of creating a label silently.
 - Never force-push over remote work outside the requested native stack branches
@@ -48,7 +55,8 @@ final human review.
   findings as blockers until fixed, acknowledged, or explicitly deferred.
 - Automatic creation reviews may be disabled; pushes do not guarantee a review.
   After publication, request once per new head with `@greptileai please review`.
-  Match the reviewed commit to the current head and follow `AGENTS.md`'s bounded
+  Match the reviewed commit to the current head, or confirm carry-over with
+  `node scripts/review/review-carryover.mjs check <pr>`, and follow `AGENTS.md`'s bounded
   retry rules; do not repeatedly ping while the same-head review is in flight.
 - Do not stage unrelated files. Run `git status --short --branch` before every
   staging operation.
@@ -112,7 +120,8 @@ final human review.
      `ready-for-ci`, remove the label from that PR and every descendant PR
      whose head will be rewritten by the next stack rebase/submit:
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add labels only
-     after fresh current-head Greptile reviews return `5/5`.
+     after each rewritten PR has a current-head `5/5` again, either carried
+     over by the check or from a fresh Greptile review.
    - Run the narrow relevant tests after the fix. Before staging or committing,
      also run `git diff --check`, `bun run typecheck`,
      `bun run check:patterns`, and `bun run test`. If an external outage or
@@ -183,7 +192,8 @@ final human review.
      `Greptile review not received for <pr> @ <sha>` as a blocker instead of
      polling indefinitely.
    - Trust a Greptile score only when its reviewed commit matches the PR's
-     current `headRefOid`; otherwise treat it as stale and keep waiting.
+     current `headRefOid`, or when `node scripts/review/review-carryover.mjs check <pr>`
+     exits 0 for it; otherwise treat it as stale and request a fresh review.
    - When the PR is not draft, the latest trusted Greptile result is `5/5`, and
      there are no unresolved human review threads, unresolved Codex review
      comments, or unresolved actionable issue comments, add the repository label
@@ -201,7 +211,8 @@ final human review.
    - If any fix requires a new push after `ready-for-ci` was applied, remove the
      label before editing:
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add it only after
-     a fresh current-head Greptile review returns `5/5` for the new commit.
+     the new commit has a current-head `5/5`, either carried over by the check
+     or from a fresh Greptile review.
    - Completion requires every monitored PR to be either:
      - latest trusted Greptile `5/5` with no unresolved human review threads,
        unresolved Codex review comments, or unresolved actionable issue
