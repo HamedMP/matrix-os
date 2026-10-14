@@ -32,9 +32,9 @@ describe('infrastructure-only exact-source hosted fallback',()=>{
   expect(signed('test_failed','preflight')).toBe(false);
  });
  it.each([['execution_failed','failed'],['cleanup_failed','failed'],['evidence_failed','failed'],['result_cap','failed'],['lease_revoked','cancelled']])('names the host reason %s when a lease ends %s',async(reason,type)=>{
-  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});pending.catch(()=>{});
+  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});const rejected=expect(pending).rejects.toThrow(`Owned Linux qualification did not complete (${reason})`);
   c.stdout.write(JSON.stringify({protocolVersion:1,type,leaseId:envelope.leaseId,requestDigest:proof.requestDigest,status:type==='failed'?70:75,reason})+'\n');c.emit('close',70);
-  await expect(pending).rejects.toThrow(`Owned Linux qualification did not complete (${reason})`);
+  await rejected;
  });
  it('repeats exactly the host reasons lease_outcome.py declares, per record type',()=>{
   const printed=spawnSync('python3',['-I','-B','-c',`import json,sys\nsys.path.insert(0,${JSON.stringify(fileURLToPath(new URL('../../scripts/ci/runner',import.meta.url)))})\nfrom lease_outcome import FAILURE_REASONS\nprint(json.dumps({k:sorted(v) for k,v in FAILURE_REASONS.items()}))`],{encoding:'utf8',timeout:10000});
@@ -42,14 +42,14 @@ describe('infrastructure-only exact-source hosted fallback',()=>{
   expect(Object.fromEntries(Object.entries(LEASE_FAILURE_REASONS).map(([k,v])=>[k,[...v].sort()]))).toEqual(JSON.parse(printed.stdout));
  });
  it.each([['cancelled','result_cap',75],['failed','lease_revoked',70]])('does not repeat a %s record carrying %s',async(type,reason,status)=>{
-  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});pending.catch(()=>{});
+  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});const rejected=expect(pending).rejects.toThrow(/^Owned Linux qualification did not complete$/);
   c.stdout.write(JSON.stringify({protocolVersion:1,type,leaseId:envelope.leaseId,requestDigest:proof.requestDigest,status,reason})+'\n');c.emit('close',status);
-  await expect(pending).rejects.toThrow(/^Owned Linux qualification did not complete$/);
+  await rejected;
  });
  it('never repeats an unknown host reason',async()=>{
-  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});pending.catch(()=>{});
+  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});const rejected=expect(pending).rejects.toThrow(/^Owned Linux qualification did not complete$/);
   c.stdout.write(JSON.stringify({protocolVersion:1,type:'failed',leaseId:envelope.leaseId,requestDigest:proof.requestDigest,status:70,reason:'see https://example.test/x'})+'\n');c.emit('close',70);
-  await expect(pending).rejects.toThrow(/^Owned Linux qualification did not complete$/);
+  await rejected;
  });
  it.each(['started','cleanup','reason','stage','digest','status','unknownKey','auth'])('does not allow %s failure to become hosted success',async kind=>{
   const c=client(),revalidate=vi.fn(async()=>{if(kind==='auth')throw new Error('source stale');}),pending=runDedicatedLeaseSession(c,envelope,{revalidate,maxMilliseconds:1000});pending.catch(()=>{});

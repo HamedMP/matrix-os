@@ -87,6 +87,21 @@ class HostAdmissionContracts(unittest.TestCase):
    kept=Path(td)/('lease.'+'a'*32);kept.mkdir()
    gone=Path(td)/('lease.'+'b'*32) # listed, then pruned by an operator before lstat
    self.assertEqual([lease for _,lease,_ in lease_directories([gone,kept,Path(td)/'manual'])],['a'*32])
+ def test_retention_counts_exclude_entries_removed_during_the_scan(self):
+  import shutil
+  import lease_retention
+  from lease_retention import cleanup_results
+  with tempfile.TemporaryDirectory() as td:
+   results=Path(td)/'results';results.mkdir(mode=0o700)
+   for i in range(3):(results/f'manual-{i}').mkdir(mode=0o700)
+   for lease in ('a'*32,'b'*32):(results/('lease.'+lease)).mkdir(mode=0o700)
+   real=lease_retention.lease_directories
+   def operator_prunes(entries):
+    # An operator removes one lease and one manual entry after the listing.
+    shutil.rmtree(results/('lease.'+'b'*32));shutil.rmtree(results/'manual-0')
+    return real(entries)
+   with patch('lease_retention.lease_directories',operator_prunes):
+    self.assertEqual(cleanup_results(Path(td)),(3,1))
  def test_failure_reasons_cover_every_code_the_lease_manager_sends(self):
   import re
   from lease_outcome import FAILURE_REASONS,REJECTIONS

@@ -74,7 +74,6 @@ def cleanup_results(root, now=None):
             if not shutil.rmtree.avoids_symlink_attacks:
                 raise ValueError('Symlink-safe result removal unavailable')
             shutil.rmtree(path)
-            entries.remove(path)
             leases -= 1
             log = root / (lease + '.log')
             remove_log(log)
@@ -91,8 +90,9 @@ def cleanup_results(root, now=None):
         # Still under the same registry flock: only resource-free expired
         # replay tombstones can disappear after proven owned-output removal.
         store.records(now=now)
-        # Counted under the registry flock after pruning, so admission needs no second scan.
-        return len(entries), leases
+        # Counted under the registry flock after pruning. Relisting (no lstat)
+        # drops entries pruned here or removed by an operator meanwhile.
+        return len(list(directory.iterdir())), leases
 
 
 if __name__ == '__main__':
