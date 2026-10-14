@@ -70,6 +70,91 @@ async function rig(commandTimeoutMs?:number) {
   return { driver, fake, homePath, signal: new AbortController().signal };
 }
 describe('shared owner Chrome CDP driver', () => {
+  it('detaches a duplicate auto-attachment to its owned current page and keeps the primary session usable', async () => {
+    const { driver, fake, signal } = await rig();
+    await driver.execute({ action: 'tab_new' }, signal);
+    const start = fake.messages.length;
+    fake.event('Target.attachedToTarget', { sessionId: 'duplicate-session', waitingForDebugger: false,
+      targetInfo: { targetId: 'agent-tab', type: 'page', url: 'about:blank' } });
+
+    const snapshot = await driver.execute({ action: 'snapshot' }, signal);
+    expect(snapshot).toMatchObject({ success: true, targetId: 'agent-tab' });
+    expect(fake.messages.slice(start).filter(row => row.method === 'Target.detachFromTarget'))
+      .toEqual([expect.objectContaining({ params: { sessionId: 'duplicate-session' } })]);
+    expect(fake.messages.slice(start).filter(row => row.method === 'Page.getFrameTree'))
+      .toEqual([expect.objectContaining({ sessionId: 'agent-session' })]);
+    expect(fake.messages.some(row => row.sessionId === 'duplicate-session')).toBe(false);
+    await expect(driver.execute({ action: 'click', observationId: snapshot.observationId!, ref: 'r1' }, signal))
+      .resolves.toMatchObject({ success: true, targetId: 'agent-tab' });
+    await driver.detach();
+    expect(fake.messages.some(row => row.method === 'Fetch.disable' && row.sessionId === 'duplicate-session')).toBe(false);
+    expect(fake.messages.filter(row => row.method === 'Target.createTarget')).toHaveLength(1);
+  });
+
+  it('drains duplicate detach failure before observing and fails closed without detaching the primary session', async () => {
+    const { driver, fake, signal } = await rig();
+    await driver.execute({ action: 'tab_new' }, signal);
+    fake.skip('Target.detachFromTarget');
+    const start = fake.messages.length;
+    fake.event('Target.attachedToTarget', { sessionId: 'duplicate-session', waitingForDebugger: false,
+      targetInfo: { targetId: 'agent-tab', type: 'page', url: 'about:blank' } });
+    const observing = driver.execute({ action: 'snapshot' }, signal);
+    await vi.waitFor(() => expect(fake.messages.at(-1)).toMatchObject({ method: 'Target.detachFromTarget', params: { sessionId: 'duplicate-session' } }));
+    fake.raw({ id: fake.messages.at(-1).id, error: { code: -32000, message: 'Detach unavailable' } });
+
+    expect(await observing).toMatchObject({ success: false, handoffRequested: true });
+    expect(fake.messages.slice(start).some(row => row.method === 'Page.getFrameTree')).toBe(false);
+    expect(fake.messages.slice(start).some(row => row.method === 'Target.detachFromTarget' && row.params.sessionId === 'agent-session')).toBe(false);
+    await expect(driver.execute({ action: 'tab_new' }, signal)).rejects.toMatchObject({ code: 'browser_changed' });
+    fake.skip(''); await driver.detach();
+  });
+
+  it('drains a pending duplicate detach before releasing the primary session to the owner', async () => {
+    const { driver, fake, signal } = await rig();
+    await driver.execute({ action: 'tab_new' }, signal);
+    fake.skip('Target.detachFromTarget');
+    const start = fake.messages.length;
+    fake.event('Target.attachedToTarget', { sessionId: 'duplicate-session', waitingForDebugger: false,
+      targetInfo: { targetId: 'agent-tab', type: 'page', url: 'about:blank' } });
+    const duplicate = fake.messages.at(-1);
+    const releasing = driver.detach();
+    await Promise.resolve(); await Promise.resolve();
+    expect(fake.messages.slice(start).some(row => row.method === 'Fetch.disable')).toBe(false);
+    fake.skip(''); fake.raw({ id: duplicate.id, result: {} });
+
+    await releasing;
+    expect(fake.messages.slice(start).filter(row => row.method === 'Target.detachFromTarget').map(row => row.params.sessionId))
+      .toEqual(['duplicate-session', 'agent-session']);
+    expect(fake.messages.some(row => row.sessionId === 'duplicate-session')).toBe(false);
+  });
+
+  it('bounds an unacknowledged duplicate detach and hands off instead of observing', async () => {
+    const { driver, fake, signal } = await rig(20);
+    await driver.execute({ action: 'tab_new' }, signal);
+    fake.skip('Target.detachFromTarget');
+    const start = fake.messages.length;
+    fake.event('Target.attachedToTarget', { sessionId: 'duplicate-session', waitingForDebugger: false,
+      targetInfo: { targetId: 'agent-tab', type: 'page', url: 'about:blank' } });
+    expect(await driver.execute({ action: 'snapshot' }, signal)).toMatchObject({ success: false, handoffRequested: true });
+    expect(fake.messages.slice(start).some(row => row.method === 'Page.getFrameTree')).toBe(false);
+    fake.skip(''); await driver.detach();
+  });
+
+  it.each([
+    ['unowned-page', 'page', 'different-session'],
+    ['agent-tab', 'iframe', 'different-session'],
+    ['agent-tab', 'page', 'agent-session'],
+  ])('keeps nonwaiting %s/%s attachments outside the duplicate exception', async (targetId, type, sessionId) => {
+    const { driver, fake, signal } = await rig();
+    await driver.execute({ action: 'tab_new' }, signal);
+    const start = fake.messages.length;
+    fake.event('Target.attachedToTarget', { sessionId, waitingForDebugger: false,
+      targetInfo: { targetId, type, url: 'about:blank' } });
+    expect(await driver.execute({ action: 'snapshot' }, signal)).toMatchObject({ success: false, handoffRequested: true });
+    expect(fake.messages.slice(start).some(row => row.method === 'Target.detachFromTarget')).toBe(false);
+    await driver.detach();
+  });
+
   it('retains cursor cleanup authority across direct transport disconnect',async()=>{
     const {driver,fake,signal}=await rig();const observed=await driver.execute({action:'snapshot'},signal);
     await driver.execute({action:'click',observationId:observed.observationId!,ref:'r1'},signal);

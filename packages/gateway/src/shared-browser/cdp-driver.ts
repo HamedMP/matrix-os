@@ -15,7 +15,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   const owned = new Map<string, number>(); // <=8 agent-created tabs, 24h idle-ID eviction; no owner-tab scan.
   const paused = new Map<string, Promise<void>>(); // <=16 Fetch requests, DNS 2s + CDP 8s eviction.
   const children = new Map<string, { targetId: string; type: string; newlyPaused: boolean }>(); // <=16 related sessions, detached/run-close eviction.
-  const childJobs = new Set<Promise<void>>(); // <=16 bounded initializations, settlement/close eviction.
+  const childJobs = new Set<Promise<void>>(); // <=16 bounded initializations/duplicate detaches, settlement/close eviction.
   const intentionalDetach = new Set<string>(); // <=17 current sessions; command settlement eviction.
   let handoffRequired = false;
   let unsubscribe: (() => unknown) | undefined;
@@ -106,6 +106,17 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   function related(event: CdpEvent) {
     const { sessionId: child, targetInfo: info, waitingForDebugger } = event.params;
     if (typeof child !== 'string' || child.length > 128 || !info || typeof info.targetId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(info.targetId) || children.size >= 16 || childJobs.size >= 16) { handoffRequired = true; invalidateObservation(); return; }
+    // Chrome can auto-attach a second session to the page we already own and
+    // control. Release only that duplicate; it is not a newly related target.
+    if (child.length > 0 && child !== sessionId && event.sessionId === sessionId
+      && info.type === 'page' && info.targetId === targetId && owned.has(info.targetId)
+      && waitingForDebugger === false) {
+      const job = detachSession(child).catch(error => {
+        report(error); handoffRequired = true; invalidateObservation();
+      });
+      childJobs.add(job); void job.finally(() => childJobs.delete(job));
+      return;
+    }
     children.set(child, { targetId: info.targetId, type: info.type, newlyPaused: waitingForDebugger === true });
     // Existing shared/service workers may belong to other owner tabs. Do not
     // inspect, resume, terminate or close them. Unsupported targets hand off.
@@ -184,7 +195,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   }
   async function attach(target: string, signal: AbortSignal) {
     invalidateObservation();
-    if (children.size) await detachChildren();
+    if (children.size || childJobs.size) await detachChildren();
     if (sessionId) {
       await request('Fetch.disable', {}, signal); await request('Network.setBypassServiceWorker', { bypass: false }, signal);
       await request('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true }, signal);
@@ -244,7 +255,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     signal.throwIfAborted(); const parsed = SharedBrowserActionSchema.safeParse(raw);
     if (!parsed.success) throw new SharedBrowserError('invalid_action'); const input = parsed.data;
     expireTargets();
-    await connect(); signal.throwIfAborted();
+    await connect(); await Promise.all(childJobs); signal.throwIfAborted();
     if (input.action === 'status') return { success: client!.available };
     if (handoffRequired) { if (input.action === 'snapshot') return handoff(); throw new SharedBrowserError('browser_changed'); }
     if (input.action === 'tab_switch') {
