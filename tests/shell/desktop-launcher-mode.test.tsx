@@ -263,6 +263,7 @@ describe("Desktop launcher dock button by mode", () => {
   afterEach(() => {
     // A module reset does not cancel the previous store's debounced save.
     resetLayoutPersistence();
+    vi.useRealTimers();
     queryClient.clear();
     vi.unstubAllGlobals();
   });
@@ -453,6 +454,7 @@ describe("Desktop launcher dock button by mode", () => {
   });
 
   it.each([false, true])("adds a generated app from the launcher without duplicating saved moved placements (moved=%s)", async (moved) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const sushi = {
       name: "Sushi Counter",
       path: moved ? "/files/apps/food/counter/index.html" : "/files/apps/sushi-counter/index.html",
@@ -497,9 +499,13 @@ describe("Desktop launcher dock button by mode", () => {
 
     renderDesktop();
 
-    // Startup now persists Chat. Settle that revision before the icon action;
-    // the fixture must not invent an icon as the startup PATCH response.
-    await waitFor(() => expect(patches).toHaveLength(1));
+    // Startup and its debounced save are separate async phases.
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(windowManagerStore.getState().windows).toContainEqual(expect.objectContaining({ path: "__chat__" }));
+    expect(patches).toHaveLength(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(patches).toHaveLength(1);
+    vi.useRealTimers();
     expect(document.apps).toContainEqual(expect.objectContaining({ path: "__chat__", state: "open" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Open App Launcher" }));
