@@ -253,6 +253,22 @@ describe('browser lab supervision', () => {
     ]);
     await expect(configureHumanControl(true, execute)).rejects.toThrow('verification');
   });
+  it('waits for both input gate writes before reporting a failed change', async () => {
+    let finish!: () => void;
+    const execute = vi.fn(async (_binary: string, args: string[]) => {
+      if (args[3]?.startsWith('AcceptPointerEvents=')) throw new Error('Pointer gate unavailable');
+      return await new Promise<{ stdout: string; stderr: string }>(resolve => { finish = () => resolve({ stdout: '', stderr: '' }); });
+    });
+    let settled = false;
+    const change = configureHumanControl(true, execute).catch(() => { settled = true; });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    const early = await Promise.race([change.then(() => 'settled'), new Promise<string>(resolve => setTimeout(() => resolve('pending'), 25))]);
+    expect(early).toBe('pending');
+    expect(settled).toBe(false);
+    finish(); await change;
+    expect(settled).toBe(true);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
   it('rejects loopback Host rebinding, non-JSON and oversized HTTP controls', async () => {
     const { supervisor, spawn } = rig();
     const server = createLabServer(supervisor, '/nonexistent');

@@ -20,7 +20,9 @@ export async function configureHumanControl(enabled, execute = executeFile) {
   const executable = process.env.BROWSER_LAB_VNCCONFIG ?? '/usr/bin/vncconfig';
   const parameters = ['AcceptPointerEvents', 'AcceptKeyEvents'];
   const options = { signal, timeout: 5000, maxBuffer: 1024, env: { HOME: process.env.HOME, PATH: process.env.PATH, DISPLAY: ':7' } };
-  await Promise.all(parameters.map(parameter => execute(executable, ['-display', ':7', '-set', `${parameter}=${enabled ? '1' : '0'}`], options)));
+  const writes = await Promise.allSettled(parameters.map(parameter => execute(executable, ['-display', ':7', '-set', `${parameter}=${enabled ? '1' : '0'}`], options)));
+  const failed = writes.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
   const observed = await Promise.all(parameters.map(parameter => execute(executable, ['-display', ':7', '-get', parameter], options)));
   if (observed.some(({ stdout }) => !(enabled ? ['1', 'true'] : ['0', 'false']).includes(stdout.trim().toLowerCase()))) throw new Error('Viewer input gate verification failed');
 }
