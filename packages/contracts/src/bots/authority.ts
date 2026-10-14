@@ -7,9 +7,19 @@ import { BotIdSchema, BotIntegrationServiceSchema, BotInteractionIdSchema, BotRe
 import { BotInteractionKindSchema } from "#bots/interactions";
 import { BotMemoryItemSchema } from "#bots/memory";
 
+export const BotConnectionAccountSchema = z.object({
+  displayKey: z.string().regex(/^acct_[a-f0-9]{24}$/),
+  label: canonicalBoundedText(120, 480),
+  email: z.string().max(254).nullable(),
+  state: z.enum(["connected_not_granted", "granted"]),
+}).strict();
+
 export const BotConnectionStateSchema = z.object({
   service: BotIntegrationServiceSchema,
+  serviceName: canonicalBoundedText(120, 480).optional(),
+  logoUrl: z.url({ protocol: /^https$/ }).max(2048).optional(),
   state: z.enum(["not_connected", "connected_not_granted", "granted"]),
+  accounts: z.array(BotConnectionAccountSchema).max(10).optional(),
 }).strict();
 
 export const BotRoutineSummarySchema = z.object({

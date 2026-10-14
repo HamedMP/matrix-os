@@ -40,6 +40,10 @@ A bot checks what the person has connected in Matrix and asks for additional acc
 5. **Given** a successful connection or a later revocation, **when** the bot next acts, **then** it uses freshly verified access. A duplicated or stale completion cannot attach another person's account or start duplicate work.
 6. **Given** the job evolves, **when** the bot needs an additional integration, **then** it requests it naturally in the existing conversation without restarting setup.
 
+**Inbox Triage access repair (2026-10-14).** With Gmail connected but no bot grant, inventory opens one owner-facing account choice and tells the bot to wait. Repeated inventory calls reuse the pending choice; an expired choice can be replaced, while a declined choice is not repeated in that task. The selected connection receives only the recipe's declared effects (read for the retained Inbox Triage recipe), and disconnected, revoked, or other-owner grants cannot authorize use. Optional services remain nonblocking until requested.
+
+In Edit bot > Apps, each declared service shows its registry name/logo, connected account labels and available emails, and each account's bot access state. Web Canvas, Web Desktop, Electron Desktop, and Web Mobile render the shared component; Native Mobile uses a separate renderer and is outside this UI change. Acceptance needs a multi-account chooser, a granted read on the selected account, denial of send, and live captures for each affected surface. Integration inventory and authority reads remain owner-authenticated and bounded; request creation and Chat events share a transaction, with no network call under that lock. A separate public documentation PR should explain connection versus bot authorization and account selection.
+
 ### User Story 3 - Work With Bots in a Group (Priority: P1)
 
 A person creates a normal group chat with named bots and optionally other people. Bots are visible participants with their own rabbit avatars. They can be addressed, exchange authorized findings, delegate parts of a task, and produce a shared result.
