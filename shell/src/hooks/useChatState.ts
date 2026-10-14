@@ -37,6 +37,7 @@ export interface ChatState {
   displayedThroughSeq?: number;
   updateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
   agentClient?: ChatAgentClient;
+  creationConversationClient?: Pick<import("@/lib/canonical-chat-client").CanonicalShellChatClient, "create" | "detail" | "admitTurn" | "cancelRun">;
   agentSummaryClient?: ChatAgentClient;
   authorityKey?: string;
   composerIdentity?: object;
