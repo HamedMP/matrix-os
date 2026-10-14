@@ -45,7 +45,10 @@ export function useManagedCreditRefresh(
     document.addEventListener("visibilitychange", reconcile);
     check();
     return () => {
-      alive = false; cancel();
+      alive = false;
+      clearTimeout(timer);
+      timer = undefined;
+      request?.abort();
       window.removeEventListener("focus", reconcile);
       window.removeEventListener("online", reconcile);
       window.removeEventListener("offline", reconcile);
