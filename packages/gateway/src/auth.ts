@@ -222,6 +222,8 @@ export function authMiddleware(
   },
 ): MiddlewareHandler {
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
+  // Two gateway-local buckets, never keyed by caller-controlled headers.
+  const appReadLimiter = createRateLimiter({ maxAttempts: 120, windowMs: 60_000, lockoutMs: 30_000, maxKeys: 2 });
 
   return async (c, next) => {
     const setTerminalAccess = (actorId: string) => {
@@ -249,6 +251,7 @@ export function authMiddleware(
       const header = c.req.header("authorization");
       const run = header?.startsWith("Bearer ")
         ? options?.resolveMatrixMcpRunContext?.(header.slice(7), c.req.method, new URL(c.req.raw.url).pathname) : null;
+      if (!appReadLimiter.check(run?.appDataRead && run.isLive?.() ? "owner" : "denied")) return tooManyRequests(c);
       if (c.req.method !== "POST" || !run?.appDataRead || !run.isLive?.()
         || run.appDataRead.runtimeHandle !== config.runtimeHandle
         || c.req.header("x-platform-user-id") || c.req.header("x-platform-verified")) {

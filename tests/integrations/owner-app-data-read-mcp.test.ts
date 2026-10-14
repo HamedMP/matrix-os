@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ownerReadFixture, fiveRows, READ_TOOL, READ_PATH, MACHINE_SECRET, DATABASE_SECRET,
   OWNER, RUN, RUNTIME } from "../gateway/owner-app-data-read-fixture.js";
 
-describe("ENG-289 registered owner app-data read MCP capability (RED)", () => {
+describe("ENG-289 registered owner app-data read MCP capability", () => {
   it.each(["chat-call", "chat-discovery"] as const)("advertises the dedicated read-only tool on %s", async surface => {
     const f = await ownerReadFixture();
     const { client } = await f.connectMcp(surface);

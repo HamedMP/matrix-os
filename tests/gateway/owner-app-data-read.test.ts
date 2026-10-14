@@ -4,7 +4,7 @@ import {
   DEFAULT_ROWS, MAX_ROWS, MAX_BYTES, BODY_BYTES, MACHINE_SECRET, DATABASE_SECRET,
 } from "./owner-app-data-read-fixture.js";
 
-describe("ENG-289 dedicated owner app-data read boundary (RED)", () => {
+describe("ENG-289 dedicated owner app-data read boundary", () => {
   it("registers a dedicated read route rather than granting the mixed write bridge", async () => {
     expect(registerReadRoutes, "Missing dedicated owner app-data read route registration").toBeTypeOf("function");
     const f = await ownerReadFixture();
@@ -147,6 +147,16 @@ describe("ENG-289 dedicated owner app-data read boundary (RED)", () => {
     }
     f.grantInput.appDataRead.apps[0]!.tables.push("restricted");
     expect((await f.request({ ...fiveRows, table: "restricted" })).status).toBe(403);
+  });
+
+  it("bounds unauthenticated audit work independently of owner read traffic", async () => {
+    const f = await ownerReadFixture();
+    for (let i = 0; i < 120; i++) {
+      expect((await f.request(fiveRows, { authorization: "Bearer invalid" })).status).toBe(401);
+    }
+    expect((await f.request(fiveRows, { authorization: "Bearer invalid" })).status).toBe(429);
+    expect(f.audit).toHaveBeenCalledTimes(120);
+    expect((await f.request(fiveRows)).status).toBe(200);
   });
 
   it("denies URL/method aliases and an unknown filter column before the record query", async () => {

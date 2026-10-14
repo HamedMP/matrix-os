@@ -221,7 +221,7 @@ const ClaudeAllowRuleSchema = z.union([
 const ClaudeLaunchSettingsSchema = z.object({
   permissions: z.object({
     // Twenty writable roots plus fixed built-in, Custom MCP and company Drive wrappers.
-    allow: z.array(ClaudeAllowRuleSchema).max(28).optional(),
+    allow: z.array(ClaudeAllowRuleSchema).max(29).optional(),
     ask: z.array(z.enum(MATRIX_INTEGRATION_ACTION_TOOLS)).max(4).optional(),
     deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
   }).strict().optional(),

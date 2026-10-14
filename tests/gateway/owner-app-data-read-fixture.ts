@@ -3,19 +3,18 @@ import { afterAll, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAppDb } from "../../packages/gateway/src/app-db.js";
-import { createAppRegistry, type AppRegistry } from "../../packages/gateway/src/app-db-registry.js";
-import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/app-db-query.js";
+import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js";
+import { createQueryEngine } from "../../packages/gateway/src/app-db-query.js";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
-import * as bridgeRoutes from "../../packages/gateway/src/server/bridge-routes.js";
+import { registerOwnerAppDataReadRoutes as registerReadRoutes } from "../../packages/gateway/src/server/bridge-routes.js";
+export { registerReadRoutes };
 import { createIntegrationsMcpServer } from "../../packages/integrations-mcp/src/server.js";
 import type { GatewayFetcher } from "../../packages/kernel/src/tools/integrations.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 
-// ENG-289 RED contract. These proposed names are implementation seams, not a
-// test implementation of the missing capability. No fallback handler is mounted.
-// Existing auth, capability registry, MCP registration and Kysely/PG execute for
-// real. Only audit collection/observability spies and network transport are fake.
+// Existing auth, capability registry, MCP registration and Kysely/PG execute
+// for real. Only audit collection/observability spies and transport are fake.
 export const READ_PATH = "/api/agent/app-data/read";
 export const READ_TOOL = "read_app_data";
 export const OWNER = { type: "personal", ownerId: "owner_app_read" };
@@ -32,17 +31,6 @@ type AuditEvent = {
   ownerId?: string; runId?: string; runtimeHandle?: string;
   app?: string; action?: string; outcome: "allowed" | "denied" | "error";
 };
-type RouteOptions = {
-  appRegistry: AppRegistry; queryEngine: QueryEngine;
-  configuredOwnerId: string; runtimeHandle: string;
-  audit(event: AuditEvent): Promise<void>;
-  defaultRows: number; maxRows: number; maxResponseBytes: number; bodyLimitBytes: number;
-};
-type Registration = (app: Hono, options: RouteOptions) => void;
-export const registerReadRoutes = (bridgeRoutes as unknown as {
-  registerOwnerAppDataReadRoutes?: Registration;
-}).registerOwnerAppDataReadRoutes;
-
 const cleanups: Array<() => Promise<void>> = []; // <=1 fixture per test; drained after every case.
 // One PostgreSQL engine per suite; reset owner schemas between tests instead of
 // retaining dozens of WASM heaps until the worker exits.
@@ -99,7 +87,7 @@ export async function ownerReadFixture(options: { runtime?: string; rows?: numbe
     ownerAppDataRead: { runtimeHandle: options.runtime ?? RUNTIME, audit },
   };
   gateway.use("*", authMiddleware(MACHINE_SECRET, authOptions));
-  registerReadRoutes?.(gateway, {
+  registerReadRoutes(gateway, {
     appRegistry: apps, queryEngine: engine, configuredOwnerId: OWNER.ownerId,
     runtimeHandle: options.runtime ?? RUNTIME, audit,
     defaultRows: DEFAULT_ROWS, maxRows: MAX_ROWS, maxResponseBytes: MAX_BYTES, bodyLimitBytes: BODY_BYTES,

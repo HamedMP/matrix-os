@@ -115,6 +115,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       };
       expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true });
       expect(settings.permissions.allow?.filter((rule) => rule.startsWith("mcp__"))).toEqual([
+        "mcp__matrix-integrations__read_app_data",
         "mcp__matrix-integrations__list_integration_inventory",
         "mcp__matrix-integrations__list_connected_services",
         "mcp__matrix-integrations__describe_service",
@@ -157,6 +158,7 @@ describe("Claude canonical Chat Provider adapter", () => {
         permissions: { allow: string[]; deny: string[] };
       };
       expect(settings.permissions.allow).toEqual([
+        "mcp__matrix-integrations__read_app_data",
         "mcp__matrix-integrations__list_integration_inventory",
         "mcp__matrix-integrations__list_connected_services",
         "mcp__matrix-integrations__describe_service",
