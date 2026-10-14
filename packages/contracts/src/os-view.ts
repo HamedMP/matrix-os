@@ -138,6 +138,7 @@ export const DEFAULT_OS_VIEW_DESKTOP_APP_PATHS = Object.freeze([
   "__settings__",
   "__plugins__",
   "__browser__",
+  "__cloud-desktop__",
   "apps/notes/index.html",
   "apps/whiteboard/index.html",
 ] as const);
@@ -154,6 +155,7 @@ export const OS_VIEW_PLACEABLE_BUILTIN_APPS = Object.freeze([
   { appId: "browser", name: "Browser", path: "__browser__" },
   { appId: "notes", name: "Notes", path: "apps/notes/index.html" },
   { appId: "whiteboard", name: "Whiteboard", path: "apps/whiteboard/index.html" },
+  { appId: "cloud-desktop", name: "Cloud desktop", path: "__cloud-desktop__" },
 ] as const);
 
 const DEFAULT_DESKTOP_GRID = Object.freeze({
