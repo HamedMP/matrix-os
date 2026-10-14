@@ -11,7 +11,8 @@ const Owner = z.string().regex(/^user_[A-Za-z0-9_-]{1,150}$/);
 const Confirm = z.object({ confirm: z.literal(true) }).strict();
 const DeletedEvent = z.object({type:z.literal('user.deleted'),data:z.object({id:Owner,deleted:z.literal(true)})});
 export interface AccountDeletionExport {
-  downloads: Array<{ name: string; url: string }>;
+  downloads: Array<{ name: string; url: string; lastModified?: string | null; sizeBytes?: number | null; kind?: 'file' | 'database'; expiresIn?: number; expiresAt?:string }>;
+  inventoryStatus?: string;
   migrationUrl: string;
   instructions?: string[];
   nextCursor?: string | null;
@@ -22,7 +23,7 @@ export function createAccountDeletionRoutes(options: {
   webhookSecret?: string;
   publishableKey?: string;
   exportData?(owner: string, cursor?: string): Promise<AccountDeletionExport>;
-  exportPlatformData?(owner:string): Promise<unknown>;
+  exportPlatformData?(owner:string,cursor?:string): Promise<unknown>;
   registerAppleAuthorization?(owner:string,code:string):Promise<void>;
 }): Hono {
   const app = new Hono();
@@ -53,7 +54,7 @@ export function createAccountDeletionRoutes(options: {
           if(!query.success)return c.json({error:'Invalid request'},422);
           const status=await options.service.get(owner);
           if (status.status==='processing'||status.status==='completed'||(status.status==='scheduled'&&status.erasesAfter&&Date.parse(status.erasesAfter)<=Date.now())) return c.json({error:'Data is no longer available for download.'},409);
-          if(path.endsWith('/platform')){if(!options.exportPlatformData)return c.json(unavailable(),503);c.header('Content-Disposition','attachment; filename="matrix-account.json"');return c.json(await options.exportPlatformData(owner));}
+          if(path.endsWith('/platform')){if(!options.exportPlatformData)return c.json(unavailable(),503);c.header('Content-Disposition','attachment; filename="matrix-account.json"');return c.json(await options.exportPlatformData(owner,query.data.cursor));}
           if (!options.exportData) return c.json(unavailable(),503);
           return c.json(await options.exportData(owner,query.data.cursor));
         }

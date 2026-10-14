@@ -44,7 +44,7 @@ async function seedMachine(db: PlatformDB) {
     VALUES ('export-machine',${owner},'export-owner','running',${timestamp},'PRIVATE_REGISTRATION_TOKEN')`.execute(db.executor);
 }
 
-describe('ENG-287 export contract (tests first; response additions are proposed)', () => {
+describe('ENG-287 export contract (approved contract)', () => {
   it('preserves authoritative object timestamps and sizes through storage adapter, export wiring and route', async () => {
     const { db } = await createTestPlatformDb();
     const send = vi.spyOn(S3Client.prototype, 'send').mockImplementation(async command => {
@@ -111,7 +111,7 @@ describe('ENG-287 export contract (tests first; response additions are proposed)
       const response = await app.request('/api/account/delete/export/platform', { headers: authorization });
       expect(response.status).toBe(200);
       const body = await response.json();
-      // Proposed JSON group names: review the protected-field projection before implementation.
+      // Approved portable groups must preserve owner content without protected platform fields.
       expect.soft(body.apps).toEqual([expect.objectContaining({ id: 'owner-app', name: 'Owner app' })]);
       expect.soft(body.appRatings).toEqual([expect.objectContaining({ review: 'OWNER_REVIEW' })]);
       expect.soft(body.appInstalls).toEqual([expect.objectContaining({ app_id: 'owner-app' })]);
