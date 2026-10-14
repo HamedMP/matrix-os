@@ -140,7 +140,7 @@ describe("ENG-293 real-browser Web Terminal Enter", () => {
         node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, isComposing: true, bubbles: true }));
         node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 0, isComposing: true, bubbles: true }));
         });
-      expect((await inputs(page)).map(frame => frame.data).join("")).toBe("");
+      expect(await inputs(page)).toEqual([]);
       await page.locator("#pane-0 textarea").evaluate(node => {
         node.dispatchEvent(new CompositionEvent("compositionend", { data: "", bubbles: true }));
       });
@@ -149,6 +149,37 @@ describe("ENG-293 real-browser Web Terminal Enter", () => {
       expect((await inputs(page)).map(frame => frame.data).join("")).toBe("");
       await page.keyboard.press("Enter");
       expect((await inputs(page)).map(frame => frame.data).join("")).toBe("\r");
+    } finally { await page.close(); }
+  });
+
+  it("preserves composition text when modern composing Enter confirms it", async () => {
+    const page = await open();
+    try {
+      await page.locator("#pane-0 textarea").evaluate(node => {
+        const textarea = node as HTMLTextAreaElement;
+        textarea.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+        textarea.value = "日本";
+        textarea.dispatchEvent(new CompositionEvent("compositionupdate", { data: "日本", bubbles: true }));
+        textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", isComposing: true, bubbles: true }));
+        textarea.dispatchEvent(new CompositionEvent("compositionend", { data: "日本", bubbles: true }));
+        textarea.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+      });
+      await settle(page);
+      expect((await inputs(page)).map(frame => frame.data).join("")).toBe("日本");
+      await modernEnter(page);
+      expect((await inputs(page)).map(frame => frame.data).join("")).toBe("日本\r");
+      expect((await inputs(page)).every(frame => TerminalTabClientFrameSchema.safeParse(frame).success)).toBe(true);
+    } finally { await page.close(); }
+  });
+
+  it("routes input-only Enter through the active shortcut prefix before command submission", async () => {
+    const page = await open();
+    try {
+      await page.keyboard.press("Control+g");
+      await page.locator("#pane-0 textarea").evaluate(() => document.execCommand("insertLineBreak"));
+      expect(await inputs(page)).toEqual([]);
+      await modernEnter(page);
+      expect((await inputs(page)).map(frame => frame.data)).toEqual(["\r"]);
     } finally { await page.close(); }
   });
 

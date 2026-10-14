@@ -2,6 +2,7 @@
 export function createTerminalEnterInput(options: {
   textarea: HTMLTextAreaElement;
   input(data: string): void;
+  handleLineBreak(event: KeyboardEvent): boolean;
 }) {
   const { textarea } = options;
   const view = textarea.ownerDocument.defaultView! as Window & typeof globalThis;
@@ -36,7 +37,10 @@ export function createTerminalEnterInput(options: {
       || event.data !== null || event.isComposing || composing || compositionSettling) return;
     // A keyboard event already handled by xterm, a shortcut or this helper must
     // not submit again when its corresponding browser editing event arrives.
-    if (!keyEnterPending) options.input("\r");
+    if (!keyEnterPending) {
+      const key = new view.KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, cancelable: true });
+      if (options.handleLineBreak(key)) options.input("\r");
+    }
     event.preventDefault();
     event.stopImmediatePropagation();
   };
@@ -58,10 +62,13 @@ export function createTerminalEnterInput(options: {
       keyEnterPending = event.key === "Enter";
       clearAfterTask();
       if (!passthrough || event.defaultPrevented || !keyEnterPending
-        || composing || compositionSettling || event.isComposing || event.keyCode !== 0
+        || event.keyCode !== 0
         || !["Enter", "NumpadEnter"].includes(event.code)
         || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey
         || event.getModifierState("AltGraph")) return passthrough;
+      // Do not let xterm finalize composition on a modern Enter keydown. The
+      // native compositionend still owns the committed text; this emits no input.
+      if (composing || compositionSettling || event.isComposing) return false;
       // Synthetic key-only KeyboardEvents are an explicitly supported automation
       // shape. Emit only a fixed CR; never interpret event payloads as PTY bytes.
       options.input("\r");

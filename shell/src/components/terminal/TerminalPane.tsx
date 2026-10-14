@@ -1549,10 +1549,6 @@ export function TerminalPane({
         sendTerminalResize(wsRef.current, { cols, rows }, allowRemoteResizeRef.current, sessionIdRef.current);
       });
 
-      const enterInput = term.textarea ? createTerminalEnterInput({
-        textarea: term.textarea,
-        input: (data) => term.input(data, true),
-      }) : null;
       const keyHandler = createTerminalKeyHandler({
         isMac: isAppleCommandPlatform(navigator.platform),
         getSelection: () => term.getSelection(),
@@ -1563,6 +1559,11 @@ export function TerminalPane({
         toggleSearch: () => setSearchOpen((open) => !open),
         handleControls: handleControlKeyEvent,
       });
+      const enterInput = term.textarea ? createTerminalEnterInput({
+        textarea: term.textarea,
+        input: (data) => term.input(data, true),
+        handleLineBreak: keyHandler,
+      }) : null;
       term.attachCustomKeyEventHandler((event) => {
         const passthrough = keyHandler(event);
         return enterInput?.handleKeyEvent(event, passthrough) ?? passthrough;
