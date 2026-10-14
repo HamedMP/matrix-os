@@ -46,9 +46,12 @@ Owner `~/.npmrc`, project npm config and environment overrides remain authoritat
 | C7 — Version consistency | Check installers, Docker, contracts and scope worker against explicit promoted pin | 0.162.1 across consumers; unknown-version checks retained |
 | C8 — Actual scope process | Exact published binary, empty HOME, fake loopback Responses server, fixed production args | Red: strict config rejects removed field. Green: completed synthetic answer, zero offered tools, no Authorization header, `store=false` |
 | C9 — Packaging | Inspect host bundle's scripts allowlist and installer wiring | Red before explicit helper copy; green after packaging fix |
-| C10 — Model visibility | Inspect the affected account's official model catalog on its actual Terminal runtime | Not performed. No claim that this fix alone grants sol 6.1 or any account entitlement |
+| C10 — Failed repair recovery | Upgrade the binary, fail post-install reconciliation, then rerun developer-tools | Failing-first two-process fixture confirms the second run retries repair despite a current binary; a failed Codex pack clears its prior installed marker |
+| C11 — Model visibility | Inspect the affected account's official model catalog on its actual Terminal runtime | Not performed. No claim that this fix alone grants sol 6.1 or any account entitlement |
 
-Final affected-scope run under Node 24.18.0 at `7b90acba`: **30 files passed; 368 tests passed; 3 intentionally skipped**. This includes the actual published binary case with `CODEX_CONTRACT_BINARY` set. Its default unit invocation skips that case unless an exact isolated binary is supplied; it never borrows a user's authenticated CLI from PATH.
+Final affected-scope serial run after the retry correction under Node 24.18.0: **31 files passed; 369 tests passed; 3 intentionally skipped**. The preceding `7b90acba` receipt was 30 files / 368 passed / 3 skipped. This includes the actual published binary case with `CODEX_CONTRACT_BINARY` set. Its default unit invocation skips that case unless an exact isolated binary is supplied; it never borrows a user's authenticated CLI from PATH.
+
+One unchanged `tests/scope-runtime/server.test.ts` client-close assertion failed once in a concurrent rerun; the isolated file passed all four tests and the complete final serial affected-scope run passed. No production supervisor-server code was changed.
 
 Workspace native typechecks and explicit scope-runtime `tsc --noEmit` passed. Pattern scans reported zero violations (five existing full-tree warnings, two changed-scope warnings). Shell syntax and `git diff --check` passed. The complete Node 24 run lost its execution transport (`pong_timeout` / unknown session) before producing its final JSON report. Its process was confirmed absent after reconnection. The complete result is uncertain and is not a green receipt. Its log also contains macOS `mv -T` incompatibility output. Do not infer full-suite or CI success from the focused results.
 
@@ -58,7 +61,7 @@ Published Darwin arm64 0.162.1 reports `codex-cli 0.162.1`. Its generated full a
 
 ## Independent review and landing gates
 
-The independent review of the initial implementation found three P1 issues: missing bundle copy, legacy prefix EACCES, and the real CLI's removed config option. Each received a failing regression before its correction. A further version-coherence assertion caught the disposable acceptance harness retaining 0.154.0 and its old profile digest; its constants and documentation were synchronized without executing the host script. This does not count as a GitHub approving review of the final head.
+The independent review of the initial implementation found three P1 issues: missing bundle copy, legacy prefix EACCES, and the real CLI's removed config option. Each received a failing regression before its correction. A further version-coherence assertion caught the disposable acceptance harness retaining 0.154.0 and its old profile digest; its constants and documentation were synchronized without executing the host script. Greptile reviewed `f472102e` as 4/5 and identified the post-install retry gap: a previous installed marker could survive a repair failure and make the next run skip. The marker is now cleared for a failed Codex pack, with a two-process failing-first recovery test. This does not count as a GitHub approving review of the final head.
 
 ENG-268 PRs #2547/#2548/#2549/#2545 were read for metadata and changed files. This branch changes no files in that stack's auth/UI diff. The shared promoted contract affects their runtime dependency, so they must still be tested against the final installed CLI; none of those PRs was changed or merged here.
 
