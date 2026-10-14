@@ -28,6 +28,30 @@ const input = { clientRequestId: "req_custom_budget", name: "Budget", instructio
   instanceId: "matrix_chatgpt_plan", model: "gpt-owner", options: [{ id: "accountId", value: "owner-account" }, { id: "grantRevision", value: "3" }],
 } };
 const recipe = { skills: ["matrix-integrations"], integrations: [{ service: "gmail", accountLabel: "Personal" }], output: "Confirmed result" };
+
+it("creates an editable Matrix AI template clone once and runs its saved settings rather than the fixed catalog", async () => {
+  const edited = {...input,clientRequestId:"req_editable_template",name:"My writing Bot",instructions:"Use the owner's changed editorial procedure.",
+    selection:{instanceId:"matrix_pi_default",model:"current-managed-model"},recipe,
+    seedRecipe:{recipeId:"writing-bot",version:"2026-09-27.1"}};
+  const created = await service.createCustom(OWNER,edited);
+  const replayed = await service.createCustom(OWNER,edited);
+  expect(replayed).toEqual({...created,operation:"replayed"});
+  const saved = await agents.get(owner,created.agent.id);
+  expect(saved?.recipeRef).toEqual({recipeId:"custom-coordinator",version:"1"});
+  const executable = await procedures.resolve(OWNER,saved!);
+  expect(executable.instructions).toContain(edited.instructions);
+  expect(executable.instructions).toContain("Use only authorized tools.");
+  expect(executable.output).toBe(recipe.output);
+  expect(executable.integrations).toEqual([{service:"gmail",effects:["read","write","send"],required:false}]);
+  expect(await agents.list(owner)).toHaveLength(1);
+});
+
+it("rejects a SOUL or unknown template clone before reserving a creation operation", async () => {
+  for (const seedRecipe of [{recipeId:"matrix-bot",version:"2026-10-10.1"},{recipeId:"writing-bot",version:"retired"}]) {
+    await expect(service.createCustom(OWNER,{...input,seedRecipe})).rejects.toMatchObject({code:"invalid_request"});
+  }
+  await emptyCreationState();
+});
 let home: string;
 let state: Awaited<ReturnType<typeof createBotStateDatabase>>;
 let agents: ChatAgentStore;

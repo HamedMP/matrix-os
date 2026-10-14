@@ -1,3 +1,4 @@
+import { ChatBotCreationWireVersionSchema, projectChatBotCreationResponse } from "@matrix-os/contracts";
 import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
@@ -300,7 +301,8 @@ function handleError(c: Context, error: unknown) {
 }
 
 function chatJson(context: Context, value: object, status: 200 | 201 | 202 = 200) {
-  return context.json(projectChatReadStateResponse(projectChatRecipeSources(value),
+  return context.json(projectChatReadStateResponse(projectChatRecipeSources(projectChatBotCreationResponse(value,
+    ChatBotCreationWireVersionSchema.parse(context.req.query("botCreationVersion")))),
     ChatReadStateWireVersionSchema.parse(context.req.query("readStateVersion"))), status);
 }
 
@@ -310,7 +312,9 @@ export function createCanonicalChatRoutes(options: {
 }): Hono {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
-    if (!ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
+    if (!ChatBotCreationWireVersionSchema.safeParse(context.req.query("botCreationVersion")).success
+      || (context.req.queries("botCreationVersion")?.length ?? 0) > 1
+      || !ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
       || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success
       || !ChatReadStateWireVersionSchema.safeParse(context.req.query("readStateVersion")).success) {
       return validationError(context);

@@ -1,3 +1,4 @@
+import { ChatBotCreationWireVersionSchema, projectChatBotCreationFrame } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
 import { projectChatFundingErrors } from "./funding-error-wire.js";
@@ -78,6 +79,8 @@ export function registerCanonicalChatEventHttpRoute(options: {
     if (!readStateVersion.success) return context.json({ error: "Unsupported read-state version" }, 400);
     const eventVersion = ChatEventWireVersionSchema.safeParse(context.req.query("eventVersion"));
     if (!eventVersion.success) return context.json({ error: "Unsupported event version" }, 400);
+    const botCreationVersion = ChatBotCreationWireVersionSchema.safeParse(context.req.query("botCreationVersion"));
+    if (!botCreationVersion.success || (context.req.queries("botCreationVersion")?.length ?? 0) > 1) return context.json({ error: "Unsupported Bot drafting version" }, 400);
     const encoder = new TextEncoder();
     const principal = options.getPrincipal(context);
     const protocol = context.req.header("x-matrix-chat-protocol");
@@ -117,7 +120,7 @@ export function registerCanonicalChatEventHttpRoute(options: {
       send(frame: CanonicalChatTransportFrame): boolean {
         if (closed || (controller.desiredSize ?? 0) <= 0) return false;
         try {
-          const projected = projectChatMessageFrame(projectChatEventFrame(frame, eventVersion.data), messageVersion.data, inputVersion.data);
+          const projected = projectChatBotCreationFrame(projectChatMessageFrame(projectChatEventFrame(frame, eventVersion.data), messageVersion.data, inputVersion.data), botCreationVersion.data);
           const readProjected = projected.type === "chat.content" ? {
             ...projected, content: projectChatReadStateResponse(projected.content, readStateVersion.data),
           } : projected;

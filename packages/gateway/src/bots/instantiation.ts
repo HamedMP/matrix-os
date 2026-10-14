@@ -15,6 +15,7 @@
  * is never deleted or replaced to repair one.
  */
 import { createHash } from "node:crypto";
+import { editableBotRecipeSeed } from "./recipe-creation-seed.js";
 import { lstat, opendir } from "node:fs/promises";
 import {
   CreateManagedCustomBotRequestSchema, MANAGED_CUSTOM_BOT_RECIPE_REF,
@@ -244,6 +245,15 @@ export function createBotInstantiation(deps: {
       if (existing && existing.payloadHash !== payloadHash) throw new BotInstantiationError("conflict");
       const replayedExisting = existing ? await replay(existing, false) : undefined;
       if (replayedExisting) return replayedExisting;
+      if (custom?.seedRecipe) {
+        try {
+          if (!editableBotRecipeSeed(deps.recipes,custom.seedRecipe).editable) throw new BotInstantiationError("invalid_request");
+        }
+        catch (error: unknown) {
+          if (error instanceof BotRecipeCatalogError) throw new BotInstantiationError("invalid_request");
+          throw error;
+        }
+      }
       let recipe;
       try {
         if (!custom && request.recipe.recipeId === MANAGED_CUSTOM_BOT_RECIPE_REF.recipeId) throw new BotInstantiationError("invalid_request");

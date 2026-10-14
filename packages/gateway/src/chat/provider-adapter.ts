@@ -1,4 +1,6 @@
 import {
+  BotDraftProposalSchema,
+  ChatRunContextSchema,
   UserInputQuestionListSchema,
   AgentAttachmentSchema,
   ProtectedToolOutputSchema,
@@ -23,6 +25,7 @@ import { SealedAssistantCredentialSchema } from "./assistant-credential-crypto.j
 const SafeProviderRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 
 export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
+  BotDraftProposalSchema.extend({ type: z.literal("bot.draft.proposed") }).strict(),
   z.object({
     type: z.literal("assistant.delta"),
     messageId: SafeProviderRefSchema.optional(),
@@ -201,6 +204,7 @@ export function parseCanonicalProviderRunInput<State>(
   input: CanonicalProviderRunInput<State>,
 ): CanonicalProviderRunInput<State> {
   CanonicalOwnerScopeSchema.parse(input.owner);
+  if (input.context) ChatRunContextSchema.parse(input.context);
   CanonicalChatModelSelectionSchema.parse(input.selection);
   z.array(CanonicalChatMessagePartSchema).min(1).max(64).parse(input.parts);
   z.string().min(1).max(96 * 1024).parse(input.prompt);

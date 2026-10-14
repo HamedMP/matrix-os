@@ -1,3 +1,4 @@
+import { assertBotDraftProposalAuthority } from "./activity-persistence.js";
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
   CanonicalChatIdSchema,
@@ -386,6 +387,18 @@ export class ChatRunLifecycleRepository {
         .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
       if (existingRun && !run) throw new ChatRunNotActiveError(chatId, runId);
       if (!run) throw new ChatNotFoundError(chatId);
+      const proposals = activities.filter(activity => activity.type === "bot.draft.proposed");
+      if (proposals.length) {
+        if (new Set(proposals.map(proposal => proposal.proposalId)).size !== 1) throw new ChatConflictError(chatId, Number(current.revision));
+        const saved = await trx.selectFrom("chat_runs").selectAll().where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirstOrThrow();
+        for (const proposal of proposals) assertBotDraftProposalAuthority(toRun(saved), {
+          type: proposal.type, proposalId: proposal.proposalId, sessionId: proposal.sessionId,
+          baseDraftRevision: proposal.baseDraftRevision, patch: proposal.patch,
+        });
+        const previous = await trx.selectFrom("chat_run_events").select("id").where("run_id", "=", runId)
+          .where(sql<string>`event->>'type'`, "=", "bot.draft.proposed").limit(1).executeTakeFirst();
+        if (previous && previous.id !== proposals[0]!.id) throw new ChatConflictError(chatId, Number(current.revision));
+      }
       if (expectedInputClaim) {
         const state = await getChatInputState(trx, owner, { chatId, runId, requestId: expectedInputClaim.requestId });
         if (state.resolved || state.submitted?.id !== expectedInputClaim.submissionId) throw new ChatConflictError(chatId, Number(current.revision));

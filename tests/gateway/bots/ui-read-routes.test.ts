@@ -3,8 +3,22 @@ import { BotTaskSummarySchema } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createBotRoutes } from "../../../packages/gateway/src/bots/routes.js";
 import { MissingRequestPrincipalError } from "../../../packages/gateway/src/request-principal.js";
+import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
 
 describe("bot UI read routes", () => {
+  it("authenticates writable creation seeds and excludes catalog policy and SOUL identity",async()=>{
+    const server=(authenticated=true)=>createBotRoutes({recipes:createBotRecipeCatalog(),getPrincipal:()=>{
+      if(!authenticated)throw new MissingRequestPrincipalError();return{userId:"owner",source:"jwt"};
+    }});
+    const path="/api/chat-agents/bot-recipes/writing-bot/2026-09-27.1/creation-seed";
+    const response=await server().request(path);
+    expect(response.status).toBe(200);expect(response.headers.get("cache-control")).toBe("private, no-store");
+    const body=await response.json();expect(body.editable).toBe(true);expect(body.draft.instructions).toContain("draft and revise writing");
+    expect(body.draft.capabilities).toBeUndefined();expect(body.draft.identitySource).toBeUndefined();
+    expect((await server(false).request(path)).status).toBe(401);
+    expect((await server().request(path.replace("2026-09-27.1","retired"))).status).toBe(404);
+    expect((await server().request("/api/chat-agents/bot-recipes/matrix-bot/2026-10-10.1/creation-seed")).status).toBe(404);
+  });
   it("returns bounded public recipe metadata without instructions and requires a principal", async () => {
     const app = (authenticated = true) => {
       const server = new Hono();

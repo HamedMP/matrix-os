@@ -16,6 +16,7 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
   admitJevWorkflow?: ConstructorParameters<typeof ChatAgentContext>[0]["admitJevWorkflow"];
   /** Created by the caller when bots need the store before the runtime exists. */
   agents?: ChatAgentStore;
+  creationRecipes?: ConstructorParameters<typeof ChatAgentContext>[0]["creationRecipes"];
   botChats?: ConstructorParameters<typeof ChatAgentContext>[0]["botChats"];
 }) {
   const recipes = createChatAgentRecipeResolver({
@@ -30,6 +31,7 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
     admitJevWorkflow: options.admitJevWorkflow,
     drives: options.drives,
     assertChatReferenceAllowed: options.assertChatReferenceAllowed,
+    ...(options.creationRecipes ? { creationRecipes: options.creationRecipes } : {}),
     ...(options.botChats ? { botChats: options.botChats } : {}),
   });
   return { agents, recipes, context, orchestrator: new CanonicalChatOrchestrator({ ...options, agentContext: context }) };

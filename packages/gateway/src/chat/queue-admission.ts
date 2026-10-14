@@ -68,6 +68,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   now: () => Date;
 }): Promise<CanonicalChatQueueAdmissionResponse> {
   const input = CanonicalQueueChatTurnRequestSchema.parse(options.input);
+  if (input.botCreation) throw new CanonicalQueueAdmissionError(safeError("capability_mismatch", "Send a new message with the current Bot draft after this run finishes."), 400);
   const record = await options.repository.get(options.owner, options.chatId);
   if (!record) {
     throw new CanonicalQueueAdmissionError(

@@ -78,7 +78,7 @@ export function createManagedPiRuntime(deps: {
     let stage: "route" | "admission" | "tool_setup" | "run_spec" | "worker_dispatch" = "route";
     try {
       run.isolated = deps.isolatedChat?.select({ ownerId: input.owner.ownerId, chatId: input.chatId, modelId: input.selection.model }) ?? false;
-      if (run.isolated && (input.resumeState || input.continuationId || input.selection.instanceId !== "matrix_pi_default"
+      if (run.isolated && (input.context?.botCreation || input.resumeState || input.continuationId || input.selection.instanceId !== "matrix_pi_default"
         || input.parts.some(part => part.type !== "text"))) throw new BotRouteError("model_unavailable");
       const resolved = await resolveManagedPiSelection(input.selection, input.owner.ownerId, deps);
       if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
@@ -178,7 +178,7 @@ export function createManagedPiRuntime(deps: {
     },
     async steer(input) {
       const run = active.get(input.runId);
-      if (!run?.binding || run.isolated || run.ownerId !== input.owner.ownerId || run.chatId !== input.chatId || run.stopping) throw new Error("Matrix AI run unavailable");
+      if (!run?.binding || run.binding.botCreation || run.isolated || run.ownerId !== input.owner.ownerId || run.chatId !== input.chatId || run.stopping) throw new Error("Matrix AI run unavailable");
       const reply = await deps.host.client.runBot({ runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration,
         command: { version: 1, kind: "bot.steer", runId: input.runId, text: input.prompt.slice(0, 8192) } });
       if (!reply.ok) throw new Error("Matrix AI steering unavailable");

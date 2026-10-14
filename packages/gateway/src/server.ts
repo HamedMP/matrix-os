@@ -1632,7 +1632,7 @@ export async function createGateway(config: GatewayConfig) {
       repository: chatRepository,
       catalog: botServices?.adapter ? withBotProviderInstance(canonicalChatProviderCatalog) : canonicalChatProviderCatalog,
       agents: chatAgents,
-      ...(botServices ? { botChats: botServices.botChats } : {}),
+      ...(botServices ? { botChats: botServices.botChats, creationRecipes: botServices.recipes } : {}),
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
