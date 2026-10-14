@@ -130,9 +130,8 @@ Require focused tests and all applicable repository gates. React changes also
 require React Doctor and current screenshot evidence. Record every skipped gate
 with its exact reason.
 
-After implementation and local validation, tell the owner to mark its draft PR
-ready for review and verify that it is no longer a draft. The same problem
-owner is personally responsible for invoking and completing
+After implementation and local validation, keep the PR as a draft. The same
+problem owner is personally responsible for invoking and completing
 `$worktree-pr-monitor` for its single assigned PR. The owner must:
 
 1. resolve current-head review feedback until Greptile reports `5/5`;

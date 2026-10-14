@@ -14,7 +14,7 @@ const sourceJobs = [
 interface GitHubFixture {
   event_name: string;
   ref: string;
-  event: { action?: string; changes?: { base?: unknown; title?: unknown; body?: unknown } };
+  event: { pull_request?: { draft: boolean }; action?: string; changes?: { base?: unknown; title?: unknown; body?: unknown } };
 }
 const mainPush: GitHubFixture = { event_name: 'push', ref: 'refs/heads/main', event: {} };
 function evaluateJobExpression(value: string, needs: unknown, github: GitHubFixture) {

@@ -146,6 +146,10 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   expect(flag).toBe(expectedFlag);
   if(isolated)expect(flag).toBe('false');
  });
+ it.each(['fast-ci','ready-for-ci'])('isolates the %s event when both admission labels are added to a draft together',label=>{
+  const github={event_name:'pull_request_target',run_id:'4242',event:{action:'labeled',label:{name:label},pull_request:{draft:true,labels:[{name:'fast-ci'},{name:'ready-for-ci'}]}}};
+  expect(new Function('github',`return (${js(nonAdmitting())});`)(github)).toBe(true);
+ });
  it('publishes immutable source request identity before admission can start',()=>{
   const marker=workflow()['run-name'];
   expect(marker).toContain('dedicated-ci-v2 pr={0} head={1} base={2} requested={3}');
