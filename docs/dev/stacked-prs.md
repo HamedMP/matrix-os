@@ -98,9 +98,11 @@ is needed. Inspect the result rather than assuming a command succeeded.
    task changed one, stop and reconcile its work. Never use an unconditional
    force push. Publish with `gh stack submit`; refresh the remote head baseline.
 8. Request Greptile once for each new head with `@greptileai please review`.
-   Match the summary's **Last reviewed commit** to `headRefOid`; an old 5/5 is
-   stale. Follow the bounded retry rules in `AGENTS.md` rather than repeated pings.
-9. Restore `ready-for-ci` proactively only after current-head 5/5 and zero
+   Match the summary's **Last reviewed commit** to `headRefOid`. An old 5/5 is
+   stale unless `node scripts/review/review-carryover.mjs check <pr>` exits 0, which it does
+   after restacks, retargets, and base merges that only replay the reviewed
+   change onto a new base. Follow the bounded retry rules in `AGENTS.md` rather than repeated pings.
+9. Restore `ready-for-ci` proactively only after current-head (or carried-over) 5/5 and zero
    unresolved review blockers. Verify all applicable CI jobs pass for that head.
 
 `gh stack modify` restructures membership; it is not a commit-amend command.
@@ -113,8 +115,9 @@ Use `/monitor-stack-reviews <pr-or-range-or-branch>` for the full monitoring loo
 Merge only with requester authorization and all included PR gates satisfied:
 
 - Native stack base is `main`; membership is the intended bottom-to-top order.
-- Every included head is unchanged from its reviewed and CI-tested SHA.
-- Each PR is ready, has current-head Greptile 5/5, zero unresolved blockers,
+- Every included head is unchanged from its CI-tested SHA and is its reviewed SHA
+  or a carried-over head the carry-over check accepts.
+- Each PR is ready, has current-head (or carried-over) Greptile 5/5, zero unresolved blockers,
   `ready-for-ci`, and passing applicable CI, with task/spec/evidence linked.
 
 ```bash

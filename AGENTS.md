@@ -470,7 +470,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 - **Merge stacks through GitHub's atomic stack operation:**
   `gh stack merge <stack-number> --yes --squash`. Verify the stack targets `main`,
   its bottom-to-top membership and exact head SHAs, and current-head Greptile
-  `5/5`, zero unresolved review blockers, `ready-for-ci`, and passing CI for every
+  `5/5` (or a carried-over `5/5`, see below), zero unresolved review blockers, `ready-for-ci`, and passing CI for every
   included PR. Native stack merge lands the included layers into the stack base
   together; child PR bases correctly remain their preceding layer.
 - **Use `gh pr merge` only for a standalone PR targeting `main`.** Verify
@@ -492,14 +492,14 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **Standalone PRs require a verified task ticket; stacked PRs may share the stack ticket** -- link the relevant ticket before creation, merge, or auto-merge, and include the stack name/link for each layer. Never require a new ticket solely because it is another PR in the same stack. See **Linear Ticket Check** above.
-- **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
-- **Request Greptile explicitly for each published head with `@greptileai please review`.** Automatic creation reviews may be disabled, and pushes do not guarantee a new review. Check for an existing review in flight first; request once when no review names the new head, including initial PR creation. After a push an older score stays stale until the new head is reviewed.
+- **No PR merge until Greptile reports 5/5** on the current head, or on an earlier head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0) -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue. A review carries over only when the head is exactly the reviewed change replayed onto its new base: base merges, stack restacks, retargets after a parent lands, and message-only amends keep it; new PR work, conflict resolutions, moved edits, base edits next to the PR's lines, and retargets that pull parent commits into the PR need a fresh review (exit 1). Exit 3 means the check could not decide (GitHub, git, or tool failure): fix it and rerun instead of requesting a review. The Review Receipt workflow records each reviewed commit's base when Greptile reviews, so carry-over works across force-pushed restacks; `check` recomputes everything from git and fails closed on anything it cannot resolve. See `docs/dev/review-pipeline.md`.
+- **Request Greptile explicitly for each published head with `@greptileai please review`.** Automatic creation reviews may be disabled, and pushes do not guarantee a new review. Check for an existing review in flight first; request once when no review names the new head and the carry-over check does not accept the earlier review, including initial PR creation. After a push an older score stays stale until the new head is reviewed.
 - **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
 
   | Reviewed SHA | What it means | Do this |
   | --- | --- | --- |
   | Names the current head | Answered, current | Use the score |
-  | Names an older head | **Answered**, about a superseded commit | **Request once for the new head, now** |
+  | Names an older head | **Answered**, about a superseded commit | Run `node scripts/review/review-carryover.mjs check <pr>`; if it exits 1, **request once for the new head, now** |
   | No review names the head, under 15 min | Probably still working | Wait |
   | No review names the head, over 15 min | Probably lost | Request once more |
   | Still nothing after that | Outage | Say so in the PR and escalate; do not keep asking |
@@ -619,8 +619,8 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 ### Stack review monitor
 
 - For existing GitHub native stacks, use `.claude/commands/monitor-stack-reviews.md`: `/monitor-stack-reviews <pr-or-range-or-branch>`.
-- That command owns the review gate for stack fixes: current-head Greptile `5/5`, no unresolved human/Codex review blockers, `ready-for-ci` applied only after that review state, then CI monitoring.
-- Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that do not match the current head SHA, or missing `ready-for-ci` repository label as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
+- That command owns the review gate for stack fixes: current-head Greptile `5/5` (or an earlier-head `5/5` that `node scripts/review/review-carryover.mjs check <pr>` accepts), no unresolved human/Codex review blockers, `ready-for-ci` applied only after that review state, then CI monitoring.
+- Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that neither match the current head SHA nor pass the carry-over check, or missing `ready-for-ci` repository label as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
 
 ### Backlog
 

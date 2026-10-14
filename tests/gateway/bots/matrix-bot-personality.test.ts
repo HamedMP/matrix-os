@@ -41,7 +41,7 @@ import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selecti
 import { OWNER, OTHER_OWNER, createBotStateDatabase, createRealBotStateDatabase } from "./bot-state-support.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
-afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 interface InferenceContext {
   db: Awaited<ReturnType<typeof createBotStateDatabase>>["db"];
@@ -298,10 +298,11 @@ it("resolves a canonical Anthropic phase through the actual Provider V3 model ca
   expect(f.registry.size).toBe(0);
 });
 
-it("constrains the actual canonical Bot run and preserves its genuine first-turn session on the second phase", async () => {
+it.each([2, 12])("keeps the isolated canonical Bot at one call with ordinary trusted cap %i and preserves its first-turn session", async maxInferenceCalls => {
+  vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", String(maxInferenceCalls));
   const f = await fixture({ isolated: true });
   await f.turn("Who are you?"); await f.wait();
-  expect(f.specs[0]).toMatchObject({ route: { maxOutputTokens: 256 }, capabilities: [], limits: { maxToolActions: 1 },
+  expect(f.specs[0]).toMatchObject({ route: { maxOutputTokens: 256 }, capabilities: [], limits: { maxToolActions: 1, maxInferenceCalls: 1 },
     isolatedTurn: { phaseId: "phase_canonical_1", target: { kind: "canonical_bot", botId: f.created.agent.id,
       chatId: f.created.chatId, recipeRef: { recipeId: "matrix-bot", version: "2026-10-10.1" } } } });
   await f.turn("How will you help me?"); await f.wait();

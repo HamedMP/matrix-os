@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "../bots/broker-actions.js";
 import { mapBotEvent, MAX_BOT_ACTIVITY_EVENTS } from "../bots/chat-adapter.js";
 import { BotRouteError } from "../bots/route-resolver.js";
+import { readTrustedBotRunLimits } from "../bots/trusted-inference-limits.js";
 import { BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type ManagedPiRuntimeBinding, type PiRuntimeBinding } from "../bots/runtime-registry.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
@@ -51,6 +52,7 @@ export function createManagedPiRuntime(deps: {
   cancelInference(binding: ManagedPiRuntimeBinding): void;
 }) {
   const systemPrompt = createManagedPiSystemPrompt(deps.personality);
+  const limits = readTrustedBotRunLimits();
   const active = new Map<string, Active>(); // capacity/terminal eviction below; runtime deadline bounds lifetime.
   async function stop(runId: string): Promise<void> {
     const run = active.get(runId); if (!run || run.finished) return;
@@ -90,7 +92,7 @@ export function createManagedPiRuntime(deps: {
       stage = "run_spec";
       run.spec = BotRunSpecSchema.parse({ route: resolved.route,
         systemPrompt: await systemPrompt(input),
-        capabilities: run.binding.capabilities, limits: { maxToolActions: run.isolated ? 1 : 60 },
+        capabilities: run.binding.capabilities, limits: run.isolated ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         ...(isolatedTurn ? { isolatedTurn } : {}),
         turn: { kind: "prompt", text: input.prompt } });
       run.queue.push({ kind: "state", state: { runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration } });
