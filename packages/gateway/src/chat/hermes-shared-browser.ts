@@ -1,5 +1,5 @@
 /** A process-only overlay preserves the owner's native model/login/configuration. No persistent config writes. */
-import type { CanonicalOwnerScope } from "@matrix-os/contracts";
+import { SHARED_BROWSER_ACTION_DEADLINE_MS, type CanonicalOwnerScope } from "@matrix-os/contracts";
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 import type { HermesGatewayEvent } from "./hermes-stdio-client.js";
 import { sharedBrowserEndpoint } from "./shared-browser-client.js";
@@ -19,7 +19,7 @@ export function openHermesSharedBrowserRun(options: { broker: SharedBrowserBroke
     "def matrix_browser_overlay(value):", "    value = copy.deepcopy(value)", "    servers = value.get('mcp_servers', {})",
     "    if not isinstance(servers, dict): raise RuntimeError('Browser configuration unavailable')",
     "    value['mcp_servers'] = dict(servers)",
-    "    value['mcp_servers']['matrix_shared_browser'] = {'command':'/opt/matrix/runtime/node/bin/node', 'args':['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'], 'enabled':True, 'timeout':330, 'connect_timeout':20, 'supports_parallel_tool_calls':False, 'env': {'MATRIX_SHARED_BROWSER_TOKEN':os.environ['MATRIX_SHARED_BROWSER_TOKEN'], 'MATRIX_SHARED_BROWSER_GATEWAY_PORT':os.environ['MATRIX_SHARED_BROWSER_GATEWAY_PORT']}, 'tools':{'include':['shared_browser'], 'resources':False, 'prompts':False}}",
+    `    value['mcp_servers']['matrix_shared_browser'] = {'command':'/opt/matrix/runtime/node/bin/node', 'args':['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'], 'enabled':True, 'timeout':${(SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000) / 1000}, 'connect_timeout':20, 'supports_parallel_tool_calls':False, 'env': {'MATRIX_SHARED_BROWSER_TOKEN':os.environ['MATRIX_SHARED_BROWSER_TOKEN'], 'MATRIX_SHARED_BROWSER_GATEWAY_PORT':os.environ['MATRIX_SHARED_BROWSER_GATEWAY_PORT']}, 'tools':{'include':['shared_browser'], 'resources':False, 'prompts':False}}`,
     "    agent = value.get('agent', {})", "    if not isinstance(agent, dict): raise RuntimeError('Browser configuration unavailable')",
     "    disabled = agent.get('disabled_toolsets', [])", "    if not isinstance(disabled, list) or not all(isinstance(item,str) for item in disabled): raise RuntimeError('Browser configuration unavailable')",
     "    value['agent'] = dict(agent)", "    value['agent']['disabled_toolsets'] = list(dict.fromkeys(disabled + ['browser']))", "    return value",

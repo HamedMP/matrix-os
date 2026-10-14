@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { SharedBrowserActionSchema, SharedBrowserControlSchema, type SharedBrowserAction,
+import { SHARED_BROWSER_ACTION_DEADLINE_MS, SharedBrowserActionSchema, SharedBrowserControlSchema, type SharedBrowserAction,
   type SharedBrowserActionResult, type SharedBrowserControl, type SharedBrowserState } from "@matrix-os/contracts";
 
 export interface SharedBrowserBinding { ownerId: string; chatId: string; runId: string; harness: "pi" | "openclaw" | "hermes" }
@@ -166,7 +166,21 @@ export function createSharedBrowserBroker(options: {
       }
       return value;
     }).finally(()=>{queued--;});
-    actionTail=result.then(()=>{},report);return result;
+    actionTail=result.then(()=>{},report);
+    const value=await result;
+    if(value.success || !value.handoffRequested)return value;
+    // Keep the native tool call alive while the owner signs in. Wait outside
+    // actionTail so Resume can drain/detach; resume observation, never the
+    // original mutation. Recursive handoffs inherit this first deadline.
+    const resumedSignal=AbortSignal.any([signal,AbortSignal.timeout(SHARED_BROWSER_ACTION_DEADLINE_MS)]);
+    if(registered(binding,resumedSignal)!==row)throw new SharedBrowserError("run_unavailable");
+    await controlTail;
+    if(active!==row)throw new SharedBrowserError("run_unavailable");
+    if(["human","paused"].includes(phase))await awaitResume(row,resumedSignal);
+    if(registered(binding,resumedSignal)!==row)throw new SharedBrowserError("run_unavailable");
+    await controlTail;
+    if(active!==row || phase!=="agent")throw new SharedBrowserError("browser_changed");
+    return execute(binding,{action:"snapshot"},resumedSignal);
   }
   async function control(ownerId:string,raw:SharedBrowserControl):Promise<SharedBrowserState> {
     if(closed || ownerId!==options.ownerId)throw new SharedBrowserError("run_unavailable");

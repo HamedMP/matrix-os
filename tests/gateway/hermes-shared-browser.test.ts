@@ -19,7 +19,7 @@ it("uses per-run native configuration overlay and actual Python bootstrap withou
     const result = spawnSync("python3", run.args, { env: { PATH: process.env.PATH, ...run.env }, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
     const value = JSON.parse(result.stdout);
-    expect(value.config.mcp_servers.matrix_shared_browser).toMatchObject({ command: "/opt/matrix/runtime/node/bin/node", args: ["/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js"], timeout: 330, tools: { resources: false, prompts: false } });
+    expect(value.config.mcp_servers.matrix_shared_browser).toMatchObject({ command: "/opt/matrix/runtime/node/bin/node", args: ["/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js"], timeout: 390, tools: { resources: false, prompts: false } });
     expect(value.config.mcp_servers.matrix_shared_browser.env).toEqual({ MATRIX_SHARED_BROWSER_TOKEN: "a".repeat(43), MATRIX_SHARED_BROWSER_GATEWAY_PORT: "4000" });
     expect(value.config.agent.disabled_toolsets).toEqual(["cron", "browser"]);
     expect(value.config.model.default).toBe("owner-model"); expect(value.readonly).toEqual(value.config);
