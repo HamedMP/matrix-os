@@ -107,11 +107,18 @@ it.each([['requested',1,true],['in_progress',1,false],['in_progress',2,true],['c
  const source={id:321,run_attempt:attempt,event:'push',head_branch:'main',head_sha:main,display_title:attempt>1?`CI coverage-v1 · ${main}`:'fix(cli): keep telemetry off stderr'};
  const github={event_name:'workflow_run',ref:'refs/heads/main',event:{action,workflow_run:source}};
  const startsWith=(text:string,prefix:string)=>text.startsWith(prefix),format=(text:string,...args:any[])=>text.replace(/\{([0-9]+)\}/g,(_,i)=>String(args[Number(i)]));
- const marker=Function('github','format','startsWith',`return (${w['run-name'].trim().slice(3,-2)});`)(github,format,startsWith);
- expect(marker).toBe(`dedicated-refresh-v2 execution=${expected} request=321 title=CI coverage-v1 · ${main}`);
+ const marker=(vars:any)=>Function('vars','github','format','startsWith',`return (${w['run-name'].trim().slice(3,-2)});`)(vars,github,format,startsWith);
+ const admits=(vars:any)=>Function('vars','github','startsWith','contains',`return (${jsCondition(w.jobs.benchmark.if)});`)(vars,github,startsWith,contains);
+ const delegated={MATRIX_CI_DEDICATED_ENABLED:'true',MATRIX_CI_DEDICATED_MAIN:'true'};
+ expect(marker(delegated)).toBe(`dedicated-refresh-v2 execution=${expected} request=321 title=CI coverage-v1 · ${main}`);
  expect(helpers.refreshExecutionRequested(action,source)).toBe(expected);
- expect(Function('vars','github','startsWith','contains',`return (${jsCondition(w.jobs.benchmark.if)});`)({MATRIX_CI_DEDICATED_ENABLED:'true'},github,startsWith,contains)).toBe(expected);
- const controller={id:124,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'workflow_run',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:marker};
+ expect(admits(delegated)).toBe(expected);
+ // While main runs hosted, no main-push controller starts or claims execution, so none holds the Linux lease.
+ for(const hosted of [{MATRIX_CI_DEDICATED_ENABLED:'true'},{MATRIX_CI_DEDICATED_ENABLED:'true',MATRIX_CI_DEDICATED_MAIN:'false'},{MATRIX_CI_DEDICATED_SHADOW:'true',MATRIX_CI_DEDICATED_MAIN:'true'}]){
+  expect(marker(hosted)).toBe(`dedicated-refresh-v2 execution=false request=321 title=CI coverage-v1 · ${main}`);
+  expect(admits(hosted)).toBe(false);
+ }
+ const controller={id:124,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'workflow_run',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:marker(delegated)};
  expect(helpers.authenticatedControllerRun(controller,repo,{sourceKind:'main',prNumber:0,headSha:main,sourceSha:main,requestingRunId:321},{id:99},'main')).toBe(expected);
 });
 it.each([[['fast-ci','ready-for-ci'],true],[['ready-for-ci'],false],[[],false]])('enters the matrix-ci environment for PR events only with fast-ci (%j)',async(labels,expected)=>{
