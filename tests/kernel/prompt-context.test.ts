@@ -60,7 +60,8 @@ describe("system prompt context", () => {
       const prompt = buildSystemPrompt(home);
       expect(prompt).toContain("## App Data");
       expect(prompt).toContain("App record contents have not been queried for this prompt");
-      expect(prompt).toContain("owner-scoped Postgres query API");
+      expect(prompt).toContain("read_app_data");
+      expect(prompt).toContain("direct /api/bridge/query access is not delegated to Chat");
       expect(prompt).toContain("files under ~/data are not a database inventory");
       for (const sentinel of [legacyDirectory, legacyKey, legacyValue]) {
         expect(prompt).not.toContain(sentinel);
@@ -71,7 +72,8 @@ describe("system prompt context", () => {
       if (state === "missing") rmSync(join(home, "data"), { recursive: true });
       const prompt = buildSystemPrompt(home);
       expect(prompt).toContain("App record contents have not been queried for this prompt");
-      expect(prompt).toContain("owner-scoped Postgres query API");
+      expect(prompt).toContain("read_app_data");
+      expect(prompt).toContain("direct /api/bridge/query access is not delegated to Chat");
       expect(prompt).not.toContain("No app data");
     });
   });
