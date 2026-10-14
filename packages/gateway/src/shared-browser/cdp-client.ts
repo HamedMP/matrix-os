@@ -21,6 +21,10 @@ const unavailable = (dispatched = false) => new SharedBrowserError('browser_unav
 export class BrowserCdpMissingTargetError extends SharedBrowserError {
   constructor() { super('observe_again'); this.name = 'BrowserCdpMissingTargetError'; }
 }
+/** An exact Chromium response for a document object that no longer exists. */
+export class BrowserCdpMissingObjectError extends Error {
+  constructor() { super('Browser document changed'); this.name = 'BrowserCdpMissingObjectError'; }
+}
 
 export class BrowserCdpClient {
   private readonly pending = new Map<number, Pending>(); // <=64, deadline/close eviction.
@@ -56,7 +60,11 @@ export class BrowserCdpClient {
       const method = this.pending.get(packet.id)?.method;
       const missing = ['Target.getTargetInfo', 'Target.attachToTarget'].includes(method ?? '')
         && packet.error?.code === -32602 && packet.error?.message === 'No target with given id found';
-      this.finish(packet.id, packet.error ? missing ? new BrowserCdpMissingTargetError() : unavailable() : undefined, packet.result && typeof packet.result === 'object' ? packet.result : {});
+      const missingObject = method === 'Runtime.callFunctionOn' && packet.error?.code === -32000
+        && packet.error?.message === 'Could not find object with given id';
+      this.finish(packet.id, packet.error ? missing ? new BrowserCdpMissingTargetError()
+        : missingObject ? new BrowserCdpMissingObjectError() : unavailable() : undefined,
+      packet.result && typeof packet.result === 'object' ? packet.result : {});
     } else if (typeof packet.method === 'string' && packet.method.length < 128 && packet.params && typeof packet.params === 'object') {
       for (const callback of this.listeners) {
         try { callback({ method: packet.method, params: packet.params, sessionId: packet.sessionId }); }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { SharedBrowserActionSchema, type SharedBrowserAction, type SharedBrowserActionResult } from '@matrix-os/contracts';
 import { SharedBrowserError, type SharedBrowserDriver } from './broker.js';
-import { BrowserCdpMissingTargetError, connectBrowserCdp, type BrowserCdpClient, type CdpConnectOptions, type CdpEvent } from './cdp-client.js';
+import { BrowserCdpMissingObjectError, BrowserCdpMissingTargetError, connectBrowserCdp, type BrowserCdpClient, type CdpConnectOptions, type CdpEvent } from './cdp-client.js';
 import { CURSOR_ACTION_FUNCTION, CLEAR_CURSOR_FUNCTION } from './cdp-cursor.js';
 import { ACTION_FUNCTION, SNAPSHOT_FUNCTION } from './cdp-dom.js';
 import { collectChromeDownload, cleanupDownloadTemps } from './cdp-downloads.js';
@@ -34,7 +34,23 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     clearingCursor=clearingCursor.catch(report).then(async()=>{
       try { await transport.request('Runtime.callFunctionOn',{objectId:cursor.document,functionDeclaration:CLEAR_CURSOR_FUNCTION,arguments:[],
         returnByValue:true,awaitPromise:false},cursor.session,AbortSignal.timeout(2000)); }
-      catch(error) { if (!cursorDocument && owned.has(cursor.target)) cursorDocument=cursor; throw error; }
+      catch(error) {
+        if (error instanceof BrowserCdpMissingObjectError) {
+          try {
+            // The old object may be gone after navigation. Clear any remaining
+            // decoration through the currently attached document before release.
+            const tree=await transport.request('Page.getFrameTree',{},cursor.session,AbortSignal.timeout(2000));
+            if(typeof tree.frameTree?.frame?.id!=='string')throw new SharedBrowserError('browser_unavailable');
+            const world=await transport.request('Page.createIsolatedWorld',{frameId:tree.frameTree.frame.id,worldName:'matrix-shared-browser'},cursor.session,AbortSignal.timeout(2000));
+            if(!Number.isSafeInteger(world.executionContextId))throw new SharedBrowserError('browser_unavailable');
+            const cleared=await transport.request('Runtime.evaluate',{expression:`(${CLEAR_CURSOR_FUNCTION}).call(document)`,contextId:world.executionContextId,returnByValue:true},cursor.session,AbortSignal.timeout(2000));
+            if(cleared.exceptionDetails || cleared.result?.value?.ok!==true)throw new SharedBrowserError('browser_unavailable');
+            return;
+          } catch(recoveryError) { error=recoveryError; }
+        }
+        if (!cursorDocument && owned.has(cursor.target)) cursorDocument=cursor;
+        throw error;
+      }
     });
     void clearingCursor.catch(report);return clearingCursor;
   };

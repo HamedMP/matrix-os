@@ -11,7 +11,7 @@ const fixture = 'http://127.0.0.1:8730/invoices';
 const homes: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
 function chrome() {
-  let url = 'about:blank', handoff = false, snapshotId = '', skip = '', created = 0, downloadPath = '', downloads = false, navigationError = false;
+  let url = 'about:blank', handoff = false, snapshotId = '', skip = '', created = 0, downloadPath = '', downloads = false, navigationError = false, missingCursor = false;
   const missing = new Set<string>();
   let lookupError: { code: number; message: string } | undefined;
   const original = Buffer.from('%PDF-1.4\noriginal CDP invoice fixture\n%%EOF');
@@ -24,6 +24,10 @@ function chrome() {
       if (packet.method === skip) return;
       if (['Target.getTargetInfo', 'Target.attachToTarget'].includes(packet.method) && (missing.has(packet.params.targetId) || lookupError)) {
         queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ id: packet.id, error: lookupError ?? { code: -32602, message: 'No target with given id found' } }))));
+        return;
+      }
+      if (missingCursor && packet.method === 'Runtime.callFunctionOn' && packet.params.functionDeclaration.startsWith('function MATRIX_CLEAR_CURSOR')) {
+        queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ id: packet.id, error: { code: -32000, message: 'Could not find object with given id' } }))));
         return;
       }
       if (packet.method === 'Browser.setDownloadBehavior') downloadPath = packet.params.downloadPath ?? '';
@@ -58,7 +62,7 @@ function chrome() {
   const fetcher = vi.fn(async () => Response.json({ webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/browser/test-123' }));
   return { messages, fetcher, socketFactory: () => (socket = new Socket()), raw: (value: unknown) => socket.emit('message', Buffer.from(typeof value === 'string' ? value : JSON.stringify(value))), event: (method: string, params = {}, sessionId = 'agent-session') => socket.emit('message', Buffer.from(JSON.stringify({ method, params, sessionId }))),
     setUrl(value: string) { url = value; }, setHandoff(value: boolean) { handoff = value; }, skip(value: string) { skip = value; }, enableDownloads() { downloads = true; return original; },
-    closeTarget(id: string) { missing.add(id); }, failLookup(error?: { code: number; message: string }) { lookupError = error; }, failNavigation() { navigationError = true; }, disconnect() { socket.close(); } };
+    closeTarget(id: string) { missing.add(id); }, failLookup(error?: { code: number; message: string }) { lookupError = error; }, failNavigation() { navigationError = true; }, failCursor() { missingCursor = true; }, disconnect() { socket.close(); } };
 }
 async function rig(commandTimeoutMs?:number) {
   const homePath = await mkdtemp(join(tmpdir(), 'shared-cdp-')); homes.push(homePath);
@@ -86,6 +90,14 @@ describe('shared owner Chrome CDP driver', () => {
     expect(fake.messages.some(row=>row.method==='Runtime.evaluate' && row.params.expression.includes('MATRIX_CLEAR_CURSOR'))).toBe(true);
     expect(fake.messages.filter(row=>row.method==='Runtime.callFunctionOn' && row.params.arguments?.[2]?.value==='click')).toHaveLength(1);
     fake.skip('');await driver.detach();
+  });
+  it('releases owner input after navigation invalidates the decorated document', async () => {
+    const { driver, fake, signal } = await rig();
+    const observed = await driver.execute({ action: 'snapshot' }, signal);
+    await driver.execute({ action: 'click', observationId: observed.observationId!, ref: 'r1' }, signal);
+    fake.failCursor(); driver.invalidateObservation();
+    await expect(driver.detach()).resolves.toBeUndefined();
+    expect(fake.messages.some(row => row.method === 'Target.detachFromTarget')).toBe(true);
   });
   it('clears the painted agent pointer on observation invalidation before detaching for owner input',async()=>{
     const {driver,fake,signal}=await rig();const observed=await driver.execute({action:'snapshot'},signal);
