@@ -14,21 +14,20 @@ const state = vi.hoisted(() => {
   };
 });
 
-describe("ENG-288 capacity-based resource monitoring", () => {
+describe.each([[1.5, 1, 67], [0.5, 0.25, 50]] as const)("ENG-288 load normalization with capacity %s", (capacity, load, percent) => {
   beforeEach(() => {
-    Object.assign(state, fixtures({ visibleLogicalCpuCount: 8, effectiveCpuCapacity: 1.5, constraintStatus: "complete" }));
+    Object.assign(state, fixtures({ visibleLogicalCpuCount: 8, effectiveCpuCapacity: capacity, constraintStatus: "complete" }));
+    (state.snapshot.resources as { cpu: { load1: number } }).cpu.load1 = load;
   });
-
-  it("normalizes Resource Manager load against fractional effective capacity", async () => {
+  it("uses fractional effective capacity in Resource Manager", async () => {
     const { container } = render(<ResourceManager />);
-    await waitFor(() => expect(container.textContent).toContain("1.00 load"));
+    await waitFor(() => expect(container.textContent).toContain(`${load.toFixed(2)} load`));
     const bar = container.querySelector<HTMLElement>('[aria-label="CPU usage"] .bar');
-    expect(bar?.style.width).toBe("67%");
+    expect(bar?.style.width).toBe(`${percent}%`);
   });
-
-  it("normalizes Web Activity Monitor load against the same effective capacity", () => {
+  it("uses fractional effective capacity in Web Activity Monitor", () => {
     const { container } = render(<ActivityMonitorApp />);
-    expect(container.textContent).toContain("67%");
+    expect(container.textContent).toContain(`${percent}%`);
   });
 });
 vi.mock("../../desktop/src/renderer/src/stores/connection", () => ({

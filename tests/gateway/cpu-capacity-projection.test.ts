@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as contracts from "@matrix-os/contracts";
 
+const fixture = vi.hoisted(() => ({ affinity: 4, quota: "max 100000\n", quotaUnavailable: false }));
 const constraints = vi.hoisted(() => ({
   "/proc/self/cgroup": "0::/\n",
   "/proc/self/status": "Cpus_allowed_list:\t0-3\n",
@@ -18,8 +19,9 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...fs,
     readFileSync: (path: Parameters<typeof fs.readFileSync>[0], ...args: unknown[]) => {
-      const fixture = constraints[String(path) as keyof typeof constraints];
-      if (fixture !== undefined) return fixture;
+      if (String(path) === "/sys/fs/cgroup/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("fixture unavailable"), { code: "EACCES" });
+      const content = constraints[String(path) as keyof typeof constraints];
+      if (content !== undefined) return content;
       return Reflect.apply(fs.readFileSync, fs, [path, ...args]);
     },
   };
@@ -29,8 +31,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...fs,
     readFile: async (path: Parameters<typeof fs.readFile>[0], ...args: unknown[]) => {
-      const fixture = constraints[String(path) as keyof typeof constraints];
-      if (fixture !== undefined) return fixture;
+      if (String(path) === "/sys/fs/cgroup/cpu.max" && fixture.quotaUnavailable) throw Object.assign(new Error("fixture unavailable"), { code: "EACCES" });
+      const content = constraints[String(path) as keyof typeof constraints];
+      if (content !== undefined) return content;
       return Reflect.apply(fs.readFile, fs, [path, ...args]);
     },
   };
@@ -46,7 +49,7 @@ vi.mock("../../packages/gateway/src/collaboration/config.js", () => ({
 vi.mock("node:os", async (importOriginal) => ({
   ...await importOriginal<typeof import("node:os")>(),
   cpus: () => Array.from({ length: 8 }, () => ({ model: "fixture", speed: 0, times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 } })),
-  availableParallelism: () => 4,
+  availableParallelism: () => fixture.affinity,
 }));
 
 // Process fixtures, not customer observations. Keep collection local and bounded.
@@ -60,6 +63,15 @@ vi.mock("node:child_process", async () => {
 import { getSystemInfo } from "../../packages/gateway/src/system-info.js";
 import { collectSystemActivity } from "../../packages/gateway/src/system-activity/collector.js";
 import { CleanupCandidateRegistry } from "../../packages/gateway/src/system-activity/cleanup.js";
+
+beforeEach(() => {
+  fixture.affinity = 4;
+  fixture.quota = "max 100000\n";
+  fixture.quotaUnavailable = false;
+  constraints["/proc/self/status"] = "Cpus_allowed_list:\t0-3\n";
+  constraints["/sys/fs/cgroup/cpu.max"] = fixture.quota;
+  constraints["/sys/fs/cgroup/cpuset.cpus.effective"] = "0-3\n";
+});
 
 let home: string | undefined;
 afterEach(() => {
@@ -85,7 +97,16 @@ describe("ENG-288 system info and activity CPU projections", () => {
     expect(derivation).toHaveBeenCalledTimes(2);
   });
 
-  it("publishes the same explicit capacity observation in both live projections", async () => {
+  it.each([
+    ["affinity", 4, "max 100000\n", false, 4],
+    ["quota only", 8, "150000 100000\n", false, 1.5],
+    ["unreadable quota", 8, "max 100000\n", true, null],
+  ] as const)("publishes matching capacity for %s", async (_name, affinity, quota, unavailable, effective) => {
+    fixture.affinity = affinity;
+    fixture.quotaUnavailable = unavailable;
+    constraints["/proc/self/status"] = `Cpus_allowed_list:\t0-${affinity - 1}\n`;
+    constraints["/sys/fs/cgroup/cpuset.cpus.effective"] = `0-${affinity - 1}\n`;
+    constraints["/sys/fs/cgroup/cpu.max"] = quota;
     home = mkdtempSync(join(tmpdir(), "eng-288-"));
     const info = getSystemInfo(home);
     const activity = await collectSystemActivity({
@@ -100,8 +121,8 @@ describe("ENG-288 system info and activity CPU projections", () => {
     expect(activity.resources.cpu.cores).toBe(8);
     expect(infoResources.cpuCapacity).toEqual({
       visibleLogicalCpuCount: 8,
-      effectiveCpuCapacity: 4,
-      constraintStatus: "complete",
+      effectiveCpuCapacity: effective,
+      constraintStatus: unavailable ? "unavailable" : "complete",
     });
     expect(activityCpu.capacity).toEqual(infoResources.cpuCapacity);
   });
