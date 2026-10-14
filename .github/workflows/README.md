@@ -126,8 +126,8 @@ OTA payloads.
 | `review-receipt.yml` | Records the base each Greptile-reviewed commit forked from, for `scripts/review/review-carryover.mjs` | Greptile summary comments on PRs | No; merge-readiness tooling reads it |
 
 Full PR validation runs on every non-draft PR head: opening a ready PR, marking a draft ready
-for review, pushing, reopening and retargeting the base all run core CI and Docker
-classification. Labels never start or gate it. Keep a PR as a draft while it is still being
+for review, pushing and reopening run core CI and Docker classification; retargeting the base
+reruns core CI only. Labels never start or gate it. Keep a PR as a draft while it is still being
 reviewed to avoid CI on every intermediate push. Drafts and title or body edits publish no
 `CI Results` check at all, so the required check shows as expected rather than red; a draft
 cannot be merged. Reviewers must use the checks attached to the exact head SHA rather than an
