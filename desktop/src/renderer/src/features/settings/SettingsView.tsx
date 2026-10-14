@@ -119,7 +119,9 @@ export function SettingsSidebar({
 export default function SettingsView({
   section: controlledSection,
   onSectionChange,
+  automaticCreditRefreshEnabled = false,
 }: {
+  automaticCreditRefreshEnabled?: boolean;
   section?: SettingsSectionId;
   onSectionChange?: (section: SettingsSectionId) => void;
 } = {}) {
@@ -150,7 +152,7 @@ export default function SettingsView({
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "organization" ? <OrganizationSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
-          {section === "agents-providers" ? <AgentsProvidersAdapter /> : null}
+          {section === "agents-providers" ? <AgentsProvidersAdapter automaticCreditRefreshEnabled={automaticCreditRefreshEnabled} /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
           {section === "services" ? <IntegrationsSettingsSection /> : null}
           {section === "mcps" ? <McpServersSection /> : null}

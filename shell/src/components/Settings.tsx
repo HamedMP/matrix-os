@@ -414,7 +414,7 @@ function SettingsFrame({
               {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "organization" && <OrganizationSection />}
               {activeSection === "agents-providers" && (
-                <AgentSection onOpenTerminal={onOpenProviderTerminalSession} />
+                <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}
