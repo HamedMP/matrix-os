@@ -23,7 +23,7 @@ import {
   seedProjectCommand,
   type RemoteCommand,
 } from "../../packages/sync-client/src/cli/handoff/remote-scripts.js";
-import { git, TEST_GIT_ENV as GIT_ENV } from "./handoff-test-git.js";
+import { assertGatewayRunBody, git, TEST_GIT_ENV as GIT_ENV } from "./handoff-test-git.js";
 
 const exec = promisify(execFile);
 
@@ -37,6 +37,7 @@ function nextId(): string {
 }
 
 async function runRemote(command: RemoteCommand): Promise<Record<string, string>> {
+  assertGatewayRunBody(command);
   const [bin, ...args] = command.command;
   const { stdout } = await exec(bin!, args, { cwd: home, env: { ...process.env, ...GIT_ENV }, timeout: 60_000 });
   return parseScriptOutput(stdout);

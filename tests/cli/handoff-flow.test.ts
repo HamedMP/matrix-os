@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HandoffApiError, type HandoffGateway, type ProviderInstance } from "../../packages/sync-client/src/cli/handoff/gateway-api.js";
 import type { MatrixProject } from "../../packages/sync-client/src/cli/handoff/project-match.js";
 import { runHandoff, type HandoffDeps, type HandoffInput } from "../../packages/sync-client/src/cli/handoff/run-handoff.js";
-import { git, TEST_GIT_ENV } from "./handoff-test-git.js";
+import { assertGatewayRunBody, git, TEST_GIT_ENV } from "./handoff-test-git.js";
 
 const exec = promisify(execFile);
 
@@ -20,7 +20,7 @@ const CODEX: ProviderInstance = {
   driverKind: "codex",
   displayName: "Codex",
   availability: "available",
-  models: [{ id: "gpt-5.6-sol", availability: "available" }],
+  models: [{ id: "gpt-5.6-sol", availability: "available" }, { id: "gpt-6-sol", availability: "available" }, { id: "gpt-6-old", availability: "unavailable" }],
   setupActions: [],
   supports: { interactionModes: ["default", "review"], permissionModes: ["supervised", "auto_accept_edits", "auto", "full_access"] },
   defaultSelection: { model: "gpt-5.6-sol", options: [{ id: "effort", value: "low" }] },
@@ -99,6 +99,7 @@ function fakeGateway(state: FakeState): HandoffGateway {
       state.turns.push({ chatId, body });
     },
     async run(command) {
+      assertGatewayRunBody(command);
       const [bin, ...args] = command.command;
       const { stdout, stderr } = await exec(bin!, args, { cwd: home, env: { ...process.env, ...TEST_GIT_ENV }, timeout: 60_000 });
       return { stdout, stderr, exitCode: 0 };
@@ -236,6 +237,16 @@ describe("runHandoff", () => {
     const second = await runHandoff(input(), deps(state, { now: () => new Date("2026-10-14T12:50:00Z") }), yes);
     expect(second.result!.projectSlug).toBe(slug);
     expect(state.calls.filter((call) => call.startsWith("createProject"))).toHaveLength(2);
+  });
+
+  it("uses a requested model and rejects one the agent does not offer", async () => {
+    const state: FakeState = { projects: [], githubAuth: true, chats: [], turns: [], calls: [] };
+    const { result } = await runHandoff(input({ model: "gpt-6-sol" }), deps(state), yes);
+    expect(result).not.toBeNull();
+    expect(state.turns[0]!.body).toMatchObject({ selection: { instanceId: "codex_default", model: "gpt-6-sol" } });
+    for (const model of ["gpt-6.1-sol", "gpt-6-old"]) {
+      await expect(runHandoff(input({ model }), deps(state), yes)).rejects.toMatchObject({ code: "invalid_model" });
+    }
   });
 
   it("stops before uploading when the agent is not signed in on Matrix", async () => {

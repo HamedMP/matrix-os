@@ -59,6 +59,7 @@ export interface HandoffInput {
   title?: string;
   history: "auto" | "none" | { path: string; harness: "codex" | "claude" };
   permissionMode?: string;
+  model?: string;
   approvalToken?: string;
   gatewayUrl: string;
 }
@@ -118,9 +119,12 @@ function safeTitle(input: string | undefined, fallback: string): string {
   return title || "Matrix handoff";
 }
 
-export function chooseSelection(instance: ProviderInstance, requestedPermission?: string) {
-  const model = instance.defaultSelection?.model
-    ?? instance.models.find((candidate) => (candidate.availability ?? "available") === "available")?.id;
+export function chooseSelection(instance: ProviderInstance, requestedPermission?: string, requestedModel?: string) {
+  const available = instance.models.filter((candidate) => (candidate.availability ?? "available") === "available").map((candidate) => candidate.id);
+  if (requestedModel && !available.includes(requestedModel)) {
+    throw new HandoffError(`Model must be one of: ${available.join(", ") || "none available"}.`, "invalid_model");
+  }
+  const model = requestedModel ?? instance.defaultSelection?.model ?? available[0];
   if (!model) throw new HandoffError(`${instance.displayName ?? instance.id} has no available model in Matrix.`, "model_unavailable");
   const interactionModes = instance.supports?.interactionModes ?? [];
   const permissionModes = instance.supports?.permissionModes ?? [];
@@ -249,7 +253,7 @@ export async function runHandoff(
 
   const [projects, instances] = await Promise.all([deps.gateway.listProjects(), deps.gateway.providerCatalog()]);
   const instance = readyInstance(instances, input.agent);
-  const { selection, interactionMode, permissionMode } = chooseSelection(instance, input.permissionMode);
+  const { selection, interactionMode, permissionMode } = chooseSelection(instance, input.permissionMode, input.model);
   const match = findMatchingProject(projects, { github: repo.github, fallbackSlug });
   const project: ProjectPlan = match
     ? { action: "reuse", project: match }
