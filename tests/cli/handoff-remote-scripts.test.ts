@@ -225,6 +225,14 @@ describe("handoff remote scripts", () => {
     expect(await apply(p, matrixRepo, side)).toMatchObject({ result: "ok" });
     expect(await readFile(join(side, "app.ts"), "utf8")).toBe("local wip\n");
 
+    // Staged edits hidden behind a matching working copy are foreign too.
+    await writeFile(join(side, "app.ts"), "staged by someone\n");
+    await git(side, "add", "app.ts");
+    await writeFile(join(side, "app.ts"), "local wip\n");
+    expect(await integrate(p, matrixRepo)).toMatchObject({ result: "side_branch_conflict" });
+    expect(await apply(p, matrixRepo, side)).toMatchObject({ result: "checkout_dirty" });
+    await git(side, "reset", "-q", "app.ts");
+
     // Anything else on the side branch is a conflict, never overwritten.
     await writeFile(join(side, "app.ts"), "edited after handoff\n");
     expect(await integrate(p, matrixRepo)).toMatchObject({ result: "side_branch_conflict" });

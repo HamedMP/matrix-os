@@ -40,7 +40,7 @@ let origin: string;
 let local: string;
 
 interface FakeState {
-  projects: (MatrixProject & { createdBy?: string })[];
+  projects: MatrixProject[];
   failNextTurn?: boolean;
   githubAuth: boolean;
   chats: { id: string; body: unknown }[];
@@ -58,19 +58,19 @@ function fakeGateway(state: FakeState): HandoffGateway {
       state.calls.push(`createProject:${String(body.mode)}`);
       const slug = String(body.slug);
       const existing = state.projects.find((project) => project.slug === slug);
-      if (existing && existing.createdBy === body.clientRequestId) return existing;
+      if (existing && existing.createRequestId === body.clientRequestId) return existing;
       if (existing) throw new HandoffApiError("conflict", 409, "slug_conflict");
       if (body.mode === "github") {
         if (!state.githubAuth) throw new HandoffApiError("auth", 424, "github_auth_required");
         const localPath = join(home, "projects", slug, "repo");
         await mkdir(join(home, "projects", slug), { recursive: true });
         await git(root, "clone", "-q", origin, localPath);
-        const project = { id: `proj_${slug}`, slug, name: String(body.name), kind: "github", localPath, github: { owner: "acme", repo: "app" }, createdBy: String(body.clientRequestId) };
+        const project = { id: `proj_${slug}`, slug, name: String(body.name), kind: "github", localPath, github: { owner: "acme", repo: "app" }, createRequestId: String(body.clientRequestId) };
         state.projects.push(project);
         return project;
       }
       const localPath = await realpath(join(home, String(body.path)));
-      const project = { id: `proj_${slug}`, slug, name: String(body.name), kind: "folder", localPath, createdBy: String(body.clientRequestId) };
+      const project = { id: `proj_${slug}`, slug, name: String(body.name), kind: "folder", localPath, createRequestId: String(body.clientRequestId) };
       state.projects.push(project);
       return project;
     },
@@ -264,6 +264,39 @@ describe("runHandoff", () => {
       await expect(runHandoff(input({ ...other, approvalToken: preview.approvalToken }), deps(state), yes)).rejects.toMatchObject({ code: "scope_changed" });
     }
     expect(state.calls.some((call) => call.startsWith("createProject") || call === "upload")).toBe(false);
+  });
+
+  it("rejects an approval whose previewed project disappeared or was replaced", async () => {
+    const state: FakeState = { projects: [], githubAuth: true, chats: [], turns: [], calls: [] };
+    await runHandoff(input(), deps(state), yes); // creates project "app"
+    const { preview } = await runHandoff(input({ brief: "next" }), deps(state, { now: () => new Date("2026-10-14T13:00:00Z") }), async () => false);
+    expect(preview.project).toMatchObject({ action: "reuse", project: { id: "proj_app" } });
+    state.projects[0]!.archivedAt = "2026-10-14T13:01:00Z";
+    await expect(runHandoff(input({ brief: "next", approvalToken: preview.approvalToken }), deps(state), yes)).rejects.toMatchObject({ code: "scope_changed" });
+
+    // A create approval does not adopt a matching project someone else made.
+    const fresh: FakeState = { projects: [], githubAuth: true, chats: [], turns: [], calls: [] };
+    const created = await runHandoff(input(), deps(fresh), async () => false);
+    fresh.projects.push({ id: "proj_other", slug: "app", name: "app", kind: "github", localPath: "/elsewhere", github: { owner: "acme", repo: "app" }, createRequestId: "req_someone_else" });
+    await expect(runHandoff(input({ approvalToken: created.preview.approvalToken }), deps(fresh), yes)).rejects.toMatchObject({ code: "scope_changed" });
+  });
+
+  it("rejects an approval after the transcript changed in place with the same length", async () => {
+    const state: FakeState = { projects: [], githubAuth: true, chats: [], turns: [], calls: [] };
+    const transcriptPath = join(root, "same-size.jsonl");
+    await writeFile(transcriptPath, "{\"a\":1}\n");
+    const { stat: statFile } = await import("node:fs/promises");
+    const discover = async () => {
+      const info = await statFile(transcriptPath, { bigint: true });
+      return { path: transcriptPath, harness: "codex" as const, bytes: Number(info.size), modifiedMs: 1, capture: { size: Number(info.size), dev: info.dev, ino: info.ino } };
+    };
+    const { preview } = await runHandoff(input({ history: "auto" }), deps(state, { discoverTranscript: discover }), async () => false);
+    expect(preview.transcript?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    const { open: openFile } = await import("node:fs/promises");
+    const handle = await openFile(transcriptPath, "r+");
+    await handle.write("2", 5); // {"a":2}\n, same inode and length
+    await handle.close();
+    await expect(runHandoff(input({ history: "auto", approvalToken: preview.approvalToken }), deps(state, { discoverTranscript: discover }), yes)).rejects.toMatchObject({ code: "scope_changed" });
   });
 
   it("lets the same approval finish after a failure that followed project creation", async () => {

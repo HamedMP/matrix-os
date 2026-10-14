@@ -25,6 +25,7 @@ const ProjectSchema = z.object({
   github: z.object({ owner: z.string().max(100), repo: z.string().max(100) }).optional(),
   archivedAt: z.string().max(64).optional(),
   deletingAt: z.string().max(64).optional(),
+  createRequestId: z.string().max(160).optional(),
 });
 const ProjectListSchema = z.object({ projects: z.array(ProjectSchema).max(5000) });
 const ProjectEnvelopeSchema = z.object({ project: ProjectSchema });

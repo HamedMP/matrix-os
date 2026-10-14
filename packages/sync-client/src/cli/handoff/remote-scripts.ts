@@ -71,6 +71,8 @@ state_tree() {
 foreign_dirty() {
   [ -n "$(git -C "$1" status --porcelain)" ] || return 1
   [ -n "\${snapshot:-}" ] || return 0
+  # A handoff never stages anything, so any staged change is someone else's.
+  git -C "$1" diff --cached --quiet || return 0
   [ "$(git -C "$1" rev-parse HEAD)" = "$head" ] || return 0
   [ "$(state_tree "$1")" != "$(git -C "$1" rev-parse "$snapshot^{tree}")" ]
 }

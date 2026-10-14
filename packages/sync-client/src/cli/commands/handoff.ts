@@ -204,6 +204,9 @@ export const handoffCommand = defineCommand({
             try {
               const signal = AbortSignal.timeout(10 * 60_000);
               const transcript = await source.preview(choice.harness, signal);
+              if (!choice.sha256 || transcript.sourceHash !== choice.sha256) {
+                throw new HandoffError("The transcript changed since the preview. Run the preview again and approve its new token.", "source_changed");
+              }
               const transport = createLocalChatHttpTransport({ baseUrl: profile.gatewayUrl, headers: () => ({ authorization: `Bearer ${token}` }) });
               const imported = await uploadLocalChatArchive({
                 harness: choice.harness,
