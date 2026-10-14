@@ -8,6 +8,33 @@ const cookie = `matrix_app_session__browser-lab=${payload}.synthetic; Path=/apps
 const renewal = { url: "/api/apps/browser-lab/session", init: { method: "POST" as const, body: "{}" } };
 
 describe("native Browser product session renewal", () => {
+  it("finishes stale cookie cleanup before a newer login installs its cookie", async () => {
+    let finishOldSet!: () => void;
+    const oldSet = new Promise<void>(resolve => { finishOldSet = resolve; });
+    let storedValue: string | null = null;
+    let setCount = 0;
+    const jar = {
+      set: vi.fn(async ({ value }: { value: string }) => {
+        if (++setCount === 1) await oldSet;
+        storedValue = value;
+      }),
+      remove: vi.fn(async () => { storedValue = null; }),
+    };
+    let oldIsCurrent = true;
+    const oldInstall = installBrowserProductSessionCookie([cookie], "https://gateway.test", () => oldIsCurrent, jar);
+    await vi.waitFor(() => expect(jar.set).toHaveBeenCalledTimes(1));
+    oldIsCurrent = false;
+    const newCookie = cookie.replace(".synthetic", ".renewed");
+    const newInstall = installBrowserProductSessionCookie([newCookie], "https://gateway.test", () => true, jar);
+    await Promise.resolve();
+    expect(jar.set).toHaveBeenCalledTimes(1);
+    finishOldSet();
+    await expect(oldInstall).rejects.toThrow("browser session changed");
+    await expect(newInstall).resolves.toBeUndefined();
+    expect(jar.remove).toHaveBeenCalledTimes(1);
+    expect(storedValue).toBe(newCookie.split("=")[1]!.split(";")[0]);
+  });
+
   it.each(["matrix-browser", "matrix-cloud-desktop"])("renews only %s on the lab route and installs cookie before returning", async identity => {
     const install = vi.fn(async () => {});
     const fetchFn = vi.fn(async () => Response.json({ expiresAt: Date.now() + 600_000 }, { headers: { "set-cookie": cookie } }));
