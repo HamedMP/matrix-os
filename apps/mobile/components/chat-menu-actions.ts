@@ -29,6 +29,10 @@ interface MenuTarget {
   text: string | null;
 }
 
+// The latest copy or share chosen from any chat menu. Only its result is
+// shown, so a slow earlier one cannot replace it.
+let latestAttempt = 0;
+
 /** A light tap of feedback as the menu opens. */
 export function chatMenuOpenHaptic(): void {
   void Promise.resolve(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)).catch((error: unknown) => {
@@ -49,38 +53,47 @@ export function useChatMenuActions(chatId: string | null, text: string | null): 
     return () => { shown.current = null; };
   }, [chatId, text]);
 
-  // Each action checks, when chosen, that its message is still the one shown.
-  const ifShown = (run: () => Promise<void>) => () => {
-    if (shown.current?.chatId === chatId && shown.current?.text === text) void run();
+  // Each action checks, when chosen, that its message is still the one shown,
+  // and again before it tells the person how it went.
+  const ifShown = (run: (current: () => boolean) => Promise<void>) => () => {
+    const isShown = () => shown.current?.chatId === chatId && shown.current?.text === text;
+    if (!isShown()) return;
+    const attempt = ++latestAttempt;
+    void run(() => attempt === latestAttempt && isShown());
   };
   return [
     ...(text ? [
-      { id: "copy-text" as const, label: "Copy text", onSelect: ifShown(() => copy(text, "text")) },
-      { id: "share" as const, label: "Share", text, onSelect: ifShown(() => share(text)) },
+      { id: "copy-text" as const, label: "Copy text", onSelect: ifShown((current) => copy(text, "text", current)) },
+      { id: "share" as const, label: "Share", text, onSelect: ifShown((current) => share(text, current)) },
     ] : []),
     ...(chatId ? [
-      { id: "copy-chat-id" as const, label: "Copy chat ID", onSelect: ifShown(() => copy(chatId, "chat ID")) },
+      {
+        id: "copy-chat-id" as const,
+        label: "Copy chat ID",
+        onSelect: ifShown((current) => copy(chatId, "chat ID", current)),
+      },
     ] : []),
   ];
 }
 
-async function copy(value: string, what: "text" | "chat ID") {
+/** `current` says whether the result still belongs on screen. */
+async function copy(value: string, what: "text" | "chat ID", current: () => boolean) {
   try {
     const copied = await Clipboard.setStringAsync(value);
     if (copied === false) throw new Error("Clipboard unavailable");
-    showToast(what === "text" ? "Text copied" : "Chat ID copied");
+    if (current()) showToast(what === "text" ? "Text copied" : "Chat ID copied");
   } catch (error: unknown) {
     // The platform's own words can name internals; the person gets ours.
     console.warn("[chat] Clipboard copy failed", error instanceof Error ? error.name : "UnknownError");
-    showToast(`Could not copy ${what}. Try again.`, "error");
+    if (current()) showToast(`Could not copy ${what}. Try again.`, "error");
   }
 }
 
-async function share(text: string) {
+async function share(text: string, current: () => boolean) {
   try {
     await Share.share({ message: text });
   } catch (error: unknown) {
     console.warn("[chat] Share failed", error instanceof Error ? error.name : "UnknownError");
-    showToast("Could not share. Try again.", "error");
+    if (current()) showToast("Could not share. Try again.", "error");
   }
 }

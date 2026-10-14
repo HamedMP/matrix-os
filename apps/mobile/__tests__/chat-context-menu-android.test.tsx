@@ -144,6 +144,41 @@ describe("ChatContextMenu on Android", () => {
     await waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat_new"));
   });
 
+  it("says nothing about a copy that ends after its chat has left the screen", async () => {
+    let finish!: (copied: boolean) => void;
+    jest.spyOn(Clipboard, "setStringAsync").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const view = renderMenu({ chatId: "chat_old" });
+
+    press(openMenu(alert).buttons, "Copy chat ID");
+    view.rerender(
+      <>
+        <ChatContextMenu chatId="chat_new">{row()}</ChatContextMenu>
+        <ToastHost />
+      </>,
+    );
+    await act(async () => finish(true));
+
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat_old");
+    expect(screen.queryByTestId("toast")).toBeNull();
+  });
+
+  it("shows only the latest copy's result when an earlier one ends after it", async () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    let failFirst!: (error: Error) => void;
+    jest.spyOn(Clipboard, "setStringAsync")
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { failFirst = reject; }))
+      .mockResolvedValueOnce(true);
+    renderMenu({ chatId: "chat_1", messageText: REPLY });
+
+    press(openMenu(alert).buttons, "Copy text");
+    press(openMenu(alert).buttons, "Copy chat ID");
+    await waitFor(() => expect(screen.getByText("Chat ID copied")).toBeTruthy());
+    await act(async () => failFirst(new Error("slow failure")));
+
+    expect(screen.getByText("Chat ID copied")).toBeTruthy();
+    expect(screen.queryByText("Could not copy text. Try again.")).toBeNull();
+  });
+
   it("does nothing from a menu whose row has gone", async () => {
     const view = renderMenu({ chatId: "chat_1", messageText: REPLY });
     const { buttons } = openMenu(alert);

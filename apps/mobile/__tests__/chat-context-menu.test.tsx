@@ -127,6 +127,19 @@ describe("ChatContextMenu on iOS", () => {
     await waitFor(() => expect(screen.getByText("Could not copy chat ID. Try again.")).toBeTruthy());
   });
 
+  it("says nothing about a copy that ends after its message has gone", async () => {
+    let finish!: (copied: boolean) => void;
+    jest.spyOn(Clipboard, "setStringAsync").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const view = renderMenu({ chatId: "chat_1", messageText: REPLY });
+
+    fireEvent.press(menuItem(screen.getByTestId("row"), "Copy text"));
+    view.rerender(<ToastHost />);
+    await act(async () => finish(true));
+
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(REPLY);
+    expect(screen.queryByTestId("toast")).toBeNull();
+  });
+
   it("gives what it opens on the width of its row, as SwiftUI does not", () => {
     renderMenu({ chatId: "chat_1", messageText: REPLY });
 
