@@ -108,7 +108,7 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     if (typeof child !== 'string' || child.length > 128 || !info || typeof info.targetId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(info.targetId) || children.size >= 16 || childJobs.size >= 16) { handoffRequired = true; invalidateObservation(); return; }
     // Chrome can auto-attach a second session to the page we already own and
     // control. Release only that duplicate; it is not a newly related target.
-    if (child.length > 0 && child !== sessionId && event.sessionId === sessionId
+    if (typeof sessionId === 'string' && sessionId.length > 0 && child.length > 0 && child !== sessionId && event.sessionId === sessionId
       && info.type === 'page' && info.targetId === targetId && owned.has(info.targetId)
       && waitingForDebugger === false) {
       const job = detachSession(child).catch(error => {
@@ -161,7 +161,10 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
   }
   function event(event: CdpEvent) {
     if (event.method === 'Target.targetDestroyed' && owned.has(event.params.targetId)) { forgetTarget(event.params.targetId); return; }
-    const knownSession = event.sessionId === sessionId || !!event.sessionId && children.has(event.sessionId);
+    // A browser-global primary attachment can arrive before its response.
+    // It has no parent session and is not a scoped related-target attachment.
+    const knownSession = typeof event.sessionId === 'string' && event.sessionId.length > 0
+      && (event.sessionId === sessionId || children.has(event.sessionId));
     if (event.method === 'Target.attachedToTarget' && knownSession) { related(event); return; }
     if (event.method === 'Target.detachedFromTarget' && children.has(event.params.sessionId)) {
       const child = children.get(event.params.sessionId)!;

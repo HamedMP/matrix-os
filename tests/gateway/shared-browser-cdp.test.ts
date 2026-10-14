@@ -11,7 +11,7 @@ const fixture = 'http://127.0.0.1:8730/invoices';
 const homes: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
 function chrome() {
-  let url = 'about:blank', handoff = false, snapshotId = '', skip = '', created = 0, downloadPath = '', downloads = false, navigationError = false, missingCursor = false;
+  let url = 'about:blank', handoff = false, snapshotId = '', skip = '', created = 0, downloadPath = '', downloads = false, navigationError = false, missingCursor = false, globalPrimaryAttachEvent = false;
   const missing = new Set<string>();
   let lookupError: { code: number; message: string } | undefined;
   const original = Buffer.from('%PDF-1.4\noriginal CDP invoice fixture\n%%EOF');
@@ -47,6 +47,12 @@ function chrome() {
       }
       const shouldDownload = downloads && downloadPath && packet.method === 'Runtime.callFunctionOn' && packet.params.arguments[2]?.value === 'click';
       queueMicrotask(async () => {
+        if (globalPrimaryAttachEvent && packet.method === 'Target.attachToTarget') {
+          this.emit('message', Buffer.from(JSON.stringify({ method: 'Target.attachedToTarget', params: {
+            sessionId: result.sessionId, waitingForDebugger: false,
+            targetInfo: { targetId: packet.params.targetId, type: 'page', url },
+          } })));
+        }
         if (packet.method === 'Target.detachFromTarget') this.emit('message', Buffer.from(JSON.stringify({ method: 'Target.detachedFromTarget', params: { sessionId: packet.params.sessionId } })));
         if (shouldDownload) {
           await writeFile(join(downloadPath, 'cdp-invoice-guid'), original);
@@ -61,6 +67,7 @@ function chrome() {
   let socket: Socket;
   const fetcher = vi.fn(async () => Response.json({ webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/browser/test-123' }));
   return { messages, fetcher, socketFactory: () => (socket = new Socket()), raw: (value: unknown) => socket.emit('message', Buffer.from(typeof value === 'string' ? value : JSON.stringify(value))), event: (method: string, params = {}, sessionId = 'agent-session') => socket.emit('message', Buffer.from(JSON.stringify({ method, params, sessionId }))),
+    emitPrimaryAttachBeforeAck() { globalPrimaryAttachEvent = true; },
     setUrl(value: string) { url = value; }, setHandoff(value: boolean) { handoff = value; }, skip(value: string) { skip = value; }, enableDownloads() { downloads = true; return original; },
     closeTarget(id: string) { missing.add(id); }, failLookup(error?: { code: number; message: string }) { lookupError = error; }, failNavigation() { navigationError = true; }, failCursor() { missingCursor = true; }, disconnect() { socket.close(); } };
 }
@@ -70,6 +77,25 @@ async function rig(commandTimeoutMs?:number) {
   return { driver, fake, homePath, signal: new AbortController().signal };
 }
 describe('shared owner Chrome CDP driver', () => {
+  it('ignores the global primary attach event before acknowledgement and still releases a later scoped duplicate', async () => {
+    const { driver, fake, signal } = await rig();
+    fake.emitPrimaryAttachBeforeAck();
+    await expect(driver.execute({ action: 'tab_new' }, signal)).resolves.toMatchObject({ success: true, targetId: 'agent-tab' });
+    expect(fake.messages.filter(row => row.method === 'Target.detachFromTarget')).toHaveLength(0);
+    const firstSnapshot = await driver.execute({ action: 'snapshot' }, signal);
+    expect(firstSnapshot).toMatchObject({ success: true, targetId: 'agent-tab' });
+    const start = fake.messages.length;
+    fake.event('Target.attachedToTarget', { sessionId: 'duplicate-session', waitingForDebugger: false,
+      targetInfo: { targetId: 'agent-tab', type: 'page', url: 'about:blank' } });
+    await expect(driver.execute({ action: 'snapshot' }, signal)).resolves.toMatchObject({ success: true, targetId: 'agent-tab' });
+    expect(fake.messages.slice(start).filter(row => row.method === 'Target.detachFromTarget'))
+      .toEqual([expect.objectContaining({ params: { sessionId: 'duplicate-session' } })]);
+    expect(fake.messages.slice(start).filter(row => row.method === 'Page.getFrameTree'))
+      .toEqual([expect.objectContaining({ sessionId: 'agent-session' })]);
+    expect(fake.messages.some(row => row.sessionId === 'duplicate-session')).toBe(false);
+    await driver.detach();
+  });
+
   it('detaches a duplicate auto-attachment to its owned current page and keeps the primary session usable', async () => {
     const { driver, fake, signal } = await rig();
     await driver.execute({ action: 'tab_new' }, signal);
