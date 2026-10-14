@@ -81,8 +81,9 @@ function leaveSharedChatPath(): void {
   }
 }
 
-export function useCanonicalChatState({ initialDraft, initialCollaborationView, navigationScope,navigationGeneration }: {
+export function useCanonicalChatState({ initialDraft, initialChatId, initialCollaborationView, navigationScope,navigationGeneration }: {
   initialDraft?: string | null;
+  initialChatId?: string | null;
   navigationScope?:string;
   navigationGeneration?:string;
   initialCollaborationView?: ChatCollaborationView;
@@ -123,7 +124,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     scope: composerIdentity, candidates: records, authoritativeItems: navigation.items,
     fresh: navigation.fresh, truncated: navigation.truncated,
     missingId: detailError?.scope === navigationIdentity && detailError.notFound ? detailError.chatId : undefined,
-    initialExplicit: Boolean(initialDraft || initialCollaborationView),
+    initialExplicit: Boolean(initialDraft || initialChatId || initialCollaborationView),
+    initialId: !initialDraft && !initialCollaborationView ? initialChatId ?? undefined : undefined,
   });
   const [selectedCollaborationView, setSelectedCollaborationView] = useState<ChatCollaborationView | null>(
     initialCollaborationView ?? null,

@@ -64,6 +64,18 @@ describe("Matrix OS coding-agent plugin", () => {
     }
   });
 
+  it("ships the handoff skill with preview, approval and secret boundaries, mirrored in the repo", async () => {
+    const skill = await readFile(resolve(pluginRoot, "skills/matrix-handoff/SKILL.md"), "utf8");
+    expect(skill).toContain("name: matrix-handoff");
+    expect(skill).toContain("matrix whoami");
+    expect(skill).toContain("matrix handoff --agent");
+    expect(skill).toContain("--approve <token>");
+    expect(skill).toContain("never uploads `.env` files");
+    expect(skill).toContain("Never treat the original request as approval");
+    const repoCopy = await readFile(resolve(pluginRoot, "../../.agents/skills/matrix-handoff/SKILL.md"), "utf8");
+    expect(repoCopy).toBe(skill);
+  });
+
   it("ships a local Codex Chat import skill with preview and owner checks", async () => {
     const skill = await readFile(resolve(pluginRoot, "skills/matrix-chat-import/SKILL.md"), "utf8");
     expect(skill).toContain("name: matrix-chat-import");
