@@ -2,7 +2,7 @@ import { MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import { createSharedFundedProbeCache, fundedProbeCacheKey, SHARED_FUNDED_HEALTH_TTL_MS } from "./ai-funded-shared-probe-cache.js";
 import { sql } from "kysely";
-import { FUNDED_AI_READINESS_TIMEOUTS, IsoTimestampSchema, JEV_MODEL_ID } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, IsoTimestampSchema, JEV_MODEL_ID, ProviderModelReferenceSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { JevProbeRuntimeSchema, probeOwnerFundedJev, probeWithSignal, cancelProbeBody, type JevProbeRuntime, type JevProbeCredentials } from "./ai-funded-jev-probe.js";
@@ -135,7 +135,13 @@ export function createFundedModelProbeService(input: {
   budgetDeadlineMs?: number;
   reserveProbe?: typeof reserveFundedModelProbe;
   credentials?: JevProbeCredentials;
+  bedrockModelIds?: readonly string[];
 }): FundedModelProbeService {
+  const parsedBedrockModels = z.array(ProviderModelReferenceSchema).max(8).safeParse(input.bedrockModelIds ?? []);
+  if (!parsedBedrockModels.success || new Set(parsedBedrockModels.data).size !== parsedBedrockModels.data.length) {
+    throw new Error("Funded AI model probe configuration is invalid");
+  }
+  const bedrockModels = new Set(parsedBedrockModels.data);
   const now = input.now ?? (() => new Date());
   const shared = createSharedFundedProbeCache({ db: input.db, now, dbDeadlineMs: input.budgetDeadlineMs });
   const MAX_KEYS = 128;
@@ -188,7 +194,9 @@ export function createFundedModelProbeService(input: {
         if (/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(call.receiptId ?? "")) {
           console.info(JSON.stringify({ event: "funded_readiness_join", receiptId: call.receiptId!.toLowerCase(),
             ...(entry.probeId ? { probeId: entry.probeId } : {}),
-            modelId: FUNDED_PROBE_MODELS.includes(model as FundedProbeModel) ? model : JEV_MODEL_ID, ready: result.ready }));
+            modelId: model.startsWith("aws_bedrock:") ? model.slice("aws_bedrock:".length)
+              : FUNDED_PROBE_MODELS.includes(model as FundedProbeModel) ? model : JEV_MODEL_ID,
+            ready: result.ready }));
         }
         if (entry.waiters.size === 0 && inFlight.get(model) === entry) {
           inFlight.delete(model);
@@ -208,22 +216,28 @@ export function createFundedModelProbeService(input: {
   }
   return {
     async readCached(modelId, call = {}) {
-      if (!enabled || !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel)) return unavailable();
+      const requestedBedrock = call.upstream === "aws_bedrock";
+      const bedrock = requestedBedrock && bedrockModels.has(modelId);
+      if (!enabled || (requestedBedrock
+        ? !bedrock
+        : !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel))) return unavailable();
       const deadline = Math.min(call.deadlineAtMs ?? Date.now() + 1500, Date.now() + 1500);
       if (deadline <= Date.now() || call.signal?.aborted) return unavailable();
       const signal = AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(deadline - Date.now())]);
-      const key = fundedProbeCacheKey({ modelId, relayOrigin: base!.origin,
+      const key = fundedProbeCacheKey({ modelId: bedrock ? `aws_bedrock:${modelId}` : modelId, relayOrigin: base!.origin,
         controlToken: input.relayControlToken!, dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit! });
       return shared.readCached(key, signal, unavailable);
     },
     async probe(modelId, call = {}) {
       const runtime = modelId === JEV_MODEL_ID ? JevProbeRuntimeSchema.safeParse(call.runtime).data : undefined;
+      const requestedBedrock = call.upstream === "aws_bedrock";
+      const bedrock = requestedBedrock && bedrockModels.has(modelId);
       if (!enabled || (modelId === JEV_MODEL_ID ? !runtime || !input.credentials
-        : !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel))) return unavailable();
+        : requestedBedrock ? !bedrock : !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel))) return unavailable();
       if (call.signal?.aborted || (call.deadlineAtMs !== undefined && call.deadlineAtMs <= Date.now())) return unavailable();
       const model = runtime ? JSON.stringify([JEV_MODEL_ID, runtime.identity.ownerId, runtime.identity.machineId,
         runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision])
-        : call.upstream === "aws_bedrock" ? `aws_bedrock:${modelId}` : modelId;
+        : bedrock ? `aws_bedrock:${modelId}` : modelId;
       const windowMs = runtime ? FUNDED_AI_READINESS_TIMEOUTS.jevRouteMs : FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs;
       const cached = runtime ? cache.get(model) : undefined;
       if (cached && Date.parse(cached.staleAfter) > now().getTime()) return cached;

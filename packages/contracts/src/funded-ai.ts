@@ -40,6 +40,7 @@ export const FundedAiUpstreamPreferenceViewSchema = FundedAiUpstreamPreferenceSc
 }).strict();
 
 export const FundedAiUpstreamPreferenceUpdateRequestSchema = z.object({
+  idempotencyKey: canonicalReferenceId(128),
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1),
   selectedUpstream: FundedAiUpstreamPreferenceValueSchema,
 }).strict();

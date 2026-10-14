@@ -31,9 +31,10 @@ allowlists.
   price review, and authenticated readiness result are all required before the
   platform can resolve Bedrock. Missing, invalid, stale, unauthorized, or
   unhealthy state resolves to Cloudflare.
-- Preference writes use optimistic revision checks and persist the preference
-  and its content-free audit event in one transaction. Renderers receive only
-  the platform projection; they never derive cohort membership or readiness.
+- Preference writes use optimistic revision checks and a bounded idempotency
+  key, and persist the preference plus its content-free replay/audit event in
+  one transaction. Renderers receive only the platform projection; they never
+  derive cohort membership or readiness.
 - The relay route JSON is operator configuration. It binds one client model ID
   to one canonical Matrix model, resolved Bedrock model/inference profile,
   region, context/output ceilings, and a time-bounded reviewed integer price
@@ -53,6 +54,12 @@ allowlists.
   request ID. Prompts, tool arguments, generated content, credentials, raw AWS
   errors, endpoints, account IDs, and response bodies are never stored as
   provenance or returned in client errors.
+- Explicit Bedrock readiness accepts only the validated bounded Bedrock model
+  list and fails closed without an exact configured route. Cloudflare health
+  can never establish Bedrock readiness.
+- A complete pre-stream zero-usage rejection carries the already-resolved
+  content-free upstream evidence into exact settlement, so route-bound holds
+  cannot be stranded by provenance validation.
 
 ## Auth matrix
 

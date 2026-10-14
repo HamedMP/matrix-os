@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
   FundedAiUpstreamPreferenceSchema,
   FundedAiUpstreamPreferenceValueSchema,
@@ -61,6 +61,7 @@ export function loadAiFundedUpstreamPreferenceConfig(
 const SetPreferenceSchema = z.object({
   ownerId: OwnerIdSchema,
   actorOwnerId: OwnerIdSchema,
+  idempotencyKey: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1),
   selectedUpstream: FundedAiUpstreamPreferenceValueSchema,
 }).strict();
@@ -86,14 +87,12 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
   selectionSecret: string;
   probeBedrock: (modelId: string) => Promise<FundedBedrockProbeResult>;
   now?: () => Date;
-  eventIdFactory?: () => string;
 }) {
   if (!options.db?.kysely || options.selectionSecret.length < 32 || !options.config?.enabled || !options.probeBedrock) {
     throw new Error("Funded AI upstream preference dependencies are missing");
   }
   const config = options.config;
   const now = options.now ?? (() => new Date());
-  const eventIdFactory = options.eventIdFactory ?? randomUUID;
   const entitled = (ownerId: string) => Date.parse(config.validThrough) > now().getTime()
     && config.ownerIds.includes(ownerId);
 
@@ -122,12 +121,29 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
       throw new AiFundedPolicyError("not_found");
     }
     const updatedAt = now().toISOString();
+    const eventId = `upstream-preference:${createHash("sha256")
+      .update(`${request.ownerId}\0${request.idempotencyKey}`).digest("hex")}`;
     await options.db.ready;
     return options.db.transaction(async (trx) => {
       // Share authorization's owner lock so a preference revision cannot
       // change between selection verification and reservation creation.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${request.ownerId}`}, 0))`
         .execute(trx.executor);
+      const replay = await trx.executor.selectFrom("ai_funded_upstream_preference_audit")
+        .selectAll().where("event_id", "=", eventId).executeTakeFirst();
+      if (replay) {
+        if (replay.owner_id !== request.ownerId || replay.actor_owner_id !== request.actorOwnerId
+          || replay.previous_revision !== request.expectedRevision
+          || replay.selected_upstream !== request.selectedUpstream) {
+          throw new AiFundedPolicyError("idempotency_conflict");
+        }
+        return FundedAiUpstreamPreferenceSchema.parse({
+          selectedUpstream: replay.selected_upstream,
+          revision: replay.revision,
+          updatedAt: replay.created_at,
+          validThrough: config.validThrough,
+        });
+      }
       const stored = await trx.executor.selectFrom("ai_funded_upstream_preferences")
         .selectAll().where("owner_id", "=", request.ownerId).forUpdate().executeTakeFirst();
       const previousRevision = stored?.revision ?? 0;
@@ -151,7 +167,7 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
             .returningAll().executeTakeFirst();
       if (!updated) throw new AiFundedPolicyError("revision_conflict");
       await trx.executor.insertInto("ai_funded_upstream_preference_audit").values({
-        event_id: eventIdFactory(),
+        event_id: eventId,
         owner_id: request.ownerId,
         actor_owner_id: request.actorOwnerId,
         previous_upstream: previousUpstream,
@@ -178,12 +194,15 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
   async function resolveUpstream(input: { ownerId: string; modelId: string }): Promise<FundedAiUpstreamSelection> {
     const ownerId = OwnerIdSchema.parse(input.ownerId);
     const modelId = ProviderModelReferenceSchema.parse(input.modelId);
-    const checked = now();
     const preference = await getPreference(ownerId);
+    let probe: FundedBedrockProbeResult | undefined;
+    if (preference?.selectedUpstream === "aws_bedrock" && config.bedrockModelIds.includes(modelId)) {
+      probe = await options.probeBedrock(modelId);
+    }
+    const checked = now();
     let upstream: "cloudflare" | "aws_bedrock" = "cloudflare";
     let staleAt = checked.getTime() + SELECTION_TTL_MS;
-    if (preference?.selectedUpstream === "aws_bedrock" && config.bedrockModelIds.includes(modelId)) {
-      const probe = await options.probeBedrock(modelId);
+    if (probe) {
       const probeChecked = Date.parse(probe.checkedAt);
       const probeStale = Date.parse(probe.staleAfter);
       const priceValidThrough = Date.parse(probe.priceValidThrough ?? "");

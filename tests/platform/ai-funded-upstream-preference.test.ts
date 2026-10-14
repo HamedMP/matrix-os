@@ -27,7 +27,6 @@ describe("funded AI upstream preference", () => {
       db,
       now: () => NOW,
       selectionSecret: "upstream-selection-secret-for-tests-123",
-      eventIdFactory: () => "event_1",
       config: {
         enabled: true,
         ownerIds: OWNER_IDS,
@@ -86,6 +85,7 @@ describe("funded AI upstream preference", () => {
     await expect(repo.setPreference({
       ownerId: "user_nima",
       actorOwnerId: "user_nima",
+      idempotencyKey: "preference_1",
       expectedRevision: 0,
       selectedUpstream: "aws_bedrock",
     })).resolves.toMatchObject({ selectedUpstream: "aws_bedrock", revision: 1 });
@@ -93,12 +93,14 @@ describe("funded AI upstream preference", () => {
     await expect(repo.setPreference({
       ownerId: "user_nima",
       actorOwnerId: "user_nima",
+      idempotencyKey: "preference_2",
       expectedRevision: 0,
       selectedUpstream: "cloudflare",
     })).rejects.toMatchObject({ code: "revision_conflict" });
     await expect(repo.setPreference({
       ownerId: "user_outsidecohort",
       actorOwnerId: "user_outsidecohort",
+      idempotencyKey: "preference_3",
       expectedRevision: 0,
       selectedUpstream: "aws_bedrock",
     })).rejects.toMatchObject({ code: "not_found" });
@@ -116,7 +118,7 @@ describe("funded AI upstream preference", () => {
 
   it("selects Bedrock only for a current entitled preference, exact model, and healthy authenticated probe", async () => {
     const repo = repository();
-    await repo.setPreference({ ownerId: "user_nima", actorOwnerId: "user_nima",
+    await repo.setPreference({ ownerId: "user_nima", actorOwnerId: "user_nima", idempotencyKey: "preference_1",
       expectedRevision: 0, selectedUpstream: "aws_bedrock" });
 
     const selected = await repo.resolveUpstream({ ownerId: "user_nima", modelId: MODEL_ID });
@@ -138,5 +140,46 @@ describe("funded AI upstream preference", () => {
       .resolves.toMatchObject({ upstream: "cloudflare" });
     await expect(repo.resolveUpstream({ ownerId: "user_outsidecohort", modelId: MODEL_ID }))
       .resolves.toMatchObject({ upstream: "cloudflare" });
+  });
+
+  it("accepts a fresh Bedrock observation timestamped after the probe begins", async () => {
+    let observedNow = NOW.getTime();
+    const repo = createAiFundedUpstreamPreferenceRepository({
+      db,
+      now: () => new Date(observedNow),
+      selectionSecret: "upstream-selection-secret-for-tests-123",
+      config: {
+        enabled: true,
+        ownerIds: OWNER_IDS,
+        bedrockModelIds: [MODEL_ID],
+        validThrough: VALID_THROUGH,
+      },
+      probeBedrock: async () => {
+        observedNow += 1_000;
+        return {
+          ready: true,
+          checkedAt: new Date(observedNow).toISOString(),
+          staleAfter: new Date(observedNow + 30_000).toISOString(),
+          priceValidThrough: VALID_THROUGH,
+        };
+      },
+    });
+    await repo.setPreference({ ownerId: "user_nima", actorOwnerId: "user_nima",
+      idempotencyKey: "fresh_probe", expectedRevision: 0, selectedUpstream: "aws_bedrock" });
+
+    await expect(repo.resolveUpstream({ ownerId: "user_nima", modelId: MODEL_ID }))
+      .resolves.toMatchObject({ upstream: "aws_bedrock", checkedAt: "2026-10-14T12:00:01.000Z" });
+  });
+
+  it("replays an applied preference mutation by durable idempotency key", async () => {
+    const repo = repository();
+    const mutation = { ownerId: "user_nima", actorOwnerId: "user_nima",
+      idempotencyKey: "durable_retry", expectedRevision: 0, selectedUpstream: "aws_bedrock" as const };
+    await expect(repo.setPreference(mutation)).resolves.toMatchObject({ revision: 1 });
+    await expect(repo.setPreference(mutation)).resolves.toMatchObject({ revision: 1 });
+    expect(await db.executor.selectFrom("ai_funded_upstream_preference_audit")
+      .selectAll().execute()).toHaveLength(1);
+    await expect(repo.setPreference({ ...mutation, selectedUpstream: "cloudflare" }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
   });
 });
