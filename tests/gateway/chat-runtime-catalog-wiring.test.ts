@@ -61,8 +61,8 @@ describe("gateway Chat runtime catalog composition", () => {
       const { resolveClaudeCredentialLaunch, options } = compose("/runtime/codex");
       expect(mocks.createClaude).toHaveBeenCalledWith({ homePath: "/runtime-home", resolveCredentialLaunch: resolveClaudeCredentialLaunch });
       await resolveClaudeCredentialLaunch();
-      // A person waiting in Chat is interactive funded priority.
-      expect(mocks.credentials).toHaveBeenCalledWith("/runtime-home", process.env, undefined, undefined, { requestClass: "interactive" });
+      expect(mocks.credentials).toHaveBeenCalledWith("/runtime-home", expect.objectContaining({ HOME: "/runtime-home" }),
+        "owner_claude_profile", undefined, { requestClass: "interactive" });
       expect(options).toMatchObject(dependencies);
       options.skillsSource?.();
       expect(mocks.skills).toHaveBeenCalledWith("/runtime-home");
