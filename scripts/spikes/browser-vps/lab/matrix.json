@@ -1,0 +1,16 @@
+{
+  "name": "Browser Lab",
+  "description": "Compare browser tools on an owner-only VPS with live Chrome and human takeover.",
+  "runtime": "static",
+  "category": "utility",
+  "icon": "globe",
+  "author": "self",
+  "version": "0.1.0",
+  "slug": "browser-lab",
+  "scope": "personal",
+  "permissions": [
+    "network"
+  ],
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party"
+}

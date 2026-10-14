@@ -1,0 +1,6 @@
+{
+  "name": "matrix-browser-lab",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "vite build" }
+}

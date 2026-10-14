@@ -1,0 +1,189 @@
+// @vitest-environment jsdom
+import React from "react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BrowserSurface } from "../../packages/ui/src/browser/BrowserSurface";
+import { useBrowserSurface } from "../../packages/ui/src/browser/use-browser-surface";
+
+const gatewayUrl = "https://app.matrix-os.com/vm/pr-2526";
+const ready = { available: true, chrome: { present: true, minimized: false }, humanControlAvailable: true };
+let status = ready;
+let calls: Array<{ url: string; init?: RequestInit }>;
+let ensureSession: ReturnType<typeof vi.fn>;
+let ticketNumber = 0;
+beforeEach(() => {
+  status = structuredClone(ready); calls = []; ticketNumber = 0;
+  ensureSession = vi.fn(async () => {});
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    if (url.endsWith("/browser-status")) return Response.json(status);
+    if (url.endsWith("/browser-session")) return Response.json({ ticket: (++ticketNumber).toString(16).padStart(48, "a"), expiresAt: Date.now() + 60_000 });
+    if (url.endsWith("/browser-control")) { status = structuredClone(ready); return Response.json(status); }
+    throw new Error("Unexpected browser request");
+  }));
+});
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
+function mount(extra: Record<string, unknown> = {}) { return render(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" ensureSession={ensureSession} {...extra} />); }
+function message(frame: HTMLIFrameElement, data: unknown = { type: "matrix-browser-viewer", connected: true }, origin = "https://app.matrix-os.com", source: MessageEventSource | null = frame.contentWindow) {
+  act(() => { window.dispatchEvent(new MessageEvent("message", { data, origin, source })); });
+}
+async function frame() { return await screen.findByTitle("Chrome on your Matrix computer") as HTMLIFrameElement; }
+
+describe("shared Chrome-first surface", () => {
+  it("disables all native desktop commands before handshake, during read-only, and after revocation", async () => {
+    status = { ...ready, humanControlAvailable: false };
+    mount({ surface: "desktop" });
+    const viewer = await screen.findByTitle("Your Matrix cloud desktop") as HTMLIFrameElement;
+    const assertDisabled = () => { for (const name of ["Show desktop", "Files", "Terminal", "Open Chrome"]) expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true); };
+    assertDisabled(); message(viewer); assertDisabled();
+    message(viewer, { type: "matrix-browser-viewer", connected: false }); assertDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    expect(calls.some(call => call.url.endsWith("/browser-control"))).toBe(false);
+  });
+  it("disables Chrome settings and minimized recovery before acknowledged connection", async () => {
+    status = { ...ready, chrome: { present: true, minimized: true } };
+    mount(); await frame(); fireEvent.click(screen.getByRole("button", { name: "Browser settings" }));
+    expect(screen.getAllByRole("button", { name: "Restore Chrome" }).every(button => button.hasAttribute("disabled"))).toBe(true);
+  });
+  it("rejects direct controls while disconnected, and after disconnect during session renewal", async () => {
+    const hook = renderHook(() => useBrowserSurface({ gatewayUrl, surface: "desktop", ensureSession }));
+    await waitFor(() => expect(hook.result.current.state.viewerUrl).not.toBe(""));
+    await act(async () => expect(await hook.result.current.control("open-files")).toBe(false));
+    const element = document.createElement("iframe"); document.body.append(element);
+    hook.result.current.iframe.current = element;
+    try {
+      message(element); await waitFor(() => expect(hook.result.current.state.connection).toBe("connected"));
+      let release!: () => void; ensureSession.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+      let pending!: Promise<boolean>; act(() => { pending = hook.result.current.control("open-files"); });
+      message(element, { type: "matrix-browser-viewer", connected: false });
+      await act(async () => { release(); expect(await pending).toBe(false); });
+      expect(calls.some(call => call.url.endsWith("/browser-control"))).toBe(false);
+    } finally { element.remove(); }
+  });
+  it("ensures the owner session before claiming the fixed product viewer", async () => {
+    let release!: () => void;
+    ensureSession.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    mount(); expect(calls).toHaveLength(0);
+    await act(async () => { release(); });
+    const viewer = await frame();
+    const url = new URL(viewer.src);
+    expect(url.origin).toBe("https://app.matrix-os.com");
+    expect(url.pathname).toBe("/vm/pr-2526/apps/browser-lab/viewer/");
+    expect(url.searchParams.get("resize")).toBe("remote");
+    expect(url.searchParams.get("matrix_product")).toBe("1");
+    expect(url.searchParams.get("path")).toMatch(/^vm\/pr-2526\/apps\/browser-lab\/viewer\/websockify\?lab_ticket=[a-f0-9]{48}$/);
+    expect(calls.find(call => call.url.endsWith("/browser-session"))?.init?.body).toBe('{"surface":"browser"}');
+    expect(calls.every(call => call.url.startsWith(`${gatewayUrl}/apps/browser-lab/api/`))).toBe(true);
+    expect(calls.some(call => call.url.endsWith("/browser-control"))).toBe(false);
+  });
+  it("does not report connected or permit input from iframe load alone", async () => {
+    mount(); const viewer = await frame(); fireEvent.load(viewer);
+    expect(viewer.hasAttribute("inert")).toBe(true);
+    expect(screen.queryByText("Connected")).toBeNull();
+    message(viewer);
+    expect(screen.getByText("Connected")).toBeTruthy();
+    expect(viewer.hasAttribute("inert")).toBe(false);
+    expect(screen.queryByText("Run comparison")).toBeNull();
+    expect(screen.queryByText("agent-browser")).toBeNull();
+    expect(screen.queryByText(/\/10 actions/)).toBeNull();
+  });
+  it("retains the connecting iframe when the installed client first reports not connected", async () => {
+    mount(); const viewer = await frame();
+    message(viewer, { type: "matrix-browser-viewer", connected: false });
+    expect(screen.getByTitle("Chrome on your Matrix computer")).toBe(viewer);
+    expect(viewer.hasAttribute("inert")).toBe(true);
+    message(viewer); expect(viewer.hasAttribute("inert")).toBe(false);
+  });
+  it("keeps the connected toolbar focused on the viewport and places recovery in settings", async () => {
+    const open = vi.fn(); mount({ onOpenCloudDesktop: open }); const viewer = await frame(); message(viewer);
+    expect(screen.queryByRole("button", { name: "Restore Chrome" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reconnect" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cloud desktop" })); expect(open).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Browser settings" }));
+    expect(screen.getByRole("button", { name: "Restore Chrome" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeTruthy();
+  });
+  it("rejects messages with the wrong source, origin or payload", async () => {
+    mount(); const viewer = await frame();
+    message(viewer, undefined, "https://attacker.test");
+    message(viewer, undefined, "https://app.matrix-os.com", window);
+    message(viewer, { type: "matrix-browser-viewer", connected: true, inputs: "private" });
+    message(viewer, { type: "matrix-browser-viewer", connected: "true" });
+    message(viewer, { type: "other", connected: true });
+    expect(viewer.hasAttribute("inert")).toBe(true);
+    expect(screen.queryByText("Connected")).toBeNull();
+  });
+  it("keeps input gated when the acknowledged owner status forbids it", async () => {
+    status = { ...ready, humanControlAvailable: false };
+    mount(); const viewer = await frame(); message(viewer);
+    expect(viewer.hasAttribute("inert")).toBe(true);
+    expect(screen.getByText("Read only")).toBeTruthy();
+  });
+  it("requires explicit reconnect after a stream disconnect and rejects messages from the retired iframe", async () => {
+    mount(); const previous = await frame(); message(previous);
+    const previousSource = previous.contentWindow;
+    message(previous, { type: "matrix-browser-viewer", connected: false });
+    expect(screen.getByText("Disconnected")).toBeTruthy();
+    expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
+    expect(ticketNumber).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    const next = await frame(); expect(next).not.toBe(previous); expect(ticketNumber).toBe(2);
+    message(next, undefined, "https://app.matrix-os.com", previousSource);
+    expect(next.hasAttribute("inert")).toBe(true);
+    message(next); expect(next.hasAttribute("inert")).toBe(false);
+  });
+  it("removes the stream while inactive and reacquires it when activated", async () => {
+    const view = mount(); const previous = await frame(); message(previous);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
+    expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
+    expect(ticketNumber).toBe(1);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
+    const next = await frame(); expect(next).not.toBe(previous); expect(ticketNumber).toBe(2);
+  });
+  it("ignores late claims and aborts their requests after deactivation", async () => {
+    const normal = vi.mocked(fetch).getMockImplementation()!;
+    let release!: (response: Response) => void; let signal: AbortSignal | undefined;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/browser-session")) { signal = init?.signal as AbortSignal; return new Promise<Response>(resolve => { release = resolve; }); }
+      return normal(url as string, init);
+    });
+    const view = mount(); await waitFor(() => expect(release).toBeTypeOf("function"));
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
+    expect(signal?.aborted).toBe(true);
+    await act(async () => { release(Response.json({ ticket: "a".repeat(48), expiresAt: Date.now() + 60_000 })); });
+    expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
+  });
+  it("restores minimized Chrome through the fixed action and supports retry after failure", async () => {
+    status = { ...ready, chrome: { present: true, minimized: true } };
+    const normal = vi.mocked(fetch).getMockImplementation()!; let failed = false;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/browser-control") && !failed) { failed = true; return new Response("private provider failure", { status: 503 }); }
+      return normal(url as string, init);
+    });
+    mount(); const viewer = await frame(); message(viewer);
+    expect(screen.getByText("Chrome is minimized")).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Restore Chrome" })[0]!);
+    const error = await screen.findByRole("alert"); expect(error.textContent).not.toContain("private");
+    fireEvent.click(screen.getAllByRole("button", { name: "Restore Chrome" })[0]!);
+    await waitFor(() => expect(screen.queryByText("Chrome is minimized")).toBeNull());
+    expect(calls.find(call => call.url.endsWith("/browser-control"))?.init?.body).toBe('{"action":"restore-chrome"}');
+  });
+  it("keeps unavailable services explicit without silently opening another browser", async () => {
+    status = { ...ready, available: false };
+    mount(); await screen.findByText("Browser unavailable");
+    expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
+    expect(ticketNumber).toBe(0);
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeTruthy();
+  });
+  it("uses the same viewer with fixed desktop actions and no simulated app content", async () => {
+    render(<BrowserSurface gatewayUrl={gatewayUrl} surface="desktop" ensureSession={ensureSession} />);
+    const viewer = await screen.findByTitle("Your Matrix cloud desktop") as HTMLIFrameElement; message(viewer);
+    for (const [name, action] of [["Show desktop", "show-desktop"], ["Files", "open-files"], ["Terminal", "open-terminal"], ["Open Chrome", "restore-chrome"]]) {
+      fireEvent.click(screen.getByRole("button", { name }));
+      await waitFor(() => expect(calls.some(call => call.init?.body === JSON.stringify({ action }))).toBe(true));
+      await waitFor(() => expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(false));
+    }
+    expect(calls.find(call => call.url.endsWith("/browser-session"))?.init?.body).toBe('{"surface":"desktop"}');
+    expect(screen.queryByText("Run comparison")).toBeNull();
+  });
+});

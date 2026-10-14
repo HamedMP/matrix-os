@@ -1,3 +1,4 @@
+import { remoteBrowserSurfaceForPath, remoteBrowserWindowSize } from "@matrix-os/contracts";
 import { constrainFloatingWindow } from "@matrix-os/ui";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -244,6 +245,9 @@ function computeDefaultWindowSize(path: string): { width: number; height: number
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const mode = useDesktopMode.getState().mode;
+  if (remoteBrowserSurfaceForPath(path)) {
+    return remoteBrowserWindowSize(desktopWorkArea({ width: vw, height: vh }, mode === "desktop"));
+  }
   const preferred = isTerminalWindowPath(path)
     ? { width: TERMINAL_DEFAULT_WINDOW_WIDTH, height: TERMINAL_DEFAULT_WINDOW_HEIGHT }
     : getEffectiveMinimumWindowSize(path);
