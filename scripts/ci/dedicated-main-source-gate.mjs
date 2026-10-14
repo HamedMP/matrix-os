@@ -20,8 +20,9 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
  if(retained)Object.assign(evidence,retained.source,{coverageProof:retained,requestingRunId:oldRun.id,requestingRunAttempt:oldRun.run_attempt});
  const write=async(conclusion,title,extra={})=>{
   const summary=JSON.stringify({...evidence,...extra});if(Buffer.byteLength(summary)>4096)throw new Error('Main qualification App summary exceeds bound');
-  const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,status:'completed',conclusion,request,output:{title,summary}};
-  const {data:written}=prior?await options.gateGithub.rest.checks.update({...args,check_run_id:prior.check.id}):await options.gateGithub.rest.checks.create({...args,name:'CI Source Qualification',head_sha:source});
+  const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,...(conclusion?{status:'completed',conclusion}:{status:'in_progress'}),request,output:{title,summary}};
+  const update=prior&&(conclusion||prior.check.status==='in_progress');
+  const {data:written}=update?await options.gateGithub.rest.checks.update({...args,check_run_id:prior.check.id}):await options.gateGithub.rest.checks.create({...args,name:'CI Source Qualification',head_sha:source});
   if(written.app?.id!==options.gateAppId||written.app?.slug==='github-actions'||written.name!=='CI Source Qualification'||written.head_sha!==source)throw new Error('Dedicated main gate App issuer response mismatch');
  };
  if(config.controllerSha!==controller.sha||!/^sha256:[a-f0-9]{64}$/.test(config.imageDigest||'')||!/^[a-f0-9]{64}$/.test(config.harnessDigest||'')){
@@ -38,7 +39,7 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   if(!requester||requester.status!=='completed'){
    // Running or not-yet-visible CI is not a failure; the completed-CI reconcile settles this check.
    stage='write';
-   await write('neutral','Waiting for exact-main CI to finish',requester?{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,waitingForRequester:true}:{waitingForRequester:true});return 1;
+   await write(null,'Waiting for exact-main CI to finish',requester?{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,waitingForRequester:true}:{waitingForRequester:true});return 1;
   }
   if(requester.conclusion!=='success'){
    stage='write';

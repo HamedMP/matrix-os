@@ -155,8 +155,8 @@ this single assigned PR, including its Greptile and CI gates. Do not merge.
 - Focused checks: <commands and results>
 - Broad checks: <commands and results>
 - Greptile: `5/5` for <current SHA or review timestamp evidence>
-- `ready-for-ci`: <applied/verified>
-- Label-triggered CI: <passing checks>
+- Ready for review: <marked/verified>
+- Current-head CI: <passing checks>
 - Dependencies: <order or `None`>
 - Skipped checks/residual risk: <details or `None`>
 ```

@@ -14,7 +14,7 @@ const sourceJobs = [
 interface GitHubFixture {
   event_name: string;
   ref: string;
-  event: { action?: string; changes?: { base?: unknown; title?: unknown; body?: unknown } };
+  event: { pull_request?: { draft: boolean }; action?: string; changes?: { base?: unknown; title?: unknown; body?: unknown } };
 }
 const mainPush: GitHubFixture = { event_name: 'push', ref: 'refs/heads/main', event: {} };
 function evaluateJobExpression(value: string, needs: unknown, github: GitHubFixture) {
@@ -82,8 +82,8 @@ describe('CI job admission for documentation changes', () => {
 
   it.each([
     ['main push', mainPush],
-    ['ordinary PR', { event_name: 'pull_request', ref: 'refs/pull/1/merge', event: { action: 'synchronize' } }],
-    ['base edit', { event_name: 'pull_request', ref: 'refs/pull/1/merge', event: { action: 'edited', changes: { base: { ref: { from: 'stack/old' } } } } }],
+    ['ordinary PR', { event_name: 'pull_request', ref: 'refs/pull/1/merge', event: { action: 'synchronize', pull_request: { draft: false } } }],
+    ['base edit', { event_name: 'pull_request', ref: 'refs/pull/1/merge', event: { action: 'edited', changes: { base: { ref: { from: 'stack/old' } } }, pull_request: { draft: false } } }],
   ] satisfies Array<[string, GitHubFixture]>)('keeps genuine CI Results for docs-only %s coverage', (_, github) => {
     expect(schedules('docs-contract', false, true, false, github)).toBe(true);
     expect(schedules('os-view-parity', false, true, false, github)).toBe(false);
@@ -93,13 +93,21 @@ describe('CI job admission for documentation changes', () => {
 
   it.each(['title', 'body'])('keeps %s-only edits from publishing a replacement required aggregate', field => {
     const github: GitHubFixture = { event_name: 'pull_request', ref: 'refs/pull/1/merge',
-      event: { action: 'edited', changes: { [field]: { from: 'previous text' } } } };
+      event: { action: 'edited', changes: { [field]: { from: 'previous text' } }, pull_request: { draft: false } } };
     expect(schedules('ci-results', false, false, false, github)).toBe(false);
     // A skipped job named CI Results could clear a real failure. Both the
     // suppression and the distinct check identity must remain in the workflow.
-    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Metadata (ignored)');
+    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Draft or Metadata (ignored)');
     expect(schedules('docs-contract', false, false, false, github)).toBe(false);
     expect(schedules('os-view-parity', false, false, false, github)).toBe(false);
+  });
+
+  it.each(['opened', 'synchronize', 'reopened'])('publishes no required aggregate for a draft %s event', action => {
+    // A draft cannot merge; an absent CI Results reads as expected, never red.
+    const github: GitHubFixture = { event_name: 'pull_request', ref: 'refs/pull/1/merge',
+      event: { action, pull_request: { draft: true } } };
+    expect(schedules('ci-results', false, false, false, github)).toBe(false);
+    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Draft or Metadata (ignored)');
   });
 
   it('accepts intentional source-job skips while keeping the aggregate check', () => {

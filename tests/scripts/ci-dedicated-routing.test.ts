@@ -72,16 +72,17 @@ describe('executable delegation and aggregate admission',()=>{
     }finally{rmSync(dir,{recursive:true,force:true});}
   });
   it.each([
-    ['reopened','false','true',true],['reopened','false','false',false],
-    ['edited','true','true',true],['edited','false','true',false],['edited','true','false',false],
-    ['synchronize','false','true',true],['ready_for_review','false','false',true],
-  ])('preserves ready-gated source classification for %s baseEdit=%s ready=%s',(action,baseEdit,ready,requested)=>{
+    ['reopened','false','false',true],['reopened','false','true',false],
+    ['edited','true','false',true],['edited','false','false',false],['edited','true','true',false],
+    ['synchronize','false','false',true],['synchronize','false','true',false],['ready_for_review','false','false',true],
+    ['opened','false','false',true],['opened','false','true',false],['labeled','false','false',false],
+  ])('runs source classification for non-draft heads only: %s baseEdit=%s draft=%s',(action,baseEdit,draft,requested)=>{
     const dir=mkdtempSync(resolve(tmpdir(),'matrix-ci-stack-trigger-'));
     try{
       // Inert source discovery: exercise the real gating shell without network.
       writeFileSync(resolve(dir,'git'),'#!/bin/sh\nif [ "$1" = diff ]; then printf "%s\\n" "packages/kernel/src/index.ts"; fi\n',{mode:0o755});
       const step=ci.jobs.changes.steps.find((value:{id?:string})=>value.id==='changed');
-      const env={...process.env,PATH:`${dir}:${process.env.PATH}`,GITHUB_EVENT_NAME:'pull_request',GITHUB_BASE_REF:'stack/parent',GITHUB_SHA:'a'.repeat(40),GITHUB_OUTPUT:resolve(dir,'output'),PR_ACTION:action,PR_BASE_EDIT:baseEdit,PR_HAS_READY_FOR_CI:ready,PR_LABEL_NAME:''};
+      const env={...process.env,PATH:`${dir}:${process.env.PATH}`,GITHUB_EVENT_NAME:'pull_request',GITHUB_BASE_REF:'stack/parent',GITHUB_SHA:'a'.repeat(40),GITHUB_OUTPUT:resolve(dir,'output'),PR_ACTION:action,PR_BASE_EDIT:baseEdit,PR_DRAFT:draft};
       const execution=spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000});
       expect(execution.status,execution.stderr).toBe(0);
       const outputs=readFileSync(resolve(dir,'output'),'utf8');

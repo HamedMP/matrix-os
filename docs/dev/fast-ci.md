@@ -1,21 +1,25 @@
 # fast-ci: priority Linux CI for PRs
 
 `fast-ci` runs a PR's heavy CI lanes on a dedicated Linux host instead of
-GitHub-hosted runners. A typical full run takes about 13 minutes on Linux
-against about 25 minutes hosted. This page is the engineer workflow; the
+GitHub-hosted runners. Linux execution benchmarks are promising, but queueing and qualification
+failures must be included before claiming an end-to-end speedup. This page is
+the engineer workflow; the
 design lives in [spec 605](../../specs/605-priority-linux-ci/spec.md) and the
 host internals in [`scripts/ci/runner/README.md`](../../scripts/ci/runner/README.md).
 
 ## Using it
 
-1. Open the PR (same repository, not a draft).
-2. Add `fast-ci` **first**.
-3. Add `ready-for-ci` to start CI. This is the same label every PR uses;
-   it is sticky, so later pushes rerun CI while it stays on.
+1. Open the PR as a **draft** (same repository).
+2. Add `fast-ci` and `ready-for-ci` while the PR is a draft; adding both together
+   is supported. Linux admission still requires both labels; ordinary PRs need none.
+3. Mark the PR ready for review. That starts CI, and later pushes rerun it.
 
-Adding the labels the other way round still works, but CI that already
-started hosted is not cancelled. Keep the order: `fast-ci`, then
-`ready-for-ci`.
+A PR opened ready, or marked ready before both labels are on, starts hosted
+CI first; that run is not cancelled when the labels arrive. To change routing
+after CI starts or finishes, return the PR to draft, set both admission labels,
+and mark it ready again. Unrelated labels never start normal PR CI.
+Adding both labels together to an already-ready PR can still supersede its
+label-triggered controllers; configure them while still a draft.
 
 Only open, non-draft, same-repository PRs with **both** labels run on Linux,
 and only when the change runs CI lanes at all: a docs-only change (only
@@ -45,7 +49,7 @@ with a 30-minute queue deadline. A job that waits longer fails with
 | `CI Backend Decision` | Waits for and verifies the Linux result, then tells `CI Results` whether hosted lanes must run. | Read it when `CI Results` failed. |
 | `Type Check`, `Unit Tests (${{ matrix.shard }}/4)`, `E2E Tests (${{ matrix.lane }})`, `Shell Production Build`, ... **Skipped** | The hosted copies of lanes that ran on Linux. GitHub only fills in matrix names for jobs that run, so skipped matrix jobs show the raw template. | No. |
 | `Verified Dedicated Linux Qualification` **Skipped** | Not used by the current routing; `CI Backend Decision` does that verification. | No. |
-| `CI Source Qualification` red or "not admitted" | An internal freshness gate. The `main` ruleset does not currently require it (spec 605 intends to), so today it never blocks a merge. It also turns red after a PR merges, by design. | No, unless the ruleset starts requiring it. |
+| `CI Source Qualification` pending, red or "not admitted" | An internal freshness gate. Pending means exact-source coverage is queued, running, or being dispatched; it never grants qualification. The `main` ruleset does not currently require it (spec 605 intends to), so today it never blocks a merge. It also turns red after a PR merges, by design. | No, unless the ruleset starts requiring it. |
 
 The host is deliberately **not** a GitHub self-hosted runner, so it does not
 appear under Settings → Actions → Runners. A reviewed controller on a hosted
@@ -114,3 +118,25 @@ When a change takes effect depends on where it runs:
   only after an operator moves the pin and the host's root policy. By
   procedure the target is a green `main` commit containing the change; the
   controller itself only checks that the pin is on `main`.
+
+## Measuring Linux against hosted CI
+
+Compare the exact merge SHA, ordered parents and frozen lockfile, not unrelated
+successful PRs. Record the controller/harness/image pins, suite inventories,
+requesting/controller run IDs and attempts, and every failure or retry. Linux
+qualification covers heavy lanes; the independent hosted security, PostgreSQL
+and Node 20 lanes still contribute to the final CI result.
+
+Report admission/runner queue, setup, workload execution and time to successful
+`CI Results` separately. Use the immutable Linux receipt's `queueSeconds` and
+`wallSeconds`, not the controller job duration as test runtime. For hosted CI,
+use individual job timestamps and report the critical path rather than summing
+parallel jobs. Metadata-only and superseded skips are not full qualifications.
+A passed Linux workload with failed orchestration is a failed end-to-end sample.
+A single same-source pair cannot establish median/tail latency or throughput.
+
+Pagination and pending-state repairs are pinned controller helpers. Merge alone
+does not activate them: after reviewed green main, approve that controller on
+the host and advance `MATRIX_CI_CONTROLLER_SHA` using the existing operator
+procedure. No routing flag or approval-rule change is needed. The independent
+host-retention repair in PR #2592 retains its own review and CI gates.
