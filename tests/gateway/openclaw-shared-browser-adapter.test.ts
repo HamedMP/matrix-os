@@ -47,6 +47,31 @@ it("rejects cancellation from another owner or Chat without revoking the active 
   for (;;) { if ((await iterator.next()).done) break; }
   expect(broker.closeRun).toHaveBeenCalledOnce();
 });
+it("sends native abort before a slow browser drain finishes", async () => {
+  const { broker, rpc, adapter } = setup();
+  const drain = Promise.withResolvers<void>();
+  const agent = Promise.withResolvers<unknown>();
+  broker.closeRun.mockImplementationOnce(() => drain.promise);
+  rpc.call.mockImplementation(async (method: string) => {
+    if (method === "matrix.browser.bind") return { bound: true };
+    if (method === "agent") return agent.promise;
+    if (method === "matrix.browser.revoke") return { revoked: true };
+    if (method === "chat.abort") return { ok: true };
+    throw new Error("Unexpected native method");
+  });
+  const iterator = adapter.start(input)[Symbol.asyncIterator]();
+  expect((await iterator.next()).value).toMatchObject({ type: "state.updated" });
+  const nativeSignal = rpc.call.mock.calls.find(call => call[0] === "agent")![2] as AbortSignal;
+  const cancelling = adapter.cancel!({ owner: input.owner, chatId: input.chatId, runId: input.runId });
+  try {
+    await vi.waitFor(() => expect(rpc.call.mock.calls.map(call => call[0])).toContain("chat.abort"), { timeout: 250 });
+    expect(nativeSignal.aborted).toBe(true);
+  } finally {
+    drain.resolve(); agent.resolve({ runId: input.runId, status: "error" });
+    await cancelling;
+    for (;;) { if ((await iterator.next()).done) break; }
+  }
+});
 it("fails closed when native acceptance changes the browser-bound run or session", async () => {
   const { broker, rpc, adapter } = setup();
   rpc.call.mockImplementationOnce(async () => ({ bound: true })).mockImplementationOnce(async (_method, _args, _signal, options) => {

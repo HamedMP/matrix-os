@@ -54,6 +54,7 @@ interface ActiveRun {
   sessionKey?: string;
   agentId?: string;
   cancelled: boolean;
+  agentController?: AbortController;
   browserClose?: () => Promise<void>;
 }
 
@@ -222,9 +223,12 @@ export function createOpenClawChatProviderAdapter(
 
   async function abortRun(active: ActiveRun, state?: OpenClawChatState): Promise<void> {
     active.cancelled = true;
-    await active.browserClose?.();
+    active.agentController?.abort();
+    // Broker revocation starts immediately. Native cancellation must not wait
+    // for a browser action drain or the best-effort lease cleanup RPC.
+    const browserClose = active.browserClose?.();
     const sessionKey = active.sessionKey ?? state?.sessionKey;
-    if (!sessionKey) return;
+    if (!sessionKey) { await browserClose; return; }
     const agentId = active.agentId ?? state?.agentId;
     try {
       await options.rpc.call("chat.abort", {
@@ -238,6 +242,8 @@ export function createOpenClawChatProviderAdapter(
         "[chat-openclaw] cancellation request failed",
         error instanceof Error ? error.name : "UnknownError",
       );
+    } finally {
+      await browserClose;
     }
   }
 
@@ -279,6 +285,12 @@ export function createOpenClawChatProviderAdapter(
       }
     }
 
+    const scheduleAbort = () => {
+      void abortRun(active, input.resumeState).catch((error: unknown) => {
+        console.warn("[chat-openclaw] cancellation cleanup failed", error instanceof Error ? error.name : "UnknownError");
+      });
+    };
+
     const onEvent = (event: OpenClawRpcEvent) => {
       if (event.event !== "agent") return;
       const parsed = AgentEventPayloadSchema.safeParse(event.payload);
@@ -290,7 +302,9 @@ export function createOpenClawChatProviderAdapter(
       }
       wake.resolve();
     };
-    const onAbort = () => { void abortRun(active, input.resumeState); };
+    const agentController = new AbortController();
+    active.agentController = agentController;
+    const onAbort = scheduleAbort;
     input.signal.addEventListener("abort", onAbort, { once: true });
     if (input.signal.aborted) onAbort();
 
@@ -303,7 +317,7 @@ export function createOpenClawChatProviderAdapter(
       deliver: false,
       timeout: Math.ceil(runTimeoutMs / 1_000),
       idempotencyKey: input.runId,
-    }, new AbortController().signal, {
+    }, agentController.signal, {
       expectFinal: true,
       timeoutMs: Math.min(runTimeoutMs + 5_000, active.browserClose ? BROWSER_RUN_TIMEOUT_MS : MAX_RUN_TIMEOUT_MS),
       onAccepted(value) {
@@ -317,8 +331,8 @@ export function createOpenClawChatProviderAdapter(
         if (parsed.data.sessionKey !== undefined) active.sessionKey = parsed.data.sessionKey;
         active.agentId = parsed.data.agentId;
         if (active.browserClose && (parsed.data.runId !== input.runId || parsed.data.sessionKey !== undefined && parsed.data.sessionKey !== requestedSessionKey)) {
-          protocolFailed = true; void abortRun(active, input.resumeState);
-        } else if (active.cancelled) void abortRun(active, input.resumeState);
+          protocolFailed = true; scheduleAbort();
+        } else if (active.cancelled) scheduleAbort();
         wake.resolve();
       },
       onEvent,
