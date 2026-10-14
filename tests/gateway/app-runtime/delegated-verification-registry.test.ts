@@ -149,4 +149,36 @@ describe("delegated verification registry", () => {
     expect(await pending).toBeNull();
     expect(registry.size()).toBe(0);
   });
+
+  it("does not let a redemption capability act as a session while authority is being checked", async () => {
+    let release!: (value: VerificationAuthority) => void;
+    let waiting: Promise<VerificationAuthority> | null = null;
+    registry.close();
+    registry = new DelegatedVerificationRegistry({
+      ownerId: binding.ownerId, runtimeId: binding.runtimeId, ttlMs: 30_000, maxEntries: 2,
+      readAuthority: () => waiting ?? Promise.resolve(authority), audit,
+    });
+    const grant = await issue();
+    waiting = new Promise(resolve => { release = resolve; });
+    const pending = registry.redeem(grant.capability, binding);
+    // A distinct lookup must not await authority for a pending redemption.
+    waiting = null;
+    expect(await registry.authorize(grant.capability, binding)).toBeNull();
+    release(authority);
+    await pending;
+  });
+
+  it("fences an issuance already awaiting authority when the run is revoked", async () => {
+    let release!: (value: VerificationAuthority) => void;
+    const waiting = new Promise<VerificationAuthority>(resolve => { release = resolve; });
+    registry.close();
+    registry = new DelegatedVerificationRegistry({
+      ownerId: binding.ownerId, runtimeId: binding.runtimeId, ttlMs: 30_000, maxEntries: 2,
+      readAuthority: () => waiting, audit,
+    });
+    const pending = registry.issue(binding.ownerId, binding);
+    registry.revokeRun(binding.runId);
+    release(authority);
+    expect(await pending).toBeNull();
+  });
 });
