@@ -87,7 +87,15 @@ it("activates the real host wrapper only with the trusted optional flag and exac
     const appDir=join(f.root,"app"),entryDir=join(appDir,"packages/gateway/dist/chat"),prefix=join(f.root,"node"),nodeDir=join(prefix,"bin");
     await mkdir(entryDir,{recursive:true});await mkdir(nodeDir,{recursive:true});await symlink(process.execPath,join(nodeDir,"node"));
     await writeFile(join(entryDir,"openclaw-shared-browser-plugin-entry.js"),`export const OPENCLAW_SHARED_BROWSER_MANIFEST=${JSON.stringify(OPENCLAW_SHARED_BROWSER_MANIFEST)};`);
-    const native=join(nodeDir,"openclaw"),started=join(f.root,"started");await writeFile(native,`#!/usr/bin/env bash\nprintf 'started' > '${started}'\n`);await chmod(native,0o755);
+    const native=join(nodeDir,"openclaw"),started=join(f.root,"started");await writeFile(native,`#!/usr/bin/env bash
+set -euo pipefail
+"$MATRIX_NODE_PREFIX/bin/node" - "$OPENCLAW_CONFIG_PATH" <<'NODE'
+const config = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
+const matrixEnvPresent = Object.entries(process.env).some(([key, value]) => key.startsWith('MATRIX_') && value);
+if (matrixEnvPresent && config.channels?.matrix?.enabled !== false) process.exit(1);
+NODE
+printf 'started' > '${started}'
+`);await chmod(native,0o755);
     const auth=join(f.root,"auth.env");await writeFile(auth,`OPENCLAW_GATEWAY_TOKEN=${"a".repeat(64)}\n`);
     const env={...process.env,MATRIX_RUNTIME_HOME:f.root,MATRIX_NODE_PREFIX:prefix,OPENCLAW_STATE_DIR:f.stateDir,OPENCLAW_CONFIG_PATH:f.configPath,OPENCLAW_ENV_FILE:auth,OPENCLAW_BIN:native,
       MATRIX_OPENCLAW_BROWSER_CONFIGURER:resolve("distro/customer-vps/host-bin/matrix-configure-openclaw-shared-browser.mjs"),MATRIX_APP_DIR:appDir,MATRIX_BROWSER_LAB:"true",PORT:"4123",TMPDIR:f.root};
@@ -118,5 +126,47 @@ it("bootstraps a missing allowlist only for the explicitly enabled Matrix plugin
     }
     await writeFile(f.configPath, JSON.stringify({ ...f.initial, plugins: { allow: null } }));
     await expect(configureOpenClawSharedBrowser(f.options)).rejects.toThrow();
+  } finally { await f.close(); }
+});
+
+it("suppresses Matrix protocol auto-install from Matrix OS environment variables during shared browser bootstrap", async () => {
+  const f = await fixture(); try {
+    await configureOpenClawSharedBrowser(f.options);
+    const config = JSON.parse(await readFile(f.configPath, "utf8"));
+    // Pinned native OpenClaw treats any nonempty MATRIX_* key as channel presence.
+    const matrixOsEnv = { MATRIX_HOME: f.root, MATRIX_BROWSER_LAB: "true" };
+    const nativeDetectsMatrixChannel = Object.entries(matrixOsEnv).some(([key, value]) => key.startsWith("MATRIX_") && value.length > 0);
+    expect(nativeDetectsMatrixChannel).toBe(true);
+    expect(config.channels).toEqual({ matrix: { enabled: false } });
+    expect(config.plugins.allow).toEqual([ID]);
+    const before = await readFile(f.configPath);
+    await configureOpenClawSharedBrowser(f.options);
+    expect(await readFile(f.configPath)).toEqual(before);
+  } finally { await f.close(); }
+});
+
+it("preserves existing owner channel settings and only defaults an absent Matrix protocol channel", async () => {
+  const f = await fixture(); try {
+    for (const matrix of [{ enabled: true, homeserver: "https://owner.invalid", accessToken: "synthetic-owner-token" }, { enabled: false }, {}]) {
+      const channels = { matrix, slack: { enabled: false, ownerOption: "keep" } };
+      await writeFile(f.configPath, JSON.stringify({ ...f.initial, channels }));
+      await configureOpenClawSharedBrowser(f.options);
+      expect(JSON.parse(await readFile(f.configPath, "utf8")).channels).toEqual(channels);
+      await rm(join(f.stateDir, ".matrix-shared-browser-installed.json"));
+    }
+    await writeFile(f.configPath, JSON.stringify({ ...f.initial, channels: { slack: { enabled: false } } }));
+    await configureOpenClawSharedBrowser(f.options);
+    expect(JSON.parse(await readFile(f.configPath, "utf8")).channels).toEqual({ slack: { enabled: false }, matrix: { enabled: false } });
+  } finally { await f.close(); }
+});
+
+it("rejects malformed channel configuration without replacing owner configuration", async () => {
+  const f = await fixture(); try {
+    for (const channels of [null, [], "invalid", { matrix: null }, { matrix: [] }, { matrix: "invalid" }, { matrix: { enabled: "invalid" } }]) {
+      await writeFile(f.configPath, JSON.stringify({ ...f.initial, channels }));
+      const before = await readFile(f.configPath);
+      await expect(configureOpenClawSharedBrowser(f.options)).rejects.toThrow();
+      expect(await readFile(f.configPath)).toEqual(before);
+    }
   } finally { await f.close(); }
 });

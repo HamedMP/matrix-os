@@ -107,6 +107,13 @@ export async function configureOpenClawSharedBrowser(options) {
       if(JSON.stringify(config)!==JSON.stringify(parsed))await writeAtomic(state,configName,JSON.stringify(config,null,2)+'\n',original);
       return{state:'owner_uninstalled'};
     }
+    if(config.channels!==undefined&&!mapping(config.channels))throw unavailable();
+    const ownerChannels=config.channels??{};
+    if(Object.hasOwn(ownerChannels,'matrix')&&(!mapping(ownerChannels.matrix)
+      ||ownerChannels.matrix.enabled!==undefined&&typeof ownerChannels.matrix.enabled!=='boolean'))throw unavailable();
+    // Native OpenClaw detects any MATRIX_* variable as Matrix protocol channel presence.
+    // Matrix OS owns that namespace; default only an absent channel to an explicit opt-out.
+    const channels=Object.hasOwn(ownerChannels,'matrix')?ownerChannels:{...ownerChannels,matrix:{enabled:false}};
     if(typeof options.compiledEntry!=='string'||!options.compiledEntry.startsWith('/')||!options.compiledEntry.endsWith('/packages/gateway/dist/chat/openclaw-shared-browser-plugin-entry.js'))throw unavailable();
     const manifest=options.manifest;
     if(!mapping(manifest)||manifest.id!==ID||JSON.stringify(manifest.contracts?.tools)!=='["shared_browser"]'||manifest.activation?.onStartup!==true)throw unavailable();
@@ -130,7 +137,7 @@ export async function configureOpenClawSharedBrowser(options) {
       if(current&&!current.equals(Buffer.from(content))&&marker?.files[name]!==hash(current))throw unavailable();
     }
     for(const[name,content]of Object.entries(files))if(!previous[name]?.equals(Buffer.from(content)))await writeAtomic(plugin,name,content,previous[name]);
-    const next={...config,plugins:{...config.plugins,allow:[ID],entries:{...entries,[ID]:{...entry,enabled:true,config:{gatewayPort:options.gatewayPort}}},
+    const next={...config,channels,plugins:{...config.plugins,allow:[ID],entries:{...entries,[ID]:{...entry,enabled:true,config:{gatewayPort:options.gatewayPort}}},
       installs:{...installs,[ID]:installation??{source:'path',sourcePath:pluginPath,installPath:pluginPath,version:manifest.version,installedAt:new Date().toISOString()}}}};
     await options.beforeConfigCommit?.();
     if(JSON.stringify(next)!==JSON.stringify(parsed))await writeAtomic(state,configName,JSON.stringify(next,null,2)+'\n',original);
