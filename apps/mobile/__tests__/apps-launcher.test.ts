@@ -48,7 +48,7 @@ describe("buildLauncherEntries", () => {
     const defaults = buildLauncherEntries(catalog).slice(0, 7);
     const desktopOrder = OS_VIEW_PLACEABLE_BUILTIN_APPS
       .map((builtIn) => builtIn.name)
-      .filter((name) => !["Editor", "VS Code", "Browser"].includes(name));
+      .filter((name) => !["Editor", "VS Code", "Browser", "Cloud desktop"].includes(name));
 
     expect(names(defaults)).toEqual(desktopOrder);
   });
