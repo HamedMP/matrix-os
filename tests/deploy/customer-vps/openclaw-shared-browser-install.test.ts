@@ -20,11 +20,65 @@ it("installs only the fixed contained Matrix plugin, preserving owner model/conf
     const config = JSON.parse(await readFile(f.configPath, "utf8")); expect(config.models).toEqual(f.initial.models); expect(config.tools).toEqual(f.initial.tools);
     expect(config.plugins.entries["owner-other"]).toEqual(f.initial.plugins.entries["owner-other"]);
     expect(config.plugins.allow).toEqual([ID]); expect(config.plugins.entries[ID]).toEqual({ enabled: true, config: { gatewayPort: 4000 } });
+    expect(config.plugins).not.toHaveProperty("installs");
     const dir = join(f.stateDir, "extensions", ID); const pkg = JSON.parse(await readFile(join(dir,"package.json"),"utf8"));
     expect(pkg.openclaw.extensions).toEqual(["./index.mjs"]);
     expect(await readFile(join(dir, "index.mjs"), "utf8")).toContain('export { default } from "/opt/matrix/app/packages/gateway/dist/chat/openclaw-shared-browser-plugin-entry.js"');
     expect(JSON.parse(await readFile(join(dir, "openclaw.plugin.json"), "utf8"))).toEqual(OPENCLAW_SHARED_BROWSER_MANIFEST);
     const bytes = await readFile(f.configPath); await configureOpenClawSharedBrowser(f.options); expect(await readFile(f.configPath)).toEqual(bytes);
+  } finally { await f.close(); }
+});
+it("removes only a proven legacy Matrix receipt without changing plugin files or owner settings", async () => {
+  const f = await fixture(); try {
+    await configureOpenClawSharedBrowser(f.options);
+    const pluginPath = join(f.stateDir, "extensions", ID);
+    const config = JSON.parse(await readFile(f.configPath, "utf8"));
+    config.plugins.installs = { [ID]: { source: "path", sourcePath: pluginPath, installPath: pluginPath,
+      version: OPENCLAW_SHARED_BROWSER_MANIFEST.version, installedAt: "2026-01-01T00:00:00.000Z" } };
+    await writeFile(f.configPath, JSON.stringify(config));
+    const files = await Promise.all(["index.mjs", "package.json", "openclaw.plugin.json"].map(name => readFile(join(pluginPath, name))));
+    expect(await configureOpenClawSharedBrowser(f.options)).toMatchObject({ state: "installed" });
+    delete config.plugins.installs;
+    expect(JSON.parse(await readFile(f.configPath, "utf8"))).toEqual(config);
+    expect(await Promise.all(["index.mjs", "package.json", "openclaw.plugin.json"].map(name => readFile(join(pluginPath, name))))).toEqual(files);
+  } finally { await f.close(); }
+});
+it("refuses foreign or unproven legacy receipts without modifying configuration", async () => {
+  const f = await fixture(); try {
+    await configureOpenClawSharedBrowser(f.options);
+    const pluginPath = join(f.stateDir, "extensions", ID);
+    const config = JSON.parse(await readFile(f.configPath, "utf8"));
+    const receipt = { source: "path", sourcePath: pluginPath, installPath: pluginPath,
+      version: OPENCLAW_SHARED_BROWSER_MANIFEST.version, installedAt: "2026-01-01T00:00:00.000Z" };
+    for (const installs of [{ owner: receipt }, { [ID]: receipt, owner: receipt }, {}, { [ID]: { ...receipt, installedAt: "invalid" } },
+      { [ID]: { ...receipt, version: "foreign" } }, { [ID]: { ...receipt, sourcePath: "/owner/custom" } }]) {
+      await writeFile(f.configPath, JSON.stringify({ ...config, plugins: { ...config.plugins, installs } }));
+      const before = await readFile(f.configPath);
+      await expect(configureOpenClawSharedBrowser(f.options)).rejects.toThrow();
+      expect(await readFile(f.configPath)).toEqual(before);
+    }
+    await writeFile(f.configPath, JSON.stringify({ ...config, plugins: { ...config.plugins, installs: { [ID]: receipt } } }));
+    const before = await readFile(f.configPath);
+    await rm(join(f.stateDir, ".matrix-shared-browser-installed.json"));
+    await expect(configureOpenClawSharedBrowser(f.options)).rejects.toThrow();
+    expect(await readFile(f.configPath)).toEqual(before);
+  } finally { await f.close(); }
+});
+it("requires the complete installed-file fingerprints before migrating a legacy Matrix receipt", async () => {
+  const f = await fixture(); try {
+    await configureOpenClawSharedBrowser(f.options);
+    const pluginPath = join(f.stateDir, "extensions", ID), markerPath = join(f.stateDir, ".matrix-shared-browser-installed.json");
+    const marker = JSON.parse(await readFile(markerPath, "utf8"));
+    const config = JSON.parse(await readFile(f.configPath, "utf8"));
+    config.plugins.installs = { [ID]: { source: "path", sourcePath: pluginPath, installPath: pluginPath,
+      version: OPENCLAW_SHARED_BROWSER_MANIFEST.version, installedAt: "2026-01-01T00:00:00.000Z" } };
+    await writeFile(f.configPath, JSON.stringify(config)); const before = await readFile(f.configPath);
+    await writeFile(markerPath, JSON.stringify({ ...marker, files: { ...marker.files, "index.mjs": "0".repeat(64) } }));
+    await expect(configureOpenClawSharedBrowser(f.options)).rejects.toThrow(); expect(await readFile(f.configPath)).toEqual(before);
+    await writeFile(markerPath, JSON.stringify(marker));
+    await writeFile(join(pluginPath, "index.mjs"), "// owner customization");
+    await expect(configureOpenClawSharedBrowser(f.options)).rejects.toThrow(); expect(await readFile(f.configPath)).toEqual(before);
+    expect(await readFile(join(pluginPath, "index.mjs"), "utf8")).toBe("// owner customization");
   } finally { await f.close(); }
 });
 it("does not silently re-enable owner-disabled or owner-uninstalled plugins", async () => {

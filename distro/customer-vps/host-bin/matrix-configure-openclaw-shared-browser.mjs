@@ -89,6 +89,7 @@ export async function configureOpenClawSharedBrowser(options) {
     if(marker&&(!mapping(marker)||marker.version!==1||!mapping(marker.files)))throw unavailable();
     const parsed=JSON.parse(original.toString('utf8'));if(!mapping(parsed)||parsed.plugins!==undefined&&!mapping(parsed.plugins))throw unavailable();
     const plugins=parsed.plugins??{};
+    if(plugins.installs!==undefined&&!options.enabled)throw unavailable();
     const allow=plugins.allow===undefined?[]:plugins.allow;
     if(!Array.isArray(allow)||allow.some(value=>value!==ID)||new Set(allow).size!==allow.length)throw unavailable();
     const config={...parsed,plugins:{...plugins,allow}};
@@ -119,10 +120,19 @@ export async function configureOpenClawSharedBrowser(options) {
     if(!mapping(manifest)||manifest.id!==ID||JSON.stringify(manifest.contracts?.tools)!=='["shared_browser"]'||manifest.activation?.onStartup!==true)throw unavailable();
     const extensionPath=join(state.path,'extensions'),pluginPath=join(extensionPath,ID);
     if(config.plugins.load?.paths!==undefined&&(!Array.isArray(config.plugins.load.paths)||config.plugins.load.paths.some(value=>value!==pluginPath)))throw unavailable();
-    if(config.plugins.installs!==undefined&&!mapping(config.plugins.installs))throw unavailable();
-    const installs=config.plugins.installs??{},installation=installs[ID];
-    if(installation!==undefined&&(!mapping(installation)||installation.source!=='path'||installation.sourcePath!==pluginPath||installation.installPath!==pluginPath
-      ||Object.keys(installation).some(key=>!['source','sourcePath','installPath','version','installedAt'].includes(key))))throw unavailable();
+    // Pinned native OpenClaw rejects plugins.installs. Only a complete receipt
+    // from this earlier Matrix bootstrap may be removed; foreign data fails closed.
+    const legacy=config.plugins.installs!==undefined,installation=config.plugins.installs?.[ID];
+    if(legacy) {
+      if(!mapping(config.plugins.installs)||Object.keys(config.plugins.installs).length!==1||!mapping(installation)
+        ||Object.keys(installation).length!==5||Object.keys(installation).some(key=>!['source','sourcePath','installPath','version','installedAt'].includes(key))
+        ||installation.source!=='path'||installation.sourcePath!==pluginPath||installation.installPath!==pluginPath
+        ||installation.version!==manifest.version||typeof installation.installedAt!=='string'
+        ||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(installation.installedAt)
+        ||!Number.isFinite(Date.parse(installation.installedAt))||new Date(installation.installedAt).toISOString()!==installation.installedAt
+        ||Date.parse(installation.installedAt)>Date.now()||!marker||Object.keys(marker).length!==2
+        ||Object.keys(marker.files).sort().join(',')!=='index.mjs,openclaw.plugin.json,package.json')throw unavailable();
+    }
     const extensions=await directory(join(state.access,'extensions'),true);directories.push(extensions);
     const plugin=await directory(join(extensions.access,ID),true);directories.push(plugin);await sweep(plugin);
     const files={
@@ -133,12 +143,13 @@ export async function configureOpenClawSharedBrowser(options) {
     const previous={};
     for(const[name,content]of Object.entries(files)) {
       const current=await read(join(plugin.access,name));previous[name]=current;
+      if(legacy&&(!current||!current.equals(Buffer.from(content))||marker.files[name]!==hash(current)))throw unavailable();
       if(marker&&current===null)return{state:'owner_uninstalled'};
       if(current&&!current.equals(Buffer.from(content))&&marker?.files[name]!==hash(current))throw unavailable();
     }
     for(const[name,content]of Object.entries(files))if(!previous[name]?.equals(Buffer.from(content)))await writeAtomic(plugin,name,content,previous[name]);
-    const next={...config,channels,plugins:{...config.plugins,allow:[ID],entries:{...entries,[ID]:{...entry,enabled:true,config:{gatewayPort:options.gatewayPort}}},
-      installs:{...installs,[ID]:installation??{source:'path',sourcePath:pluginPath,installPath:pluginPath,version:manifest.version,installedAt:new Date().toISOString()}}}};
+    const {installs:_legacyReceipt,...nativePlugins}=config.plugins;
+    const next={...config,channels,plugins:{...nativePlugins,allow:[ID],entries:{...entries,[ID]:{...entry,enabled:true,config:{gatewayPort:options.gatewayPort}}}}};
     await options.beforeConfigCommit?.();
     if(JSON.stringify(next)!==JSON.stringify(parsed))await writeAtomic(state,configName,JSON.stringify(next,null,2)+'\n',original);
     const markerContent=JSON.stringify({version:1,files:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,hash(Buffer.from(content))]))})+'\n';
