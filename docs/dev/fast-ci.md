@@ -57,9 +57,12 @@ run code on the host.
 
 - **A real failure** (a failing test or build): fix it and push.
   `Dedicated CI Results` links to the failing phase.
-- **The host was unavailable** (including waiting past the queue deadline,
-  `queue_timeout`): the host reports it as an infrastructure problem and CI
-  switches to the hosted lanes automatically. Nothing to do.
+- **A verified infrastructure failure** (including waiting past the queue
+  deadline, `queue_timeout`): the host signs it as an infrastructure problem and
+  CI switches to the hosted lanes automatically. Nothing to do. Other host or
+  SSH failures without a trusted receipt (for example the host dropping after
+  the lease started) stay red: inspect `CI Backend Decision`, then re-run the
+  failed jobs once the underlying problem is fixed.
 - **`CI Backend Decision` failing on a GitHub API error** (for example
   `API rate limit exceeded for installation`): there is no hosted fallback for
   PRs in this case. Wait a few minutes, then re-run the failed jobs.
@@ -76,11 +79,16 @@ Merge only when all of these hold for the PR's current head:
 - Greptile is `5/5` on that head, or on an earlier head that
   `node scripts/review/review-carryover.mjs check <pr>` accepts (see
   [Review Pipeline](review-pipeline.md#greptile-review-carry-over));
-- no unresolved review threads.
+- no unresolved review threads;
+- one approving review from someone other than the author.
 
-Updating a branch with `main` creates a new head, so CI runs again. The review
-usually carries over (exit `0`): base merges, restacks and retargets keep it,
-new work does not. Merge a standalone PR with
+Any push dismisses existing approvals, including the `main` merge the
+up-to-date rule forces, so ask for the approval last: update with `main`, wait
+for `CI Results` and the review, then approve and merge.
+
+Updating a branch with `main` creates a new head, so CI runs again. The
+Greptile review usually carries over (exit `0`): base merges, restacks and
+retargets keep it, new work does not. The GitHub approval never carries over. Merge a standalone PR with
 `gh pr merge <n> --squash --match-head-commit <sha>`, one PR at a time. Stack
 layers merge through the native stack merge in
 [Stacked PRs](stacked-prs.md), never a `gh pr merge` loop.
@@ -90,8 +98,11 @@ layers merge through the native stack merge in
 Routing is controlled by repository variables: `MATRIX_CI_DEDICATED_ENABLED`
 (PR routing), `MATRIX_CI_DEDICATED_SHADOW` (observation), and
 `MATRIX_CI_DEDICATED_MAIN` (main Linux-first). Rollback is
-`gh variable set MATRIX_CI_DEDICATED_ENABLED --repo HamedMP/matrix-os --body false`,
-which sends every PR back to hosted runners.
+`gh variable set MATRIX_CI_DEDICATED_ENABLED --repo HamedMP/matrix-os --body false`.
+That routes new CI runs to hosted runners. PRs that already ran on Linux keep
+their skipped hosted lanes until the source gate's next reconcile dispatches a
+hosted replacement run for each; rollback is complete only once those
+replacement runs are green.
 
 When a change takes effect depends on where it runs:
 
