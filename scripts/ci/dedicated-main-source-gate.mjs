@@ -43,7 +43,9 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   let result;
   // Reused coverage is re-derived here with the exact gate App id; any difference fails closed.
   if(decision.reusedFrom){
-   const again=await resolveReusablePrCoverage(github,repo,snapshot.sourceSha,{gateAppId:options.gateAppId});
+   const again=await resolveReusablePrCoverage(github,repo,snapshot.sourceSha,{gateAppId:options.gateAppId,checkId:decision.reusedFrom.qualificationCheckId,
+    qualification:{controllerSha:controller.sha,imageDigest:config.imageDigest,harnessDigest:config.harnessDigest},
+    frontier:{coverageBaseSha:decision.coverageBaseSha,bootstrap:decision.bootstrap}});
    if(!again.reused||JSON.stringify(again.reusedFrom)!==JSON.stringify(decision.reusedFrom))throw new Error(`Reused PR coverage did not re-verify: ${again.reason??'proof changed'}`);
    result={reusedFrom:decision.reusedFrom};
   }

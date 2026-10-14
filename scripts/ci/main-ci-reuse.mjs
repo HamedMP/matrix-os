@@ -4,6 +4,10 @@
 // the PR head when it qualifies that merge; once the PR has merged, the live gate check
 // is rewritten and the open-PR Linux verifier no longer applies, so the proof is what
 // survives. Data mismatches return {reused:false}; API failures throw to the caller.
+//
+// Reuse also requires the squash parent's own main coverage run to have passed: main
+// plans its lanes from the last green coverage commit, so only then does main's plan
+// equal the PR's plan for the same diff.
 import {parseRefreshMarker} from './dedicated-refresh.mjs';
 
 export const MERGE_QUALIFICATION_CHECK='CI Merge Qualification';
@@ -12,18 +16,22 @@ const request={timeout:10000},sha=/^[a-f0-9]{40}$/;
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const same=(a,b)=>typeof a==='string'&&typeof b==='string'&&a.toLowerCase()===b.toLowerCase();
 const COVERAGE=['linux','infrastructure-hosted','hosted-recovery'];
-const evidenceKeys=['schemaVersion','kind','prNumber','headSha','baseSha','sourceSha','requestingRunId','requestingRunAttempt','coverage','controllerSha'];
+const IMAGE=/^sha256:[a-f0-9]{64}$/,HARNESS=/^[a-f0-9]{64}$/;
+const CI_PATHS=['.github/workflows/ci.yml','.github/workflows/ci.yml@main','.github/workflows/ci.yml@refs/heads/main'];
+const evidenceKeys=['schemaVersion','kind','prNumber','headSha','baseSha','sourceSha','requestingRunId','requestingRunAttempt','coverage','controllerSha','imageDigest','harnessDigest'];
 const reusedKeys=['prNumber','headSha','mergeSha','tree','requestingRunId','requestingRunAttempt','qualificationCheckId','coverage'];
 const exactKeys=(value,keys)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
 const externalId=value=>`merge-qualification-${value.sourceSha}-${value.requestingRunId}-${value.requestingRunAttempt}`;
-const MAX_SUMMARY=4096,MAX_PROOFS=100;
+const MAX_SUMMARY=4096,MAX_PROOFS=100,MAX_RUNS=100;
 
 function validEvidence(value){
- return exactKeys(value,evidenceKeys)&&value.schemaVersion===1&&value.kind==='merge-qualification'&&id(value.prNumber)&&[value.headSha,value.baseSha,value.sourceSha,value.controllerSha].every(v=>sha.test(v||''))&&id(value.requestingRunId)&&id(value.requestingRunAttempt)&&COVERAGE.includes(value.coverage);
+ return exactKeys(value,evidenceKeys)&&value.schemaVersion===1&&value.kind==='merge-qualification'&&id(value.prNumber)&&[value.headSha,value.baseSha,value.sourceSha,value.controllerSha].every(v=>sha.test(v||''))&&id(value.requestingRunId)&&id(value.requestingRunAttempt)&&COVERAGE.includes(value.coverage)&&IMAGE.test(value.imageDigest||'')&&HARNESS.test(value.harnessDigest||'');
 }
 
-export function mergeQualificationEvidence({snapshot,requester,coverage,controllerSha}){
- const value={schemaVersion:1,kind:'merge-qualification',prNumber:snapshot?.prNumber,headSha:snapshot?.headSha,baseSha:snapshot?.baseSha,sourceSha:snapshot?.sourceSha,requestingRunId:requester?.id,requestingRunAttempt:requester?.run_attempt,coverage,controllerSha};
+// `qualification` names the controller pin and runner image that produced the result.
+export function mergeQualificationEvidence({snapshot,requester,coverage,qualification}){
+ const value={schemaVersion:1,kind:'merge-qualification',prNumber:snapshot?.prNumber,headSha:snapshot?.headSha,baseSha:snapshot?.baseSha,sourceSha:snapshot?.sourceSha,requestingRunId:requester?.id,requestingRunAttempt:requester?.run_attempt,coverage,
+  controllerSha:qualification?.controllerSha,imageDigest:qualification?.imageDigest,harnessDigest:qualification?.harnessDigest};
  if(!validEvidence(value))throw new Error('Invalid merge qualification evidence');
  return value;
 }
@@ -35,14 +43,14 @@ export function assertReusedFrom(value){
 
 async function listProofs(github,repo,headSha){
  const {data}=await github.rest.checks.listForRef({...repo,ref:headSha,check_name:MERGE_QUALIFICATION_CHECK,filter:'all',per_page:MAX_PROOFS,request});
- if(!Array.isArray(data?.check_runs)||data.check_runs.length>MAX_PROOFS)throw new Error('Invalid merge qualification inventory');
+ if(!Number.isSafeInteger(data?.total_count)||!Array.isArray(data.check_runs)||data.total_count>MAX_PROOFS||data.check_runs.length!==data.total_count)throw new Error('Merge qualification inventory is incomplete');
  return data.check_runs;
 }
 
 // Called by the pinned PR gate right after it qualified the exact merge. Write-once:
 // a proof is never updated, so later gate rewrites cannot erase what was qualified.
-export async function recordMergeQualification({github,gateGithub,repo,snapshot,requester,coverage,controllerSha,gateAppId}){
- const value=mergeQualificationEvidence({snapshot,requester,coverage,controllerSha});
+export async function recordMergeQualification({github,gateGithub,repo,snapshot,requester,coverage,qualification,gateAppId}){
+ const value=mergeQualificationEvidence({snapshot,requester,coverage,qualification});
  const external=externalId(value);
  const existing=await listProofs(github,repo,value.headSha);
  if(existing.some(check=>check.app?.id===gateAppId&&check.external_id===external))return {created:false};
@@ -71,17 +79,27 @@ async function commitOf(github,repo,ref){
  return {parents:data.parents.map(parent=>parent.sha),tree:data.commit.tree.sha};
 }
 
+const ciRun=(run,full)=>CI_PATHS.includes(run?.path)&&same(run.repository?.full_name,full)&&same(run.head_repository?.full_name,full);
+const testsMerge=(run,proof)=>run.event==='pull_request'?run.head_sha===proof.headSha&&run.display_title===`CI coverage-v1 · ${proof.sourceSha}`
+ :run.event==='workflow_dispatch'&&run.head_branch==='main'&&(marker=>marker?.prNumber===proof.prNumber&&marker.headSha===proof.headSha&&marker.baseSha===proof.baseSha&&marker.sourceSha===proof.sourceSha)(parseRefreshMarker(run.display_title));
+
+async function runsAfter(github,repo,filter,createdAt){
+ const {data}=await github.rest.actions.listWorkflowRuns({...repo,workflow_id:'ci.yml',...filter,created:`>=${createdAt}`,per_page:MAX_RUNS,request});
+ if(!Number.isSafeInteger(data?.total_count)||!Array.isArray(data.workflow_runs)||data.total_count>MAX_RUNS||data.workflow_runs.length!==data.total_count)throw new Error('CI run history is incomplete');
+ return data.workflow_runs;
+}
+
 // The exact CI attempt the proof names must be a genuine successful ci.yml run for this
-// PR snapshot, with a GitHub Actions-issued CI Results aggregate.
+// PR snapshot, still its run's latest attempt, not superseded by a newer run for the same
+// merge, and carry a GitHub Actions-issued CI Results aggregate.
 async function genuineRequestingRun(github,repo,proof){
- const {data:run}=await github.rest.actions.getWorkflowRunAttempt({...repo,run_id:proof.requestingRunId,attempt_number:proof.requestingRunAttempt,request});
  const full=`${repo.owner}/${repo.repo}`;
- if(run?.id!==proof.requestingRunId||run.run_attempt!==proof.requestingRunAttempt||run.status!=='completed'||run.conclusion!=='success'||!['.github/workflows/ci.yml','.github/workflows/ci.yml@main','.github/workflows/ci.yml@refs/heads/main'].includes(run.path)||!same(run.repository?.full_name,full)||!same(run.head_repository?.full_name,full))return false;
- if(run.event==='pull_request'){if(run.head_sha!==proof.headSha||run.display_title!==`CI coverage-v1 · ${proof.sourceSha}`)return false;}
- else if(run.event==='workflow_dispatch'){
-  const marker=parseRefreshMarker(run.display_title);
-  if(run.head_branch!=='main'||marker?.prNumber!==proof.prNumber||marker.headSha!==proof.headSha||marker.baseSha!==proof.baseSha||marker.sourceSha!==proof.sourceSha)return false;
- }else return false;
+ const {data:run}=await github.rest.actions.getWorkflowRunAttempt({...repo,run_id:proof.requestingRunId,attempt_number:proof.requestingRunAttempt,request});
+ if(run?.id!==proof.requestingRunId||run.run_attempt!==proof.requestingRunAttempt||run.status!=='completed'||run.conclusion!=='success'||!ciRun(run,full)||!testsMerge(run,proof)||!run.created_at)return false;
+ const {data:latest}=await github.rest.actions.getWorkflowRun({...repo,run_id:run.id,request});
+ if(latest?.id!==run.id||latest.run_attempt!==run.run_attempt)return false;
+ const newer=[...await runsAfter(github,repo,{event:'pull_request',head_sha:proof.headSha},run.created_at),...await runsAfter(github,repo,{event:'workflow_dispatch',branch:'main'},run.created_at)];
+ if(newer.some(other=>other.id>run.id&&ciRun(other,full)&&testsMerge(other,proof)))return false;
  const {data}=await github.rest.actions.listJobsForWorkflowRunAttempt({...repo,run_id:run.id,attempt_number:run.run_attempt,per_page:100,request});
  if(!Number.isSafeInteger(data?.total_count)||data.total_count>100||!Array.isArray(data.jobs)||data.jobs.length!==data.total_count)return false;
  const aggregates=data.jobs.filter(job=>job.name==='CI Results');
@@ -93,19 +111,32 @@ async function genuineRequestingRun(github,repo,proof){
  return check?.id===checkId&&check.name==='CI Results'&&check.app?.slug==='github-actions'&&check.head_sha===run.head_sha&&check.status==='completed'&&check.conclusion==='success'&&check.details_url?.startsWith(`https://github.com/${full}/actions/runs/${run.id}/`);
 }
 
-// `gateAppId` pins the exact App when the caller has it (the pinned main gate); ci.yml
-// cannot read the environment-scoped id and relies on the globally unique App slug.
-export async function resolveReusablePrCoverage(github,repo,mainSha,{gateAppId}={}){
+async function parentCoverageGreen(github,repo,parent){
+ const {data}=await github.rest.actions.listWorkflowRuns({...repo,workflow_id:'ci.yml',event:'push',branch:'main',head_sha:parent,per_page:20,request});
+ const full=`${repo.owner}/${repo.repo}`;
+ return Array.isArray(data?.workflow_runs)&&data.workflow_runs.some(run=>run.head_sha===parent&&run.status==='completed'&&run.conclusion==='success'&&ciRun(run,full)&&run.display_title===`CI coverage-v1 · ${parent}`);
+}
+
+// `qualification` is the current controller pin and runner image: proofs from any other
+// configuration never qualify main. `gateAppId` pins the exact App when the caller has it
+// (the pinned main gate); ci.yml cannot read the environment-scoped id and relies on the
+// globally unique App slug. `frontier` is main's recorded coverage base when known, and
+// `checkId` re-verifies exactly the proof a decision receipt named.
+export async function resolveReusablePrCoverage(github,repo,mainSha,{gateAppId,qualification,frontier,checkId}={}){
  if(!sha.test(mainSha||''))throw new Error('Invalid main commit');
+ if(!sha.test(qualification?.controllerSha||'')||!IMAGE.test(qualification?.imageDigest||'')||!HARNESS.test(qualification?.harnessDigest||''))throw new Error('Reuse requires the current qualification configuration');
  const main=await commitOf(github,repo,mainSha);
  if(main.parents.length!==1)return {reused:false,reason:'main commit is not a single-parent squash'};
  const [parent]=main.parents,full=`${repo.owner}/${repo.repo}`;
+ if(frontier&&(frontier.bootstrap!==false||frontier.coverageBaseSha!==parent))return {reused:false,reason:'main coverage frontier is not the squash parent'};
+ if(!await parentCoverageGreen(github,repo,parent))return {reused:false,reason:'main coverage frontier is not the squash parent'};
  const {data:pulls}=await github.rest.repos.listPullRequestsAssociatedWithCommit({...repo,commit_sha:mainSha,per_page:100,request});
  const merged=(Array.isArray(pulls)?pulls:[]).filter(pull=>id(pull.number)&&pull.merged_at&&pull.merge_commit_sha===mainSha&&pull.base?.ref==='main'&&same(pull.base?.repo?.full_name,full)&&same(pull.head?.repo?.full_name,full)&&sha.test(pull.head?.sha||''));
  if(merged.length!==1)return {reused:false,reason:'no single merged PR for the main commit'};
  const [pull]=merged;
- const proofs=(await listProofs(github,repo,pull.head.sha)).map(check=>({check,value:parseProof(check,gateAppId)}))
-  .filter(({value})=>value&&value.prNumber===pull.number&&value.headSha===pull.head.sha&&value.baseSha===parent)
+ const proofs=(await listProofs(github,repo,pull.head.sha)).filter(check=>checkId===undefined||check.id===checkId).map(check=>({check,value:parseProof(check,gateAppId)}))
+  .filter(({value})=>value&&value.prNumber===pull.number&&value.headSha===pull.head.sha&&value.baseSha===parent
+   &&value.controllerSha===qualification.controllerSha&&value.imageDigest===qualification.imageDigest&&value.harnessDigest===qualification.harnessDigest)
   .sort((a,b)=>b.check.id-a.check.id);
  for(const {check,value} of proofs){
   const tested=await commitOf(github,repo,value.sourceSha);

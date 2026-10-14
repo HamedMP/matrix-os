@@ -138,8 +138,13 @@ export async function reconcileSourceQualification(github,repo,controller,option
    if(!duplicate){await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:pull.head.sha,base_sha:pull.base.sha,source_sha:pull.merge_commit_sha,...(recovery?{execution_mode:'hosted-only'}:{})},request});dispatched++;}
    continue;
   }
-  // Running CI is not a failure; the completed-CI reconcile settles this check.
-  if(requester.status!=='completed'){await write('neutral','Waiting for exact-source CI to finish',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,waitingForRequester:true});continue;}
+  // The PR's own run for this head is not a failure while it runs: its CI Results on the head
+  // is pending too, so nothing stale can pass. A dispatched refresh or hosted replacement runs
+  // on main while the head keeps an older green CI Results, so that wait stays failure.
+  if(requester.status!=='completed'){
+   const ownRun=!recovery&&requester.event==='pull_request'&&requester.head_sha===pull.head.sha;
+   await write(ownRun?'neutral':'failure',ownRun?'Waiting for exact-source CI to finish':'Current requesting CI is pending',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,waitingForRequester:true});continue;
+  }
   if(requester.conclusion!=='success'){await write('failure','Current requesting CI failed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
   try{
    if(recovery)await verifyHostedReplacement(github,repo,requester);
@@ -165,7 +170,8 @@ export async function reconcileSourceQualification(github,repo,controller,option
    await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
    // Main reuses this exact merge's result after the PR lands; the proof is an
    // optimization, so failing to record it never turns a qualified PR red.
-   try{await recordMergeQualification({github,gateGithub:options.gateGithub,repo,snapshot,requester,controllerSha:controller.sha,gateAppId:options.gateAppId,
+   try{await recordMergeQualification({github,gateGithub:options.gateGithub,repo,snapshot,requester,gateAppId:options.gateAppId,
+    qualification:{controllerSha:controller.sha,imageDigest:config.imageDigest,harnessDigest:config.harnessDigest},
     coverage:recovery?'hosted-recovery':evidence.infrastructureFallback?'infrastructure-hosted':'linux'});}
    catch(proofError){if(!(proofError instanceof Error))throw proofError;logGateError(pull.number,'merge-qualification',proofError);}
   }catch(error){await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;logGateError(pull.number,'qualification',error);}

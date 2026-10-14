@@ -118,7 +118,8 @@ jobs:
             if(admission.sourceKind==='main'&&process.env.MATRIX_CI_MAIN_REUSE==='true'){
               try{
                 const {resolveReusablePrCoverage}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/main-ci-reuse.mjs')).href);
-                const reuse=await resolveReusablePrCoverage(github,context.repo,admission.sourceSha);
+                const reuse=await resolveReusablePrCoverage(github,context.repo,admission.sourceSha,{
+                  qualification:{controllerSha:process.env.CONTROLLER_SHA,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST}});
                 if(reuse.reused){core.notice(`Standing down: main reuses PR #${reuse.reusedFrom.prNumber} qualified coverage`);core.setOutput('admitted','false');return;}
               }catch(error){core.warning(`Main reuse check unavailable; qualifying on Linux: ${error instanceof Error ? error.message : 'unknown error'}`);}
             }

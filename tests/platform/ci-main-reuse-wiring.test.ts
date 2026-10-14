@@ -30,6 +30,11 @@ describe('main CI reuse of qualified PR coverage', () => {
     expect(reuse.id).toBe('reuse');
     for (const term of ["github.event_name == 'push'", "github.ref == 'refs/heads/main'", "vars.MATRIX_CI_MAIN_REUSE == 'true'", "steps.changed.outputs.should_run == 'true'"]) expect(reuse.if).toContain(term);
     expect(reuse.with?.script).toContain("core.setOutput('reused','false')");
+    // A missing or broken helper, or a pin without it, falls back to full main CI instead of failing the job.
+    const script = reuse.with!.script!;
+    expect(script.indexOf('try{')).toBeLessThan(script.indexOf("await import("));
+    expect(script.indexOf('try{')).toBeLessThan(script.indexOf("path:'scripts/ci/main-ci-reuse.mjs',ref:process.env.CONTROLLER_SHA"));
+    expect(reuse.env).toMatchObject({ CONTROLLER_SHA: '${{ vars.MATRIX_CI_CONTROLLER_SHA }}', IMAGE_DIGEST: '${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}', HARNESS_DIGEST: '${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}', COVERAGE_BASE_SHA: '${{ steps.changed.outputs.base_sha }}', COVERAGE_BOOTSTRAP: '${{ steps.changed.outputs.bootstrap }}' });
     expect(changes.outputs?.reused).toBe("${{ steps.reuse.outputs.reused == 'true' && 'true' || 'false' }}");
   });
 
@@ -46,12 +51,13 @@ describe('main CI reuse of qualified PR coverage', () => {
 
   it.each([
     'Type Check', 'Shell Production Build', 'Agent SDK 0.3.251 Compatibility', 'Unit Tests (${{ matrix.shard }}/4)',
-    'E2E Tests (${{ matrix.lane }})', 'Docs Contract Tests', 'OS View Parity', 'CI Backend Decision', 'Verified Dedicated Linux Qualification',
+    'E2E Tests (${{ matrix.lane }})', 'Docs Contract Tests', 'CI Backend Decision', 'Verified Dedicated Linux Qualification',
   ])('skips heavy lane %s when coverage is reused', name => {
     expect(byName(name).if).toContain(GUARD);
   });
 
-  it.each(['Pattern Scan', 'React Doctor', 'Sync Client Package', 'Funded Settlement PostgreSQL', 'Protected Funded Host Root Contracts'])('keeps light lane %s running', name => {
+  // Main always selects OS View Parity, while a PR run may not have, so reuse never skips it.
+  it.each(['Pattern Scan', 'React Doctor', 'Sync Client Package', 'Funded Settlement PostgreSQL', 'Protected Funded Host Root Contracts', 'OS View Parity'])('keeps lane %s running', name => {
     expect(byName(name).if ?? '').not.toContain(GUARD);
   });
 

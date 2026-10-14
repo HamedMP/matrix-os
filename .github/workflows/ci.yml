@@ -160,12 +160,22 @@ jobs:
         id: reuse
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.MATRIX_CI_MAIN_REUSE == 'true' && steps.changed.outputs.should_run == 'true'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
+          COVERAGE_BASE_SHA: ${{ steps.changed.outputs.base_sha }}
+          COVERAGE_BOOTSTRAP: ${{ steps.changed.outputs.bootstrap }}
         with:
           script: |
             const {pathToFileURL}=require('node:url');const {resolve}=require('node:path');
-            const {resolveReusablePrCoverage}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/main-ci-reuse.mjs')).href);
             try{
-              const result=await resolveReusablePrCoverage(github,context.repo,context.sha);
+              // The pinned main gate verifies reused receipts, so reuse only once the pin carries the helper.
+              await github.rest.repos.getContent({...context.repo,path:'scripts/ci/main-ci-reuse.mjs',ref:process.env.CONTROLLER_SHA,request:{timeout:10000}});
+              const {resolveReusablePrCoverage}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/main-ci-reuse.mjs')).href);
+              const result=await resolveReusablePrCoverage(github,context.repo,context.sha,{
+                qualification:{controllerSha:process.env.CONTROLLER_SHA,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST},
+                frontier:{coverageBaseSha:process.env.COVERAGE_BASE_SHA,bootstrap:process.env.COVERAGE_BOOTSTRAP==='true'}});
               if(result.reused){
                 const from=result.reusedFrom;
                 core.notice(`Reusing PR #${from.prNumber} CI run ${from.requestingRunId} attempt ${from.requestingRunAttempt}: tree ${from.tree} was already tested`);
@@ -745,7 +755,7 @@ jobs:
   os-view-parity:
     name: OS View Parity
     needs: [changes, ci-backend]
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.reused != 'true' && (needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    if: always() && needs.changes.result == 'success' && (needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:

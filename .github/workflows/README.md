@@ -127,10 +127,15 @@ OTA payloads.
 Main reuses a merged PR's result when nothing changed: under the strict up-to-date ruleset the
 squash commit on `main` has the same tree as the PR merge commit that PR CI tested. When the pinned
 PR source gate qualifies an open PR it records an immutable `CI Merge Qualification` check on the PR
-head, bound to that merge and CI attempt. With `MATRIX_CI_MAIN_REUSE=true`, a main push whose single
-parent and tree match a recorded proof skips the heavy lanes and the main Linux controller, records
-`reusedFrom` in its decision receipt, and the pinned main gate re-derives the same proof before
-writing `CI Source Qualification`. Any mismatch, missing proof, or API error runs full main CI.
+head, bound to that merge, CI attempt, controller pin and runner image. With
+`MATRIX_CI_MAIN_REUSE=true`, a main push reuses a proof only when it is a single-parent squash whose
+tree matches the tested merge, the parent's own main coverage run passed (so main and the PR plan the
+same lanes), the proof matches the current pin and image, and no newer CI run for that merge exists.
+It then skips the heavy lanes and the main Linux controller (OS View Parity, which main always runs,
+still runs), records `reusedFrom` in its decision receipt, and the pinned main gate re-verifies that
+exact proof before writing `CI Source Qualification`. Any mismatch, missing proof, or API error runs
+full main CI. The controller and `ci.yml` decide reuse independently from the same proof; if they
+disagree, main pays the five-minute Linux admission window and falls back to full hosted CI.
 Roll out in order: merge, main CI green, move `MATRIX_CI_CONTROLLER_SHA` to a commit that contains
 `scripts/ci/main-ci-reuse.mjs`, let PRs record proofs, then set `MATRIX_CI_MAIN_REUSE=true`.
 
