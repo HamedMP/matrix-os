@@ -29,13 +29,23 @@ async function fixture() {
   };
   const store = new TerminalWorkspaceStore({ homePath });
   const runtime = new TerminalRuntime({ store, zellij: adapter, sweepIntervalMs: 60_000 });
-  const workspace = await runtime.ensureWorkspace();
-  const tab = await runtime.createTab(workspace.id, { name: "reattach", cwd: "" });
-  const ref: TerminalRef = { workspaceId: workspace.id, tabId: tab.id };
   const socketPath = join(homePath, "runtime.sock");
   const streams: TerminalRuntimeSocketStream[] = [];
   const directViewers: Awaited<ReturnType<TerminalRuntime["attach"]>>[] = [];
   let server: TerminalRuntimeSocketServer | undefined;
+  const cleanup = async () => {
+    const results = await Promise.allSettled(streams.map(async (stream) => stream.close()));
+    results.push(...await Promise.allSettled([Promise.resolve().then(() => server?.close())]));
+    results.push(...await Promise.allSettled(directViewers.map((viewer) => viewer.detach())));
+    results.push(...await Promise.allSettled([runtime.shutdown()]));
+    results.push(...await Promise.allSettled([rm(homePath, { recursive: true, force: true })]));
+    const failures = results.filter((result) => result.status === "rejected");
+    if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), "Fixture cleanup failed");
+  };
+  try {
+    const workspace = await runtime.ensureWorkspace();
+    const tab = await runtime.createTab(workspace.id, { name: "reattach", cwd: "" });
+    const ref: TerminalRef = { workspaceId: workspace.id, tabId: tab.id };
   return {
     runtime, store, ref, tab, createTab, closeTab,
     emit(data: string) {
@@ -62,14 +72,13 @@ async function fixture() {
       streams.push(stream);
       return { stream, frames, onClose, onError };
     },
-    async cleanup() {
-      for (const stream of streams) stream.close();
-      await server?.close();
-      for (const viewer of directViewers) await viewer.detach();
-      await runtime.shutdown();
-      await rm(homePath, { recursive: true, force: true });
-    },
+    cleanup,
   };
+  } catch (error: unknown) {
+    try { await cleanup(); }
+    catch (cleanupError: unknown) { throw new AggregateError([error, cleanupError], "Fixture setup and cleanup failed"); }
+    throw error;
+  }
 }
 
 const output = (frames: Frame[]) => frames.flatMap((frame) =>
