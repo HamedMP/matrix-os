@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@t
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserSurface } from "../../packages/ui/src/browser/BrowserSurface";
 import { useBrowserSurface } from "../../packages/ui/src/browser/use-browser-surface";
+import { createHostedBrowserSession } from "../../packages/ui/src/browser/hosted-session";
 
 const gatewayUrl = "https://app.matrix-os.com/vm/pr-2526";
 const ready = { available: true, chrome: { present: true, minimized: false }, humanControlAvailable: true };
@@ -30,6 +31,42 @@ function message(frame: HTMLIFrameElement, data: unknown = { type: "matrix-brows
 async function frame() { return await screen.findByTitle("Chrome on your Matrix computer") as HTMLIFrameElement; }
 
 describe("shared Chrome-first surface", () => {
+  it.each(["browser", "desktop"] as const)("renews invalidated hosted %s admission on explicit reconnect before retrying viewer requests", async surface => {
+    let cookieValid = true;
+    let release!: () => void;
+    let renewals = 0;
+    const renew = vi.fn(() => {
+      renewals++;
+      if (renewals !== 2) { cookieValid = true; return Promise.resolve(); }
+      return new Promise<void>(resolve => { release = () => { cookieValid = true; resolve(); }; });
+    });
+    ensureSession = vi.fn(createHostedBrowserSession(renew, () => 0));
+    const normal = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => !cookieValid
+      ? new Response("Unavailable", { status: 401 }) : normal(url as string, init));
+    const view = mount({ surface });
+    const title = surface === "browser" ? "Chrome on your Matrix computer" : "Your Matrix cloud desktop";
+    const previous = await screen.findByTitle(title) as HTMLIFrameElement;
+    message(previous);
+    cookieValid = false;
+    message(previous, { type: "matrix-browser-viewer", connected: false });
+    const beforeReconnect = vi.mocked(fetch).mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    await waitFor(() => expect(renew).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(beforeReconnect);
+    expect(screen.queryByTitle(title)).toBeNull();
+    await act(async () => { release(); });
+    const next = await screen.findByTitle(title) as HTMLIFrameElement;
+    expect(next).not.toBe(previous);
+    expect(next.hasAttribute("inert")).toBe(true);
+    message(next); expect(next.hasAttribute("inert")).toBe(false);
+
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface={surface} active={false} ensureSession={ensureSession} />);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface={surface} active ensureSession={ensureSession} />);
+    await screen.findByTitle(title);
+    expect(renew).toHaveBeenCalledTimes(3);
+  });
+
   it("disables all native desktop commands before handshake, during read-only, and after revocation", async () => {
     status = { ...ready, humanControlAvailable: false };
     mount({ surface: "desktop" });
