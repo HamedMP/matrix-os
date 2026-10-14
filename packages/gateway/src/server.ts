@@ -1,3 +1,4 @@
+import { createOwnerAppDataReadRuntime } from "./startup/owner-app-data-read.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
@@ -332,6 +333,7 @@ export async function createGateway(config: GatewayConfig) {
     configuredOwnerId: process.env.MATRIX_CLERK_USER_ID === process.env.MATRIX_USER_ID
       ? process.env.MATRIX_CLERK_USER_ID
       : undefined,
+    configuredRuntimeHandle: process.env.MATRIX_HANDLE,
     previewRuntime: process.env.MATRIX_PREVIEW_RUNTIME === "true",
   });
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
@@ -864,6 +866,12 @@ export async function createGateway(config: GatewayConfig) {
   gatewayCollaboration = ownerDatabaseServices?.collaboration ?? null;
   messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
+  const ownerAppDataRead = appRegistry && queryEngine && kyselyInstance && internalHandle
+    && process.env.MATRIX_USER_ID && process.env.MATRIX_USER_ID === process.env.MATRIX_CLERK_USER_ID
+    && process.env.MATRIX_PREVIEW_RUNTIME !== "true"
+    ? await createOwnerAppDataReadRuntime({ apps: appRegistry, queryEngine, kysely: kyselyInstance,
+      ownerId: process.env.MATRIX_USER_ID, runtimeHandle: internalHandle }) : null;
+
   const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
   const osViewTools = osViewStateRepository
     && trustedOsViewOwnerId
@@ -1237,6 +1245,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
+    ...(ownerAppDataRead ? { ownerAppDataRead: ownerAppDataRead.auth } : {}),
   }));
   const legacyProjectPathAdmission = gatewayCollaboration
     ? createLegacyProjectPathAdmission({
@@ -1363,6 +1372,7 @@ export async function createGateway(config: GatewayConfig) {
     } : {}),
   });
 
+  ownerAppDataRead?.register(app);
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
   const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
@@ -1585,6 +1595,7 @@ export async function createGateway(config: GatewayConfig) {
         credentialKey: toolOutputKey,
         resolveCredentialLaunch: resolveClaudeCredentialLaunch,
         matrixMcpCapabilityIssuer: matrixMcpCapabilities,
+        ...(ownerAppDataRead ? { resolveAppDataReadGrant: ownerAppDataRead.resolveGrant } : {}),
         ...(previewDriveClient ? { previewDriveClient } : {}),
         customMcpApprovalClient: internalPlatformUrl && internalPlatformToken && internalHandle
           ? createCustomMcpApprovalClient({ platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle })

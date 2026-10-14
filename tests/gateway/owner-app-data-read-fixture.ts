@@ -128,7 +128,7 @@ export async function ownerReadFixture(options: { runtime?: string; rows?: numbe
     return { client, fetcher };
   }
   return { gateway, request, headers, grant, grantInput, capabilities, audit, writes, raw, find,
-    engine, apps, before, connectMcp, expire: () => { clock = 35 * 60_000; } };
+    engine, apps, db, kysely, before, connectMcp, expire: () => { clock = 35 * 60_000; } };
 }
 
 export const fiveRows = { action: "find", app: "notes", table: "entries", limit: 5,

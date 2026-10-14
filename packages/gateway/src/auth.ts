@@ -245,10 +245,11 @@ export function authMiddleware(
     // Dedicated authority gate: never fall through to JWT/machine/dev bypass.
     if (normalizedPath === OWNER_APP_READ_PATH) {
       const config = options?.ownerAppDataRead;
+      if (!config) return c.json({ error: "App data read unavailable" }, 503);
       const header = c.req.header("authorization");
       const run = header?.startsWith("Bearer ")
         ? options?.resolveMatrixMcpRunContext?.(header.slice(7), c.req.method, new URL(c.req.raw.url).pathname) : null;
-      if (!config || c.req.method !== "POST" || !run?.appDataRead || !run.isLive?.()
+      if (c.req.method !== "POST" || !run?.appDataRead || !run.isLive?.()
         || run.appDataRead.runtimeHandle !== config.runtimeHandle
         || c.req.header("x-platform-user-id") || c.req.header("x-platform-verified")) {
         try { await config?.audit({ outcome: "denied" }); }

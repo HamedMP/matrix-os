@@ -21,6 +21,7 @@
     "./data-imports": "./src/data-imports.ts"
   },
   "imports": {
+    "#owner-app-data-read": "./src/owner-app-data-read.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-wire": "./src/chatgpt-plan-wire.ts",
     "#canonical-chat-import-parts": "./src/canonical-chat-import-parts.ts",

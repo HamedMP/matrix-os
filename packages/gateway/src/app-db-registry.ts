@@ -31,7 +31,7 @@ export interface AppRegistry {
   register(opts: RegisterOpts): Promise<void>;
   unregister(slug: string): Promise<void>;
   get(slug: string): Promise<AppRecord | null>;
-  listApps(): Promise<AppRecord[]>;
+  listApps(limit?: number): Promise<AppRecord[]>;
   getSchema(slug: string): Promise<Record<string, TableDef>>;
 }
 
@@ -83,11 +83,11 @@ export function createAppRegistry(db: AppDb, kysely: Kysely<any>): AppRegistry {
       return (result.rows[0] as AppRecord | undefined) ?? null;
     },
 
-    async listApps(): Promise<AppRecord[]> {
+    async listApps(limit?: number): Promise<AppRecord[]> {
       const result = await sql<AppRecord>`
         SELECT slug, name, description, version, installed_version, author, category, tables,
           created_at::text AS created_at, updated_at::text AS updated_at
-        FROM public._apps ORDER BY name
+        FROM public._apps ORDER BY name ${limit === undefined ? sql`` : sql`LIMIT ${Math.max(1, Math.min(65, Math.floor(limit)))}`}
       `.execute(kysely);
       return result.rows as AppRecord[];
     },

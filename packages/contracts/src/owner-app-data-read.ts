@@ -30,7 +30,7 @@ export const OwnerAppReadGrantSchema = z.strictObject({
   runtimeHandle: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/),
   apps: z.array(z.strictObject({ app: name, schema: name,
     tables: z.array(name).min(1).max(32).refine(v => new Set(v).size === v.length),
-  })).max(64),
+  }).refine(v => v.app === v.schema && v.schema !== "public" && v.schema !== "information_schema" && !v.schema.startsWith("pg_"))).max(64),
 }).refine(v => new Set(v.apps.map(app => app.app)).size === v.apps.length);
 export type OwnerAppReadGrant = z.infer<typeof OwnerAppReadGrantSchema>;
 export interface OwnerAppReadAuditEvent {

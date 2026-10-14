@@ -1465,4 +1465,4 @@ export * from '#chatgpt-plan-wire';
 export * from '#matrix-anthropic-connection';
 
 export * from "#chat-navigation";
-export * from "./owner-app-data-read.js";
+export * from "#owner-app-data-read";

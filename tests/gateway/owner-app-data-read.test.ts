@@ -130,6 +130,54 @@ describe("ENG-289 dedicated owner app-data read boundary (RED)", () => {
     expect(f.writes.every(spy => spy.mock.calls.length === 0)).toBe(true);
   });
 
+  it("rechecks live authority after a read has started", async () => {
+    const f = await ownerReadFixture();
+    f.find.mockImplementationOnce(async () => { f.grant.revoke(); return [{ title: "must-not-escape" }]; });
+    const response = await f.request(fiveRows);
+    expect(response.status).toBe(401);
+    expect(await response.text()).not.toContain("must-not-escape");
+  });
+
+  it("validates and copies app/schema/table grants at issuance", async () => {
+    const f = await ownerReadFixture();
+    for (const app of [{ app: "notes", schema: "public", tables: ["users"] },
+      { app: "notes", schema: "private_app", tables: ["entries"] },
+      { app: "pg_catalog", schema: "pg_catalog", tables: ["pg_authid"] }]) {
+      expect(f.capabilities.issue({ ...f.grantInput, appDataRead: { runtimeHandle: RUNTIME, apps: [app] } })).toBeNull();
+    }
+    f.grantInput.appDataRead.apps[0]!.tables.push("restricted");
+    expect((await f.request({ ...fiveRows, table: "restricted" })).status).toBe(403);
+  });
+
+  it("denies URL/method aliases and an unknown filter column before the record query", async () => {
+    const f = await ownerReadFixture();
+    expect((await f.gateway.request(READ_PATH, { headers: f.headers })).status).toBe(401);
+    expect(f.capabilities.resolve(f.grant.token, "POST", READ_PATH + "/")).toBeNull();
+    expect(f.capabilities.resolve(f.grant.token, "POST", READ_PATH.replace("read", "%72ead"))).toBeNull();
+    expect((await f.request({ ...fiveRows, filter: { undeclared: "data" } })).status).toBe(400);
+    expect(f.raw).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with generic 503 when audit persistence fails", async () => {
+    const f = await ownerReadFixture();
+    f.audit.mockRejectedValue(new Error("postgres://private-secret"));
+    const response = await f.request(fiveRows);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "App data read unavailable" });
+  });
+
+  it("projects declared columns and paginates with an implicit id tie-breaker", async () => {
+    const f = await ownerReadFixture();
+    await f.db.raw("ALTER TABLE notes.entries ADD COLUMN undeclared text DEFAULT 'private-column'");
+    f.raw.mockClear();
+    const response = await f.request({ action: "find", app: "notes", table: "entries", limit: 2, offset: 2 });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.rows.map((r: { title: string }) => r.title)).toEqual(["note-3", "note-4"]);
+    expect(JSON.stringify(body)).not.toContain("private-column");
+    expect(f.find).toHaveBeenCalledWith("notes", "entries", expect.objectContaining({ orderBy: { id: "asc" }, offset: 2 }));
+  });
+
   it("distinguishes empty records from generic database unavailability without credential exposure", async () => {
     const f = await ownerReadFixture();
     const empty = await f.request({ ...fiveRows, filter: { position: -1 } });

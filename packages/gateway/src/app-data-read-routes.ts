@@ -23,14 +23,12 @@ export function registerOwnerAppDataReadRoutes(app: Hono, options: OwnerAppReadR
     || caps[0]! > caps[1]!) throw new Error("Invalid app read limits");
   const [defaultRows, maxRows, maxBytes, bodyBytes] = caps as [number, number, number, number];
   const unavailable = { error: "App data read unavailable" };
-  app.post(OWNER_APP_READ_PATH, async (c, next) => {
-    // bodyLimit's rejection is audited too; audit failure must fail closed.
-    try { await next(); }
-    catch (error: unknown) {
-      console.warn("[app-data-read] Request unavailable", error instanceof Error ? error.name : "UnknownError");
-      c.res = c.json(unavailable, 503);
-    }
-  }, bodyLimit({ maxSize: bodyBytes, onError: async c => {
+  const routes = new Hono();
+  routes.onError((error, c) => {
+    console.warn("[app-data-read] Request unavailable", error.name);
+    return c.json(unavailable, 503);
+  });
+  routes.post(OWNER_APP_READ_PATH, bodyLimit({ maxSize: bodyBytes, onError: async c => {
     await options.audit({ outcome: "denied" });
     return c.json({ error: "App data request too large" }, 413);
   } }), async c => {
@@ -70,9 +68,10 @@ export function registerOwnerAppDataReadRoutes(app: Hono, options: OwnerAppReadR
         const tables = Object.fromEntries(Object.entries(record.tables).filter(([name]) => grant.tables.includes(name)));
         if (input.action === "schema") data = { app: input.app, schema: grant.schema, tables };
         else {
-          const table = tables[input.table];
+          const table = Object.hasOwn(tables, input.table) ? tables[input.table] : undefined;
           if (!table) return deny(403);
-          const columns = ["id", "created_at", "updated_at", ...Object.keys(table.columns)];
+          const columns = [...new Set(["id", "created_at", "updated_at", ...Object.keys(table.columns)])]; // registry-bound projection
+          if (columns.length > 128) return deny(403);
           if ([...Object.keys(input.filter ?? {}), ...Object.keys(input.orderBy ?? {})].some(col => !columns.includes(col))) return deny(400);
           const orderBy = { ...input.orderBy, id: input.orderBy?.id ?? "asc" as const };
           if (!live()) return deny(401);
@@ -98,4 +97,5 @@ export function registerOwnerAppDataReadRoutes(app: Hono, options: OwnerAppReadR
         ? c.json({ error: "App data response too large" }, 413) : c.json(unavailable, 503);
     }
   });
+  app.route("/", routes);
 }

@@ -212,6 +212,7 @@ const ClaudeEditPermissionRuleSchema = z.string()
   .regex(/^Edit\(\/\/[^)\r\n]+\/\*\*\)$/);
 const ClaudeAllowRuleSchema = z.union([
   ClaudeEditPermissionRuleSchema,
+  z.literal("mcp__matrix-integrations__read_app_data"),
   z.enum(MATRIX_CUSTOM_MCP_TOOLS),
   z.enum(MATRIX_INTEGRATION_DISCOVERY_TOOLS),
   z.enum(MATRIX_COMPANY_DRIVE_TOOLS),
@@ -291,7 +292,7 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   const previewDrive = input.matrixCustomMcpScope === "preview_drive_call";
   const chatIntegrations = input.matrixCustomMcpScope?.startsWith("chat_") === true || previewDrive;
   const mcpTools = input.matrixCustomMcp
-    ? [...(input.matrixIntegrationRead && !chatIntegrations ? MATRIX_INTEGRATION_READ_TOOLS : []), ...(!previewDrive && input.matrixDriveContext ? MATRIX_COMPANY_DRIVE_TOOLS : []), ...(previewDrive ? [MATRIX_INTEGRATION_DISCOVERY_TOOLS[0], MATRIX_INTEGRATION_DISCOVERY_TOOLS[2]]
+    ? [...(chatIntegrations && !previewDrive ? ["mcp__matrix-integrations__read_app_data"] : []), ...(input.matrixIntegrationRead && !chatIntegrations ? MATRIX_INTEGRATION_READ_TOOLS : []), ...(!previewDrive && input.matrixDriveContext ? MATRIX_COMPANY_DRIVE_TOOLS : []), ...(previewDrive ? [MATRIX_INTEGRATION_DISCOVERY_TOOLS[0], MATRIX_INTEGRATION_DISCOVERY_TOOLS[2]]
       : chatIntegrations ? MATRIX_INTEGRATION_DISCOVERY_TOOLS : []), ...(previewDrive ? [] : mode === "read-only" || claudePermissionMode(input) === "default"
       ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
     : [];

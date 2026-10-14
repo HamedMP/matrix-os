@@ -1,3 +1,4 @@
+import type { OwnerAppReadGrant } from "@matrix-os/contracts";
 import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
 import { createClaudeInputController } from "./claude-input-control.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
@@ -161,6 +162,7 @@ export function createClaudeChatProviderAdapter(options: {
   /** The run id doubles as the funded priority claim key for this turn. */
   resolveCredentialLaunch?: (context: { runId: string; instanceId: string }) => Promise<KernelCredentialLaunch>;
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
+  resolveAppDataReadGrant?: (owner: { type: string; ownerId: string }) => Promise<OwnerAppReadGrant | null>;
   previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
@@ -189,8 +191,12 @@ export function createClaudeChatProviderAdapter(options: {
     // A presentation selector never authorizes a Gateway request.
     const mcpScope = approvalReady && input.interactionMode === "default" && selectedPermission !== "plan"
       ? "chat_call" : "chat_discovery";
+    const appDataRead = !input.sharedScopeId && input.owner.type === "personal"
+      ? await options.resolveAppDataReadGrant?.(input.owner) : null;
+    input.signal.throwIfAborted();
     const capability = options.matrixMcpCapabilityIssuer?.issue({
       owner: input.owner,
+      ...(appDataRead ? { appDataRead } : {}),
       runId: input.runId,
       // Review is read-only even if its saved permission choice says full access.
       // Unknown future interaction modes receive discovery only.
@@ -211,7 +217,8 @@ export function createClaudeChatProviderAdapter(options: {
               : "This run supports discovery only; remote tool calls are unavailable.")
           : "No Matrix tools are available for this run.")
       : undefined;
-    const nativePrompt = recipeGuidance ? `${input.prompt}\n\n${recipeGuidance}` : input.prompt;
+    const nativePrompt = (recipeGuidance ? `${input.prompt}\n\n${recipeGuidance}` : input.prompt)
+      + (capability && appDataRead ? "\n\nUse read_app_data to list granted apps, discover their declared schema and read bounded records. No SQL, writes, credential access or direct bridge-query calls." : "");
     let approvalClient = approvalReady && capability && !previewDrive && selectedPermission === "default" && input.interactionMode === "default"
       ? options.customMcpApprovalClient : undefined;
     let registeredGeneration: number | undefined;
@@ -278,7 +285,7 @@ export function createClaudeChatProviderAdapter(options: {
       : definedEnvironment({ ...credentialEnv, ...launch.env });
     // Host control credentials are never delegated, including launches where
     // scoped capability issuance fails (for example shared Preview runtimes).
-    for (const name of ["MATRIX_AUTH_TOKEN", "UPGRADE_TOKEN", "MATRIX_CODE_PROXY_TOKEN", "AI_RELAY_CONTROL_TOKEN"]) {
+    for (const name of ["MATRIX_AUTH_TOKEN", "UPGRADE_TOKEN", "MATRIX_CODE_PROXY_TOKEN", "AI_RELAY_CONTROL_TOKEN", "DATABASE_URL", "PGPASSWORD", "PGPASSFILE", "PGSERVICEFILE", "PGSERVICE", "POSTGRES_PASSWORD", "POSTGRES_URL", "POSTGRESQL_URL", "PGDATABASE", "PGUSER"]) {
       delete runEnv[name];
     }
     if (capability) {
