@@ -31,7 +31,8 @@ it.each(["desktop", "canvas"] as const)(
       const connect = await screen.findByRole("button", { name: "Connect Codex" });
       const entry = screen.getByRole("region", { name: "Chat provider connection" });
       // Require the limitation at the actual entry, not only in Settings.
-      expect(within(entry).getByText(/ChatGPT.*subscription.*Electron Desktop|Electron Desktop.*ChatGPT.*subscription/i)).toBeVisible();
+      expect(within(entry).getByText("ChatGPT subscription management requires Electron Desktop on the owner’s device.")).toBeVisible();
+      expect(within(entry).getByText("The paired device must stay connected while chats and Matrix Bots run.")).toBeVisible();
       fireEvent.click(connect);
       expect(settings).toHaveBeenCalledOnce();
       expect(mutations).not.toHaveBeenCalled();

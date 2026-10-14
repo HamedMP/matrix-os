@@ -2,14 +2,15 @@
 import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema, type BotProviderConnection } from "@matrix-os/contracts";
 import { YourSubscriptions } from "../../packages/ui/src/agents-providers/YourSubscriptions";
 import { projectChatGptPlanSnapshot, projectChatGptPlanAppRoutes } from "../../packages/gateway/src/app-ai/chatgpt-plan-projection";
 import { initialProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence";
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector";
 
-afterEach(cleanup);
+beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(+now); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const now = new Date("2026-10-14T12:00:00.000Z");
 const peer: BotProviderConnection = {
   id: "matrix_chatgpt_plan", providerId: "openai", executionKind: "direct_pi",
