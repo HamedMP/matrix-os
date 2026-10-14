@@ -192,6 +192,8 @@ for tool in $TOOLS; do
   if /opt/matrix/bin/matrix-install-tool-pack "$tool" >>"$STATE_DIR/${tool}.log" 2>&1; then
     if [ "$tool" = "claude-code" ] && ! claude_version_is_current; then
       log "installed Claude Code did not meet the required version"
+    elif [ "$tool" = "codex" ] && ! codex_version_is_current; then
+      log "installed Codex did not meet the required version"
     else
       install_succeeded=1
     fi

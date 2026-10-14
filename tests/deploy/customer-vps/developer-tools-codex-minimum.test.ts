@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -29,6 +29,22 @@ function fixture(output: string, options: { marked?: boolean; exitCode?: number;
     "CLAUDE_CODE_VERSION=2.1.280", definitions, body,
   ].join("\n"), "bash", prefix], { encoding: "utf8", timeout: 5_000 });
   return { prefix, run };
+}
+
+function installFixture(output: string, exitCode = 0) {
+  const { prefix, run } = fixture(output, { exitCode });
+  renameSync(join(prefix, "bin/codex"), join(prefix, "prepared-codex"));
+  writeFileSync(join(prefix, "installed-tools"), "");
+  const loop = source.match(/failed=0\nfor tool in \$TOOLS; do[\s\S]*?\ndone/)?.[0];
+  const exitCheck = source.match(/if \[ "\$failed" -ne 0 \]; then\n  exit 1\nfi/)?.[0];
+  if (!loop || !exitCheck) throw new Error("Missing installer loop or retry exit");
+  const result = run([
+    "set -euo pipefail", "STATE_DIR=\"$NODE_PREFIX\"", "FAILED_FILE=\"$STATE_DIR/failed-tools\"", "TOOLS=codex",
+    ": > \"$FAILED_FILE\"", "log() { :; }", "link_tool() { touch \"$STATE_DIR/linked\"; }",
+    "successful_tool_pack() { cp \"$NODE_PREFIX/prepared-codex\" \"$NODE_PREFIX/bin/codex\"; touch \"$STATE_DIR/pack-ran\"; }",
+    loop.replace("/opt/matrix/bin/matrix-install-tool-pack", "successful_tool_pack"), exitCheck,
+  ].join("\n"));
+  return { prefix, result };
 }
 afterEach(() => { for (const directory of temporary.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
@@ -73,5 +89,23 @@ describe("managed Codex minimum version during optional tool provisioning", () =
     const result = run(`log() { :; }\nfor tool in codex; do\n${skip}\ndone`);
     expect(result.status).toBe(0);
     expect(readFileSync(join(prefix, "installed-tools"), "utf8")).toBe("codex\n");
+  });
+  it.each([
+    ["codex-cli 0.156.1", 0], ["codex-cli broken", 0], ["codex-cli 0.162.1", 1],
+  ] as const)("retries successful package installation with unusable CLI %s (exit %s)", (output, exitCode) => {
+    const { prefix, result } = installFixture(output, exitCode);
+    expect(existsSync(join(prefix, "pack-ran"))).toBe(true);
+    expect(result.status).toBe(1);
+    expect(readFileSync(join(prefix, "failed-tools"), "utf8")).toBe("codex\n");
+    expect(readFileSync(join(prefix, "installed-tools"), "utf8")).toBe("");
+    expect(existsSync(join(prefix, "linked"))).toBe(false);
+  });
+  it.each(["0.162.1", "0.162.2"])("records verified successful %s installation", version => {
+    const { prefix, result } = installFixture(`codex-cli ${version}`);
+    expect(existsSync(join(prefix, "pack-ran"))).toBe(true);
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(prefix, "failed-tools"), "utf8")).toBe("");
+    expect(readFileSync(join(prefix, "installed-tools"), "utf8")).toBe("codex\n");
+    expect(existsSync(join(prefix, "linked"))).toBe(true);
   });
 });
