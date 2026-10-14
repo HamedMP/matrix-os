@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PostgresDialect, sql } from 'kysely';
 import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,15 +21,42 @@ const env = {
 };
 const lifetimeEntryId = `starter-lifetime:${createHash('sha256').update(identity.ownerId).digest('hex')}`;
 
+// Hosted funded CI provides a disposable service; dedicated CI supplies the
+// existing native clone helper. Never point this schema fixture at owner data.
+function hostedTestUrl(): URL | undefined {
+  if (process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL || !process.env.MATRIX_TEST_POSTGRES_URL) return undefined;
+  const url = new URL(process.env.MATRIX_TEST_POSTGRES_URL);
+  if (!['postgres:', 'postgresql:'].includes(url.protocol) || !['127.0.0.1', '[::1]'].includes(url.hostname)
+    || url.pathname !== '/matrix_test' || url.search || url.hash) throw new Error('Starter recovery requires the disposable loopback test service');
+  return url;
+}
+
 describe('ENG-291 completed customer starter recovery', () => {
   let db: PlatformDB;
   let secondDb: PlatformDB | undefined;
   let service: ReturnType<typeof createCustomerVpsService>;
   let repository: ReturnType<typeof createAiFundedPolicyRepository>;
+  let admin: pg.Pool | undefined;
+  let schema: string | undefined;
 
   beforeEach(async () => {
     for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
-    ({ db } = await createTestPlatformDb());
+    const url = hostedTestUrl();
+    if (url) {
+      schema = `starter_backfill_${randomUUID().replaceAll('-', '')}`;
+      admin = new pg.Pool({ connectionString: url.href, max: 1, connectionTimeoutMillis: 2000,
+        statement_timeout: 10_000, query_timeout: 12_000 });
+      await admin.query(`CREATE SCHEMA "${schema}"`);
+      url.searchParams.set('options', `-c search_path=${schema}`);
+      db = createPlatformDb({ dialect: new PostgresDialect({ pool: new pg.Pool({
+        connectionString: url.href, max: 1, connectionTimeoutMillis: 2000,
+        statement_timeout: 10_000, query_timeout: 12_000,
+        types: { getTypeParser: (oid, format = 'text') => oid === pg.types.builtins.INT8 && format === 'text'
+          ? value => { const n = BigInt(value); return n >= Number.MIN_SAFE_INTEGER && n <= Number.MAX_SAFE_INTEGER ? Number(n) : n; }
+          : pg.types.getTypeParser(oid, format) },
+      }) }) });
+      await db.ready;
+    } else ({ db } = await createTestPlatformDb());
     await insertUserMachine(db, {
       machineId: identity.machineId, clerkUserId: identity.ownerId, handle: 'starter-backfill',
       runtimeSlot: 'primary', provisioningClass: 'customer', activationState: 'authorized',
@@ -55,7 +82,14 @@ describe('ENG-291 completed customer starter recovery', () => {
     finally {
       secondDb = undefined;
       try { await destroyTestPlatformDb(db); }
-      finally { vi.unstubAllEnvs(); vi.restoreAllMocks(); }
+      finally {
+        try {
+          if (admin && schema) await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+        } finally {
+          try { await admin?.end(); }
+          finally { admin = undefined; schema = undefined; vi.unstubAllEnvs(); vi.restoreAllMocks(); }
+        }
+      }
     }
   });
 
@@ -214,12 +248,13 @@ describe('ENG-291 completed customer starter recovery', () => {
     expect(await snapshot()).toEqual(before);
   });
 
-  it.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('issues exactly one lifetime grant across independent native PostgreSQL pools', async () => {
+  it.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL && !process.env.MATRIX_TEST_POSTGRES_URL)('issues exactly one lifetime grant across independent native PostgreSQL pools', async () => {
     // The native fixture validates a disposable loopback URL and owns its clone.
     // No WASM fallback may stand in for independent-pool lock evidence.
     const result = await sql<{ name: string }>`SELECT current_database() AS name`.execute(db.executor);
-    const url = new URL(process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL!);
+    const url = new URL((process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL ?? process.env.MATRIX_TEST_POSTGRES_URL)!);
     url.pathname = `/${result.rows[0].name}`;
+    if (schema) url.searchParams.set('options', `-c search_path=${schema}`);
     secondDb = createPlatformDb({ dialect: new PostgresDialect({ pool: new pg.Pool({
       connectionString: url.href, max: 1, connectionTimeoutMillis: 2000,
       statement_timeout: 10_000, query_timeout: 12_000,
