@@ -104,3 +104,19 @@ it("invokes optional installer configuration only at stopped-service install or 
   expect(installer).toContain("systemctl is-active --quiet matrix-openclaw-gateway.service");
   expect(installer).toContain("deferred to gateway startup");
 });
+
+it("bootstraps a missing allowlist only for the explicitly enabled Matrix plugin", async () => {
+  const f = await fixture(); try {
+    for (const plugins of [undefined, { entries: f.initial.plugins.entries }]) {
+      await writeFile(f.configPath, JSON.stringify({ ...f.initial, plugins }));
+      expect(await configureOpenClawSharedBrowser(f.options)).toMatchObject({ state: "installed" });
+      const current = JSON.parse(await readFile(f.configPath, "utf8"));
+      expect(current.plugins.allow).toEqual([ID]);
+      expect(current.models).toEqual(f.initial.models);
+      expect(current.gateway).toEqual(f.initial.gateway);
+      await rm(join(f.stateDir, ".matrix-shared-browser-installed.json"));
+    }
+    await writeFile(f.configPath, JSON.stringify({ ...f.initial, plugins: { allow: null } }));
+    await expect(configureOpenClawSharedBrowser(f.options)).rejects.toThrow();
+  } finally { await f.close(); }
+});

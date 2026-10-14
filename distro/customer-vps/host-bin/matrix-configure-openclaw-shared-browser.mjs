@@ -89,7 +89,7 @@ export async function configureOpenClawSharedBrowser(options) {
     if(marker&&(!mapping(marker)||marker.version!==1||!mapping(marker.files)))throw unavailable();
     const parsed=JSON.parse(original.toString('utf8'));if(!mapping(parsed)||parsed.plugins!==undefined&&!mapping(parsed.plugins))throw unavailable();
     const plugins=parsed.plugins??{};
-    const allow=plugins.allow===undefined&&marker?[]:plugins.allow;
+    const allow=plugins.allow===undefined?[]:plugins.allow;
     if(!Array.isArray(allow)||allow.some(value=>value!==ID)||new Set(allow).size!==allow.length)throw unavailable();
     const config={...parsed,plugins:{...plugins,allow}};
     if(config.plugins.entries!==undefined&&!mapping(config.plugins.entries))throw unavailable();
