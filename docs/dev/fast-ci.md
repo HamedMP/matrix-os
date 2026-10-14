@@ -8,14 +8,16 @@ host internals in [`scripts/ci/runner/README.md`](../../scripts/ci/runner/README
 
 ## Using it
 
-1. Open the PR (same repository, not a draft).
-2. Add `fast-ci` **first**.
-3. Add `ready-for-ci` to start CI. This is the same label every PR uses;
-   it is sticky, so later pushes rerun CI while it stays on.
+1. Open the PR as a **draft** (same repository).
+2. Add `fast-ci`, then `ready-for-ci`, as two separate steps. Linux admission
+   still requires both labels until the next controller pin move; ordinary
+   PRs no longer need any label.
+3. Mark the PR ready for review. That starts CI, and later pushes rerun it.
 
-Adding the labels the other way round still works, but CI that already
-started hosted is not cancelled. Keep the order: `fast-ci`, then
-`ready-for-ci`.
+A PR opened ready, or marked ready before both labels are on, starts hosted
+CI first; that run is not cancelled when the labels arrive. Adding both
+labels in one command sends events that supersede each other and leave a
+cancelled run on the PR.
 
 Only open, non-draft, same-repository PRs with **both** labels run on Linux,
 and only when the change runs CI lanes at all: a docs-only change (only
