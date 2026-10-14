@@ -197,6 +197,27 @@ describe("WebDesktopSurface", () => {
     expect(onOpenApp).not.toHaveBeenCalledWith(customBrowser.path, customBrowser.name);
   });
 
+  it("keeps the default Whiteboard icon when the app catalog omits Whiteboard", () => {
+    render(
+      <WebDesktopSurface
+        apps={apps.filter((app) => app.path !== "apps/whiteboard/index.html")}
+        windows={[]}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        desktopIcons={[{ path: "apps/whiteboard/index.html", x: 20, y: 58 }]}
+        onOpenApp={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
+  });
+
   it("renders account, runtime, and support controls in the header action slot", () => {
     render(
       <WebDesktopSurface
