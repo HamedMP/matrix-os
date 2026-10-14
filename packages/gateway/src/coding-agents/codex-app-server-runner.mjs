@@ -1,3 +1,4 @@
+import { RunnerConfigSchema, ModelOptionSchema, PendingTurnSchema, EffortSchema, ServiceTierSchema } from "./codex-runner-config.mjs";
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
@@ -80,37 +81,6 @@ const NativeApprovalDecisionListSchema = z.array(z.unknown()).max(16).transform(
     const parsed = NativeApprovalDecisionSchema.safeParse(decision);
     return parsed.success ? [parsed.data] : [];
   }));
-// This runner is executed directly by plain Node, so keep this boundary schema
-// aligned with ProviderModelReferenceSchema from @matrix-os/contracts.
-const ProviderModelReferenceSchema = z.string()
-  .min(1)
-  .max(160)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/)
-  .refine((value) => !value.includes(".."));
-const RunnerConfigSchema = z.object({
-  prompt: z.string().trim().min(1).max(64 * 1024),
-  providerThreadId: NativeReferenceSchema.optional(),
-  approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
-  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
-  writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
-  model: ProviderModelReferenceSchema.optional(),
-  effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
-  serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
-}).strict();
-const ModelOptionSchema = z.object({
-  id: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/),
-  value: z.union([
-    z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/),
-    z.boolean(),
-  ]),
-}).strict();
-const PendingTurnSchema = z.object({
-  prompt: z.string().trim().min(1).max(64 * 1024),
-  model: RunnerConfigSchema.shape.model,
-  modelOptions: z.array(ModelOptionSchema).max(32).default([]),
-}).strict();
-const EffortSchema = RunnerConfigSchema.shape.effort;
-const ServiceTierSchema = RunnerConfigSchema.shape.serviceTier;
 const ApprovalRequestSchema = z.object({
   id: NativeRequestIdSchema,
   method: ApprovalMethodSchema,
