@@ -52,7 +52,7 @@ describe('ENG-291 completed customer starter recovery', () => {
         connectionString: url.href, max: 1, connectionTimeoutMillis: 2000,
         statement_timeout: 10_000, query_timeout: 12_000,
         types: { getTypeParser: (oid, format = 'text') => oid === pg.types.builtins.INT8 && format === 'text'
-          ? value => { const n = BigInt(value); return n >= Number.MIN_SAFE_INTEGER && n <= Number.MAX_SAFE_INTEGER ? Number(n) : n; }
+          ? (value: string) => { const n = BigInt(value); return n >= Number.MIN_SAFE_INTEGER && n <= Number.MAX_SAFE_INTEGER ? Number(n) : n; }
           : pg.types.getTypeParser(oid, format) },
       }) }) });
       await db.ready;
