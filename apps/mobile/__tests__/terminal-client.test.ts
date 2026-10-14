@@ -104,7 +104,7 @@ describe("mobile terminal client", () => {
 
   it("builds token-authenticated terminal websocket URLs", () => {
     expect(buildTerminalWebSocketUrl("https://app.matrix-os.test/", SESSION_ID, "ws token")).toBe(
-      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&lease=exclusive&token=ws+token`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&activityCapability=input-activity-v1&lease=exclusive&token=ws+token`,
     );
     expect(isSafeSessionId(SESSION_ID)).toBe(true);
     expect(isSafeSessionId("../bad")).toBe(false);
