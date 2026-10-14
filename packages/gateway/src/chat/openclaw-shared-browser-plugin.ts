@@ -22,10 +22,19 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
   sharedBrowserEndpoint(options.gatewayPort);
   const now = options.now ?? Date.now;
   const leases = new Map<string, Lease>(); // <=64, terminal/revoke/shutdown/30m TTL.
+  // Shares the 64-run cap with leases. Native termination (or gateway stop)
+  // evicts these credential-free guards; an elapsed TTL does not prove exit.
+  const revoked = new Map<string, { sessionKey: string }>();
   const tickets = new Map<string, Ticket>(); // <=128, one-use, 10s TTL and lease removal.
   let closed = false;
-  function revoke(runId: string) { const lease = leases.get(runId); if (!lease) return; leases.delete(runId); lease.controller.abort();
+  function release(runId: string) { const lease = leases.get(runId); if (!lease) return; leases.delete(runId); lease.controller.abort();
     for (const [id,ticket] of tickets) if (ticket.lease === lease) tickets.delete(id); }
+  function revoke(runId: string) {
+    const lease = leases.get(runId); if (!lease) return;
+    // Abort is asynchronous in the native harness. Remove bearer authority
+    // immediately without reopening native browser/shell fallbacks meanwhile.
+    revoked.set(runId, { sessionKey: lease.sessionKey }); release(runId);
+  }
   function sweep() { for (const lease of leases.values()) if (lease.expiresAt <= now()) revoke(lease.runId);
     for (const [id,ticket] of tickets) if (ticket.expiresAt <= now()) tickets.delete(id); }
   const timer = setInterval(sweep, 10_000); timer.unref();
@@ -34,8 +43,8 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
     let pending: Lease | undefined;
     try {
       sweep(); const parsed = Bind.parse(params);
-      if (closed || parsed.expiresAt <= now() || parsed.expiresAt > now() + 30 * 60_000 || leases.size >= 64 || leases.has(parsed.runId)
-        || [...leases.values()].some(lease => lease.sessionKey === parsed.sessionKey)) throw new Error("Browser binding unavailable");
+      if (closed || parsed.expiresAt <= now() || parsed.expiresAt > now() + 30 * 60_000 || leases.size + revoked.size >= 64 || leases.has(parsed.runId) || revoked.has(parsed.runId)
+        || [...leases.values(), ...revoked.values()].some(lease => lease.sessionKey === parsed.sessionKey)) throw new Error("Browser binding unavailable");
       // Reserve before the network await: capacity and revoke also cover in-flight authentication.
       pending = { ...parsed, controller: new AbortController(), browserStarted: false, authenticated: false };
       leases.set(parsed.runId, pending);
@@ -43,7 +52,8 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
       if (closed || parsed.expiresAt <= now() || pending.controller.signal.aborted || leases.get(parsed.runId) !== pending) throw new Error("Browser binding unavailable");
       pending.authenticated = true; respond(true, { bound: true });
     } catch (error: unknown) {
-      if (pending && leases.get(pending.runId) === pending) revoke(pending.runId);
+      // A failed bind cannot start native inference, so it needs no tombstone.
+      if (pending && leases.get(pending.runId) === pending) release(pending.runId);
       console.warn("[shared-browser-openclaw] Binding refused", error instanceof Error ? error.name : "UnknownError");
       respond(false, undefined, { code: "INVALID_REQUEST", message: "Browser binding unavailable." }); }
   }, { scope: "operator.admin" });
@@ -55,7 +65,8 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
   api.on("before_tool_call", (event, context) => {
     sweep(); const lease = context.runId ? leases.get(context.runId) : undefined;
     const name = event.toolName ?? context.toolName;
-    if (name !== "shared_browser") return lease && (name === "browser" || lease.browserStarted && BYPASS.has(name ?? "")) ? unavailable : undefined;
+    if (name !== "shared_browser") return (context.runId && revoked.has(context.runId) && BYPASS.has(name ?? ""))
+      || (lease && (name === "browser" || lease.browserStarted && BYPASS.has(name ?? ""))) ? unavailable : undefined;
     const input = SharedBrowserActionSchema.safeParse(event.params);
     if (closed || !lease || !lease.authenticated || lease.sessionKey !== context.sessionKey || !context.toolCallId || !input.success || tickets.size >= 128) return unavailable;
     if (input.data.action !== "status") lease.browserStarted = true;
@@ -77,8 +88,8 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }], details: undefined };
       } };
   }, { names: ["shared_browser"], optional: false });
-  api.on("agent_end", (_event, context) => { if (context.runId) revoke(context.runId); });
-  function close() { if (closed) return; closed = true; clearInterval(timer); for (const runId of leases.keys()) revoke(runId); tickets.clear(); }
+  api.on("agent_end", (_event, context) => { if (context.runId) { release(context.runId); revoked.delete(context.runId); } });
+  function close() { if (closed) return; closed = true; clearInterval(timer); for (const runId of leases.keys()) release(runId); revoked.clear(); tickets.clear(); }
   api.on("gateway_stop", close);
   return close;
 }

@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { createOpenClawChatProviderAdapter } from "../../packages/gateway/src/chat/openclaw-provider-adapter.js";
+import { registerOpenClawSharedBrowserPlugin } from "../../packages/gateway/src/chat/openclaw-shared-browser-plugin.js";
 const input = { owner: { type: "personal" as const, ownerId: "owner_qa" }, chatId: "chat_qa", runId: "run_qa", turnId: "turn_qa", prompt: "Collect fixture invoices", parts: [{ type: "text" as const, text: "Collect fixture invoices" }],
   selection: { instanceId: "openclaw_default", model: "openai:gpt-5.4" }, interactionMode: "default", permissionMode: "full_access", signal: new AbortController().signal };
 const collect = async (source: AsyncIterable<unknown>) => { const rows = []; for await (const row of source) rows.push(row); return rows; };
@@ -72,6 +73,54 @@ it("sends native abort and starts browser revocation before a slow drain finishe
     drain.resolve(); agent.resolve({ runId: input.runId, status: "error" });
     await cancelling;
     for (;;) { if ((await iterator.next()).done) break; }
+  }
+});
+it("keeps the real native plugin bypass guard while canonical cancellation waits for native abort", async () => {
+  const { rpc, adapter } = setup();
+  const methods = new Map<string, (input: { params: unknown; respond(ok: boolean, result?: unknown): void }) => Promise<void>>();
+  const hooks = new Map<string, (event: unknown, context: unknown) => unknown>();
+  const stopPlugin = registerOpenClawSharedBrowserPlugin({
+    registerGatewayMethod: (name, handler) => { methods.set(name, handler); },
+    registerTool: () => {},
+    on: (name, handler) => { hooks.set(name, handler as never); },
+  }, { gatewayPort: 4000, fetcher: vi.fn<typeof fetch>(async () => Response.json({ success: true })) });
+  const native = Promise.withResolvers<unknown>();
+  const abort = Promise.withResolvers<unknown>();
+  let sessionKey!: string;
+  rpc.call.mockImplementation(async (method, args, _signal, options) => {
+    if (methods.has(method)) {
+      if (method === "matrix.browser.bind") sessionKey = (args as { sessionKey: string }).sessionKey;
+      let result: unknown;
+      await methods.get(method)!({ params: args, respond: (ok, value) => {
+        if (!ok) throw new Error("Binding refused"); result = value;
+      } });
+      return result;
+    }
+    if (method === "agent") {
+      options?.onAccepted?.({ runId: input.runId, sessionKey, status: "accepted" });
+      return native.promise;
+    }
+    if (method === "chat.abort") return abort.promise;
+    throw new Error("Unexpected native method");
+  });
+  const iterator = adapter.start(input)[Symbol.asyncIterator]();
+  expect((await iterator.next()).value).toMatchObject({ type: "state.updated" });
+  const context = { runId: input.runId, sessionKey, toolCallId: "claim_1" };
+  hooks.get("before_tool_call")!({ toolName: "shared_browser", params: { action: "snapshot" } }, context);
+  const cancelling = adapter.cancel!({ owner: input.owner, chatId: input.chatId, runId: input.runId });
+  try {
+    await vi.waitFor(() => expect(rpc.call.mock.calls.map(call => call[0])).toContain("matrix.browser.revoke"));
+    expect(rpc.call.mock.calls.map(call => call[0])).toContain("chat.abort");
+    for (const toolName of ["browser", "exec", "process"]) {
+      expect(hooks.get("before_tool_call")!({ toolName }, context)).toMatchObject({ block: true });
+    }
+    hooks.get("agent_end")!({}, context);
+    expect(hooks.get("before_tool_call")!({ toolName: "exec" }, context)).toBeUndefined();
+  } finally {
+    abort.resolve({ ok: true }); native.resolve({ runId: input.runId, status: "error" });
+    await cancelling;
+    for (;;) { if ((await iterator.next()).done) break; }
+    stopPlugin();
   }
 });
 it("fails closed when native acceptance changes the browser-bound run or session", async () => {
