@@ -1,5 +1,6 @@
 "use client";
 
+import { CanonicalChatIdSchema } from "@matrix-os/contracts";
 import { GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useAuth } from "@clerk/nextjs";
@@ -32,9 +33,17 @@ const LAUNCHABLE_BUILT_IN_PATHS = new Set([
 
 function readLaunchPathFromLocation(): string | null {
   if (typeof window === "undefined") return null;
-  if (readRecipePromptFromLocation()) return "__chat__";
+  if (readRecipePromptFromLocation() || readChatIdFromLocation()) return "__chat__";
   const launch = new URLSearchParams(window.location.search).get("launch");
   return launch && LAUNCHABLE_BUILT_IN_PATHS.has(launch) ? launch : null;
+}
+
+// `?chat=<id>` opens one Chat, e.g. the link printed by `matrix handoff`.
+function readChatIdFromLocation(): string | null {
+  const values = new URLSearchParams(window.location.search).getAll("chat");
+  if (values.length !== 1) return null;
+  const parsed = CanonicalChatIdSchema.safeParse(values[0]);
+  return parsed.success ? parsed.data : null;
 }
 
 function readRecipePromptFromLocation(): string | null {
@@ -97,10 +106,12 @@ function ShellHomeBody({
 
   const runtimeSlot = useSyncExternalStore(subscribeLaunchPathNoop, readRuntimeSlotFromLocation, getLaunchPathServerSnapshot);
   const recipePrompt = useSyncExternalStore(subscribeLaunchPathNoop, readRecipePromptFromLocation, getLaunchPathServerSnapshot);
+  const linkedChatId = useSyncExternalStore(subscribeLaunchPathNoop, readChatIdFromLocation, getLaunchPathServerSnapshot);
   const terminalCollaborationView = initialCollaborationView?.kind === "terminal" ? initialCollaborationView : undefined;
   const chatCollaborationView = terminalCollaborationView ? undefined : initialCollaborationView;
   const chat = useCanonicalChatState({
     initialDraft: recipePrompt,
+    initialChatId: linkedChatId,
     initialCollaborationView: chatCollaborationView,
     navigationScope: createShellChatNavigationScope(cacheScope, sessionId, chatGatewayUrl),
     navigationGeneration: sessionId ?? "self-hosted",

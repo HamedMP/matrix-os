@@ -1,16 +1,16 @@
 # Matrix Handoff
 
-Move this repository and the active task context to the user's Matrix OS computer, then start a continuing Claude or Codex session there.
+Move this repository and the active task to the user's Matrix computer as a project Chat.
 
 Arguments from the user: `$ARGUMENTS`
 
-Follow the `matrix-handoff` skill exactly. Prefer the repo copy at `.agents/skills/matrix-handoff/SKILL.md`; when it is absent, use the global copy at `~/.claude/skills/matrix-handoff/SKILL.md`. Default the remote agent to `claude` unless the arguments request `codex`, and invoke the script from the same skill directory you read.
+Follow the `matrix-handoff` skill exactly. Use `.agents/skills/matrix-handoff/SKILL.md` in this repository, or the installed Matrix OS plugin skill when that file is absent. Default the agent to `claude` unless the arguments ask for `codex`.
 
-Before any upload:
+Before anything is uploaded:
 
-1. Write a secret-free continuation brief for the current task.
-2. Run the handoff script without `--approve` and show its exact preview and approval token.
-3. Warn that an included raw transcript may contain anything pasted into this conversation.
-4. Ask the user to approve that exact file count, transcript path, destination, and agent.
+1. Write a continuation brief for the current task, with no secrets in it.
+2. Run `matrix handoff --agent <agent> --brief <file>` and show the user its exact preview.
+3. If a transcript is listed, warn the user that it may contain anything pasted into this conversation.
+4. Ask the user to approve that exact project action, branch, set of changes, transcript and agent.
 
-Only after approval, rerun the same command with `--approve TOKEN`, using the exact token from the preview. Return the session name, Matrix project path, app URL, and attach command.
+Only after the user approves, run the exact command the preview printed, ending in `--approve TOKEN`. Then report the Chat link, the project and the branch.
