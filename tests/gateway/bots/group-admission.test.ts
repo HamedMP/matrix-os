@@ -33,6 +33,9 @@ beforeEach(async () => {
   await mkdir(root.primaryWorkspaceRoot, { recursive: true });
   ({ db, destroy } = await createBotStateDatabase());
   await insertChat(db, CHAT);
+  await db.updateTable("chats").set({ collaboration: {
+    scopeId: context.scopeId, membershipScopeId: context.scopeId, executionFenced: true,
+  } }).where("id", "=", CHAT).execute();
   await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: CHAT, kind: "group", created_at: NOW, removed_at: null }).execute();
 });
 afterEach(async () => { await destroy(); await rm(homePath, { recursive: true, force: true }); });
@@ -47,6 +50,7 @@ describe("shared group Pi admission", () => {
   it("requires fresh exact collaboration authorization and never uses the private workspace", async () => {
     const authorize = vi.fn(async () => context);
     const { admission, roots, client, registry } = setup(authorize);
+    expect(await admission.ownsDirectChat(request)).toBe(false);
     await admission.admit(request);
     expect(authorize).toHaveBeenCalledTimes(2);
     expect(roots.resolve).toHaveBeenCalledWith({ type: "personal", ownerId: OWNER }, root.ref);

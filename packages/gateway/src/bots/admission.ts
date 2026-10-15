@@ -84,16 +84,16 @@ export function createPrivateBotAdmission(deps: {
   homePath?: string;
 }) {
   async function ownsChat(input: { ownerId: string; botId: string; chatId: string; group?: GroupBotRunRequest }): Promise<boolean> {
-    const row = await deps.db.selectFrom("bot_chat_bindings as binding")
+    let query = deps.db.selectFrom("bot_chat_bindings as binding")
       .innerJoin("chats as chat", "chat.id", "binding.chat_id")
       .select("binding.chat_id")
       .where("binding.owner_id", "=", input.ownerId).where("binding.bot_id", "=", input.botId)
       .where("binding.chat_id", "=", input.chatId).where("binding.kind", "=", input.group ? "group" : "direct")
       .where("binding.removed_at", "is", null)
       .where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", input.ownerId)
-      .where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active")
-      .executeTakeFirst();
-    return row !== undefined;
+      .where("chat.lifecycle", "=", "active");
+    if (!input.group) query = query.where("chat.collaboration", "is", null);
+    return await query.executeTakeFirst() !== undefined;
   }
 
   /** Unbinds first so no frame is authorized, then stops the workload. */
