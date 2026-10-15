@@ -77,6 +77,42 @@ async function rig(commandTimeoutMs?:number) {
   return { driver, fake, homePath, signal: new AbortController().signal };
 }
 describe('shared owner Chrome CDP driver', () => {
+  it('rejects depth, node and string budget violations before notifying CDP listeners', async () => {
+    let deep: unknown = 'leaf';
+    for (let depth = 0; depth < 20; depth++) deep = { nested: deep };
+    const invalidPayloads = [
+      { value: deep },
+      { values: Array.from({ length: 4100 }, () => null) },
+      { value: 'x'.repeat(64 * 1024 + 1) },
+    ];
+    for (const params of invalidPayloads) {
+      const fake = chrome();
+      const client = await connectBrowserCdp(fake);
+      const listener = vi.fn();
+      client.onEvent(listener);
+
+      fake.raw({ method: 'Runtime.consoleAPICalled', params });
+
+      expect(listener).not.toHaveBeenCalled();
+      expect(client.available).toBe(false);
+    }
+  });
+
+  it('validates CDP reply and event envelopes while preserving bounded nested payloads', async () => {
+    const fake = chrome();
+    const client = await connectBrowserCdp(fake);
+    const listener = vi.fn();
+    client.onEvent(listener);
+    fake.raw({ method: 'Runtime.consoleAPICalled', params: { args: [{ type: 'string', value: 'ok' }] }, sessionId: 'agent-session' });
+    expect(listener).toHaveBeenCalledWith({ method: 'Runtime.consoleAPICalled', params: { args: [{ type: 'string', value: 'ok' }] }, sessionId: 'agent-session' });
+
+    const pending = client.request('Target.getTargets');
+    const sent = fake.messages.at(-1);
+    fake.raw({ id: sent.id, result: [] });
+    await expect(pending).rejects.toMatchObject({ code: 'browser_unavailable' });
+    expect(client.available).toBe(false);
+  });
+
   it('ignores the global primary attach event before acknowledgement and still releases a later scoped duplicate', async () => {
     const { driver, fake, signal } = await rig();
     fake.emitPrimaryAttachBeforeAck();

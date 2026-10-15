@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { z } from 'zod/v4';
 import { SharedBrowserError } from './broker.js';
 
 export interface CdpSocket {
@@ -16,6 +17,50 @@ export interface CdpConnectOptions {
 }
 type Pending = { method: string; resolve(value: Record<string, any>): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; signal?: AbortSignal; aborted: boolean; onAbort(): void };
 const MAX_FRAME = 192 * 1024;
+const MAX_JSON_DEPTH = 16;
+const MAX_JSON_NODES = 4096;
+const MAX_JSON_STRING = 64 * 1024;
+const MAX_JSON_KEY = 256;
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() => z.union([
+  z.null(), z.boolean(), z.number().finite(), z.string().max(MAX_JSON_STRING),
+  z.array(jsonValueSchema), z.record(z.string().max(MAX_JSON_KEY), jsonValueSchema),
+]));
+const cdpPayloadSchema = z.record(z.string().max(MAX_JSON_KEY), jsonValueSchema);
+const cdpReplySchema = z.object({
+  id: z.number().int().safe().nonnegative(),
+  result: cdpPayloadSchema.optional(),
+  error: z.object({
+    code: z.number().int().safe(),
+    message: z.string().max(4096),
+    data: jsonValueSchema.optional(),
+  }).passthrough().optional(),
+}).passthrough().refine(packet => packet.result !== undefined || packet.error !== undefined);
+const cdpEventSchema = z.object({
+  method: z.string().min(1).max(127),
+  params: cdpPayloadSchema,
+  sessionId: z.string().min(1).max(256).optional(),
+}).passthrough();
+
+function hasBoundedJsonShape(root: unknown): boolean {
+  const pending: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
+  let nodes = 0;
+  while (pending.length > 0) {
+    const { value, depth } = pending.pop()!;
+    if (++nodes > MAX_JSON_NODES || depth > MAX_JSON_DEPTH) return false;
+    if (typeof value === 'string') { if (value.length > MAX_JSON_STRING) return false; continue; }
+    if (value === null || typeof value === 'boolean' || typeof value === 'number') continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) pending.push({ value: entry, depth: depth + 1 });
+      continue;
+    }
+    if (!value || typeof value !== 'object') return false;
+    const entries = Object.entries(value);
+    if (entries.length > MAX_JSON_NODES || entries.some(([key]) => key.length > MAX_JSON_KEY)) return false;
+    for (const [, entry] of entries) pending.push({ value: entry, depth: depth + 1 });
+  }
+  return true;
+}
 const unavailable = (dispatched = false) => new SharedBrowserError('browser_unavailable', dispatched);
 /** Only the exact Chromium InvalidParams response proves a recorded target is gone. */
 export class BrowserCdpMissingTargetError extends SharedBrowserError {
@@ -52,11 +97,13 @@ export class BrowserCdpClient {
   private message = (data: unknown) => {
     const bytes = typeof data === 'string' ? Buffer.from(data) : Buffer.isBuffer(data) ? data : undefined;
     if (!bytes || bytes.length > MAX_FRAME) { this.fail(); return; }
-    let packet: Record<string, any>;
-    try { packet = JSON.parse(bytes.toString('utf8')); }
+    let decoded: unknown;
+    try { decoded = JSON.parse(bytes.toString('utf8')); }
     catch (error) { console.warn('[shared-browser] CDP frame unavailable', error instanceof SyntaxError ? 'invalid_frame' : 'operation_failed'); this.fail(); return; }
-    if (!packet || typeof packet !== 'object' || Array.isArray(packet)) { this.fail(); return; }
-    if (Number.isSafeInteger(packet.id)) {
+    if (!hasBoundedJsonShape(decoded)) { this.fail(); return; }
+    const reply = cdpReplySchema.safeParse(decoded);
+    if (reply.success) {
+      const packet = reply.data;
       const method = this.pending.get(packet.id)?.method;
       const missing = ['Target.getTargetInfo', 'Target.attachToTarget'].includes(method ?? '')
         && packet.error?.code === -32602 && packet.error?.message === 'No target with given id found';
@@ -64,8 +111,11 @@ export class BrowserCdpClient {
         && packet.error?.message === 'Could not find object with given id';
       this.finish(packet.id, packet.error ? missing ? new BrowserCdpMissingTargetError()
         : missingObject ? new BrowserCdpMissingObjectError() : unavailable() : undefined,
-      packet.result && typeof packet.result === 'object' ? packet.result : {});
-    } else if (typeof packet.method === 'string' && packet.method.length < 128 && packet.params && typeof packet.params === 'object') {
+      packet.result ?? {});
+    } else {
+      const event = cdpEventSchema.safeParse(decoded);
+      if (!event.success) { this.fail(); return; }
+      const packet = event.data;
       for (const callback of this.listeners) {
         try { callback({ method: packet.method, params: packet.params, sessionId: packet.sessionId }); }
         catch (error) { console.warn('[shared-browser] CDP event unavailable', error instanceof SharedBrowserError ? error.code : 'operation_failed'); this.fail(); break; }
