@@ -1668,6 +1668,7 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
 
     expect(syncAgent).toContain('download_bundle()');
     expect(syncAgent).toContain('chunk_size=8388608');
+    expect(syncAgent).toContain('max_bundle_size=21474836480');
     expect(syncAgent).toContain('for attempt in 1 2 3; do');
     expect(syncAgent).toContain('local transfer_deadline_seconds=3600');
     expect(syncAgent).toContain('/usr/bin/timeout --signal=KILL "$curl_timeout" curl');

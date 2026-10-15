@@ -23,8 +23,8 @@ describe('bounded host bundle download native regressions', () => {
     expect(result.signal).toBeNull();
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     if (process.platform === 'linux') {
-      expect(result.stdout).toMatch(/# tests 12(?:\r?\n|$)/);
-      expect(result.stdout).toMatch(/# pass 12(?:\r?\n|$)/);
+      expect(result.stdout).toMatch(/# tests 15(?:\r?\n|$)/);
+      expect(result.stdout).toMatch(/# pass 15(?:\r?\n|$)/);
       expect(result.stdout).toMatch(/# skipped 0(?:\r?\n|$)/);
     }
   }, 65_000);

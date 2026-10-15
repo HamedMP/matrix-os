@@ -16,9 +16,9 @@ function downloadFunction(deadlineSeconds = 3600) {
 function runDownload(object, options = {}) {
   const { failOnceAt = -1, failAlwaysAt = -1, corruptRange = false, responseStatus = 206,
     sleepSeconds = 0, sleepAt = -1, deadlineSeconds = 3600, incomingAttack = '', chunkDirectoryMode,
-    headerMode = 'valid' } = options;
-  const directory = mkdtempSync(join(tmpdir(), 'matrix-bounded-download-'));
-  const bin = join(directory, 'bin'); mkdirSync(bin);
+    headerMode = 'valid', moveFailure = '', moveFailureAt = -1, declaredSize = object.length,
+    directory = mkdtempSync(join(tmpdir(), 'matrix-bounded-download-')) } = options;
+  const bin = join(directory, 'bin'); mkdirSync(bin, { recursive: true });
   const objectPath = join(directory, 'object'); const outputPath = join(directory, 'bundle.tar.gz');
   const protectedPath = join(directory, 'protected'); const curlLog = join(directory, 'curl.log');
   const attempts = join(directory, 'attempts');
@@ -60,6 +60,13 @@ else
  /usr/bin/mktemp "$@"
 fi
 `, { mode: 0o755 });
+  writeFileSync(join(bin, 'mv'), `#!/bin/bash
+set -euo pipefail
+src="\${@: -2:1}";dst="\${@: -1}"
+if [[ "\${MOVE_FAILURE:-}" == intermediate && "$src" == */.chunk-"\${MOVE_FAILURE_AT}".* ]] ||
+   [[ "\${MOVE_FAILURE:-}" == final && "$src" == *.incoming.* ]]; then exit 1; fi
+exec /bin/mv "$@"
+`, { mode: 0o755 });
   const digest = spawnSync('shasum', ['-a', '256', objectPath], { encoding: 'utf8' }).stdout.split(/\s/)[0];
   const chunkDirectory = `${outputPath}.chunks-${digest}`;
   let initialChunkNlink;
@@ -81,8 +88,9 @@ exit "$rc"`;
     PATH: `${bin}:${process.env.PATH}`, OBJECT_FILE: objectPath, OUTPUT: outputPath, CURL_LOG: curlLog,
     ATTEMPTS: attempts, FAIL_ONCE_AT: String(failOnceAt), FAIL_ALWAYS_AT: String(failAlwaysAt),
     CORRUPT_RANGE: corruptRange ? '1' : '0', RESPONSE_STATUS: String(responseStatus), SLEEP_SECONDS: String(sleepSeconds), SLEEP_AT: String(sleepAt),
-    INCOMING_ATTACK: incomingAttack, HEADER_MODE: headerMode, PROTECTED_PATH: protectedPath, SHA256: digest, SIZE: String(object.length),
-    REFRESHED_JSON: JSON.stringify({ version: 'v-test', sha256: digest, size: object.length, url: 'https://storage.example/fresh' }) } });
+    INCOMING_ATTACK: incomingAttack, HEADER_MODE: headerMode, MOVE_FAILURE: moveFailure, MOVE_FAILURE_AT: String(moveFailureAt), PROTECTED_PATH: protectedPath,
+    SHA256: digest, SIZE: String(declaredSize),
+    REFRESHED_JSON: JSON.stringify({ version: 'v-test', sha256: digest, size: declaredSize, url: 'https://storage.example/fresh' }) } });
   return { result, output: result.status === 0 ? readFileSync(outputPath) : null,
     ranges: readFileSync(curlLog, 'utf8').trim().split('\n').filter(Boolean), directory, chunkDirectory, protectedPath, initialChunkNlink };
 }
@@ -131,5 +139,24 @@ describe('bounded host bundle download', () => {
   it('retains only completed chunks after retry exhaustion', () => {
     const probe = runDownload(Buffer.alloc(8 * 1024 * 1024 + 17, 5), { failAlwaysAt: 8388608 });
     try { assert.notEqual(probe.result.status, 0); assert.deepEqual(readFileSync(join(probe.chunkDirectory, 'chunk-0')), Buffer.alloc(8 * 1024 * 1024, 5)); assert.equal(probe.ranges.length, 4); } finally { cleanup(probe); }
+  });
+  it('accepts the canonical 20 GiB manifest limit before attempting bounded ranges', () => {
+    const probe = runDownload(Buffer.alloc(1024, 1), { declaredSize: 20 * 1024 * 1024 * 1024 });
+    try { assert.notEqual(probe.result.status, 0); assert.equal(probe.ranges.length, 3); }
+    finally { cleanup(probe); }
+  });
+  it('fails closed when an intermediate chunk move fails and retains earlier chunks', () => {
+    const probe = runDownload(Buffer.alloc(8 * 1024 * 1024 + 17, 4), { moveFailure: 'intermediate', moveFailureAt: 1 });
+    try { assert.notEqual(probe.result.status, 0); assert.equal(probe.output, null); assert.equal(readFileSync(join(probe.chunkDirectory, 'chunk-0')).length, 8 * 1024 * 1024); }
+    finally { cleanup(probe); }
+  });
+  it('retains completed chunks after a final move failure and resumes without redownloading', () => {
+    const object = Buffer.alloc(1024, 8); const first = runDownload(object, { moveFailure: 'final' });
+    try {
+      assert.notEqual(first.result.status, 0); assert.deepEqual(readFileSync(join(first.chunkDirectory, 'chunk-0')), object);
+      const resumed = runDownload(object, { directory: first.directory });
+      try { assert.equal(resumed.result.status, 0, resumed.result.stderr); assert.deepEqual(resumed.output, object); assert.deepEqual(resumed.ranges, []); }
+      finally { cleanup(resumed); }
+    } catch (error) { cleanup(first); throw error; }
   });
 });

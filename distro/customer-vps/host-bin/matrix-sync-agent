@@ -1144,7 +1144,7 @@ PY
 download_bundle() {
   (
   local version="$1" expected_sha256="$2" expected_size="$3" bundle_url="$4" bundle_file="$5"
-  local chunk_size=8388608 max_bundle_size=8589934592 chunk_dir chunk_file chunk_temp
+  local chunk_size=8388608 max_bundle_size=21474836480 chunk_dir chunk_file chunk_temp
   local transfer_deadline_seconds=3600 transfer_started_at=$SECONDS remaining_seconds
   local header_file incoming_file start end expected_chunk index attempt status curl_max_time curl_timeout
   local refreshed refreshed_version refreshed_sha256 refreshed_size refreshed_url downloaded=false
@@ -1266,7 +1266,10 @@ PY
           rm -f -- "$chunk_temp" "$header_file"
           break
         fi
-        mv -f -- "$chunk_temp" "$chunk_file"
+        if ! mv -f -- "$chunk_temp" "$chunk_file"; then
+          rm -f -- "$chunk_temp" "$header_file"
+          break
+        fi
         rm -f -- "$header_file"
         downloaded=true
         break
@@ -1325,7 +1328,11 @@ PY
     write_update_error "download_failed" "The release bundle download failed." "$version"
     return 1
   fi
-  mv -f -- "$incoming_file" "$bundle_file"
+  if ! mv -f -- "$incoming_file" "$bundle_file"; then
+    rm -f -- "$incoming_file"
+    write_update_error "download_failed" "The release bundle download failed." "$version"
+    return 1
+  fi
   rm -rf -- "$chunk_dir"
   return 0
   )
