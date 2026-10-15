@@ -191,11 +191,16 @@ describe('pre-admission default-controller retry coordination',()=>{
   it.each([
     `dedicated-ci-v2 pr=1 head=${headSha} base=${baseSha} requested=true`,
     `dedicated-ci-v2 pr=2440 head=${'e'.repeat(40)} base=${baseSha} requested=true`,
-    `dedicated-ci-v2 pr=2440 head=${headSha} base=${'e'.repeat(40)} requested=true`,
     `dedicated-ci-v2 pr=2440 head=${headSha} base=${baseSha} requested=false`,
   ])('does not let a different tuple or irrelevant event block this PR (%s)',async display_title=>{
     const {github,run}=fixture();github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[run,{...run,id:124,status:'queued',display_title}]}});
     await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
+  });
+  it('waits for a newer main PTR event even when its stored marker base differs from the tested parent',async()=>{
+    const {github,run}=fixture();
+    const display_title=`dedicated-ci-v2 pr=2440 head=${headSha} base=${'e'.repeat(40)} requested=true`;
+    github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[run,{...run,id:124,status:'queued',display_title}]}});
+    await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('No verified');
   });
   it('scans bounded metadata pages before selecting the newest matching request',async()=>{
     const {github,run}=fixture();let calls=0;

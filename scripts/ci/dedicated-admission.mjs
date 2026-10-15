@@ -4,7 +4,7 @@ import {readCurrentBranchSha} from './dedicated-branch.mjs';
 import {verifyMainSource} from './dedicated-main.mjs';
 import {resolveDedicatedMergeParents} from './dedicated-merge.mjs';
 import {admitRefreshController} from './dedicated-refresh.mjs';
-import {verifyMainPrSnapshot} from './dedicated-main-pr.mjs';
+import {verifyMainPrSnapshot,resolveMainPrSnapshot} from './dedicated-main-pr.mjs';
 const shaPattern = /^[a-f0-9]{40}$/;
 const request = {timeout: 10_000};
 const sameRepo = (value, repo) => typeof value === 'string' && value.toLowerCase() === repo.toLowerCase();
@@ -62,10 +62,8 @@ export async function admitDedicatedSource(github, input) {
       pull.head.sha !== eventPull.head.sha || (eventPull.base.ref!=='main'&&pull.base.sha !== eventPull.base.sha) ||
       pull.base.ref !== eventPull.base.ref) return null;
   if(eventPull.base.ref==='main'){
-    const snapshot={sourceSha:eventPull.merge_commit_sha,headSha:eventPull.head.sha,baseSha:eventPull.base.sha,baseRef:'main',prNumber:pull.number,...(typeof eventPull.head.ref==='string'?{headRef:eventPull.head.ref}:{})};
-    if(!validSnapshot(snapshot))throw new Error('Current merge commit unavailable');
-    const current=await verifyMainPrSnapshot(github,repo,pull,snapshot,{eventPull});
-    return {...snapshot,mergeParents:current.mergeParents};
+    if(!shaPattern.test(eventPull.merge_commit_sha||''))throw new Error('Current merge commit unavailable');
+    return resolveMainPrSnapshot(github,repo,pull,{eventPull});
   }
   if(await liveParentRefSha(github,repo,pull.base.ref)!==pull.base.sha)throw new Error('Current parent ref has changed');
   const snapshot = {sourceSha: pull.merge_commit_sha, headSha: pull.head.sha,

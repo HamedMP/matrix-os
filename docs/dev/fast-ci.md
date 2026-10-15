@@ -98,6 +98,11 @@ the immutable main revision and merge it actually tested; it does not claim
 coverage of subsequent main changes. New commits to the PR still rerun CI and
 dismiss approvals. Non-main stack parents retain strict freshness.
 
+An older base revision shown in PR metadata alone does not require a branch
+update: CI verifies the actual main parent of GitHub's generated merge. Existing
+tested sources retain their exact parent pair and provenance checks. A real
+merge conflict still needs resolution, and CI failures still need repair.
+
 Two independently green changes can interact badly after merging. Keep full
 main CI; if it fails, stop further merges and repair or revert the integration.
 
