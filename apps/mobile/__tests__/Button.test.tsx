@@ -5,7 +5,8 @@ import { Button, type ButtonVariant } from "../components/ui/Button";
 import { Icon } from "../components/ui/Icon";
 import { AddIcon } from "../components/ui/icons";
 
-import { flat, pressedStyle } from "./ui-test-utils";
+import { motion } from "../lib/theme-v2";
+import { flat, heldScale } from "./ui-test-utils";
 
 describe("Button", () => {
   afterEach(cleanup);
@@ -97,10 +98,10 @@ describe("Button", () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
-  it("dims to 0.65 while pressed", () => {
+  it("shrinks a little while pressed instead of dimming", () => {
     render(<Button label="Save" onPress={jest.fn()} />);
 
-    expect(pressedStyle({ accessibilityRole: "button" }).opacity).toBe(0.65);
+    expect(heldScale({ accessibilityRole: "button" })).toBe(motion.pressScale);
     expect(flat(screen.getByRole("button", { name: "Save" })).opacity).toBeUndefined();
   });
 

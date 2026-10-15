@@ -1,4 +1,5 @@
 import { act, cleanup, render, screen } from "@testing-library/react-native";
+import * as Haptics from "expo-haptics";
 import { AccessibilityInfo, StyleSheet } from "react-native";
 import type { ReactTestRendererJSON } from "react-test-renderer";
 
@@ -41,6 +42,25 @@ describe("ToastHost", () => {
     expect(screen.getByText("Text copied")).toBeTruthy();
     act(() => jest.advanceTimersByTime(1));
     expect(screen.queryByTestId("toast")).toBeNull();
+  });
+
+  it("is felt as well as seen: the success pattern for a success, the warning one for a failure", () => {
+    jest.mocked(Haptics.notificationAsync).mockClear();
+    render(<ToastHost />);
+
+    act(() => showToast("Terminal renamed"));
+    expect(Haptics.notificationAsync).toHaveBeenLastCalledWith(Haptics.NotificationFeedbackType.Success);
+    act(() => showToast("Could not rename terminal. Try again.", "error"));
+    expect(Haptics.notificationAsync).toHaveBeenLastCalledWith(Haptics.NotificationFeedbackType.Warning);
+    expect(Haptics.notificationAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("plays nothing when there is no host to show the toast", () => {
+    jest.mocked(Haptics.notificationAsync).mockClear();
+
+    showToast("Terminal renamed");
+
+    expect(Haptics.notificationAsync).not.toHaveBeenCalled();
   });
 
   it("marks a failure as an alert, with its own icon", () => {

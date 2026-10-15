@@ -4,7 +4,7 @@ import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-na
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { useReduceMotion } from "@/components/chat/use-reduce-motion";
+import { useReduceMotion } from "@/lib/use-reduce-motion";
 import { TOAST_DURATION_MS, useToast, type Toast } from "@/lib/toast";
 
 import { Icon } from "./Icon";
