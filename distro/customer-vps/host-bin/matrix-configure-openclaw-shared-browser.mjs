@@ -100,10 +100,8 @@ export async function configureOpenClawSharedBrowser(options) {
     // Pinned native OpenClaw rejects plugins.installs even while the plugin is disabled.
     // Remove only a complete receipt from this earlier Matrix bootstrap.
     const legacy=config.plugins.installs!==undefined;
-    if(marker&&!entry&&!legacy) {
-      if(JSON.stringify(config)!==JSON.stringify(parsed))await writeAtomic(state,configName,JSON.stringify(config,null,2)+'\n',original);
-      return{state:'owner_uninstalled'};
-    }
+    // An owner uninstall must not normalize or rewrite their remaining configuration.
+    if(marker&&!entry&&!legacy)return{state:'owner_uninstalled'};
     let pluginPath, plugin, files, previous;
     if(legacy||options.enabled) {
       if(typeof options.compiledEntry!=='string'||!options.compiledEntry.startsWith('/')||!options.compiledEntry.endsWith('/packages/gateway/dist/chat/openclaw-shared-browser-plugin-entry.js'))throw unavailable();

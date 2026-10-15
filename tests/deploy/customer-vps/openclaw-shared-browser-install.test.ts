@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
@@ -114,7 +114,7 @@ it("does not silently re-enable owner-disabled or owner-uninstalled plugins", as
     const removed = { ...f.initial, plugins: { entries: f.initial.plugins.entries } };
     await writeFile(f.configPath, JSON.stringify(removed)); await rm(join(f.stateDir,"extensions",ID), { recursive: true });
     expect(await configureOpenClawSharedBrowser(f.options)).toMatchObject({ state: "owner_uninstalled" });
-    expect(JSON.parse(await readFile(f.configPath,"utf8"))).toEqual(f.initial);
+    expect(JSON.parse(await readFile(f.configPath,"utf8"))).toEqual(removed);
   } finally { await f.close(); }
 });
 it("disables only Matrix activation when the trusted optional feature is off and honors harness opt-out", async () => {
@@ -252,6 +252,28 @@ it("rejects malformed channel configuration without replacing owner configuratio
       const before = await readFile(f.configPath);
       await expect(configureOpenClawSharedBrowser(f.options)).rejects.toThrow();
       expect(await readFile(f.configPath)).toEqual(before);
+    }
+  } finally { await f.close(); }
+});
+
+it("preserves exact owner-uninstalled config bytes and file identity when plugins or allowlist are absent", async () => {
+  const f = await fixture(); try {
+    await configureOpenClawSharedBrowser(f.options);
+    const markerPath = join(f.stateDir, ".matrix-shared-browser-installed.json");
+    const marker = await readFile(markerPath);
+    for (const plugins of [undefined, {}, { entries: f.initial.plugins.entries }]) {
+      const removed = { ...f.initial, plugins };
+      const bytes = Buffer.from(JSON.stringify(removed, null, 4) + "\n");
+      await writeFile(f.configPath, bytes);
+      const before = await stat(f.configPath, { bigint: true });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(await configureOpenClawSharedBrowser(f.options)).toMatchObject({ state: "owner_uninstalled" });
+        expect(await readFile(f.configPath)).toEqual(bytes);
+        const after = await stat(f.configPath, { bigint: true });
+        expect({ ino: after.ino, mtime: after.mtimeNs, uid: after.uid, gid: after.gid, mode: after.mode })
+          .toEqual({ ino: before.ino, mtime: before.mtimeNs, uid: before.uid, gid: before.gid, mode: before.mode });
+        expect(await readFile(markerPath)).toEqual(marker);
+      }
     }
   } finally { await f.close(); }
 });
