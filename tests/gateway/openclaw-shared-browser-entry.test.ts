@@ -1,16 +1,21 @@
 import { expect, it, vi } from "vitest";
 import plugin, { OPENCLAW_SHARED_BROWSER_MANIFEST } from "../../packages/gateway/src/chat/openclaw-shared-browser-plugin-entry.js";
-it("declares exact pinned native tool ownership and startup activation for protected bind RPC", () => {
+function nativeApi() {
+  const services: Array<{ stop(): Promise<void> }> = [];
+  return { services, config: { gateway: { bind: "loopback", mode: "local", port: 18789, auth: { mode: "token", token: "b".repeat(64) } } }, registerService: (service: { stop(): Promise<void> }) => services.push(service), lifecycle: { registerRuntimeLifecycle: vi.fn() } };
+}
+it("declares exact pinned native tool ownership and startup activation for protected bind RPC", async () => {
   expect(OPENCLAW_SHARED_BROWSER_MANIFEST).toMatchObject({ id: "matrix-shared-browser", activation: { onStartup: true }, contracts: { tools: ["shared_browser"] } });
   const hooks = new Map<string, () => void>();
-  const api = { pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: (name: string, handler: () => void) => hooks.set(name, handler) };
+  const api = { ...nativeApi(), pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: (name: string, handler: () => void) => hooks.set(name, handler) };
   plugin.register(api as never);
-  expect(api.registerGatewayMethod.mock.calls.map(call => call[0])).toEqual(["matrix.browser.bind", "matrix.browser.revoke"]);
+  expect(api.registerGatewayMethod.mock.calls.map(call => call[0])).toEqual(["matrix.browser.bind", "matrix.browser.revoke", "matrix.browser.before", "matrix.browser.execute", "matrix.browser.cancel", "matrix.browser.end"]);
   expect(api.registerGatewayMethod.mock.calls.every(call => call[2].scope === "operator.admin")).toBe(true);
-  hooks.get("gateway_stop")!();
+  await hooks.get("gateway_stop")!();
+  await api.services[0]!.stop();
   expect(() => plugin.register({ ...api, pluginConfig: { gatewayPort: 70000 } } as never)).toThrow();
 });
-it("enables safe diagnostics only for the exact opt-in environment value", () => {
+it("enables safe diagnostics only for the exact opt-in environment value", async () => {
   const original = process.env.MATRIX_BROWSER_DIAGNOSTICS;
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   try {
@@ -18,14 +23,18 @@ it("enables safe diagnostics only for the exact opt-in environment value", () =>
       if (value === undefined) delete process.env.MATRIX_BROWSER_DIAGNOSTICS;
       else process.env.MATRIX_BROWSER_DIAGNOSTICS = value;
       const hooks = new Map<string, (event?: unknown, context?: unknown) => void>();
-      plugin.register({ pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: (name: string, handler: never) => hooks.set(name, handler) } as never);
-      hooks.get("gateway_stop")!();
+      const api = { ...nativeApi(), pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: (name: string, handler: never) => hooks.set(name, handler) };
+      plugin.register(api as never);
+      await hooks.get("gateway_stop")!();
+    await api.services[0]!.stop();
     }
     expect(warn).not.toHaveBeenCalledWith("[shared-browser-openclaw] lifecycle", expect.anything());
     process.env.MATRIX_BROWSER_DIAGNOSTICS = "1";
     const hooks = new Map<string, (event?: unknown, context?: unknown) => void>();
-    plugin.register({ pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: (name: string, handler: never) => hooks.set(name, handler) } as never);
-    hooks.get("gateway_stop")!();
+    const api = { ...nativeApi(), pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: (name: string, handler: never) => hooks.set(name, handler) };
+    plugin.register(api as never);
+    await hooks.get("gateway_stop")!();
+    await api.services[0]!.stop();
     expect(warn).toHaveBeenCalledWith("[shared-browser-openclaw] lifecycle", expect.stringMatching(/^\{"event":"gateway_stop","generation":"[a-f0-9]{16}",/));
   } finally {
     if (original === undefined) delete process.env.MATRIX_BROWSER_DIAGNOSTICS;

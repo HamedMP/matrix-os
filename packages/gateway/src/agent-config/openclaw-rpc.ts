@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
 import { z } from "zod/v4";
 import { AgentConfigError } from "./errors.js";
+import { BROWSER_AUTHORITY_METHODS, BROWSER_AUTHORITY_TIMEOUT_MS, BROWSER_AUTHORITY_REQUEST_MAX_BYTES } from "../chat/openclaw-shared-browser-rpc.js";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_REQUEST_BYTES = 16 * 1024;
@@ -13,6 +14,7 @@ const MAX_CANCELLATION_CORRELATIONS = 8;
 const CONFIG_PATCH_LIMIT = 3;
 const CONFIG_PATCH_WINDOW_MS = 60_000;
 const ALLOWED_METHODS = new Set([
+  ...Object.keys(BROWSER_AUTHORITY_METHODS),
   "health",
   "channels.status",
   "models.list",
@@ -114,6 +116,7 @@ const BrowserRevokeParamsSchema = z.object({ runId: BrowserRunIdSchema,
   bindingId: z.string().regex(/^[a-f0-9]{32}$/).optional(), nativeNotStarted: z.literal(true).optional(),
 }).strict().refine(value => value.nativeNotStarted !== true || value.bindingId !== undefined);
 const MethodParamsSchemas: Record<string, z.ZodType> = {
+  ...BROWSER_AUTHORITY_METHODS,
   health: EmptyParamsSchema,
   "channels.status": EmptyParamsSchema,
   "models.list": ModelsListParamsSchema,
@@ -255,7 +258,7 @@ function serializeRequest(id: string, method: string, params: unknown): string {
   } catch (error) {
     throw new AgentConfigError("agent_config_invalid", error);
   }
-  const maxBytes = method === "agent" ? MAX_AGENT_REQUEST_BYTES : MAX_REQUEST_BYTES;
+  const maxBytes = method in BROWSER_AUTHORITY_METHODS ? BROWSER_AUTHORITY_REQUEST_MAX_BYTES : method === "agent" ? MAX_AGENT_REQUEST_BYTES : MAX_REQUEST_BYTES;
   if (Buffer.byteLength(serialized) > maxBytes) {
     throw new AgentConfigError("agent_config_invalid");
   }
@@ -577,7 +580,7 @@ export function createOpenClawRpcClient(
     if (closed || socket === null || socket.readyState !== WebSocket.OPEN) {
       throw new AgentConfigError("runtime_unavailable");
     }
-    const pendingLimit = method === "chat.abort"
+    const pendingLimit = method === "chat.abort" || method === "matrix.browser.cancel"
       ? maxPending + MAX_CANCELLATION_CORRELATIONS
       : maxPending;
     if (pending.size >= pendingLimit) {
@@ -594,7 +597,7 @@ export function createOpenClawRpcClient(
     const callTimeoutMs = callOptions.timeoutMs ?? timeoutMs;
     if (!Number.isFinite(callTimeoutMs)
       || callTimeoutMs < 100
-      || callTimeoutMs > MAX_AGENT_TIMEOUT_MS) {
+      || callTimeoutMs > (method in BROWSER_AUTHORITY_METHODS ? BROWSER_AUTHORITY_TIMEOUT_MS : MAX_AGENT_TIMEOUT_MS)) {
       throw new AgentConfigError("agent_config_invalid");
     }
     const timer = setTimeout(() => {
