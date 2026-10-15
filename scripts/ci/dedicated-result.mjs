@@ -21,9 +21,11 @@ function parseEvidence(check, expected, latest) {
   let runId;
   if (check.details_url === `${repositoryUrl}/runs/${check.id}`) {
     // GitHub normalizes manually created Actions checks to their own URL.
-    // This check is only an index: discovery already authenticated latest,
-    // and the immutable receipt must bind that exact controller/run attempt.
-    if (!positiveId(latest?.id)) return null;
+    // Bind the index to its workflow run before using the independently
+    // authenticated controller identity. Otherwise an older normalized check
+    // can be mistaken for a later controller that stood down without a result.
+    if (!positiveId(latest?.id) || !positiveId(check.check_suite?.id) ||
+        check.check_suite.id !== latest.check_suite_id) return null;
     runId = latest.id;
   } else {
     const prefix = `${repositoryUrl}/actions/runs/`;
