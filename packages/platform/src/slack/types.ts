@@ -40,10 +40,12 @@ export interface SlackAuthorityDependencies {
   isCurrentMember(input: { actorId: string; organizationId: string }): Promise<boolean>;
   /** Must resolve existing collaboration scope, owner/runtime, organization and manage authority. */
   authorizeChannelBinding(input: SlackChannelBinding & { actorId: string }): Promise<boolean>;
+  /** Resolve without dispatching; the receipt pins this identity before any external call. */
+  resolveDestination(input: { installation: SlackInstallation; link: SlackEmployeeLink; binding: SlackChannelBinding | null; event: SlackInboundEvent }): Promise<{ ownerId: string; runtimeId: string }>;
   /** Must durably commit to the selected owner home; dedup by app/team/eventId. A resolved promise acknowledges that commit. */
-  dispatch(input: { installation: SlackInstallation; link: SlackEmployeeLink; binding: SlackChannelBinding | null; event: SlackInboundEvent; signal: AbortSignal }): Promise<{ ownerId: string }>;
+  dispatch(input: { installation: SlackInstallation; link: SlackEmployeeLink; binding: SlackChannelBinding | null; event: SlackInboundEvent; destination: SlackReplyDestination; signal: AbortSignal }): Promise<{ ownerId: string }>;
   authenticateRuntime?(c: Context): Promise<{ ownerId: string } | null>;
   authorizeReply?(input: { installation: SlackInstallation; destination: SlackReplyDestination; ownerId: string; publication?: { textDigest: string } }): Promise<boolean>;
 }
 
-export interface SlackReplyDestination { appId: string; teamId: string; eventId: string; ownerId: string; actorId: string; slackUserId: string; organizationId: string; channelId: string; threadTs: string; eventTs?: string; scopeId: string | null; installationGeneration: number }
+export interface SlackReplyDestination { runtimeId?: string; appId: string; teamId: string; eventId: string; ownerId: string; actorId: string; slackUserId: string; organizationId: string; channelId: string; threadTs: string; eventTs?: string; scopeId: string | null; installationGeneration: number }

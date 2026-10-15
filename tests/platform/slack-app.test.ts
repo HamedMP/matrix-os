@@ -33,6 +33,7 @@ function signedBody(body:string,timestamp=String(clock.getTime()/1000)) {
 function envelope(event: object, eventId = "Ev123") { return { type: "event_callback", api_app_id: config.appId, team_id: "T123", event_id: eventId, event }; }
 const mention = { type: "app_mention", user: "U123", channel: "C123", text: "<@UBOT> summarize", ts: "123.456" };
 function makeApp(overrides:Partial<SlackAppRouteOptions>={}) { return createSlackAppRoutes({ config, repository:repo, api, resolveActor:async()=>actor,
+  resolveDestination:async({event})=>({ownerId:event.kind==="direct_message"?"user_employee":"user_admin",runtimeId:"runtime_original"}),
   requireOrgAdmin:async()=>admin,isCurrentMember:async()=>member,authorizeChannelBinding,authenticateRuntime:async()=>({ownerId:actor!}),authorizeReply,dispatch,now:()=>clock,...overrides }); }
 const mutation=(path:string,method="POST",body:unknown={})=>app.request(path,{method,headers:{"content-type":"application/json",origin:config.publicBaseUrl},body:JSON.stringify(body)});
 async function startOAuth(){const response=await mutation("/api/slack/install","POST",{organizationId:org});const url=new URL((await response.json()).url);return `/api/slack/oauth/callback?state=${url.searchParams.get("state")}&code=code`;}
@@ -206,6 +207,26 @@ describe("Slack app ingress", () => {
     const rows = await db.selectFrom("slack_event_receipts").selectAll().execute();
     expect(JSON.stringify(rows)).not.toContain("summarize");
     expect(rows[0].state).toBe("completed");
+  });
+  it("pins destination before a lost acknowledgement and never reroutes a retry after channel rebinding", async () => {
+    await linkEmployee();
+    const binding = { appId:"A123",teamId:"T123",organizationId:org,channelId:"C123",scopeId:"11111111-1111-4111-8111-111111111111",approvedOutput:true,configuredBy:"user_admin" };
+    await repo.saveChannelBinding(binding);
+    dispatch.mockImplementationOnce(async () => {
+      const receipt = await db.selectFrom("slack_event_receipts").selectAll().executeTakeFirstOrThrow();
+      expect(receipt.destination_owner_id).toBe("user_admin");
+      expect(receipt.destination_runtime_id).toBe("runtime_original");
+      expect(receipt.scope_id).toBe(binding.scopeId);
+      throw new Error("durable home commit; acknowledgement lost");
+    });
+    expect((await app.request("/webhooks/slack/events",signed(envelope(mention)))).status).toBe(503);
+    await repo.saveChannelBinding({...binding,scopeId:"22222222-2222-4222-8222-222222222222"});
+    expect((await app.request("/webhooks/slack/events",signed(envelope(mention)))).status).toBe(200);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const receipt = await db.selectFrom("slack_event_receipts").selectAll().executeTakeFirstOrThrow();
+    expect(receipt.destination_owner_id).toBe("user_admin");
+      expect(receipt.destination_runtime_id).toBe("runtime_original");
+    expect(receipt.scope_id).toBe(binding.scopeId);
   });
   it("returns retryable failure after a failed home enqueue, and never reacts to bots", async () => {
     await repo.createChallenge({ hash: "b".repeat(64), appId: "A123", teamId: "T123", slackUserId: "U123" });

@@ -28,7 +28,7 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   const fetchImpl:typeof fetch=options.fetchImpl??((input,init)=>fetch(input,{...init,signal:init?.signal??AbortSignal.timeout(10_000),
     ...(options.customerVpsProxyDispatcher?{dispatcher:options.customerVpsProxyDispatcher}:{})} as RequestInit));
   const rpc=createSlackHomeTransport({fetchImpl});
-  async function homeFor(actorId:string,scopeId?:string,organizationId?:string):Promise<SlackHome> {
+  async function homeFor(actorId:string,scopeId?:string,organizationId?:string):Promise<SlackHome & {runtimeId:string}> {
     let machine;
     if(scopeId) {
       const route=await directory.getDirectoryRoute(scopeId);
@@ -38,7 +38,7 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
       if(!machine || machine.clerkUserId!==route.ownerId) throw new Error("Slack home unavailable");
     } else machine=await getRunningUserMachineByClerkId(options.db,actorId);
     if(!machine || machine.status!=="running" || !machine.publicIPv4) throw new Error("Slack home unavailable");
-    return {ownerId:machine.clerkUserId,origin:`https://${machine.publicIPv4}`,token:buildPlatformVerificationToken(machine.handle,options.platformSecret)};
+    return {runtimeId:machine.machineId,ownerId:machine.clerkUserId,origin:`https://${machine.publicIPv4}`,token:buildPlatformVerificationToken(machine.handle,options.platformSecret)};
   }
   return createSlackApp({db:options.db.kysely as unknown as Kysely<SlackDatabase>,config,resolveActor,fetchImpl,startCleanup:options.startCleanup,
     isCurrentMember:input=>organizations.projection.isCurrentMember(input),
@@ -52,8 +52,13 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
       const home=await homeFor(input.actorId,input.scopeId,input.organizationId);
       return (await rpc(home,"authorize",{ownerId:home.ownerId,organizationId:input.organizationId,actorId:input.actorId,scopeId:input.scopeId,action:"manage_members"})).allowed===true;
     },
-    dispatch:async({installation,link,binding,event,signal})=>{
+    resolveDestination:async({installation,link,binding})=>{
       const home=await homeFor(link.actorId,binding?.scopeId,installation.organizationId);
+      return {ownerId:home.ownerId,runtimeId:home.runtimeId};
+    },
+    dispatch:async({installation,link,binding,event,destination,signal})=>{
+      const home=await homeFor(link.actorId,binding?.scopeId,installation.organizationId);
+      if(home.ownerId!==destination.ownerId || home.runtimeId!==destination.runtimeId) throw new Error("Slack destination changed");
       await rpc(home,"events",{ownerId:home.ownerId,organizationId:installation.organizationId,actorId:link.actorId,
         ...(binding?.approvedOutput?{channelScopeId:binding.scopeId,companyPublicationApproved:true}:{}),event},signal);
       return {ownerId:home.ownerId};
