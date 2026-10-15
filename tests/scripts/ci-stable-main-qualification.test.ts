@@ -30,7 +30,7 @@ describe('unchanged PR coverage survives main advancing',()=>{
   f.complete();
   await reconcileSourceQualification(f.github,repo,f.origin,{runId:123,runAttempt:1,prNumber:2454,gateAppId:5271502,gateGithub:f.gateGithub});
   const written=(f.gateGithub.rest.checks.update.mock.calls.at(-1)?.[0]??f.gateGithub.rest.checks.create.mock.calls.at(-1)![0]);
-  expect(written).toMatchObject({name:'CI Source Qualification',conclusion:'success'});
+  expect(written).toMatchObject({check_run_id:f.provenance.id,conclusion:'success'});
   expect(JSON.parse(written.output.summary)).toMatchObject({baseSha:pins.base,sourceSha:pins.source,requestingRunId:321});
   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
   expect(await reconcileDedicatedChildren(f.github,repo,f.origin,{prNumber:2454})).toMatchObject({invalidated:0});
