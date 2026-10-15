@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import type { PlatformDB } from './db.js';
 import { AccountDeletionAdmissionError } from './account-deletion/admission.js';
 import { initializeCustomerFundedStarterPolicy, lockCustomerFundedStarterActivation } from './customer-funded-starter-policy.js';
@@ -35,6 +36,8 @@ export function createCustomerFundedStarterReconciler(options: {
       let outcome = 'unchanged';
       try {
         const changed = await options.db.transaction(async trx => {
+          // Bound admission before its first lock; LOCAL restores the pool's setting on commit/rollback.
+          await sql`SELECT set_config('lock_timeout', '250ms', true)`.execute(trx.executor);
           // Acquire deletion/owner admission before the machine lock. Sampling
           // selects work only; all identity/cohort checks are repeated locked.
           await lockCustomerFundedStarterActivation(trx, candidate.clerk_user_id, env);
