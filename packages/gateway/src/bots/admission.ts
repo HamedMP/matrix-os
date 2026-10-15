@@ -88,6 +88,11 @@ export function createPrivateBotAdmission(deps: {
       : input.brainProjectId === undefined;
   }
 
+  /** Only the owner's live direct Chat of the bot; a thread never counts. */
+  async function ownsDirectChat(input: { ownerId: string; botId: string; chatId: string }): Promise<boolean> {
+    return ownsBoundChat({ ownerId: input.ownerId, botId: input.botId, chatId: input.chatId });
+  }
+
   /** Unbinds first so no frame is authorized, then stops the workload. */
   async function release(runtimeHandle: string): Promise<void> {
     deps.registry.release(runtimeHandle);
@@ -145,7 +150,7 @@ export function createPrivateBotAdmission(deps: {
       try {
         // Provisioning awaits external work; authority may have changed since preflight.
         // Refuse publication and stop the new workload through the existing cleanup path.
-        if (!await ownsDirectChat(input)) throw new BotAdmissionError("not_found");
+        if (!await ownsBoundChat(input)) throw new BotAdmissionError("not_found");
         deps.registry.bind({
           runtimeHandle: runtime.runtimeHandle,
           executionGeneration: runtime.executionGeneration,
