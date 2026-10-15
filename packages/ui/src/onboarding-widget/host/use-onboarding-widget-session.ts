@@ -1,0 +1,148 @@
+import {
+  initialOnboardingWidgetState,
+  onboardingPendingRun,
+  reduceOnboardingWidget,
+  type AvailableIntegration,
+  type CanonicalProviderCatalog,
+  type ConnectedIntegration,
+  type OnboardingWidgetEvent,
+  type OnboardingWidgetState,
+} from "@matrix-os/contracts";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import type { OnboardingWidgetActions, OnboardingWidgetPrefs, OnboardingWidgetProps, OnboardingWidgetRepo } from "../types.js";
+import { onboardingActiveAi, onboardingApps, onboardingConnectedProviders, onboardingCreditsExhausted, onboardingSelection } from "./catalog.js";
+import type { OnboardingChatPort } from "./chat-port.js";
+import { onboardingSessionInit, writeOnboardingPrefs, type OnboardingStoredPrefs } from "./prefs.js";
+import { loadOnboardingRepos, type OnboardingRepoSource } from "./repos.js";
+import { useOnboardingAiConnect, type OnboardingAiConnectPort } from "./use-onboarding-ai-connect.js";
+import { useOnboardingRun } from "./use-onboarding-run.js";
+
+export interface OnboardingAppConnect {
+  connectingService: string | null;
+  connectApp: (serviceId: string) => void;
+}
+
+export type OnboardingSettingsSection = "agents-providers" | "billing";
+
+function initialState(prefs: OnboardingStoredPrefs): OnboardingWidgetState {
+  return initialOnboardingWidgetState(onboardingSessionInit(prefs));
+}
+
+export function useOnboardingWidgetState(initialPrefs: OnboardingStoredPrefs) {
+  const [state, dispatch] = useReducer(reduceOnboardingWidget, initialPrefs, initialState);
+  const [prefs, setPrefs] = useState<OnboardingWidgetPrefs>(() => ({
+    keepInCorner: initialPrefs.keepInCorner, side: initialPrefs.side, showOnLogin: initialPrefs.showOnLogin,
+  }));
+  return { state, dispatch, prefs, setPrefs };
+}
+
+export interface OnboardingWidgetSessionInput {
+  prefsKey: string;
+  state: OnboardingWidgetState;
+  dispatch: (event: OnboardingWidgetEvent) => void;
+  prefs: OnboardingWidgetPrefs;
+  setPrefs: (prefs: OnboardingWidgetPrefs) => void;
+  displayName: string | null;
+  catalog: CanonicalProviderCatalog;
+  catalogLoading: boolean;
+  chatPort: OnboardingChatPort | null;
+  aiPort: OnboardingAiConnectPort | null;
+  /** Must be referentially stable; repo loads restart when it changes. */
+  repoSource: OnboardingRepoSource;
+  available: readonly AvailableIntegration[];
+  connections: readonly ConnectedIntegration[];
+  appConnect: OnboardingAppConnect;
+  openChat: (chatId: string | null) => void;
+  openSettings: (section: OnboardingSettingsSection) => void;
+}
+
+/** Everything a host renders `OnboardingWidget` with, minus its own layering. */
+export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput): Omit<OnboardingWidgetProps, "zIndex"> {
+  const { prefsKey, state, dispatch, prefs, setPrefs, catalog, repoSource, available, connections, appConnect, openChat, openSettings } = input;
+  const loading = input.catalogLoading;
+  const activeAi = useMemo(() => (loading ? state.aiChoice : onboardingActiveAi(catalog, state.aiChoice)), [catalog, loading, state.aiChoice]);
+  const matrixAvailable = useMemo(() => loading || onboardingSelection(catalog, "matrix") !== null, [catalog, loading]);
+  const selection = useMemo(() => onboardingSelection(catalog, activeAi), [catalog, activeAi]);
+  const connectedProviders = useMemo(() => onboardingConnectedProviders(catalog), [catalog]);
+  const creditsExhausted = useMemo(() => onboardingCreditsExhausted(catalog, selection), [catalog, selection]);
+
+  const runView = useOnboardingRun(state, dispatch, { port: input.chatPort, selection, selectionPending: loading });
+  const ai = useOnboardingAiConnect(input.aiPort, dispatch);
+  const connectPanelOpen = state.ai?.step === "waiting" || state.ai?.step === "key";
+  const abandonSignIn = ai.abandonSignIn;
+  useEffect(() => {
+    if (!connectPanelOpen) abandonSignIn();
+  }, [abandonSignIn, connectPanelOpen]);
+  const apps = useMemo(() => onboardingApps(available, connections, appConnect.connectingService), [appConnect.connectingService, available, connections]);
+
+  const github = connections.find((connection) => connection.service === "github" && connection.status === "active")
+    ?? connections.find((connection) => connection.service === "github");
+  const githubId = github?.id ?? null;
+  const githubLabel = github?.accountLabel ?? null;
+  const onRepoScreen = state.screen.kind === "repo";
+  const [repos, setRepos] = useState<OnboardingWidgetRepo[] | null>(null);
+  useEffect(() => {
+    if (!onRepoScreen) return;
+    if (!githubId || !githubLabel) { setRepos([]); return; }
+    const controller = new AbortController();
+    setRepos(null);
+    loadOnboardingRepos(repoSource, { id: githubId, accountLabel: githubLabel }, controller.signal).then(setRepos, (error: unknown) => {
+      if (controller.signal.aborted) return;
+      console.warn("[onboarding-widget] repo list failed:", error instanceof Error ? error.name : typeof error);
+      setRepos([]);
+    });
+    return () => controller.abort();
+  }, [githubId, githubLabel, onRepoScreen, repoSource]);
+
+  useEffect(() => {
+    writeOnboardingPrefs(prefsKey, {
+      ...prefs,
+      firstTaskCompleted: state.firstTaskCompleted,
+      aiChoice: state.aiChoice,
+      chatId: state.chatId,
+      pendingRun: onboardingPendingRun(state),
+    });
+  }, [prefs, prefsKey, state]);
+
+  const showChat = useCallback(() => {
+    openChat(state.chatId);
+    dispatch({ type: "size.changed", size: "bubble" });
+  }, [dispatch, openChat, state.chatId]);
+
+  const actions = useMemo<OnboardingWidgetActions>(() => ({
+    dispatch,
+    connectApp: appConnect.connectApp,
+    openResult: showChat,
+    openFullChat: showChat,
+    openSettings: () => openSettings("agents-providers"),
+    addCredits: () => openSettings("billing"),
+    startAiSignIn: ai.startSignIn,
+    reopenAiSignIn: ai.reopenSignIn,
+    cancelAiSignIn: ai.cancelSignIn,
+    submitAiKey: ai.submitKey,
+    submitAiCode: ai.submitCode,
+    changePrefs: setPrefs,
+  }), [ai.cancelSignIn, ai.reopenSignIn, ai.startSignIn, ai.submitCode, ai.submitKey, appConnect.connectApp, dispatch, openSettings, setPrefs, showChat]);
+
+  const userName = onboardingFirstName(input.displayName);
+  return {
+    state,
+    actions,
+    ...(userName ? { userName } : {}),
+    apps,
+    repos,
+    runView,
+    activeAi,
+    matrixAvailable,
+    connectedProviders,
+    creditsExhausted,
+    aiSignInCode: ai.signInCode,
+    aiSignInNeedsCode: ai.signInNeedsCode,
+    prefs,
+  };
+}
+
+export function onboardingFirstName(displayName: string | null | undefined): string | undefined {
+  const first = displayName?.trim().split(/\s+/)[0];
+  return first ? first.slice(0, 40) : undefined;
+}

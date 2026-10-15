@@ -1,5 +1,10 @@
-import type { OnboardingAiPanel, OnboardingAiProvider, OnboardingRequiredService } from "@matrix-os/contracts";
+import { onboardingAiLabel, type OnboardingAiChoice, type OnboardingAiPanel, type OnboardingAiProvider, type OnboardingRequiredService } from "@matrix-os/contracts";
 import type { OnboardingWidgetApp } from "./types.js";
+
+/** The name of the AI a task runs on, or null when only Matrix AI is left and it can't run on this computer. */
+export function activeAiName(activeAi: OnboardingAiChoice, matrixAvailable: boolean): string | null {
+  return activeAi === "matrix" && !matrixAvailable ? null : onboardingAiLabel(activeAi);
+}
 
 export const AI_KEY_MAX_CHARS = 512;
 

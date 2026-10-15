@@ -138,7 +138,7 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
         <WidgetBody props={props} apps={appsVisit} runInFlight={runInFlight} />
 
         <footer className="mxo-footer">
-          {state.ai?.step === "menu" ? <AiMenu choice={state.aiChoice} connected={props.connectedProviders} actions={actions} /> : null}
+          {state.ai?.step === "menu" ? <AiMenu choice={props.activeAi} matrixAvailable={props.matrixAvailable} connected={props.connectedProviders} actions={actions} /> : null}
           <form className="mxo-composer" onSubmit={submit}>
             <input
               ref={inputRef}
@@ -152,7 +152,7 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
               <Icon icon={ArrowUp02Icon} size={14} />
             </button>
           </form>
-          {showModelLine ? <ModelLine state={state} actions={actions} /> : null}
+          {showModelLine ? <ModelLine state={state} actions={actions} activeAi={props.activeAi} matrixAvailable={props.matrixAvailable} /> : null}
         </footer>
       </section>
     </div>

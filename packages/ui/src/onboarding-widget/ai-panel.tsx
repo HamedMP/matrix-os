@@ -21,7 +21,12 @@ function ProviderLogo({ provider }: { provider: OnboardingAiChoice }) {
   );
 }
 
-export function AiMenu({ choice, connected, actions }: { choice: OnboardingAiChoice; connected: readonly OnboardingAiProvider[]; actions: OnboardingWidgetActions }) {
+export function AiMenu({ choice, matrixAvailable, connected, actions }: {
+  choice: OnboardingAiChoice;
+  matrixAvailable: boolean;
+  connected: readonly OnboardingAiProvider[];
+  actions: OnboardingWidgetActions;
+}) {
   const row = (provider: OnboardingAiChoice, name: string, line: string) => {
     const isConnected = provider === "matrix" || connected.includes(provider);
     const selected = choice === provider;
@@ -30,6 +35,7 @@ export function AiMenu({ choice, connected, actions }: { choice: OnboardingAiCho
         type="button"
         role="menuitemradio"
         aria-checked={selected}
+        disabled={provider === "matrix" && !matrixAvailable}
         className="mxo-menu__row"
         onClick={() => actions.dispatch(isConnected ? { type: "ai.selected", provider } : { type: "ai.providerPicked", provider })}
       >
@@ -44,7 +50,7 @@ export function AiMenu({ choice, connected, actions }: { choice: OnboardingAiCho
   };
   return (
     <div className="mxo-popover mxo-ai-menu" role="menu" aria-label="Change AI" data-mxo-menu="ai">
-      {row("matrix", "Matrix AI", "Free to start")}
+      {row("matrix", "Matrix AI", matrixAvailable ? "Free to start" : "Not available on this computer")}
       {row("claude", PROVIDER_COPY.claude.menuName, PROVIDER_COPY.claude.menuLine)}
       {row("codex", PROVIDER_COPY.codex.menuName, PROVIDER_COPY.codex.menuLine)}
       <div className="mxo-menu__sep" />
@@ -129,13 +135,16 @@ function WaitingStep({ panel, actions, signInCode, needsCode }: {
   );
 }
 
-export function AiFlow({ panel, actions, signInCode, needsCode = false }: {
+export function AiFlow({ panel, actions, keepName, signInCode, needsCode = false }: {
   panel: Exclude<OnboardingAiPanel, { step: "menu" }>;
   actions: OnboardingWidgetActions;
+  /** The AI the user keeps by leaving this flow, or null when none can run yet. */
+  keepName: string | null;
   signInCode?: string | null;
   needsCode?: boolean;
 }) {
   const copy = PROVIDER_COPY[panel.provider];
+  const keepLabel = keepName ? `Keep ${keepName}` : "Not now";
   const keyRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (panel.step === "key") keyRef.current?.focus();
@@ -165,7 +174,7 @@ export function AiFlow({ panel, actions, signInCode, needsCode = false }: {
             </span>
           </button>
         </div>
-        <button type="button" className="mxo-btn mxo-btn--ghost mxo-btn--start" onClick={() => actions.dispatch({ type: "ai.keepMatrix" })}>Keep Matrix AI</button>
+        <button type="button" className="mxo-btn mxo-btn--ghost mxo-btn--start" onClick={() => actions.dispatch({ type: "ai.keepMatrix" })}>{keepLabel}</button>
       </>
     );
   }
@@ -177,7 +186,7 @@ export function AiFlow({ panel, actions, signInCode, needsCode = false }: {
         <p className="mxo-text">Finish connecting {copy.name} in Settings.</p>
         <ButtonRow>
           <button type="button" className="mxo-btn mxo-btn--dark" onClick={actions.openSettings}>Open Settings</button>
-          <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => actions.dispatch({ type: "ai.keepMatrix" })}>Keep Matrix AI</button>
+          <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => actions.dispatch({ type: "ai.keepMatrix" })}>{keepLabel}</button>
         </ButtonRow>
       </>
     );

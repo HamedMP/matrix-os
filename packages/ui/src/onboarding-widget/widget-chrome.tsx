@@ -1,12 +1,12 @@
 import {
   deriveOnboardingBubble,
-  onboardingAiLabel,
   type OnboardingRunView,
   type OnboardingWidgetState,
 } from "@matrix-os/contracts";
 import { ArrowExpand01Icon, ArrowShrink02Icon, MinusSignIcon, MoreHorizontalIcon, PinIcon } from "@hugeicons/core-free-icons";
 import type { Ref } from "react";
 import { AiFlow } from "./ai-panel.js";
+import { activeAiName } from "./helpers.js";
 import { DoneLine, Icon, RabbitAvatar, StatusDot, UserEcho } from "./parts.js";
 import { AppsScreen, ConnectScreen, QuestionScreen, RepoScreen, RunScreen, TasksScreen } from "./screens.js";
 import type { OnboardingWidgetPrefs, OnboardingWidgetProps } from "./types.js";
@@ -104,10 +104,10 @@ export function WidgetHeader({ status, prefs, actions, moreOpen, onMoreOpen, onM
   );
 }
 
-export function ModelLine({ state, actions }: Pick<OnboardingWidgetProps, "state" | "actions">) {
+export function ModelLine({ state, actions, activeAi, matrixAvailable }: Pick<OnboardingWidgetProps, "state" | "actions" | "activeAi" | "matrixAvailable">) {
   return (
     <p className="mxo-model-line">
-      {onboardingAiLabel(state.aiChoice)} · <button type="button" className="mxo-inline-link" aria-expanded={state.ai?.step === "menu"} data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
+      {activeAiName(activeAi, matrixAvailable) ?? "Matrix AI isn't available here"} · <button type="button" className="mxo-inline-link" aria-expanded={state.ai?.step === "menu"} data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
     </p>
   );
 }
@@ -121,7 +121,7 @@ function ScreenView({ props, apps }: { props: OnboardingWidgetProps; apps: AppsV
     case "question": return <QuestionScreen taskId={screen.taskId} actions={actions} />;
     case "connect": return <ConnectScreen taskId={screen.taskId} status={screen.status} apps={props.apps} actions={actions} />;
     case "repo": return <RepoScreen repos={props.repos} actions={actions} />;
-    case "run": return <RunScreen run={screen} state={state} runView={props.runView} creditsExhausted={props.creditsExhausted} actions={actions} />;
+    case "run": return <RunScreen run={screen} state={state} runView={props.runView} creditsExhausted={props.creditsExhausted} activeAi={props.activeAi} actions={actions} />;
   }
 }
 
@@ -137,7 +137,15 @@ export function WidgetBody({ props, apps, runInFlight }: {
     <div className="mxo-body" aria-live="polite">
       {state.echo ? <UserEcho text={state.echo} /> : null}
       {state.notice ? <DoneLine text={state.notice} /> : null}
-      {aiFlow ? <AiFlow panel={aiFlow} actions={actions} signInCode={props.aiSignInCode ?? null} needsCode={props.aiSignInNeedsCode ?? false} /> : (
+      {aiFlow ? (
+        <AiFlow
+          panel={aiFlow}
+          actions={actions}
+          keepName={activeAiName(props.activeAi, props.matrixAvailable)}
+          signInCode={props.aiSignInCode ?? null}
+          needsCode={props.aiSignInNeedsCode ?? false}
+        />
+      ) : (
         <>
           <ScreenView props={props} apps={apps} />
           {showAllTasks ? (
