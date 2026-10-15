@@ -275,17 +275,24 @@ describe("side panel layout", () => {
       expect(mocks.fetchCollaborationInbox).not.toHaveBeenCalled();
     });
 
-    it("keeps Shared with me when an empty membership listing failed", () => {
-      mocks.useSettingsSystemInfo.mockReturnValue({ systemInfo: { capabilities: { collaboration: true } } });
-      mocks.useOrganizationList.mockReturnValue({
+    it.each([
+      ["Clerk is still loading", { isLoaded: false, userMemberships: undefined }],
+      ["membership data is missing", { isLoaded: true, userMemberships: undefined }],
+      ["the membership listing is fetching", {
         isLoaded: true,
-        userMemberships: {
-          data: [],
-          hasNextPage: false,
-          isFetching: false,
-          isError: true,
-        },
-      });
+        userMemberships: { data: [], hasNextPage: false, isFetching: true, isError: false },
+      }],
+      ["the membership listing has another page", {
+        isLoaded: true,
+        userMemberships: { data: [], hasNextPage: true, isFetching: false, isError: false },
+      }],
+      ["the membership listing failed", {
+        isLoaded: true,
+        userMemberships: { data: [], hasNextPage: false, isFetching: false, isError: true },
+      }],
+    ])("keeps Shared with me when %s", (_state, organizationList) => {
+      mocks.useSettingsSystemInfo.mockReturnValue({ systemInfo: { capabilities: { collaboration: true } } });
+      mocks.useOrganizationList.mockReturnValue(organizationList);
 
       render(<DrawerLayout />);
 
