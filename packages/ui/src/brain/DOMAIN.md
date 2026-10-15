@@ -24,10 +24,14 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
   off. The repository card shows the owner's model spend for the last 30 days across all projects, and the model
   confirm the budget left (`modelSpend` of `GET .../claims`). A run that waits for another run of the project says so.
 - Every screen is one shrinkable grid column; long titles, keys and selects shrink or wrap to fit a 390 px screen.
-- Colors come from `BRAIN_TONE`: each class chains the Electron Desktop token first and the Web token second, with
-  no `dark:` variants. Both renderers scan this folder for Tailwind classes.
-- Keyboard focus (`BRAIN_TONE.focus`) is a 2 px outline in the ring color on Web; Electron Desktop's global focus
-  ring replaces it. `tests/ui/brain-tone.test.ts` builds the classes with Tailwind to check it.
+- The view follows `DESIGN.md`. `BRAIN_THEME` (set on the BrainApp root) holds its semantic and control colors as
+  `light-dark()` pairs, the dark side mirroring the neutral ramp like the Native Mobile theme, so there are no `dark:`
+  variants. `BRAIN_TONE` and `BRAIN_TYPE` hold the classes over them: Geist on the interface type scale, Geist Mono
+  for paths and keys, 44 px buttons, full-radius chips, filled fields, flat 14 px cards, and status dots beside words.
+  Both renderers scan this folder for Tailwind classes.
+- Keyboard focus (`BRAIN_TONE.focus`) is a 2 px Gold outline set off by 2 px on Web; Electron Desktop's global focus
+  ring replaces it. A focused field draws a 1.5 px primary-text border instead. `tests/ui/brain-tone.test.ts` builds
+  the classes with Tailwind to check them.
 - Out of scope: account connections (Settings), window chrome, and where each surface registers the app (adapters).
 
 ## Source Of Truth

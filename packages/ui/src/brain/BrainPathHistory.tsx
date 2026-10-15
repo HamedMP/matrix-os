@@ -1,7 +1,7 @@
 "use client";
 
 import { BrainButton } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import { BrainBadge, BrainCite, BrainEmpty, BrainLoadMore, BrainView, type BrainScreenProps } from "./brain-ui.js";
 import type { BrainWhyItem } from "./brain-types.js";
 import { useBrainPages } from "./use-brain-load.js";
@@ -23,7 +23,9 @@ export function BrainPathHistory({ api, projectId, onOpenSources, path, ask, onS
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="min-w-0 flex-1 break-all text-base font-semibold">History of {path}</h2>
+        <h2 className={`min-w-0 flex-1 break-all ${BRAIN_TYPE.subheading}`}>
+          History of <span className={BRAIN_TYPE.machine}>{path}</span>
+        </h2>
         <BrainButton size="sm" variant="ghost" onClick={onSearchWords}>Search the words instead</BrainButton>
       </div>
       <BrainView state={pages.first.state} label="Reading the history..." onRetry={pages.first.reload}
@@ -41,7 +43,7 @@ export function BrainPathHistory({ api, projectId, onOpenSources, path, ask, onS
               </BrainEmpty>
             ) : (
               <>
-                <p className="text-xs text-muted-foreground">
+                <p className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>
                   {view.total}{view.totalCapped ? "+" : ""} {view.total === 1 ? "change" : "changes"}, newest first.
                 </p>
                 <ol aria-label="Path history" className={`grid gap-2 border-l pl-4 ${BRAIN_TONE.border}`}>
@@ -61,17 +63,17 @@ export function BrainPathHistory({ api, projectId, onOpenSources, path, ask, onS
 function PathItem({ item }: { readonly item: BrainWhyItem }) {
   const more = item.matchedPathCount - Math.min(item.matchedPaths.length, MATCHED_SHOWN);
   return (
-    <li className={`grid gap-1 rounded-md border p-2 ${BRAIN_TONE.border}`}>
+    <li className={`grid gap-2 p-4 ${BRAIN_TONE.card}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         <BrainBadge>{KIND_LABELS[item.kind]}</BrainBadge>
         {item.link === "inferred" && <BrainBadge tone="warn">number inferred</BrainBadge>}
       </div>
       <BrainCite cite={item} />
       {item.summary !== null && (
-        <p className="whitespace-pre-line text-sm">{item.summary.text}{item.summary.truncated ? "..." : ""}</p>
+        <p className={`whitespace-pre-line ${BRAIN_TYPE.callout}`}>{item.summary.text}{item.summary.truncated ? "..." : ""}</p>
       )}
       {item.matchedPaths.length > 0 && (
-        <p className="truncate text-xs text-muted-foreground">
+        <p className={`truncate ${BRAIN_TYPE.footnote} ${BRAIN_TYPE.machine} ${BRAIN_TONE.secondary}`}>
           {item.matchedPaths.slice(0, MATCHED_SHOWN).join(", ")}{more > 0 ? ` and ${more} more` : ""}
         </p>
       )}

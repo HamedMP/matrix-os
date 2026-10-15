@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { BrainButton } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import { brainMergeEvidenceText, brainScoreText } from "./brain-format.js";
 import { BrainBadge, BrainEmpty, BrainError, BrainLoadMore, BrainView, type BrainScreenProps } from "./brain-ui.js";
 import type { BrainEntityRefView, BrainMergeSuggestionView } from "./brain-types.js";
@@ -42,7 +42,7 @@ export function BrainPersonMerges({ api, projectId, onOpenSources }: BrainScreen
     item.suggestionId !== suggestionId && [entity.entityId, alias.entityId].includes(item.alias.entityId))?.alias;
   return (
     <section aria-label="Possible duplicates" className="grid gap-2">
-      <h2 className="text-sm font-semibold">Possible duplicates</h2>
+      <h2 className={BRAIN_TYPE.subheading}>Possible duplicates</h2>
       <BrainView state={pages.first.state} label="Looking for duplicates..." onRetry={pages.first.reload}>
         {(view) => (
           <div className="grid gap-2">
@@ -61,7 +61,7 @@ export function BrainPersonMerges({ api, projectId, onOpenSources }: BrainScreen
               </ul>
             )}
             {view.truncated && (
-              <p className="text-xs text-muted-foreground">Only part of the people were checked; more may show later.</p>
+              <p className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>Only part of the people were checked; more may show later.</p>
             )}
             <BrainLoadMore nextCursor={pages.nextCursor} loading={pages.loadingMore} error={pages.moreError}
               onLoadMore={pages.loadMore} />
@@ -76,10 +76,10 @@ function Person({ person, links, keeps }: {
   readonly person: BrainEntityRefView; readonly links: number; readonly keeps: boolean;
 }) {
   return (
-    <li className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs">
-      <span className="font-medium text-foreground">{person.displayName}</span>
-      <span className="min-w-0 break-all text-muted-foreground">{person.key}</span>
-      <span className="text-muted-foreground">{links} {links === 1 ? "link" : "links"}</span>
+    <li className={`flex min-w-0 flex-wrap items-center gap-x-2 ${BRAIN_TYPE.caption}`}>
+      <span className={`font-medium ${BRAIN_TONE.text}`}>{person.displayName}</span>
+      <span className={`min-w-0 break-all ${BRAIN_TYPE.machine} ${BRAIN_TONE.secondary}`}>{person.key}</span>
+      <span className={BRAIN_TONE.secondary}>{links} {links === 1 ? "link" : "links"}</span>
       {keeps && <BrainBadge tone="good">stays</BrainBadge>}
     </li>
   );
@@ -102,9 +102,9 @@ function MergeCard({ suggestion, merged, heldBy, action, mine, onChange }: Merge
   // Each reason once, so its words are its key.
   const reasons = [...new Set(suggestion.evidence.map(brainMergeEvidenceText))].slice(0, EVIDENCE_SHOWN);
   return (
-    <li className={`grid gap-2 rounded-md border p-3 text-sm ${BRAIN_TONE.border}`}>
+    <li className={`grid gap-2 p-4 ${BRAIN_TONE.card} ${BRAIN_TYPE.label}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">Likely one person</span>
+        <span className={`font-semibold ${BRAIN_TYPE.callout}`}>Likely one person</span>
         <BrainBadge>{brainScoreText(suggestion.score)}</BrainBadge>
       </div>
       <ul aria-label="People" className="grid gap-1">
@@ -112,19 +112,19 @@ function MergeCard({ suggestion, merged, heldBy, action, mine, onChange }: Merge
         <Person person={alias} links={counts.aliasLinks} keeps={false} />
       </ul>
       {moving > 0 && (
-        <p className="text-xs text-muted-foreground">
+        <p className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>
           {moving} more {moving === 1 ? "name moves" : "names move"} with {alias.displayName}.
         </p>
       )}
       {reasons.length > 0 && (
-        <ul aria-label="Why" className="list-disc pl-5 text-xs text-muted-foreground">
+        <ul aria-label="Why" className={`list-disc pl-5 ${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>
           {reasons.map((reason) => <li key={reason}>{reason}</li>)}
         </ul>
       )}
       <div className="flex flex-wrap items-center gap-2">
         {merged ? (
           <>
-            <p role="status" className="text-xs">Merged {alias.displayName} into {entity.displayName}.</p>
+            <p role="status" className={BRAIN_TYPE.label}>Merged {alias.displayName} into {entity.displayName}.</p>
             <BrainButton size="sm" variant="outline" disabled={locked} onClick={() => onChange("unmerge")}>
               {running === "unmerge" ? "Undoing..." : "Undo"}
             </BrainButton>
@@ -135,7 +135,7 @@ function MergeCard({ suggestion, merged, heldBy, action, mine, onChange }: Merge
               disabled={locked || heldBy !== undefined} onClick={() => onChange("merge")}>
               {running === "merge" ? "Merging..." : `Merge into ${entity.displayName}`}
             </BrainButton>
-            {heldBy && <p className="text-xs text-muted-foreground">Undo the merge of {heldBy.displayName} first.</p>}
+            {heldBy && <p className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>Undo the merge of {heldBy.displayName} first.</p>}
           </>
         )}
       </div>

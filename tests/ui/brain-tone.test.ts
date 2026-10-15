@@ -35,11 +35,11 @@ function outline(rules: { selector: string; declarations: Declarations }[], focu
 }
 
 describe("BRAIN_TONE.focus", () => {
-  it("draws a solid 2px ring-colored outline on keyboard focus and none otherwise", async () => {
+  it("draws a solid 2px gold outline on keyboard focus and none otherwise", async () => {
     const rules = await compiledRules(BRAIN_TONE.focus);
 
     expect(outline(rules, false).style).toBe("none");
-    expect(outline(rules, true)).toEqual({ style: "solid", width: "2px", color: "var(--ring, var(--accent))" });
+    expect(outline(rules, true)).toEqual({ style: "solid", width: "2px", color: "var(--brain-focus)" });
   });
 
   it("sets the outline style back on focus whenever it clears the outline", () => {

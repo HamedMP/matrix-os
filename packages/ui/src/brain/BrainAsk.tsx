@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { Search } from "lucide-react";
 import { BrainButton, BrainInput, BrainSelect } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import { brainAskPath } from "./brain-format.js";
 import {
   BrainBadge, BrainCite, BrainEmpty, BrainFreshness, BrainLoadMore, BrainSnippet, BrainView, type BrainScreenProps,
@@ -64,8 +64,8 @@ export function BrainAsk({ api, projectId, onOpenSources }: BrainScreenProps) {
       </form>
       {asked.q === "" && (
         <BrainEmpty title="Ask about a decision, a file, a person or a pull request.">
-          Every answer links to the pull request, commit, spec or note it came from. Type a path, like
-          packages/gateway/src/brain/why.ts, to see its history.
+          Every answer links to the pull request, commit, spec or note it came from. Type a path, like{" "}
+          <code className={BRAIN_TYPE.machine}>packages/gateway/src/brain/why.ts</code>, to see its history.
         </BrainEmpty>
       )}
       {asked.path !== null && (
@@ -94,12 +94,12 @@ export function BrainAsk({ api, projectId, onOpenSources }: BrainScreenProps) {
 
 function AskHit({ hit }: { readonly hit: BrainSearchHitView }) {
   return (
-    <li className={`grid min-w-0 gap-2 rounded-md border p-3 ${BRAIN_TONE.border}`}>
+    <li className={`grid min-w-0 gap-2 p-4 ${BRAIN_TONE.card}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         <BrainBadge>{hit.claim === null ? hit.cite.kind : hit.claim.kind}</BrainBadge>
         {hit.claim?.stale === true && <BrainBadge tone="warn">Outdated</BrainBadge>}
       </div>
-      {hit.claim !== null && <p className="text-sm font-medium">{hit.claim.statement}</p>}
+      {hit.claim !== null && <p className={`font-semibold ${BRAIN_TYPE.callout}`}>{hit.claim.statement}</p>}
       <BrainSnippet text={hit.snippet.text} highlights={hit.snippet.highlights} />
       <BrainCite cite={hit.cite} />
     </li>

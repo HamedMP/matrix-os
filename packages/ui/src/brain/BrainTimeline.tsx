@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { BrainButton, BrainInput, BrainSelect } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import {
   BrainBadge, BrainCite, BrainEmpty, BrainFreshness, BrainLoadMore, BrainView, type BrainScreenProps,
 } from "./brain-ui.js";
@@ -78,7 +78,8 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
               <li key={match.entityId} className="min-w-0 max-w-full">
                 <BrainButton size="sm" variant="outline" wrap className="max-w-full break-all text-left"
                   onClick={() => { setPerson(""); setEntity(match.entityId); }}>
-                  {match.displayName} <span className="text-xs text-muted-foreground">{match.key}</span>
+                  {match.displayName}{" "}
+                  <span className={`${BRAIN_TYPE.caption} ${BRAIN_TYPE.machine} ${BRAIN_TONE.secondary}`}>{match.key}</span>
                 </BrainButton>
               </li>
             ))}
@@ -91,7 +92,7 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
         onOpenSources={onOpenSources}>
         {(view) => (
           <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
-            <h2 className="break-words text-base font-semibold">{view.entity.displayName}</h2>
+            <h2 className={`break-words ${BRAIN_TYPE.subheading}`}>{view.entity.displayName}</h2>
             <BrainFreshness pending={view.freshness.pendingDocuments} capped={view.freshness.pendingCapped} />
             {pages.items.length === 0 ? (
               <BrainEmpty title="Nothing touches this yet.">
@@ -114,14 +115,14 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
 
 function TimelineItem({ item }: { readonly item: BrainTimelineItemView }) {
   return (
-    <li className={`grid min-w-0 gap-1 rounded-md border p-2 ${BRAIN_TONE.border}`}>
+    <li className={`grid min-w-0 gap-2 p-4 ${BRAIN_TONE.card}`}>
       <BrainCite cite={item.cite} />
       <div className="flex flex-wrap items-center gap-1.5">
         {item.linkTypes.map((type) => <BrainBadge key={type}>{type.replace(/_/g, " ")}</BrainBadge>)}
         {item.mode === "inferred" && <BrainBadge tone="warn">inferred</BrainBadge>}
       </div>
       {item.matchedPaths.length > 0 && (
-        <p className="truncate text-xs text-muted-foreground">{item.matchedPaths.join(", ")}</p>
+        <p className={`truncate ${BRAIN_TYPE.footnote} ${BRAIN_TYPE.machine} ${BRAIN_TONE.secondary}`}>{item.matchedPaths.join(", ")}</p>
       )}
     </li>
   );
