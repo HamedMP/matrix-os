@@ -4,7 +4,7 @@ import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 import type { HermesGatewayEvent } from "./hermes-stdio-client.js";
 import { sharedBrowserEndpoint } from "./shared-browser-client.js";
 import { z } from "zod/v4";
-const TOOL = "mcp__matrix_shared_browser__shared_browser";
+import { HERMES_SHARED_BROWSER_TOOL as TOOL, hermesSharedBrowserToolProjection } from "./hermes-shared-browser-tools.js";
 const Catalog = z.object({ lazy: z.boolean().optional(), tools: z.record(z.string().max(128), z.array(z.string().max(256)).max(512)) });
 export function openHermesSharedBrowserRun(options: { broker: SharedBrowserBroker; root: string; gatewayPort: number; owner: CanonicalOwnerScope;
   chatId: string; runId: string; signal: AbortSignal }) {
@@ -25,6 +25,7 @@ export function openHermesSharedBrowserRun(options: { broker: SharedBrowserBroke
     "    value['agent'] = dict(agent)", "    value['agent']['disabled_toolsets'] = list(dict.fromkeys(disabled + ['browser']))", "    return value",
     "matrix_config.load_config = lambda: matrix_browser_overlay(matrix_load())",
     "matrix_config.load_config_readonly = lambda: matrix_browser_overlay(matrix_readonly())",
+    ...hermesSharedBrowserToolProjection(),
     "runpy.run_module('tui_gateway.entry', run_name='__main__')"].join("\n");
   let sessionId: string | undefined, observed: HermesGatewayEvent | undefined, valid = false, failed = false;
   let changed: (() => void) | undefined, closing: Promise<void> | undefined;

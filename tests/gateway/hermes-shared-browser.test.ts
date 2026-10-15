@@ -10,6 +10,7 @@ function fixture() {
   writeFileSync(join(root, "hermes_cli", "__init__.py"), ""); writeFileSync(join(root, "tui_gateway", "__init__.py"), "");
   writeFileSync(join(root, "hermes_cli", "config.py"), "value={'agent': {'disabled_toolsets':['cron']}, 'mcp_servers':{'owner_existing':{'command':'existing'}},'model':{'default':'owner-model'}}\ndef load_config(): return value\ndef load_config_readonly(): return value\n");
   writeFileSync(join(root, "tui_gateway", "entry.py"), "import json\nfrom hermes_cli.config import load_config,load_config_readonly,value\ncfg=load_config()\nprint(json.dumps({'config':cfg,'readonly':load_config_readonly(),'original':value}))\n");
+  writeFileSync(join(root, "model_tools.py"), "def get_tool_definitions(**kwargs): return []\n");
   return root;
 }
 it("uses per-run native configuration overlay and actual Python bootstrap without writing owner settings", async () => {
