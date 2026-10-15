@@ -143,6 +143,7 @@ class MatrixMockWebSocket {
 global.WebSocket = MatrixMockWebSocket;
 
 jest.mock("expo-secure-store", () => ({
+  getItem: jest.fn(() => null),
   getItemAsync: jest.fn(() => Promise.resolve(null)),
   setItemAsync: jest.fn(() => Promise.resolve()),
   deleteItemAsync: jest.fn(() => Promise.resolve()),

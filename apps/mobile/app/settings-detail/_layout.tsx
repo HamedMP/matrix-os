@@ -1,5 +1,4 @@
 import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
-import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import { Stack, useRouter } from "expo-router";
 import { useUnistyles } from "react-native-unistyles";
 
@@ -8,14 +7,16 @@ import { IconButton } from "@/components/ui";
 export default function SettingsDetailLayout() {
   const router = useRouter();
   const { theme } = useUnistyles();
-  const closeButton = () => (
+  // These pages are pushed over Settings, so each goes back to it, by this
+  // arrow or by a swipe from the left edge.
+  const settingsBackButton = () => (
     <IconButton
-      accessibilityLabel="Close settings"
-      icon={Cancel01Icon}
+      accessibilityLabel="Back to settings"
+      icon={ArrowLeft01Icon}
       iconSize={22}
       iconColor={theme.v2.appColors.ink}
       buttonSize={32}
-      onPress={() => router.dismiss()}
+      onPress={() => router.back()}
     />
   );
   const backButton = (accessibilityLabel: string) => (
@@ -28,9 +29,9 @@ export default function SettingsDetailLayout() {
       onPress={() => router.back()}
     />
   );
-  const closeItems = () => [{
+  const settingsBackItems = () => [{
     type: "custom" as const,
-    element: closeButton(),
+    element: settingsBackButton(),
     hidesSharedBackground: true,
   }];
 
@@ -58,8 +59,8 @@ export default function SettingsDetailLayout() {
           name={name}
           options={{
             title,
-            headerLeft: closeButton,
-            unstable_headerLeftItems: closeItems,
+            headerLeft: settingsBackButton,
+            unstable_headerLeftItems: settingsBackItems,
           }}
         />
       ))}

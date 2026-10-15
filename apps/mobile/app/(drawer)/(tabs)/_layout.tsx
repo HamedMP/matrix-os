@@ -4,6 +4,7 @@ import { Tabs, type BottomTabBarProps } from "expo-router/tabs";
 import { useAgentsWaitingCount } from "@/components/agents/use-agents-waiting-count";
 import { TABS, TabBar } from "@/components/shell/TabBar";
 import { focusedNestedRouteName, isTabBarHidden } from "@/lib/tab-bar-visibility";
+import { useReduceMotion } from "@/lib/use-reduce-motion";
 
 function ShellTabBar({ state, navigation }: BottomTabBarProps) {
   const agentsWaiting = useAgentsWaitingCount();
@@ -37,6 +38,7 @@ function ShellTabBar({ state, navigation }: BottomTabBarProps) {
 
 export default function TabsLayout() {
   const { theme } = useUnistyles();
+  const reduceMotion = useReduceMotion();
 
   return (
     <Tabs
@@ -44,6 +46,9 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         sceneStyle: { backgroundColor: theme.v2.colors.background },
+        // The next tab's screen slides in a little from its side; with reduced
+        // motion it cross-fades instead.
+        animation: reduceMotion ? "fade" : "shift",
       }}
     >
       {TABS.map((tab) => <Tabs.Screen key={tab.route} name={tab.route} />)}
