@@ -1,4 +1,5 @@
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
+import { createSharedAttachmentSource } from "../bots/shared-integration-attachment.js";
 import { createHash } from "node:crypto";
 import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
 import { readReleaseInfo } from "../system-info.js";
@@ -224,7 +225,8 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const integrationClient = options.integrations ? createBotIntegrationClient(options.integrations) : undefined;
   const integrationTools = integrationClient
-    ? createBotIntegrationTools({ client: integrationClient, homePath: options.homePath, transact, recipes, resolveProcedure, agents: options.agents, assertSource: revalidateSource })
+    ? createBotIntegrationTools({ client: integrationClient, homePath: options.homePath, transact, recipes, resolveProcedure, agents: options.agents, assertSource: revalidateSource,
+      assertSharedAttachmentSource: createSharedAttachmentSource({ roots: options.executionRoots, group: options.group }) })
     : undefined;
   const connections = integrationClient && integrationTools
     ? createBotConnections({ client: integrationClient, transact, tools: integrationTools })
