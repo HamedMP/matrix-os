@@ -531,7 +531,7 @@ try:
             raise ValueError('invalid')
         state = directory(('var', 'lib', 'matrix-funded-host-config'))
         applied = json.loads(read('applied.json', 131072, state), object_pairs_hook=unique_object)
-        if set(applied) != {'rolloutId', 'identity', 'afterSha256'} or not isinstance(applied['identity'], dict) or not re.fullmatch(r'repair-[a-f0-9]{32}', applied['rolloutId']) or not re.fullmatch(r'[a-f0-9]{64}', applied['afterSha256']):
+        if set(applied) != {'rolloutId', 'identity', 'afterSha256'} or not isinstance(applied['identity'], dict) or not re.fullmatch(r'(?:repair|epoch)-[a-f0-9]{32}', applied['rolloutId']) or not re.fullmatch(r'[a-f0-9]{64}', applied['afterSha256']):
             raise ValueError('invalid')
         phase = os.open('update-phase', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=anchors[2][2])
         fds.append(phase)
