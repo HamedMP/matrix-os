@@ -3,6 +3,7 @@ import { canonicalReferenceId } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { JEV_MODEL_ID, JEV_PRICING_VERSION, JevProvenanceSchema } from "#jev";
 export * from "#funded-ai-execution-recovery";
+export * from "#funded-workers-models";
 
 export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;
@@ -282,7 +283,7 @@ export const FundedAiRouteReadinessReceiptSchema = z.object({
   runtimeRevision: RevisionSchema,
   checkedAt: IsoTimestampSchema,
   staleAfter: IsoTimestampSchema,
-  readyModelIds: z.array(ProviderModelReferenceSchema).max(2)
+  readyModelIds: z.array(ProviderModelReferenceSchema).max(10)
     .refine((models) => new Set(models).size === models.length, "Model IDs must be unique"),
 }).strict().superRefine((value, ctx) => {
   const checked = Date.parse(value.checkedAt);

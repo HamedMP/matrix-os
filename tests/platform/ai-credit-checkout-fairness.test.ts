@@ -3,13 +3,14 @@ import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isAiCreditCheckoutRouteHealthy } from "../../packages/platform/src/ai-credit-checkout-readiness.js";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
-import { createFundedModelProbeService, FUNDED_PROBE_MODELS } from "../../packages/platform/src/ai-funded-model-probes.js";
+import { createFundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 import { createBillingRoutes, type StripeBillingClient } from "../../packages/platform/src/billing-routes.js";
 
 const identity = { ownerId: "fair_owner", machineId: "fair_machine", runtimeSlot: "primary" };
-const [glm, sonnet] = FUNDED_PROBE_MODELS;
+const glm = "@cf/zai-org/glm-5.3-flash";
+const sonnet = "anthropic/claude-sonnet-5";
 let db: PlatformDB;
 
 beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
@@ -201,7 +202,7 @@ describe("multi-model credit checkout readiness", () => {
   it("reuses cached model health while rereading owner policy without new admissions", async () => {
     const f = await fixture({ [glm]: { delayMs: 100, ready: true },
       [sonnet]: { delayMs: 200, ready: true } });
-    const warm = Promise.all(FUNDED_PROBE_MODELS.map(model => f.probes.probe(model)));
+    const warm = Promise.all([glm, sonnet].map(model => f.probes.probe(model)));
     await vi.waitFor(() => expect(f.fetchFn).toHaveBeenCalledTimes(2), { interval: 1 });
     await vi.advanceTimersByTimeAsync(200);
     expect((await warm).every(result => result.ready)).toBe(true);

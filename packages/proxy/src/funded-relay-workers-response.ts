@@ -1,3 +1,4 @@
+import { isManagedWorkersAiResponseModel } from "@matrix-os/contracts";
 import { safeUpstreamHeaders } from "./funded-relay-stream.js";
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -44,14 +45,14 @@ export function normalizeWorkersAiResponse(upstream: Response, modelId: string, 
         object: "chat.completion.chunk", ...(created === null ? {} : { created }), choices: [], usage: value.usage })}\n\n`));
       return;
     }
-    if (!Array.isArray(value.choices) || value.model !== modelId || typeof value.id !== "string"
+    if (!Array.isArray(value.choices) || !isManagedWorkersAiResponseModel(modelId, value.model) || typeof value.id !== "string"
       || value.id.length > 256 || !value.id || sawSummary
       || (responseId !== null && responseId !== value.id)) throw new Error("Invalid AI response");
     responseId = value.id;
     if (typeof value.created === "number" && Number.isSafeInteger(value.created)) created = value.created;
     if (value.choices.length === 0) return;
     const { usage: _deltaUsage, ...forwarded } = value;
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(forwarded)}\n\n`));
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ ...forwarded, model: modelId })}\n\n`));
   }
   function consume(controller: TransformStreamDefaultController<Uint8Array>) {
     let separator: RegExpExecArray | null;
@@ -80,8 +81,8 @@ export function normalizeWorkersAiResponse(upstream: Response, modelId: string, 
         } else {
           const value: unknown = JSON.parse(buffer);
           const result = record(value) && value.success === true ? value.result : value;
-          if (!record(result) || result.model !== modelId || !Array.isArray(result.choices)) throw new Error("Invalid AI response");
-          controller.enqueue(encoder.encode(JSON.stringify(result)));
+          if (!record(result) || !isManagedWorkersAiResponseModel(modelId, result.model) || !Array.isArray(result.choices)) throw new Error("Invalid AI response");
+          controller.enqueue(encoder.encode(JSON.stringify({ ...result, model: modelId })));
         }
       } catch (error) {
         console.warn("[proxy] Workers AI response normalization failed", { errorName: error instanceof Error ? error.name : "UnknownError" });

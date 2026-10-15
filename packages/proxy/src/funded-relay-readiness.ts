@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import type { FundedRelayConfig } from "./funded-relay-config.js";
-import { FUNDED_GLM_FLASH } from "./funded-relay-model.js";
-import { workersAiTarget } from "./funded-relay-openai-request.js";
+import { isManagedWorkersAiModel, isManagedWorkersAiResponseModel } from "@matrix-os/contracts";
+import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 
 export const FUNDED_SONNET = "anthropic/claude-sonnet-5";
 const MAX_PROBE_BODY_BYTES = 64 * 1024;
@@ -45,8 +45,8 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
   let url: string;
   let headers: Record<string, string>;
   let body: string;
-  if (modelId === FUNDED_GLM_FLASH && config.workersAiToken && config.reservationMode === "usage") {
-    const target = workersAiTarget(config.gatewayBaseUrl);
+  if (isManagedWorkersAiModel(modelId) && config.workersAiToken && config.reservationMode === "usage") {
+    const target = workersAiTarget(config.gatewayBaseUrl, modelId);
     url = target.url;
     headers = {
       authorization: `Bearer ${config.workersAiToken}`,
@@ -56,8 +56,8 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
     };
     // Match ordinary managed turns: omission selects provider max reasoning,
     // which can exceed the health budget even for a one-token generation.
-    body = JSON.stringify({ model: FUNDED_GLM_FLASH, messages: [{ role: "user", content: "ping" }],
-      max_tokens: 1, store: false, reasoning_effort: "low" });
+    body = serializeFundedOpenAiRequest({ model: modelId, messages: [{ role: "user", content: "ping" }],
+      max_tokens: 1, store: false }).body;
   } else if (modelId === FUNDED_SONNET) {
     url = `${config.gatewayBaseUrl}/v1/messages`;
     headers = {
@@ -82,7 +82,7 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
     const envelope = responseBody as { success?: unknown; result?: unknown };
     if ("success" in envelope && envelope.success !== true) return finish("invalid_response", response.status);
     const result = envelope.success === true ? envelope.result : responseBody;
-    return finish(!!result && typeof result === "object" && "model" in result && result.model === FUNDED_GLM_FLASH
+    return finish(!!result && typeof result === "object" && "model" in result && isManagedWorkersAiResponseModel(modelId, result.model)
       && "choices" in result && Array.isArray(result.choices) && result.choices.length > 0 ? "ready" : "invalid_response", response.status);
   } catch (error) {
     const name = error instanceof Error && ["TimeoutError", "AbortError", "SyntaxError"].includes(error.name) ? error.name : "UnknownError";

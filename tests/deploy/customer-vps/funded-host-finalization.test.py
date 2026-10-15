@@ -202,6 +202,22 @@ exec(compile(sys.stdin.read(),"<actual-emitted-finalizer-with-fault>","exec"))'
                     self.assertEqual(self.phase.stat().st_nlink, 2)
                 self.assert_blocked_and_retained()
 
+    def test_epoch_bootstrap_id_retains_archive_with_damaged_or_absent_pin(self):
+        marker = json.loads(self.applied)
+        marker['rolloutId'] = 'epoch-' + 'b' * 32
+        self.applied = json.dumps(marker).encode()
+        (self.state / 'applied.json').write_bytes(self.applied)
+        for damaged in (b'', b'not-json', None):
+            with self.subTest(pin=damaged):
+                self.pin.unlink(missing_ok=True)
+                if damaged is not None:
+                    self.pin.write_bytes(damaged)
+                    os.chmod(self.pin, 0o644)
+                self.assert_blocked_and_retained()
+                self.assertEqual(self.pin.exists(), damaged is not None)
+                if damaged is not None:
+                    self.assertEqual(self.pin.read_bytes(), damaged)
+
     def test_failed_restoration_or_health_defers_before_retirement(self):
         for fault in ('resume', 'health'):
             with self.subTest(fault=fault):
