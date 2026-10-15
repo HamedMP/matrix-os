@@ -3,13 +3,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
 import { Composer, type ComposerProps } from "@/components/chat/Composer";
-import { ListRowSkeletonStack } from "@/components/shell/Controls";
 import {
   BackIcon,
   Button,
   EmptyState,
   FolderIcon,
   IconTile,
+  ItemRowSkeletons,
   MoreIcon,
   SectionLabel,
   TopBar,
@@ -84,7 +84,8 @@ export function ProjectScreen({ state, project, chats, composer, onBack, onOpenO
           <TopBar testID="project-top-bar" leading={back} />
           {state === "loading" ? (
             <View testID="project-loading" style={styles.inset}>
-              <ListRowSkeletonStack testID="project-skeleton-row" />
+              {/* Shaped like the project's chat rows. */}
+              <ItemRowSkeletons testID="project-skeleton-row" leadingSize={40} leadingShape="round" />
             </View>
           ) : state === "error" ? (
             <View style={[styles.inset, styles.notice]}>

@@ -102,17 +102,31 @@ export function FileTileSkeletonGrid() {
   return <GridTileSkeletonGrid testID="file-tile-skeleton" />;
 }
 
-export function GridTileSkeletonGrid({ testID = "grid-tile-skeleton" }: { testID?: string }) {
+export function GridTileSkeletonGrid({
+  testID = "grid-tile-skeleton",
+  variant = "card",
+}: {
+  testID?: string;
+  /** "icon" for centered tiles, which draw an icon over a label and no tile behind them. */
+  variant?: "card" | "icon";
+}) {
   return (
     <View style={styles.tileRow}>
-      {Array.from({ length: 3 }, (_, index) => (
+      {Array.from({ length: 3 }, (_, index) => (variant === "icon" ? (
+        <View key={index} testID={testID} style={styles.skeletonIconTile}>
+          <Spacer size="md" />
+          <Skeleton testID={`${testID}-icon`} style={styles.skeletonIcon} />
+          <Spacer size="md" />
+          <Skeleton testID={`${testID}-label`} style={styles.skeletonLabel} />
+        </View>
+      ) : (
         <Skeleton
           key={index}
           testID={testID}
           shimmerTestID={`${testID}-shimmer`}
           style={styles.skeletonTile}
         />
-      ))}
+      )))}
     </View>
   );
 }
@@ -176,19 +190,9 @@ interface ListRowProps {
   onPress?: () => void;
 }
 
+/** Rows 12pt apart. The space is a gap rather than views between them, so a row that comes or goes moves alone. */
 export function ListRowStack({ children }: { children: ReactNode }) {
-  const rows = Children.toArray(children);
-
-  return (
-    <View>
-      {rows.map((row, index) => (
-        <Fragment key={index}>
-          {row}
-          {index < rows.length - 1 ? <Spacer size="md" /> : null}
-        </Fragment>
-      ))}
-    </View>
-  );
+  return <View style={styles.rowStack}>{children}</View>;
 }
 
 export function ListRowSkeletonStack({
@@ -311,6 +315,9 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     columnGap: 10,
   },
+  rowStack: {
+    gap: theme.v2.spacing.md,
+  },
   tileCentered: {
     flexDirection: "column",
     alignItems: "center",
@@ -332,6 +339,22 @@ const styles = StyleSheet.create((theme) => ({
     width: "31.5%",
     aspectRatio: 0.9,
     borderRadius: 18,
+  },
+  skeletonIconTile: {
+    width: "31.5%",
+    aspectRatio: 0.9,
+    alignItems: "center",
+  },
+  // The size and corners of an app's icon, and of its one-line label.
+  skeletonIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+  },
+  skeletonLabel: {
+    width: "60%",
+    height: 11,
+    borderRadius: theme.v2.radius.full,
   },
   tileLabel: {
     fontFamily: theme.v2.fonts.semibold,
