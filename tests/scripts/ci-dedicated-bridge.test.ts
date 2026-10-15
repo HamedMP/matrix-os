@@ -100,6 +100,56 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   expect(group).toContain("github.event.changes.base == null");
   expect(group).toContain("github.event.label.name != 'ready-for-ci'");
  });
+ // GitHub expression subset used by the non-admitting predicate. GitHub compares strings
+ // case-insensitively and this evaluator does not; repository labels are lowercase and
+ // admission (admittedPull) requires their exact case.
+ const js=(expression:string)=>expression.replace(/contains\(github\.event\.pull_request\.labels\.\*\.name, ('[^']+')\)/g,'github.event.pull_request.labels.map((l:any)=>l.name).includes($1)').replace(/:any/g,'').replaceAll('github.event.label.name','github.event.label?.name').replaceAll('github.event.changes.base','github.event.changes?.base');
+ const nonAdmitting=()=>{
+  const group=workflow().concurrency.group as string;
+  const body=group.slice(group.indexOf('}}-${{ ')+7,group.lastIndexOf(" && github.run_id || 'shared' }}"));
+  expect(body.startsWith("(github.event_name == 'pull_request_target' && (")).toBe(true);
+  return body;
+ };
+ it('uses one non-admitting predicate for the group, the requested flag and both jobs',()=>{
+  const value=workflow(),predicate=nonAdmitting();
+  expect(value['run-name']).toContain(`github.event_name == 'pull_request_target' && !${predicate} && (`);
+  expect(value.jobs.benchmark.if).toContain(`github.ref == 'refs/heads/main' && !${predicate} && (`);
+  expect(value.jobs.reconcile.if).toContain(`github.ref == 'refs/heads/main' && !${predicate} && (`);
+ });
+ it.each([
+  // [event, action, label, labels after the event, base edit, isolated, requested flag]
+  ['pull_request_target','labeled','fast-ci',['fast-ci'],false,true,'false'],
+  ['pull_request_target','labeled','ready-for-ci',['fast-ci','ready-for-ci'],false,false,'true'],
+  ['pull_request_target','labeled','fast-ci',['ready-for-ci','fast-ci'],false,false,'true'],
+  ['pull_request_target','labeled','preview-vps',['fast-ci','ready-for-ci','preview-vps'],false,true,'false'],
+  ['pull_request_target','labeled','ready-for-ci',['ready-for-ci'],false,true,'false'],
+  ['pull_request_target','unlabeled','preview-vps',['fast-ci','ready-for-ci'],false,true,'false'],
+  ['pull_request_target','unlabeled','fast-ci',['ready-for-ci'],false,false,'false'],
+  ['pull_request_target','unlabeled','ready-for-ci',['fast-ci'],false,false,'false'],
+  ['pull_request_target','edited',null,['fast-ci','ready-for-ci'],false,true,'false'],
+  ['pull_request_target','edited',null,['fast-ci','ready-for-ci'],true,false,'true'],
+  ['pull_request_target','opened',null,['fast-ci','ready-for-ci'],false,false,'true'],
+  ['pull_request_target','synchronize',null,['fast-ci','ready-for-ci'],false,false,'true'],
+  ['pull_request_target','closed',null,['fast-ci','ready-for-ci'],false,false,'false'],
+  ['pull_request_target','converted_to_draft',null,['fast-ci','ready-for-ci'],false,false,'false'],
+  ['workflow_run','requested',null,[],false,false,'false'],
+  ['workflow_run','completed',null,[],false,false,'false'],
+  ['schedule',null,null,[],false,false,'false'],
+  ['push',null,null,[],false,false,'false'],
+ ])('%s %s %s (labels %j) is isolated only when it cannot admit, and is then never requested',(eventName,action,label,labels,baseEdit,isolated,expectedFlag)=>{
+  // A superseded run shows as a cancelled red benchmark and reconcile on the PR head.
+  const github={event_name:eventName,run_id:'4242',event:{action,label:label?{name:label}:undefined,changes:{base:baseEdit?{ref:{from:'main'}}:null},pull_request:{labels:labels.map(name=>({name}))}}};
+  const predicate=nonAdmitting();
+  expect(new Function('github',`return (${js(predicate)});`)(github)).toBe(isolated);
+  const marker=workflow()['run-name'] as string;const requested=marker.slice(marker.lastIndexOf("github.event_name == 'pull_request_target' && !(")).replace(/\) \}\}$/,'');
+  const flag=new Function('github',`return (${js(requested)});`)(github);
+  expect(flag).toBe(expectedFlag);
+  if(isolated)expect(flag).toBe('false');
+ });
+ it.each(['fast-ci','ready-for-ci'])('isolates the %s event when both admission labels are added to a draft together',label=>{
+  const github={event_name:'pull_request_target',run_id:'4242',event:{action:'labeled',label:{name:label},pull_request:{draft:true,labels:[{name:'fast-ci'},{name:'ready-for-ci'}]}}};
+  expect(new Function('github',`return (${js(nonAdmitting())});`)(github)).toBe(true);
+ });
  it('publishes immutable source request identity before admission can start',()=>{
   const marker=workflow()['run-name'];
   expect(marker).toContain('dedicated-ci-v2 pr={0} head={1} base={2} requested={3}');
@@ -113,8 +163,8 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   ['pull_request_target','unlabeled',false,'false'],['pull_request_target','closed',false,'false'],
   ['pull_request_target','converted_to_draft',false,'false'],['workflow_dispatch','synchronize',false,'false'],
  ])('marks only source request events before admission (%s/%s)',(eventName,action,baseEdit,requested)=>{
-  const marker=workflow()['run-name'];const expression=marker.slice(marker.lastIndexOf("github.event_name == 'pull_request_target'")).replace(/\) \}\}$/, '');
-  const github={event_name:eventName,event:{action,changes:{base:baseEdit?{ref:{from:'main'}}:null}}};
+  const marker=workflow()['run-name'];const expression=js(marker.slice(marker.lastIndexOf("github.event_name == 'pull_request_target' && !(")).replace(/\) \}\}$/, ''));
+  const github={event_name:eventName,event:{action,changes:{base:baseEdit?{ref:{from:'main'}}:null},pull_request:{labels:[{name:'fast-ci'},{name:'ready-for-ci'}]}}};
   expect(new Function('github',`return (${expression});`)(github)).toBe(requested);
  });
  it('binds immutable evidence names to the current controller rerun attempt',()=>{

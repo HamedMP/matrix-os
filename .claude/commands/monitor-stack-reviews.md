@@ -1,5 +1,5 @@
 ---
-description: Monitor a GitHub native PR stack through Greptile 5/5, ready-for-ci labeling, and CI.
+description: Monitor a GitHub native PR stack through Greptile 5/5, marking PRs ready for review, and CI.
 argument-hint: [pr-or-range-or-branch]
 ---
 
@@ -16,8 +16,8 @@ $ARGUMENTS
 ## Goal
 
 Monitor every PR in an existing GitHub native stack, inspect Greptile feedback, fix
-actionable review findings, add the `ready-for-ci` label only after Greptile is
-`5/5`, and keep monitoring CI until every non-deferred stack PR is ready for
+actionable review findings, mark each PR ready for review (which starts full CI)
+only after Greptile is `5/5`, and keep monitoring CI until every non-deferred stack PR is ready for
 final human review.
 
 ## Rules
@@ -29,10 +29,10 @@ final human review.
   or unauthenticated, stop and report the blocker instead of treating GitHub
   command failures as PR state.
 - Never merge PRs unless the requester explicitly asks.
-- Do not create worktrees, create implementation branches, open new feature PRs,
-  or convert draft PRs to ready. This command is for monitoring and fixing an
-  existing PR/stack. Use `/worktree-pr-monitor` for the implementation stage.
-- Do not add `ready-for-ci` before the latest trusted Greptile review for that
+- Do not create worktrees, create implementation branches, or open new feature
+  PRs. This command is for monitoring and fixing an existing PR/stack. Use `/worktree-pr-monitor` for the implementation stage.
+- Full PR CI runs on every non-draft head. Do not mark a PR ready for review
+  (`gh pr ready <number>`) before the latest trusted Greptile review for that
   PR is `5/5`. There is no command-level override for this gate.
 - In this command, a *current-head* `5/5` also includes a `5/5` on an earlier
   head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0;
@@ -41,8 +41,6 @@ final human review.
   base merges keep the PR's own diff, so they keep the review; do not request a
   re-review for them. New PR work or conflict resolutions fail the check and
   need a fresh review.
-- If the `ready-for-ci` label is missing from the repository, stop and report
-  the blocker instead of creating a label silently.
 - Never force-push over remote work outside the requested native stack branches
   unless the requester explicitly approves that exact risk. Cascading rebases
   necessarily rewrite stack branch SHAs; they are permitted only after verifying
@@ -89,14 +87,13 @@ final human review.
      flat issue comments.
    - Inspect Greptile comments/status. Record the latest trusted Greptile
      rating per PR, especially whether it is `5/5`.
-   - Audit existing `ready-for-ci` labels before any fixes. For each monitored
-     PR, compare the label state with the latest Greptile review and current
-     `headRefOid`; also inspect unresolved human review threads, unresolved
-     Codex review comments, and unresolved actionable issue comments. Remove
-     `ready-for-ci` immediately if the PR is draft, if the label is not backed
-     by a current-head `5/5` review, or if any unresolved review blocker is
-     present:
-     `gh pr edit <number> --remove-label "ready-for-ci"`.
+   - Audit ready-for-review state before any fixes. For each monitored PR,
+     compare it with the latest Greptile review and current `headRefOid`; also
+     inspect unresolved human review threads, unresolved Codex review comments,
+     and unresolved actionable issue comments. Convert a ready PR back to draft
+     immediately if it is not backed by a current-head `5/5` review, or if any
+     unresolved review blocker is present:
+     `gh pr ready <number> --undo`.
    - Do not treat CI as the primary gate until Greptile has reached `5/5` for
      the PR. If CI is already running, record status but keep Greptile first.
    - Before each edit/submit iteration, snapshot the current remote head for
@@ -116,11 +113,11 @@ final human review.
      before the implementation change. Do not edit behavior code until the
      regression exists. For docs-only fixes, keep the edit scoped to the
      reviewed workflow.
-   - Before any edit that will lead to a new push for a PR that currently has
-     `ready-for-ci`, remove the label from that PR and every descendant PR
-     whose head will be rewritten by the next stack rebase/submit:
-     `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add labels only
-     after each rewritten PR has a current-head `5/5` again, either carried
+   - Before any edit that will lead to a new push for a PR that is ready for
+     review, convert that PR and every descendant PR whose head will be
+     rewritten by the next stack rebase/submit back to draft:
+     `gh pr ready <number> --undo`. Mark them ready again only after each
+     rewritten PR has a current-head `5/5` again, either carried
      over by the check or from a fresh Greptile review.
    - Run the narrow relevant tests after the fix. Before staging or committing,
      also run `git diff --check`, `bun run typecheck`,
@@ -159,15 +156,15 @@ final human review.
      `gh stack submit --auto`. Before invoking it, confirm every locally tracked
      layer has an existing open PR in the requested native stack and there are
      no extra local layers. Otherwise stop: submit can create PRs, while this
-     monitor must not create them or change draft/ready state.
+     monitor must not create them.
    - After every successful submit, discard the pre-submit
      baseline and immediately refresh the remote-head snapshot for every
      monitored PR before entering another fix loop. A cascading rebase can
      rewrite stack branch SHAs; the published SHAs become the
      next iteration's conflict baseline.
-   - After every successful rebase or submit, re-run the Step 3 label audit
-     for the edited PR and all descendants, removing any `ready-for-ci` label
-     that is no longer backed by a current-head `5/5` Greptile review.
+   - After every successful rebase or submit, re-run the Step 3 readiness
+     audit for the edited PR and all descendants, converting back to draft any
+     PR that is no longer backed by a current-head `5/5` Greptile review.
    - If a finding is ambiguous or conflicts with the product intent, draft a
      concise response and ask before changing behavior.
 
@@ -194,23 +191,21 @@ final human review.
    - Trust a Greptile score only when its reviewed commit matches the PR's
      current `headRefOid`, or when `node scripts/review/review-carryover.mjs check <pr>`
      exits 0 for it; otherwise treat it as stale and request a fresh review.
-   - When the PR is not draft, the latest trusted Greptile result is `5/5`, and
-     there are no unresolved human review threads, unresolved Codex review
-     comments, or unresolved actionable issue comments, add the repository label
-     exactly named `ready-for-ci` if it is not already present:
-     `gh pr edit <number> --add-label "ready-for-ci"`. If any review thread or
-     actionable comment remains unresolved, or if the PR is draft, do not label
-     the PR yet.
-   - After labeling, monitor CI with `gh pr checks <number>` or run-level APIs
+   - When the latest trusted Greptile result is `5/5` and there are no
+     unresolved human review threads, unresolved Codex review comments, or
+     unresolved actionable issue comments, mark the PR ready for review if it
+     is still a draft: `gh pr ready <number>`. If any review thread or
+     actionable comment remains unresolved, keep it a draft.
+   - After marking it ready, monitor CI with `gh pr checks <number>` or run-level APIs
      until checks pass, fail with actionable output, or are blocked. During
      this CI loop, periodically re-audit review threads and actionable comments
      with the same thread-aware workflow from Step 3. If any new unresolved
      human thread, Codex review comment, or actionable issue comment appears,
-     stop treating the PR as complete and return to the Step 3 label audit
+     stop treating the PR as complete and return to the Step 3 readiness audit
      before declaring success.
-   - If any fix requires a new push after `ready-for-ci` was applied, remove the
-     label before editing:
-     `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add it only after
+   - If any fix requires a new push after the PR was marked ready, convert it
+     back to draft before editing: `gh pr ready <number> --undo`. Mark it ready
+     again only after
      the new commit has a current-head `5/5`, either carried over by the check
      or from a fresh Greptile review.
    - Completion requires every monitored PR to be either:
@@ -219,11 +214,11 @@ final human review.
        comments, or
      - explicitly deferred with the reason and follow-up.
    - For non-deferred PRs with Greptile `5/5`, completion also requires the
-     `ready-for-ci` label to be present and CI to be passing or explicitly
+     PR to be ready for review and CI to be passing or explicitly
      blocked by an external condition.
 
 6. Report status.
    - Include the PR list, branch list, latest commit, checks run, current
-     Greptile rating for each PR, `ready-for-ci` label state, CI state, fixes
+     Greptile rating for each PR, draft/ready state, CI state, fixes
      made, and residual risks.
    - If blocked, state the exact blocker and next required action.

@@ -470,7 +470,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 - **Merge stacks through GitHub's atomic stack operation:**
   `gh stack merge <stack-number> --yes --squash`. Verify the stack targets `main`,
   its bottom-to-top membership and exact head SHAs, and current-head Greptile
-  `5/5` (or a carried-over `5/5`, see below), zero unresolved review blockers, `ready-for-ci`, and passing CI for every
+  `5/5` (or a carried-over `5/5`, see below), zero unresolved review blockers, ready for review (not a draft), and passing CI for every
   included PR. Native stack merge lands the included layers into the stack base
   together; child PR bases correctly remain their preceding layer.
 - **Use `gh pr merge` only for a standalone PR targeting `main`.** Verify
@@ -620,8 +620,8 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 ### Stack review monitor
 
 - For existing GitHub native stacks, use `.claude/commands/monitor-stack-reviews.md`: `/monitor-stack-reviews <pr-or-range-or-branch>`.
-- That command owns the review gate for stack fixes: current-head Greptile `5/5` (or an earlier-head `5/5` that `node scripts/review/review-carryover.mjs check <pr>` accepts), no unresolved human/Codex review blockers, `ready-for-ci` applied only after that review state, then CI monitoring.
-- Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that neither match the current head SHA nor pass the carry-over check, or missing `ready-for-ci` repository label as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
+- That command owns the review gate for stack fixes: current-head Greptile `5/5` (or an earlier-head `5/5` that `node scripts/review/review-carryover.mjs check <pr>` accepts), no unresolved human/Codex review blockers, the PR marked ready for review only after that review state, then CI monitoring.
+- Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that neither match the current head SHA nor pass the carry-over check, as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
 
 ### Backlog
 

@@ -29,7 +29,7 @@ For dependent PRs, use the GitHub native workflow in `docs/dev/stacked-prs.md`
 instead of the standalone push/pull recipe below. Create/adopt layers with
 `gh stack init` and `gh stack add`, commit explicit paths with Git, rebase
 descendants with `gh stack rebase`, and publish with `gh stack submit`. Verify
-remote heads before rewriting, remove stale `ready-for-ci` labels, and request
+remote heads before rewriting, convert rewritten layers back to draft, and request
 a new Greptile review for each changed head. Link the shared requester-assigned
 ENG ticket and native stack in every PR. Do not flatten the stack or merge
 `origin/main` individually into its layers.

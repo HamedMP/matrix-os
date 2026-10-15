@@ -113,10 +113,10 @@ OTA payloads.
 
 | Workflow | Owner | When it runs | Required? |
 | --- | --- | --- | --- |
-| `ci.yml` | Core code validation | `ready-for-ci`, ready PRs, merge queue, `main`, manual | Yes, via `CI Results` |
+| `ci.yml` | Core code validation | Every non-draft PR head, merge queue, `main`, manual | Yes, via `CI Results` |
 | `codeql.yml` | CodeQL code scanning (TypeScript and workflow definitions) | Weekly (Sunday 03:17 UTC), manual | No; findings land in Security → Code scanning |
 | `ci-pr-supersede.yml` | Safe PR-CI supersession | New heads on admitted PRs; trusted base workflow only | No; optimization only |
-| `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on `ready-for-ci`, ready PRs, and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
+| `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on every non-draft PR head and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
 | `ai-relay-cloud-run.yml` | Dedicated Matrix-funded AI relay deployment | Manual preview deployment | Required before funded AI can be enabled in a preview platform |
@@ -125,12 +125,13 @@ OTA payloads.
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 | `review-receipt.yml` | Records the base each Greptile-reviewed commit forked from, for `scripts/review/review-carryover.mjs` | Greptile summary comments on PRs | No; merge-readiness tooling reads it |
 
-The `ready-for-ci` label is sticky: applying it starts full PR validation, and every later PR
-head or label event reruns core CI while the label remains; each later head also reruns Docker
-classification. Reviewers must use
-the checks attached to the exact head SHA rather than an earlier green commit. Until CI is
-explicitly requested, the aggregate `CI Results` check stays red so skipped shards cannot be
-mistaken for validated source changes.
+Full PR validation runs on every non-draft PR head: opening a ready PR, marking a draft ready
+for review, pushing and reopening run core CI and Docker classification; retargeting the base
+reruns core CI only. Labels never start or gate it. Keep a PR as a draft while it is still being
+reviewed to avoid CI on every intermediate push. Drafts and title or body edits publish no
+`CI Results` check at all, so the required check shows as expected rather than red; a draft
+cannot be merged. Reviewers must use the checks attached to the exact head SHA rather than an
+earlier green commit.
 
 ## Delivery Lane Router
 
