@@ -29,6 +29,7 @@ function OwnerWhatsAppSettings({
   const [refresh, setRefresh] = useState(0);
   const loadRef = useRef(load);
   const busy = useRef(false);
+  const refreshQueued = useRef(false);
   useEffect(() => {
     loadRef.current = load;
   }, [load]);
@@ -40,20 +41,27 @@ function OwnerWhatsAppSettings({
     void loadRef
       .current()
       .then((value) => {
-        if (active) setSnapshot(WhatsAppSettingsSchema.parse(value));
+        if (active && !refreshQueued.current) setSnapshot(WhatsAppSettingsSchema.parse(value));
       })
       .catch((error: unknown) => {
         console.warn(
           "[messaging] Connection unavailable",
           error instanceof Error ? error.name : "UnknownError",
         );
-        if (active) {
+        if (active && !refreshQueued.current) {
           setSnapshot(null);
           setError(true);
         }
       })
       .finally(() => {
-        if (active) busy.current = false;
+        if (active) {
+          busy.current = false;
+          if (refreshQueued.current) {
+            refreshQueued.current = false;
+            busy.current = true;
+            setRefresh((x) => x + 1);
+          }
+        }
       });
     return () => {
       active = false;
@@ -61,10 +69,13 @@ function OwnerWhatsAppSettings({
   }, [refresh]);
   useEffect(() => {
     const returned = () => {
-      if (!busy.current && document.visibilityState === "visible") {
-        busy.current = true;
-        setRefresh((x) => x + 1);
+      if (document.visibilityState !== "visible") return;
+      if (busy.current) {
+        refreshQueued.current = true;
+        return;
       }
+      busy.current = true;
+      setRefresh((x) => x + 1);
     };
     window.addEventListener("focus", returned);
     document.addEventListener("visibilitychange", returned);
