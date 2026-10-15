@@ -17,7 +17,7 @@ export interface SlackPersonalOptions {
  /** Best-effort acknowledgement after canonical admission has been durably recorded. */
  onAdmitted?(envelope:SlackBridgeEnvelope):Promise<void>;
  readResult(record:SlackPersonalRecord):Promise<SlackPersonalResult>;
- sendReply(input:SlackPersonalRecord&{runId:string;text:string}):Promise<{status:"sent";messageTs:string}|{status:"retryable"|"uncertain"}>;
+ sendReply(input:SlackPersonalRecord&{runId:string;text:string}):Promise<{status:"sent";messageTs:string}|{status:"retryable";reason?:"receipt_not_ready";retryAfterMs?:number}|{status:"uncertain"}>;
 }
 /** A D-only durable transport. The signed bridge route authenticates every receive request. */
 export class SlackPersonalService {
@@ -58,7 +58,10 @@ export class SlackPersonalService {
   try{const record=this.record(inbox);const result=await this.options.readResult(record);this.requireResult(record,result);
    if(result.status!=="completed"||result.runId!==outbox.run_id)throw new SlackCompanyError("forbidden");
    const sent=await this.options.sendReply({...record,runId:outbox.run_id,text:outbox.text});
-   await this.repository.replyStatus(outbox.event_id,outbox.lease,sent.status==="sent"?"sent":sent.status==="uncertain"?"uncertain":outbox.attempts<3?"pending":"failed",sent.status==="sent"?sent.messageTs:undefined);
+   if(sent.status==="retryable"&&sent.reason==="receipt_not_ready"){
+    await this.repository.waitForReceipt(outbox.event_id,outbox.lease);continue;
+   }
+   await this.repository.replyStatus(outbox.event_id,outbox.lease,sent.status==="sent"?"sent":sent.status==="uncertain"?"uncertain":outbox.attempts<3?"pending":"failed",sent.status==="sent"?sent.messageTs:undefined,sent.status==="retryable"?sent.retryAfterMs:undefined);
   }catch(error:unknown){console.warn("[slack-personal] delivery unavailable",error instanceof Error?error.name:"UnknownError");await this.repository.replyStatus(outbox.event_id,outbox.lease,denied(error)?"failed":"uncertain");}
  }
  }
