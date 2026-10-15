@@ -1662,14 +1662,17 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(hostBinInstall).toBeGreaterThan(installRuntime);
   });
 
-  it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
+  it('sync agent refreshes immutable metadata for bounded bundle chunks', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
     expect(syncAgent).toContain('download_bundle()');
-    expect(syncAgent).toContain('for attempt in 1 2; do');
-    expect(syncAgent).toContain('/usr/bin/timeout --signal=KILL 1800 curl');
-    expect(syncAgent).toContain('continue_args=(--continue-at -)');
+    expect(syncAgent).toContain('chunk_size=8388608');
+    expect(syncAgent).toContain('for attempt in 1 2 3; do');
+    expect(syncAgent).toContain('/usr/bin/timeout --signal=KILL 330 curl');
+    expect(syncAgent).toContain('--range "$start-$end" --max-filesize "$expected_chunk"');
+    expect(syncAgent).toContain("status_code != '206'");
+    expect(syncAgent).toContain('os.O_RDONLY | os.O_NOFOLLOW');
     expect(syncAgent).toContain('fetch_manifest "$(release_url_for_version "$version")"');
     expect(syncAgent).toContain('[ "$refreshed_version" = "$version" ]');
     expect(syncAgent).toContain('[ "$refreshed_sha256" = "$expected_sha256" ]');
