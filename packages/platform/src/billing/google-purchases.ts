@@ -2,6 +2,15 @@ import type { PlatformDB } from '../db.js';
 import { deliverGooglePurchases, expireGoogleTracking, type GooglePurchaseSender } from './google-purchase-store.js';
 import { invoiceTrackingEvent, type InvoiceTrackingPurchase } from './tracking-events.js';
 import type { StripeBillingClient } from './stripe-client.js';
+import { createStripeBillingClient } from '../stripe-billing.js';
+
+/** The process lifecycle owns background work; HTTP app construction has no timers. */
+export function startGooglePurchaseWorker(db: PlatformDB, env: NodeJS.ProcessEnv,
+  backgroundWorkersEnabled: boolean): () => Promise<void> {
+  if (!backgroundWorkersEnabled) return async () => undefined;
+  const stripe = env.STRIPE_SECRET_KEY ? createStripeBillingClient({ secretKey: env.STRIPE_SECRET_KEY }) : undefined;
+  return startGooglePurchaseDelivery(db, env, stripe);
+}
 
 export function createGooglePurchaseSender(env: NodeJS.ProcessEnv, fetcher: typeof fetch = fetch,
   retrieveInvoice?: (id: string) => Promise<unknown>): GooglePurchaseSender {

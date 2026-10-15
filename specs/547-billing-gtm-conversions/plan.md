@@ -42,3 +42,5 @@ Browser receipts are capped at 128. Remove the Stripe session token after resolu
 - Configure the Matrix GA4 web stream and private Measurement Protocol secret; validate with GTM Preview and GA4 DebugView. GA4/Ads publication and Git push require their respective authorization gates.
 
 Acquisition collection requires Stripe `livemode: true` for both checkout and invoice objects; test and unknown-mode payments produce no purchase or trial event. Confirmed ineligible expanded invoices are terminally skipped without sending, retaining only the deduplication marker. Failed invoice lookups remain retryable.
+
+The dedicated platform worker owns the Google delivery/retention scheduler through process startup and shutdown cleanup; HTTP app construction starts no timers. Cloud Run request replicas still deliver immediate webhook acquisitions after billing commits. Disabled measurement still runs retention on the worker. Startup remains a composition entrypoint; the billing module owns worker configuration and behavior.

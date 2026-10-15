@@ -1,10 +1,12 @@
 import { Hono } from 'hono';
+import { createApp } from '../../packages/platform/src/main.js';
+import { stubOrchestrator } from './proxy-routing-test-utils.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { createBillingRoutes } from '../../packages/platform/src/billing-routes.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { enqueueGooglePurchase, expireGoogleTracking } from '../../packages/platform/src/billing/google-purchase-store.js';
-import { startGooglePurchaseDelivery } from '../../packages/platform/src/billing/google-purchases.js';
+import { startGooglePurchaseWorker } from '../../packages/platform/src/billing/google-purchases.js';
 import { invoiceTrackingEvent } from '../../packages/platform/src/billing/tracking-events.js';
 import { getBillingSubscription, insertUserMachine, listBillingRuntimeActions, upsertBillingSubscription, type PlatformDB } from '../../packages/platform/src/db.js';
 
@@ -28,6 +30,21 @@ describe('billing tracking lifecycle isolation', () => {
     }));
   }
   const request = { method: 'POST', headers: { 'stripe-signature': 'signed' }, body: '{}' };
+
+  it('does not start background database work when constructing an HTTP app', async () => {
+    const transaction = vi.spyOn(db, 'transaction');
+    const app = createApp({ db, orchestrator: stubOrchestrator(), env: {} });
+    await app.shutdownPostHog();
+    expect(transaction).not.toHaveBeenCalled();
+    transaction.mockRestore();
+  });
+
+  it('does not start a background queue on a request-only replica', async () => {
+    const transaction = vi.spyOn(db, 'transaction');
+    await startGooglePurchaseWorker(db, {}, false)();
+    expect(transaction).not.toHaveBeenCalled();
+    transaction.mockRestore();
+  });
 
   it('terminally clears confirmed unsupported invoices without collecting or retrying', async () => {
     const retrieveTrackingInvoice = vi.fn().mockResolvedValue({ ...invoice, payments: { data: [
@@ -85,7 +102,7 @@ describe('billing tracking lifecycle isolation', () => {
       planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1', createdAt: '2020-01-01T00:00:00.000Z' });
     await rememberGoogleAttribution(db, attempt.id, 'user_recovered', undefined, '2020-01-01T00:00:00.000Z');
     await enqueueGooglePurchase(db, invoiceTrackingEvent(invoice)!, '2020-01-01T00:00:00.000Z', 'user_recovered');
-    const stop = startGooglePurchaseDelivery(db, {});
+    const stop = startGooglePurchaseWorker(db, {}, true);
     await stop();
     expect((await db.executor.selectFrom('billing_google_purchases').selectAll().executeTakeFirstOrThrow()).payload).toBeNull();
     expect(await db.executor.selectFrom('billing_google_checkout_attribution').selectAll().execute()).toEqual([]);
