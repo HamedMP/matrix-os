@@ -1,3 +1,4 @@
+import { ProviderModelReferenceSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { FundedTokenUsage } from "./funded-relay-model.js";
 
@@ -28,7 +29,7 @@ const BedrockRouteConfigSchema = z.object({
   routeId: z.string().regex(SAFE_ROUTE_ID),
   region: z.string().min(3).max(64).regex(SAFE_REGION),
   clientModelId: z.string().min(1).max(256).regex(SAFE_MODEL_ID),
-  canonicalModelId: z.string().min(1).max(256).regex(SAFE_MODEL_ID),
+  canonicalModelId: ProviderModelReferenceSchema,
   resolvedModel: z.string().min(1).max(256).regex(SAFE_MODEL_ID),
   inferenceProfile: z.string().min(1).max(2_048).regex(SAFE_MODEL_ID),
   maxInputTokens: z.number().int().positive().max(10_000_000),
