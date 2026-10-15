@@ -1,19 +1,20 @@
 import { Children, Fragment, useState, type ReactNode } from "react";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
-import { Pressable, Text, TextInput, View, type ColorValue } from "react-native";
+import { Text, TextInput, View, type ColorValue } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import {
   CloseIcon,
   Icon,
   IconButton,
+  PressableScale,
   SearchIcon,
   Skeleton,
   Spacer,
   type IconData,
 } from "@/components/ui";
-import { size, type SpacingSize } from "@/lib/theme-v2";
+import { motion, size, type SpacingSize } from "@/lib/theme-v2";
 
 const CLEAR_BUTTON_SIZE = 32;
 const CLEAR_SLOP = (size.tapTarget - CLEAR_BUTTON_SIZE) / 2;
@@ -129,17 +130,16 @@ export function GridTile({
 }: GridTileProps) {
   const { theme } = useUnistyles();
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={accessibilityLabel ?? `Open ${label}`}
       accessibilityState={onPress ? undefined : { disabled: true }}
       disabled={!onPress}
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.tile,
         centered && styles.tileCentered,
         accent && styles.tileAccent,
-        pressed && styles.pressed,
       ]}
     >
       <Spacer size="md" />
@@ -159,7 +159,7 @@ export function GridTile({
         {label}
       </Text>
       <Spacer size="md" />
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -268,14 +268,15 @@ export function ListRow({
   }
 
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? `Open ${title}`}
       onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+      pressedScale={motion.rowPressScale}
+      style={styles.row}
     >
       {content}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -388,9 +389,5 @@ const styles = StyleSheet.create((theme) => ({
     height: 66,
     borderRadius: 16,
     paddingHorizontal: 13,
-  },
-  pressed: {
-    opacity: 0.7,
-    transform: [{ scale: 0.985 }],
   },
 }));
