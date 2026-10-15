@@ -26,6 +26,7 @@ function run(failure = "") {
     executable("node", `case "$*" in
   *"slack-preview-runtime.mjs register"*)
     printf 'register\\n' >> "$ROOT/operations"
+    printf '%s' "\${PREVIEW_HANDLE:-}" > "$ROOT/registration-handle"
     [ -f "$ROOT/committed" ] || : > "$ROOT/published-before-commit"
     [ "$FAILURE" != register ] || exit 1
     : > "$ROOT/registered"
@@ -84,6 +85,7 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
         PREVIEW_MACHINE_ID: machineId, PREVIEW_ADDRESS: "192.0.2.10" },
     });
     return { status: result.status, stderr: result.stderr,
+      registrationHandle: existsSync(join(directory, "registration-handle")) ? readFileSync(join(directory, "registration-handle"), "utf8") : null,
       registered: existsSync(join(directory, "registered")), committed: existsSync(join(directory, "committed")),
       restored: existsSync(join(directory, "restored")), publishedBeforeCommit: existsSync(join(directory, "published-before-commit")),
       operations: readFileSync(join(directory, "operations"), "utf8").trim().split("\n"),
@@ -92,6 +94,11 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
 }
 
 describe("Slack preview route publication and VM rollback", () => {
+  it("passes the exact committed preview handle to the registration process", () => {
+    const result = run();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.registrationHandle).toBe("pr-2079");
+  });
   it("publishes a route only after the healthy VM binding is committed, then verifies enrollment", () => {
     const result = run();
     expect(result.status, result.stderr).toBe(0);
