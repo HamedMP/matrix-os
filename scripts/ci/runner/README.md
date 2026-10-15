@@ -176,6 +176,26 @@ restore skipped coverage. A successful old receipt or
 similarly named check cannot qualify another attempt. Public testing docs ship
 in the companion site documentation PR.
 
+## Metadata edits and bounded run history
+
+Title/body edits keep a real `CI Results` job in the latest Actions suite.
+That job verifies the newest genuine coverage run for the identical PR head,
+base and merge source, including its workflow, attempt and Actions issuer.
+Metadata verifications cannot qualify each other. Missing, failed, cancelled,
+pending or mismatched coverage fails closed; skipped workload jobs are never
+coverage evidence. Base edits retain normal full CI, and drafts still publish
+no required aggregate. No approval or required-check binding changes are needed.
+
+Controller discovery streams inclusive creation-time windows so unrelated
+traffic cannot bury evidence behind the former 300-run scan or GitHub's
+1,000-result filtered-search ceiling. It retains runs sharing a boundary second
+and compares all event streams before selecting the newest authenticated run.
+Memory stays at one 100-run page per stream, with at most 100 API requests per
+discovery. API errors, budget exhaustion and more than 1,000 runs in one second
+fail closed; they never authorize an older green result. Privileged controllers
+use this helper only after its reviewed commit is activated through the existing
+idle-host pin procedure.
+
 ## Controller configuration credentials
 
 Repository Variables API reads require a GitHub App installation token with
