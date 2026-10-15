@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { BrainButton, BrainInput, BrainSelect } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
-import { BrainBadge, BrainEmpty, BrainError, BrainView, type BrainScreenProps } from "./brain-ui.js";
+import { BRAIN_CHECK, BRAIN_CHECK_ROW, BrainButton, BrainInput, BrainSelect } from "./brain-controls.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
+import { BrainAlertText, BrainBadge, BrainEmpty, BrainError, BrainView, type BrainScreenProps } from "./brain-ui.js";
 import {
   BRAIN_SOURCE_CHOICES_MAX, BRAIN_SOURCE_DEFAULT_SETTINGS, BRAIN_SOURCE_KIND_LABELS, BRAIN_TYPED_SOURCE_INPUTS,
   brainSourceConfig, brainSourceSettingsProblem, brainTypedValues, type BrainSourceSettings, type BrainTypedSourceInput,
@@ -35,9 +35,9 @@ export function BrainSourceConnect({ api, projectId, kinds, onConnected }: Pick<
   const choices = kinds.filter((view): view is BrainSourceKindView & { kind: BrainConnectableSourceKind } => view.kind !== "git");
   return (
     <section aria-label="Connect a source"
-      className={`grid grid-cols-[minmax(0,1fr)] gap-3 rounded-md border p-3 ${BRAIN_TONE.border}`}>
-      <h3 className="text-sm font-semibold">Connect a source</h3>
-      <label className="grid gap-1 text-sm">
+      className={`grid grid-cols-[minmax(0,1fr)] gap-4 p-4 ${BRAIN_TONE.card}`}>
+      <h3 className={`font-semibold ${BRAIN_TYPE.callout}`}>Connect a source</h3>
+      <label className={`grid gap-1.5 font-medium ${BRAIN_TYPE.label}`}>
         Kind
         <BrainSelect
           value={kind ?? ""}
@@ -52,7 +52,7 @@ export function BrainSourceConnect({ api, projectId, kinds, onConnected }: Pick<
           ))}
         </BrainSelect>
       </label>
-      <ul aria-label="Source kinds" className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      <ul aria-label="Source kinds" className={`flex flex-wrap gap-x-4 gap-y-2 ${BRAIN_TYPE.caption}`}>
         {choices.map((view) => (
           <li key={view.kind} className="flex items-center gap-1.5">
             {BRAIN_SOURCE_KIND_LABELS[view.kind]}
@@ -132,7 +132,7 @@ function ConnectForm({ api, projectId, kind, onConnected }: Pick<BrainScreenProp
   };
 
   return (
-    <form onSubmit={submit} className="grid gap-3">
+    <form onSubmit={submit} className="grid gap-4">
       {draft.typedInput ? (
         <TypedChoice input={draft.typedInput} text={text} values={draft.values} max={max} onChange={setText} />
       ) : (
@@ -160,11 +160,13 @@ function TypedChoice({ input, text, values, max, onChange }: {
   readonly input: BrainTypedSourceInput; readonly text: string; readonly values: readonly string[] | null;
   readonly max: number; readonly onChange: (text: string) => void;
 }) {
+  const invalid = values === null || values.length > max;
   return (
-    <div className="grid gap-1 text-sm">
+    <div className="grid gap-1.5">
       <BrainInput aria-label={input.label} placeholder={input.example} maxLength={TYPED_MAX_CHARS} value={text}
-        aria-invalid={values === null || values.length > max} onChange={(event) => onChange(event.target.value)} />
-      <span className="text-xs text-muted-foreground">{typedHint(values, max, input.hint)}</span>
+        aria-invalid={invalid} onChange={(event) => onChange(event.target.value)} />
+      {invalid ? <BrainAlertText>{typedHint(values, max, input.hint)}</BrainAlertText>
+        : <span className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>{typedHint(values, max, input.hint)}</span>}
     </div>
   );
 }
@@ -184,8 +186,8 @@ function OptionChoices({ state, onRetry, max, picked, onToggle }: {
           <BrainButton size="sm" variant="link" onClick={onRetry}>Check again</BrainButton>
         </BrainEmpty>
       ) : (
-        <fieldset className="grid max-h-56 gap-1 overflow-auto">
-          <legend className="mb-1 text-sm font-medium">
+        <fieldset className="grid max-h-56 overflow-auto">
+          <legend className={`mb-1 font-medium ${BRAIN_TYPE.label}`}>
             {max === 1 ? "Choose one" : `Choose what to include (up to ${max})`}
           </legend>
           {view.items.map((option) => (
@@ -193,7 +195,7 @@ function OptionChoices({ state, onRetry, max, picked, onToggle }: {
               disabled={full && !chosen.has(option.id)} onToggle={onToggle} />
           ))}
           {view.nextCursor !== null && (
-            <p className="text-xs text-muted-foreground">Only the first {view.items.length} are shown.</p>
+            <p className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>Only the first {view.items.length} are shown.</p>
           )}
         </fieldset>
       )}
@@ -206,16 +208,17 @@ function OptionChoice({ option, single, checked, disabled, onToggle }: {
   readonly disabled: boolean; readonly onToggle: (id: string, on: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 text-sm">
+    <label className={BRAIN_CHECK_ROW}>
       <input
         type={single ? "radio" : "checkbox"}
+        className={BRAIN_CHECK}
         name="brain-source-option"
         checked={checked}
         disabled={disabled}
         onChange={(event) => onToggle(option.id, event.target.checked)}
       />
       <span>{option.label}</span>
-      {option.detail && <span className="text-xs text-muted-foreground">{option.detail}</span>}
+      {option.detail && <span className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>{option.detail}</span>}
     </label>
   );
 }

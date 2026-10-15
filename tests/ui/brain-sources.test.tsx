@@ -66,7 +66,7 @@ describe("Repository", () => {
     const repository = await screen.findByRole("region", { name: "Repository" });
     const button = (name: string) => within(repository).getByRole("button", { name });
     const connect = await within(repository).findByRole("button", { name: "Connect repository" });
-    expect(connect.closest(".border-dashed")).toHaveTextContent(/read its commits, pull requests and specs/);
+    expect(connect.closest("[data-slot='brain-empty']")).toHaveTextContent(/read its commits, pull requests and specs/);
     fireEvent.click(connect);
     expect(await within(repository).findByText("Repository connected. Sync it next.")).toBeTruthy();
     expect(api.registerGitSource).toHaveBeenCalledWith(PROJECT, {});
@@ -195,7 +195,7 @@ describe("Connect a source", () => {
       sourceOptions: vi.fn(async () => ({ kind: "matrix_files", nextCursor: "c2", items: roots })),
       connectSource: vi.fn(async () => ({ source: source("src_new"), created: true })),
     });
-    const empty = (await screen.findByText("No other sources yet.")).closest(".border-dashed");
+    const empty = (await screen.findByText("No other sources yet.")).closest("[data-slot='brain-empty']");
     expect(empty?.querySelector("svg[aria-hidden='true']")).not.toBeNull();
     expect(empty).toHaveTextContent(/Connect one below/);
     const kind = screen.getByRole("combobox", { name: "Kind" });
@@ -249,7 +249,7 @@ describe("Connect a source", () => {
       kind: "github", config: { repo: "HamedMP/matrix-os", mode: "integration", include: { pullRequests: true, reviews: true, issues: true } },
     });
     fireEvent.change(kind, { target: { value: "matrix_files" } });
-    const empty = (await screen.findByText("Nothing to choose from yet.")).closest(".border-dashed") as HTMLElement;
+    const empty = (await screen.findByText("Nothing to choose from yet.")).closest("[data-slot='brain-empty']") as HTMLElement;
     expect(empty).toHaveTextContent(/Add one first, then check again/);
     fireEvent.click(within(empty).getByRole("button", { name: "Check again" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This source kind is not available.");

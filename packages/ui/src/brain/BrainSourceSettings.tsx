@@ -1,8 +1,9 @@
 "use client";
 
 import { useId } from "react";
-import { BrainInput, BrainSelect } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BRAIN_CHECK, BRAIN_CHECK_ROW, BrainInput, BrainSelect } from "./brain-controls.js";
+import { BRAIN_TYPE } from "./brain-tone.js";
+import { BrainAlertText } from "./brain-ui.js";
 import {
   BRAIN_CALENDAR_DAYS_MAX, BRAIN_FILE_SIZE_CHOICES, BRAIN_SOURCE_INCLUDE, brainIncludeNeed, brainIncludeOn,
   brainSourceSettingsProblem, type BrainSourceSettings,
@@ -23,14 +24,14 @@ export function BrainSourceSettingsForm({ kind, settings, onChange }: {
   const days = (value: string) => (value === "" ? Number.NaN : Number(value));
   if (include === undefined && kind !== "matrix_files" && kind !== "google_calendar") return null;
   return (
-    <fieldset className="grid gap-2 text-sm" aria-describedby={problem === null ? undefined : hintId}>
+    <fieldset className={`grid gap-2 ${BRAIN_TYPE.label}`} aria-describedby={problem === null ? undefined : hintId}>
       <legend className="mb-1 font-medium">Settings</legend>
       {include?.map(([key, label]) => {
         // A type read only with another (GitHub reviews with pull requests) is off and locked while that one is off.
         const need = brainIncludeNeed(kind, key);
         return (
-          <label key={key} className="flex items-center gap-2">
-            <input type="checkbox" checked={brainIncludeOn(kind, settings, key)}
+          <label key={key} className={BRAIN_CHECK_ROW}>
+            <input type="checkbox" className={BRAIN_CHECK} checked={brainIncludeOn(kind, settings, key)}
               disabled={need !== undefined && !brainIncludeOn(kind, settings, need)}
               onChange={(event) => set({ include: { ...settings.include, [key]: event.target.checked } })} />
             {label}
@@ -38,13 +39,13 @@ export function BrainSourceSettingsForm({ kind, settings, onChange }: {
         );
       })}
       {kind === "matrix_files" && (
-        <div className="grid gap-2 @md:grid-cols-2">
-          <label className="grid gap-1">
+        <div className="grid gap-3 @md:grid-cols-2">
+          <label className="grid gap-1.5">
             File endings
             <BrainInput value={settings.extensions} maxLength={EXTENSIONS_MAX_CHARS} placeholder="md, txt"
               aria-invalid={problem !== null} onChange={(event) => set({ extensions: event.target.value })} />
           </label>
-          <label className="grid gap-1">
+          <label className="grid gap-1.5">
             Largest file
             <BrainSelect value={settings.maxFileBytes} onChange={(event) => set({ maxFileBytes: Number(event.target.value) })}>
               {BRAIN_FILE_SIZE_CHOICES.map(([bytes, text]) => <option key={bytes} value={bytes}>{text}</option>)}
@@ -53,14 +54,14 @@ export function BrainSourceSettingsForm({ kind, settings, onChange }: {
         </div>
       )}
       {kind === "google_calendar" && (
-        <div className="grid grid-cols-2 gap-2">
-          <label className="grid gap-1">
+        <div className="grid grid-cols-2 gap-3">
+          <label className="grid gap-1.5">
             Days back
             <BrainInput type="number" min={0} max={BRAIN_CALENDAR_DAYS_MAX}
               value={Number.isNaN(settings.pastDays) ? "" : settings.pastDays}
               aria-invalid={problem !== null} onChange={(event) => set({ pastDays: days(event.target.value) })} />
           </label>
-          <label className="grid gap-1">
+          <label className="grid gap-1.5">
             Days ahead
             <BrainInput type="number" min={0} max={BRAIN_CALENDAR_DAYS_MAX}
               value={Number.isNaN(settings.futureDays) ? "" : settings.futureDays}
@@ -68,7 +69,7 @@ export function BrainSourceSettingsForm({ kind, settings, onChange }: {
           </label>
         </div>
       )}
-      {problem !== null && <span id={hintId} className={`text-xs ${BRAIN_TONE.warnText}`}>{problem}</span>}
+      {problem !== null && <BrainAlertText id={hintId}>{problem}</BrainAlertText>}
     </fieldset>
   );
 }

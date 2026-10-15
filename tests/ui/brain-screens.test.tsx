@@ -75,7 +75,7 @@ describe("Today", () => {
     expect(p.api.brief).toHaveBeenLastCalledWith(PROJECT, { window: "week" });
     // Every empty section is onboarding: an icon, the headline, how it fills and the way to Sources.
     for (const text of ["Nothing needs attention.", "No new decisions.", "No open commitments.", "No new risks.", "Nothing changed."]) {
-      const empty = screen.getByText(text).closest(".border-dashed") as HTMLElement;
+      const empty = screen.getByText(text).closest("[data-slot='brain-empty']") as HTMLElement;
       expect(empty.querySelector("svg[aria-hidden='true']")).not.toBeNull();
       expect(empty).toHaveTextContent(/find claims in Sources, then rebuild the brief/);
       fireEvent.click(within(empty).getByRole("button", { name: "Open Sources" }));

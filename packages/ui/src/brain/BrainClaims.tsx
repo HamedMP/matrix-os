@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { BrainButton, BrainInput } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BRAIN_CHECK, BRAIN_CHECK_ROW, BrainButton, BrainInput } from "./brain-controls.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import {
-  BrainBadge, BrainCite, BrainEmpty, BrainLoadMore, BrainView, type BrainScreenProps,
+  BrainAlertText, BrainBadge, BrainCite, BrainEmpty, BrainLoadMore, BrainView, type BrainScreenProps,
 } from "./brain-ui.js";
 import { BRAIN_CONFLICTS_LIMIT, BRAIN_CONFLICTS_MAX, brainConflictFlags } from "./brain-format.js";
 import type {
@@ -59,7 +59,7 @@ export function BrainClaims({ api, projectId, onOpenSources, kind }: BrainScreen
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
-      <h2 className="text-base font-semibold">{text.plural}</h2>
+      <h2 className={BRAIN_TYPE.subheading}>{text.plural}</h2>
       <form onSubmit={apply} className="flex flex-wrap items-center gap-2" aria-label={`Filter ${text.noun}`}>
         <BrainInput
           aria-label="File or folder"
@@ -70,16 +70,16 @@ export function BrainClaims({ api, projectId, onOpenSources, kind }: BrainScreen
           className="min-w-0 flex-1 basis-56"
         />
         <BrainButton type="submit" variant="outline">Filter</BrainButton>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={onlyFlagged} onChange={(event) => setOnlyFlagged(event.target.checked)} />
+        <label className={BRAIN_CHECK_ROW}>
+          <input type="checkbox" className={BRAIN_CHECK} checked={onlyFlagged} onChange={(event) => setOnlyFlagged(event.target.checked)} />
           Only conflicts
         </label>
       </form>
       {conflicts.state.status === "error" && (
-        <p role="status" className="text-xs text-muted-foreground">Conflict checks are not available right now.</p>
+        <p role="status" className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>Conflict checks are not available right now.</p>
       )}
       {conflicts.state.status === "ready" && conflicts.state.data.nextCursor !== null && (
-        <p role="status" className="text-xs text-muted-foreground">
+        <p role="status" className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>
           Only the first {BRAIN_CONFLICTS_MAX} conflicts are checked.
         </p>
       )}
@@ -115,7 +115,7 @@ export function BrainClaims({ api, projectId, onOpenSources, kind }: BrainScreen
 function ClaimItem({ claim, conflict }: { readonly claim: BrainClaimView; readonly conflict: string | undefined }) {
   const { fields } = claim;
   return (
-    <li className={`grid gap-2 rounded-md border p-3 ${BRAIN_TONE.border}`}>
+    <li className={`grid gap-2 p-4 ${BRAIN_TONE.card}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         {claim.label && <BrainBadge>{claim.label}</BrainBadge>}
         {conflict !== undefined && <BrainBadge tone="warn">Conflict</BrainBadge>}
@@ -126,9 +126,9 @@ function ClaimItem({ claim, conflict }: { readonly claim: BrainClaimView; readon
         <BrainBadge>{claim.confidence} confidence</BrainBadge>
         <BrainBadge>{claim.extractor.startsWith("model:") ? "read by model" : "read by rules"}</BrainBadge>
       </div>
-      <p className="text-sm font-medium">{claim.statement}</p>
-      {conflict !== undefined && <p className={`text-xs ${BRAIN_TONE.warnText}`}>{conflict}</p>}
-      <blockquote className={`border-l-2 pl-3 text-xs whitespace-pre-wrap text-muted-foreground ${BRAIN_TONE.border}`}>
+      <p className={`font-semibold ${BRAIN_TYPE.callout}`}>{claim.statement}</p>
+      {conflict !== undefined && <BrainAlertText attention>{conflict}</BrainAlertText>}
+      <blockquote className={`border-l-2 pl-3 whitespace-pre-wrap ${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary} border-[var(--brain-border-strong)]`}>
         {claim.quote}
       </blockquote>
       <BrainCite cite={claim.document} />

@@ -2,8 +2,8 @@
 
 import { useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
-import { BrainButton } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BrainButton, BrainChip } from "./brain-controls.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import { brainDay } from "./brain-format.js";
 import { BrainBadge, BrainCite, BrainEmpty, BrainError, BrainView, type BrainScreenProps } from "./brain-ui.js";
 import type { BrainBriefLine, BrainBriefView, BrainBriefWindow } from "./brain-types.js";
@@ -18,12 +18,12 @@ export function BrainToday({ api, projectId, onOpenSources }: BrainScreenProps) 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="Brief period" className="flex gap-1">
+        <div role="group" aria-label="Brief period" className="flex gap-2">
           {(["day", "week"] as const).map((value) => (
-            <BrainButton key={value} size="sm" variant={span === value ? "secondary" : "ghost"}
-              aria-pressed={span === value} disabled={rebuild.busy !== null} onClick={() => setSpan(value)}>
+            <BrainChip key={value} selected={span === value} disabled={rebuild.busy !== null}
+              onClick={() => setSpan(value)}>
               {value === "day" ? "Today" : "This week"}
-            </BrainButton>
+            </BrainChip>
           ))}
         </div>
         <BrainButton size="sm" variant="outline" className="ml-auto" disabled={rebuild.busy !== null}
@@ -51,21 +51,24 @@ function BriefBody({ view, onOpenSources }: { readonly view: BrainBriefView; rea
   );
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
-      <p className="text-xs text-muted-foreground">
+      <p className={`${BRAIN_TYPE.footnote} ${BRAIN_TONE.secondary}`}>
         {view.window === "day" ? `Brief for ${view.date}` : `Week ending ${view.date}`}, built {brainDay(view.generatedAt)}
         {view.truncated ? ". Some sections were cut short." : "."}
       </p>
-      {view.summary && <p className={`rounded-md p-3 text-sm ${BRAIN_TONE.panel}`}>{view.summary.text}</p>}
+      {view.summary && <p className={`p-4 ${BRAIN_TONE.fill} ${BRAIN_TYPE.callout}`}>{view.summary.text}</p>}
       <BriefLines title="Needs attention" lines={sections.attention} empty={empty("Nothing needs attention.")} />
       <BriefLines title="Decisions" lines={sections.decisions} empty={empty("No new decisions.")} />
       <BriefLines title="Risks" lines={sections.risks} empty={empty("No new risks.")} />
       <section aria-label="Changes" className="grid gap-2">
-        <h2 className="text-sm font-semibold">Changes</h2>
+        <h2 className={BRAIN_TYPE.subheading}>Changes</h2>
         {sections.changes.length === 0 && empty("Nothing changed.")}
         {sections.changes.map((group) => (
-          <div key={`${group.sourceId}:${group.label}`} className="grid gap-1">
-            <h3 className="text-sm font-medium">
-              {group.label} <span className="text-xs text-muted-foreground">{group.created} new, {group.revised} revised</span>
+          <div key={`${group.sourceId}:${group.label}`} className="grid gap-2">
+            <h3 className={`font-semibold ${BRAIN_TYPE.callout}`}>
+              {group.label}{" "}
+              <span className={`font-normal ${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>
+                {group.created} new, {group.revised} revised
+              </span>
             </h3>
             <LineList lines={group.items} />
           </div>
@@ -81,7 +84,7 @@ function BriefLines({ title, lines, empty }: {
 }) {
   return (
     <section aria-label={title} className="grid gap-2">
-      <h2 className="text-sm font-semibold">{title}</h2>
+      <h2 className={BRAIN_TYPE.subheading}>{title}</h2>
       {lines.length === 0 ? empty : <LineList lines={lines} />}
     </section>
   );
@@ -91,8 +94,8 @@ function LineList({ lines }: { readonly lines: readonly BrainBriefLine[] }) {
   return (
     <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
       {lines.map((line) => (
-        <li key={line.lineId} className={`grid min-w-0 gap-1 rounded-md border p-2 ${BRAIN_TONE.border}`}>
-          <p className="break-words text-sm">{line.text}</p>
+        <li key={line.lineId} className={`grid min-w-0 gap-2 p-4 ${BRAIN_TONE.card}`}>
+          <p className={`break-words ${BRAIN_TYPE.callout}`}>{line.text}</p>
           <div className="flex flex-wrap items-center gap-1.5">
             {line.due && <BrainBadge tone="warn">Due {line.due}</BrainBadge>}
             {line.assignee && <BrainBadge>{line.assignee}</BrainBadge>}

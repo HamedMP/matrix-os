@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { brainRunMayContinue } from "./brain-client.js";
 import { BrainButton } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import {
   BRAIN_RECEIPTS_SHOWN, brainCountsText, brainDay, brainExtractText, brainModelBudgetText, brainModelSpendText,
   brainNextActionText, brainSyncText,
@@ -71,7 +71,7 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
   });
   return (
     <section aria-label="Repository" className="grid gap-3">
-      <h2 className="text-base font-semibold">Repository</h2>
+      <h2 className={BRAIN_TYPE.subheading}>Repository</h2>
       <BrainView state={git.state} label="Loading the repository..." onRetry={git.reload}>
         {(view) => view.source === null ? (
           <BrainEmpty title="This project's repository is not connected.">
@@ -82,11 +82,15 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
             </BrainButton>
           </BrainEmpty>
         ) : (
-          <div className={`grid gap-3 rounded-md border p-3 ${BRAIN_TONE.border}`}>
+          <div className={`grid gap-3 p-4 ${BRAIN_TONE.card}`}>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{view.source.label}</span>
+              <span className={`font-semibold ${BRAIN_TYPE.callout}`}>{view.source.label}</span>
               <BrainBadge tone={view.source.status === "active" ? "good" : "warn"}>{view.source.status}</BrainBadge>
-              {view.source.webBase && <span className="truncate text-xs text-muted-foreground">{view.source.webBase}</span>}
+              {view.source.webBase && (
+                <span className={`truncate ${BRAIN_TYPE.footnote} ${BRAIN_TYPE.machine} ${BRAIN_TONE.secondary}`}>
+                  {view.source.webBase}
+                </span>
+              )}
             </div>
             {/* relative: the model confirm floats over what follows, the width of this row. */}
             <div className="relative flex flex-wrap gap-2">
@@ -107,7 +111,7 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
                   </BrainButton>
                 )}>
                 <p>{MODEL_RUN_NOTE}</p>
-                {budgetText !== "" && <p className="text-muted-foreground">{budgetText}</p>}
+                {budgetText !== "" && <p className={BRAIN_TONE.secondary}>{budgetText}</p>}
                 <div className="flex flex-wrap gap-2">
                   <BrainButton size="sm" disabled={busy} onClick={() => {
                     setConfirmModel(false);
@@ -121,13 +125,13 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
                 </div>
               </BrainConfirm>
             </div>
-            {spendText !== "" && <p className="text-xs text-muted-foreground">{spendText}</p>}
+            {spendText !== "" && <p className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>{spendText}</p>}
             {RUN_NAMES.map((name) => <BrainJobProgress key={name} job={jobs[name]} labels={RUN_LABELS} />)}
             <BrainReceipts receipts={view.receipts} />
           </div>
         )}
       </BrainView>
-      {message !== "" && <p role="status" className="text-sm">{message}</p>}
+      {message !== "" && <p role="status" className={BRAIN_TYPE.label}>{message}</p>}
       {action.error && <BrainError error={action.error} />}
     </section>
   );
@@ -135,17 +139,17 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
 
 /** The recent syncs of a source, newest first. */
 export function BrainReceipts({ receipts }: { readonly receipts: readonly BrainReceiptView[] }) {
-  if (receipts.length === 0) return <p className="text-xs text-muted-foreground">Never synced.</p>;
+  if (receipts.length === 0) return <p className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>Never synced.</p>;
   return (
-    <ul aria-label="Recent syncs" className="grid gap-1 text-xs">
+    <ul aria-label="Recent syncs" className={`grid gap-1.5 ${BRAIN_TYPE.caption}`}>
       {receipts.slice(0, BRAIN_RECEIPTS_SHOWN).map((receipt) => (
         <li key={receipt.receiptId} className="flex flex-wrap items-center gap-2">
           <BrainBadge tone={receipt.status === "succeeded" ? "good" : receipt.status === "running" ? "plain" : "warn"}>
             {receipt.status}
           </BrainBadge>
-          <time dateTime={receipt.startedAt}>{brainDay(receipt.startedAt)}</time>
-          <span className="text-muted-foreground">{brainCountsText(receipt.counts)}</span>
-          {receipt.errorCode && <span className="text-muted-foreground">{brainNextActionText(receipt.nextAction)}</span>}
+          <time dateTime={receipt.startedAt} className={BRAIN_TONE.tertiary}>{brainDay(receipt.startedAt)}</time>
+          <span className={BRAIN_TONE.secondary}>{brainCountsText(receipt.counts)}</span>
+          {receipt.errorCode && <span className={BRAIN_TONE.secondary}>{brainNextActionText(receipt.nextAction)}</span>}
         </li>
       ))}
     </ul>

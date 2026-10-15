@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { BrainButton } from "./brain-controls.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import {
   BRAIN_RECEIPTS_SHOWN, BRAIN_SOURCE_KIND_LABELS, brainDay, brainNextActionText, brainSyncText,
 } from "./brain-format.js";
@@ -42,7 +42,7 @@ function OtherSources({ api, projectId, active }: Pick<BrainScreenProps, "api" |
   const list = useBrainLoad(() => api.sources(projectId), "sources");
   return (
     <section aria-label="Other sources" className="grid gap-3">
-      <h2 className="text-base font-semibold">Other sources</h2>
+      <h2 className={BRAIN_TYPE.subheading}>Other sources</h2>
       <BrainView state={list.state} label="Loading sources..." onRetry={list.reload}>
         {(view) => {
           const others = view.items.filter((source) => source.kind !== "git");
@@ -91,13 +91,13 @@ function SourceRow({ api, projectId, source, active, onChanged }: Pick<BrainScre
     job.start("sync", outcome.view);
   });
   return (
-    <li className={`grid gap-2 rounded-md border p-3 ${BRAIN_TONE.border}`}>
+    <li className={`grid gap-3 p-4 ${BRAIN_TONE.card}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">{source.label}</span>
+        <span className={`font-semibold ${BRAIN_TYPE.callout}`}>{source.label}</span>
         <BrainBadge>{BRAIN_SOURCE_KIND_LABELS[source.kind]}</BrainBadge>
         <BrainBadge tone={paused ? "warn" : "good"}>{source.status}</BrainBadge>
         {source.lastSync && (
-          <span className="text-xs text-muted-foreground">
+          <span className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>
             Last sync {source.lastSync.status} {brainDay(source.lastSync.startedAt)}
             {source.lastSync.errorCode ? `. ${brainNextActionText(source.lastSync.nextAction)}` : ""}
           </span>
@@ -118,7 +118,7 @@ function SourceRow({ api, projectId, source, active, onChanged }: Pick<BrainScre
         </BrainButton>
         <BrainConfirm open={confirming} onClose={() => setConfirming(false)} label={`Disconnect ${source.label}`}
           trigger={(
-            <BrainButton size="sm" variant="ghost" aria-haspopup="dialog" aria-expanded={confirming}
+            <BrainButton size="sm" variant="destructive" aria-haspopup="dialog" aria-expanded={confirming}
               onClick={() => setConfirming(!confirming)}>Disconnect</BrainButton>
           )}>
           <p>Disconnect {source.label}? What it added to this project's brain is removed.</p>
@@ -132,7 +132,7 @@ function SourceRow({ api, projectId, source, active, onChanged }: Pick<BrainScre
         </BrainConfirm>
       </div>
       <BrainJobProgress job={job} labels={SOURCE_RUN_LABELS} />
-      {message !== "" && <p role="status" className="text-sm">{message}</p>}
+      {message !== "" && <p role="status" className={BRAIN_TYPE.label}>{message}</p>}
       {action.error && <BrainError error={action.error} onRetry={onChanged} />}
       <BrainView state={receipts.state} label="Loading syncs..." onRetry={receipts.reload}>
         {(view) => <BrainReceipts receipts={view.receipts} />}
