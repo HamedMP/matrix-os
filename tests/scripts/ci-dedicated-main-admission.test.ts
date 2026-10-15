@@ -8,9 +8,11 @@ const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci-de
 const startsWith = (text: string, prefix: string) => text.startsWith(prefix);
 const contains = (values: string[], value: string) => values.includes(value);
 const format = (text: string, ...args: unknown[]) => text.replace(/\{([0-9]+)\}/g, (_, i) => String(args[Number(i)]));
-const condition = workflow.jobs.benchmark.if.replaceAll('github.event.pull_request.labels.*.name', '(github.event.pull_request?.labels??[]).map(label=>label.name)');
+// GitHub expressions are null-safe; JS needs optional chaining for absent PR fields.
+const nullSafe = (expression: string) => expression.replaceAll('github.event.pull_request.labels.*.name', '(github.event.pull_request?.labels??[]).map(label=>label.name)').replaceAll('github.event.label.name','github.event.label?.name').replaceAll('github.event.changes.base','github.event.changes?.base');
+const condition = nullSafe(workflow.jobs.benchmark.if);
 const admits = (vars: Record<string, string>, github: unknown) => Function('vars', 'github', 'startsWith', 'contains', `return (${condition});`)(vars, github, startsWith, contains);
-const executes = (vars: Record<string, string>, github: unknown) => String(Function('vars', 'github', 'format', 'startsWith', `return (${workflow['run-name'].trim().slice(3, -2)});`)(vars, github, format, startsWith)).includes('execution=true');
+const executes = (vars: Record<string, string>, github: unknown) => String(Function('vars', 'github', 'format', 'startsWith', 'contains', `return (${nullSafe(workflow['run-name'].trim().slice(3, -2))});`)(vars, github, format, startsWith, contains)).includes('execution=true');
 
 const sha = 'a'.repeat(40);
 const mainPush = (action: string, attempt: number, title: string) => ({ event_name: 'workflow_run', ref: 'refs/heads/main', event: { action, workflow_run: { id: 321, run_attempt: attempt, event: 'push', head_branch: 'main', head_sha: sha, display_title: title } } });

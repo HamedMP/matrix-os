@@ -201,6 +201,13 @@ describe("bot grant, memory, task, and authority contracts", () => {
     expect(BotAuthorityViewSchema.parse(view)).toEqual(view);
     expect(BotAuthorityViewSchema.safeParse({ ...view, grants: Array.from({ length: 101 }, () => grant) }).success).toBe(false);
     expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ service: "gmail", state: "unknown" }] }).success).toBe(false);
+    const account = { displayKey: `acct_${"a".repeat(24)}`, label: "Work", email: "owner@example.test", state: "connected_not_granted" };
+    const connection = { service: "gmail", serviceName: "Gmail", logoUrl: "https://pipedream.com/s.v0/gmail/logo/48",
+      state: "connected_not_granted", accounts: [account] };
+    expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [connection] }).success).toBe(true);
+    expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ ...connection, accounts: [{ ...account, displayKey: "conn_work" }] }] }).success).toBe(false);
+    expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ ...connection, logoUrl: "javascript:alert(1)" }] }).success).toBe(false);
+    expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ ...connection, accounts: Array(11).fill(account) }] }).success).toBe(false);
   });
 });
 

@@ -202,9 +202,9 @@ describe('pre-admission default-controller retry coordination',()=>{
       .mockResolvedValue({data:{workflow_runs:[run,{...run,id:124,status:'queued'}]}});
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('No verified');
   });
-  it('caps source request discovery at three pages per poll',async()=>{
+  it('rejects saturated source history without valid creation timestamps',async()=>{
     const {github,run}=fixture();github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:Array.from({length:100},(_,index)=>({...run,id:200+index,display_title:'other source request'}))}});
-    await expect(waitForDedicatedResult(github,expected,{maxAttempts:1,delay:async()=>{}})).rejects.toThrow('history exceeds bounded coverage');
+    await expect(waitForDedicatedResult(github,expected,{maxAttempts:1,delay:async()=>{}})).rejects.toThrow('Invalid bounded workflow creation history');
     expect(Math.max(...github.rest.actions.listWorkflowRuns.mock.calls.map(([args]:any[])=>args.page))).toBe(3);expect(github.rest.actions.listWorkflowRuns.mock.calls.length).toBeLessThanOrEqual(9);
   });
   it('does not let an arbitrary workflow check impersonate the default controller',async()=>{
