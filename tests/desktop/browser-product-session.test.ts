@@ -32,19 +32,61 @@ describe("native Browser product session renewal", () => {
     expect(jar.set).not.toHaveBeenCalled();
   });
 
-  it("rolls back a partial same-generation write only when its exact attempted values are still present", async () => {
+  it.each(["before", "after"])("preserves a valid shared route and signed session when route set rejects %s its write", async rejection => {
     const route = "matrix_app_route=pr-2526; Path=/apps/browser-lab/; HttpOnly; Secure; SameSite=Lax; Max-Age=600";
-    const values = new Map<string, { name: string; value: string; path: string; domain: string }>();
+    const previous = { name: "matrix_app_route", value: "pr-2526", path: "/apps/browser-lab/", domain: "app.matrix-os.com" };
+    const priorSession = { ...previous, name: "matrix_app_session__browser-lab", value: "previous-signed-session" };
+    const values = new Map([[previous.name, previous], [priorSession.name, priorSession]]);
     const jar = {
       set: vi.fn(async (c: { name: string; value: string; path?: string }) => {
-        values.set(c.name, { ...c, path: c.path!, domain: "app.matrix-os.com" });
-        if (c.name === "matrix_app_route") throw new Error("synthetic cookie store failure");
+        if (rejection === "after") values.set(c.name, { ...c, path: c.path!, domain: "app.matrix-os.com" });
+        throw new Error("synthetic cookie store failure");
       }),
       get: vi.fn(async ({ name }: { name: string }) => values.has(name) ? [values.get(name)!] : []),
       remove: vi.fn(async (_url: string, name: string) => { values.delete(name); }),
     };
     await expect(installBrowserProductSessionCookie([cookie, route], "https://app.matrix-os.com", () => true, jar)).rejects.toThrow();
-    expect(jar.remove).toHaveBeenCalledTimes(2); expect(values.size).toBe(0);
+    expect(jar.set.mock.calls.map(([c]) => c.name)).toEqual(["matrix_app_route"]);
+    expect(jar.remove).not.toHaveBeenCalled();
+    expect(values.get(previous.name)).toEqual(previous);
+    expect(values.get(priorSession.name)).toEqual(priorSession);
+  });
+
+  it("preserves a successfully refreshed existing route when the later app-cookie set fails", async () => {
+    const route = "matrix_app_route=pr-2526; Path=/apps/browser-lab/; HttpOnly; Secure; SameSite=Lax; Max-Age=600";
+    const previous = { name: "matrix_app_route", value: "pr-2526", path: "/apps/browser-lab/", domain: "app.matrix-os.com" };
+    const priorSession = { ...previous, name: "matrix_app_session__browser-lab", value: "previous-signed-session" };
+    const values = new Map([[previous.name, previous], [priorSession.name, priorSession]]);
+    const jar = {
+      set: vi.fn(async (c: { name: string; value: string; path?: string }) => {
+        if (c.name === priorSession.name) throw new Error("synthetic cookie store failure");
+        values.set(c.name, { ...c, path: c.path!, domain: "app.matrix-os.com" });
+      }),
+      get: vi.fn(async ({ name }: { name: string }) => values.has(name) ? [values.get(name)!] : []),
+      remove: vi.fn(async (_url: string, name: string) => { values.delete(name); }),
+    };
+    await expect(installBrowserProductSessionCookie([cookie, route], "https://app.matrix-os.com", () => true, jar)).rejects.toThrow();
+    expect(jar.remove).not.toHaveBeenCalled();
+    expect(values.get(previous.name)).toEqual(previous);
+    expect(values.get(priorSession.name)).toEqual(priorSession);
+  });
+
+  it("rolls back only confirmed new writes and leaves a rejected write indeterminate", async () => {
+    const route = "matrix_app_route=pr-2526; Path=/apps/browser-lab/; HttpOnly; Secure; SameSite=Lax; Max-Age=600";
+    const values = new Map<string, { name: string; value: string; path: string; domain: string }>();
+    const jar = {
+      set: vi.fn(async (c: { name: string; value: string; path?: string }) => {
+        values.set(c.name, { ...c, path: c.path!, domain: "app.matrix-os.com" });
+        if (c.name === "matrix_app_session__browser-lab") throw new Error("synthetic cookie store failure");
+      }),
+      get: vi.fn(async ({ name }: { name: string }) => values.has(name) ? [values.get(name)!] : []),
+      remove: vi.fn(async (_url: string, name: string) => { values.delete(name); }),
+    };
+    await expect(installBrowserProductSessionCookie([cookie, route], "https://app.matrix-os.com", () => true, jar)).rejects.toThrow();
+    expect(jar.remove).toHaveBeenCalledTimes(1);
+    expect(jar.remove).toHaveBeenCalledWith("https://app.matrix-os.com/apps/browser-lab/", "matrix_app_route");
+    expect(values.has("matrix_app_route")).toBe(false);
+    expect(values.has("matrix_app_session__browser-lab")).toBe(true);
   });
 
   it("does not delete a newer externally installed session when a late renewal loses its generation", async () => {

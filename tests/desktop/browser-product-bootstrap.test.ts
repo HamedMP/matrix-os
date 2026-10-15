@@ -64,7 +64,7 @@ describe("Browser canonical launch renewal", () => {
     await expect(requester(identity, renewal, "browser-lab")).resolves.toHaveProperty("expiresAt");
     const routeCookie = await jar.get({ name: "matrix_app_route" });
     expect(readMobileAppRouteCookie(path + "api/browser-status", `matrix_app_route=${routeCookie[0]?.value}`)).toBe("pr-2526");
-    expect(jar.set.mock.calls.map(([c]) => c.name)).toEqual(["matrix_app_session__browser-lab", "matrix_app_route"]);
+    expect(jar.set.mock.calls.map(([c]) => c.name)).toEqual(["matrix_app_route", "matrix_app_session__browser-lab"]);
     expect(values.get("matrix_app_route")!.expirationDate * 1000).toBeLessThanOrEqual(Date.now() + 600_000);
     expect(tokens.size()).toBe(0); expect(fetchFn).toHaveBeenCalledTimes(2);
   });

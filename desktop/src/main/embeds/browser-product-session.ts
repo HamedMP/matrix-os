@@ -34,28 +34,37 @@ export async function installBrowserProductSessionCookie(
     || !isCurrent()) throw new Error("invalid browser session");
   const url = `${base.origin}/apps/browser-lab/`;
   const expirationDate = Math.min(cookie.expires, payload.exp * 1000) / 1000;
-  const writes: SessionWrite[] = [{ url, name: cookie.name, value: cookie.value, path: cookie.path, httpOnly: true,
-    secure: base.protocol === "https:" || cookie.secure === true, sameSite: "strict", expirationDate }];
+  const writes: SessionWrite[] = [];
+  // Renew routing first so a rejected hint write cannot overwrite a working signed session.
   if (route) writes.push({ url, name: route.name, value: route.value, path: route.path!, httpOnly: true,
     secure: true, sameSite: "lax", expirationDate: Math.min(route.expires!, expirationDate * 1000) / 1000 });
+  writes.push({ url, name: cookie.name, value: cookie.value, path: cookie.path, httpOnly: true,
+    secure: base.protocol === "https:" || cookie.secure === true, sameSite: "strict", expirationDate });
+  const matches = (stored: Pick<Cookie, "name" | "value" | "path" | "domain">, next: SessionWrite) =>
+    stored.name === next.name && stored.value === next.value && stored.path === next.path && stored.domain === base.hostname;
   const install = async () => {
     if (!isCurrent()) throw new Error("browser session changed");
-    const attempted: SessionWrite[] = [];
+    const installed: { cookie: SessionWrite; existedWithSameValue: boolean }[] = [];
     try {
       for (const next of writes) {
         if (!isCurrent()) throw new Error("browser session changed");
-        attempted.push(next); await jar.set(next);
+        const before = await jar.get({ url, name: next.name });
+        if (!isCurrent()) throw new Error("browser session changed");
+        const existedWithSameValue = before.some(stored => matches(stored, next));
+        await jar.set(next);
+        installed.push({ cookie: next, existedWithSameValue });
         if (!isCurrent()) throw new Error("browser session changed");
       }
     } catch (error) {
       // No cookie CAS exists. Never delete after the native login changes, or
-      // when a fresh canonical launch has replaced an attempted value.
-      for (const next of attempted.reverse()) {
+      // when a fresh canonical launch has replaced a confirmed installed value.
+      // Rejected writes are indeterminate; identical preexisting hints are shared.
+      for (const { cookie: next, existedWithSameValue } of installed.reverse()) {
         if (!isCurrent()) break;
+        if (existedWithSameValue) continue;
         try {
           const stored = await jar.get({ url, name: next.name });
-          if (isCurrent() && stored.length === 1 && stored[0]?.value === next.value && stored[0].path === next.path
-            && stored[0].domain === base.hostname) await jar.remove(url, next.name);
+          if (isCurrent() && stored.length === 1 && matches(stored[0]!, next)) await jar.remove(url, next.name);
         } catch (cleanupError) { console.warn("[browser] Session cleanup unavailable", cleanupError instanceof Error ? cleanupError.name : "unknown"); }
       }
       if (!(error instanceof Error)) console.warn("[browser] Session unavailable", "non-error");
