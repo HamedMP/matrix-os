@@ -6,6 +6,8 @@ Tracking: [ENG-159 — launch activation and paid-cohort measurement](https://li
 
 Google configuration: reuse landing container `GTM-5D8ZT4HF` and Google tag Matrix (`AW-18486552087` / `GT-5MCTD42L`). The Matrix OS Website & App stream (`G-JJS1LJGEBS`) is connected as another destination. Send billing events through a GA4 event tag; do not install a second base Google tag.
 
+Cloud Run deployment uses the production environment variables `GOOGLE_TAG_MANAGER_ID`, `GOOGLE_ANALYTICS_MEASUREMENT_ID` and pinned `GOOGLE_ANALYTICS_API_SECRET_VERSION`. Bind `GOOGLE_ANALYTICS_API_SECRET` from Secret Manager `google-analytics-billing-api-secret`; grant only the existing platform runtime identity access. Staging leaves the measurement ID empty unless separately configured. The deployment helper rejects invalid IDs, delimiters and unpinned secret versions before emitting bindings.
+
 ## Contract
 
 - Keep `billing=success` / `checkout=success`; add Stripe's literal session-ID token to every subscription success URL, including configured overrides and device/runtime return paths.
