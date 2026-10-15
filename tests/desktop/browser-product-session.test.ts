@@ -12,6 +12,17 @@ function canonicalFetch(header: string) {
     : new Response(null, { status: 302, headers: { location: "/apps/browser-lab/", "set-cookie": header } }));
 }
 
+function expectRefreshedRoute(
+  stored: { name: string; value: string; path: string; domain: string; expirationDate?: number } | undefined,
+  startedAt: number,
+) {
+  expect(stored).toEqual({ name: "matrix_app_route", value: "pr-2526", path: "/apps/browser-lab/",
+    domain: "app.matrix-os.com", url: "https://app.matrix-os.com/apps/browser-lab/", httpOnly: true,
+    secure: true, sameSite: "lax", expirationDate: expect.any(Number) });
+  expect(stored?.expirationDate).toBeGreaterThan(startedAt);
+  expect(stored?.expirationDate).toBeLessThanOrEqual(startedAt + 600);
+}
+
 
 describe("native Browser product session renewal", () => {
   it("renews the expired app routing cookie together with the signed Browser cookie", async () => {
@@ -45,10 +56,12 @@ describe("native Browser product session renewal", () => {
       get: vi.fn(async ({ name }: { name: string }) => values.has(name) ? [values.get(name)!] : []),
       remove: vi.fn(async (_url: string, name: string) => { values.delete(name); }),
     };
+    const startedAt = Date.now() / 1000;
     await expect(installBrowserProductSessionCookie([cookie, route], "https://app.matrix-os.com", () => true, jar)).rejects.toThrow();
     expect(jar.set.mock.calls.map(([c]) => c.name)).toEqual(["matrix_app_route"]);
     expect(jar.remove).not.toHaveBeenCalled();
-    expect(values.get(previous.name)).toEqual(previous);
+    if (rejection === "before") expect(values.get(previous.name)).toEqual(previous);
+    else expectRefreshedRoute(values.get(previous.name), startedAt);
     expect(values.get(priorSession.name)).toEqual(priorSession);
   });
 
@@ -65,9 +78,10 @@ describe("native Browser product session renewal", () => {
       get: vi.fn(async ({ name }: { name: string }) => values.has(name) ? [values.get(name)!] : []),
       remove: vi.fn(async (_url: string, name: string) => { values.delete(name); }),
     };
+    const startedAt = Date.now() / 1000;
     await expect(installBrowserProductSessionCookie([cookie, route], "https://app.matrix-os.com", () => true, jar)).rejects.toThrow();
     expect(jar.remove).not.toHaveBeenCalled();
-    expect(values.get(previous.name)).toEqual(previous);
+    expectRefreshedRoute(values.get(previous.name), startedAt);
     expect(values.get(priorSession.name)).toEqual(priorSession);
   });
 
