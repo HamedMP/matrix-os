@@ -696,9 +696,11 @@ describe("group integration isolation", () => {
     await grant(WORK);
     const { tools, call } = setup();
     const shared = { ...binding, group };
-    const inventory = await tools.inventory(shared, {});
-    expect(JSON.stringify(inventory)).not.toContain('conn_work');
-    expect(JSON.stringify(inventory)).not.toContain('Work');
+    for (const args of [{}, { service: "gmail" }]) {
+      const inventory = await tools.inventory(shared, args);
+      expect(JSON.stringify(inventory)).not.toContain('conn_work');
+      expect(JSON.stringify(inventory)).not.toContain('Work');
+    }
     await expect(tools.call(shared, read)).rejects.toMatchObject({ code: "not_granted" });
     expect(call).not.toHaveBeenCalled();
     await expect(pending()).resolves.toEqual([]);
