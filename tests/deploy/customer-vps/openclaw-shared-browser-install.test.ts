@@ -357,6 +357,10 @@ it("upgrades only a fingerprinted legacy managed index to inject the official na
     expect(await readFile(f.configPath)).toEqual(before);
     expect(await readFile(join(dir, "index.mjs"), "utf8")).toBe(customIndex);
     await writeFile(join(dir, "index.mjs"), legacyIndex); await writeFile(markerPath, JSON.stringify(marker));
+    await expect(configureOpenClawSharedBrowser({ ...f.options, beforeConfigCommit: async () => { throw new Error("synthetic interruption"); } })).rejects.toThrow("synthetic interruption");
+    expect(await readFile(f.configPath)).toEqual(before);
+    expect(JSON.parse(await readFile(markerPath, "utf8"))).toEqual(marker);
+    expect(await readFile(join(dir, "index.mjs"), "utf8")).toBe(`import { resolveGatewayAuth } from "openclaw/plugin-sdk/gateway-runtime";\nimport { createOpenClawSharedBrowserPlugin } from ${JSON.stringify(f.options.compiledEntry)};\nexport default createOpenClawSharedBrowserPlugin(resolveGatewayAuth);\n`);
     expect(await configureOpenClawSharedBrowser(f.options)).toMatchObject({ state: "installed" });
     delete config.plugins.installs;
     expect(JSON.parse(await readFile(f.configPath, "utf8"))).toEqual(config);

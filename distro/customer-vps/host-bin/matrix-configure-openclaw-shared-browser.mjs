@@ -128,8 +128,10 @@ export async function configureOpenClawSharedBrowser(options) {
       previous={};
       for(const[name,content]of Object.entries(files)) {
         const current=await read(join(plugin.access,name));previous[name]=current;
-        const legacyIndex=name==='index.mjs'&&current?.equals(Buffer.from(`export { default } from ${JSON.stringify(options.compiledEntry)};\n`));
-        if(legacy&&(!current||(!current.equals(Buffer.from(content))&&!legacyIndex)||marker.files[name]!==hash(current)))throw unavailable();
+        const legacyIndexBytes=Buffer.from(`export { default } from ${JSON.stringify(options.compiledEntry)};\n`);
+        const legacyIndex=name==='index.mjs'&&current?.equals(legacyIndexBytes);
+        const interruptedUpgrade=name==='index.mjs'&&current?.equals(Buffer.from(content))&&marker?.files[name]===hash(legacyIndexBytes);
+        if(legacy&&(!current||(!current.equals(Buffer.from(content))&&!legacyIndex)||marker.files[name]!==hash(current)&&!interruptedUpgrade))throw unavailable();
         if(marker&&current===null)return{state:'owner_uninstalled'};
         if(current&&!current.equals(Buffer.from(content))&&marker?.files[name]!==hash(current))throw unavailable();
       }
