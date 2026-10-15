@@ -260,7 +260,7 @@ export function createBotIntegrationTools(deps: {
         const usable = grants.some((grant) => grant.service === service && effects.every((effect) => grant.effects.includes(effect))
           && connected.filter((connection) => connection.service === service && connection.label === grant.accountLabel).length === 1
           && connected.some((connection) => connection.service === service && connection.connectionId === grant.connectionId && connection.label === grant.accountLabel));
-        if (!usable && !args.service) {
+        if (!usable && !binding.group && !args.service) {
           const declined = await deps.transact(binding.ownerId, async (tx) => Boolean(await tx.db.selectFrom("bot_interactions")
             .select("interaction_id").where("owner_id", "=", binding.ownerId).where("task_id", "=", binding.taskId)
             .where("kind", "in", ["account_choice", "connect_request"]).where("status", "in", ["resolved", "cancelled"])
@@ -268,7 +268,7 @@ export function createBotIntegrationTools(deps: {
             .executeTakeFirst()));
           if (declined) { skippedDeclined = true; continue; }
         }
-        if (!usable && (required || args.service)) {
+        if (!usable && !binding.group && (required || args.service)) {
           return text(await deps.transact(binding.ownerId, (tx) => requestAccess(tx, binding, service, effects, connected)));
         }
         available.push(entry);
