@@ -89,7 +89,7 @@ async function setup(revisionRace = false) {
   vi.setSystemTime(new Date("2026-09-30T12:00:00Z"));
   const fixture = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
   cleanup.push(fixture.destroy);
-  const home = await mkdtemp(join(tmpdir(), "matrix-slack-pi-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "matrix-slack-pi-")));
   cleanup.push(() => rm(home, { recursive: true, force: true }));
   const projectPath = join(home, "projects", "company");
   await mkdir(projectPath, { recursive: true });
