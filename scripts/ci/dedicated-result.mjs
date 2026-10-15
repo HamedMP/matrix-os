@@ -119,7 +119,7 @@ async function newestResultController(github,repo,expected,workflow,parents,veri
  for(let skipped=0;latest;skipped++){
   if(latest.status==='completed'&&latest.conclusion!=='success')return{latest};
   const selected=await newestController(github,repo,expected,workflow,latest,parents,verified);
-  if(selected?.changed)return{latest:selected.run};
+  if(selected?.changed)return{latest:selected.run,admitted:true};
   if(selected||latest.status!=='completed')return{latest,selected};
   if(skipped>=9)throw new Error('Completed controller history without result exceeds bounded coverage');
   latest=await newestRequest(github,repo,expected,workflow,latest.id);
@@ -159,14 +159,17 @@ async function waitWithinDeadline(github, expected, options={}) {
     const newest=await newestWorkflowRun(github,repo,ciWorkflow,run=>Boolean(mainPrRequest(run,repo,expected,ciWorkflow)),{kind:'requester',headSha:expected.headSha,headRef:expected.headRef});
     if(!newest||newest.id!==expected.requestingRunId||newest.run_attempt!==expected.requestingRunAttempt||(newest.status==='completed'&&newest.conclusion!=='success'))throw new Error('A newer or failed requesting CI attempt superseded coverage');
   };
+  let controllerAdmitted=false;
   for(let attempt=0;attempt<maxAttempts;attempt++) {
     const currentSource=await verifyCurrentDedicatedSource(github,repo,expected);
     await verifyMainRequester(currentSource);
-    const {latest,selected}=await newestResultController(github,repo,expected,workflow,currentSource.mergeParents);
+    const {latest,selected,admitted}=await newestResultController(github,repo,expected,workflow,currentSource.mergeParents);
     if(latest?.status==='completed' && latest.conclusion!=='success') {
       throw new Error('Verified dedicated Linux qualification failed');
     }
-    if(!selected&&options.admissionAttempts&&attempt+1>=options.admissionAttempts)throw new Error('No Linux controller admitted within the admission window');
+    // Admission survives a fresh run-state race; it never grants qualification.
+    controllerAdmitted=controllerAdmitted||Boolean(selected)||admitted===true;
+    if(!controllerAdmitted&&options.admissionAttempts&&attempt+1>=options.admissionAttempts)throw new Error('No Linux controller admitted within the admission window');
     if(selected?.run.status==='completed') {
       const {check,evidence,run}=selected;
       if(run.conclusion!=='success' || (check.status==='completed' && check.conclusion!=='success'&&!(check.conclusion==='neutral'&&validInfrastructureProof(evidence)))) {
