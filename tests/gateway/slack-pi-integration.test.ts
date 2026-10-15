@@ -216,6 +216,7 @@ async function setupSlack(s: Awaited<ReturnType<typeof setup>>, beforeMetadata?:
       ownerId, organizationId: ORG, actorId: destination.actorId, scopeId: destination.scopeId,
       ...(publication ? { action: "publish_reply", appId: destination.appId, teamId: destination.teamId, eventId: destination.eventId, textDigest: publication.textDigest } : { action: "discuss" }),
     })).allowed === true,
+    resolveDestination: async () => ({ownerId:actors.owner,runtimeId:"company-runtime"}),
     dispatch: async ({ installation, link, binding, event, signal }) => {
     await homeRpc(home, "events", { ownerId: actors.owner, organizationId: installation.organizationId, actorId: link.actorId,
       channelScopeId: binding!.scopeId, companyPublicationApproved: binding!.approvedOutput, event }, signal);
