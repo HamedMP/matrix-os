@@ -11,6 +11,16 @@ export function recordedMainSources(evidence,snapshot){
  if(evidence?.schemaVersion!==1||evidence.prNumber!==snapshot.prNumber||evidence.headSha!==snapshot.headSha||evidence.headRef!==snapshot.headRef||evidence.baseRef!=='main'||!Array.isArray(evidence.sourceBindings)||evidence.sourceBindings.length>MAIN_SOURCE_BINDING_LIMIT)return [];
  return evidence.sourceBindings.filter(value=>sha.test(value?.baseSha||'')&&sha.test(value?.sourceSha||'')).map(({baseSha,sourceSha})=>({baseSha,sourceSha}));
 }
+// A later rerun does not erase a protected observation made by an earlier
+// authenticated controller attempt. This reads identity only, not receipt credit.
+export async function recordedControllerAttempt(github,repo,runId,attempt){
+ const {data:latest}=await github.rest.actions.getWorkflowRun({...repo,run_id:runId,request});
+ if(latest.id===runId&&id(latest.run_attempt)&&latest.run_attempt>attempt){
+  const {data:recorded}=await github.rest.actions.getWorkflowRunAttempt({...repo,run_id:runId,attempt_number:attempt,request});
+  return recorded;
+ }
+ return latest;
+}
 export async function hasMainSourceProvenance(github,repo,snapshot){
  const prefix=`https://github.com/${repo.owner}/${repo.repo}/actions/runs/`,fullName=`${repo.owner}/${repo.repo}`;
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
@@ -24,7 +34,7 @@ export async function hasMainSourceProvenance(github,repo,snapshot){
    if(!recordedMainSources(evidence,snapshot).some(value=>value.baseSha===snapshot.baseSha&&value.sourceSha===snapshot.sourceSha))continue;
    const runId=Number(check.details_url.slice(prefix.length));
    if(!id(runId)||evidence.controllerRef!=='refs/heads/main'||!sha.test(evidence.controllerSha||'')||!id(evidence.controllerAttempt))continue;
-   const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:runId,request});
+   const run=await recordedControllerAttempt(github,repo,runId,evidence.controllerAttempt);
    if(run.id!==runId||run.run_attempt!==evidence.controllerAttempt||run.workflow_id!==workflow.id||run.path!==workflow.path||!same(run.repository?.full_name,fullName)||!same(run.head_repository?.full_name,fullName))continue;
    if(['push','schedule'].includes(run.event)&&run.head_branch==='main'&&sha.test(run.head_sha||''))return true;
    if(run.event==='pull_request_target'&&run.head_sha===snapshot.headSha&&run.head_branch===snapshot.headRef)return true;

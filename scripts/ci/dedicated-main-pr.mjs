@@ -1,5 +1,6 @@
 // A PR targeting main qualifies its immutable tested merge, not every later
 // main tip. Stack parents retain the stricter live-source policy.
+import {logGateEvent} from './gate-log.mjs';
 import {readCurrentBranchSha} from './dedicated-branch.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
 import {hasMainSourceProvenance,recordedMainSources,MAIN_SOURCE_BINDING_LIMIT,waitForMainSourceProvenance} from './dedicated-main-provenance.mjs';
@@ -44,14 +45,20 @@ export async function mainPrRunSource(github,repo,run,snapshot,workflow,options=
  if(merge.sha!==value.sourceSha||!Array.isArray(parents)||parents.length!==2||!parents.every(parent=>sha.test(parent||''))||parents[0]===parents[1]||parents[1]!==snapshot.headSha||(run.event==='workflow_dispatch'&&value.baseSha!==parents[0]))throw new Error('Main PR coverage merge is not bound to its tested source');
  const snapshotValue={...value,baseSha:parents[0],mergeParents:parents};
  const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});
+ assertMainPrIdentity(repo,pull,snapshotValue,options.waitForProvenance===true);
  if(options.waitForProvenance&&(pull.merge_commit_sha!==snapshotValue.sourceSha||pull.base.sha!==snapshotValue.baseSha))await waitForMainSourceProvenance(github,repo,snapshotValue,{delay:options.provenanceDelay});
  await verifyMainPrSnapshot(github,repo,pull,snapshotValue);
  return {run,snapshot:snapshotValue};
 }
 
+export function assertMainPrIdentity(repo,pull,snapshot,requireLabels=false){
+ const fullName=`${repo.owner}/${repo.repo}`;
+ if(snapshot.baseRef!=='main'||pull.base?.ref!=='main'||pull.number!==snapshot.prNumber||pull.state!=='open'||pull.draft!==false||pull.head?.sha!==snapshot.headSha||(snapshot.headRef!==undefined&&pull.head?.ref!==snapshot.headRef)||!same(pull.head?.repo?.full_name,snapshot.headRepository??fullName)||!same(pull.base?.repo?.full_name,fullName)||![snapshot.headSha,snapshot.baseSha,snapshot.sourceSha].every(value=>sha.test(value||''))||(requireLabels&&!['ready-for-ci','fast-ci'].every(name=>pull.labels?.some(label=>label.name===name))))throw new Error('Dedicated qualification revision or admission is stale');
+}
+
 export async function verifyMainPrSnapshot(github,repo,pull,snapshot,options={}){
  const fullName=`${repo.owner}/${repo.repo}`;
- if(snapshot.baseRef!=='main'||pull.base?.ref!=='main'||pull.number!==snapshot.prNumber||pull.state!=='open'||pull.draft!==false||pull.head?.sha!==snapshot.headSha||(snapshot.headRef!==undefined&&pull.head?.ref!==snapshot.headRef)||!same(pull.head?.repo?.full_name,snapshot.headRepository??fullName)||!same(pull.base?.repo?.full_name,fullName)||![snapshot.headSha,snapshot.baseSha,snapshot.sourceSha].every(value=>sha.test(value||'')))throw new Error('Dedicated qualification revision or admission is stale');
+ assertMainPrIdentity(repo,pull,snapshot);
  const {data:merge}=await github.rest.repos.getCommit({...repo,ref:snapshot.sourceSha,request:{...request,signal:AbortSignal.timeout(10_000)}});
  const parents=merge.parents?.map(parent=>parent.sha);
  if(merge.sha!==snapshot.sourceSha||snapshot.baseSha===snapshot.headSha||JSON.stringify(parents)!==JSON.stringify([snapshot.baseSha,snapshot.headSha])||(snapshot.mergeParents!==undefined&&JSON.stringify(snapshot.mergeParents)!==JSON.stringify(parents)))throw new Error('Merge commit ordered parents do not bind the tested main PR source');
@@ -81,7 +88,7 @@ export async function mainPrSourceBindings(github,repo,pull,prior,eventPull){
  for(const snapshot of candidates){
   if(bindings.length>=MAIN_SOURCE_BINDING_LIMIT||bindings.some(value=>value.sourceSha===snapshot.sourceSha&&value.baseSha===snapshot.baseSha)||![snapshot.sourceSha,snapshot.baseSha].every(value=>sha.test(value||'')))continue;
   try{await verifyMainPrSnapshot(github,repo,pull,snapshot,{eventPull});}
-  catch(error){if(!bindings.length)throw error;continue;}
+  catch(error){if(!(error instanceof Error)||!bindings.length)throw error;logGateEvent('Retaining authenticated main PR provenance','canonical-source',error);continue;}
   bindings.push({baseSha:snapshot.baseSha,sourceSha:snapshot.sourceSha});
  }
  return bindings;

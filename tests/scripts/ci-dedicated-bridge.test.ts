@@ -224,3 +224,12 @@ it.each(['Authenticate reviewed controller pin before helper or secret use','Aut
  await expect(new AsyncFunction('github','context','core',step.with.script)(github,context,core)).rejects.toThrow(/branch identity/);
  expect(github.rest.repos.compareCommitsWithBasehead).not.toHaveBeenCalled();expect(core.setOutput).not.toHaveBeenCalled();
 });
+
+it.each(['head','target','draft','closed','labels'])('stands down before waiting for provenance when %s changes after admission',async kind=>{
+ const f=await admit();vi.stubEnv('SNAPSHOT',JSON.stringify(f.outputs));
+ if(kind==='head')f.pull.head.sha='e'.repeat(40);if(kind==='target')f.pull.base.ref='another-parent';if(kind==='draft')f.pull.draft=true;if(kind==='closed')f.pull.state='closed';if(kind==='labels')f.pull.labels=[];
+ f.pull.merge_commit_sha='f'.repeat(40);
+ await execute('Revalidate exact PR snapshot before dispatch',f.github,f.context,f.core);
+ expect(f.outputs.superseded).toBe('true');expect(f.outputs.current).toBeUndefined();
+ expect(f.core.setFailed).not.toHaveBeenCalled();
+});

@@ -80,3 +80,41 @@ it('rejects a stalled transport at the publication deadline even if it ignores a
   await expect(pending).rejects.toThrow(/before dispatch/);
  }finally{vi.useRealTimers();}
 });
+
+it('logs a bounded canonical-source read failure while retaining authenticated history',async()=>{
+ const {vi}=await import('vitest'),{mainPrSourceBindings}=await import('../../scripts/ci/dedicated-main-pr.mjs');
+ const f=stableMainFixture(),prior=JSON.parse(f.provenance.output.summary);f.advance();
+ f.github.rest.repos.getCommit.mockRejectedValue(new Error('https://private.invalid/operator-detail'));
+ const warning=vi.spyOn(console,'warn').mockImplementation(()=>{});
+ try{
+  expect(await mainPrSourceBindings(f.github,repo,f.pull,prior)).toEqual(prior.sourceBindings);
+  expect(warning).toHaveBeenCalledWith(expect.stringMatching(/canonical-source: unexpected Error$/));
+  expect(warning.mock.calls.flat().join(' ')).not.toContain('private.invalid');
+ }finally{warning.mockRestore();}
+});
+
+it('authenticates the recorded controller attempt after a later rerun begins',async()=>{
+ const f=stableMainFixture();f.advance();
+ const get=f.github.rest.actions.getWorkflowRun.getMockImplementation()!;
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async(args:any)=>{const result=await get(args);return{data:{...result.data,run_attempt:2}};});
+ Object.assign(f.github.rest.actions,{getWorkflowRunAttempt:async(args:any)=>({data:{...(await get({run_id:args.run_id})).data,run_attempt:args.attempt_number}})});
+ await expect(verifyCurrentDedicatedSource(f.github,repo,f.snapshot)).resolves.toMatchObject({mergeParents:[pins.base,pins.head]});
+});
+
+it('preserves the earlier-attempt journal when a push controller rebuilds the gate',async()=>{
+ const {reconcileSourceQualification}=await import('../../scripts/ci/dedicated-source-gate.mjs');
+ const f=stableMainFixture();f.advance();f.complete();
+ const get=f.github.rest.actions.getWorkflowRun.getMockImplementation()!;
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async(args:any)=>({data:{...(await get(args)).data,run_attempt:2}}));
+ Object.assign(f.github.rest.actions,{getWorkflowRunAttempt:async(args:any)=>({data:{...(await get({run_id:args.run_id})).data,run_attempt:args.attempt_number}})});
+ await reconcileSourceQualification(f.github,repo,f.origin,{runId:123,runAttempt:2,prNumber:2454,gateAppId:5271502,gateGithub:f.gateGithub});
+ const write=f.gateGithub.rest.checks.update.mock.calls.at(-1)?.[0]??f.gateGithub.rest.checks.create.mock.calls.at(-1)![0];
+ expect(JSON.parse(write.output.summary).sourceBindings).toContainEqual({baseSha:pins.base,sourceSha:pins.source});
+});
+
+it('rejects obsolete workflow-run admission before waiting for historical publication',async()=>{
+ const f=stableMainFixture();f.advance();f.pull.head.sha=pins.advanced;let waited=false;
+ f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[]}});
+ await expect(admitRefreshController(f.github,repo,{action:'requested',workflow_run:f.ci},{provenanceDelay:async()=>{waited=true;}})).rejects.toThrow(/stale/);
+ expect(waited).toBe(false);
+});

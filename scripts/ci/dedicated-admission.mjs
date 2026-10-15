@@ -105,3 +105,5 @@ export {verifyDedicatedLeaseGrant,newestRequestingCiRun} from './dedicated-lease
 export {runDedicatedLeaseSession,dispatchDedicatedLease,validateLeaseRequest,canonicalRequest,verifyLeaseReceipt} from './dedicated-ssh.mjs';
 
 export {reconcileSourceQualification} from './dedicated-source-gate.mjs';
+
+export {assertMainPrIdentity} from './dedicated-main-pr.mjs';

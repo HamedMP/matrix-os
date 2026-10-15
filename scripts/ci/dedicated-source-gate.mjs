@@ -8,7 +8,7 @@ import {readReviewedConfiguration} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
 import {reconcileMainSourceQualification} from './dedicated-main-source-gate.mjs';
 import {logGateEvent} from './gate-log.mjs';
-import {recordedMainSources} from './dedicated-main-provenance.mjs';
+import {recordedMainSources,recordedControllerAttempt} from './dedicated-main-provenance.mjs';
 import {mainPrCoverage,mainPrRequest,mainPrRunSource,mainPrSourceBindings} from './dedicated-main-pr.mjs';
 const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
@@ -38,7 +38,7 @@ async function ownedGate(github,repo,pull,workflow,appId){
   let evidence;try{evidence=JSON.parse(check.output.summary);}catch(error){if(error instanceof SyntaxError)continue;throw error;}
   const runId=Number(check.details_url.slice(prefix.length));
   if(!id(runId)||evidence?.schemaVersion!==1||evidence.prNumber!==pull.number||evidence.controllerRef!=='refs/heads/main'||!sha.test(evidence.controllerSha||'')||!id(evidence.controllerAttempt))continue;
-  const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:runId,request});
+  const run=await recordedControllerAttempt(github,repo,runId,evidence.controllerAttempt);
   if(run.id!==runId||run.run_attempt!==evidence.controllerAttempt||run.workflow_id!==workflow.id||run.path!==path||!['pull_request_target','workflow_run','schedule','push'].includes(run.event)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))continue;
   // Scheduled/main-push definitions must never inherit a candidate-branch
   // run's app identity. PTR metadata describes the live PR head separately.
