@@ -46,9 +46,9 @@ Native Mobile only: the Chats tab and an agent's chat.
   computer it is on) failed. Try again reads the computer again when that is
   what failed, otherwise the chat. The loading state shows again while it
   reads.
-- Send and the keyboard's send key are off until the chat has been read, so a
-  message is never sent against a revision the phone does not know, and while
-  a run is active, which the computer would refuse.
+- Send is off until the chat has been read, so a message is never sent
+  against a revision the phone does not know, and while a run is active,
+  which the computer would refuse.
 
 ### A message that was not sent
 

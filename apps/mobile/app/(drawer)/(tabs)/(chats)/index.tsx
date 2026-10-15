@@ -42,8 +42,8 @@ export default function ChatScreen() {
   } = useCanonicalChatDetail(activeChatId);
   // An open chat is sent to at the revision it was read at, so nothing is
   // sent to it before it has been read -- nor while a run is active, which
-  // the computer would refuse: that holds Retry of a message that was not
-  // sent, and the keyboard's send key, as well as the Send button.
+  // the computer would refuse. Holding sends back holds Retry of a message
+  // that was not sent as well as the Send button.
   const chatUnread = activeChatId !== null && !detail;
   const runActive = activeChatRun(detail) !== undefined;
   const { chats } = useCanonicalChats();
