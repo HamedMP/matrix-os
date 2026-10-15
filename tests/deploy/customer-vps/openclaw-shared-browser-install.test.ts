@@ -277,3 +277,61 @@ it("preserves exact owner-uninstalled config bytes and file identity when plugin
     }
   } finally { await f.close(); }
 });
+
+it("starts the host wrapper after owner uninstall with missing plugins or allowlist without restoring the bridge or changing config bytes", async () => {
+  const { execFile } = await import("node:child_process"); const { promisify } = await import("node:util"); const { chmod } = await import("node:fs/promises");
+  const run = promisify(execFile), f = await fixture(); try {
+    const appDir = join(f.root, "app"), entryDir = join(appDir, "packages/gateway/dist/chat"), prefix = join(f.root, "node"), nodeDir = join(prefix, "bin");
+    await mkdir(entryDir, { recursive: true }); await mkdir(nodeDir, { recursive: true }); await symlink(process.execPath, join(nodeDir, "node"));
+    await writeFile(join(entryDir, "openclaw-shared-browser-plugin-entry.js"), `export const OPENCLAW_SHARED_BROWSER_MANIFEST=${JSON.stringify(OPENCLAW_SHARED_BROWSER_MANIFEST)};`);
+    const native = join(nodeDir, "openclaw"), started = join(f.root, "started");
+    await writeFile(native, `#!/usr/bin/env bash
+set -euo pipefail
+[ ! -e "$OPENCLAW_STATE_DIR/extensions/${ID}/index.mjs" ]
+printf 'started' > '${started}'
+`); await chmod(native, 0o755);
+    const auth = join(f.root, "auth.env"); await writeFile(auth, `OPENCLAW_GATEWAY_TOKEN=${"a".repeat(64)}\n`);
+    const env = { ...process.env, MATRIX_RUNTIME_HOME: f.root, MATRIX_NODE_PREFIX: prefix, OPENCLAW_STATE_DIR: f.stateDir, OPENCLAW_CONFIG_PATH: f.configPath, OPENCLAW_ENV_FILE: auth, OPENCLAW_BIN: native,
+      MATRIX_OPENCLAW_BROWSER_CONFIGURER: resolve("distro/customer-vps/host-bin/matrix-configure-openclaw-shared-browser.mjs"), MATRIX_APP_DIR: appDir, MATRIX_BROWSER_LAB: "true", PORT: "4000", TMPDIR: f.root };
+    await configureOpenClawSharedBrowser(f.options);
+    await rm(join(f.stateDir, "extensions", ID), { recursive: true });
+    for (const plugins of [undefined, {}, { entries: f.initial.plugins.entries }, { load: { paths: [] } }]) {
+      const bytes = Buffer.from(JSON.stringify({ ...f.initial, plugins }, null, 4) + "\n"); await writeFile(f.configPath, bytes);
+      const before = await stat(f.configPath, { bigint: true });
+      await expect(run("bash", ["distro/customer-vps/host-bin/matrix-openclaw-gateway"], { env, timeout: 5_000 })).resolves.toBeDefined();
+      expect(await readFile(started, "utf8")).toBe("started"); await rm(started);
+      await expect(run("bash", ["distro/customer-vps/host-bin/matrix-openclaw-gateway"], { env: { ...env, MATRIX_BROWSER_LAB: "false" }, timeout: 5_000 })).resolves.toBeDefined();
+      await rm(started);
+      expect(await readFile(f.configPath)).toEqual(bytes);
+      const after = await stat(f.configPath, { bigint: true }); expect(after.ino).toBe(before.ino); expect(after.mtimeNs).toBe(before.mtimeNs);
+      await expect(readFile(join(f.stateDir, "extensions", ID, "index.mjs"))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    const pluginPath = join(f.stateDir, "extensions", ID);
+    // Empty native allowlists are nonrestrictive: leftover extension sources must fail closed.
+    for (const leftover of ["directory", "index", "dangling-symlink", "parent-symlink"]) {
+      if (leftover === "parent-symlink") {
+        await rm(join(f.stateDir, "extensions"), { recursive: true });
+        await symlink(join(f.root, "missing-extensions"), join(f.stateDir, "extensions"));
+      } else if (leftover === "dangling-symlink") await symlink(join(f.root, "missing-plugin"), pluginPath);
+      else { await mkdir(pluginPath); if (leftover === "index") await writeFile(join(pluginPath, "index.mjs"), "// leftover"); }
+      const bytes = Buffer.from(JSON.stringify({ ...f.initial, plugins: {} })); await writeFile(f.configPath, bytes);
+      await expect(run("bash", ["distro/customer-vps/host-bin/matrix-openclaw-gateway"], { env, timeout: 5_000 })).rejects.toMatchObject({ code: 3 });
+      await expect(readFile(started)).rejects.toMatchObject({ code: "ENOENT" }); expect(await readFile(f.configPath)).toEqual(bytes);
+      if (leftover === "parent-symlink") { await rm(join(f.stateDir, "extensions")); await mkdir(join(f.stateDir, "extensions")); }
+      else await rm(pluginPath, { recursive: true, force: true });
+    }
+    for (const plugins of [{ allow: null }, { allow: ["foreign"] }, { allow: "invalid" }, { load: { paths: ["/foreign/plugin"] } }]) {
+      const bytes = Buffer.from(JSON.stringify({ ...f.initial, plugins })); await writeFile(f.configPath, bytes);
+      await expect(run("bash", ["distro/customer-vps/host-bin/matrix-openclaw-gateway"], { env, timeout: 5_000 })).rejects.toMatchObject({ code: 3 });
+      await expect(readFile(started)).rejects.toMatchObject({ code: "ENOENT" }); expect(await readFile(f.configPath)).toEqual(bytes);
+    }
+    for (const policy of [{ gateway: { ...f.initial.gateway, bind: "all" } }, { tools: { deny: [] } }]) {
+      const bytes = Buffer.from(JSON.stringify({ ...f.initial, ...policy, plugins: {} })); await writeFile(f.configPath, bytes);
+      await expect(run("bash", ["distro/customer-vps/host-bin/matrix-openclaw-gateway"], { env, timeout: 5_000 })).rejects.toMatchObject({ code: 3 });
+      await expect(readFile(started)).rejects.toMatchObject({ code: "ENOENT" }); expect(await readFile(f.configPath)).toEqual(bytes);
+    }
+    await writeFile(f.configPath, JSON.stringify({ ...f.initial, plugins: {} }));
+    await expect(run("bash", ["distro/customer-vps/host-bin/matrix-openclaw-gateway"], { env: { ...env, MATRIX_OPENCLAW_BROWSER_CONFIGURER: join(f.root, "missing-configurer"), MATRIX_BROWSER_LAB: "false" }, timeout: 5_000 })).rejects.toMatchObject({ code: 3 });
+    await expect(readFile(started)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally { await f.close(); }
+}, 15_000);
