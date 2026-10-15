@@ -156,20 +156,28 @@ describe("shared Chrome broker ownership and takeover",()=>{
     expect(s.gates).toEqual([false,true]);expect(s.broker.status().phase).toBe("human");
     expect((await queued).code).toBe("browser_changed");expect(s.driver.execute).toHaveBeenCalledOnce();await s.broker.close();
   });
-  it("aborts an in-flight download, waits for physical cleanup, and invalidates its queued successor before acknowledging Pause",async()=>{
+  it("aborts and cleans an in-flight download, rejects its queued successor, then resumes the pending tool with a fresh snapshot",async()=>{
     const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);
     const entered=deferred<void>(),cleanup=deferred<void>();let cleanupFinished=false;const order:string[]=[];
     s.driver.execute.mockImplementationOnce(async(_input,signal)=>{
       entered.resolve();await new Promise<void>(resolve=>signal.addEventListener("abort",resolve,{once:true}));
-      order.push("aborted");await cleanup.promise;cleanupFinished=true;order.push("cleaned");throw new SharedBrowserError("browser_unavailable");
+      order.push("aborted");await cleanup.promise;cleanupFinished=true;order.push("cleaned");
+      return{success:false,handoffRequested:true,content:"The original document was preserved for owner review."};
     });
     s.driver.detach.mockImplementationOnce(async()=>{expect(cleanupFinished).toBe(true);order.push("detached");});
-    const download=s.broker.execute(binding,{action:"download",observationId:"obs-1",ref:"r1",documentId:"INV-2"},s.controller.signal).catch(error=>error);
+    let downloadSettled=false;
+    const download=s.broker.execute(binding,{action:"download",observationId:"obs-1",ref:"r1",documentId:"INV-2"},s.controller.signal).finally(()=>{downloadSettled=true;});
     await entered.promise;const queued=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(error=>error);
     let paused=false;const pause=s.broker.control("owner",{action:"pause"}).then(value=>{paused=true;return value;});
     await vi.waitFor(()=>expect(order).toEqual(["aborted"]));expect(paused).toBe(false);cleanup.resolve();
-    expect((await download).code).toBe("browser_changed");expect((await queued).code).toBe("browser_changed");
-    expect(await pause).toMatchObject({phase:"paused"});expect(order).toEqual(["aborted","cleaned","detached"]);expect(s.gates).toEqual([false,false]);await s.broker.close();
+    expect((await queued).code).toBe("browser_changed");expect(await pause).toMatchObject({phase:"paused"});
+    expect(downloadSettled).toBe(false);expect(order).toEqual(["aborted","cleaned","detached"]);expect(s.gates).toEqual([false,false]);
+    expect(s.broker.status()).toMatchObject({phase:"paused",handoff:{content:"The original document was preserved for owner review."}});
+    await s.broker.control("owner",{action:"resume"});
+    expect(await download).toMatchObject({success:true,observationId:"obs-1"});
+    expect((await download).content).toContain("The original document was preserved for owner review.");
+    expect(s.driver.execute.mock.calls.map(call=>(call[0] as {action:string}).action)).toEqual(["snapshot","download","snapshot"]);
+    expect(s.broker.status()).toMatchObject({phase:"agent",needsObservation:false});await s.broker.close();
   });
   it("fails closed and keeps owner input disabled when an aborted action does not finish cleanup before the drain deadline",async()=>{
     const s=setup(),entered=deferred<void>(),never=deferred<void>();let actionSignal:AbortSignal|undefined;
@@ -177,7 +185,18 @@ describe("shared Chrome broker ownership and takeover",()=>{
     const action=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(error=>error);await entered.promise;
     await expect(s.broker.control("owner",{action:"pause"})).rejects.toHaveProperty("code","browser_unavailable");
     expect(actionSignal?.aborted).toBe(true);expect(s.broker.status().phase).toBe("unavailable");expect(s.gates).toEqual([false]);
-    never.resolve();expect((await action).code).toBe("browser_changed");await s.broker.close();
+    never.resolve();expect((await action).code).toBe("run_unavailable");await s.broker.close();
+  });
+  it("releases a paused logical tool wait when the owner stops its run",async()=>{
+    const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);
+    const entered=deferred<void>();
+    s.driver.execute.mockImplementationOnce(async(_input,signal)=>{
+      entered.resolve();await new Promise<void>(resolve=>signal.addEventListener("abort",resolve,{once:true}));
+      return{success:false,handoffRequested:true,content:"Owner review required."};
+    });
+    const action=s.broker.execute(binding,{action:"download",observationId:"obs-1",ref:"r1",documentId:"INV-3"},s.controller.signal).catch(error=>error);
+    await entered.promise;await s.broker.control("owner",{action:"pause"});await s.broker.control("owner",{action:"stop"});
+    expect((await action).code).toBe("run_unavailable");expect(s.broker.status().phase).toBe("idle");expect(s.broker.resolveCapability(s.grant.token)).toBeNull();await s.broker.close();
   });
   it("requires a fresh observation after explicit owner resume",async()=>{
     const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);

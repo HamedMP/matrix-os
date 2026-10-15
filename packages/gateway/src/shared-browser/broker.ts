@@ -15,6 +15,9 @@ export class SharedBrowserError extends Error {
     this.name = "SharedBrowserError";
   }
 }
+class SharedBrowserInterruptedError extends SharedBrowserError {
+  constructor(readonly action:"pause"|"takeover"|"stop",readonly content?:string) { super("browser_changed"); }
+}
 interface Registered { binding: SharedBrowserBinding; signal: AbortSignal; controller: AbortController; expiresAt: number; hash: Buffer; onAbort(): void; closing?:Promise<void>; collectionId:string; artifacts:NonNullable<SharedBrowserActionResult["artifact"]>[] }
 const digest = (value: string) => createHash("sha256").update(value).digest();
 const same = (a:SharedBrowserBinding,b:SharedBrowserBinding) => a.ownerId===b.ownerId && a.chatId===b.chatId && a.runId===b.runId && a.harness===b.harness;
@@ -32,7 +35,8 @@ export function createSharedBrowserBroker(options: {
   let active: Registered | undefined;
   let phase: SharedBrowserState["phase"]="idle", revision=0, needsObservation=true, closed=false;
   let handoff: SharedBrowserState["handoff"];
-  let actionTail:Promise<void>=Promise.resolve(), running:Promise<unknown>|undefined, runningAbort:AbortController|undefined, queued=0;
+  let actionTail:Promise<void>=Promise.resolve(), running:Promise<unknown>|undefined;
+  let runningControl:{controller:AbortController;action?:"pause"|"takeover"|"stop"}|undefined,queued=0;
   let controlTail:Promise<void>=Promise.resolve(), controls=0;
   let waitingResume: { row: Registered; finish(error?:SharedBrowserError):void } | undefined;
   const report=(error:unknown)=>console.warn("[shared-browser] Operation unavailable",error instanceof SharedBrowserError?error.code:"operation_failed");
@@ -52,7 +56,10 @@ export function createSharedBrowserBroker(options: {
     try { await Promise.race([running.catch(report),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new SharedBrowserError("browser_unavailable")),drainMs);})]); }
     catch(error){report(error);throw unavailable();} finally{clearTimeout(timer);}
   }
-  function pauseRunning() { changed("pausing");runningAbort?.abort(); }
+  function pauseRunning(action:"pause"|"takeover"|"stop") {
+    changed("pausing");
+    if(runningControl){runningControl.action=action;runningControl.controller.abort();}
+  }
   function erase(row:Registered) { row.signal.removeEventListener("abort",row.onAbort);row.controller.abort();if(waitingResume?.row===row)waitingResume.finish(new SharedBrowserError("run_unavailable")); }
   function enqueueControl<T>(operation:()=>Promise<T>,cleanup=false):Promise<T> {
     if(!cleanup && controls>=4)throw new SharedBrowserError("browser_busy");
@@ -65,7 +72,7 @@ export function createSharedBrowserBroker(options: {
     if(row.closing)return row.closing;
     erase(row);
     if(active!==row){runs.delete(runId);return;}
-    pauseRunning();
+    pauseRunning("stop");
     row.closing=enqueueControl(async()=>{
       await drain();if(active!==row)return;
       await detach();await gate(true);active=undefined;changed("idle");
@@ -125,8 +132,8 @@ export function createSharedBrowserBroker(options: {
     const result=actionTail.then(async()=>{
       if(registered(binding,signal)!==row)throw new SharedBrowserError("run_unavailable");
       if(admittedRevision!==revision || active && active!==row || active && phase!=="agent")throw new SharedBrowserError("browser_changed");
-      const actionController=new AbortController();
-      runningAbort=actionController;
+      const actionControl={controller:new AbortController(),action:undefined as "pause"|"takeover"|"stop"|undefined};
+      runningControl=actionControl;
       const request=(async()=>{
         if(!active){active=row;changed("resuming");const claimRevision=revision;await gate(false);if(registered(binding,signal)!==row)throw new SharedBrowserError("run_unavailable");
           if(revision!==claimRevision || phase!=="resuming")throw new SharedBrowserError("browser_changed");changed("agent");}
@@ -134,12 +141,17 @@ export function createSharedBrowserBroker(options: {
         if(parsed.data.action==="download" && row.artifacts.length>=64)throw new SharedBrowserError("browser_busy");
         let value:SharedBrowserActionResult;
         try {
-          value=await options.driver.execute(parsed.data,AbortSignal.any([signal,row.signal,row.controller.signal,actionController.signal,AbortSignal.timeout(30_000)]));
-          if(actionController.signal.aborted)throw new SharedBrowserError("browser_changed");
+          value=await options.driver.execute(parsed.data,AbortSignal.any([signal,row.signal,row.controller.signal,actionControl.controller.signal,AbortSignal.timeout(30_000)]));
+          if(actionControl.controller.signal.aborted){
+            const content=!value.success&&value.handoffRequested?value.content:undefined;
+            if(content)handoff={content};
+            throw new SharedBrowserInterruptedError(actionControl.action??"stop",content);
+          }
         } catch(error) {
           // Owner control invalidates this action, but waits for the driver's
           // promise so its physical cleanup finishes before detach is allowed.
-          if(actionController.signal.aborted)throw new SharedBrowserError("browser_changed");
+          if(error instanceof SharedBrowserInterruptedError)throw error;
+          if(actionControl.controller.signal.aborted)throw new SharedBrowserInterruptedError(actionControl.action??"stop");
           throw error;
         }
         if(parsed.data.action==="download" && value.success && value.artifact){
@@ -157,7 +169,7 @@ export function createSharedBrowserBroker(options: {
       let value:SharedBrowserActionResult;
       try {
         try { value=await request; }
-        finally {if(running===request)running=undefined;if(runningAbort===actionController)runningAbort=undefined;}
+        finally {if(running===request)running=undefined;if(runningControl===actionControl)runningControl=undefined;}
       } catch(error) {
         if(error instanceof SharedBrowserError) {
           if(error.code==="browser_unavailable")unavailable();
@@ -181,7 +193,21 @@ export function createSharedBrowserBroker(options: {
       return value;
     }).finally(()=>{queued--;});
     actionTail=result.then(()=>{},report);
-    const value=await result;
+    let value:SharedBrowserActionResult;
+    try { value=await result; }
+    catch(error) {
+      if(!(error instanceof SharedBrowserInterruptedError) || error.action!=="pause")throw error;
+      // Physical cleanup and actionTail are complete. Keep only the logical
+      // tool call pending, so Resume can safely return a fresh observation.
+      const resumedSignal=AbortSignal.any([signal,AbortSignal.timeout(SHARED_BROWSER_ACTION_DEADLINE_MS)]);
+      await controlTail;
+      if(registered(binding,resumedSignal)!==row || active!==row || phase!=="paused")throw new SharedBrowserError("run_unavailable");
+      await awaitResume(row,resumedSignal);await controlTail;
+      if(registered(binding,resumedSignal)!==row || active!==row || status().phase!=="agent")throw new SharedBrowserError("browser_changed");
+      const resumed=await execute(binding,{action:"snapshot"},resumedSignal);
+      if(!error.content)return resumed;
+      return{...resumed,content:[error.content,resumed.content].filter((content):content is string=>Boolean(content)).join("\n\n").slice(0,32_000)};
+    }
     if(value.success || !value.handoffRequested)return value;
     // Keep the native tool call alive while the owner signs in. Wait outside
     // actionTail so Resume can drain/detach; resume observation, never the
@@ -205,7 +231,7 @@ export function createSharedBrowserBroker(options: {
     const {action}=parsed.data;
     if(action==="pause" && !active)throw new SharedBrowserError("run_unavailable");
     // Invalidate queued work immediately, before waiting for the current action.
-    if(action!=="resume")pauseRunning();
+    if(action!=="resume")pauseRunning(action);
     return enqueueControl(async()=>{
       if(closed)throw new SharedBrowserError("run_unavailable");
       await drain();
@@ -230,7 +256,7 @@ export function createSharedBrowserBroker(options: {
   async function close() {
     if(closed)return;closed=true;clearInterval(timer);
     for(const row of runs.values())erase(row);
-    pauseRunning();
+    pauseRunning("stop");
     try{await enqueueControl(async()=>{await drain();await detach();await gate(true);active=undefined;runs.clear();changed("idle");},true);}catch(error){report(error);}
   }
   return{openRun,execute,closeRun,resolveCapability,status,control,ownerOperation,close};
