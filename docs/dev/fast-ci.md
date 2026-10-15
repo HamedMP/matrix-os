@@ -57,6 +57,15 @@ runner leases it over SSH, and PR code runs in a disposable, credential-free
 container. Self-hosted runners on a public repository would let any workflow
 run code on the host.
 
+GitHub may normalize a manually created Linux result check to its own `/runs/`
+URL and attach it to a candidate-head suite that differs from the controller's
+suite. That check is only an index: qualification independently authenticates
+the controller run and current attempt, artifact ownership, and the receipt's
+exact source, requester, lease, image and harness tuple. A successful controller
+that stood down without an artifact cannot borrow an older check, even when
+their attempt numbers match. A genuinely newer failed or pending controller
+still blocks settlement of older success.
+
 ## When Linux fails
 
 - **A real failure** (a failing test or build): fix it and push.

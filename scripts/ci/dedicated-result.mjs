@@ -18,14 +18,13 @@ function parseEvidence(check, expected, latest) {
   if (!positiveId(check.id) || check.name !== 'Dedicated CI Results' || check.head_sha !== expected.headSha ||
       check.app?.slug !== 'github-actions' || !['queued','in_progress','completed'].includes(check.status)) return null;
   const repositoryUrl = `${expected.serverUrl}/${expected.owner}/${expected.repo}`;
-  let runId;
+  let runId,normalized=false;
   if (check.details_url === `${repositoryUrl}/runs/${check.id}`) {
     // GitHub normalizes manually created Actions checks to their own URL.
-    // Bind the index to its workflow run before using the independently
-    // authenticated controller identity. Otherwise an older normalized check
-    // can be mistaken for a later controller that stood down without a result.
-    if (!positiveId(latest?.id) || !positiveId(check.check_suite?.id) ||
-        check.check_suite.id !== latest.check_suite_id) return null;
+    // Its candidate-head suite is not the executing controller's suite. This
+    // provisional index gets no result credit without that run's exact receipt.
+    if (!positiveId(latest?.id)) return null;
+    normalized=true;
     runId = latest.id;
   } else {
     const prefix = `${repositoryUrl}/actions/runs/`;
@@ -48,8 +47,17 @@ function parseEvidence(check, expected, latest) {
       evidence.requestingRunAttempt!==expected.requestingRunAttempt || evidence.imageDigest!==expected.imageDigest ||
       evidence.harnessDigest!==expected.harnessDigest || evidence.mode!==expected.mode ||
       (check.status==='completed'&&((evidence.receiptVerified!==true&&!validInfrastructureProof(evidence)) || !/^[a-f0-9]{64}$/.test(evidence.requestDigest||'') || !/^[a-f0-9]{32}$/.test(evidence.leaseId||'')))) return null;
-  return {...evidence, runId};
+  return {...evidence, runId,normalized};
 }
+
+const artifactName=(expected,attempt)=>`dedicated-qualification-${expected.headSha}-${expected.sourceSha}-${expected.baseSha}-pr${expected.prNumber}-request${expected.requestingRunId}-${expected.requestingRunAttempt}-attempt${attempt}`;
+async function controllerArtifact(github,repo,expected,run){
+ const {data}=await github.rest.actions.listWorkflowRunArtifacts({...repo,run_id:run.id,per_page:100,request});
+ if(!Array.isArray(data.artifacts)||data.artifacts.length>100)throw new Error('Invalid bounded controller artifact inventory');
+ return data.artifacts.find(artifact=>artifact.name===artifactName(expected,run.run_attempt));
+}
+const validArtifact=(artifact,runId)=>artifact&&!artifact.expired&&artifact.workflow_run?.id===runId&&Number.isSafeInteger(artifact.size_in_bytes)&&artifact.size_in_bytes>=1&&artifact.size_in_bytes<=16384;
+const sameArtifact=(a,b)=>a&&b&&a.id===b.id&&a.digest===b.digest&&a.size_in_bytes===b.size_in_bytes&&a.workflow_run?.id===b.workflow_run?.id;
 
 const requestMarker = expected => `dedicated-ci-v2 pr=${expected.prNumber} head=${expected.headSha} base=${expected.baseSha} requested=true`;
 // REST run head_* fields describe the PR candidate, not the executable workflow
@@ -64,10 +72,10 @@ async function newestRequest(github,repo,expected,workflow,beforeId){
  return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow)&&(!beforeId||run.id<beforeId),{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef});
 }
 
-async function newestController(github, repo, expected, workflow, latest) {
+async function newestController(github, repo, expected, workflow, latest,parents,verified) {
   if(!latest)return undefined;
-  // At most 300 checks per poll; authenticate only the newest current-attempt
-  // check for the newest source request, then discard the scoped array.
+  // At most 300 checks per candidate; normalized indexes may share attempts,
+  // so retain bounded candidates until the immutable receipt identifies one.
   const candidates=[];
   for(let page=1;page<=3;page++) {
     const {data}=await github.rest.checks.listForRef({...repo,ref:expected.headSha,per_page:100,page,filter:'all',check_name:'Dedicated CI Results',request});
@@ -77,23 +85,41 @@ async function newestController(github, repo, expected, workflow, latest) {
       const evidence=parseEvidence(check,expected,latest);
       if(evidence?.runId===latest.id && evidence.controllerAttempt===latest.run_attempt)candidates.push({check,evidence});
     }
-    if(candidates.length||checks.length<100)break;
+    if(checks.length<100)break;
     if(page===3)throw new Error('Source check history exceeds bounded coverage');
   }
   candidates.sort((a,b)=>b.check.id-a.check.id);
-  const selected=candidates[0];
+  let selected=candidates[0];
   if(!selected)return undefined;
   const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:latest.id,request});
-  if(!trustedController(run,expected,workflow) || run.id!==latest.id ||
-      run.run_attempt!==selected.evidence.controllerAttempt)return undefined;
+  if(!trustedController(run,expected,workflow) || run.id!==latest.id)throw new Error('Authenticated controller changed during evidence discovery');
+  if(run.run_attempt!==latest.run_attempt||run.status!==latest.status||run.conclusion!==latest.conclusion)return{changed:true,run};
+  if(selected.evidence.normalized&&run.status==='completed'){
+    // A completed stand-down may share an attempt number with an older check.
+    // No artifact means no result from this run, regardless of that check's suite.
+    const provenance=await controllerArtifact(github,repo,expected,run);
+    if(!provenance)return undefined;
+    if(!validArtifact(provenance,run.id))throw new Error('Invalid immutable controller artifact provenance');
+    if(verified?.receipt&&verified.run.id===run.id&&verified.run.run_attempt===run.run_attempt&&!sameArtifact(verified.provenance,provenance))throw new Error('Immutable controller artifact changed during verification');
+    // The receipt is immutable; the final freshness pass can reuse its bytes only
+    // for the same authenticated run/attempt and the identical mutable index.
+    const prior=candidates.find(value=>verified?.receipt&&verified.run.id===run.id&&verified.run.run_attempt===run.run_attempt&&sameArtifact(verified.provenance,provenance)&&value.check.id===verified.check.id&&value.check.status===verified.check.status&&value.check.conclusion===verified.check.conclusion&&value.check.output.summary===verified.check.output.summary);
+    if(prior)return{...prior,run,receipt:verified.receipt,provenance};
+    const receipt=await downloadControllerReceipt(github,repo,provenance);
+    selected=candidates.find(value=>value.evidence.requestDigest===receipt.requestDigest&&value.evidence.leaseId===receipt.leaseId);
+    if(!selected)throw new Error('Immutable controller receipt identity mismatch');
+    verifyControllerArtifact(receipt,selected.evidence,expected,run,parents,selected.check);
+    return{...selected,run,receipt,provenance};
+  }
   return {...selected,run};
 }
 
-async function newestResultController(github,repo,expected,workflow){
+async function newestResultController(github,repo,expected,workflow,parents,verified){
  let latest=await newestRequest(github,repo,expected,workflow);
  for(let skipped=0;latest;skipped++){
   if(latest.status==='completed'&&latest.conclusion!=='success')return{latest};
-  const selected=await newestController(github,repo,expected,workflow,latest);
+  const selected=await newestController(github,repo,expected,workflow,latest,parents,verified);
+  if(selected?.changed)return{latest:selected.run,admitted:true};
   if(selected||latest.status!=='completed')return{latest,selected};
   if(skipped>=9)throw new Error('Completed controller history without result exceeds bounded coverage');
   latest=await newestRequest(github,repo,expected,workflow,latest.id);
@@ -133,32 +159,33 @@ async function waitWithinDeadline(github, expected, options={}) {
     const newest=await newestWorkflowRun(github,repo,ciWorkflow,run=>Boolean(mainPrRequest(run,repo,expected,ciWorkflow)),{kind:'requester',headSha:expected.headSha,headRef:expected.headRef});
     if(!newest||newest.id!==expected.requestingRunId||newest.run_attempt!==expected.requestingRunAttempt||(newest.status==='completed'&&newest.conclusion!=='success'))throw new Error('A newer or failed requesting CI attempt superseded coverage');
   };
+  let controllerAdmitted=false;
   for(let attempt=0;attempt<maxAttempts;attempt++) {
     const currentSource=await verifyCurrentDedicatedSource(github,repo,expected);
     await verifyMainRequester(currentSource);
-    const {latest,selected}=await newestResultController(github,repo,expected,workflow);
+    const {latest,selected,admitted}=await newestResultController(github,repo,expected,workflow,currentSource.mergeParents);
     if(latest?.status==='completed' && latest.conclusion!=='success') {
       throw new Error('Verified dedicated Linux qualification failed');
     }
-    if(!selected&&options.admissionAttempts&&attempt+1>=options.admissionAttempts)throw new Error('No Linux controller admitted within the admission window');
+    // Admission survives a fresh run-state race; it never grants qualification.
+    controllerAdmitted=controllerAdmitted||Boolean(selected)||admitted===true;
+    if(!controllerAdmitted&&options.admissionAttempts&&attempt+1>=options.admissionAttempts)throw new Error('No Linux controller admitted within the admission window');
     if(selected?.run.status==='completed') {
       const {check,evidence,run}=selected;
       if(run.conclusion!=='success' || (check.status==='completed' && check.conclusion!=='success'&&!(check.conclusion==='neutral'&&validInfrastructureProof(evidence)))) {
         throw new Error('Verified dedicated Linux qualification failed');
       }
       if(check.status==='completed') {
-        const artifactName=`dedicated-qualification-${expected.headSha}-${expected.sourceSha}-${expected.baseSha}-pr${expected.prNumber}-request${expected.requestingRunId}-${expected.requestingRunAttempt}-attempt${evidence.controllerAttempt}`;
-        const {data:artifactData}=await github.rest.actions.listWorkflowRunArtifacts({...repo,run_id:evidence.runId,per_page:100,request});
-        const provenance=artifactData.artifacts?.find(artifact=>artifact.name===artifactName);
-        if(provenance && !provenance.expired && provenance.workflow_run?.id===evidence.runId &&
-            Number.isSafeInteger(provenance.size_in_bytes) && provenance.size_in_bytes>=1 && provenance.size_in_bytes<=16384) {
+        const provenance=await controllerArtifact(github,repo,expected,run);
+        if(selected.receipt&&!sameArtifact(selected.provenance,provenance))throw new Error('Immutable controller artifact changed during verification');
+        if(validArtifact(provenance,evidence.runId)) {
           const {data:jobData}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:evidence.runId,per_page:100,filter:'latest',request});
           const dispatch=jobData.jobs?.find(job=>job.name==='benchmark');
           if(dispatch?.status==='completed') {
             if(dispatch.conclusion!=='success')throw new Error('Verified dedicated Linux qualification failed');
-            const receipt=await downloadControllerReceipt(github,repo,provenance);
+            const receipt=selected.receipt??await downloadControllerReceipt(github,repo,provenance);
             const infrastructure=verifyControllerArtifact(receipt,evidence,expected,run,currentSource.mergeParents,check);
-            const {latest:current,selected:currentSelected}=await newestResultController(github,repo,expected,workflow);
+            const {latest:current,selected:currentSelected}=await newestResultController(github,repo,expected,workflow,currentSource.mergeParents,selected);
             if(current?.status==='completed' && current.conclusion!=='success') {
               throw new Error('Verified dedicated Linux qualification failed');
             }
