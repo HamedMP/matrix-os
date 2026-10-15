@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MANAGED_WORKERS_AI_MODELS } from "@matrix-os/contracts";
 import type {
   AiCreditHistoryEntry,
   AiCreditHistoryResponse,
@@ -16,7 +17,7 @@ const historyMoney = new Intl.NumberFormat("en-US", {
 
 const modelNames: Readonly<Record<string, string>> = {
   "anthropic/claude-sonnet-5": "Claude Sonnet 5",
-  "@cf/zai-org/glm-5.3-flash": "GLM 5.3 Flash",
+  ...Object.fromEntries(MANAGED_WORKERS_AI_MODELS.map(model => [model.id, model.displayName])),
 };
 const historyDate = new Intl.DateTimeFormat(undefined, {
   month: "short",

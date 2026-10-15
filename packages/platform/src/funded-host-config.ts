@@ -1,3 +1,4 @@
+import { MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { readUsageWaiverAudit, USAGE_WAIVER_MAX_RECORDS } from "./ai-funded-usage-waiver-audit.js";
 import { getAccountDeletionAdmission } from "./account-deletion/admission.js";
@@ -60,7 +61,7 @@ const RequestSchema = IdentitySchema.extend({
   runtimeTokenEpoch: z.string().regex(/^[1-9][0-9]{0,9}$/).transform(Number).pipe(EpochSchema),
   authorization: z.string().regex(/^Bearer [a-f0-9]{64}$/),
 });
-const SupportedChatModels = ["anthropic/claude-sonnet-5", "@cf/zai-org/glm-5.3-flash"] as readonly string[];
+const SupportedChatModels = ["anthropic/claude-sonnet-5", ...MANAGED_WORKERS_AI_MODEL_IDS] as readonly string[];
 function permittedModels(globalRaw: string, runtimeRaw: string): boolean {
   const models = z.array(z.string().max(128)).max(16);
   const global = models.parse(JSON.parse(globalRaw) as unknown);

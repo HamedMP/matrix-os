@@ -1,3 +1,4 @@
+import { MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import { createSharedFundedProbeCache, fundedProbeCacheKey, SHARED_FUNDED_HEALTH_TTL_MS } from "./ai-funded-shared-probe-cache.js";
 import { sql } from "kysely";
@@ -6,12 +7,13 @@ import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { JevProbeRuntimeSchema, probeOwnerFundedJev, probeWithSignal, cancelProbeBody, type JevProbeRuntime, type JevProbeCredentials } from "./ai-funded-jev-probe.js";
 
-export const FUNDED_PROBE_MODELS = ["@cf/zai-org/glm-5.3-flash", "anthropic/claude-sonnet-5"] as const;
+export const FUNDED_PROBE_MODELS = [...MANAGED_WORKERS_AI_MODEL_IDS, "anthropic/claude-sonnet-5"] as const;
 type FundedProbeModel = typeof FUNDED_PROBE_MODELS[number];
 const MAX_PROBE_RESPONSE_BYTES = 1_024;
 const POSITIVE_TTL_MS = 30_000;
 const NEGATIVE_TTL_MS = 5_000;
-const MAX_PENDING_BUDGET_OPERATIONS = 8;
+// Admit one complete bounded text catalog plus the owner-funded Jev probe.
+const MAX_PENDING_BUDGET_OPERATIONS = Math.max(8, FUNDED_PROBE_MODELS.length + 1);
 const MAX_WAITERS_PER_MODEL = 32;
 const pendingBudgetOperations = new Set<Promise<boolean>>();
 const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough: IsoTimestampSchema }).strict();
