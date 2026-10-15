@@ -109,7 +109,7 @@ export class SlackCompanyRepository {
         .where("event_id", "in", trx.selectFrom("slack_company_inbox").select("id").where("owner_id", "=", this.ownerId))
         .where("state", "=", "sending").where("lease_until", "<", now).execute();
       const row = await trx.selectFrom("slack_company_outbox as outbox").innerJoin("slack_company_inbox as inbox", "inbox.id", "outbox.event_id")
-        .selectAll("outbox").where("inbox.owner_id", "=", this.ownerId).where("outbox.state", "=", "pending").where("outbox.attempts", "<", 3).where((eb)=>eb.or([eb("outbox.lease_until","is",null),eb("outbox.lease_until","<=",now)]))
+        .selectAll("outbox").where("inbox.owner_id", "=", this.ownerId).where("outbox.state", "=", "pending").where("inbox.created_at", ">", new Date(now.getTime()-86400_000)).where("outbox.attempts", "<", 3).where((eb)=>eb.or([eb("outbox.lease_until","is",null),eb("outbox.lease_until","<=",now)]))
         .orderBy("outbox.updated_at", "asc").forUpdate("outbox").skipLocked().limit(1).executeTakeFirst();
       if (!row) return null;
       const outbox = await trx.updateTable("slack_company_outbox").set({ state: "sending", attempts: row.attempts+1, lease: randomUUID(),
@@ -118,9 +118,17 @@ export class SlackCompanyRepository {
       return { outbox, inbox };
     });
   }
-  async replyStatus(eventId: string, lease: string | null, state: "sent" | "pending" | "uncertain" | "failed", messageTs?: string) {
-    await this.db.updateTable("slack_company_outbox").set({ state, message_ts: messageTs ?? null, lease: null, lease_until: state === "pending" ? new Date(this.now().getTime()+30_000) : null, updated_at: this.now() })
-      .where("event_id", "=", eventId).where("lease", "=", lease).execute();
+  async replyStatus(eventId: string, lease: string | null, state: "sent" | "pending" | "uncertain" | "failed", messageTs?: string, retryAfterMs?: number) {
+    const delay = retryAfterMs !== undefined && Number.isFinite(retryAfterMs) ? Math.max(30_000, Math.min(3_600_000, retryAfterMs)) : 30_000;
+    await this.db.updateTable("slack_company_outbox").set({ state, message_ts: messageTs ?? null, lease: null, lease_until: state === "pending" ? new Date(this.now().getTime()+delay) : null, updated_at: this.now() })
+      .where("event_id", "=", eventId).where("lease", "=", lease).where("state", "=", "sending")
+      .where("event_id", "in", this.db.selectFrom("slack_company_inbox").select("id").where("owner_id", "=", this.ownerId)).execute();
+  }
+  async waitForReceipt(eventId: string, lease: string | null) {
+    await this.db.updateTable("slack_company_outbox").set({state:"pending",attempts:sql<number>`GREATEST(attempts - 1, 0)`,
+      lease:null,lease_until:new Date(this.now().getTime()+30_000),updated_at:this.now()})
+      .where("event_id", "=", eventId).where("lease", "=", lease).where("state", "=", "sending")
+      .where("event_id", "in", this.db.selectFrom("slack_company_inbox").select("id").where("owner_id", "=", this.ownerId)).execute();
   }
   async publicationReceipt(appId:string,teamId:string,eventId:string) {
     const id=slackRequestId([appId,teamId,eventId]);
@@ -136,6 +144,9 @@ export class SlackCompanyRepository {
       const now=this.now();
       await trx.updateTable("slack_company_inbox").set({state:"failed",lease:null,lease_until:null,updated_at:now})
         .where("owner_id","=",this.ownerId).where("state","in",["pending","processing","accepted"]).where("created_at","<",new Date(now.getTime()-86400_000)).execute();
+      await trx.updateTable("slack_company_outbox").set({state:"failed",lease:null,lease_until:null,updated_at:now})
+        .where("state", "=", "pending").where("event_id", "in", trx.selectFrom("slack_company_inbox").select("id")
+          .where("owner_id", "=", this.ownerId).where("created_at", "<=", new Date(now.getTime()-86400_000))).execute();
       await trx.deleteFrom("slack_company_inbox").where("owner_id", "=", this.ownerId).where("state", "in", ["completed", "failed"])
         .where("updated_at", "<", new Date(now.getTime()-7*86400_000)).where("id", "not in", trx.selectFrom("slack_company_outbox").select("event_id").where("state", "in", ["pending", "sending"])) .execute();
       await trx.deleteFrom("slack_company_threads").where("owner_id", "=", this.ownerId).where("updated_at", "<", new Date(now.getTime()-30*86400_000))
