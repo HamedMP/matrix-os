@@ -16,7 +16,14 @@ export async function startCodexNativeProviderSession(options) {
       for await (const _chunk of initialized.child.stderr) { /* Never project provider stderr. */ }
       return { ok: true };
     } catch (error) {
-      if (!expectedStop) options.onFailure(error);
+      if (!expectedStop) {
+        // Stream errors are not CodexTransportError; retain safe diagnostics
+        // here while keeping provider bytes, messages and stacks private.
+        const name = error instanceof Error && ["Error", "TypeError", "RangeError", "AbortError", "SystemError"].includes(error.name) ? error.name : "UnknownError";
+        const code = error instanceof Error && ["ECONNRESET", "EPIPE", "ERR_STREAM_PREMATURE_CLOSE", "ERR_STREAM_DESTROYED"].includes(error.code) ? error.code : undefined;
+        console.warn("[coding-agents] Native stderr stream failed", { name, ...(code ? { code } : {}) });
+        options.onFailure(error);
+      }
       return { ok: expectedStop, error };
     }
   })();
