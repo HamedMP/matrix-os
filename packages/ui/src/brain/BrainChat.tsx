@@ -3,15 +3,15 @@
 import {
   useCallback, useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode,
 } from "react";
-import { ExternalLink, PanelLeft } from "lucide-react";
+import { ExternalLink, PanelLeft, TriangleAlert } from "lucide-react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "../chat-agents/client.js";
 import { BrainButton } from "./brain-controls.js";
 import { readRemembered, writeRemembered } from "./brain-memory.js";
-import { BRAIN_TONE } from "./brain-tone.js";
+import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import { brainErrorText } from "./brain-format.js";
 import type { BrainShellClient, BrainShellErrorState } from "./brain-types.js";
-import { BrainEmpty, BrainError, BrainLoading } from "./brain-ui.js";
+import { BRAIN_NOTICE, BrainAlertText, BrainEmpty, BrainError, BrainLoading } from "./brain-ui.js";
 import { BrainChatList, type BrainChatRowActions } from "./BrainChatList.js";
 import { createCompanyBrainBot, findCompanyBrainBot, type CompanyBrainBotState } from "./company-brain-bot.js";
 import { BRAIN_LIST_MAX_ITEMS, useBrainLoad } from "./use-brain-load.js";
@@ -63,11 +63,13 @@ function ChatNotice({ text, onOpenSearch, onOpenSources, onCheckAgain }: {
   readonly onCheckAgain?: () => void;
 }) {
   return (
-    <div className="p-4">
+    <div className="p-5">
       <BrainEmpty title={text}>
-        {onOpenSources && <BrainButton size="sm" variant="outline" onClick={onOpenSources}>Open Sources</BrainButton>}
-        {onCheckAgain && <BrainButton size="sm" variant="outline" onClick={onCheckAgain}>Check again</BrainButton>}
-        {onOpenSearch && <BrainButton size="sm" variant="outline" onClick={onOpenSearch}>Open Search</BrainButton>}
+        <div className="flex flex-wrap gap-2">
+          {onOpenSources && <BrainButton size="sm" variant="outline" onClick={onOpenSources}>Open Sources</BrainButton>}
+          {onCheckAgain && <BrainButton size="sm" variant="outline" onClick={onCheckAgain}>Check again</BrainButton>}
+          {onOpenSearch && <BrainButton size="sm" variant="outline" onClick={onOpenSearch}>Open Search</BrainButton>}
+        </div>
       </BrainEmpty>
     </div>
   );
@@ -104,9 +106,11 @@ function useDraftNotice(api: BrainShellClient, projectId: string, onOpenSources:
     window.addEventListener("focus", listener);
     return () => window.removeEventListener("focus", listener);
   }, []);
-  if (state.status === "loading" || state.status === "idle") return <BrainLoading label="Checking the project's sources..." />;
+  if (state.status === "loading" || state.status === "idle") {
+    return <div className="px-5"><BrainLoading label="Checking the project's sources..." /></div>;
+  }
   if (state.status === "error") {
-    return <div className="p-4"><BrainError error={state.error} onRetry={sources.reload} onOpenSources={onOpenSources} /></div>;
+    return <div className="p-5"><BrainError error={state.error} onRetry={sources.reload} onOpenSources={onOpenSources} /></div>;
   }
   if (missing) {
     return <ChatNotice text={brainErrorText(NO_SOURCES)} onOpenSources={onOpenSources} onCheckAgain={sources.reload} />;
@@ -136,10 +140,13 @@ function BrainChatBot({ host, ...props }: BotProps) {
     );
   };
   const state = bot.state;
-  if (state.status === "loading" || state.status === "idle") return <BrainLoading label="Opening the brain chat..." />;
+  if (state.status === "loading" || state.status === "idle") {
+    return <div className="px-5"><BrainLoading label="Opening the brain chat..." /></div>;
+  }
   if (state.status === "error") {
     return (
-      <div role="alert" className={`m-4 flex flex-wrap items-center gap-3 rounded-md border p-3 text-sm ${BRAIN_TONE.warn}`}>
+      <div role="alert" className={`m-5 ${BRAIN_NOTICE}`}>
+        <TriangleAlert className={`size-4 shrink-0 ${BRAIN_TONE.danger}`} aria-hidden="true" />
         <p className="min-w-0 flex-1">The brain chat could not be opened.</p>
         <BrainButton size="sm" variant="outline" onClick={bot.reload}>Try again</BrainButton>
       </div>
@@ -162,18 +169,18 @@ function BrainChatState({ state, starting, onStart, ...props }: BotProps & {
 function BrainChatSetup({ starting, onStart }: { readonly starting: Starting; readonly onStart: () => void }) {
   const headingId = useId();
   return (
-    <section aria-labelledby={headingId} className={`m-4 grid max-w-lg gap-3 rounded-xl border p-4 ${BRAIN_TONE.border}`}>
-      <h2 id={headingId} className="text-base font-semibold">Chat with your Company Brain</h2>
-      <p className="text-sm">
+    <section aria-labelledby={headingId} className={`m-5 grid max-w-lg gap-3 p-5 ${BRAIN_TONE.card}`}>
+      <h2 id={headingId} className={BRAIN_TYPE.subheading}>Chat with your Company Brain</h2>
+      <p className={BRAIN_TYPE.callout}>
         Ask about a project in plain English. Answers come only from its brain, with a link to every source. Your
         chats are saved and open on every device.
       </p>
-      <p className="text-xs text-muted-foreground">
+      <p className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>
         It picks a model for you (Automatic). You can change the model later in the chat. Answers are billed like any
         Chat.
       </p>
       {starting === "failed" && (
-        <p role="alert" className={`text-sm ${BRAIN_TONE.warnText}`}>The brain chat could not be started. Try again.</p>
+        <BrainAlertText role="alert">The brain chat could not be started. Try again.</BrainAlertText>
       )}
       <BrainButton className="justify-self-start" disabled={starting === "busy"} onClick={onStart}>
         {starting === "busy" ? "Starting..." : "Start"}
@@ -320,7 +327,7 @@ function BrainChatThreads({
   const toggle = useRef<HTMLButtonElement>(null);
   const listId = useId();
   if (threads.notRunning) return <ChatNotice text={NOT_RUNNING} onOpenSearch={onOpenSearch} />;
-  if (current === null) return <BrainLoading label="Loading chats..." />;
+  if (current === null) return <div className="px-5"><BrainLoading label="Loading chats..." /></div>;
   const { chatId } = current;
   const listed = items.find((record) => record.chat.id === chatId)?.chat.title;
   const title = chatId === null ? "New chat" : listed ?? current.title ?? "Chat";
@@ -362,13 +369,13 @@ function BrainChatThreads({
           closeDeleted(id, () => listedNow.current.find((record) => record.chat.id !== id) ?? null);
         }} />
       <div className="flex min-h-0 min-w-0 flex-col">
-        <div className={`flex min-h-11 items-center gap-2 border-b px-2 ${BRAIN_TONE.border}`}>
+        <div className={`flex min-h-13 items-center gap-2 border-b px-3 py-1 ${BRAIN_TONE.border}`}>
           <BrainButton ref={toggle} size="sm" variant="ghost" className="@2xl:hidden" aria-expanded={listOpen}
             aria-controls={listId} onClick={() => setListOpen((value) => !value)}>
             <PanelLeft className="size-4" aria-hidden="true" />
             Chats
           </BrainButton>
-          <p className="min-w-0 flex-1 truncate text-sm font-medium">{title}</p>
+          <p className={`min-w-0 flex-1 truncate px-2 font-semibold ${BRAIN_TYPE.body}`}>{title}</p>
           {chatId !== null && host.openInChat && (
             <BrainButton size="sm" variant="ghost" onClick={() => host.openInChat?.(chatId)}>
               <ExternalLink className="size-4" aria-hidden="true" />
