@@ -106,4 +106,4 @@ export {runDedicatedLeaseSession,dispatchDedicatedLease,validateLeaseRequest,can
 
 export {reconcileSourceQualification} from './dedicated-source-gate.mjs';
 
-export {assertMainPrIdentity} from './dedicated-main-pr.mjs';
+export {assertMainPrIdentity,waitForCurrentMainSource} from './dedicated-main-pr.mjs';

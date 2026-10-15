@@ -58,6 +58,7 @@ export async function waitForMainSourceProvenance(github,repo,snapshot,options={
  const poll=async()=>{
   for(let attempt=0;attempt<12;attempt++){
    aborter.signal.throwIfAborted();
+   await options.assertCurrent?.();
    if(await hasMainSourceProvenance(client,repo,snapshot))return;
    if(attempt<11)await(options.delay??(()=>new Promise((resolve,reject)=>{const stop=()=>{clearTimeout(pause);reject(aborter.signal.reason);};const pause=setTimeout(()=>{aborter.signal.removeEventListener('abort',stop);resolve();},5000);aborter.signal.addEventListener('abort',stop,{once:true});})))();
   }

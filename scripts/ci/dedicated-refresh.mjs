@@ -2,8 +2,7 @@
 // Only data is taken from input; privileged helpers never come from the PR.
 import {resolveMainSource} from './dedicated-main.mjs';
 import {verifyCurrentDedicatedSource,verifyCurrentHostedSource} from './dedicated-admission.mjs';
-import {waitForMainSourceProvenance} from './dedicated-main-provenance.mjs';
-import {mainPrRunSource,assertMainPrIdentity} from './dedicated-main-pr.mjs';
+import {mainPrRunSource,assertMainPrIdentity,waitForCurrentMainSource} from './dedicated-main-pr.mjs';
 const sha=/^[a-f0-9]{40}$/;
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const same=(value,repo)=>typeof value==='string'&&value.toLowerCase()===`${repo.owner}/${repo.repo}`.toLowerCase();
@@ -88,7 +87,7 @@ export async function admitRefreshController(github,repo,event,options={}){
  }
  if(snapshot?.executionMode==='hosted-only')return null;
  if(!snapshot||!authenticatedRequestingRun(run,repo,snapshot,workflow)||!['queued','requested','waiting','pending','in_progress'].includes(run.status))throw new Error('Refresh requester is not currently admitted');
- if(snapshot.sourceKind!=='main'){const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});snapshot.baseRef=pull.base.ref;snapshot.headRef=pull.head.ref;if(snapshot.baseRef==='main')assertMainPrIdentity(repo,pull,snapshot,true);if(run.event==='workflow_dispatch'&&snapshot.baseRef==='main'&&(pull.merge_commit_sha!==snapshot.sourceSha||pull.base.sha!==snapshot.baseSha))await waitForMainSourceProvenance(github,repo,snapshot,{delay:options.provenanceDelay});}
+ if(snapshot.sourceKind!=='main'){const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});snapshot.baseRef=pull.base.ref;snapshot.headRef=pull.head.ref;if(snapshot.baseRef==='main')assertMainPrIdentity(repo,pull,snapshot,true);if(run.event==='workflow_dispatch'&&snapshot.baseRef==='main'&&(pull.merge_commit_sha!==snapshot.sourceSha||pull.base.sha!==snapshot.baseSha))await waitForCurrentMainSource(github,repo,snapshot,{delay:options.provenanceDelay});}
  const current=await verifyCurrentDedicatedSource(github,repo,snapshot);
  snapshot.mergeParents=current.mergeParents;
  return snapshot;

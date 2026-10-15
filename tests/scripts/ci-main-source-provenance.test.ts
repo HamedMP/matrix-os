@@ -118,3 +118,10 @@ it('rejects obsolete workflow-run admission before waiting for historical public
  await expect(admitRefreshController(f.github,repo,{action:'requested',workflow_run:f.ci},{provenanceDelay:async()=>{waited=true;}})).rejects.toThrow(/stale/);
  expect(waited).toBe(false);
 });
+
+it('stands down if the head changes while historical publication is pending',async()=>{
+ const f=stableMainFixture();f.advance();let waits=0;
+ f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[]}});
+ await expect(admitRefreshController(f.github,repo,{action:'requested',workflow_run:f.ci},{provenanceDelay:async()=>{waits++;f.pull.head.sha=pins.advanced;}})).rejects.toThrow(/stale/);
+ expect(waits).toBe(1);
+});

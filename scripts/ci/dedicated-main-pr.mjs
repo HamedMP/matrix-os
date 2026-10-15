@@ -46,7 +46,7 @@ export async function mainPrRunSource(github,repo,run,snapshot,workflow,options=
  const snapshotValue={...value,baseSha:parents[0],mergeParents:parents};
  const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});
  assertMainPrIdentity(repo,pull,snapshotValue,options.waitForProvenance===true);
- if(options.waitForProvenance&&(pull.merge_commit_sha!==snapshotValue.sourceSha||pull.base.sha!==snapshotValue.baseSha))await waitForMainSourceProvenance(github,repo,snapshotValue,{delay:options.provenanceDelay});
+ if(options.waitForProvenance&&(pull.merge_commit_sha!==snapshotValue.sourceSha||pull.base.sha!==snapshotValue.baseSha))await waitForCurrentMainSource(github,repo,snapshotValue,{delay:options.provenanceDelay});
  await verifyMainPrSnapshot(github,repo,pull,snapshotValue);
  return {run,snapshot:snapshotValue};
 }
@@ -92,4 +92,11 @@ export async function mainPrSourceBindings(github,repo,pull,prior,eventPull){
   bindings.push({baseSha:snapshot.baseSha,sourceSha:snapshot.sourceSha});
  }
  return bindings;
+}
+
+export async function waitForCurrentMainSource(github,repo,snapshot,options={}){
+ return waitForMainSourceProvenance(github,repo,snapshot,{delay:options.delay,assertCurrent:async()=>{
+  const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});
+  assertMainPrIdentity(repo,pull,snapshot,true);
+ }});
 }
