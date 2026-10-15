@@ -9,9 +9,9 @@ import unittest
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
-SUITES = ('funded-host-component.test.py', 'funded-host-restoration.test.py',
+SUITES = ('funded-host-epoch.test.py', 'funded-host-component.test.py', 'funded-host-restoration.test.py',
           'funded-host-artifact-repair.test.py', 'funded-host-install-serialization.test.py',
-          'funded-host-generated.test.py', 'funded-host-finalization.test.py')
+          'funded-host-generated.test.py', 'funded-host-generated-epoch.test.py', 'funded-host-finalization.test.py')
 
 
 def require_disposable():

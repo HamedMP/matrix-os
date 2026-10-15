@@ -58,6 +58,20 @@ for current machine identity, owner, activation, slot, credential epoch, policy,
 account deletion and unsettled obligations. This capability performs no grants,
 reservation, probe, settlement or financial recovery.
 
+## Missing local epoch
+
+The protected component can bootstrap an absent local epoch through the separately
+admitted metadata-only `funded-host-epoch` route. It authenticates the installed
+machine-scoped Sync credential against the current database epoch, without a
+caller epoch hint or legacy-token fallback. The ordinary funded-config request
+then uses that authoritative epoch. A distinct version-3 root-only journal
+publishes the absent epoch and four funded assignments together as one atomic
+complete image; no epoch-only intermediate is exposed. Present epochs retain
+the existing four-field path. See [the bootstrap contract](../608-funded-host-epoch-bootstrap/spec.md)
+for exact admission, rollback and verification. This does not repair missing/stale
+Sync credentials, alter epochs in Platform, rotate tokens or authorize maintenance
+without the existing coordinated idle window.
+
 ## Auth and wire contract
 
 `GET /internal/containers/:handle/funded-host-config` requires the existing
