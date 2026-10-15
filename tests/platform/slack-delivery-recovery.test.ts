@@ -127,6 +127,22 @@ describe("Slack delivery recovery and dispatch fences", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect((await db.selectFrom("slack_reply_intents").selectAll().executeTakeFirstOrThrow()).state).toBe("sent");
   });
+  it("retries a rate-limited metadata read without preparing or sending a reply", async () => {
+    await linkEmployee();
+    await app.request("/webhooks/slack/events", signed(envelope(dm)));
+    const fetchImpl = vi.fn().mockResolvedValueOnce(new Response("limited", { status: 429, headers: { "Retry-After": "999999" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, channel: { is_member: true, is_ext_shared: false } })));
+    api.conversationInfo.mockImplementation(createSlackApi({ clientId: config.clientId, clientSecret: config.clientSecret, fetchImpl }).conversationInfo);
+    const limited = await reply();
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toBe("3600");
+    expect(await db.selectFrom("slack_reply_intents").selectAll().execute()).toEqual([]);
+    expect(api.postMessage).not.toHaveBeenCalled();
+    expect((await reply()).status).toBe(200);
+    expect(api.postMessage).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect((await db.selectFrom("slack_reply_intents").selectAll().executeTakeFirstOrThrow()).state).toBe("sent");
+  });
   it("keeps ambiguous provider failures blocked instead of releasing the claim", async () => {
     await linkEmployee(); await app.request("/webhooks/slack/events", signed(envelope(dm)));
     const fetchImpl = vi.fn().mockRejectedValue(new Error("response lost"));

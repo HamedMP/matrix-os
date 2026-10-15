@@ -35,7 +35,15 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
     }
     const { installed, destination } = authorized;
     const token = decryptSlackToken(installed.encryptedBotToken, options.config.tokenEncryptionKey, `${key.appId}:${key.teamId}`);
-    const channel = await options.api.conversationInfo({ token, channelId: destination.channelId });
+    let channel: Awaited<ReturnType<typeof options.api.conversationInfo>>;
+    try {
+      channel = await options.api.conversationInfo({ token, channelId: destination.channelId });
+    } catch (error: unknown) {
+      if (!(error instanceof SlackApiRateLimitError)) throw error;
+      // No publication has been claimed or attempted during this metadata read.
+      c.header("Retry-After", String(error.retryAfterSeconds));
+      return c.json({ error: "Try again later" }, 429);
+    }
     if (!channel.canAccess || channel.isExternalShared) return c.json({ error: "Forbidden" }, 403);
     const claim = await options.repository.claimReply(key, digest);
     if (claim === "sent") {
