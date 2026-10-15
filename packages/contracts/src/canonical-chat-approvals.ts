@@ -57,7 +57,7 @@ export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse,
     approvals.set(identity, {
       id: activity.id, runId: activity.runId, approvalId: activity.approvalId,
       ...(activity.actionDigest ? { actionDigest: activity.actionDigest } : {}),
-      ...canonicalChatApprovalDisplay(activity.title, activity.safeDescription ?? "The agent is waiting for your decision."),
+      ...canonicalChatApprovalDisplay(activity.title, activity.safeDescription ?? "The agent requested your approval."),
       risk: activity.risk, allowedDecisions: activity.allowedDecisions,
       pending: false, timestamp: Date.parse(activity.occurredAt),
     });
