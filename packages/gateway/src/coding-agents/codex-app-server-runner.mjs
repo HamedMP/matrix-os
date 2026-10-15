@@ -365,6 +365,10 @@ let activeTurn = false;
 let activeTurnOutcome;
 let nativeThreadId;
 let activeNativeTurnId;
+// Native session mechanics live in codex-native-provider-session.mjs. This
+// composition guard stays here pending the runner-loop extraction planned in
+// specs/627-browser-vps-comparison/codex-claude-browser.md.
+let renewingNativeTurn = false;
 let activeTurnTokenUsage;
 let activeTurnFailureReason;
 let terminalEventCount = 0;
@@ -1114,8 +1118,16 @@ async function applyControl(control) {
   } else if (control.type === "steer") {
     if (!await steerActiveTurn(control)) return { ok: false };
   } else if (control.type === "interrupt") {
-    if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
-    await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
+    if (!nativeThreadId) return { ok: false };
+    if (!activeNativeTurnId) {
+      if (!renewingNativeTurn) return { ok: false };
+      // The admitted Matrix turn has no native id while its child is renewed.
+      // Stop the runner so it cannot dispatch that turn after reporting abort.
+      userStopped = true;
+      stop();
+    } else {
+      await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
+    }
   } else if (control.type === "defer_input") {
     if (!deferCodexNativeInput(control, pendingInputs, sendProvider)) return { ok: false };
   } else if (control.type === "approval") {
@@ -1466,9 +1478,15 @@ try {
   let firstTurn = true;
   while (turn && !stopping) {
     if (!firstTurn && (currentBrowserLease || turn.browser)) {
-      await nativeSession.close(); startupController.signal.throwIfAborted();
-      await startNativeSession(turn.browser ?? undefined);
+      renewingNativeTurn = true;
+      try {
+        await nativeSession.close(); startupController.signal.throwIfAborted();
+        await startNativeSession(turn.browser ?? undefined);
+      } finally {
+        renewingNativeTurn = false;
+      }
     }
+    if (stopping) break;
     firstTurn = false;
     const outcome = await runTurn(nativeThreadId, turn);
     if (outcome === "failed") exitCode = 1;

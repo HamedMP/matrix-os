@@ -11,6 +11,35 @@ import { codexProviderEventPath } from "../../packages/gateway/src/coding-agents
 async function waitFor(check:()=>Promise<boolean>){const end=Date.now()+6000;while(Date.now()<end){if(await check())return;await new Promise(r=>setTimeout(r,20));}throw new Error("Fixture wait expired");}
 async function stop(child:ChildProcess){if(child.exitCode!==null||child.signalCode!==null)return;const closed=new Promise<void>(r=>child.once("close",()=>r()));child.kill("SIGTERM");await closed;}
 async function readNativeTrace(path:string){let text:string;try{text=await readFile(path,'utf8');}catch(error:unknown){if(error&&typeof error==='object'&&'code' in error&&error.code==='ENOENT')return[];throw error;}const records=text.trim();return records?records.split('\n').map(x=>JSON.parse(x)):[];}
+async function renewalAbortRig(phase:"close"|"start"){
+ const home=await mkdtemp('/tmp/mx-browser-renewal-abort-'),fake=join(home,'native.mjs'),trace=join(home,'trace.jsonl');
+ await writeFile(fake,String.raw`import {createInterface} from 'node:readline';
+import {appendFile,readFile} from 'node:fs/promises';
+const trace=process.env.SYNTHETIC_TRACE,log=async value=>appendFile(trace,JSON.stringify(value)+'\n');
+const prior=await readFile(trace,'utf8').catch(()=>''),generation=(prior.match(/"event":"spawn"/g)?.length??0)+1;
+await log({event:'spawn',generation,pid:process.pid});
+process.on('SIGTERM',async()=>{await log({event:'close_requested',generation});setTimeout(()=>process.exit(0),process.env.SYNTHETIC_PHASE==='close'&&generation===1?1000:0);});
+const reply=(id,result)=>process.stdout.write(JSON.stringify({id,result})+'\n');
+for await(const line of createInterface({input:process.stdin})){
+ const m=JSON.parse(line);
+ if(m.method==='initialize')reply(m.id,{userAgent:'synthetic',platformFamily:'unix',platformOs:'linux',codexHome:'synthetic'});
+ else if(m.method==='thread/start')reply(m.id,{thread:{id:'native-renewal-thread'}});
+ else if(m.method==='thread/resume'){
+  await log({event:'resume_wait',generation});
+  if(process.env.SYNTHETIC_PHASE==='start')setTimeout(()=>reply(m.id,{thread:{id:'native-renewal-thread'}}),1000);
+  else reply(m.id,{thread:{id:'native-renewal-thread'}});
+ }else if(m.method==='mcpServerStatus/list')reply(m.id,{data:[{name:'matrix_shared_browser',runtimeStatus:'connected',tools:{shared_browser:{}}}]});
+ else if(m.method==='turn/start'){
+  await log({event:'turn',generation});reply(m.id,{turn:{id:'native-turn-'+generation}});
+  process.stdout.write(JSON.stringify({method:'turn/completed',params:{turn:{id:'native-turn-'+generation,status:'completed',items:[]}}})+'\n');
+ }
+}`);
+ const event=codexProviderEventPath(home,'sess_renewal_abort'),attemptId=randomUUID();
+ const config=Buffer.from(JSON.stringify({prompt:'First',approvalPolicy:'never',sandbox:'danger-full-access',writableRoots:[],browserAttemptId:attemptId})).toString('base64');
+ const child=spawn(process.execPath,[join(process.cwd(),'packages/gateway/src/coding-agents/codex-app-server-runner.mjs'),event,process.version.slice(1),process.execPath,fake,config],{cwd:home,env:{...process.env,SYNTHETIC_TRACE:trace,SYNTHETIC_PHASE:phase,MATRIX_BACKGROUND_AGENT:'1'},stdio:['ignore','pipe','pipe']});
+ let diagnostics='';child.stderr?.on('data',chunk=>{diagnostics+=chunk});child.stdout?.resume();
+ return{home,trace,child,attemptId,diagnostics:()=>diagnostics};
+}
 it("allows a newly created empty trace while preserving malformed-record failures",async()=>{
  const home=await mkdtemp('/tmp/mx-browser-empty-trace-'),path=join(home,'trace.jsonl');
  try{
@@ -82,4 +111,21 @@ for await(const line of createInterface({input:process.stdin})){
   expect(rows[1].params.config['mcp_servers.matrix_shared_browser'].env_vars).toEqual(['MATRIX_SHARED_BROWSER_TOKEN','MATRIX_SHARED_BROWSER_GATEWAY_PORT']);
  }catch(error){throw new Error('Synthetic native browser regression failed: '+String(error)+' '+diagnostics);}
  finally{await stop(child);await new Promise<void>(r=>gateway.close(()=>r()));await rm(home,{recursive:true,force:true});}
+},15000);
+it.each(["close", "start"] as const)("accepts public cancellation during native child %s renewal and never dispatches the admitted turn",async phase=>{
+ const rig=await renewalAbortRig(phase);const control=createCodexControlClient({homePath:rig.home,timeoutMs:3000});
+ const lease=(attemptId:string)=>({attemptId,token:'a'.repeat(43),gatewayPort:18765});
+ try{
+  await new Promise(resolve=>setTimeout(resolve,100));
+  await control.prepareBrowser!({sessionId:'sess_renewal_abort',browser:lease(rig.attemptId),signal:AbortSignal.timeout(5000)});
+  await waitFor(async()=> (await readNativeTrace(rig.trace)).some(row=>row.event==='turn'&&row.generation===1));
+  await control.submitTurn({sessionId:'sess_renewal_abort',turnId:'turn_renewal_second',prompt:'Must not run',modelOptions:[],browser:lease(randomUUID())});
+  await waitFor(async()=> (await readNativeTrace(rig.trace)).some(row=>row.event===(phase==='close'?'close_requested':'resume_wait')&&row.generation===(phase==='close'?1:2)));
+  await control.interruptTurn({sessionId:'sess_renewal_abort',clientRequestId:`req_abort_${phase}`});
+  await waitFor(async()=>rig.child.exitCode!==null||rig.child.signalCode!==null);
+  expect((await readNativeTrace(rig.trace)).filter(row=>row.event==='turn')).toEqual([
+    expect.objectContaining({generation:1}),
+  ]);
+ }catch(error){throw new Error(`Synthetic ${phase} renewal cancellation failed: ${String(error)} ${rig.diagnostics()} ${JSON.stringify(await readNativeTrace(rig.trace))}`);}
+ finally{await stop(rig.child);await rm(rig.home,{recursive:true,force:true});}
 },15000);
