@@ -171,12 +171,23 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
         const binding = inbound.kind === "mention" ? await options.repository.getChannelBinding(appId, teamId, inbound.channelId) : null;
         if (inbound.kind === "mention" && (!binding || !binding.approvedOutput || binding.organizationId !== activeInstallation.organizationId)) return;
         signal.throwIfAborted();
-        const destination = await options.dispatch({ installation: activeInstallation, link, binding, event: inbound, signal });
-        const ownerId = ActorIdSchema.parse(destination.ownerId);
-        if (inbound.kind === "direct_message" && ownerId !== link.actorId) throw new Error("Slack personal destination mismatch");
-        await options.repository.recordDestination(key, claim.leaseToken, { ownerId, actorId: link.actorId, slackUserId: inbound.userId,
-          organizationId: activeInstallation.organizationId, channelId: inbound.channelId, threadTs: inbound.threadTs ?? inbound.ts, eventTs: inbound.ts,
-          scopeId: binding?.scopeId ?? null, installationGeneration: activeInstallation.generation });
+        const pinned = await options.repository.getEventDestination(key);
+        if (pinned && (!pinned.runtimeId || pinned.actorId !== link.actorId || pinned.organizationId !== activeInstallation.organizationId
+          || pinned.scopeId !== (binding?.scopeId ?? null) || pinned.installationGeneration !== activeInstallation.generation)) return;
+        let destination = pinned;
+        if (!destination) {
+          const resolved = await options.resolveDestination({ installation: activeInstallation, link, binding, event: inbound });
+          const ownerId = ActorIdSchema.parse(resolved.ownerId);
+          if (inbound.kind === "direct_message" && ownerId !== link.actorId) throw new Error("Slack personal destination mismatch");
+          if (!/^[A-Za-z0-9:_-]{1,160}$/.test(resolved.runtimeId)) throw new Error("Slack destination unavailable");
+          destination = { ...key, ownerId, runtimeId: resolved.runtimeId, actorId: link.actorId, slackUserId: inbound.userId,
+            organizationId: activeInstallation.organizationId, channelId: inbound.channelId, threadTs: inbound.threadTs ?? inbound.ts, eventTs: inbound.ts,
+            scopeId: binding?.scopeId ?? null, installationGeneration: activeInstallation.generation };
+          await options.repository.recordDestination(key, claim.leaseToken, destination);
+        }
+        signal.throwIfAborted();
+        const dispatched = await options.dispatch({ installation: activeInstallation, link, binding, event: inbound, destination, signal });
+        if (dispatched.ownerId !== destination.ownerId) throw new Error("Slack destination changed");
       })();
       await options.repository.settleEvent(key, claim.leaseToken, true);
       return c.json({ received: true });

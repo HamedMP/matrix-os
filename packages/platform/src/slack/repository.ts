@@ -168,7 +168,7 @@ export class SlackRepository {
       const now = this.now();
       const leaseToken = randomUUID();
       await trx.insertInto("slack_event_receipts").values({ app_id: key.appId, team_id: key.teamId, event_id: key.eventId,
-        digest, destination_owner_id: null, actor_id: null, slack_user_id: null, organization_id: null, channel_id: null, thread_ts: null, event_ts: null, scope_id: null, installation_generation: null, state: "pending", lease_token: leaseToken, lease_until: now, expires_at: new Date(now.getTime() + RECEIPT_RETENTION_MS) })
+        digest, destination_owner_id: null, destination_runtime_id: null, actor_id: null, slack_user_id: null, organization_id: null, channel_id: null, thread_ts: null, event_ts: null, scope_id: null, installation_generation: null, state: "pending", lease_token: leaseToken, lease_until: now, expires_at: new Date(now.getTime() + RECEIPT_RETENTION_MS) })
         .onConflict((oc) => oc.columns(["app_id", "team_id", "event_id"]).doNothing()).execute();
       const row = await trx.selectFrom("slack_event_receipts").selectAll().where("app_id", "=", key.appId).where("team_id", "=", key.teamId)
         .where("event_id", "=", key.eventId).forUpdate().executeTakeFirstOrThrow();
@@ -185,18 +185,24 @@ export class SlackRepository {
       .where("app_id", "=", key.appId).where("team_id", "=", key.teamId).where("event_id", "=", key.eventId).where("lease_token", "=", leaseToken).execute();
   }
   async recordDestination(key: SlackReceiptKey, leaseToken: string, destination: Omit<SlackReplyDestination, "appId" | "teamId" | "eventId">): Promise<void> {
-    const row = await this.db.updateTable("slack_event_receipts").set({ destination_owner_id: destination.ownerId,
+    const row = await this.db.updateTable("slack_event_receipts").set({ destination_owner_id: destination.ownerId, destination_runtime_id: destination.runtimeId ?? null,
       actor_id: destination.actorId, slack_user_id: destination.slackUserId, organization_id: destination.organizationId,
       channel_id: destination.channelId, thread_ts: destination.threadTs, event_ts: destination.eventTs ?? null, scope_id: destination.scopeId,
       installation_generation: destination.installationGeneration }).where("app_id", "=", key.appId).where("team_id", "=", key.teamId)
-      .where("event_id", "=", key.eventId).where("lease_token", "=", leaseToken).where("state", "=", "pending").returning("event_id").executeTakeFirst();
+      .where("event_id", "=", key.eventId).where("lease_token", "=", leaseToken).where("state", "=", "pending").where("destination_owner_id", "is", null).returning("event_id").executeTakeFirst();
     if (!row) throw new SlackRepositoryError("conflict");
   }
   async getReplyDestination(key: SlackReceiptKey): Promise<SlackReplyDestination | null> {
-    const row = await this.db.selectFrom("slack_event_receipts").selectAll().where("app_id", "=", key.appId).where("team_id", "=", key.teamId)
-      .where("event_id", "=", key.eventId).where("state", "=", "completed").where("expires_at", ">", this.now()).executeTakeFirst();
+    return this.getEventDestination(key, false);
+  }
+  /** Internal retry routing only; reply endpoints still require a completed receipt. */
+  async getEventDestination(key: SlackReceiptKey, includePending = true): Promise<SlackReplyDestination | null> {
+    let query = this.db.selectFrom("slack_event_receipts").selectAll().where("app_id", "=", key.appId).where("team_id", "=", key.teamId)
+      .where("event_id", "=", key.eventId).where("expires_at", ">", this.now());
+    if (!includePending) query = query.where("state", "=", "completed");
+    const row = await query.executeTakeFirst();
     if (!row?.destination_owner_id || !row.actor_id || !row.slack_user_id || !row.organization_id || !row.channel_id || !row.thread_ts || !row.installation_generation) return null;
-    return { ...key, ownerId: row.destination_owner_id, actorId: row.actor_id, slackUserId: row.slack_user_id, organizationId: row.organization_id,
+    return { ...key, ...(row.destination_runtime_id ? {runtimeId:row.destination_runtime_id}:{}), ownerId: row.destination_owner_id, actorId: row.actor_id, slackUserId: row.slack_user_id, organizationId: row.organization_id,
       channelId: row.channel_id, threadTs: row.thread_ts, ...(row.event_ts ? { eventTs: row.event_ts } : {}), scopeId: row.scope_id, installationGeneration: row.installation_generation };
   }
   async claimReply(key: SlackReceiptKey, digest: string): Promise<"claimed" | "sent" | "conflict" | "unknown"> {

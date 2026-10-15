@@ -7,7 +7,7 @@ export interface SlackDatabase {
   slack_link_challenges: { hash: string; app_id: string; team_id: string; slack_user_id: string; expires_at: Date | string; consumed_at: Date | string | null };
   slack_employee_links: { app_id: string; team_id: string; slack_user_id: string; actor_id: string; organization_id: string; created_at: Date | string };
   slack_channel_bindings: { app_id: string; team_id: string; channel_id: string; organization_id: string; scope_id: string; approved_output: boolean; configured_by: string; updated_at: Date | string };
-  slack_event_receipts: { app_id: string; team_id: string; event_id: string; digest: string; state: "pending" | "completed"; lease_token: string; lease_until: Date | string; expires_at: Date | string; destination_owner_id: string | null; actor_id: string | null; slack_user_id: string | null; organization_id: string | null; channel_id: string | null; thread_ts: string | null; event_ts: string | null; scope_id: string | null; installation_generation: number | null };
+  slack_event_receipts: { app_id: string; team_id: string; event_id: string; digest: string; state: "pending" | "completed"; lease_token: string; lease_until: Date | string; expires_at: Date | string; destination_owner_id: string | null; destination_runtime_id: string | null; actor_id: string | null; slack_user_id: string | null; organization_id: string | null; channel_id: string | null; thread_ts: string | null; event_ts: string | null; scope_id: string | null; installation_generation: number | null };
   slack_reply_intents: { app_id: string; team_id: string; event_id: string; digest: string; state: "prepared" | "sent" | "unknown"; delivery_ts: string | null; expires_at: Date | string };
   slack_reaction_intents: { app_id: string; team_id: string; event_id: string; state: "prepared" | "sent" | "unknown" };
 }
@@ -53,6 +53,7 @@ export async function bootstrapSlackDatabase(db: Kysely<SlackDatabase>): Promise
       PRIMARY KEY(app_id,team_id,event_id)
     )`.execute(trx);
     await sql`ALTER TABLE slack_event_receipts ADD COLUMN IF NOT EXISTS event_ts TEXT`.execute(trx);
+    await sql`ALTER TABLE slack_event_receipts ADD COLUMN IF NOT EXISTS destination_runtime_id TEXT`.execute(trx);
     await sql`CREATE TABLE IF NOT EXISTS slack_reply_intents (
       app_id TEXT NOT NULL, team_id TEXT NOT NULL, event_id TEXT NOT NULL, digest TEXT NOT NULL,
       state TEXT NOT NULL CHECK(state IN ('prepared','sent','unknown')), delivery_ts TEXT, expires_at TIMESTAMPTZ NOT NULL,
