@@ -1042,17 +1042,42 @@ jobs:
             }
 
   ci-results:
-    # Drafts and metadata edits publish no CI Results: they must neither replace a
-    # real failed gate with skipped success nor supersede a requesting source run,
-    # and a draft cannot merge, so the absent required check shows as expected,
-    # never red. Their run-name is distinct above.
-    name: ${{ (github.event_name == 'pull_request' && (github.event.pull_request.draft == true || (github.event.action == 'edited' && github.event.changes.base == null))) && 'CI Draft or Metadata (ignored)' || 'CI Results' }}
+    # Every non-draft suite executes this stable required check. Metadata edits
+    # verify earlier exact-source coverage instead of renaming/skipping the job:
+    # GitHub's merge box only considers the latest suite for this workflow.
+    name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft == true) && 'CI Draft (ignored)' || 'CI Results' }}
     needs: [changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
-    if: always() && !(github.event_name == 'pull_request' && (github.event.pull_request.draft == true || (github.event.action == 'edited' && github.event.changes.base == null)))
+    if: always() && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true)
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
     steps:
+      - name: Checkout metadata verification helpers
+        if: github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Verify exact-source coverage after metadata edit
+        if: github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {verifyMetadataCoverage}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/metadata-result.mjs')).href);
+            const pull=context.payload.pull_request;
+            const source={prNumber:pull.number,headSha:pull.head.sha,headRef:pull.head.ref,
+              baseSha:pull.base.sha,baseRef:pull.base.ref,sourceSha:context.sha,headRepository:pull.head.repo.full_name};
+            const result=await verifyMetadataCoverage(github,context.repo,source,context.runId);
+            await core.summary.addRaw(`Metadata edit verified exact-source CI run ${result.runId}, attempt ${result.runAttempt}. No workload was skipped as a substitute for coverage.\n`).write();
       - name: Summarize required CI jobs
+        if: ${{ !(github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) }}
         env:
           CI_TRIGGER_REQUESTED: ${{ needs.changes.outputs.trigger_requested }}
           SHOULD_RUN: ${{ needs.changes.outputs.should_run }}

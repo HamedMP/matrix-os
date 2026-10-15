@@ -37,7 +37,7 @@ import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
-import { managedChatInstances, managedPiChatInstances } from "./managed-chat-catalog.js";
+import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
 import { fundedSelectionError } from "./funded-chat-error.js";
 
@@ -227,6 +227,7 @@ function codingInstance(
     id,
     driverKind,
     displayName: provider.displayName,
+    ...(driverKind === "claude_code" ? { connectionLabel: "Claude subscription" } : {}),
     availability,
     workspaceRequirement: "project_optional",
     models: visibleModels,
@@ -624,16 +625,11 @@ export function createChatProviderCatalogService(options: {
       ? aiProviderResult.value
       : undefined;
     const executableDriverKinds = options.executableDriverKinds;
-    const fundedClaudeExecutable = coding.some((provider) =>
-      codingDriverKind(provider) === "claude_code" && provider.installStatus === "installed")
-      && (executableDriverKinds === undefined || executableDriverKinds.includes("claude_code"));
     const instances = applyHarnessSettings({
       systemRepairAction,
       now: options.now?.() ?? new Date(),
       instances: [
       ...(!selection || scope.managedMatrix ? managedPiChatInstances(aiSnapshot, (options.now?.() ?? new Date()).getTime()) : []),
-      ...managedChatInstances(aiSnapshot, skills, options.now?.().getTime() ?? Date.now(), fundedClaudeExecutable)
-        .filter(instance => instance.id === "claude_code_matrix_included"),
       ...systemInstances,
       ...completeCodingInstances,
       ],
@@ -779,6 +775,9 @@ export function validateChatProviderSelection(input: {
   }
   if (isRetiredMatrixSdkInstance(selection.data.instanceId)) {
     return { ok: false, error: matrixSdkRetirementError() };
+  }
+  if (selection.data.instanceId === "claude_code_matrix_included") {
+    return selectionError("provider_unavailable", "Choose Matrix AI or Claude subscription in a new Chat.", ["start_new_chat"]);
   }
   const instance = input.catalog.instances.find((candidate) =>
     candidate.id === selection.data.instanceId

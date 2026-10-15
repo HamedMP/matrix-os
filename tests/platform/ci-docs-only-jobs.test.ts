@@ -91,13 +91,13 @@ describe('CI job admission for documentation changes', () => {
     expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Results');
   });
 
-  it.each(['title', 'body'])('keeps %s-only edits from publishing a replacement required aggregate', field => {
+  it.each(['title', 'body'])('executes authenticated coverage verification for %s-only edits', field => {
     const github: GitHubFixture = { event_name: 'pull_request', ref: 'refs/pull/1/merge',
       event: { action: 'edited', changes: { [field]: { from: 'previous text' } }, pull_request: { draft: false } } };
-    expect(schedules('ci-results', false, false, false, github)).toBe(false);
-    // A skipped job named CI Results could clear a real failure. Both the
-    // suppression and the distinct check identity must remain in the workflow.
-    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Draft or Metadata (ignored)');
+    expect(schedules('ci-results', false, false, false, github)).toBe(true);
+    // The job runs and verifies a genuine exact-source aggregate; skipped
+    // workload lanes alone cannot establish success.
+    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Results');
     expect(schedules('docs-contract', false, false, false, github)).toBe(false);
     expect(schedules('os-view-parity', false, false, false, github)).toBe(false);
   });
@@ -107,7 +107,7 @@ describe('CI job admission for documentation changes', () => {
     const github: GitHubFixture = { event_name: 'pull_request', ref: 'refs/pull/1/merge',
       event: { action, pull_request: { draft: true } } };
     expect(schedules('ci-results', false, false, false, github)).toBe(false);
-    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Draft or Metadata (ignored)');
+    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Draft (ignored)');
   });
 
   it('accepts intentional source-job skips while keeping the aggregate check', () => {

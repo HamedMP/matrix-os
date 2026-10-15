@@ -310,14 +310,15 @@ describe('CI workflows', () => {
     expect(unknown.output).toContain('trigger_requested=false');
   });
 
-  it('never publishes a CI Results check for drafts or metadata edits', () => {
+  it('omits the required check only for drafts and executes authenticated metadata verification', () => {
     // A draft cannot merge; leaving the required check absent shows "expected", never red.
     const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
     const results = workflow.jobs['ci-results'];
-    const ignored = "(github.event_name == 'pull_request' && (github.event.pull_request.draft == true || (github.event.action == 'edited' && github.event.changes.base == null)))";
-    expect(results.name).toBe(`\${{ ${ignored} && 'CI Draft or Metadata (ignored)' || 'CI Results' }}`);
+    const ignored = "(github.event_name == 'pull_request' && github.event.pull_request.draft == true)";
+    expect(results.name).toBe(`\${{ ${ignored} && 'CI Draft (ignored)' || 'CI Results' }}`);
     expect(results.if).toBe(`always() && !${ignored}`);
-    expect(workflow['run-name']).toContain(`${ignored} && format('CI metadata-v1 · {0}', github.sha)`);
+    expect(results.steps.find(step => step.name === 'Verify exact-source coverage after metadata edit')?.with.script).toContain('verifyMetadataCoverage');
+    expect(results.steps.find(step => step.name === 'Summarize required CI jobs')?.if).toContain("github.event.action == 'edited'");
   });
 
   it('runs every main commit to completion in its own concurrency group', () => {
