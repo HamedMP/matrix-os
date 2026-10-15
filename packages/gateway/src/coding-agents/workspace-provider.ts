@@ -1,5 +1,5 @@
 import { prepareCodexBrowser } from "./codex-browser-bootstrap-client.js";
-import { nativeBrowserExecution } from "../chat/native-browser-execution-context.js";
+import { beginNativeBrowserBootstrap, markNativeBrowserCleanupUnconfirmed, nativeBrowserExecution } from "../chat/native-browser-execution-context.js";
 import { join } from "node:path";
 import { boundedOperation } from "../bounded-operation.js";
 import {
@@ -262,41 +262,51 @@ export function createWorkspaceCodingAgentProvider(
           ...(options.codexControl ? { checkpoint: true } : {}),
         });
       }
+      // Startup may retain an unconfirmed native process before browser binding.
+      // Keep admission tracked through both physical startup and MCP bootstrap.
+      const startup = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
       let result;
       try {
-        result = await options.runtime.startSession({
-          ownerScope: { type: "user", id: principal.userId },
-          request: {
-            sessionId,
-            kind: "agent",
-            agent,
-            prompt: request.prompt,
-            attachments: request.attachments,
-            model: request.model,
-            modelOptions: request.modelOptions,
-            projectSlug: request.projectId,
-            taskId: request.taskId,
-            worktreeId: request.worktreeId,
-            mode: request.mode,
-            approvalPolicy: agent === "codex" && !options.codexControl
-              ? "never"
-              : request.approvalPolicy,
-            sandboxMode: request.sandboxMode,
-            runtimePreference: agent === "codex" && options.codexEvents && options.codexControl ? "background" : "zellij",
-          },
-        });
-      } catch (error: unknown) {
-        options.codexEvents?.unwatch(sessionId);
-        throw error;
-      }
-      if (result.ok && browser) {
-        try { await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control: options.codexControl!, runtime: options.runtime, signal: signal ?? new AbortController().signal }); }
-        catch (error: unknown) { options.codexEvents?.unwatch(sessionId); throw error; }
-      }
-      if (!result.ok) {
-        options.codexEvents?.unwatch(sessionId);
-        throw new Error("Workspace provider start failed");
-      }
+        try {
+          result = await options.runtime.startSession({
+            ownerScope: { type: "user", id: principal.userId },
+            request: {
+              sessionId,
+              kind: "agent",
+              agent,
+              prompt: request.prompt,
+              attachments: request.attachments,
+              model: request.model,
+              modelOptions: request.modelOptions,
+              projectSlug: request.projectId,
+              taskId: request.taskId,
+              worktreeId: request.worktreeId,
+              mode: request.mode,
+              approvalPolicy: agent === "codex" && !options.codexControl
+                ? "never"
+                : request.approvalPolicy,
+              sandboxMode: request.sandboxMode,
+              runtimePreference: agent === "codex" && options.codexEvents && options.codexControl ? "background" : "zellij",
+            },
+          });
+        } catch (error: unknown) {
+          if (browser) markNativeBrowserCleanupUnconfirmed(principal.userId);
+          options.codexEvents?.unwatch(sessionId);
+          throw error;
+        }
+        if (!result.ok && browser && result.error.code === "runtime_ownership_retained") {
+          markNativeBrowserCleanupUnconfirmed(principal.userId);
+        }
+        if (result.ok && browser) {
+          try { await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control: options.codexControl!, runtime: options.runtime, signal: signal ?? new AbortController().signal }); }
+          catch (error: unknown) { options.codexEvents?.unwatch(sessionId); throw error; }
+        }
+        if (!result.ok) {
+          options.codexEvents?.unwatch(sessionId);
+          throw new Error("Workspace provider start failed");
+        }
+
+      } finally { startup?.finish(); }
 
       const terminalRef = terminalRefFor(result.session);
       return {
