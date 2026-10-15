@@ -17,7 +17,7 @@ export async function openOpenClawSharedBrowserRun(options: { broker: SharedBrow
     catch (error: unknown) { console.warn("[shared-browser-openclaw] Native lease cleanup unavailable", error instanceof Error ? error.name : "UnknownError"); }
   })(); }
   try {
-    const result: unknown = await options.rpc.call("matrix.browser.bind", { runId: options.runId, sessionKey: options.sessionKey, ...lease, bindingId },
+    const result: unknown = await options.rpc.call("matrix.browser.bind", { runId: options.runId, sessionKey: options.sessionKey, token: lease.token, expiresAt: lease.expiresAt, bindingId },
       AbortSignal.any([options.signal, AbortSignal.timeout(10_000)]), { timeoutMs: 10_000 });
     if (!result || typeof result !== "object" || !("bound" in result) || result.bound !== true) throw new Error("Native browser tool unavailable");
     options.signal.throwIfAborted(); return { close, markDispatched() { dispatched = true; } };
