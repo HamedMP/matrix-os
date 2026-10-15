@@ -1,7 +1,7 @@
 import type { createGenericNativeWriter, GenericNativeWriterProfile } from "./generic-native-writer.js";
 import type { createHermesSettingsConnection } from "./hermes-settings-auth.js";
 import { nativeWorkflowConnectionOptions } from "./native-workflow-options.js";
-import { authenticatedNativeHarness } from "./native-workflow-account.js";
+import { createClaudeNativeConnectCompletion } from "./claude-native-connect-completion.js";
 import type { createPiSettingsConnection } from "./pi-settings-auth.js";
 import type { createOpenClawSettingsConnection } from "./openclaw-settings-auth.js";
 import type { createOpenCodeSettingsConnection } from "./opencode-settings-auth.js";
@@ -10,7 +10,7 @@ import type { NativeProviderProfileGuard } from "./native-provider-profile-guard
 import type { ProviderKeyVerifier } from "./provider-workflow-key.js";
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3, type ProviderWorkflowStart } from '@matrix-os/contracts';
@@ -120,14 +120,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
     ];
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
       ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
-    const confirmNativeLogin = async (idempotencyKey: string) => {
-      const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
-      const exact = authenticatedNativeHarness(fresh, harness.id, harness.harness);
-      if (!exact) throw new ProviderWorkflowError('unavailable');
-      if (!exact.enabled) await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: exact.id,
-        enabled: true, expectedRevision: fresh.revision,
-        idempotencyKey: `connect-${createHash('sha256').update(idempotencyKey).digest('hex')}` });
-    };
+    const nativeClaudeCompletion = createClaudeNativeConnectCompletion(options.store, harness.id);
     return {
       harnessInstanceId: harness.id, harness: harness.harness, displayName: harness.displayName, installState: harness.installState,
       loginMethods, apiKeyProviders,
@@ -142,29 +135,26 @@ export async function createNativeProviderWorkflowAdapters(options: {
         // Hosted subscription login is permitted only for the native Claude client.
         // V1 and direct adapter callers cannot bypass this provider boundary.
         if (request.kind === 'login' && harness.harness !== 'claude') throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && request.harnessInstanceId !== harness.id) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && (!request.method || !loginMethods.includes(request.method))) throw new ProviderWorkflowNotStartedError();
         if (connectionOption && (connectionOption.availability !== "available" || connectionOption.providerId !== (harness.harness === "claude" ? "anthropic" : "openai"))) throw new ProviderWorkflowNotStartedError();
-        if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription' || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription'
+          || connectionOption.billingKind !== 'subscription' || connectionOption.executionKind !== 'native'
+          || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login') {
+          // No native resource exists during adoption. Register that fact before
+          // a completion can fail after committing; failure must not strand the
+          // workflow admission or fall back to another authentication process.
+          if (await nativeClaudeCompletion.tryAdopt(request.idempotencyKey,
+            () => registerCleanup(async () => {}))) {
+            publish({ state: 'succeeded', safeFailure: null });
+            return { async cancel() {} };
+          }
+        }
         if (request.kind === 'login' && request.method === 'browser') {
           if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
-          return options.claudeBrowserLogin({ publish, registerCleanup, onSuccess: async () => {
-            const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
-            const exact = fresh.harnesses.find(row => row.id === harness.id && row.harness === 'claude');
-            const source = fresh.accessSources.find(row => row.id === 'owner_claude_profile'
-              && row.providerId === 'anthropic' && row.kind === 'provider_account');
-            const account = fresh.accounts.find(row => row.id === source?.accountId
-              && row.providerId === 'anthropic' && row.accessSourceId === source?.id
-              && row.authMethod === 'terminal' && row.authState === 'authenticated');
-            if (!exact || exact.installState !== 'installed' || fresh.access.mode !== 'writable'
-              || !source || !account || exact.route.providerId !== 'anthropic'
-              || !source.eligibleModelIds.includes(exact.route.modelId)) throw new ProviderWorkflowError('unavailable');
-            // Consent selects its exact account even if a saved API-key/Matrix
-            // route was active before login. Do not enable that previous source.
-            if (!options.store.completeClaudeNativeLogin) throw new ProviderWorkflowError('unavailable');
-            await options.store.completeClaudeNativeLogin({ harnessInstanceId: exact.id,
-              expectedRevision: fresh.revision,
-              idempotencyKey: `connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}` });
-          } });
+          return options.claudeBrowserLogin({ publish, registerCleanup,
+            onSuccess: () => nativeClaudeCompletion.complete(request.idempotencyKey) });
         }
         let releaseProfile: (() => void | Promise<void>) | undefined;
         if (request.kind !== "login" && options.profileGuard && (harness.harness === "codex" || harness.harness === "claude")) releaseProfile = await options.profileGuard.acquire(harness.harness, { kind: "write", durable: true });
@@ -312,7 +302,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           }
           try {
             if (request.kind === 'login') {
-              await confirmNativeLogin(request.idempotencyKey);
+              await nativeClaudeCompletion.complete(request.idempotencyKey);
               publish({ state: 'succeeded', safeFailure: null });
               return;
             }
