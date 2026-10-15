@@ -69,7 +69,7 @@ export async function stopChrome({ mainPid, fetch = globalThis.fetch, Socket = g
   const remaining = () => Math.max(1, deadline - now());
   let socket;
   try {
-    const response = await fetch(versionEndpoint, { redirect: 'error', signal: AbortSignal.timeout(Math.min(3000, remaining())) });
+    const response = await fetch(versionEndpoint, { redirect: 'error', signal: AbortSignal.timeout(Math.ceil(Math.min(3000, remaining()))) });
     const version = await readVersion(response);
     socket = await issueClose(validateBrowserSocket(version.webSocketDebuggerUrl), Socket, Math.min(3000, remaining()));
     // Browser.close requests Chrome's normal shutdown/LevelDB flush. An accepted

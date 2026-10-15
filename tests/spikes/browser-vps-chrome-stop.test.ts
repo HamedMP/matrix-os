@@ -32,6 +32,16 @@ describe('Chrome profile-preserving service stop', () => {
     expect(fetch.mock.calls[0][0]).toBe('http://127.0.0.1:9222/json/version');
     expect(fetch.mock.calls[0][1].redirect).toBe('error');
   });
+  it('uses integer abort deadlines with a fractional monotonic clock', async () => {
+    const { options } = rig(); let reads = 0;
+    options.now = () => reads++ === 0 ? 0.25 : 0.5;
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+      expect(Number.isInteger(milliseconds)).toBe(true);
+      return new AbortController().signal;
+    });
+    try { expect(await stopChrome(options)).toEqual({ status: 'gracefully_stopped' }); }
+    finally { timeout.mockRestore(); }
+  });
   it('does not attach or issue Browser.close when systemd main process has already exited', async () => {
     const { options, readProcess, fetch } = rig(); readProcess.mockResolvedValue(null);
     expect(await stopChrome(options)).toEqual({ status: 'already_stopped' });
