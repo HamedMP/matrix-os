@@ -76,23 +76,34 @@ run code on the host.
 
 ## Merging
 
-Merge only when all of these hold for the PR's current head:
+The coordinated main-freshness rollout is described in
+[the policy and rollout plan](../../specs/605-priority-linux-ci/stable-main-qualification.md).
+Until its reviewed helpers are active and the GitHub setting is changed, the
+existing up-to-date requirement still applies. To finish a PR during this
+transition, reserve its next merge slot: avoid other main merges from its final
+branch update until its green CI, peer approval and merge.
 
-- the branch is up to date with `main` (the ruleset requires it);
+After that coordinated cutover, merge only when all of these hold for the PR's current head:
+
 - `CI Results` is green on that exact head;
 - Greptile is `5/5` on that head, or on an earlier head that
   `node scripts/review/review-carryover.mjs check <pr>` accepts (see
   [Review Pipeline](review-pipeline.md#greptile-review-carry-over));
 - no unresolved review threads;
-- one approving review from someone other than the author.
+- one approving review from someone other than the author;
+- GitHub reports no merge conflicts.
 
-Any push dismisses existing approvals, including the `main` merge the
-up-to-date rule forces, so ask for the approval last: update with `main`, wait
-for `CI Results` and the review, then approve and merge.
+A main advance alone then requires no branch push or repeat approval. CI keeps
+the immutable main revision and merge it actually tested; it does not claim
+coverage of subsequent main changes. New commits to the PR still rerun CI and
+dismiss approvals. Non-main stack parents retain strict freshness.
+
+Two independently green changes can interact badly after merging. Keep full
+main CI; if it fails, stop further merges and repair or revert the integration.
 
 Updating a branch with `main` creates a new head, so CI runs again. The
 Greptile review usually carries over (exit `0`): base merges, restacks and
-retargets keep it, new work does not. The GitHub approval never carries over. Merge a standalone PR with
+retargets keep it, new work does not. A new head still dismisses GitHub approval. Merge a standalone PR with
 `gh pr merge <n> --squash --match-head-commit <sha>`, one PR at a time. Stack
 layers merge through the native stack merge in
 [Stacked PRs](stacked-prs.md), never a `gh pr merge` loop.

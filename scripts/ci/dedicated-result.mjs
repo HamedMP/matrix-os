@@ -6,6 +6,7 @@ import {verifyCurrentDedicatedSource} from './dedicated-admission.mjs';
 import {authenticatedControllerRun} from './dedicated-refresh.mjs';
 import {createConditionalGithub} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
+import {mainPrRequest} from './dedicated-main-pr.mjs';
 const workflowPath = '.github/workflows/ci-dedicated.yml';
 const trustedRunPath = value => [workflowPath, `${workflowPath}@main`, `${workflowPath}@refs/heads/main`].includes(value);
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -108,8 +109,19 @@ async function waitWithinDeadline(github, expected, options={}) {
   const repo={owner:expected.owner,repo:expected.repo};
   const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
   if(workflow.path!==workflowPath)throw new Error('Unexpected dedicated controller workflow');
+  let ciWorkflow;
+  const verifyMainRequester=async source=>{
+    if(expected.baseRef!=='main'||expected.sourceKind!==undefined)return;
+    if(!ciWorkflow){
+      ({data:ciWorkflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request}));
+      if(!positiveId(ciWorkflow.id)||ciWorkflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected requesting CI definition');
+    }
+    const newest=await newestWorkflowRun(github,repo,ciWorkflow,run=>Boolean(mainPrRequest(run,repo,expected,ciWorkflow)),{kind:'requester',headSha:expected.headSha,headRef:expected.headRef});
+    if(!newest||newest.id!==expected.requestingRunId||newest.run_attempt!==expected.requestingRunAttempt||(newest.status==='completed'&&newest.conclusion!=='success'))throw new Error('A newer or failed requesting CI attempt superseded coverage');
+  };
   for(let attempt=0;attempt<maxAttempts;attempt++) {
     const currentSource=await verifyCurrentDedicatedSource(github,repo,expected);
+    await verifyMainRequester(currentSource);
     const latest=await newestRequest(github,repo,expected,workflow);
     if(latest?.status==='completed' && latest.conclusion!=='success') {
       throw new Error('Verified dedicated Linux qualification failed');
@@ -140,7 +152,7 @@ async function waitWithinDeadline(github, expected, options={}) {
             // A retry may have been queued while artifacts/jobs were fetched.
             if(current?.id===run.id && current.run_attempt===run.run_attempt &&
                 current.head_sha===run.head_sha && current.status==='completed' && current.conclusion==='success') {
-              await verifyCurrentDedicatedSource(github,repo,expected);
+              await verifyMainRequester(await verifyCurrentDedicatedSource(github,repo,expected));
               options.metrics?.(api.metrics());
               if(infrastructure){if(options.allowInfrastructureFallback!==true)throw new Error('Linux infrastructure unavailable; hosted coverage required');return {runId:evidence.runId,sourceSha:expected.sourceSha,infrastructure};}
               return {runId:evidence.runId,sourceSha:expected.sourceSha};

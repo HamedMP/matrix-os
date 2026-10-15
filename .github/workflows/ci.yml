@@ -1075,7 +1075,7 @@ jobs:
             const source={prNumber:pull.number,headSha:pull.head.sha,headRef:pull.head.ref,
               baseSha:pull.base.sha,baseRef:pull.base.ref,sourceSha:context.sha,headRepository:pull.head.repo.full_name};
             const result=await verifyMetadataCoverage(github,context.repo,source,context.runId);
-            await core.summary.addRaw(`Metadata edit verified exact-source CI run ${result.runId}, attempt ${result.runAttempt}. No workload was skipped as a substitute for coverage.\n`).write();
+            await core.summary.addRaw(`Metadata edit verified tested-source CI run ${result.runId}, attempt ${result.runAttempt}. Tested merge: ${result.sourceSha}; recorded base: ${result.baseSha}. No workload was skipped as a substitute for coverage.\n`).write();
       - name: Summarize required CI jobs
         if: ${{ !(github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) }}
         env:

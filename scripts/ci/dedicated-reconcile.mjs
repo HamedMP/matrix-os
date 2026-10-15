@@ -1,5 +1,5 @@
 // Only the reviewed default controller may revoke its completed child results.
-import {assertDefaultController,liveParentRefSha} from './dedicated-admission.mjs';
+import {assertDefaultController,liveParentRefSha,verifyCurrentDedicatedSource} from './dedicated-admission.mjs';
 const request={timeout:10_000};
 const workflowPath='.github/workflows/ci-dedicated.yml';
 const sha=/^[a-f0-9]{40}$/;
@@ -50,6 +50,10 @@ export async function reconcileDedicatedChildren(github,repo,controller,options=
    if(run.id!==prior.runId||run.workflow_id!==workflow.id||!['pull_request_target','workflow_run'].includes(run.event)||![workflowPath,`${workflowPath}@main`,`${workflowPath}@refs/heads/main`].includes(run.path)||(run.event==='pull_request_target'&&run.head_sha!==prior.headSha)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))continue;
    const {data:live}=await github.rest.pulls.get({...repo,pull_number:listed.number,request});
    if(live.head?.sha!==listed.head.sha||!same(live.head?.repo?.full_name,repo)||!same(live.base?.repo?.full_name,repo))continue;
+   if(eligible(live)&&live.base.ref==='main'&&prior.baseRef==='main'){
+    try{await verifyCurrentDedicatedSource(github,repo,{...prior,headRef:live.head.ref});continue;}
+    catch(error){if(!(error instanceof Error))throw error;console.warn('Main PR qualification cannot be retained:',error.message);}
+   }
    const parentSha=await liveParentRefSha(github,repo,live.base.ref);
    if(eligible(live)&&parentSha===prior.baseSha&&live.base.sha===prior.baseSha&&live.base.ref===prior.baseRef&&live.merge_commit_sha===prior.sourceSha)continue;
    // Revoke only our own source result. CI Source Qualification separately
