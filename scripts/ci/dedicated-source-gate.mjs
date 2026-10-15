@@ -9,7 +9,7 @@ import {newestWorkflowRun} from './dedicated-history.mjs';
 import {reconcileMainSourceQualification} from './dedicated-main-source-gate.mjs';
 import {logGateEvent} from './gate-log.mjs';
 import {recordedMainSources,recordedControllerAttempt} from './dedicated-main-provenance.mjs';
-import {mainPrCoverage,mainPrRequest,mainPrRunSource,mainPrSourceBindings} from './dedicated-main-pr.mjs';
+import {mainPrCoverage,mainPrRequest,mainPrRunSource,mainPrSourceBindings,resolveMainPrSnapshot} from './dedicated-main-pr.mjs';
 const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const sha=/^[a-f0-9]{40}$/;
@@ -118,8 +118,14 @@ export async function reconcileSourceQualification(github,repo,controller,option
   // Main may advance while this generation's exact replacement is running.
   // Prior hosted runs must not choose the new generation's dispatch source.
   if(sameRecovery&&snapshot.baseRef==='main')snapshot={...snapshot,baseSha:old.baseSha,sourceSha:old.sourceSha};
-  let discoveryError,sourceBindings=recordedMainSources(old,snapshot);
-  if(snapshot.baseRef==='main'&&pull.state==='open'&&pull.draft===false)try{sourceBindings=await mainPrSourceBindings(github,repo,pull,old,options.eventPull);}catch(error){if(!(error instanceof Error))throw error;discoveryError=error;}
+  let discoveryError,canonicalMain,sourceBindings=recordedMainSources(old,snapshot);
+  if(snapshot.baseRef==='main'&&pull.state==='open'&&pull.draft===false)try{
+   sourceBindings=await mainPrSourceBindings(github,repo,pull,old,options.eventPull);
+   const binding=sourceBindings.find(value=>value.sourceSha===pull.merge_commit_sha);
+   if(binding)canonicalMain={baseSha:binding.baseSha,sourceSha:binding.sourceSha,mergeParents:[binding.baseSha,pull.head.sha]};
+   else if(admitted||recovery)canonicalMain=await resolveMainPrSnapshot(github,repo,pull);
+   if(canonicalMain&&!sameRecovery)snapshot={...snapshot,baseSha:canonicalMain.baseSha,sourceSha:canonicalMain.sourceSha,mergeParents:canonicalMain.mergeParents};
+  }catch(error){if(!(error instanceof Error))throw error;discoveryError=error;}
   const evidence={schemaVersion:1,admittedPreviously:previouslyAdmitted||admitted,...snapshot,...(sourceBindings.length?{sourceBindings}:{}),controllerSha:controller.sha,controllerRef:controller.ref,controllerAttempt:options.runAttempt};
   // Keep the authenticated generation while source/API validation fails closed.
   // Otherwise its already-running hosted replacement becomes older than itself.
@@ -157,7 +163,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
     evidence.recoveryStartedAt=sameRecovery&&!delegatedAgain?old.recoveryStartedAt:new Date(Math.floor(Date.now()/1000)*1000).toISOString();
     evidence.recoveryAfterRunId=sameRecovery&&!delegatedAgain?old.recoveryAfterRunId:latest?.id??0;
     if(delegatedAgain){
-     snapshot={...snapshot,baseSha:pull.base.sha,sourceSha:pull.merge_commit_sha};
+     snapshot={...snapshot,baseSha:canonicalMain?.baseSha??pull.base.sha,sourceSha:pull.merge_commit_sha};
      delete snapshot.mergeParents;
      Object.assign(evidence,snapshot);
      delete evidence.mergeParents;

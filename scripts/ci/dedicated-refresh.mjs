@@ -57,7 +57,11 @@ export function authenticatedControllerRun(run,repo,value,workflow,headRef){
   if(run.head_branch==='main'&&sha.test(run.head_sha||'')&&run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=CI`)return true;
   return ((run.head_branch==='main'&&sha.test(run.head_sha||''))||(run.head_branch===headRef&&run.head_sha===value.headSha))&&[refreshMarker(value),`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`].some(title=>run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=${title}`);
  }
- return run.event==='pull_request_target'&&run.head_sha===value.headSha&&run.head_branch===headRef&&run.display_title===`dedicated-ci-v2 pr=${value.prNumber} head=${value.headSha} base=${value.baseSha} requested=true`;
+ const marker=typeof run.display_title==='string'&&run.display_title.match(/^dedicated-ci-v2 pr=([1-9][0-9]{0,5}) head=([a-f0-9]{40}) base=([a-f0-9]{40}) requested=true$/);
+ // The native PTR title records GitHub's stored event base, which can lag the
+ // canonical merge's actual parent. Exact source/parents are verified separately
+ // at admission, grant and receipt validation; non-main markers stay exact.
+ return run.event==='pull_request_target'&&run.head_sha===value.headSha&&run.head_branch===headRef&&!!marker&&Number(marker[1])===value.prNumber&&marker[2]===value.headSha&&(value.baseRef==='main'||marker[3]===value.baseSha);
 }
 const TITLE_POLLS=12;
 const titleDelay=()=>new Promise(resolve=>setTimeout(resolve,10_000));
@@ -87,7 +91,7 @@ export async function admitRefreshController(github,repo,event,options={}){
  }
  if(snapshot?.executionMode==='hosted-only')return null;
  if(!snapshot||!authenticatedRequestingRun(run,repo,snapshot,workflow)||!['queued','requested','waiting','pending','in_progress'].includes(run.status))throw new Error('Refresh requester is not currently admitted');
- if(snapshot.sourceKind!=='main'){const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});snapshot.baseRef=pull.base.ref;snapshot.headRef=pull.head.ref;if(snapshot.baseRef==='main')assertMainPrIdentity(repo,pull,snapshot,true);if(run.event==='workflow_dispatch'&&snapshot.baseRef==='main'&&(pull.merge_commit_sha!==snapshot.sourceSha||pull.base.sha!==snapshot.baseSha))await waitForCurrentMainSource(github,repo,snapshot,{delay:options.provenanceDelay});}
+ if(snapshot.sourceKind!=='main'){const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});snapshot.baseRef=pull.base.ref;snapshot.headRef=pull.head.ref;if(snapshot.baseRef==='main')assertMainPrIdentity(repo,pull,snapshot,true);if(run.event==='workflow_dispatch'&&snapshot.baseRef==='main'&&pull.merge_commit_sha!==snapshot.sourceSha)await waitForCurrentMainSource(github,repo,snapshot,{delay:options.provenanceDelay});}
  const current=await verifyCurrentDedicatedSource(github,repo,snapshot);
  snapshot.mergeParents=current.mergeParents;
  return snapshot;
