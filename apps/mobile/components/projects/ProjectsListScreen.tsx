@@ -16,6 +16,7 @@ import {
   TopBar,
   TopBarButton,
 } from "@/components/ui";
+import { withRefreshTap } from "@/lib/haptics";
 
 import type { ProjectRow } from "./project-rows";
 
@@ -77,7 +78,7 @@ export function ProjectsListScreen({
             data={rows}
             keyExtractor={(row) => row.id}
             refreshing={refreshing}
-            onRefresh={onRefresh}
+            onRefresh={withRefreshTap(onRefresh)}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             contentContainerStyle={styles.list}

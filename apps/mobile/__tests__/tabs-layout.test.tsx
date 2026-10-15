@@ -1,9 +1,11 @@
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { Platform } from "react-native";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import { AccessibilityInfo, Platform } from "react-native";
 
 import TabsLayout from "../app/(drawer)/(tabs)/_layout";
 import { TAB_BAR_HIDDEN_ROUTES } from "../lib/tab-bar-visibility";
+
+import { resetReduceMotion } from "./ui-test-utils";
 
 const registeredTabs: string[] = [];
 let tabsProps: {
@@ -64,6 +66,7 @@ describe("tabs layout", () => {
   const realHiddenRoutes = { ...TAB_BAR_HIDDEN_ROUTES };
 
   beforeEach(() => {
+    resetReduceMotion();
     registeredTabs.length = 0;
     tabsProps = {};
     mockKeyboardVisible = false;
@@ -86,6 +89,17 @@ describe("tabs layout", () => {
       headerShown: false,
       sceneStyle: { backgroundColor: "#FFFEFC" },
     });
+  });
+
+  it("shifts the screens a little as the tabs change, and cross-fades them under reduced motion", async () => {
+    render(<TabsLayout />);
+    expect(tabsProps.screenOptions).toMatchObject({ animation: "shift" });
+    cleanup();
+
+    jest.mocked(AccessibilityInfo.isReduceMotionEnabled).mockResolvedValue(true);
+    render(<TabsLayout />);
+    await act(async () => {});
+    expect(tabsProps.screenOptions).toMatchObject({ animation: "fade" });
   });
 
   it("draws the tab bar with the focused tab active and no Agents badge", () => {
