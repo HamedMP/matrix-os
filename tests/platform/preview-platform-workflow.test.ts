@@ -63,6 +63,16 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("PLATFORM_SPEECH_ENABLED=true");
     expect(workflow).toContain("PLATFORM_SPEECH_PROVIDER=openai");
     expect(workflow).toContain("PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe");
+    expect(workflow).toContain("PLATFORM_SPEECH_MICROUSD_PER_MINUTE=3000");
+    expect(workflow).toContain("PLATFORM_SPEECH_FUNDING_SOURCES=promotional");
+    expect(workflow).toContain("PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD=1000000");
+    expect(workflow).toContain("PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD=1000000");
+    expect(workflow).toContain("PLATFORM_AOEDE_LIVE_ENABLED=true");
+    expect(workflow).toContain("PLATFORM_AOEDE_LIVE_MODEL=gpt-live-1");
+    expect(workflow).toContain("PLATFORM_AOEDE_LIVE_VOICE=marin");
+    expect(workflow).toContain("PLATFORM_AOEDE_LIVE_POLICY_REVISION=aoede-live-2026-10-13-v1");
+    expect(workflow).toContain("PLATFORM_AOEDE_LIVE_MICROUSD_PER_MINUTE=50000");
+    expect(workflow).toContain("PLATFORM_AOEDE_LIVE_MAX_DURATION_MS=600000");
     expect(workflow).toContain("PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest");
     expect(workflow).toContain("PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest");
     expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_ORIGIN");
@@ -71,8 +81,9 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID");
     expect(workflow).toContain("MATRIX_PREVIEW_RUNTIME");
     expect(workflow).toContain("systemctl\",\"restart\",\"matrix-gateway.service");
-    expect(workflow).toContain("PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25");
-    expect(workflow).toContain("PLATFORM_SPEECH_PREVIEW_NOT_AFTER");
+    expect(workflow).not.toContain("PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true");
+    expect(workflow).not.toContain("PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME");
+    expect(workflow).not.toContain("PLATFORM_SPEECH_PREVIEW_NOT_AFTER");
     expect(workflow).toContain("preview-runtime-route.json");
     expect(workflow).not.toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
     expect(workflow).not.toContain("openssl pkeyutl -decrypt");
