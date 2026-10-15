@@ -148,13 +148,36 @@ describe("shared Chrome broker ownership and takeover",()=>{
   it("drains an in-flight action before takeover and rejects its old queued successor",async()=>{
     const s=setup(); const started=deferred<void>();const completed=deferred<{success:boolean,observationId:string,content:string}>();
     s.driver.execute.mockImplementationOnce(async()=>{started.resolve();return completed.promise;});
-    const first=s.broker.execute(binding,{action:"snapshot"},s.controller.signal);await started.promise;
+    const first=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(error=>error);await started.promise;
     const queued=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(e=>e);
     const takeover=s.broker.control("owner",{action:"takeover"});
     expect(s.broker.status().phase).toBe("pausing"); expect(s.gates).toEqual([false]);
-    completed.resolve({success:true,observationId:"old-obs",content:"Invoices"});await first;await takeover;
+    completed.resolve({success:true,observationId:"old-obs",content:"Invoices"});expect((await first).code).toBe("browser_changed");await takeover;
     expect(s.gates).toEqual([false,true]);expect(s.broker.status().phase).toBe("human");
     expect((await queued).code).toBe("browser_changed");expect(s.driver.execute).toHaveBeenCalledOnce();await s.broker.close();
+  });
+  it("aborts an in-flight download, waits for physical cleanup, and invalidates its queued successor before acknowledging Pause",async()=>{
+    const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);
+    const entered=deferred<void>(),cleanup=deferred<void>();let cleanupFinished=false;const order:string[]=[];
+    s.driver.execute.mockImplementationOnce(async(_input,signal)=>{
+      entered.resolve();await new Promise<void>(resolve=>signal.addEventListener("abort",resolve,{once:true}));
+      order.push("aborted");await cleanup.promise;cleanupFinished=true;order.push("cleaned");throw new SharedBrowserError("browser_unavailable");
+    });
+    s.driver.detach.mockImplementationOnce(async()=>{expect(cleanupFinished).toBe(true);order.push("detached");});
+    const download=s.broker.execute(binding,{action:"download",observationId:"obs-1",ref:"r1",documentId:"INV-2"},s.controller.signal).catch(error=>error);
+    await entered.promise;const queued=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(error=>error);
+    let paused=false;const pause=s.broker.control("owner",{action:"pause"}).then(value=>{paused=true;return value;});
+    await vi.waitFor(()=>expect(order).toEqual(["aborted"]));expect(paused).toBe(false);cleanup.resolve();
+    expect((await download).code).toBe("browser_changed");expect((await queued).code).toBe("browser_changed");
+    expect(await pause).toMatchObject({phase:"paused"});expect(order).toEqual(["aborted","cleaned","detached"]);expect(s.gates).toEqual([false,false]);await s.broker.close();
+  });
+  it("fails closed and keeps owner input disabled when an aborted action does not finish cleanup before the drain deadline",async()=>{
+    const s=setup(),entered=deferred<void>(),never=deferred<void>();let actionSignal:AbortSignal|undefined;
+    s.driver.execute.mockImplementationOnce(async(_input,signal)=>{actionSignal=signal;entered.resolve();await never.promise;return{success:true,observationId:"late"};});
+    const action=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(error=>error);await entered.promise;
+    await expect(s.broker.control("owner",{action:"pause"})).rejects.toHaveProperty("code","browser_unavailable");
+    expect(actionSignal?.aborted).toBe(true);expect(s.broker.status().phase).toBe("unavailable");expect(s.gates).toEqual([false]);
+    never.resolve();expect((await action).code).toBe("browser_changed");await s.broker.close();
   });
   it("requires a fresh observation after explicit owner resume",async()=>{
     const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);
@@ -192,10 +215,10 @@ describe("shared Chrome broker ownership and takeover",()=>{
   it("keeps owner input disabled if an in-flight action cannot be drained",async()=>{
     const s=setup();const started=deferred<void>(); const never=deferred<{success:boolean,observationId:string,content:string}>();
     s.driver.execute.mockImplementationOnce(async()=>{started.resolve();return never.promise;});
-    const first=s.broker.execute(binding,{action:"snapshot"},s.controller.signal);await started.promise;
+    const first=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(error=>error);await started.promise;
     await expect(s.broker.control("owner",{action:"takeover"})).rejects.toHaveProperty("code","browser_unavailable");
     expect(s.gates).toEqual([false]);expect(s.broker.status().phase).toBe("unavailable");
-    never.resolve({success:true,observationId:"late",content:"late"});await first;await s.broker.close();
+    never.resolve({success:true,observationId:"late",content:"late"});expect((await first).code).toBe("browser_changed");await s.broker.close();
   });
   it("drains an agent claim still waiting for the input gate before acknowledging takeover",async()=>{
     const entered=deferred<void>();const release=deferred<void>();const gates:boolean[]=[];

@@ -32,7 +32,7 @@ export function createSharedBrowserBroker(options: {
   let active: Registered | undefined;
   let phase: SharedBrowserState["phase"]="idle", revision=0, needsObservation=true, closed=false;
   let handoff: SharedBrowserState["handoff"];
-  let actionTail:Promise<void>=Promise.resolve(), running:Promise<unknown>|undefined, queued=0;
+  let actionTail:Promise<void>=Promise.resolve(), running:Promise<unknown>|undefined, runningAbort:AbortController|undefined, queued=0;
   let controlTail:Promise<void>=Promise.resolve(), controls=0;
   let waitingResume: { row: Registered; finish(error?:SharedBrowserError):void } | undefined;
   const report=(error:unknown)=>console.warn("[shared-browser] Operation unavailable",error instanceof SharedBrowserError?error.code:"operation_failed");
@@ -52,6 +52,7 @@ export function createSharedBrowserBroker(options: {
     try { await Promise.race([running.catch(report),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new SharedBrowserError("browser_unavailable")),drainMs);})]); }
     catch(error){report(error);throw unavailable();} finally{clearTimeout(timer);}
   }
+  function pauseRunning() { changed("pausing");runningAbort?.abort(); }
   function erase(row:Registered) { row.signal.removeEventListener("abort",row.onAbort);row.controller.abort();if(waitingResume?.row===row)waitingResume.finish(new SharedBrowserError("run_unavailable")); }
   function enqueueControl<T>(operation:()=>Promise<T>,cleanup=false):Promise<T> {
     if(!cleanup && controls>=4)throw new SharedBrowserError("browser_busy");
@@ -64,7 +65,7 @@ export function createSharedBrowserBroker(options: {
     if(row.closing)return row.closing;
     erase(row);
     if(active!==row){runs.delete(runId);return;}
-    changed("pausing");
+    pauseRunning();
     row.closing=enqueueControl(async()=>{
       await drain();if(active!==row)return;
       await detach();await gate(true);active=undefined;changed("idle");
@@ -124,12 +125,23 @@ export function createSharedBrowserBroker(options: {
     const result=actionTail.then(async()=>{
       if(registered(binding,signal)!==row)throw new SharedBrowserError("run_unavailable");
       if(admittedRevision!==revision || active && active!==row || active && phase!=="agent")throw new SharedBrowserError("browser_changed");
+      const actionController=new AbortController();
+      runningAbort=actionController;
       const request=(async()=>{
         if(!active){active=row;changed("resuming");const claimRevision=revision;await gate(false);if(registered(binding,signal)!==row)throw new SharedBrowserError("run_unavailable");
           if(revision!==claimRevision || phase!=="resuming")throw new SharedBrowserError("browser_changed");changed("agent");}
         if(needsObservation && ["click","type","select","wait","download"].includes(parsed.data.action))throw new SharedBrowserError("observe_again");
         if(parsed.data.action==="download" && row.artifacts.length>=64)throw new SharedBrowserError("browser_busy");
-        const value=await options.driver.execute(parsed.data,AbortSignal.any([signal,row.signal,row.controller.signal,AbortSignal.timeout(30_000)]));
+        let value:SharedBrowserActionResult;
+        try {
+          value=await options.driver.execute(parsed.data,AbortSignal.any([signal,row.signal,row.controller.signal,actionController.signal,AbortSignal.timeout(30_000)]));
+          if(actionController.signal.aborted)throw new SharedBrowserError("browser_changed");
+        } catch(error) {
+          // Owner control invalidates this action, but waits for the driver's
+          // promise so its physical cleanup finishes before detach is allowed.
+          if(actionController.signal.aborted)throw new SharedBrowserError("browser_changed");
+          throw error;
+        }
         if(parsed.data.action==="download" && value.success && value.artifact){
           row.artifacts.push(value.artifact);
           if(options.exportArtifacts)try{value.collectionManifest=await options.exportArtifacts(row.collectionId,[...row.artifacts]);}
@@ -145,7 +157,7 @@ export function createSharedBrowserBroker(options: {
       let value:SharedBrowserActionResult;
       try {
         try { value=await request; }
-        finally {if(running===request)running=undefined;}
+        finally {if(running===request)running=undefined;if(runningAbort===actionController)runningAbort=undefined;}
       } catch(error) {
         if(error instanceof SharedBrowserError) {
           if(error.code==="browser_unavailable")unavailable();
@@ -193,7 +205,7 @@ export function createSharedBrowserBroker(options: {
     const {action}=parsed.data;
     if(action==="pause" && !active)throw new SharedBrowserError("run_unavailable");
     // Invalidate queued work immediately, before waiting for the current action.
-    if(action!=="resume")changed("pausing");
+    if(action!=="resume")pauseRunning();
     return enqueueControl(async()=>{
       if(closed)throw new SharedBrowserError("run_unavailable");
       await drain();
@@ -218,7 +230,7 @@ export function createSharedBrowserBroker(options: {
   async function close() {
     if(closed)return;closed=true;clearInterval(timer);
     for(const row of runs.values())erase(row);
-    changed("pausing");
+    pauseRunning();
     try{await enqueueControl(async()=>{await drain();await detach();await gate(true);active=undefined;runs.clear();changed("idle");},true);}catch(error){report(error);}
   }
   return{openRun,execute,closeRun,resolveCapability,status,control,ownerOperation,close};
