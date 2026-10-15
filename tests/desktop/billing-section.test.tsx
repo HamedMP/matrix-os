@@ -228,9 +228,9 @@ describe("desktop billing settings", () => {
     const activeCheckout = {
       status: "open",
       planSlug: "matrix_starter",
-      interval: "monthly",
+      interval: "annual",
       regionSlug: "region_nbg1",
-      developerTools: ["codex"],
+      developerTools: ["codex", "pi"],
     };
     const api = makeApi({
       access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
@@ -248,12 +248,14 @@ describe("desktop billing settings", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Resume checkout/i })).not.toBeNull());
     expect((screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement).value).toBe("matrix_starter");
     expect((screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByText("Annual")).not.toBeNull();
+    expect(screen.getByText("Codex, Pi")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Resume checkout/i }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/billing/checkout", {
       planSlug: "matrix_starter",
-      interval: "monthly",
+      interval: "annual",
       regionSlug: "region_nbg1",
-      developerTools: ["codex"],
+      developerTools: ["codex", "pi"],
     }));
     expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
       url: "https://checkout.stripe.test/resume",
@@ -264,6 +266,38 @@ describe("desktop billing settings", () => {
       "/billing/checkout/abandon",
       { runtimeSlot: "primary" },
     ));
+  });
+
+  it("refreshes checkout recovery after opening Stripe and when the app regains focus", async () => {
+    const noBilling = {
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+      activeCheckout: null,
+    };
+    const openCheckout = {
+      ...noBilling,
+      activeCheckout: {
+        status: "open",
+        planSlug: "matrix_builder",
+        interval: "monthly",
+        regionSlug: "region_fsn1",
+        developerTools: ["codex"],
+      },
+    };
+    const api = makeApi(noBilling);
+    api.get.mockResolvedValueOnce(noBilling).mockResolvedValue(openCheckout);
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+    await screen.findByText("Billing required");
+    fireEvent.click(screen.getByRole("button", { name: /Continue to checkout/i }));
+
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /Resume checkout/i })).not.toBeNull();
+
+    fireEvent.focus(window);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
   });
 
   it.each([

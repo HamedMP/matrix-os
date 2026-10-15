@@ -259,6 +259,41 @@ describe("BillingSection", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy());
   });
 
+  it("refreshes authoritative checkout state after an uncertain abandonment result", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    let statusReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout/abandon") {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      statusReads += 1;
+      return new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+        entitlement: null,
+        trialOffer: { eligible: true, durationDays: 3 },
+        activeCheckout: statusReads === 1 ? {
+          status: "open",
+          planSlug: "matrix_starter",
+          interval: "monthly",
+          regionSlug: "region_nbg1",
+          developerTools: ["codex"],
+        } : null,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await screen.findByRole("button", { name: "Resume checkout" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose different options" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy());
+    expect(statusReads).toBeGreaterThanOrEqual(2);
+  });
+
   it.each([1, 7])("shows a concise %i-day trial summary before opening Checkout", async (durationDays) => {
     const trialEnd = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
     const formattedTrialEnd = new Intl.DateTimeFormat(undefined, {

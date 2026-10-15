@@ -56,6 +56,13 @@ const PLAN_LABELS: Record<string, string> = {
   internal: "Internal",
 };
 
+const DEVELOPER_TOOL_LABELS: Record<string, string> = {
+  codex: "Codex",
+  "claude-code": "Claude Code",
+  opencode: "OpenCode",
+  pi: "Pi",
+};
+
 const PLANS: Array<{ slug: BillingPlan; label: string }> = [
   { slug: "matrix_starter", label: "Starter · $20/month" },
   { slug: "matrix_builder", label: "Builder · $100/month" },
@@ -84,6 +91,11 @@ function planLabel(slug: string): string {
 
 function formatStatus(status: string): string {
   return status.replaceAll("_", " ");
+}
+
+function developerToolsLabel(toolIds: string[]): string {
+  if (toolIds.length === 0) return "None";
+  return toolIds.map((toolId) => DEVELOPER_TOOL_LABELS[toolId] ?? toolId).join(", ");
 }
 
 function entitlementSummary(entitlement: BillingEntitlement | null): string {
@@ -142,6 +154,12 @@ function useBillingStatus() {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const refreshOnFocus = () => void refresh();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
+  }, [refresh]);
+
   return { status, loading, error, refresh };
 }
 
@@ -178,6 +196,7 @@ export default function BillingSection() {
       });
       const parsed = BillingRedirectSchema.parse(raw);
       await openBillingUrl(parsed.url);
+      await refresh();
       dispatchUi({ type: "finish-action" });
     } catch (err: unknown) {
       console.warn("[billing] checkout unavailable:", err instanceof Error ? err.message : String(err));
@@ -322,6 +341,22 @@ export default function BillingSection() {
                   </select>
                 </label>
               </details>
+              {activeCheckout ? (
+                <div
+                  aria-label="Saved checkout choices"
+                  className="grid gap-2 rounded-md border px-3 py-2"
+                  style={{ borderColor: "var(--border-default)" }}
+                >
+                  <Row
+                    label="Billing interval"
+                    value={activeCheckout.interval === "annual" ? "Annual" : "Monthly"}
+                  />
+                  <Row
+                    label="Developer tools"
+                    value={developerToolsLabel(activeCheckout.developerTools)}
+                  />
+                </div>
+              ) : null}
             </div>
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>

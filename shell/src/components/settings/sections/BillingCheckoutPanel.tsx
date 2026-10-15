@@ -220,6 +220,7 @@ export function BillingCheckoutPanel({
             ? "Checkout is already being confirmed and cannot be changed."
             : "We couldn't release this checkout. Try again in a moment.",
         );
+        onCheckoutAbandoned?.();
         return;
       }
       onCheckoutAbandoned?.();
@@ -228,6 +229,7 @@ export function BillingCheckoutPanel({
         error instanceof Error ? `abandon_${error.name}` : "abandon_unknown",
         "We couldn't release this checkout. Try again in a moment.",
       );
+      onCheckoutAbandoned?.();
     } finally {
       window.clearTimeout(timeoutId);
       setAbandonLoading(false);
