@@ -51,6 +51,29 @@ describe("unified runtime observation single flight", () => {
 function snapshot(model = "before"): AgentRuntimeSettingsSnapshot { return { runtime: { selected: "openclaw", options: [] }, providers: [], messaging: { runtime: "openclaw", provider: "anthropic", model, configured: true } }; }
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 describe("runtime observation lifecycle", () => {
+  it("waits for Node AbortError observations to settle before mutating", async () => {
+    const work = deferred<AgentRuntimeSettingsSnapshot>();
+    const observation = createRuntimeObservation(async (signal) => {
+      await work.promise;
+      if (signal.aborted) {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        throw error;
+      }
+      return snapshot();
+    });
+    const reading = observation.source(new AbortController().signal);
+    const cancelled = expect(reading).rejects.toMatchObject({ kind: "runtime_unavailable" });
+    await Promise.resolve();
+    const operation = vi.fn(async () => {});
+    const updating = observation.mutate(operation);
+    await cancelled;
+    expect(operation).not.toHaveBeenCalled();
+    work.resolve(snapshot());
+    await updating;
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
   it("preserves unexpected programming failures while draining before mutation", async () => {
     const work = deferred<AgentRuntimeSettingsSnapshot>();
     const observation = createRuntimeObservation(async () => work.promise);

@@ -76,7 +76,7 @@ export function createRuntimeObservation(read: AgentRuntimeSource) {
     }
     catch (error: unknown) {
       const cancelled = error === attempt.controller.signal.reason
-        || (error instanceof DOMException && error.name === "AbortError")
+        || (error instanceof Error && error.name === "AbortError")
         || (error instanceof AgentConfigError && error.kind === "runtime_unavailable");
       // Preserve unexpected failures and refuse an undrained dependency.
       if (!cancelled || pending === attempt) throw error;
