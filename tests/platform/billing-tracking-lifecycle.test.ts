@@ -10,7 +10,7 @@ import { getBillingSubscription, insertUserMachine, listBillingRuntimeActions, u
 
 const at = '2026-10-15T12:00:00.000Z';
 const epoch = Date.parse(at) / 1000;
-const invoice = { id: 'in_recovered', status: 'paid', created: epoch, billing_reason: 'subscription_cycle',
+const invoice = { id: 'in_recovered', livemode: true, status: 'paid', created: epoch, billing_reason: 'subscription_cycle',
   amount_due: 10000, amount_paid: 10000, total: 10000, currency: 'usd', total_taxes: [],
   parent: { subscription_details: { subscription: 'sub_recovered', metadata: {
     clerk_user_id: 'user_recovered', matrix_plan_slug: 'matrix_builder', matrix_billing_interval: 'monthly', matrix_trial_days: '3',
@@ -28,6 +28,22 @@ describe('billing tracking lifecycle isolation', () => {
     }));
   }
   const request = { method: 'POST', headers: { 'stripe-signature': 'signed' }, body: '{}' };
+
+  it('terminally clears confirmed unsupported invoices without collecting or retrying', async () => {
+    const retrieveTrackingInvoice = vi.fn().mockResolvedValue({ ...invoice, payments: { data: [
+      { status: 'paid', payment: { payment_intent: 'pi_one' } },
+      { status: 'paid', payment: { payment_intent: 'pi_two' } },
+    ] } });
+    const send = vi.fn();
+    vi.stubGlobal('fetch', send);
+    const app = webhook({ retrieveTrackingInvoice }, { GOOGLE_ANALYTICS_MEASUREMENT_ID: 'G-TEST', GOOGLE_ANALYTICS_API_SECRET: 'test' });
+    expect((await app.request('/billing/webhooks/stripe', request)).status).toBe(200);
+    expect((await app.request('/billing/webhooks/stripe', request)).status).toBe(200);
+    expect(retrieveTrackingInvoice).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+    expect(await db.executor.selectFrom('billing_google_purchases').selectAll().executeTakeFirstOrThrow())
+      .toMatchObject({ payload: null, sent_at: null, attempts: 0 });
+  });
 
   it.each(['scheduled', 'completed'] as const)('does not recreate tracking data for an owner with %s deletion', async status => {
     const secret = 'tracking-deletion-secret-at-least-32-bytes';

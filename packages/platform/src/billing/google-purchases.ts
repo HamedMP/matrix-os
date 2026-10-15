@@ -13,7 +13,10 @@ export function createGooglePurchaseSender(env: NodeJS.ProcessEnv, fetcher: type
     if (purchase.needsInvoiceLookup) {
       if (!retrieveInvoice) throw new Error('GooglePurchaseDeliveryError');
       const detailed = invoiceTrackingEvent(await retrieveInvoice(purchase.event.ecommerce.transaction_id));
-      if (!detailed || detailed.subscriptionId !== purchase.subscriptionId
+      // A successful lookup may confirm a test, mixed or partial payment.
+      // Clear its payload without recording a send; only lookup failures retry.
+      if (!detailed) return 'skipped';
+      if (detailed.subscriptionId !== purchase.subscriptionId
         || detailed.event.ecommerce.transaction_id !== purchase.event.ecommerce.transaction_id) throw new Error('GooglePurchaseDeliveryError');
       // Keep the original consent, identity and event timestamp across retries.
       purchase = { ...purchase, event: detailed.event };

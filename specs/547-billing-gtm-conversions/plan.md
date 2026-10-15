@@ -40,3 +40,5 @@ Browser receipts are capped at 128. Remove the Stripe session token after resolu
 - Website consent tests and responsive billing documentation render.
 - Separate site PR updates public deployment/billing docs and shared consent. App PR requires the pre-VPS platform/app-shell deployment plus customer VPS shell rollout; site PR requires landing deployment.
 - Configure the Matrix GA4 web stream and private Measurement Protocol secret; validate with GTM Preview and GA4 DebugView. GA4/Ads publication and Git push require their respective authorization gates.
+
+Acquisition collection requires Stripe `livemode: true` for both checkout and invoice objects; test and unknown-mode payments produce no purchase or trial event. Confirmed ineligible expanded invoices are terminally skipped without sending, retaining only the deduplication marker. Failed invoice lookups remain retryable.

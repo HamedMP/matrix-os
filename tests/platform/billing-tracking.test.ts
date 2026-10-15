@@ -6,19 +6,26 @@ export const trackingMetadata = {
   matrix_google_client_id: '123.456', matrix_google_analytics_consent: 'granted', matrix_google_expires_at: '4099680000000',
 };
 export function checkout(overrides: Record<string, unknown> = {}) {
-  return { id: 'cs_test_123', status: 'complete', mode: 'subscription', payment_status: 'paid',
+  return { id: 'cs_live_123', livemode: true, status: 'complete', mode: 'subscription', payment_status: 'paid',
     amount_total: 12000, currency: 'usd', invoice: 'in_123', subscription: { id: 'sub_123', status: 'active' },
     total_details: { amount_tax: 2000, amount_shipping: 0 },
     line_items: { data: [{ price: { id: 'price_builder', recurring: { interval: 'month' } }, quantity: 1 }] },
     ...overrides };
 }
 export function invoice(overrides: Record<string, unknown> = {}) {
-  return { id: 'in_123', status: 'paid', billing_reason: 'subscription_cycle', amount_paid: 12000, total: 12000, currency: 'usd',
+  return { id: 'in_123', livemode: true, status: 'paid', billing_reason: 'subscription_cycle', amount_paid: 12000, total: 12000, currency: 'usd',
     total_taxes: [{ amount: 2000 }], parent: { subscription_details: { subscription: 'sub_123', metadata: trackingMetadata } },
     ...overrides };
 }
 
 describe('verified billing tracking', () => {
+  it.each([false, undefined])('excludes test and unknown payment modes from all acquisition events: %j', livemode => {
+    const plan = { planSlug: 'matrix_builder', interval: 'monthly' } as const;
+    expect(checkoutTrackingEvent(checkout({ livemode }), plan)).toBeNull();
+    expect(checkoutTrackingEvent(checkout({ livemode, amount_total: 0, payment_status: 'no_payment_required',
+      subscription: { id: 'sub_123', status: 'trialing', trial_end: 2000000000 }, total_details: { amount_tax: 0 } }), plan)).toBeNull();
+    expect(invoiceTrackingEvent(invoice({ livemode }))).toBeNull();
+  });
   it('adds the literal Stripe placeholder without losing return parameters', () => {
     expect(withCheckoutSessionId('https://app.matrix-os.com/auth/device?user_code=ABCD&billing=success'))
       .toBe('https://app.matrix-os.com/auth/device?user_code=ABCD&billing=success&session_id={CHECKOUT_SESSION_ID}');

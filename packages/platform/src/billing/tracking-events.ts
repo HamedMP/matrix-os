@@ -68,7 +68,7 @@ function buildEvent(input: { transactionId: string; amount: number; tax: number;
         item_variant: input.interval, price: net, quantity: 1 }] } };
 }
 
-const CheckoutSchema = z.object({ id, mode: z.literal('subscription'), status: z.literal('complete'),
+const CheckoutSchema = z.object({ id, livemode: z.literal(true), mode: z.literal('subscription'), status: z.literal('complete'),
   payment_status: z.enum(['paid', 'no_payment_required']), amount_total: minor, currency,
   invoice: expandedId.nullish(), subscription: z.object({ id, status: z.string(), trial_end: z.number().nullish() }),
   total_details: z.object({ amount_tax: minor, amount_shipping: minor.optional() }), presentment_details: presentment,
@@ -87,7 +87,7 @@ export function checkoutTrackingEvent(value: unknown, plan: { planSlug: MatrixBi
     currency: session.currency, presentment: session.presentment_details, ...plan, trial });
 }
 
-const InvoiceSchema = z.object({ id, status: z.literal('paid'), billing_reason: z.enum(['subscription_create', 'subscription_cycle']),
+const InvoiceSchema = z.object({ id, livemode: z.literal(true), status: z.literal('paid'), billing_reason: z.enum(['subscription_create', 'subscription_cycle']),
   amount_paid: minor.positive(), total: minor.positive(), currency, total_taxes: z.array(z.object({ amount: minor })).nullish(),
   parent: z.object({ subscription_details: z.object({ subscription: expandedId, metadata: selection }) }),
   payments: z.object({ data: z.array(z.object({ status: z.string(), payment: z.object({ payment_intent: z.union([z.string(), z.object({

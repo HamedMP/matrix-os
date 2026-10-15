@@ -8,14 +8,14 @@ import type { PlatformDB } from '../../packages/platform/src/db.js';
 
 const metadata = { matrix_plan_slug: 'matrix_builder', matrix_billing_interval: 'monthly', matrix_trial_days: '3',
   matrix_google_client_id: '123.456', matrix_google_analytics_consent: 'granted', matrix_google_expires_at: '4099680000000' };
-const paidInvoice = { id: 'in_123', status: 'paid', billing_reason: 'subscription_cycle', amount_paid: 12000, total: 12000,
+const paidInvoice = { id: 'in_123', livemode: true, status: 'paid', billing_reason: 'subscription_cycle', amount_paid: 12000, total: 12000,
   currency: 'usd', total_taxes: [{ amount: 2000 }], parent: { subscription_details: { subscription: 'sub_123', metadata } } };
 
 describe('billing tracking endpoints and durable delivery', () => {
   let db: PlatformDB;
   beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
   afterEach(async () => { await destroyTestPlatformDb(db); });
-  const session = { id: 'cs_test_123', client_reference_id: 'user_123', mode: 'subscription', status: 'complete', payment_status: 'paid',
+  const session = { id: 'cs_live_123', livemode: true, client_reference_id: 'user_123', mode: 'subscription', status: 'complete', payment_status: 'paid',
     amount_total: 12000, currency: 'usd', invoice: 'in_123', subscription: { id: 'sub_123', status: 'active' },
     total_details: { amount_tax: 2000 }, line_items: { data: [{ price: { id: 'price_builder' } }] } };
   function app(userId: string | null = 'user_123', result: unknown = session) {
@@ -25,20 +25,24 @@ describe('billing tracking endpoints and durable delivery', () => {
     }));
   }
   it('requires authentication and validates IDs', async () => {
-    expect((await app(null).request('/billing/checkout-result?session_id=cs_test_123')).status).toBe(401);
+    expect((await app(null).request('/billing/checkout-result?session_id=cs_live_123')).status).toBe(401);
     expect((await app().request('/billing/checkout-result?session_id=anything')).status).toBe(400);
   });
   it('rejects another user’s session', async () => {
-    expect((await app('user_other').request('/billing/checkout-result?session_id=cs_test_123')).status).toBe(404);
+    expect((await app('user_other').request('/billing/checkout-result?session_id=cs_live_123')).status).toBe(404);
   });
   it('returns only verified payment details, ignoring forged URL amounts', async () => {
-    const response = await app().request('/billing/checkout-result?session_id=cs_test_123&amount=999&currency=EUR');
+    const response = await app().request('/billing/checkout-result?session_id=cs_live_123&amount=999&currency=EUR');
     expect(response.headers.get('cache-control')).toContain('no-store');
     expect(await response.json()).toMatchObject({ event: { event: 'purchase', amount_paid: 120, ecommerce: { currency: 'USD' } } });
   });
   it('keeps pending payment retryable', async () => {
-    expect(await (await app('user_123', { ...session, payment_status: 'unpaid' }).request('/billing/checkout-result?session_id=cs_test_123')).json())
+    expect(await (await app('user_123', { ...session, payment_status: 'unpaid' }).request('/billing/checkout-result?session_id=cs_live_123')).json())
       .toMatchObject({ event: null });
+  });
+  it.each([false, undefined])('does not expose test or unknown-mode checkout events: %j', async livemode => {
+    expect(await (await app('user_123', { ...session, livemode }).request('/billing/checkout-result?session_id=cs_live_123')).json())
+      .toEqual({ event: null });
   });
   it('persists a single acquisition per subscription across duplicate webhooks and renewals', async () => {
     const purchase = invoiceTrackingEvent(paidInvoice)!;

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PlatformDB } from '../db.js';
 import type { InvoiceTrackingPurchase } from './tracking-events.js';
 
-export interface GooglePurchaseSender { send(purchase: InvoiceTrackingPurchase): Promise<'sent' | 'disabled'> }
+export interface GooglePurchaseSender { send(purchase: InvoiceTrackingPurchase): Promise<'sent' | 'disabled' | 'skipped'> }
 
 export async function enqueueGooglePurchase(db: PlatformDB, purchase: InvoiceTrackingPurchase,
   at = new Date().toISOString(), clerkUserId = ''): Promise<void> {
@@ -44,7 +44,7 @@ export async function deliverGooglePurchases(db: PlatformDB, sender: GooglePurch
       const purchase = JSON.parse(job.payload!) as InvoiceTrackingPurchase;
       const result = await sender.send(purchase);
       await db.executor.updateTable('billing_google_purchases').set({
-        ...(result === 'sent' ? { sent_at: at, payload: null } : {}),
+        ...(result === 'sent' ? { sent_at: at, payload: null } : result === 'skipped' ? { payload: null } : {}),
         available_at: new Date(Date.parse(at) + 60000).toISOString(), lease_until: null, lease_token: null,
       }).where('subscription_id', '=', job.subscription_id).where('lease_token', '=', token).execute();
     } catch (error: unknown) {
