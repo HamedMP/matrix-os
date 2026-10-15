@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isAiCreditCheckoutRouteHealthy } from "../../packages/platform/src/ai-credit-checkout-readiness.js";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
@@ -116,7 +117,7 @@ describe("multi-model credit checkout readiness", () => {
     } };
     const result = isAiCreditCheckoutRouteHealthy({ repository, identity, modelProbes: f.probes });
     await vi.waitFor(() => expect(f.fetchFn).toHaveBeenCalledTimes(2), { interval: 1 });
-    await vi.advanceTimersByTimeAsync(12_000);
+    await vi.advanceTimersByTimeAsync(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs + 1);
     expect(await result).toBe(false);
   });
 

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderSettingsSnapshotSchema } from "@matrix-os/contracts";
 
@@ -104,7 +105,7 @@ describe("provider settings shell transport", () => {
       `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
-    expect(timeout).toHaveBeenCalledWith(15_000);
+    expect(timeout).toHaveBeenCalledWith(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs);
   });
 
   it("invalidates the shared Provider catalog only after a successful mutation", async () => {
