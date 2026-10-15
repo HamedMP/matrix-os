@@ -20,6 +20,9 @@ export function createAccountDeletionGuardedStripeClient(
       return withAccountDeletionAdmission(db, customer.clerkUserId,
         async () => client.createPortalSession(input), env);
     },
+    ...(client.expireCheckoutSession
+      ? { expireCheckoutSession: client.expireCheckoutSession.bind(client) }
+      : {}),
     retrieveCheckoutSession: client.retrieveCheckoutSession.bind(client),
     retrieveRecurringPrice: client.retrieveRecurringPrice.bind(client),
     constructWebhookEvent: client.constructWebhookEvent.bind(client),

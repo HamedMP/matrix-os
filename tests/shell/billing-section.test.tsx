@@ -114,6 +114,23 @@ describe("BillingSection", () => {
     vi.unstubAllEnvs();
   });
 
+  it("uses a recoverable open-checkout fixture in deterministic screenshot mode", async () => {
+    vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
+    window.history.replaceState({}, "", "/?e2e_billing_state=open-checkout");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+
+    expect(screen.getByRole("button", { name: "Resume checkout" })).toBeTruthy();
+    expect(screen.getByText(/Your Starter checkout is still open/)).toBeTruthy();
+    expect((screen.getByRole("radio", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
+    expect(
+      screen.getByRole("radio", { name: "Claude Code" }).closest("fieldset[disabled]"),
+    ).toBeTruthy();
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllEnvs();
+  });
+
   it("uses a recoverable unavailable fixture in deterministic screenshot mode", async () => {
     vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
     window.history.replaceState({}, "", "/?e2e_billing_state=unavailable");
@@ -177,6 +194,142 @@ describe("BillingSection", () => {
     expect(screen.queryByText("Dedicated VPS prepared before checkout")).toBeNull();
     expect(screen.queryByText("Your files and data persist across restarts")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("restores an open checkout and lets the owner resume or abandon it", async () => {
+    let abandoned = false;
+    const onCheckoutNavigate = vi.fn();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/billing/checkout" && init?.method === "POST") {
+        return new Response(JSON.stringify({ url: "https://checkout.stripe.test/resume" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (input === "/billing/checkout/abandon" && init?.method === "POST") {
+        abandoned = true;
+        return new Response(JSON.stringify({ abandoned: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+        entitlement: null,
+        trialOffer: { eligible: true, durationDays: 3 },
+        activeCheckout: abandoned ? null : {
+          status: "open",
+          planSlug: "matrix_starter",
+          interval: "monthly",
+          regionSlug: "region_nbg1",
+          developerTools: ["codex"],
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" onCheckoutNavigate={onCheckoutNavigate} />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Resume checkout" })).toBeTruthy());
+    expect(screen.getByText(/Your Starter checkout is still open/)).toBeTruthy();
+    expect((screen.getByRole("radio", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
+    expect(
+      screen.getByRole("radio", { name: "Claude Code" }).closest("fieldset[disabled]"),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume checkout" }));
+    await waitFor(() => expect(onCheckoutNavigate).toHaveBeenCalledWith("https://checkout.stripe.test/resume"));
+    expect(fetchMock).toHaveBeenCalledWith("/billing/checkout", expect.objectContaining({
+      body: JSON.stringify({
+        planSlug: "matrix_starter",
+        interval: "monthly",
+        regionSlug: "region_nbg1",
+        developerTools: ["codex"],
+      }),
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose different options" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/checkout/abandon",
+      expect.objectContaining({ body: JSON.stringify({ runtimeSlot: "primary" }) }),
+    ));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy());
+  });
+
+  it("refreshes authoritative checkout state after an uncertain abandonment result", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    let statusReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout/abandon") {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      statusReads += 1;
+      return new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+        entitlement: null,
+        trialOffer: { eligible: true, durationDays: 3 },
+        activeCheckout: statusReads === 1 ? {
+          status: "open",
+          planSlug: "matrix_starter",
+          interval: "monthly",
+          regionSlug: "region_nbg1",
+          developerTools: ["codex"],
+        } : null,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await screen.findByRole("button", { name: "Resume checkout" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose different options" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy());
+    expect(statusReads).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps the release error visible when the authoritative checkout remains open", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    let statusReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout/abandon") {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      statusReads += 1;
+      return new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+        entitlement: null,
+        trialOffer: { eligible: true, durationDays: 3 },
+        activeCheckout: {
+          status: "open",
+          planSlug: "matrix_starter",
+          interval: "monthly",
+          regionSlug: "region_nbg1",
+          developerTools: ["codex"],
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await screen.findByRole("button", { name: "Resume checkout" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose different options" }));
+
+    await waitFor(() => expect(statusReads).toBeGreaterThanOrEqual(2));
+    expect(screen.getByRole("button", { name: "Resume checkout" })).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain(
+      "We couldn't release this checkout. Try again in a moment.",
+    );
   });
 
   it.each([1, 7])("shows a concise %i-day trial summary before opening Checkout", async (durationDays) => {

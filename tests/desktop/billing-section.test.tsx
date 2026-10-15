@@ -224,6 +224,117 @@ describe("desktop billing settings", () => {
     expect(screen.getByRole("option", { name: "🇺🇸 Ashburn, Virginia" })).not.toBeNull();
   });
 
+  it("restores, resumes, and abandons the authoritative open checkout", async () => {
+    const activeCheckout = {
+      status: "open",
+      planSlug: "matrix_starter",
+      interval: "annual",
+      regionSlug: "region_nbg1",
+      developerTools: ["codex", "pi"],
+    };
+    const api = makeApi({
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+      activeCheckout,
+    });
+    api.post.mockImplementation(async (path: string) => path === "/billing/checkout/abandon"
+      ? { abandoned: true }
+      : { url: "https://checkout.stripe.test/resume" });
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /Resume checkout/i })).not.toBeNull());
+    expect((screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement).value).toBe("matrix_starter");
+    expect((screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByText("Annual")).not.toBeNull();
+    expect(screen.getByText("Codex, Pi")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Resume checkout/i }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/billing/checkout", {
+      planSlug: "matrix_starter",
+      interval: "annual",
+      regionSlug: "region_nbg1",
+      developerTools: ["codex", "pi"],
+    }));
+    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
+      url: "https://checkout.stripe.test/resume",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Choose different options/i }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/billing/checkout/abandon",
+      { runtimeSlot: "primary" },
+    ));
+  });
+
+  it("refreshes checkout recovery after opening Stripe and when the app regains focus", async () => {
+    const noBilling = {
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+      activeCheckout: null,
+    };
+    const openCheckout = {
+      ...noBilling,
+      activeCheckout: {
+        status: "open",
+        planSlug: "matrix_builder",
+        interval: "monthly",
+        regionSlug: "region_fsn1",
+        developerTools: ["codex"],
+      },
+    };
+    const api = makeApi(noBilling);
+    api.get.mockResolvedValueOnce(noBilling).mockResolvedValue(openCheckout);
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+    await screen.findByText("Billing required");
+    fireEvent.click(screen.getByRole("button", { name: /Continue to checkout/i }));
+
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /Resume checkout/i })).not.toBeNull();
+
+    fireEvent.focus(window);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
+  });
+
+  it("ignores an older focus refresh after abandonment returns newer state", async () => {
+    const openCheckout = {
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+      activeCheckout: {
+        status: "open",
+        planSlug: "matrix_starter",
+        interval: "monthly",
+        regionSlug: "region_nbg1",
+        developerTools: ["codex"],
+      },
+    };
+    const releasedCheckout = { ...openCheckout, activeCheckout: null };
+    let resolveOlderRead!: (value: unknown) => void;
+    const api = makeApi(openCheckout);
+    api.get
+      .mockResolvedValueOnce(openCheckout)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderRead = resolve; }))
+      .mockResolvedValueOnce(releasedCheckout);
+    api.post.mockResolvedValueOnce({ abandoned: true });
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+    await screen.findByRole("button", { name: /Resume checkout/i });
+    fireEvent.focus(window);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: /Choose different options/i }));
+
+    await screen.findByRole("button", { name: /Continue to checkout/i });
+    resolveOlderRead(openCheckout);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("button", { name: /Resume checkout/i })).toBeNull();
+  });
+
   it.each([
     { selection: "suggested Asia location", explicitRegion: null, expectedRegion: "region_hil" },
     { selection: "explicit EU location over the Asia suggestion", explicitRegion: "region_fsn1", expectedRegion: "region_fsn1" },

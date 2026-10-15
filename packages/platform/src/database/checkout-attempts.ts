@@ -415,7 +415,7 @@ export async function resolveCheckoutAttempt(
   status: 'paid' | 'expired',
   resolvedAt: string,
   transactionAlreadyOpen = false,
-): Promise<void> {
+): Promise<boolean> {
   await db.ready;
   const resolve = async (trx: PlatformDB) => {
     const updated = await trx.executor
@@ -442,9 +442,10 @@ export async function resolveCheckoutAttempt(
         .where('trial_checkout_attempt_id', '=', updated.id)
         .execute();
     }
+    return Boolean(updated);
   };
-  if (transactionAlreadyOpen) await resolve(db);
-  else await db.transaction(resolve);
+  if (transactionAlreadyOpen) return resolve(db);
+  return db.transaction(resolve);
 }
 
 /** Sweeps stale open provider sessions after their payment window has elapsed.

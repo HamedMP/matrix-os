@@ -5,7 +5,7 @@ import {
   type MatrixBillingPublicEntitlement,
   type MatrixBillingStatus,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { Button } from "../../../design/primitives";
 import { invoke } from "../../../lib/operator";
@@ -18,12 +18,13 @@ const BillingRedirectSchema = z.strictObject({
     .max(2048)
     .refine((url) => new URL(url).protocol === "https:", "Billing redirects must use HTTPS"),
 });
+const BillingAbandonSchema = z.strictObject({ abandoned: z.boolean() });
 
 type BillingEntitlement = MatrixBillingPublicEntitlement;
 type BillingInterval = "monthly";
 type BillingPlan = "matrix_starter" | "matrix_builder" | "matrix_max";
 type BillingRegion = "region_fsn1" | "region_nbg1" | "region_ash" | "region_hil";
-type BillingAction = "checkout" | "portal";
+type BillingAction = "checkout" | "portal" | "abandon";
 
 interface BillingUiState {
   plan: BillingPlan;
@@ -53,6 +54,13 @@ const PLAN_LABELS: Record<string, string> = {
   matrix_builder: "Builder",
   matrix_max: "Max",
   internal: "Internal",
+};
+
+const DEVELOPER_TOOL_LABELS: Record<string, string> = {
+  codex: "Codex",
+  "claude-code": "Claude Code",
+  opencode: "OpenCode",
+  pi: "Pi",
 };
 
 const PLANS: Array<{ slug: BillingPlan; label: string }> = [
@@ -85,6 +93,11 @@ function formatStatus(status: string): string {
   return status.replaceAll("_", " ");
 }
 
+function developerToolsLabel(toolIds: string[]): string {
+  if (toolIds.length === 0) return "None";
+  return toolIds.map((toolId) => DEVELOPER_TOOL_LABELS[toolId] ?? toolId).join(", ");
+}
+
 function entitlementSummary(entitlement: BillingEntitlement | null): string {
   if (!entitlement) return "No billing entitlement found.";
   return `${planLabel(entitlement.planSlug)} · ${formatStatus(entitlement.status)}`;
@@ -114,8 +127,10 @@ function useBillingStatus() {
   const [status, setStatus] = useState<MatrixBillingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const refreshSequenceRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const refreshSequence = ++refreshSequenceRef.current;
     if (!api) {
       setStatus(null);
       setLoading(false);
@@ -127,18 +142,26 @@ function useBillingStatus() {
     try {
       const raw = await api.get<unknown>("/billing/status");
       const parsed = MatrixBillingStatusSchema.parse(raw);
+      if (refreshSequence !== refreshSequenceRef.current) return;
       setStatus(parsed);
     } catch (err: unknown) {
+      if (refreshSequence !== refreshSequenceRef.current) return;
       console.warn("[billing] status unavailable:", err instanceof Error ? err.message : String(err));
       setStatus(null);
       setError(true);
     } finally {
-      setLoading(false);
+      if (refreshSequence === refreshSequenceRef.current) setLoading(false);
     }
   }, [api]);
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const refreshOnFocus = () => void refresh();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
   }, [refresh]);
 
   return { status, loading, error, refresh };
@@ -156,6 +179,9 @@ export default function BillingSection() {
 
   const active = status?.access.runtimeProxyAllowed === true;
   const entitlement = status?.entitlement ?? null;
+  const activeCheckout = status?.activeCheckout ?? null;
+  const selectedPlan = activeCheckout?.planSlug ?? ui.plan;
+  const selectedRegion = activeCheckout?.regionSlug ?? ui.region;
   const portalAvailable = entitlement?.portalAvailable === true;
   const settingsUrl = useMemo(() => {
     const base = platformHost.startsWith("https://") ? platformHost : "https://app.matrix-os.com";
@@ -167,16 +193,33 @@ export default function BillingSection() {
     dispatchUi({ type: "start-action", action: "checkout" });
     try {
       const raw = await api.post<unknown>("/billing/checkout", {
-        planSlug: ui.plan,
-        interval: ui.interval,
-        regionSlug: ui.region,
+        planSlug: selectedPlan,
+        interval: activeCheckout?.interval ?? ui.interval,
+        regionSlug: selectedRegion,
+        ...(activeCheckout ? { developerTools: activeCheckout.developerTools } : {}),
       });
       const parsed = BillingRedirectSchema.parse(raw);
       await openBillingUrl(parsed.url);
+      await refresh();
       dispatchUi({ type: "finish-action" });
     } catch (err: unknown) {
       console.warn("[billing] checkout unavailable:", err instanceof Error ? err.message : String(err));
       dispatchUi({ type: "fail-action", message: "Checkout is unavailable. Try again in a moment." });
+    }
+  }
+
+  async function abandonCheckout(): Promise<void> {
+    if (!api || ui.actionLoading || !activeCheckout) return;
+    dispatchUi({ type: "start-action", action: "abandon" });
+    try {
+      BillingAbandonSchema.parse(await api.post<unknown>("/billing/checkout/abandon", {
+        runtimeSlot: "primary",
+      }));
+      dispatchUi({ type: "finish-action" });
+      await refresh();
+    } catch (err: unknown) {
+      console.warn("[billing] checkout abandonment unavailable:", err instanceof Error ? err.name : typeof err);
+      dispatchUi({ type: "fail-action", message: "We couldn't release this checkout. Try again in a moment." });
     }
   }
 
@@ -272,7 +315,8 @@ export default function BillingSection() {
               <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
                 Plan
                 <select
-                  value={ui.plan}
+                  value={selectedPlan}
+                  disabled={activeCheckout !== null}
                   onChange={(event) => dispatchUi({ type: "set-plan", plan: event.currentTarget.value as BillingPlan })}
                   className="h-9 rounded-md border px-2 text-sm"
                   style={{ background: "var(--bg-sunken)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
@@ -284,12 +328,13 @@ export default function BillingSection() {
               </label>
               <details className="rounded-md border px-3 py-2" style={{ borderColor: "var(--border-default)" }}>
                 <summary className="cursor-pointer text-xs" style={{ color: "var(--text-secondary)" }}>
-                  Server location · {REGIONS.find((region) => region.slug === ui.region)?.label}
+                  Server location · {REGIONS.find((region) => region.slug === selectedRegion)?.label}
                 </summary>
                 <label className="mt-2 flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
                   Change server location
                   <select
-                    value={ui.region}
+                    value={selectedRegion}
+                    disabled={activeCheckout !== null}
                     onChange={(event) => dispatchUi({ type: "set-region", region: event.currentTarget.value as BillingRegion })}
                     className="h-9 rounded-md border px-2 text-sm"
                     style={{ background: "var(--bg-sunken)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
@@ -300,16 +345,47 @@ export default function BillingSection() {
                   </select>
                 </label>
               </details>
+              {activeCheckout ? (
+                <div
+                  aria-label="Saved checkout choices"
+                  className="grid gap-2 rounded-md border px-3 py-2"
+                  style={{ borderColor: "var(--border-default)" }}
+                >
+                  <Row
+                    label="Billing interval"
+                    value={activeCheckout.interval === "annual" ? "Annual" : "Monthly"}
+                  />
+                  <Row
+                    label="Developer tools"
+                    value={developerToolsLabel(activeCheckout.developerTools)}
+                  />
+                </div>
+              ) : null}
             </div>
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                Checkout opens in your browser and returns to Matrix OS after Stripe confirms payment.
+                {activeCheckout
+                  ? `Your ${planLabel(activeCheckout.planSlug)} checkout is still open. Resume it or release it before changing options.`
+                  : "Checkout opens in your browser and returns to Matrix OS after Stripe confirms payment."}
               </p>
               <Button variant="primary" onClick={() => void startCheckout()} disabled={!api || ui.actionLoading !== null}>
-                {ui.actionLoading === "checkout" ? "Opening..." : "Continue to checkout"}
+                {ui.actionLoading === "checkout"
+                  ? "Opening..."
+                  : activeCheckout
+                    ? "Resume checkout"
+                    : "Continue to checkout"}
                 <ExternalLink size={14} />
               </Button>
             </div>
+            {activeCheckout ? (
+              <Button
+                variant="ghost"
+                onClick={() => void abandonCheckout()}
+                disabled={!api || ui.actionLoading !== null}
+              >
+                {ui.actionLoading === "abandon" ? "Releasing..." : "Choose different options"}
+              </Button>
+            ) : null}
             <Button variant="ghost" onClick={() => void openBillingUrl(settingsUrl)}>
               Open billing setup in browser
             </Button>

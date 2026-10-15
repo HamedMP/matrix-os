@@ -82,6 +82,7 @@ import {
 } from './billing/stripe-client.js';
 import {
   CheckoutBillingRegionSlugSchema,
+  CheckoutAbandonRequestSchema,
   CheckoutPreparationStatusQuerySchema,
   CheckoutRequestSchema,
   CLERK_USER_ID_PATTERN,
@@ -582,6 +583,83 @@ export function createBillingRoutes(options: {
           http_status: 503,
         },
       });
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
+  });
+
+  app.post('/checkout/abandon', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), async (c) => {
+    const clerkUserId = await resolveRouteClerkUserId(c, 'checkout abandon');
+    if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) return c.json({ error: 'Invalid request' }, 400);
+      throw err;
+    }
+    const parsed = CheckoutAbandonRequestSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
+
+    try {
+      if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
+        throw new Error('stripe_timeout_exceeds_budget');
+      }
+      const activeAttempt = await getActiveCheckoutAttempt(
+        options.db,
+        clerkUserId,
+        parsed.data.runtimeSlot,
+      );
+      if (!activeAttempt) return c.json({ abandoned: false }, 200);
+      if (activeAttempt.status !== 'open' || !activeAttempt.stripeSessionId) {
+        return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
+      }
+      if (!options.stripe.expireCheckoutSession) throw new Error('stripe_checkout_expiry_unavailable');
+      const session = await options.stripe.expireCheckoutSession(activeAttempt.stripeSessionId);
+      if (session.clerkUserId !== clerkUserId) throw new Error('checkout_session_owner_mismatch');
+      const resolvedAt = now().toISOString();
+      if (session.status === 'complete') {
+        await resolveCheckoutAttempt(
+          options.db,
+          activeAttempt.stripeSessionId,
+          'paid',
+          resolvedAt,
+        );
+        return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
+      }
+      if (session.status !== 'expired') {
+        return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+      }
+      const abandoned = await options.db.transaction(async (trx) => {
+        const resolved = await resolveCheckoutAttempt(
+          trx,
+          activeAttempt.stripeSessionId!,
+          'expired',
+          resolvedAt,
+          true,
+        );
+        if (!resolved) return false;
+        await options.prebilling?.expireCheckout(trx, {
+          stripeSessionId: activeAttempt.stripeSessionId!,
+          clerkUserId,
+          now: resolvedAt,
+        });
+        return true;
+      });
+      if (abandoned) {
+        emitTelemetry(BILLING_CHECKOUT_EXPIRED_EVENT, {
+          distinctId: clerkUserId,
+          properties: {
+            plan_slug: activeAttempt.planSlug ?? undefined,
+            billing_interval: activeAttempt.billingInterval ?? undefined,
+            region_slug: activeAttempt.regionSlug ?? undefined,
+            runtime_slot: activeAttempt.runtimeSlot,
+            expiration_source: 'user_abandon',
+          },
+        });
+      }
+      return c.json({ abandoned }, 200);
+    } catch (err: unknown) {
+      console.error('[billing] checkout abandonment failed:', err instanceof Error ? err.message : String(err));
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
