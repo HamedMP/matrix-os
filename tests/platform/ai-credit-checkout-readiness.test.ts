@@ -48,6 +48,44 @@ describe("AI credit checkout preflight", () => {
     expect(f.repository.getCheckoutFundingSummary).toHaveBeenCalledTimes(2);
   });
 
+  it("hedges through eligible Sonnet during a Workers outage without probing the entire catalog", async () => {
+    vi.useFakeTimers();
+    const f = catalogFixture();
+    let active = 0;
+    let maximum = 0;
+    const signals: AbortSignal[] = [];
+    const probe = vi.fn((model: string, call?: { signal?: AbortSignal }) => {
+      maximum = Math.max(maximum, ++active);
+      signals.push(call!.signal!);
+      call!.signal!.addEventListener("abort", () => { active--; }, { once: true });
+      return model === "anthropic/claude-sonnet-5" ? Promise.resolve(f.ready)
+        : new Promise<FundedModelProbeResult>(() => undefined);
+    });
+    const result = isAiCreditCheckoutRouteHealthy({ ...f, modelProbes: { probe }, deadlineMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await result).toBe(true);
+    expect(probe.mock.calls.map(([model]) => model)).toEqual([
+      "@cf/zai-org/glm-5.3-flash", "anthropic/claude-sonnet-5",
+    ]);
+    expect(maximum).toBe(2);
+    expect(signals.every(signal => signal.aborted)).toBe(true);
+    expect(f.repository.getCheckoutFundingSummary).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("never hedges through Sonnet when the owner policy permits only Workers models", async () => {
+    vi.useFakeTimers();
+    const f = catalogFixture();
+    f.funding.policy.allowedModelIds = f.funding.policy.allowedModelIds.filter(model => model !== "anthropic/claude-sonnet-5");
+    const probe = vi.fn((_model: string) => new Promise<FundedModelProbeResult>(() => undefined));
+    const result = isAiCreditCheckoutRouteHealthy({ ...f, modelProbes: { probe }, deadlineMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await result).toBe(false);
+    expect(probe.mock.calls.map(([model]) => model)).toEqual([
+      "@cf/zai-org/glm-5.3-flash", "@cf/deepseek-ai/deepseek-v4-flash-0731",
+    ]);
+  });
+
   it("advances unavailable candidates with at most two in flight and stops at the first validated success", async () => {
     vi.useFakeTimers();
     const f = catalogFixture();

@@ -6,6 +6,10 @@ const MAX_LEDGER_AGE_MS = 5 * 60_000;
 const MAX_PENDING_FUNDING_READS = 4;
 const MAX_CONCURRENT_CHECKOUT_PROBES = 2;
 const CHECKOUT_PROBE_HEDGE_MS = 100;
+const CHECKOUT_PROBE_PRIORITY: Readonly<Record<string, number>> = {
+  [FUNDED_PROBE_MODELS[0]]: 0,
+  "anthropic/claude-sonnet-5": 1,
+};
 const pendingFundingReads = new Set<Promise<unknown>>();
 
 /** A new payment must be useful to this owner and exact computer. Zero balance is allowed. */
@@ -51,8 +55,10 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
       const current = (input.now ?? (() => new Date()))().getTime();
       if (expired || !validFunding(first, current)) return false;
       // Try the default first, then hedge one backup within the same deadline.
-      // Failed candidates advance lazily; at most two are ever in flight.
-      const eligible = FUNDED_PROBE_MODELS.filter(model => first.policy.allowedModelIds.includes(model));
+      // Prefer an already-eligible independent route for the backup so a shared
+      // Workers outage cannot hide it behind the rest of that catalog.
+      const eligible = FUNDED_PROBE_MODELS.filter(model => first.policy.allowedModelIds.includes(model))
+        .sort((left, right) => (CHECKOUT_PROBE_PRIORITY[left] ?? 2) - (CHECKOUT_PROBE_PRIORITY[right] ?? 2));
       const candidate = async (model: typeof eligible[number]): Promise<"ready" | "revoked"> => {
         const result = await input.modelProbes!.probe(model, { signal: controller.signal, deadlineAtMs });
         const afterProbe = (input.now ?? (() => new Date()))().getTime();

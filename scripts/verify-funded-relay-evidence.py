@@ -29,6 +29,9 @@ CONFIG_ENV = {"projectId": "GCP_PROJECT_ID", "region": "GCP_REGION",
               "relayServiceAccount": "AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT",
               "platformOrigin": "PLATFORM_INTERNAL_URL",
               "cloudflareGatewayUrl": "CLOUDFLARE_AI_GATEWAY_URL"}
+WORKERS_PRICING_PREFIX = "MATRIX_FUNDED_WORKERS_PRICING_"
+WORKERS_PRICING_ENV = {WORKERS_PRICING_PREFIX + field for field in
+                       ("REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH")}
 FIXED_ENV = {
     "MATRIX_FUNDED_AI_ENABLED": "true", "MATRIX_FUNDED_AI_RESERVATION_MODE": "usage",
     "MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY": "16", "MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY": "2",
@@ -114,7 +117,19 @@ def verify_configuration(config):
         expected.update({prefix + field: None for field in ("REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH")})
         require(pricing[prefix + "REVIEW_VERSION"] == version, "Unsupported price review")
         review_window(pricing[prefix + "REVIEWED_AT"], pricing[prefix + "VALID_THROUGH"], days)
+    if set(pricing) & WORKERS_PRICING_ENV:
+        require(WORKERS_PRICING_ENV <= set(pricing), "Incomplete Workers price review")
+        require(pricing[WORKERS_PRICING_PREFIX + "REVIEW_VERSION"] == "cloudflare-2026-10-15-workers-eight",
+                "Unsupported Workers price review")
+        review_window(pricing[WORKERS_PRICING_PREFIX + "REVIEWED_AT"],
+                      pricing[WORKERS_PRICING_PREFIX + "VALID_THROUGH"], 31)
+        expected.update({key: None for key in WORKERS_PRICING_ENV})
     require(set(pricing) == set(expected), "Invalid pricing fields")
+
+
+def pricing_environment_matches(pricing):
+    return (all(os.environ.get(key) == value for key, value in pricing.items()) and
+            all(not os.environ.get(key) for key in WORKERS_PRICING_ENV - set(pricing)))
 
 
 def verify_evidence(body, receipt_hash, source, run, repository, stage):
@@ -233,7 +248,7 @@ def configuration():
     receipt = load_evidence(stage)
     config = receipt["configuration"]
     require(all(os.environ.get(key) == config[field] for field, key in CONFIG_ENV.items()) and
-            all(os.environ.get(key) == value for key, value in config["pricing"].items()), "Reviewed deployment configuration mismatch")
+            pricing_environment_matches(config["pricing"]), "Reviewed deployment configuration mismatch")
     values = {}
     for key, (prefix, secret) in SECRETS.items():
         values[prefix + "_SECRET"] = secret
@@ -278,7 +293,7 @@ def promotion():
     receipt = load_evidence("production")
     config = receipt["configuration"]
     require(all(os.environ.get(key) == config[field] for field, key in CONFIG_ENV.items()) and
-            all(os.environ.get(key) == value for key, value in config["pricing"].items()), "Reviewed deployment configuration mismatch")
+            pricing_environment_matches(config["pricing"]), "Reviewed deployment configuration mismatch")
     service = cloud_json("services", config["relayService"])
     targets = [target for target in service["status"]["traffic"] if target.get("tag") == "candidate"]
     require(len(targets) == 1, "Unique candidate tag required")
