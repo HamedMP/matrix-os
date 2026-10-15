@@ -362,8 +362,24 @@ describe('shared owner Chrome CDP driver', () => {
     expect(result).toMatchObject({ success: true, artifact: { documentId: 'INV-001', original: true, size: original.length } });
     expect(await readFile(join(homePath, result.artifact!.path))).toEqual(original);
     expect(fake.messages.some(packet => /Cookies|Storage|Browser.close/.test(packet.method))).toBe(false);
-    expect(fake.messages.at(-1)).toMatchObject({ method: 'Browser.setDownloadBehavior', params: { behavior: 'default', eventsEnabled: false } });
+    expect(fake.messages.some(packet => packet.method === 'Browser.cancelDownload')).toBe(false);
+    expect(fake.messages.at(-1)).toMatchObject({ method: 'Browser.setDownloadBehavior', params: { behavior: 'deny', eventsEnabled: true } });
     await driver.detach();
+  });
+  it('denies ordinary click downloads until owner control is restored', async () => {
+    const { driver, fake, signal } = await rig(); fake.enableDownloads();
+    const observed = await driver.execute({ action: 'snapshot' }, signal);
+    expect(fake.messages.some(row => row.method === 'Browser.setDownloadBehavior' && row.params.behavior === 'deny')).toBe(true);
+    const start = fake.messages.length;
+    await expect(driver.execute({ action: 'click', observationId: observed.observationId!, ref: 'r1' }, signal)).resolves.toMatchObject({ success: true });
+    const dispatched = fake.messages.slice(start);
+    const click = dispatched.findIndex(row => row.method === 'Runtime.callFunctionOn' && row.params.arguments?.[2]?.value === 'click');
+    expect(click).toBeGreaterThanOrEqual(0);
+    expect(dispatched.some(row => row.method === 'Browser.downloadWillBegin')).toBe(false);
+    fake.event('Browser.downloadWillBegin', { guid: 'unexpected-guid', frameId: 'agent-frame', url: fixture + '/unexpected.pdf' });
+    await vi.waitFor(() => expect(fake.messages).toContainEqual(expect.objectContaining({ method: 'Browser.cancelDownload', params: { guid: 'unexpected-guid' } })));
+    await driver.detach();
+    expect(fake.messages.at(-1)).toMatchObject({ method: 'Browser.setDownloadBehavior', params: { behavior: 'default', eventsEnabled: false } });
   });
   it('rejects arbitrary evaluation and endpoint selection before connecting or dispatching', async () => {
     const { driver, fake, signal } = await rig();

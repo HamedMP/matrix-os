@@ -47,6 +47,24 @@ it('preserves a completed original for owner recovery when durable artifact stor
     reason: 'original_store_failed', ownerReviewRequired: true,
   });
 });
+it('preserves a completed original for owner recovery when cancellation wins after completion', async () => {
+  const { options, homePath, original, emit, downloadPath } = await rig();
+  const controller = new AbortController(); options.signal = controller.signal;
+  options.trigger = async () => {
+    await writeFile(join(downloadPath(), 'invoice-guid-123'), original);
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-123', url: options.sourceUrl });
+    emit('Browser.downloadProgress', { guid: 'invoice-guid-123', receivedBytes: original.length, totalBytes: original.length, state: 'completed' });
+    controller.abort();
+  };
+
+  const result = await collectChromeDownload(options);
+  expect(result).toHaveProperty('recoveryPath');
+  if (!('recoveryPath' in result)) throw new Error('Cancelled completed download was reported as durable');
+  expect(await readFile(join(homePath, result.recoveryPath, 'invoice-guid-123'))).toEqual(original);
+  expect(JSON.parse(await readFile(join(homePath, result.recoveryPath, 'recovery.json'), 'utf8'))).toMatchObject({
+    reason: 'completed_cancelled', ownerReviewRequired: true,
+  });
+});
 it('cancels oversized and incomplete downloads, removes temporary files and restores defaults', async () => {
   for (const oversized of [true, false]) {
     const { options, homePath, emit, messages } = await rig();

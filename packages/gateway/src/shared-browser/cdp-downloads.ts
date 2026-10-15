@@ -105,7 +105,8 @@ async function storeOriginal(directory: Directory, temporary: Directory, guid: s
 export async function collectChromeDownload(options: {
   homePath: string; client: Pick<BrowserCdpClient, 'request' | 'onEvent'>; frameId: string;
   sourceUrl: string; documentId: string; signal: AbortSignal; trigger(): Promise<unknown>;
-  resolveHost?: BrowserResolver; timeoutMs?: number;
+  resolveHost?: BrowserResolver; timeoutMs?: number; restoreBehavior?: 'default' | 'deny';
+  onCollectingChange?(collecting: boolean): void;
 }): Promise<NonNullable<SharedBrowserActionResult['artifact']> | { recoveryPath: string }> {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(options.documentId) || options.signal.aborted) throw unavailable();
   const checked = await validateBrowserUrl(options.sourceUrl, options.resolveHost);
@@ -115,7 +116,7 @@ export async function collectChromeDownload(options: {
   const captures = new Map<string, { receivedBytes: number; terminal: boolean; cancelRequested: boolean }>();
   const overflowCancellations = new Set<Promise<void>>();
   let overflowCleanupFailed = false;
-  let recoveryReason: 'another_chrome_tab' | 'multiple_chrome_downloads' | 'original_store_failed' | undefined;
+  let recoveryReason: 'another_chrome_tab' | 'multiple_chrome_downloads' | 'original_store_failed' | 'completed_cancelled' | undefined;
   let recoveryDeny: Promise<unknown> | undefined;
   let unsubscribe: (() => unknown) | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   let finish!: () => void, fail!: (error: Error) => void;
@@ -123,7 +124,7 @@ export async function collectChromeDownload(options: {
   // Setup/click may await commands while Chrome emits download events.
   void completion.catch(error => console.warn('[shared-browser] Original download unavailable',
     error instanceof SharedBrowserError ? error.code : 'operation_failed'));
-  const onAbort = () => fail(unavailable());
+  const onAbort = () => { if (guid && complete) recoveryReason ??= 'completed_cancelled'; fail(unavailable()); };
   const recover = (reason: NonNullable<typeof recoveryReason>) => {
     recoveryReason ??= reason;
     // Deny new downloads while retaining progress events for every file already
@@ -193,10 +194,13 @@ export async function collectChromeDownload(options: {
     timer = setTimeout(() => fail(unavailable()), Math.min(20_000, Math.max(1, options.timeoutMs ?? 20_000)));
     options.signal.throwIfAborted();
     configured = true;
+    options.onCollectingChange?.(true);
     // Linux pins the path to the held directory inode across process boundaries.
     const downloadPath = process.platform === 'linux' ? `/proc/${process.pid}/fd/${temporary.fd.fd}` : temporary.canonical;
     await options.client.request('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath, eventsEnabled: true });
-    await options.trigger(); await completion; options.signal.throwIfAborted();
+    await options.trigger(); await completion;
+    if (options.signal.aborted) recoveryReason ??= 'completed_cancelled';
+    options.signal.throwIfAborted();
     if (!guid || recoveryReason) throw unavailable();
     let stored: Awaited<ReturnType<typeof storeOriginal>>;
     try { stored = await storeOriginal(directory, temporary, guid, options.documentId); }
@@ -222,7 +226,8 @@ export async function collectChromeDownload(options: {
           const capturedDrained = await cancelCaptured();
           if (!overflowDrained || !capturedDrained) restoreFailed = true;
         }
-        await options.client.request('Browser.setDownloadBehavior', { behavior: 'default', eventsEnabled: false });
+        const restoreBehavior = options.restoreBehavior ?? 'default';
+        await options.client.request('Browser.setDownloadBehavior', { behavior: restoreBehavior, eventsEnabled: restoreBehavior === 'deny' });
         // A second begin event can arrive while the final reset is awaiting its ACK.
         await recoveryDeny;
         if (recoveryReason) {
@@ -233,7 +238,7 @@ export async function collectChromeDownload(options: {
       }
       catch (error) { report(error); restoreFailed = true; }
     }
-    unsubscribe?.();
+    unsubscribe?.(); options.onCollectingChange?.(false);
     let recoveryPath: string | undefined;
     try {
       if (directory && temporary && recoveryReason) {
