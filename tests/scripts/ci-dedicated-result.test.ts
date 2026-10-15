@@ -177,6 +177,8 @@ describe('stack lifecycle and retry evidence',()=>{
     check.check_suite.id=800;
     check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
     pinArtifactFixture(github,check,run);
+    const actions=github.rest.actions as any;
+    actions.downloadArtifact=vi.fn(actions.downloadArtifact);
     const stoodDown={...run,id:124,run_attempt:standDownAttempt,check_suite_id:901};
     const olderFailure={...run,id:122,run_attempt:1,check_suite_id:899,conclusion:'failure'};
     github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[stoodDown,run,olderFailure]}});
