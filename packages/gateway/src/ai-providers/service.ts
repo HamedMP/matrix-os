@@ -8,6 +8,7 @@ import { projectChatGptPlanSnapshot } from "../app-ai/chatgpt-plan-projection.js
 import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   AiProviderDriverViewSchema,
   type AiAccessSourceView,
   type AiProviderAccountView,
@@ -21,6 +22,7 @@ import type { KernelCredentialObservationState } from "../kernel-credentials.js"
 import { KERNEL_DEFAULTS } from "../kernel-settings.js";
 import { ProviderCredentialStore } from "./credential-store.js";
 import { ProviderHealthCache } from "./health.js";
+import { fundedSourceObservation } from "./funded-source-observation.js";
 import {
   AI_PROVIDER_CATALOG_VERSION,
   buildBundledModelCatalog,
@@ -400,9 +402,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
     const managedMatrixOnly = canonicalOnly || options.admissionScope === "managed_matrix";
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
+    // Aggregate funding can outlive native evidence. Renew within the outer
+    // observation budget; discovery and each renewal retain their own caps.
     const nativeScope = {
       signal: options.signal,
-      deadline: Math.min(+snapshotTime + 13000,
+      deadline: Math.min(+snapshotTime + FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs,
         Number.isFinite(options.nativeObservationDeadline) ? options.nativeObservationDeadline! : Infinity),
       deferRenewal: true,
     };
@@ -448,33 +452,31 @@ export class AiProviderService implements AiProviderSnapshotReader {
       "matrix",
       now,
     );
-    const fundedSourceReadiness = (modelId: string): AiProviderReadiness =>
-      funded !== undefined && (matrixReadiness.state === "ready" ? !funded.allowedModelIds.includes(modelId)
-        : !funded.discoverableModelIds?.includes(modelId) && !funded.allowedModelIds.includes(modelId))
-        ? { state: "unavailable", checkedAt: matrixReadiness.checkedAt, staleAfter: null,
-          action: "retry", safeReason: "provider_unavailable" }
-        : matrixReadiness;
     const catalog = buildBundledModelCatalog();
+    const observeFundedSource = (sourceId: string) => fundedSourceObservation(
+      eligibleModelsForSource(sourceId, catalog).map(model => model.id), matrixReadiness, funded,
+    );
+    const fundedSources = {
+      matrix_cloudflare: observeFundedSource("matrix_cloudflare"),
+      matrix_included: observeFundedSource("matrix_included"),
+    };
 
     const accessSources: AiAccessSourceView[] = [
       sourceFromReadiness({
         id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
         vendor: "cloudflare", accountLabel: "Included",
-        eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
-          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id)).map((model) => model.id),
+        eligibleModelIds: fundedSources.matrix_cloudflare.eligibleModelIds,
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
-      }, fundedSourceReadiness("@cf/zai-org/glm-5.3-flash")),
+      }, fundedSources.matrix_cloudflare.readiness),
       sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",
         fundingKind: "matrix_included",
         vendor: "anthropic",
         accountLabel: "Included",
-        eligibleModelIds: eligibleModelsForSource("matrix_included", catalog)
-          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id))
-          .map((model) => model.id),
+        eligibleModelIds: fundedSources.matrix_included.eligibleModelIds,
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
-      }, fundedSourceReadiness("claude-sonnet-5")),
+      }, fundedSources.matrix_included.readiness),
       sourceFromReadiness({
         id: "owner_anthropic_key",
         displayName: "Anthropic API key",

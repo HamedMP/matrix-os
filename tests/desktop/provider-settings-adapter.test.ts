@@ -140,7 +140,7 @@ describe("desktop provider settings transport", () => {
       const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
       const transport = createDesktopProviderSettingsTransport(client);
       await transport.getSnapshot(new AbortController().signal);
-      expect(timeout).toHaveBeenLastCalledWith(15_000);
+      expect(timeout).toHaveBeenLastCalledWith(32_000);
       await client.get("/api/auth/status");
       expect(timeout).toHaveBeenLastCalledWith(10_000);
       await transport.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_hermes", enabled: false,
@@ -158,7 +158,7 @@ describe("desktop provider settings transport", () => {
     expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true", {
       maxBytes: 1024 * 1024,
       signal: abort.signal,
-      timeoutMs: 15_000,
+      timeoutMs: 32_000,
     });
   });
 

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -92,6 +92,53 @@ describe.skipIf(!databaseUrl)("shared model health on independent PostgreSQL con
     expect(results.every(result => result.ready)).toBe(true);
     for (const result of results) expect(result).toEqual(results[0]);
     expect(await service(secondDb, fetchFn).probe(sonnet)).toEqual(results[0]);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(await budget()).toEqual([{ day_used: 1, minute_used: 1 }]);
+  });
+
+  it("keeps one paid probe leased across replicas beyond the previous fourteen-second window", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const acquired = Promise.withResolvers<void>();
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      if (fetchFn.mock.calls.length === 1) { entered.resolve(); await release.promise; }
+      return priced();
+    });
+    const first = service(db, fetchFn).probe(glm);
+    await entered.promise;
+    // Age server-side lease time without a twenty-second wall-clock sleep.
+    // This represents a second replica joining fifteen seconds into the probe.
+    await sql`update ai_funded_model_probe_cache set lease_until = lease_until - interval '15 seconds'`.execute(db.executor);
+    clock = new Date(clock.getTime() + 15_000);
+    const transaction = secondDb.transaction.bind(secondDb);
+    const spy = vi.spyOn(secondDb, "transaction").mockImplementation(async work => {
+      const result = await transaction(work); acquired.resolve(); return result;
+    });
+    const second = service(secondDb, fetchFn).probe(glm);
+    try {
+      await acquired.promise;
+      clock = new Date(clock.getTime() + 6_400);
+      release.resolve();
+      const results = await Promise.all([first, second]);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(results.every(result => result.ready)).toBe(true);
+      expect(results[1]).toEqual(results[0]);
+      expect(await budget()).toEqual([{ day_used: 1, minute_used: 1 }]);
+    } finally { release.resolve(); spy.mockRestore(); }
+  });
+
+  it("does not reuse shared receipts from the shorter probe and lease configuration", async () => {
+    const legacyKey = createHash("sha256").update(JSON.stringify([
+      "priced-readiness-v1", glm, origin, token, 1000, 2,
+    ])).digest("hex");
+    await sql`insert into ai_funded_model_probe_cache
+      (cache_key, lease_token, lease_until, ready, checked_ms, stale_ms, price_expiry_ms)
+      values (${legacyKey}, ${randomUUID()}, statement_timestamp(), true, ${+clock},
+        ${+clock + 300_000}, ${Date.parse("2026-10-15T00:00:00.000Z")})`.execute(db.executor);
+    const fetchFn = vi.fn<typeof fetch>(async () => priced());
+    const replica = service(secondDb, fetchFn);
+    expect((await replica.readCached!(glm)).ready).toBe(false);
+    expect((await replica.probe(glm)).ready).toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(await budget()).toEqual([{ day_used: 1, minute_used: 1 }]);
   });

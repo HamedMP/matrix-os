@@ -1,17 +1,22 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { Alert, KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
+import { KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
 
+import * as mockContextMenu from "./context-menu-test-utils";
 import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
 import { Icon } from "../components/ui/Icon";
 import { SidePanelIcon } from "../components/ui/icons";
+
+import { menuItem } from "./context-menu-test-utils";
 
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: false }) }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+// Jest resolves the iOS files, so each message sits in a native context menu.
+jest.mock("@expo/ui/swift-ui", () => mockContextMenu.swiftUiContextMenuModule());
 
 const mockSendMessage = jest.fn();
 const mockOpenSidePanel = jest.fn();
@@ -110,12 +115,8 @@ describe("drawer home screen", () => {
     mockDetail = { record: { chat: { id: mockActiveChatId, title: "Native failure" } }, runs: [], turns: [], activities: [],
       messages: [{ id: "msg_native_copy", chatId: mockActiveChatId, role: "user", state: "committed", seq: 1,
         parts: [{ type: "text", text: "Inspect native failure" }], createdAt: "2026-09-09T00:00:00.000Z" }] };
-    const alert = jest.spyOn(Alert, "alert");
     render(<ChatScreen />);
-    fireEvent(screen.getByText("Inspect native failure"), "longPress");
-    const action = alert.mock.calls[0]?.[2]?.find((button) => button.text === "Copy chat ID");
-    expect(action).toBeDefined();
-    action!.onPress?.();
+    fireEvent.press(menuItem(screen.getByText("Inspect native failure"), "Copy chat ID"));
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat_native_content");
   });
 
@@ -207,6 +208,14 @@ describe("drawer home screen", () => {
       expect(screen.getByText("Ship it")).toBeTruthy();
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
       expect(screen.queryByText("What should we work on?")).toBeNull();
+    });
+
+    it("sends a draft of several lines with its line breaks, trimming only the ends", () => {
+      render(<ChatScreen />);
+      sendDraft("\nPlan the week:\n\n- gym\n- groceries\n");
+
+      expect(mockSendMessage.mock.calls[0][0]).toMatchObject({ text: "Plan the week:\n\n- gym\n- groceries" });
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
     });
 
     it("keeps a message that failed to send where it was, marked as not sent, and gives it back on Edit", () => {
@@ -374,11 +383,13 @@ describe("drawer home screen", () => {
       expect(screen.queryByText("Ship it")).toBeNull();
     });
 
-    it("does not send from the keyboard while the provider catalog is still loading", () => {
+    it("does not send while the provider catalog is still loading", () => {
       mockCatalogLoading = true;
       render(<ChatScreen />);
       fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
-      fireEvent(screen.getByLabelText("Message Matrix"), "submitEditing");
+      const send = screen.getByRole("button", { name: "Send message" });
+      expect(send.props.accessibilityState).toMatchObject({ disabled: true });
+      fireEvent.press(send);
 
       expect(mockSendMessage).not.toHaveBeenCalled();
       expect(screen.queryByText("Ship it")).toBeNull();
@@ -389,7 +400,9 @@ describe("drawer home screen", () => {
       mockSendPending = true;
       render(<ChatScreen />);
       fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
-      fireEvent(screen.getByLabelText("Message Matrix"), "submitEditing");
+      // The send button is Stop until the send is answered.
+      expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
 
       expect(mockSendMessage).not.toHaveBeenCalled();
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");

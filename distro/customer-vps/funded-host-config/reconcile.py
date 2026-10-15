@@ -149,22 +149,26 @@ def run(action='apply', attempt=None):
         # Authenticate from one bounded literal sync-token line without sourcing.
         sync_tokens = re.findall(rb'^MATRIX_SYNC_RUNTIME_TOKEN=([a-f0-9]{64})$', data, re.MULTILINE)
         require(len(sync_tokens) == 1 and len(re.findall(rb'^\s*(?:export\s+)?MATRIX_SYNC_RUNTIME_TOKEN\s*=', data, re.MULTILINE)) == 1)
-        require(values.get('MATRIX_RUNTIME_SLOT') == 'primary'
-                and re.fullmatch(r'[1-9][0-9]{0,9}', values.get('MATRIX_RUNTIME_TOKEN_EPOCH', ''))
-                and len(sync_tokens) == 1)
-        epoch = int(values['MATRIX_RUNTIME_TOKEN_EPOCH'])
-        require(epoch <= 2147483647)
-        identity = {'handle': values.get('MATRIX_HANDLE'), 'machineId': values.get('MATRIX_MACHINE_ID'),
-                    'runtimeSlot': 'primary', 'runtimeTokenEpoch': epoch}
-        require(isinstance(identity['handle'], str) and re.fullmatch(r'[a-z0-9][a-z0-9-]{1,62}', identity['handle'])
-                and isinstance(identity['machineId'], str) and re.fullmatch(r'[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}', identity['machineId']))
-        local_identity = {'handle': identity['handle'], 'machineId': identity['machineId'],
-                          'ownerId': values.get('MATRIX_CLERK_USER_ID'), 'runtimeSlot': 'primary', 'epoch': epoch}
+        base_host_identity(values)
         if action != 'admit':
             activity(repair, receipt['version'])
         expected = {'sha256': digest(data), 'inode': info.st_ino, 'device': info.st_dev}
         if action == 'inspect':
-            return digest(data)
+            return digest(data)  # Epoch-absent baseline inspection never performs network I/O.
+        applied = None
+        if action == 'rollback':
+            # Cleanup authority is the protected attempt, including an epoch-absent
+            # before-image. Platform unavailability must not strand an unchanged host.
+            applied = json_bytes(state.read('applied.json'))
+            repair.validate({'action': 'rollback', 'rolloutId': applied.get('rolloutId'),
+                'identity': applied.get('identity'), 'expectedFile': expected, 'quiescentWindow': True})
+            epoch, epoch_proof = applied['identity']['epoch'], None
+        else:
+            epoch, epoch_proof = resolve_host_epoch(values, sync_tokens[0].decode(), receipt['sourceSha'])
+        identity = {'handle': values['MATRIX_HANDLE'], 'machineId': values['MATRIX_MACHINE_ID'],
+                    'runtimeSlot': 'primary', 'runtimeTokenEpoch': epoch}
+        local_identity = {'handle': identity['handle'], 'machineId': identity['machineId'],
+                         'ownerId': values['MATRIX_CLERK_USER_ID'], 'runtimeSlot': 'primary', 'epoch': epoch}
         if action in ('apply', 'admit', 'admit-stopped'):
             # Existing nonproduction managed routing is an intentional override.
             current_relay = values.get('MATRIX_FUNDED_AI_RELAY_URL', '')
@@ -178,12 +182,13 @@ def run(action='apply', attempt=None):
             config = validate_response(response, identity, receipt['sourceSha'], time.time())
             require(current_relay in ('', config['MATRIX_FUNDED_AI_RELAY_URL']))
             if action in ('admit', 'admit-stopped'):
-                return any(values.get(key) != value for key, value in config.items())
-            if any(values.get(key) != value for key, value in config.items()):
+                return epoch_proof is not None or any(values.get(key) != value for key, value in config.items())
+            needs_change = epoch_proof is not None or any(values.get(key) != value for key, value in config.items())
+            if needs_change:
                 # A retained active/unknown attempt owns rollback authority.
                 # It must be resolved first, never replaced by a new attempt.
                 require(not os.path.lexists('/var/lib/matrix-funded-host-config/applied.json'))
-            rollout = 'repair-' + secrets.token_hex(16)
+            rollout = ('epoch-' if epoch_proof is not None else 'repair-') + secrets.token_hex(16)
             if attempt is not None:
                 attempt['rolloutId'] = rollout
             request = {'action': 'apply', 'rolloutId': rollout, 'identity': local_identity, 'expectedFile': expected,
@@ -191,24 +196,29 @@ def run(action='apply', attempt=None):
                        'runtimeToken': config['MATRIX_FUNDED_AI_RUNTIME_TOKEN'], 'platformUrl': config['MATRIX_FUNDED_AI_PLATFORM_URL']}}
             def guard():
                 validate_response(response, identity, receipt['sourceSha'], time.time())
+                if epoch_proof is not None:
+                    validate_epoch_response(epoch_proof[0], epoch_proof[1], receipt['sourceSha'], time.time())
                 activity(repair, receipt['version'])
-            if any(values.get(key) != value for key, value in config.items()):
+            if needs_change:
                 state.write('applied.json', json.dumps({'rolloutId': rollout, 'identity': local_identity,
                             'beforeSha256': digest(data)}, separators=(',', ':')).encode(), 0o600)
-            result = repair._execute(request, anchor, 0, gid, guard)
+            result = (apply_missing_epoch(repair, anchor, local_identity, config, rollout, data, info, guard)
+                      if epoch_proof is not None else repair._execute(request, anchor, 0, gid, guard))
             if result['changed']:
                 state.write('applied.json', json.dumps({'rolloutId': rollout, 'identity': local_identity,
                             'afterSha256': result['afterSha256']}, separators=(',', ':')).encode(), 0o600)
         else:
-            applied = json_bytes(state.read('applied.json'))
             require(applied.get('identity') == local_identity)
-            require(attempt is None or (re.fullmatch(r'repair-[a-f0-9]{32}', attempt.get('rolloutId', ''))
+            require(attempt is None or (re.fullmatch(r'(?:repair|epoch)-[a-f0-9]{32}', attempt.get('rolloutId', ''))
                     and applied.get('rolloutId') == attempt['rolloutId']))
             request = {'action': 'rollback', 'rolloutId': applied['rolloutId'], 'identity': local_identity,
                        'expectedFile': expected, 'quiescentWindow': True}
             try:
-                result = repair._execute(request, anchor, 0, gid, lambda: activity(repair, receipt['version']))
-            except (repair.RepairError, FileNotFoundError):
+                guard = lambda: activity(repair, receipt['version'])
+                result = (execute_epoch_image(repair, anchor, local_identity, applied['rolloutId'], expected, guard)
+                          if re.fullmatch(r'epoch-[a-f0-9]{32}', applied['rolloutId'])
+                          else repair._execute(request, anchor, 0, gid, guard))
+            except (repair.RepairError, FileNotFoundError, ConfigError):
                 require(digest(data) == applied.get('beforeSha256'))
                 result = {'changed': False, 'restartRequired': False}
             os.unlink('applied.json', dir_fd=state.fds[-1])

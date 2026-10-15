@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
+import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { AlertIcon, Icon } from "@/components/ui";
 import { DISABLED_OPACITY, PRESSED_OPACITY } from "@/components/ui/pressable-state";
 import type { TranscriptAttachment } from "@/lib/chat-attachments";
@@ -20,6 +21,8 @@ export interface UserMessageProps extends Pick<MessageAttachmentsProps, "renderC
   text: string;
   /** The photos and files sent with it, shown above the text. */
   attachments?: readonly TranscriptAttachment[];
+  /** The chat the bubble's long-press menu offers to copy the ID of. */
+  chatId?: string | null;
   /**
    * Where a message sent from this phone is, said under it: "sending" once a
    * send takes a while, "failed" when it was not sent. Left out once the
@@ -38,16 +41,17 @@ export interface UserMessageProps extends Pick<MessageAttachmentsProps, "renderC
 export function UserMessage({
   text,
   attachments,
+  chatId,
   renderComputerPhoto,
   delivery,
   onRetry,
   onEdit,
   retryDisabled = false,
 }: UserMessageProps) {
-  const content = !attachments || attachments.length === 0 ? <Bubble text={text} /> : (
+  const content = !attachments || attachments.length === 0 ? <Bubble text={text} chatId={chatId} /> : (
     <View testID="user-message-with-attachments" style={styles.group}>
       <MessageAttachments attachments={attachments} renderComputerPhoto={renderComputerPhoto} />
-      {text ? <Bubble text={text} /> : null}
+      {text ? <Bubble text={text} chatId={chatId} /> : null}
     </View>
   );
   if (!delivery) return content;
@@ -61,11 +65,21 @@ export function UserMessage({
   );
 }
 
-function Bubble({ text }: { text: string }) {
+function Bubble({ text, chatId }: { text: string; chatId?: string | null }) {
+  const { theme } = useUnistyles();
+
   return (
-    <View testID="user-message" style={styles.bubble}>
-      <Text style={styles.text}>{text}</Text>
-    </View>
+    // A long press lifts the bubble alone, with its own corners.
+    <ChatContextMenu
+      chatId={chatId}
+      messageText={text}
+      fit="end"
+      cornerRadius={theme.v2.radius.bubble}
+    >
+      <Pressable accessible={false} testID="user-message" style={styles.bubble}>
+        <Text style={styles.text}>{text}</Text>
+      </Pressable>
+    </ChatContextMenu>
   );
 }
 

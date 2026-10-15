@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openWebProviderAgentSetup } from "../../shell/src/lib/provider-settings-transport.js";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
@@ -33,7 +34,7 @@ describe("Settings catalog connection-label negotiation", () => {
     const api = { get: vi.fn(async () => ({ revision: "revision", drivers: [], instances: [] })) };
     expect(await openDesktopProviderAgentSetup(api as never, "pi", () => true)).toBe(false);
     expect(api.get).toHaveBeenCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true&includeSettingsSetupActions=true",
-      expect.objectContaining({ maxBytes: 1024 * 1024, signal: expect.any(AbortSignal), timeoutMs: 15_000 }));
+      expect.objectContaining({ maxBytes: 1024 * 1024, signal: expect.any(AbortSignal), timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs }));
     expect(api.get).toHaveBeenCalledOnce();
   });
 });
