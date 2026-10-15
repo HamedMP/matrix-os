@@ -18,14 +18,15 @@ function fixture(callback: (directory: string, executable: (name: string, body: 
     });
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
-function checkTarget(version: unknown, duplicate = false) {
+function checkTarget(version: unknown, duplicate = false, signingVersion: unknown = "29", duplicateSigning = false) {
   let result: { status: number | null; stderr: string; output: string };
   fixture((directory, executable) => {
     const database = { name: "PLATFORM_DATABASE_URL", valueFrom: { secretKeyRef: { name: "slack-preview-pr2079-platform-database-url", key: version } } };
+    const signing = { name: "PLATFORM_SECRET", valueFrom: { secretKeyRef: { name: "platform-preview-secret", key: signingVersion } } };
     const env = [database,
       { name: "PLATFORM_PREVIEW", value: "true" },
       { name: "SLACK_PREVIEW_RUNTIME_HANDLE", value: "pr-2079" },
-      { name: "PLATFORM_SECRET", valueFrom: { secretKeyRef: { name: "platform-preview-secret", key: "latest" } } },
+      signing, ...(duplicateSigning ? [signing] : []),
       { name: "MATRIX_COLLABORATION_ALLOWED_ORIGINS", value: "https://pr-2079-preview.matrix-os.com" },
       { name: "MATRIX_COLLABORATION_RELAY_ORIGIN", value: "https://pr-2079-preview.matrix-os.com" },
       { name: "MATRIX_COLLABORATION_TICKET_KEYS", valueFrom: { secretKeyRef: { name: "collaboration-ticket-keys-preview", key: "latest" } } },
@@ -54,6 +55,34 @@ function checkTarget(version: unknown, duplicate = false) {
 }
 
 describe("Slack preview connection input and database fences", () => {
+  it("pins the deployment signing version from enabled metadata", () => {
+    const deploy = jobs.preview.steps.find((step: {name?:string})=>step.name === "Deploy zero-traffic tagged revision to preview service").run;
+    const start = deploy.indexOf("platform_secret_binding=");
+    expect(start).toBeGreaterThan(-1);
+    const selection = deploy.slice(start, deploy.indexOf("# Browser-reachable",start));
+    for(const [state,version,ok] of [["ENABLED","29",true],["DISABLED","29",false],["ENABLED","latest",false]] as const){
+      const run=spawnSync("bash",["-euc",`gcloud(){ printf '%s' '${JSON.stringify({state,name:'projects/synthetic/secrets/platform-preview-secret/versions/'+version})}'; };\n${selection}\nprintf '%s' "$platform_secret_binding"`],{encoding:"utf8",timeout:2000,env:{PATH:process.env.PATH,SLACK_PREVIEW_ENABLED:"true",GCP_PROJECT_ID:"synthetic"}});
+      expect(run.status===0).toBe(ok);if(ok)expect(run.stdout).toBe("platform-preview-secret:29");
+    }
+    const normal=spawnSync("bash",["-euc",`gcloud(){ exit 99; };\n${selection}\nprintf '%s' "$platform_secret_binding"`],{encoding:"utf8",timeout:2000,env:{PATH:process.env.PATH,SLACK_PREVIEW_ENABLED:"false"}});
+    expect(normal.status,normal.stderr).toBe(0);expect(normal.stdout).toBe("platform-preview-secret:latest");
+    expect(deploy).toContain("PLATFORM_SECRET=${platform_secret_binding}");
+  });
+  it.each(["1","29"])("takes immutable signing version %s from the checked revision",version=>{
+    const result=checkTarget("17",false,version);expect(result.status,result.stderr).toBe(0);expect(result.output).toContain(`signing_secret_version=${version}\n`);
+  });
+  it.each(["latest","",null,"0","1/2",29])("rejects mutable or absent signing version %s",version=>expect(checkTarget("1",false,version).status).not.toBe(0));
+  it("rejects ambiguous signing bindings",()=>expect(checkTarget("1",false,"29",true).status).not.toBe(0));
+  it("uses the revision signing version even after latest rotates",()=>{
+    const step=slack.steps.find((step:{name?:string})=>step.name==="Connect the preview VM to the isolated Slack backend under a rollback guard");
+    expect(step.env.PREVIEW_PLATFORM_SECRET_VERSION).toBe("${{ steps.target.outputs.signing_secret_version }}");
+    fixture((directory,executable)=>{
+      executable("gcloud",'printf "%s\\n" "$*" > "$ROOT/arguments"\nprintf synthetic-pinned-secret\n');
+      const command=step.run.match(/^\s*preview_secret=.*$/m)?.[0];expect(command).toBeDefined();
+      const run=spawnSync("bash",["-euc",command!],{encoding:"utf8",timeout:2000,env:{PATH:`${directory}:${process.env.PATH}`,ROOT:directory,GCP_PROJECT_ID:"synthetic",PREVIEW_PLATFORM_SECRET_VERSION:"29"}});
+      expect(run.status,run.stderr).toBe(0);expect(readFileSync(join(directory,"arguments"),"utf8")).toContain("versions access 29 --secret platform-preview-secret");
+    });
+  });
   it.each(["1", "17"])("carries checked revision database version %s instead of rotated latest", version => {
     const result = checkTarget(version);
     expect(result.status, result.stderr).toBe(0);

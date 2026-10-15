@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 const workflow = readFileSync(".github/workflows/preview-platform.yml", "utf8");
 
@@ -9,6 +10,8 @@ describe("protected Slack preview connection", () => {
     const checkout = slackJob.indexOf("uses: actions/checkout@v6");
     const authenticate = slackJob.indexOf("uses: google-github-actions/auth@v3");
     expect(checkout).toBeGreaterThanOrEqual(0);
+    const steps = YAML.parse(workflow).jobs["connect-slack-pilot-preview"].steps;
+    expect(steps.find((step:{uses?:string})=>step.uses==="actions/checkout@v6").with?.ref).toBe("${{ needs.select-share-preview.outputs.head_sha }}");
     expect(authenticate).toBeGreaterThan(checkout);
     expect(slackJob.slice(authenticate)).not.toContain("uses: actions/checkout@");
   });

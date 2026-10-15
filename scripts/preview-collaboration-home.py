@@ -2,7 +2,7 @@
 
 `<nonce> <handle> <owner> <machine ID> <binding JSON>` re-points only the
 collaboration binding in host.env, keeping the file's owner, group and mode and a
-single rollback copy of the file as it was before the first connection. It runs
+single immutable origin copy and one uncommitted-attempt rollback snapshot. It runs
 only while this run owns the connection (its guard is armed and its claim is
 recorded), under the guard's lock, so a guard restore never interleaves with it.
 Prints a fixed status only, never the file or a value."""
@@ -24,6 +24,7 @@ PIN = "MATRIX_UPDATE_MANIFEST_BASE_URL"
 KEYS = {"PLATFORM_INTERNAL_URL", "UPGRADE_TOKEN", "MATRIX_COLLABORATION_CLIENT_ORIGINS"}
 PREVIEW_AUTH = "MATRIX_PREVIEW_PLATFORM_AUTH_TOKEN"
 ROLLBACK = ".host.env.preview-collaboration-rollback"
+ATTEMPT_ROLLBACK = ".host.env.preview-collaboration-attempt-rollback"
 
 
 def read_env(path, root_owned):
@@ -107,6 +108,14 @@ def bind(root, handle, owner, machine, config, root_owned):
     pin = values(original, PIN) or values(original, "PLATFORM_INTERNAL_URL")
     if len(pin) != 1 or len(pin[0]) != 1 or not re.fullmatch(ORIGIN + "/?", pin[0][0]):
         raise ValueError("Invalid original platform binding")
+    # Keep release provenance immutable, but restore this attempt to its last committed binding.
+    attempt = root / ATTEMPT_ROLLBACK
+    try:
+        baseline = read_env(attempt, root_owned)[1].splitlines()
+    except FileNotFoundError:
+        write_like(attempt, text, meta, mode)
+        baseline = lines
+    check_identity(baseline, handle, owner, machine)
     config = {**config, PIN: pin[0][0], **({"MATRIX_PREVIEW_RUNTIME": "true"} if PREVIEW_AUTH in config else {})}
     kept = [line for line in lines if line.split("=", 1)[0] not in config]
     write_like(path, "\n".join(kept + [f"{key}={config[key]}" for key in sorted(config)]) + "\n", meta, mode)

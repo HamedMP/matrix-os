@@ -474,6 +474,14 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
+          platform_secret_binding=platform-preview-secret:latest
+          if [ "${SLACK_PREVIEW_ENABLED:-false}" = "true" ]; then
+            platform_secret_version="$(gcloud secrets versions describe latest --secret platform-preview-secret \
+              --project "$GCP_PROJECT_ID" --format=json | jq -er '
+                select(.state == "ENABLED") | .name
+                | capture("/secrets/platform-preview-secret/versions/(?<version>[1-9][0-9]{0,18})$").version')"
+            platform_secret_binding="platform-preview-secret:${platform_secret_version}"
+          fi
           # Browser-reachable preview host (custom domain routed to this service).
           # Origins/redirects and Stripe return URLs resolve to this host.
           PREVIEW_PUBLIC_URL="${PREVIEW_PUBLIC_URL:-https://preview.matrix-os.com}"
@@ -525,7 +533,7 @@ jobs:
               --no-traffic \
               --allow-unauthenticated \
               --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID:-}|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_ORIGIN=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${collaboration_env_bindings}${funded_ai_env_bindings}${SLACK_PREVIEW_ENV_BINDINGS:-}" \
-              --set-secrets "PLATFORM_DATABASE_URL=${SLACK_PREVIEW_DATABASE_SECRET_BINDING:-platform-database-url-staging:latest},PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${SLACK_PREVIEW_SECRET_BINDINGS:-}" \
+              --set-secrets "PLATFORM_DATABASE_URL=${SLACK_PREVIEW_DATABASE_SECRET_BINDING:-platform-database-url-staging:latest},PLATFORM_SECRET=${platform_secret_binding},GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${SLACK_PREVIEW_SECRET_BINDINGS:-}" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
           }
@@ -1524,6 +1532,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.select-share-preview.outputs.head_sha }}
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -1570,6 +1580,12 @@ jobs:
             | select(.name == $db) | .key
             | select(type == "string" and test("^[1-9][0-9]{0,18}$"))
           ' <<< "$revision_json")" || { echo "The checked Slack revision requires one immutable database secret version." >&2; exit 1; }
+          signing_secret_version="$(jq -er '
+            [.spec.containers[0].env[]? | select(.name == "PLATFORM_SECRET")]
+            | select(length == 1) | .[0].valueFrom.secretKeyRef
+            | select(.name == "platform-preview-secret") | .key
+            | select(type == "string" and test("^[1-9][0-9]{0,18}$"))
+          ' <<< "$revision_json")" || { echo "The checked Slack revision requires one immutable signing secret version; redeploy legacy revisions." >&2; exit 1; }
           client_origins="$(jq -er --arg alias "https://pr-${PR_NUMBER}-preview.matrix-os.com" '
             [.spec.containers[0].env[]?] as $env
             | [$env[] | select(.name == "MATRIX_COLLABORATION_ALLOWED_ORIGINS") | .value] as $allowed
@@ -1585,6 +1601,7 @@ jobs:
           ' <<< "$revision_json")" || { echo "The tagged preview has not enabled collaboration from the pilot's exact browser origin." >&2; exit 1; }
           [[ "$url" =~ ^https://[A-Za-z0-9.-]+$ ]]
           echo "database_secret_version=$database_secret_version" >> "$GITHUB_OUTPUT"
+          echo "signing_secret_version=$signing_secret_version" >> "$GITHUB_OUTPUT"
           echo "platform_url=$url" >> "$GITHUB_OUTPUT"
           echo "client_origins=$client_origins" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
@@ -1639,6 +1656,7 @@ jobs:
           echo "address=$(jq -r '.address' preview-share-route.json)" >> "$GITHUB_OUTPUT"
       - name: Connect the preview VM to the isolated Slack backend under a rollback guard
         env:
+          PREVIEW_PLATFORM_SECRET_VERSION: ${{ steps.target.outputs.signing_secret_version }}
           PREVIEW_DATABASE_SECRET_VERSION: ${{ steps.target.outputs.database_secret_version }}
           PREVIEW_RUNTIME_OWNER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
@@ -1649,6 +1667,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${PREVIEW_DATABASE_SECRET_VERSION:-}" =~ ^[1-9][0-9]{0,18}$ ]]
+          [[ "${PREVIEW_PLATFORM_SECRET_VERSION:-}" =~ ^[1-9][0-9]{0,18}$ ]]
           handle="pr-${PR_NUMBER}"
           route="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"
           response="$(mktemp)"
@@ -1693,7 +1712,7 @@ jobs:
           test "$observed_machine" = "$PREVIEW_MACHINE_ID"
           preview_db="$(gcloud secrets versions access "$PREVIEW_DATABASE_SECRET_VERSION" --secret "slack-preview-pr${PR_NUMBER}-platform-database-url" --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
-          preview_secret="$(gcloud secrets versions access latest --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
+          preview_secret="$(gcloud secrets versions access "$PREVIEW_PLATFORM_SECRET_VERSION" --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_secret"
           preview_token="$(PREVIEW_SIGNING_SECRET="$preview_secret" node --input-type=module -e 'import {createHmac} from "node:crypto"; process.stdout.write(createHmac("sha256",process.env.PREVIEW_SIGNING_SECRET).update(process.argv[1]).digest("hex"))' "$handle")"
           echo "::add-mask::$preview_token"
