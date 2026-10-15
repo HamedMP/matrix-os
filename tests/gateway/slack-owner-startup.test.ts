@@ -71,18 +71,40 @@ describe("owner Slack composition",()=>{
 
 
 describe("Slack owner reply delivery recovery",()=>{
+ it.each([["120",120_000],["0",1_000],["999999",3_600_000],["invalid",60_000],[null,60_000]])("retains bounded Retry-After%s only for confirmed429",async(header,expected)=>{
+  const {createSlackOwnerClient}=await import("../../packages/gateway/src/startup/slack-owner-client.js");
+  const client=createSlackOwnerClient({platformUrl:"https://platform.example.test",handle:"pr-2079",token,fetchImpl:async()=>new Response(null,{status:429,headers:header===null?{}:{"retry-after":String(header)}})});
+  expect(await client.sendReply({envelope:{ownerId,actorId:ownerId,organizationId:"org_company",event} as never,text:"Reply"})).toEqual({status:"retryable",retryAfterMs:expected});
+ });
+ it("retains confirmed429 even if rejected-response cleanup fails",async()=>{
+  const {createSlackOwnerClient}=await import("../../packages/gateway/src/startup/slack-owner-client.js");
+  const client=createSlackOwnerClient({platformUrl:"https://platform.example.test",handle:"pr-2079",token,fetchImpl:async()=>new Response(new ReadableStream({cancel(){throw new Error("cancel failed");}}),{status:429,headers:{"retry-after":"120"}})});
+  expect(await client.sendReply({envelope:{ownerId,actorId:ownerId,organizationId:"org_company",event} as never,text:"Reply"})).toEqual({status:"retryable",retryAfterMs:120_000});
+ });
+
+ it("does not accept successful context or reaction payloads carried by HTTP503",async()=>{
+  const {createSlackOwnerClient}=await import("../../packages/gateway/src/startup/slack-owner-client.js");
+  const callback=new Hono();callback.post("/internal/slack/context",c=>c.json({available:true,untrusted:true,partial:false,messages:[{text:"should not be accepted"}]},503));
+  callback.post("/internal/slack/reactions",c=>c.json({reacted:true},503));
+  const client=createSlackOwnerClient({platformUrl:"https://platform.example.test",handle:"pr-2079",token,fetchImpl:((url,init)=>callback.request(String(url),init)) as typeof fetch});
+  const envelope={ownerId,actorId:ownerId,organizationId:"org_company",event} as never;
+  const warning=vi.spyOn(console,"warn").mockImplementation(()=>{});
+  try{expect(await client.readThread(envelope)).toBeNull();await client.react(envelope);expect(warning).toHaveBeenCalledWith("[slack-owner] progress reaction unavailable");}finally{warning.mockRestore();}
+ });
+
  it.each([
-  [503,{error:"Delivery not ready",code:"receipt_not_ready"},"retryable"],
+  [503,{error:"Delivery not ready",code:"receipt_not_ready"},"retryable","receipt_not_ready"],
   [503,{error:"Delivery unavailable"},"uncertain"],
+  [503,{sent:true,messageTs:"1790762400.123"},"uncertain"],
   [503,{error:"Delivery not ready",code:"receipt_not_ready",extra:true},"uncertain"],
   [403,{error:"Delivery not ready",code:"receipt_not_ready"},"uncertain"],
   [503,{error:"x".repeat(17*1024),code:"receipt_not_ready"},"uncertain"],
   [503,{error:"Other",code:"receipt_not_ready"},"uncertain"],
   [429,{error:"Rate limited"},"retryable"],
- ])("classifies only bounded confirmed no-send replies (%s,%j)",async(status,body,expected)=>{
+ ])("classifies bounded confirmed no-send reply case%# (HTTP%s)",async(status,body,expected,reason)=>{
   const {createSlackOwnerClient}=await import("../../packages/gateway/src/startup/slack-owner-client.js");
   const callback=new Hono();callback.post("/internal/slack/replies",c=>c.json(body,status as 503));
   const client=createSlackOwnerClient({platformUrl:"https://platform.example.test",handle:"pr-2079",token,fetchImpl:((url,init)=>callback.request(String(url),init)) as typeof fetch});
-  expect(await client.sendReply({envelope:{ownerId,actorId:ownerId,organizationId:"org_company",event} as never,text:"Reply"})).toEqual({status:expected});
+  expect(await client.sendReply({envelope:{ownerId,actorId:ownerId,organizationId:"org_company",event} as never,text:"Reply"})).toEqual(reason?{status:expected,reason}:status===429?{status:expected,retryAfterMs:60_000}:{status:expected});
  });
 });
