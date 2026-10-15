@@ -80,7 +80,7 @@ export function BillingCheckoutPanel({
   developerTools: DeveloperToolId[];
   trialDurationDays: number | null;
   activeCheckout?: MatrixBillingActiveCheckout | null;
-  onCheckoutAbandoned?: (errorMessage?: string) => void;
+  onCheckoutAbandoned?: () => void;
 }) {
   const planSlug = selectedProfile.planSlug;
   const regionSlug = selectedRegion.featureSlug;
@@ -221,7 +221,7 @@ export function BillingCheckoutPanel({
           `abandon_http_${response.status}`,
           message,
         );
-        onCheckoutAbandoned?.(message);
+        onCheckoutAbandoned?.();
         return;
       }
       onCheckoutAbandoned?.();
@@ -231,7 +231,7 @@ export function BillingCheckoutPanel({
         error instanceof Error ? `abandon_${error.name}` : "abandon_unknown",
         message,
       );
-      onCheckoutAbandoned?.(message);
+      onCheckoutAbandoned?.();
     } finally {
       window.clearTimeout(timeoutId);
       setAbandonLoading(false);
@@ -298,7 +298,7 @@ export function BillingCheckoutPanel({
         </span>
       </div>}
       {checkoutError && (
-        <p className="mt-2 text-center text-xs text-red-300">{checkoutError}</p>
+        <p className="mt-2 text-center text-xs text-red-300" role="alert">{checkoutError}</p>
       )}
     </aside>
   );

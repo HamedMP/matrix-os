@@ -253,7 +253,6 @@ function useManagedMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
   const retryBillingStatus = useCallback(() => {
     failedAttemptsRef.current = 0;
     billingStatusSnapshot = null;
-    setRemoteState(null);
     setRemoteChecked(false);
     setRetryTick((current) => current + 1);
   }, []);
@@ -370,7 +369,18 @@ function useManagedMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
       retry: retryBillingStatus,
     };
   }
-  if (!remoteChecked) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null, retry: retryBillingStatus };
+  if (!remoteChecked) {
+    return {
+      active: remoteState?.active ?? null,
+      checking: true,
+      entitlement: remoteState?.entitlement ?? null,
+      trialOffer: remoteState?.trialOffer ?? null,
+      activeCheckout: remoteState?.activeCheckout ?? null,
+      accessReason: remoteState?.accessReason ?? null,
+      accessIssue: remoteState?.accessIssue ?? null,
+      retry: retryBillingStatus,
+    };
+  }
   return {
     active: remoteState?.active === true,
     checking: false,

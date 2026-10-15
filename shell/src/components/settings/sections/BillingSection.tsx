@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import type { CSSProperties } from "react";
 import { desktopPalette, palette } from "@matrix-os/brand";
 import { Badge } from "@/components/ui/badge";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
@@ -69,18 +69,8 @@ export function BillingSection({
   checkoutReturnPath?: string;
   checkoutRuntimeSlot?: string;
 }) {
-  const { active, checking, entitlement, trialOffer, activeCheckout, accessReason, accessIssue, retry } = useMatrixBillingAccess(checkoutRuntimeSlot);
-  const [checkoutRecoveryError, setCheckoutRecoveryError] = useState<string | null>(null);
+  const { active, entitlement, trialOffer, activeCheckout, accessReason, accessIssue, retry } = useMatrixBillingAccess(checkoutRuntimeSlot);
   const startsNewSubscription = mode === "add-computer" && entitlement?.source !== "override";
-  const refreshCheckoutState = useCallback((errorMessage?: string) => {
-    setCheckoutRecoveryError(errorMessage ?? null);
-    retry();
-  }, [retry]);
-
-  // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- the authoritative refresh decides whether the checkout still exists; clear a prior uncertain-result message only after that refresh finishes without an active checkout.
-  useEffect(() => {
-    if (!checking && !activeCheckout) setCheckoutRecoveryError(null);
-  }, [activeCheckout, checking]);
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-2 font-[family-name:var(--font-geist-sans)] sm:p-4">
@@ -101,12 +91,6 @@ export function BillingSection({
         />
       </div>
 
-      {checkoutRecoveryError ? (
-        <p className="rounded-xl border border-ember/25 bg-ember/10 px-4 py-3 text-sm text-deep" role="alert">
-          {checkoutRecoveryError}
-        </p>
-      ) : null}
-
       <BillingPanel
         active={active}
         entitlement={entitlement}
@@ -115,7 +99,6 @@ export function BillingSection({
         accessReason={accessReason}
         accessIssue={accessIssue}
         onRetry={retry}
-        onCheckoutStateRefresh={refreshCheckoutState}
         mode={mode}
         onCheckoutIntent={onCheckoutIntent}
         onCheckoutNavigate={onCheckoutNavigate}
