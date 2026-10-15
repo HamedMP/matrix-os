@@ -3,7 +3,7 @@ import { canonicalReferenceId } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { JEV_MODEL_ID, JEV_PRICING_VERSION, JevProvenanceSchema } from "#jev";
 export * from "#funded-ai-execution-recovery";
-export * from "./funded-workers-models.js";
+export * from "#funded-workers-models";
 
 export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;
