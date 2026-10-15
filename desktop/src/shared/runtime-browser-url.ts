@@ -13,7 +13,9 @@ export type RuntimeBrowserNavigationDecision =
   | { disposition: "external" };
 
 const SCHEME = /^[a-z][a-z\d+.-]*:/i;
-const DOMAIN_LIKE = /^(?:[^\s/:]+\.)+[^\s/:]+(?::\d+)?(?:[/?#].*)?$/;
+// Labels exclude "." so each dot has exactly one parse; a label class that
+// also matches "." backtracks exponentially on hostile dotted input.
+const DOMAIN_LIKE = /^(?:[^\s/:.]+\.)+[^\s/:.]+\.?(?::\d+)?(?:[/?#].*)?$/;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 function isIpv4Loopback(host: string): boolean {

@@ -2,12 +2,17 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-const { execFileMock } = vi.hoisted(() => ({
+const { execFileMock, platformMock } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
+  platformMock: vi.fn<() => NodeJS.Platform | undefined>(() => undefined),
 }));
 vi.mock("node:child_process", () => ({
   execFile: execFileMock,
 }));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, platform: () => platformMock() ?? actual.platform() };
+});
 import {
   login,
   openBrowser,
@@ -109,6 +114,42 @@ describe("openBrowser", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       "Could not open browser. Visit: https://platform.matrix-os.com/auth/device\nEnter code: BCDF-GHJK",
     );
+  });
+
+  it("opens URLs on Windows without routing them through cmd.exe", () => {
+    execFileMock.mockClear();
+    platformMock.mockReturnValue("win32");
+    try {
+      openBrowser("https://platform.matrix-os.com/auth/device?a=1&calc.exe&b=%22x%22");
+    } finally {
+      platformMock.mockReturnValue(undefined);
+    }
+
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    const [cmd, args] = execFileMock.mock.calls[0]!;
+    expect(cmd).not.toMatch(/cmd/i);
+    expect(cmd).toBe("rundll32");
+    expect(args).toEqual([
+      "url.dll,FileProtocolHandler",
+      "https://platform.matrix-os.com/auth/device?a=1&calc.exe&b=%22x%22",
+    ]);
+  });
+
+  it("passes the normalized URL as a single argv entry on macOS and Linux", () => {
+    for (const os of ["darwin", "linux"] as const) {
+      execFileMock.mockClear();
+      platformMock.mockReturnValue(os);
+      try {
+        openBrowser("https://platform.matrix-os.com/auth/device?a=1&b=2");
+      } finally {
+        platformMock.mockReturnValue(undefined);
+      }
+      expect(execFileMock).toHaveBeenCalledWith(
+        os === "darwin" ? "open" : "xdg-open",
+        ["https://platform.matrix-os.com/auth/device?a=1&b=2"],
+        expect.any(Function),
+      );
+    }
   });
 
   it("rejects non-http(s) verification URLs", () => {
