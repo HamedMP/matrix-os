@@ -104,7 +104,7 @@ export function isManagedPiBinding(binding: PiRuntimeBinding): binding is Manage
   return "kind" in binding && binding.kind === "managed_chat";
 }
 export type PiInferenceIdentity = Pick<PiRuntimeBinding, "runtimeHandle" | "executionGeneration" | "runId" | "ownerId" | "chatId">;
-type StoredBinding = PiRuntimeBinding & { expiresAt: number; inference: AbortController };
+type StoredBinding = PiRuntimeBinding & { expiresAt: number; inference: AbortController; releaseTracking?: () => void };
 
 export class BotRuntimeRegistryError extends Error {
   constructor(readonly code: "capacity_exceeded" | "invalid_binding") {
@@ -187,7 +187,7 @@ export class BotRuntimeRegistry {
   }
 
   /** Expired bindings are swept before the capacity check, so stale runs never block admission. */
-  bind(input: PiRuntimeBinding): void {
+  bind(input: PiRuntimeBinding, releaseTracking?: () => void): void {
     const parsed = (isManagedPiBinding(input) ? ManagedBindingSchema : BindingSchema).safeParse(input);
     if (!parsed.success || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
       || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
@@ -196,8 +196,8 @@ export class BotRuntimeRegistry {
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
       throw new BotRuntimeRegistryError("capacity_exceeded");
     }
-    this.entries.get(parsed.data.runtimeHandle)?.inference.abort();
-    this.entries.set(parsed.data.runtimeHandle, { ...parsed.data, expiresAt: this.now() + this.ttlMs, inference: new AbortController() });
+    this.release(parsed.data.runtimeHandle);
+    this.entries.set(parsed.data.runtimeHandle, { ...parsed.data, expiresAt: this.now() + this.ttlMs, inference: new AbortController(), ...(releaseTracking ? { releaseTracking } : {}) });
   }
 
   /** The binding for a frame's runtime and generation; a stale generation never matches. */
@@ -208,7 +208,7 @@ export class BotRuntimeRegistry {
     this.sweep();
     const entry = this.entries.get(runtimeHandle.data);
     if (!entry || entry.executionGeneration !== generation.data) return null;
-    const { expiresAt: _expiresAt, inference: _inference, ...binding } = entry;
+    const { expiresAt: _expiresAt, inference: _inference, releaseTracking: _releaseTracking, ...binding } = entry;
     return binding;
   }
 
@@ -259,22 +259,23 @@ export class BotRuntimeRegistry {
   release(runtimeHandleInput: string): void {
     const runtimeHandle = RuntimeHandleSchema.safeParse(runtimeHandleInput);
     if (runtimeHandle.success) {
-      this.entries.get(runtimeHandle.data)?.inference.abort();
+      const entry = this.entries.get(runtimeHandle.data);
       this.entries.delete(runtimeHandle.data);
+      entry?.inference.abort();
+      try { entry?.releaseTracking?.(); }
+      catch (error: unknown) { console.warn("[bots] runtime tracking release failed", error instanceof Error ? error.name : "UnknownError"); }
     }
   }
 
   shutdown(): void {
-    for (const entry of this.entries.values()) entry.inference.abort();
-    this.entries.clear();
+    for (const handle of [...this.entries.keys()]) this.release(handle);
   }
 
   private sweep(): void {
     const now = this.now();
     for (const [handle, entry] of this.entries) {
       if (entry.expiresAt <= now) {
-        entry.inference.abort();
-        this.entries.delete(handle);
+        this.release(handle);
       }
     }
   }

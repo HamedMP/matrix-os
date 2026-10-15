@@ -1,3 +1,5 @@
+import { CollaborationRevocationEnforcer, SandboxRuntimeRegistry } from "../../../packages/gateway/src/collaboration/revocation-enforcer.js";
+import { createBotBrokerActions } from "../../../packages/gateway/src/bots/broker-actions.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -46,14 +48,99 @@ beforeEach(async () => {
   await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: CHAT, kind: "group", created_at: NOW, removed_at: null }).execute();
 });
 afterEach(async () => { await destroy(); await rm(homePath, { recursive: true, force: true }); });
+function tracking(client: { stopRuntime(input: { runtimeHandle: string }): Promise<unknown> }) {
+  const runtimes = new SandboxRuntimeRegistry({ client, startTimer: false });
+  const revocations = new CollaborationRevocationEnforcer({ runtimes, control: { invalidateActor: () => undefined } });
+  return { runtimes, revocations };
+}
 function setup(authorizeGroup?: GroupBotAuthorizer, duringLaunch?: () => void) {
   const registry = new BotRuntimeRegistry();
   const roots = { resolve: vi.fn(async () => root) };
   const client = { createRuntime: vi.fn(async (_input: unknown) => { duringLaunch?.(); return { runtimeHandle: RUNTIME, executionGeneration: "1" }; }), stopRuntime: vi.fn(async () => undefined) };
-  const admission = createPrivateBotAdmission({ db, registry, roots, homePath, host: { available: true, client: client as never }, authorizeGroup });
-  return { admission, registry, roots, client };
+  const revocation = tracking(client);
+  const admission = createPrivateBotAdmission({ db, registry, roots, homePath, getGroupRevocation: () => revocation, host: { available: true, client: client as never }, authorizeGroup });
+  return { admission, registry, roots, client, revocation };
 }
 describe("shared group Pi admission", () => {
+  it("refuses group launch without live revocation tracking", async () => {
+    const { roots, registry, client } = setup(async () => context);
+    const admission = createPrivateBotAdmission({ db, roots, registry, homePath, authorizeGroup: async () => context, host: { available: true, client: client as never } });
+    await expect(admission.admit(request)).rejects.toMatchObject({ code: "unavailable" });
+    expect(client.createRuntime).not.toHaveBeenCalled();
+  });
+  it("fences revocation after the final awaited authorization before binding", async () => {
+    let checks = 0;
+    const fixture = setup(async () => {
+      if (++checks === 2) void fixture.revocation.revocations.revoke(context.scopeId, context.actorId);
+      return context;
+    });
+    await expect(fixture.admission.admit(request)).rejects.toMatchObject({ code: "not_found" });
+    expect(fixture.registry.size).toBe(0);
+    expect(fixture.revocation.runtimes.size).toBe(0);
+    expect(fixture.client.stopRuntime).toHaveBeenCalledWith({ runtimeHandle: RUNTIME });
+  });
+  it("aborts actual in-flight broker inference before a slow physical stop finishes", async () => {
+    const fixture = setup(async () => context);
+    await fixture.admission.admit(request);
+    expect(fixture.revocation.runtimes.size).toBe(1);
+    let finishStop!: () => void;
+    fixture.client.stopRuntime.mockImplementationOnce(() => new Promise<void>(resolve => { finishStop = resolve; }));
+    let signal: AbortSignal | undefined;
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+      signal = init!.signal!;
+      return new Promise<Response>((_resolve, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), { once:true }));
+    });
+    const actions = createBotBrokerActions({ db:{} as never, sessions:{} as never, checkpoints:{} as never, runs:{} as never,
+      events:{} as never, tools:{} as never, registry:fixture.registry, authorizeGroup:async()=>context,
+      inference:{ homePath, lifetime:new AbortController().signal, fetchImpl,
+        resolveCredentials:async()=>({env:{ANTHROPIC_AUTH_TOKEN:"synthetic",ANTHROPIC_BASE_URL:"https://relay.example.invalid"}}) },
+    });
+    const pending = actions.handleFrame({ version:1, action:"inference.messages", requestId:"018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1",
+      runtimeHandle:RUNTIME, executionGeneration:"1", method:"POST", path:"/v1/messages?beta=true", headers:{},
+      body:JSON.stringify({model:request.route.modelId,stream:true,max_tokens:32,messages:[{role:"user",content:"Synthetic request"}]}) });
+    await vi.waitFor(()=>expect(fetchImpl).toHaveBeenCalledOnce());
+    fixture.revocation.revocations.onSessionEnded(context, "expired");
+    const stopping = fixture.revocation.revocations.settle();
+    expect(signal?.aborted).toBe(true);
+    expect(fixture.registry.size).toBe(0);
+    expect(fixture.revocation.runtimes.size).toBe(0);
+    await expect(pending).resolves.toMatchObject({ok:false,error:"provider_unavailable"});
+    finishStop(); await stopping;
+  });
+  it("aborts every matching run before awaiting the first worker stop", async () => {
+    const fixture=setup(async()=>context); const second=`runtime_${"d".repeat(32)}`;
+    fixture.client.createRuntime.mockResolvedValueOnce({runtimeHandle:RUNTIME,executionGeneration:"1"}).mockResolvedValueOnce({runtimeHandle:second,executionGeneration:"1"});
+    await fixture.admission.admit(request); await fixture.admission.admit({...request,runId:"run_group2"});
+    const identity={ownerId:OWNER,chatId:CHAT,executionGeneration:"1"};
+    const signals=[fixture.registry.inferenceSignal({...identity,runtimeHandle:RUNTIME,runId:request.runId}),fixture.registry.inferenceSignal({...identity,runtimeHandle:second,runId:"run_group2"})];
+    let finishStop!:()=>void; fixture.client.stopRuntime.mockImplementationOnce(()=>new Promise<void>(resolve=>{finishStop=resolve;}));
+    const pending=fixture.revocation.revocations.revoke(context.scopeId,context.actorId);
+    expect(signals.map(signal=>signal?.aborted)).toEqual([true,true]);
+    finishStop(); await pending;
+  });
+  it("removes revocation tracking on normal release even when stopping fails", async () => {
+    const fixture=setup(async()=>context); await fixture.admission.admit(request);
+    fixture.client.stopRuntime.mockRejectedValueOnce(new ScopeRuntimeClientError("runtime_unavailable"));
+    await fixture.admission.release(RUNTIME);
+    expect(fixture.revocation.runtimes.size).toBe(0);expect(fixture.registry.size).toBe(0);
+  });
+  it("cleans both registries and stops the worker if tracking bind fails", async () => {
+    const fixture=setup(async()=>context);
+    vi.spyOn(fixture.revocation.runtimes,"bind").mockImplementationOnce(()=>{throw new Error("tracking unavailable");});
+    await expect(fixture.admission.admit(request)).rejects.toThrow("tracking unavailable");
+    expect(fixture.registry.size).toBe(0);expect(fixture.revocation.runtimes.size).toBe(0);
+    expect(fixture.client.stopRuntime).toHaveBeenCalledWith({runtimeHandle:RUNTIME});
+  });
+  it("aborts and unbinds a worker evicted by bounded revocation capacity", async () => {
+    const fixture=setup(async()=>context);const second=`runtime_${"d".repeat(32)}`;
+    fixture.revocation.runtimes=new SandboxRuntimeRegistry({client:fixture.client,startTimer:false,maxEntries:1});
+    fixture.client.createRuntime.mockResolvedValueOnce({runtimeHandle:RUNTIME,executionGeneration:"1"}).mockResolvedValueOnce({runtimeHandle:second,executionGeneration:"1"});
+    await fixture.admission.admit(request);
+    const signal=fixture.registry.inferenceSignal({ownerId:OWNER,chatId:CHAT,runId:request.runId,runtimeHandle:RUNTIME,executionGeneration:"1"})!;
+    await fixture.admission.admit({...request,runId:"run_group2"});
+    expect(signal.aborted).toBe(true);expect(fixture.registry.lookup({runtimeHandle:RUNTIME,executionGeneration:"1"})).toBeNull();
+    expect(fixture.revocation.runtimes.size).toBe(1);await fixture.revocation.runtimes.settle();
+  });
   it.each(["project", "worktree"] as const)("launches an authorized %s through the actual supervisor and confined Pi launcher", async (kind) => {
     const fixture = await createUnixSocketTempDir();
     const broker = createServer();
@@ -95,7 +182,8 @@ describe("shared group Pi admission", () => {
         stopRuntime: vi.fn(async () => undefined),
       };
       const registry = new BotRuntimeRegistry();
-      const admission = createPrivateBotAdmission({ db, registry, homePath, roots: { resolve: async () => ({ ...root, primaryWorkspaceRoot: workspace }) },
+      const revocation = tracking(client);
+      const admission = createPrivateBotAdmission({ db, registry, homePath, getGroupRevocation: () => revocation, roots: { resolve: async () => ({ ...root, primaryWorkspaceRoot: workspace }) },
         host: { available: true, client: client as never }, authorizeGroup: async () => context });
       const executionRoot = kind === "project" ? root.ref : { kind: "worktree" as const, projectId: root.ref.projectId, worktreeId: "worktree_company1" };
       await expect(admission.admit({ ...request, group: { ...request.group!, executionRoot } })).resolves.toMatchObject({ runtimeHandle: RUNTIME });
@@ -162,16 +250,16 @@ describe("shared group Pi admission", () => {
     await rm(join(homePath, "projects"), { recursive: true });
     const privateRoot = join(homePath, "bots", BOT); await mkdir(join(privateRoot, "company"), { recursive: true });
     await symlink(privateRoot, join(homePath, "projects"));
-    const { registry, client } = setup(async () => context);
+    const { registry, client, revocation } = setup(async () => context);
     const roots = createChatExecutionRootResolver({ homePath,
       projects: { getProjectById: async () => ({ ok: true as const, project: { id: root.ref.projectId, slug: "company", localPath: root.primaryWorkspaceRoot } }), resolveProjectWorkingDirectory: async () => root.primaryWorkspaceRoot },
       worktrees: { getWorktree: async () => ({ ok: false as const, status: 404, error: "absent" }) } });
-    const admission = createPrivateBotAdmission({ db, roots, registry, homePath, authorizeGroup: async () => context, host: { available: true, client: client as never } });
+    const admission = createPrivateBotAdmission({ db, roots, registry, homePath, getGroupRevocation: () => revocation, authorizeGroup: async () => context, host: { available: true, client: client as never } });
     await expect(admission.admit(request)).rejects.toMatchObject({ code: "invalid_root" }); expect(client.createRuntime).not.toHaveBeenCalled();
   });
 
   it("accepts a managed worktree but denies external folders, managed-container roots and missing trusted home", async () => {
-    const { admission, client, roots, registry } = setup(async () => context);
+    const { admission, client, roots, registry, revocation } = setup(async () => context);
     const worktree = join(homePath, "worktrees", "company", "review"); await mkdir(worktree, { recursive: true });
     roots.resolve.mockResolvedValue({ ...root, primaryWorkspaceRoot: worktree });
     await expect(admission.admit(request)).resolves.toMatchObject({ runtimeHandle: RUNTIME }); await admission.release(RUNTIME);
@@ -181,7 +269,7 @@ describe("shared group Pi admission", () => {
         roots.resolve.mockResolvedValue({ ...root, primaryWorkspaceRoot: candidate });
         await expect(admission.admit(request)).rejects.toMatchObject({ code: "invalid_root" });
       }
-      const missingHome = createPrivateBotAdmission({ db, roots, registry, authorizeGroup: async () => context, host: { available: true, client: client as never } });
+      const missingHome = createPrivateBotAdmission({ db, roots, registry, getGroupRevocation: () => revocation, authorizeGroup: async () => context, host: { available: true, client: client as never } });
       await expect(missingHome.admit(request)).rejects.toMatchObject({ code: "unavailable" });
     } finally { await rm(outside, { recursive: true, force: true }); }
     expect(client.createRuntime).toHaveBeenCalledOnce();

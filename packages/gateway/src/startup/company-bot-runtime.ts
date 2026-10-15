@@ -5,7 +5,7 @@ import type { CollaborationExecutionPolicyRepository } from "../collaboration/ex
 import type { SharedRunOwnerSource } from "../collaboration/shared-run-owner-source.js";
 import type { SharedMatrixBotExtension } from "../collaboration/shared-matrix-bot.js";
 import type { GroupBotAuthorizer } from "../bots/runtime-registry.js";
-import type { GroupBotRunRequest } from "../bots/admission.js";
+import type { GroupBotRunRequest, GroupBotRevocation } from "../bots/admission.js";
 import type { createSharedBotModelRouteResolver } from "../bots/codex-route.js";
 import { BotRouteError } from "../bots/route-resolver.js";
 
@@ -16,6 +16,7 @@ export function createCompanyBotRuntime(options:{ownerId:string;modelId?:string;
   ownerSource:Pick<SharedRunOwnerSource,"prepare">;
   resolveModel:ReturnType<typeof createSharedBotModelRouteResolver>;
   getAdapter():CanonicalChatProviderAdapter|undefined;
+  getGroupRevocation?():GroupBotRevocation|undefined;
 }) {
   const denied=()=>new BotRouteError("model_unavailable");
   async function validated(input:{scopeId?:string;actorId?:string;ownerId?:string;chatId?:string;runId?:string}) {
@@ -69,5 +70,5 @@ export function createCompanyBotRuntime(options:{ownerId:string;modelId?:string;
     },
     async readiness(ownerId) {return ownerId===options.ownerId && options.modelId && options.getAdapter()?"ready":"unavailable";},
   };
-  return {authorizeGroup,resolveGroupRun,resolveGroupRoute,matrixBot};
+  return {authorizeGroup,resolveGroupRun,resolveGroupRoute,matrixBot,getGroupRevocation:()=>options.getGroupRevocation?.()};
 }
