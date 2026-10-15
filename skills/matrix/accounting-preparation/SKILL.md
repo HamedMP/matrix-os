@@ -44,7 +44,11 @@ requested pagination/segments and state coverage; flag missing or conflicting va
 A bank transaction or screenshot alone does not establish an original invoice.
 
 In shared Chrome, use `download` with an observed original PDF link, current
-observationId/ref and stable documentId. Preserve its verified `artifact` and
+observationId/ref and stable documentId. For example:
+`{"action":"download","observationId":"CURRENT_OBSERVATION","ref":"CURRENT_REF","documentId":"INVOICE_ID"}`.
+Replace every placeholder with current observed values; take another snapshot
+before collecting the next original. Never invent a download URL or treat a plain
+click as a verified original. Preserve its verified `artifact` and
 `collectionManifest`; these record byte hashes, source links and retrieval times.
 The manifest deduplicates successful downloads and flags conflicting hashes; its
 downloads-only coverage does not prove all pagination pages were visited. Record

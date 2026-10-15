@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { BotToolRequestSchema } from "@matrix-os/contracts";
+import { BotToolRequestSchema, SharedBrowserActionSchema } from "@matrix-os/contracts";
 import { createBotTools } from "../../packages/bot-runtime/src/tools.js";
 
 it("gives Pi only a gated shared browser tool with bounded observed actions", async () => {
@@ -17,4 +17,14 @@ it("rejects CDP, arbitrary evaluation, caller identity and unobserved clicks bef
     { action: "status", cdpUrl: "http://localhost:9222/json" }, { action: "click", ref: "button_1" }]) {
     expect(BotToolRequestSchema.safeParse({ toolCallId: "browser_bad", capability: "browser.action", args }).success).toBe(false);
   }
+});
+
+it("advertises executable observed click and original-download examples to the model", () => {
+  const [tool] = createBotTools({ capabilities: ["browser.action"], broker: {} as never,
+    state: { waitingForPerson: false, effectUnknown: false } });
+  const examples = [...tool!.description.matchAll(/\{[^{}]+\}/g)].map(match => JSON.parse(match[0]));
+  expect(examples.some(example => example.action === "download")).toBe(true);
+  expect(examples.some(example => example.action === "click")).toBe(true);
+  for (const example of examples) expect(SharedBrowserActionSchema.safeParse(example).success).toBe(true);
+  expect(tool!.description).toMatch(/replace.*observationId.*ref/i);
 });

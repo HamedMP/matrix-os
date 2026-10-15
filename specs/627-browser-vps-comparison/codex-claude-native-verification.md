@@ -29,3 +29,9 @@ The native probes confirm supported no-inference lifecycle behavior. Synthetic s
 ## Composition extraction boundary
 
 Browser admission, launch configuration, control bootstrap and native-child lifecycle live in focused modules. The existing gateway composition entry point receives three registration-only dependency arguments; it remains 1,999 lines. Before adding further behavior there, extract coding harness registry/workspace-provider construction into a `server/coding-harness-services` module and canonical adapter assembly into a `server/canonical-chat-adapters` module. Keep owner identity, credential resolvers and the shared broker explicit typed inputs, return registered services/adapters, and validate the production registration chain before replacing the existing blocks. The current change extracts runner configuration and child lifecycle and adds no inline browser execution policy to gateway composition.
+
+## Scoped CLI qualification and action guidance
+
+The scope-runtime worker/profile pin now matches the qualified Codex 0.162.1 contract. A drift regression fences these independent package boundaries, and unqualified older/newer scope invocations remain refused. Sixty focused scope/acceptance tests and the scope-runtime typecheck passed. The installed native binary accepts the existing scope exec flags in its public help path; that is not evidence of isolated model inference. The profile digest changes, so the preview supervisor and gateway must restart together after active runs drain.
+
+The model-facing browser description is shared by Pi, OpenClaw and the native MCP server. It gives schema-valid observed click/download examples, explains replacement of observation/ref placeholders and preservation of original-download receipts. A failed Pi invoice attempt exposed argument confusion; the description change has 33 focused contract/plugin/skill regressions passing. Successful invoice completion still requires a fresh live run.
