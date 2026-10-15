@@ -1,3 +1,4 @@
+import type { CollaborationRevocationEnforcer, SandboxRuntimeRegistry } from "../collaboration/revocation-enforcer.js";
 /**
  * Private bot admission (spec 536, research R4). A private bot run needs no
  * collaboration scope: the owner principal must own the bot's live direct
@@ -41,6 +42,11 @@ export function privateBotScopeHandle(ownerId: string, botId: string): string {
   return `scope_${createHash("sha256").update(`bot-private:${ownerId}:${botId}`).digest("hex").slice(0, 32)}`;
 }
 
+export interface GroupBotRevocation {
+  runtimes: Pick<SandboxRuntimeRegistry, "bind" | "release">;
+  revocations: Pick<CollaborationRevocationEnforcer, "isRevoked">;
+}
+
 export interface GroupBotRunRequest {
   scopeId: string;
   actorId: string;
@@ -81,6 +87,7 @@ export function createPrivateBotAdmission(deps: {
   roots: Pick<ChatExecutionRootResolver, "resolve">;
   registry: BotRuntimeRegistry;
   authorizeGroup?: GroupBotAuthorizer;
+  getGroupRevocation?(): GroupBotRevocation | undefined;
   /** Trusted owner home; group mounts are restricted to its managed shared roots. */
   homePath?: string;
 }) {
@@ -118,7 +125,11 @@ export function createPrivateBotAdmission(deps: {
       if (!deps.host.available) throw new BotAdmissionError("unavailable");
       if (!await ownsChat(input)) throw new BotAdmissionError("not_found");
       let group;
+      let revocation: GroupBotRevocation | undefined;
       if (input.group) {
+        revocation = deps.getGroupRevocation?.();
+        if (!revocation) throw new BotAdmissionError("unavailable");
+        if (revocation.revocations.isRevoked(input.group.scopeId, input.group.actorId)) throw new BotAdmissionError("not_found");
         if (!deps.authorizeGroup) throw new BotAdmissionError("unavailable");
         try {
           group = await requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group: input.group }, deps.authorizeGroup);
@@ -186,6 +197,12 @@ export function createPrivateBotAdmission(deps: {
         if (!await ownsChat(input)) throw new BotAdmissionError("not_found");
         // Recheck after launch; membership can be revoked while runtime creation waits.
         if (group) await requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group }, deps.authorizeGroup);
+        if (group) {
+          const current = deps.getGroupRevocation?.();
+          if (!current || current.runtimes !== revocation?.runtimes || current.revocations !== revocation?.revocations) throw new BotAdmissionError("unavailable");
+          if (current.revocations.isRevoked(group.scopeId, group.actorId)) throw new BotAdmissionError("not_found");
+        }
+        // No await from the final revocation guard through both registry bindings.
         deps.registry.bind({
           runtimeHandle: runtime.runtimeHandle,
           executionGeneration: runtime.executionGeneration,
@@ -204,7 +221,9 @@ export function createPrivateBotAdmission(deps: {
           capabilities: input.capabilities,
           requestClass: input.requestClass,
           ...(group ? { group } : {}),
-        });
+        }, group ? () => revocation!.runtimes.release(runtime.runtimeHandle) : undefined);
+        if (group) revocation!.runtimes.bind({ scopeId: group.scopeId, actorId: group.actorId, runtimeHandle: runtime.runtimeHandle,
+          onStop: () => deps.registry.release(runtime.runtimeHandle) });
       } catch (error: unknown) {
         await release(runtime.runtimeHandle);
         if (error instanceof BotRuntimeRegistryError && error.code === "capacity_exceeded") {

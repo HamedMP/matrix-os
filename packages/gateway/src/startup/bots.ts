@@ -159,7 +159,7 @@ export async function startBots(options: {
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   now?: () => Date;
-  group?: Pick<ReturnType<typeof createCompanyBotRuntime>, "authorizeGroup" | "resolveGroupRun" | "resolveGroupRoute">;
+  group?: Pick<ReturnType<typeof createCompanyBotRuntime>, "authorizeGroup" | "resolveGroupRun" | "resolveGroupRoute" | "getGroupRevocation">;
   /** Test hook for startup checkpoint passes; bounded to the defaults. */
   checkpointReconcile?: { passes?: number; intervalMs?: number };
 }): Promise<BotServices | undefined> {
@@ -332,7 +332,7 @@ export async function startBots(options: {
     ...(integrationTools ? { ensureAccess: (binding: import("../bots/runtime-registry.js").BotRuntimeBinding, signal: AbortSignal) => integrationTools.ensureAccess(binding, "gmail", ["read", "label"], signal) } : {}),
   }) : undefined;
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry, homePath: options.homePath,
-    ...(options.group ? { authorizeGroup: options.group.authorizeGroup } : {}) });
+    ...(options.group ? { authorizeGroup: options.group.authorizeGroup, getGroupRevocation: options.group.getGroupRevocation } : {}) });
   const managedCapabilities: import("@matrix-os/contracts").BotToolCapability[] = [
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
