@@ -1,0 +1,51 @@
+/*
+ * PostHog renders the Conversations widget with inline styles, so these
+ * overrides need !important. They dock the support launcher with the
+ * onboarding widget (`html[data-mxo-onboarding]`, set by its host) and match
+ * the onboarding bubble's surface: 52px tall, 24px from the corner.
+ */
+#ph-conversations-widget-container > div {
+  right: 24px !important;
+  bottom: 24px !important;
+  transition: bottom 200ms cubic-bezier(0.19, 1, 0.22, 1), opacity 150ms ease;
+}
+
+#ph-conversations-widget-container button[aria-label^="Open chat"] {
+  width: 44px !important;
+  height: 44px !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--bg-surface) !important;
+  color: var(--text-primary) !important;
+  filter: none !important;
+  box-shadow: 0 10px 28px -8px rgba(0, 0, 0, 0.28) !important;
+}
+
+#ph-conversations-widget-container button[aria-label^="Open chat"] svg {
+  width: 20px;
+  height: 20px;
+}
+
+#ph-conversations-widget-container > div > div:has(button[aria-label="Close"]) {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.22) !important;
+}
+
+/* Onboarding bubble in the same corner: stack the launcher above it. */
+html[data-mxo-onboarding="bubble-right"] #ph-conversations-widget-container > div {
+  bottom: 88px !important;
+}
+
+html[data-mxo-onboarding="bubble-right"] #ph-conversations-widget-container > div > div:has(button[aria-label="Close"]) {
+  max-height: calc(100vh - 168px) !important;
+}
+
+/* Expanded onboarding card owns the corner; the top-bar Support button stays available. */
+html[data-mxo-onboarding="card-right"] #ph-conversations-widget-container > div:not(:has(button[aria-label="Close"])) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ph-conversations-widget-container > div { transition: none; }
+}
