@@ -5,7 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { Composer, type ComposerProps } from "@/components/chat/Composer";
 import { MessageList, type MessageListProps } from "@/components/chat/MessageList";
 import { UnsentMessageActionsProvider, type UnsentMessageActions } from "@/components/chat/unsent-message-actions";
-import { ListRowSkeletonStack } from "@/components/shell/Controls";
+import { ChatMessagesSkeleton } from "@/components/chat/ChatLoadState";
 import { AgentMascot, BackIcon, Button, InfoIcon, TopBar, TopBarButton } from "@/components/ui";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
@@ -88,7 +88,8 @@ export function AgentChatScreen({
       {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
       {state === "loading" ? (
         <View testID="agent-chat-loading" style={styles.body}>
-          <ListRowSkeletonStack testID="agent-chat-skeleton-row" />
+          {/* The shapes of a short exchange, as the main chat shows while it loads. */}
+          <ChatMessagesSkeleton />
         </View>
       ) : state === "failed" ? (
         <View testID="agent-chat-failed" style={[styles.body, styles.failed]}>

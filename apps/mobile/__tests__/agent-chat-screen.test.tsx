@@ -242,7 +242,7 @@ describe("agent chat screen", () => {
     it("shows skeleton rows, the top bar and no composer while the chat is being found", () => {
       renderScreen({ state: "loading", messages: [], chatId: null });
 
-      expect(screen.getAllByTestId("agent-chat-skeleton-row").length).toBeGreaterThan(0);
+      expect(screen.getAllByTestId("chat-loading-row").length).toBeGreaterThan(0);
       expect(flat(screen.getByTestId("agent-chat-loading"))).toMatchObject({ flex: 1, paddingHorizontal: 20 });
       expect(screen.getByRole("header", { name: "Account research" })).toBeTruthy();
       expect(screen.queryByTestId("composer")).toBeNull();
@@ -253,7 +253,7 @@ describe("agent chat screen", () => {
 
       expect(screen.getByRole("alert").props.children).toBe("This agent's chat could not be opened.");
       expect(screen.queryByTestId("composer")).toBeNull();
-      expect(screen.queryByTestId("agent-chat-skeleton-row")).toBeNull();
+      expect(screen.queryByTestId("chat-loading-row")).toBeNull();
       fireEvent.press(screen.getByRole("button", { name: "Try again" }));
 
       expect(props.onRetry).toHaveBeenCalledTimes(1);

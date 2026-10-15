@@ -21,7 +21,7 @@ import {
   ListRowStack,
 } from "@/components/shell/Controls";
 import { Page } from "@/components/shell/Page";
-import { Icon, Spacer } from "@/components/ui";
+import { Icon, ListItemMotion, SettleIn, Spacer } from "@/components/ui";
 import { useComputerIntegrations } from "@/lib/queries/use-computer-integrations";
 import type { ConnectedIntegration, IntegrationService } from "@/lib/requests";
 
@@ -86,27 +86,30 @@ export default function InstalledIntegrationsScreen() {
         <Text style={styles.statusText}>No connected accounts.</Text>
       ) : null}
       {!isPending && !isError && connected.length > 0 ? (
-        <ListRowStack>
-          {connected.map((connection) => {
-            const service = servicesById.get(connection.service) ?? fallbackService(connection.service);
-            return (
-              <SwipeableConnectionRow
-                key={connection.id}
-                connection={connection}
-                service={service}
-                disabled={Boolean(refreshingConnectionId || deletingConnectionId)}
-                refreshing={refreshingConnectionId === connection.id}
-                deleting={deletingConnectionId === connection.id}
-                onRefresh={() => refresh(connection)}
-                onDelete={(resetSwipe) => {
-                  setActionError(null);
-                  pendingDeleteSwipeRef.current = resetSwipe;
-                  setPendingDelete(connection);
-                }}
-              />
-            );
-          })}
-        </ListRowStack>
+        <SettleIn>
+          <ListRowStack>
+            {connected.map((connection) => {
+              const service = servicesById.get(connection.service) ?? fallbackService(connection.service);
+              return (
+                <ListItemMotion key={connection.id}>
+                  <SwipeableConnectionRow
+                    connection={connection}
+                    service={service}
+                    disabled={Boolean(refreshingConnectionId || deletingConnectionId)}
+                    refreshing={refreshingConnectionId === connection.id}
+                    deleting={deletingConnectionId === connection.id}
+                    onRefresh={() => refresh(connection)}
+                    onDelete={(resetSwipe) => {
+                      setActionError(null);
+                      pendingDeleteSwipeRef.current = resetSwipe;
+                      setPendingDelete(connection);
+                    }}
+                  />
+                </ListItemMotion>
+              );
+            })}
+          </ListRowStack>
+        </SettleIn>
       ) : null}
 
       <DeleteConnectionPopup
