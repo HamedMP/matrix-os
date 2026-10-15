@@ -18,14 +18,10 @@ export async function enqueueGooglePurchase(db: PlatformDB, purchase: InvoiceTra
 export async function deliverGooglePurchases(db: PlatformDB, sender: GooglePurchaseSender,
   at = new Date().toISOString(), subscriptionId?: string): Promise<{ failed: number; pending: boolean }> {
   await db.ready;
+  await expireGoogleTracking(db, at);
   const token = randomUUID();
   let failed = 0;
   const jobs = await db.transaction(async trx => {
-    // Stop retrying attribution past GA4's 72-hour backdating limit. Retain a PII-free dedup tombstone.
-    await trx.executor.updateTable('billing_google_purchases').set({ payload: null })
-      .where('created_at', '<', new Date(Date.parse(at) - 72 * 3600000).toISOString()).execute();
-    await trx.executor.deleteFrom('billing_google_checkout_attribution')
-      .where('created_at', '<', new Date(Date.parse(at) - 7 * 86400000).toISOString()).execute();
     let query = trx.executor.selectFrom('billing_google_purchases').selectAll()
       .where('sent_at', 'is', null).where('payload', 'is not', null)
       .where(eb => eb.or([eb('lease_until', 'is', null), eb('lease_until', '<=', at)]))
@@ -63,4 +59,17 @@ export async function deliverGooglePurchases(db: PlatformDB, sender: GooglePurch
   const pending = subscriptionId ? await db.executor.selectFrom('billing_google_purchases').select('subscription_id')
     .where('subscription_id', '=', subscriptionId).where('sent_at', 'is', null).where('payload', 'is not', null).executeTakeFirst() : undefined;
   return { failed, pending: Boolean(pending) };
+}
+
+/** Retention runs even when collection is disabled; cleared acquisition markers are not rewritten. */
+export async function expireGoogleTracking(db: PlatformDB, at = new Date().toISOString()): Promise<{ purchases: number; snapshots: number }> {
+  await db.ready;
+  return db.transaction(async trx => {
+    const purchases = await trx.executor.updateTable('billing_google_purchases').set({ payload: null })
+      .where('payload', 'is not', null)
+      .where('created_at', '<', new Date(Date.parse(at) - 72 * 3600000).toISOString()).executeTakeFirst();
+    const snapshots = await trx.executor.deleteFrom('billing_google_checkout_attribution')
+      .where('created_at', '<', new Date(Date.parse(at) - 7 * 86400000).toISOString()).executeTakeFirst();
+    return { purchases: Number(purchases.numUpdatedRows), snapshots: Number(snapshots.numDeletedRows) };
+  });
 }

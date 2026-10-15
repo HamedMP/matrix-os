@@ -2,6 +2,7 @@ import { createGooglePurchaseSender } from './google-purchases.js';
 import { deliverGooglePurchases, enqueueGooglePurchase } from './google-purchase-store.js';
 import { invoiceTrackingEvent } from './tracking-events.js';
 import { type Context } from 'hono';
+import { withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
 
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 
@@ -83,17 +84,9 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
       return c.json({ error: 'Invalid webhook' }, 400);
     }
 
-    // Fetch payment presentment outside the DB transaction. Invoice webhooks can
-    // arrive before subscription projection; attribution is server-written Stripe metadata.
-    let googlePurchase = event.type === 'invoice.paid' ? invoiceTrackingEvent(event.data.object) : null;
-    if (googlePurchase && options.stripe.retrieveTrackingInvoice) {
-      try {
-        googlePurchase = invoiceTrackingEvent(await options.stripe.retrieveTrackingInvoice(googlePurchase.event.ecommerce.transaction_id));
-      } catch (error: unknown) {
-        console.warn('[billing] Invoice tracking retrieval unavailable:', error instanceof Error ? error.name : typeof error);
-        return c.json({ error: 'Webhook processing failed' }, 500);
-      }
-    }
+    // Queue the signed invoice immediately; payment-detail lookup belongs to
+    // delivery after billing commits, so analytics cannot delay access recovery.
+    const googlePurchase = event.type === 'invoice.paid' ? invoiceTrackingEvent(event.data.object) : null;
     let preparationToResume: { intentId: string; clerkUserId: string } | undefined;
     try {
       const webhookProcessedAt = now();
@@ -114,7 +107,12 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
           const owner = readClerkUserIdFromStripeMetadata(
             (event.data.object as { parent?: { subscription_details?: { metadata?: unknown } } }).parent?.subscription_details?.metadata,
           );
-          if (owner) await enqueueGooglePurchase(trx, { ...googlePurchase, eventAt: event.created * 1000 }, webhookProcessedAt.toISOString(), owner);
+          if (owner) await withAccountDeletionOwnerLock(trx, owner, async (locked, admission) => {
+            if (admission.newWorkAllowed) await enqueueGooglePurchase(locked, {
+              ...googlePurchase, eventAt: event.created * 1000,
+              needsInvoiceLookup: Boolean(options.stripe.retrieveTrackingInvoice),
+            }, webhookProcessedAt.toISOString(), owner);
+          }, env);
         }
 
         const aiCreditResult = await processAiCreditWebhookEvent({
@@ -408,7 +406,8 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
         });
       }
       if (googlePurchase && env.GOOGLE_ANALYTICS_MEASUREMENT_ID && env.GOOGLE_ANALYTICS_API_SECRET) {
-        const delivery = await deliverGooglePurchases(options.db, createGooglePurchaseSender(env), now().toISOString(), googlePurchase.subscriptionId);
+        const delivery = await deliverGooglePurchases(options.db, createGooglePurchaseSender(env, fetch,
+          options.stripe.retrieveTrackingInvoice?.bind(options.stripe)), now().toISOString(), googlePurchase.subscriptionId);
         if (delivery.failed || delivery.pending) throw new Error('GooglePurchaseDeliveryError');
       }
       const clearSubscriptionAttribution = options.stripe.clearSubscriptionAttribution?.bind(options.stripe);

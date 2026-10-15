@@ -30,6 +30,7 @@ export interface InvoiceTrackingPurchase {
   clientId: string;
   eventAt?: number;
   consentExpiresAt?: number;
+  needsInvoiceLookup?: boolean;
   adUserData: 'granted' | 'denied';
   adPersonalization: 'granted' | 'denied';
   event: BillingTrackingEvent;

@@ -1,13 +1,23 @@
 import type { PlatformDB } from '../db.js';
-import { deliverGooglePurchases, type GooglePurchaseSender } from './google-purchase-store.js';
-import type { InvoiceTrackingPurchase } from './tracking-events.js';
+import { deliverGooglePurchases, expireGoogleTracking, type GooglePurchaseSender } from './google-purchase-store.js';
+import { invoiceTrackingEvent, type InvoiceTrackingPurchase } from './tracking-events.js';
+import type { StripeBillingClient } from './stripe-client.js';
 
-export function createGooglePurchaseSender(env: NodeJS.ProcessEnv, fetcher: typeof fetch = fetch): GooglePurchaseSender {
+export function createGooglePurchaseSender(env: NodeJS.ProcessEnv, fetcher: typeof fetch = fetch,
+  retrieveInvoice?: (id: string) => Promise<unknown>): GooglePurchaseSender {
   const measurementId = env.GOOGLE_ANALYTICS_MEASUREMENT_ID;
   const apiSecret = env.GOOGLE_ANALYTICS_API_SECRET;
   return { async send(purchase: InvoiceTrackingPurchase) {
     if (purchase.consentExpiresAt && purchase.consentExpiresAt <= Date.now()) return 'disabled';
     if (!measurementId || !/^G-[A-Z0-9]+$/.test(measurementId) || !apiSecret) return 'disabled';
+    if (purchase.needsInvoiceLookup) {
+      if (!retrieveInvoice) throw new Error('GooglePurchaseDeliveryError');
+      const detailed = invoiceTrackingEvent(await retrieveInvoice(purchase.event.ecommerce.transaction_id));
+      if (!detailed || detailed.subscriptionId !== purchase.subscriptionId
+        || detailed.event.ecommerce.transaction_id !== purchase.event.ecommerce.transaction_id) throw new Error('GooglePurchaseDeliveryError');
+      // Keep the original consent, identity and event timestamp across retries.
+      purchase = { ...purchase, event: detailed.event };
+    }
     const endpoint = new URL('https://region1.google-analytics.com/mp/collect');
     endpoint.searchParams.set('measurement_id', measurementId);
     endpoint.searchParams.set('api_secret', apiSecret);
@@ -28,14 +38,15 @@ export function createGooglePurchaseSender(env: NodeJS.ProcessEnv, fetcher: type
   } };
 }
 
-export function startGooglePurchaseDelivery(db: PlatformDB, env: NodeJS.ProcessEnv): () => Promise<void> {
-  if (!env.GOOGLE_ANALYTICS_MEASUREMENT_ID || !env.GOOGLE_ANALYTICS_API_SECRET) return async () => undefined;
-  const sender = createGooglePurchaseSender(env);
+export function startGooglePurchaseDelivery(db: PlatformDB, env: NodeJS.ProcessEnv,
+  stripe?: Pick<StripeBillingClient, 'retrieveTrackingInvoice'>): () => Promise<void> {
+  const enabled = Boolean(env.GOOGLE_ANALYTICS_MEASUREMENT_ID && env.GOOGLE_ANALYTICS_API_SECRET);
+  const sender = createGooglePurchaseSender(env, fetch, stripe?.retrieveTrackingInvoice?.bind(stripe));
   let pending: Promise<void> | undefined;
   let closed = false;
   function tick() {
     if (closed || pending) return;
-    pending = deliverGooglePurchases(db, sender).then(() => undefined).catch((error: unknown) => {
+    pending = (enabled ? deliverGooglePurchases(db, sender) : expireGoogleTracking(db)).then(() => undefined).catch((error: unknown) => {
       console.warn('[billing] Google delivery queue unavailable:', error instanceof Error ? error.name : typeof error);
     }).finally(() => { pending = undefined; });
   }
