@@ -187,6 +187,38 @@ describe("durable private Slack personal transport",()=>{
   await service.receive(envelope);await service.drain();
   expect(await db.selectFrom("slack_personal_outbox").select(["state","attempts","lease"]).executeTakeFirstOrThrow()).toEqual({state:"sending",attempts:1,lease:replacement});
  });
+ it("retires accepted arrivals after24h despite refreshed result checks and releases the active cap",async()=>{
+  let clock=now;
+  const readResult=vi.fn(async()=>({status:"pending" as const,requestingActorId:envelope.ownerId}));
+  service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>clock,resolvePersonalChat,submitPersonal,readResult,sendReply});
+  const admitted=await service.receive(envelope);await service.drain();
+  clock=new Date(now.getTime()+86400_000-1000);await service.drain();
+  const old=await db.selectFrom("slack_personal_inbox").selectAll().where("id","=",admitted.eventId).executeTakeFirstOrThrow();
+  expect(old.state).toBe("accepted");expect(new Date(old.updated_at).getTime()).toBe(clock.getTime());
+  await db.insertInto("slack_personal_inbox").values(Array.from({length:999},(_,i)=>({...old,id:`00000000-0000-4000-8000-${String(i+1).padStart(12,"0")}`}))).execute();
+  const fresh={...envelope,event:{...envelope.event,eventId:"EvFreshAfterExpiry"}};
+  await expect(service.receive(fresh)).rejects.toMatchObject({code:"capacity"});
+  clock=new Date(now.getTime()+86400_000);
+  const repository=new SlackPersonalRepository(db,envelope.ownerId,()=>clock);
+  expect(await repository.waiting()).toEqual([]);
+  await service.drain();
+  expect(await db.selectFrom("slack_personal_inbox").select("state").where("id","=",admitted.eventId).executeTakeFirstOrThrow()).toEqual({state:"failed"});
+  expect(readResult).toHaveBeenCalledTimes(2);expect(submitPersonal).toHaveBeenCalledOnce();expect(sendReply).not.toHaveBeenCalled();
+  await expect(service.receive(fresh)).resolves.toMatchObject({accepted:true,duplicate:false});
+ });
+ it.each(["pending","processing"])("does not admit an expired %s arrival",async(state)=>{
+  let clock=now;
+  service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>clock,resolvePersonalChat,submitPersonal,sendReply,
+   readResult:async()=>({status:"pending",requestingActorId:envelope.ownerId})});
+  const received=await service.receive(envelope);
+  const repository=new SlackPersonalRepository(db,envelope.ownerId,()=>clock);
+  if(state==="processing")expect(await repository.claim()).not.toBeNull();
+  clock=new Date(now.getTime()+86400_000);
+  expect(await repository.claim()).toBeNull();
+  await service.drain();
+  expect(await db.selectFrom("slack_personal_inbox").select("state").where("id","=",received.eventId).executeTakeFirstOrThrow()).toEqual({state:"failed"});
+  expect(submitPersonal).not.toHaveBeenCalled();expect(sendReply).not.toHaveBeenCalled();
+ });
  it("revalidates the accepted run again immediately before private delivery",async()=>{
   const readResult=vi.fn().mockResolvedValueOnce({status:"completed",requestingActorId:envelope.ownerId,runId:"run_private",text:"Answer"}).mockResolvedValueOnce({status:"pending",requestingActorId:envelope.ownerId});
   service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>now,resolvePersonalChat,submitPersonal,readResult,sendReply});
