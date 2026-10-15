@@ -73,11 +73,13 @@ function ConnectedAgentsProvidersAdapter({
   identityKey,
   platformHost,
   runtimeSlot,
+  automaticCreditRefreshEnabled,
 }: {
   api: ApiClient;
   identityKey: string;
   platformHost: string;
   runtimeSlot: string;
+  automaticCreditRefreshEnabled: boolean;
 }) {
   const runtimeApi = useMemo(() => api.forRuntime(runtimeSlot), [api, runtimeSlot]);
   const transport = useMemo(
@@ -87,7 +89,7 @@ function ConnectedAgentsProvidersAdapter({
   const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot) => {
     invalidateDesktopProviderCatalog(identityKey, intent, snapshot);
   }, [identityKey]);
-  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged });
+  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, automaticCreditRefreshEnabled });
   const [actionError, setActionError] = useState<string | null>(null);
   const checkoutLifetime = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -210,7 +212,7 @@ function ConnectedAgentsProvidersAdapter({
   );
 }
 
-export default function AgentsProvidersAdapter() {
+export default function AgentsProvidersAdapter({ automaticCreditRefreshEnabled = false }: { automaticCreditRefreshEnabled?: boolean }) {
   const status = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
   const userId = useConnection((state) => state.userId);
@@ -238,6 +240,7 @@ export default function AgentsProvidersAdapter() {
       identityKey={identityKey}
       platformHost={platformHost}
       runtimeSlot={runtimeSlot}
+      automaticCreditRefreshEnabled={automaticCreditRefreshEnabled}
     />
   );
 }
