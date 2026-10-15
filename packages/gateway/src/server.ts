@@ -568,8 +568,28 @@ export async function createGateway(config: GatewayConfig) {
   };
   const backgroundAgentRuntime = createBackgroundAgentRuntime({ homePath });
   const backgroundChatProjection = createBackgroundChatProjection();
+  // Public workspace sessions and coding-agent threads share native admission,
+  // runtime ownership and the single shutdown path, even without installed agents.
+  const codingAgentSessionManager = createAgentSessionManager({
+    homePath,
+    worktreeManager: codingAgentWorktreeManager,
+    agentLauncher: agentCredentialLauncher,
+    resolveNativeCodexSubscription: nativeCodexRuntime.resolveSubscription,
+    beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
+    terminalRuntime: terminalWorkspaceRuntime,
+    backgroundRuntime: backgroundAgentRuntime,
+  });
+  codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+    homePath,
+    projectManager: codingAgentProjectManager,
+    worktreeManager: codingAgentWorktreeManager,
+    agentSessionManager: codingAgentSessionManager,
+    onClose: () => codingAgentSessionManager.shutdown(),
+    agentSandbox: createAgentSandbox({ homePath }),
+    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+    eventPublisher: workspaceEventPublisher,
+  });
   if (codingAgentWorkspaceAgents.length > 0) {
-    const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
       ? createCodexEventBridge({
         homePath,
@@ -582,25 +602,6 @@ export async function createGateway(config: GatewayConfig) {
         },
       })
       : undefined;
-    const codingAgentSessionManager = createAgentSessionManager({
-      homePath,
-      worktreeManager: codingAgentWorktreeManager,
-      agentLauncher: agentCredentialLauncher,
-      resolveNativeCodexSubscription: nativeCodexRuntime.resolveSubscription,
-      beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
-      terminalRuntime: terminalWorkspaceRuntime,
-      backgroundRuntime: backgroundAgentRuntime,
-    });
-    codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
-      homePath,
-      projectManager: codingAgentProjectManager,
-      worktreeManager: codingAgentWorktreeManager,
-      agentSessionManager: codingAgentSessionManager,
-      onClose: () => codingAgentSessionManager.shutdown(),
-      agentSandbox: createAgentSandbox({ homePath }),
-      sessionRuntimeBridge: workspaceSessionRuntimeBridge,
-      eventPublisher: workspaceEventPublisher,
-    });
     const providerSet = createWorkspaceCodingAgentProviderSet({
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
@@ -1725,6 +1726,9 @@ export async function createGateway(config: GatewayConfig) {
     ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
     : async () => { throw new Error("Project chat cleanup unavailable"); };
   app.route("/", createWorkspaceRoutes({
+    agentSessionManager: codingAgentSessionManager,
+    sessionOrchestrator: codingAgentWorkspaceRuntime,
+    startSession: nativeCodexRuntime.startSession,
     beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
     homePath,
     backgroundRuntime: backgroundAgentRuntime,

@@ -250,6 +250,7 @@ export function createWorkspaceRoutes(options: {
   eventStore?: WorkspaceEventStore;
   eventPublisher?: WorkspaceEventPublisher;
   sessionOrchestrator?: WorkspaceSessionOrchestrator;
+  startSession?: WorkspaceSessionOrchestrator["startSession"];
   projectLifecycleService?: ProjectLifecycleService;
   projectOperationAdmission?: LegacyProjectOperationAdmission;
   deleteProjectChats?: ProjectChatCleanup;
@@ -292,6 +293,7 @@ export function createWorkspaceRoutes(options: {
     sessionRuntimeBridge,
     eventPublisher,
   });
+  const startSession = options.startSession ?? ((input) => sessionOrchestrator.startSession(input));
   const stateOps = createStateOps({ homePath: options.homePath });
   const limited = bodyLimit({ maxSize: WORKSPACE_BODY_LIMIT });
   const getOwnerScope = options.getOwnerScope ?? ((c: Context) => ownerScopeFromPrincipal(requireRequestPrincipal(c, {
@@ -937,9 +939,9 @@ export function createWorkspaceRoutes(options: {
           ownerScope,
           projectSlug: body.value.projectSlug,
           kind: "run",
-          operation: () => sessionOrchestrator.startSession({ ownerScope, request: body.value }),
+          operation: () => startSession({ ownerScope, request: body.value }),
         })
-      : { ok: true as const, value: await sessionOrchestrator.startSession({ ownerScope, request: body.value }) };
+      : { ok: true as const, value: await startSession({ ownerScope, request: body.value }) };
     if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
     const result = admitted.value;
     if (!result.ok) {
