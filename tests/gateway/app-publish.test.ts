@@ -31,6 +31,12 @@ describe('gateway/app-publish', () => {
       expect(generateSlug('My App! (v2)')).toBe('my-app-v2');
     });
 
+    it('stays linear on long separator runs', () => {
+      const started = performance.now();
+      expect(generateSlug(`${'-'.repeat(100_000)}app${'!'.repeat(100_000)}`)).toBe('app');
+      expect(performance.now() - started).toBeLessThan(1_000);
+    });
+
     it('trims leading/trailing hyphens', () => {
       expect(generateSlug('---Hello World---')).toBe('hello-world');
     });
