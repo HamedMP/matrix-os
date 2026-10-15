@@ -43,6 +43,31 @@ it("removes only a proven legacy Matrix receipt without changing plugin files or
     expect(await Promise.all(["index.mjs", "package.json", "openclaw.plugin.json"].map(name => readFile(join(pluginPath, name))))).toEqual(files);
   } finally { await f.close(); }
 });
+it("migrates a proven legacy receipt without changing disabled activation", async () => {
+  const f = await fixture(); try {
+    await configureOpenClawSharedBrowser(f.options);
+    const pluginPath = join(f.stateDir, "extensions", ID);
+    const receipt = { source: "path", sourcePath: pluginPath, installPath: pluginPath,
+      version: OPENCLAW_SHARED_BROWSER_MANIFEST.version, installedAt: "2026-01-01T00:00:00.000Z" };
+
+    const featureDisabled = JSON.parse(await readFile(f.configPath, "utf8"));
+    featureDisabled.plugins.installs = { [ID]: receipt };
+    await writeFile(f.configPath, JSON.stringify(featureDisabled));
+    expect(await configureOpenClawSharedBrowser({ ...f.options, enabled: false })).toMatchObject({ state: "feature_disabled" });
+    const featureConfig = JSON.parse(await readFile(f.configPath, "utf8"));
+    expect(featureConfig.plugins).not.toHaveProperty("installs");
+    expect(featureConfig.plugins.allow).toEqual([]);
+
+    const ownerDisabled = { ...featureConfig, plugins: { ...featureConfig.plugins, allow: [ID], installs: { [ID]: receipt },
+      entries: { ...featureConfig.plugins.entries, [ID]: { enabled: false, config: { gatewayPort: 4000 } } } } };
+    await writeFile(f.configPath, JSON.stringify(ownerDisabled));
+    expect(await configureOpenClawSharedBrowser(f.options)).toMatchObject({ state: "owner_disabled" });
+    const ownerConfig = JSON.parse(await readFile(f.configPath, "utf8"));
+    expect(ownerConfig.plugins).not.toHaveProperty("installs");
+    expect(ownerConfig.plugins.entries[ID]).toEqual(ownerDisabled.plugins.entries[ID]);
+    expect(ownerConfig.plugins.allow).toEqual([ID]);
+  } finally { await f.close(); }
+});
 it("refuses foreign or unproven legacy receipts without modifying configuration", async () => {
   const f = await fixture(); try {
     await configureOpenClawSharedBrowser(f.options);
@@ -155,6 +180,12 @@ printf 'started' > '${started}'
       MATRIX_OPENCLAW_BROWSER_CONFIGURER:resolve("distro/customer-vps/host-bin/matrix-configure-openclaw-shared-browser.mjs"),MATRIX_APP_DIR:appDir,MATRIX_BROWSER_LAB:"true",PORT:"4123",TMPDIR:f.root};
     await expect(run("bash",["distro/customer-vps/host-bin/matrix-openclaw-gateway"],{env})).resolves.toBeDefined();
     expect(await readFile(started,"utf8")).toBe("started");expect(JSON.parse(await readFile(f.configPath,"utf8")).plugins.entries[ID].config.gatewayPort).toBe(4123);
+    const disabled=JSON.parse(await readFile(f.configPath,"utf8")),pluginPath=join(f.stateDir,"extensions",ID);
+    disabled.plugins.installs={ [ID]: { source:"path",sourcePath:pluginPath,installPath:pluginPath,
+      version:OPENCLAW_SHARED_BROWSER_MANIFEST.version,installedAt:"2026-01-01T00:00:00.000Z" } };
+    await writeFile(f.configPath,JSON.stringify(disabled));
+    await expect(run("bash",["distro/customer-vps/host-bin/matrix-openclaw-gateway"],{env:{...env,MATRIX_BROWSER_LAB:"false"}})).resolves.toBeDefined();
+    const migrated=JSON.parse(await readFile(f.configPath,"utf8"));expect(migrated.plugins.allow).toEqual([]);expect(migrated.plugins).not.toHaveProperty("installs");
     await rm(started);await writeFile(f.configPath,JSON.stringify({...f.initial,plugins:{allow:["owner-extra"]}}));
     await expect(run("bash",["distro/customer-vps/host-bin/matrix-openclaw-gateway"],{env})).rejects.toMatchObject({code:3});
     await expect(readFile(started)).rejects.toMatchObject({code:"ENOENT"});

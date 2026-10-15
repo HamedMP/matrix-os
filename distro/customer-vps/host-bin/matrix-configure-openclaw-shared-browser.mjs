@@ -89,20 +89,58 @@ export async function configureOpenClawSharedBrowser(options) {
     if(marker&&(!mapping(marker)||marker.version!==1||!mapping(marker.files)))throw unavailable();
     const parsed=JSON.parse(original.toString('utf8'));if(!mapping(parsed)||parsed.plugins!==undefined&&!mapping(parsed.plugins))throw unavailable();
     const plugins=parsed.plugins??{};
-    if(plugins.installs!==undefined&&!options.enabled)throw unavailable();
     const allow=plugins.allow===undefined?[]:plugins.allow;
     if(!Array.isArray(allow)||allow.some(value=>value!==ID)||new Set(allow).size!==allow.length)throw unavailable();
-    const config={...parsed,plugins:{...plugins,allow}};
+    let config={...parsed,plugins:{...plugins,allow}};
     if(config.plugins.entries!==undefined&&!mapping(config.plugins.entries))throw unavailable();
     const entries=config.plugins.entries??{},entry=entries[ID];
     if(entry!==undefined&&(!mapping(entry)||Object.keys(entry).some(key=>!['enabled','config'].includes(key))||entry.enabled!==undefined&&typeof entry.enabled!=='boolean'
       ||entry.config!==undefined&&(!mapping(entry.config)||Object.keys(entry.config).some(key=>key!=='gatewayPort'))))throw unavailable();
+    if(config.plugins.deny!==undefined&&(!Array.isArray(config.plugins.deny)||config.plugins.deny.some(value=>typeof value!=='string')))throw unavailable();
+    // Pinned native OpenClaw rejects plugins.installs even while the plugin is disabled.
+    // Remove only a complete receipt from this earlier Matrix bootstrap.
+    const legacy=config.plugins.installs!==undefined;
+    if(marker&&!entry&&!legacy) {
+      if(JSON.stringify(config)!==JSON.stringify(parsed))await writeAtomic(state,configName,JSON.stringify(config,null,2)+'\n',original);
+      return{state:'owner_uninstalled'};
+    }
+    let pluginPath, plugin, files, previous;
+    if(legacy||options.enabled) {
+      if(typeof options.compiledEntry!=='string'||!options.compiledEntry.startsWith('/')||!options.compiledEntry.endsWith('/packages/gateway/dist/chat/openclaw-shared-browser-plugin-entry.js'))throw unavailable();
+      const manifest=options.manifest;
+      if(!mapping(manifest)||manifest.id!==ID||JSON.stringify(manifest.contracts?.tools)!=='["shared_browser"]'||manifest.activation?.onStartup!==true)throw unavailable();
+      const extensionPath=join(state.path,'extensions');pluginPath=join(extensionPath,ID);
+      if(config.plugins.load?.paths!==undefined&&(!Array.isArray(config.plugins.load.paths)||config.plugins.load.paths.some(value=>value!==pluginPath)))throw unavailable();
+      const installation=config.plugins.installs?.[ID];
+      if(legacy&&(!mapping(config.plugins.installs)||Object.keys(config.plugins.installs).length!==1||!mapping(installation)
+        ||Object.keys(installation).length!==5||Object.keys(installation).some(key=>!['source','sourcePath','installPath','version','installedAt'].includes(key))
+        ||installation.source!=='path'||installation.sourcePath!==pluginPath||installation.installPath!==pluginPath
+        ||installation.version!==manifest.version||typeof installation.installedAt!=='string'
+        ||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(installation.installedAt)
+        ||!Number.isFinite(Date.parse(installation.installedAt))||new Date(installation.installedAt).toISOString()!==installation.installedAt
+        ||Date.parse(installation.installedAt)>Date.now()||!marker||Object.keys(marker).length!==2
+        ||Object.keys(marker.files).sort().join(',')!=='index.mjs,openclaw.plugin.json,package.json'))throw unavailable();
+      const extensions=await directory(join(state.access,'extensions'),!legacy);directories.push(extensions);
+      plugin=await directory(join(extensions.access,ID),!legacy);directories.push(plugin);await sweep(plugin);
+      files={
+        'index.mjs':`export { default } from ${JSON.stringify(options.compiledEntry)};\n`,
+        'package.json':JSON.stringify({name:'@matrix-os/openclaw-shared-browser',version:'1.0.0',type:'module',openclaw:{extensions:['./index.mjs']}},null,2)+'\n',
+        'openclaw.plugin.json':JSON.stringify(manifest,null,2)+'\n',
+      };
+      previous={};
+      for(const[name,content]of Object.entries(files)) {
+        const current=await read(join(plugin.access,name));previous[name]=current;
+        if(legacy&&(!current||!current.equals(Buffer.from(content))||marker.files[name]!==hash(current)))throw unavailable();
+        if(marker&&current===null)return{state:'owner_uninstalled'};
+        if(current&&!current.equals(Buffer.from(content))&&marker?.files[name]!==hash(current))throw unavailable();
+      }
+      if(legacy) { const {installs:_legacyReceipt,...nativePlugins}=config.plugins;config={...config,plugins:nativePlugins}; }
+    }
     if(!options.enabled) {
       if(!config.plugins.allow.includes(ID)) { if(JSON.stringify(config)!==JSON.stringify(parsed))await writeAtomic(state,configName,JSON.stringify(config,null,2)+'\n',original);return{state:'feature_disabled'}; }
       const next={...config,plugins:{...config.plugins,allow:[]}};
       await options.beforeConfigCommit?.();await writeAtomic(state,configName,JSON.stringify(next,null,2)+'\n',original);return{state:'feature_disabled'};
     }
-    if(config.plugins.deny!==undefined&&(!Array.isArray(config.plugins.deny)||config.plugins.deny.some(value=>typeof value!=='string')))throw unavailable();
     if(entry?.enabled===false||config.plugins.enabled===false||config.plugins.deny?.includes(ID)) { if(JSON.stringify(config)!==JSON.stringify(parsed))await writeAtomic(state,configName,JSON.stringify(config,null,2)+'\n',original);return{state:'owner_disabled'}; }
     if(marker&&!entry) {
       if(JSON.stringify(config)!==JSON.stringify(parsed))await writeAtomic(state,configName,JSON.stringify(config,null,2)+'\n',original);
@@ -115,46 +153,13 @@ export async function configureOpenClawSharedBrowser(options) {
     // Native OpenClaw detects any MATRIX_* variable as Matrix protocol channel presence.
     // Matrix OS owns that namespace; default only an absent channel to an explicit opt-out.
     const channels=Object.hasOwn(ownerChannels,'matrix')?ownerChannels:{...ownerChannels,matrix:{enabled:false}};
-    if(typeof options.compiledEntry!=='string'||!options.compiledEntry.startsWith('/')||!options.compiledEntry.endsWith('/packages/gateway/dist/chat/openclaw-shared-browser-plugin-entry.js'))throw unavailable();
-    const manifest=options.manifest;
-    if(!mapping(manifest)||manifest.id!==ID||JSON.stringify(manifest.contracts?.tools)!=='["shared_browser"]'||manifest.activation?.onStartup!==true)throw unavailable();
-    const extensionPath=join(state.path,'extensions'),pluginPath=join(extensionPath,ID);
-    if(config.plugins.load?.paths!==undefined&&(!Array.isArray(config.plugins.load.paths)||config.plugins.load.paths.some(value=>value!==pluginPath)))throw unavailable();
-    // Pinned native OpenClaw rejects plugins.installs. Only a complete receipt
-    // from this earlier Matrix bootstrap may be removed; foreign data fails closed.
-    const legacy=config.plugins.installs!==undefined,installation=config.plugins.installs?.[ID];
-    if(legacy) {
-      if(!mapping(config.plugins.installs)||Object.keys(config.plugins.installs).length!==1||!mapping(installation)
-        ||Object.keys(installation).length!==5||Object.keys(installation).some(key=>!['source','sourcePath','installPath','version','installedAt'].includes(key))
-        ||installation.source!=='path'||installation.sourcePath!==pluginPath||installation.installPath!==pluginPath
-        ||installation.version!==manifest.version||typeof installation.installedAt!=='string'
-        ||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(installation.installedAt)
-        ||!Number.isFinite(Date.parse(installation.installedAt))||new Date(installation.installedAt).toISOString()!==installation.installedAt
-        ||Date.parse(installation.installedAt)>Date.now()||!marker||Object.keys(marker).length!==2
-        ||Object.keys(marker.files).sort().join(',')!=='index.mjs,openclaw.plugin.json,package.json')throw unavailable();
-    }
-    const extensions=await directory(join(state.access,'extensions'),true);directories.push(extensions);
-    const plugin=await directory(join(extensions.access,ID),true);directories.push(plugin);await sweep(plugin);
-    const files={
-      'index.mjs':`export { default } from ${JSON.stringify(options.compiledEntry)};\n`,
-      'package.json':JSON.stringify({name:'@matrix-os/openclaw-shared-browser',version:'1.0.0',type:'module',openclaw:{extensions:['./index.mjs']}},null,2)+'\n',
-      'openclaw.plugin.json':JSON.stringify(manifest,null,2)+'\n',
-    };
-    const previous={};
-    for(const[name,content]of Object.entries(files)) {
-      const current=await read(join(plugin.access,name));previous[name]=current;
-      if(legacy&&(!current||!current.equals(Buffer.from(content))||marker.files[name]!==hash(current)))throw unavailable();
-      if(marker&&current===null)return{state:'owner_uninstalled'};
-      if(current&&!current.equals(Buffer.from(content))&&marker?.files[name]!==hash(current))throw unavailable();
-    }
     for(const[name,content]of Object.entries(files))if(!previous[name]?.equals(Buffer.from(content)))await writeAtomic(plugin,name,content,previous[name]);
-    const {installs:_legacyReceipt,...nativePlugins}=config.plugins;
-    const next={...config,channels,plugins:{...nativePlugins,allow:[ID],entries:{...entries,[ID]:{...entry,enabled:true,config:{gatewayPort:options.gatewayPort}}}}};
+    const next={...config,channels,plugins:{...config.plugins,allow:[ID],entries:{...entries,[ID]:{...entry,enabled:true,config:{gatewayPort:options.gatewayPort}}}}};
     await options.beforeConfigCommit?.();
     if(JSON.stringify(next)!==JSON.stringify(parsed))await writeAtomic(state,configName,JSON.stringify(next,null,2)+'\n',original);
     const markerContent=JSON.stringify({version:1,files:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,hash(Buffer.from(content))]))})+'\n';
     if(!markerBytes?.equals(Buffer.from(markerContent)))await writeAtomic(state,MARKER,markerContent,markerBytes);
-    return{state:'installed',pluginPath:join(extensionPath,ID)};
+    return{state:'installed',pluginPath};
   } finally {try {await release?.();} finally {for(const dir of directories.reverse())await dir.handle.close();await state.handle.close();}}
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
@@ -163,7 +168,7 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
     const stateDir=process.env.OPENCLAW_STATE_DIR??join(process.env.MATRIX_RUNTIME_HOME??process.env.MATRIX_HOME??'/home/matrix/home','.openclaw');
     const enabled=process.env.MATRIX_BROWSER_LAB==='true';
     const compiledEntry=join(process.env.MATRIX_APP_DIR??'/opt/matrix/app','packages/gateway/dist/chat/openclaw-shared-browser-plugin-entry.js');
-    const manifest=enabled?(await import(pathToFileURL(compiledEntry).href)).OPENCLAW_SHARED_BROWSER_MANIFEST:undefined;
+    const manifest=(await import(pathToFileURL(compiledEntry).href)).OPENCLAW_SHARED_BROWSER_MANIFEST;
     const result=await configureOpenClawSharedBrowser({stateDir,configPath:process.env.OPENCLAW_CONFIG_PATH??join(stateDir,'openclaw.json'),enabled,
       gatewayPort:Number(process.env.PORT??4000),compiledEntry,manifest,disabledMarker:join(process.env.MATRIX_RUNTIME_CONTROL_STATE_DIR??'/var/lib/matrix-agent-runtime','disabled-openclaw')});
     console.log(`matrix-openclaw-browser: ${result.state}`);
