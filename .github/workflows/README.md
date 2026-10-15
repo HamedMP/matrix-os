@@ -39,8 +39,13 @@ Expensive jobs remain path-aware.
 Every main push runs CI to completion in its own concurrency group
 (`ci-refs/heads/main-<sha>`), so a newer merge never cancels or delays an
 older commit's run and each main commit keeps its own green or red result.
-Manual refresh dispatches on `main` still share one FIFO queue (up to the
-platform's 100-run `queue: max` limit).
+Ordinary manual dispatches on `main` share one FIFO queue. Exact-source refreshes
+with a PR number, head SHA, base SHA, and source SHA use an independent queue per
+tuple; duplicates share that queue across execution modes. Each queue retains
+the platform's 100-run `queue: max` limit. This changes scheduling only: trusted
+source validation, receipts, and runner admission remain unchanged. Runs already
+queued under an older workflow keep their original group; a fresh dispatch after
+this workflow lands uses the new grouping.
 
 When a main run starts, `scripts/ci/main-ci-coverage.mjs` finds the latest
 successful `CI coverage-v1` ancestor and treats it as the coverage frontier. The

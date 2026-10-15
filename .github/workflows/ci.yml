@@ -30,7 +30,9 @@ on:
     types: [opened, ready_for_review, synchronize, reopened, edited]
 
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'shared' }}
+  # Independent exact-source refreshes must not wait behind unrelated manual runs.
+  # Duplicate requests for the same tuple still share one queue across modes.
+  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || github.event_name == 'workflow_dispatch' && inputs.pr_number && inputs.head_sha && inputs.base_sha && inputs.source_sha && format('refresh-pr-{0}-head-{1}-base-{2}-source-{3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha) || 'shared' }}
   queue: max
 
 permissions:
