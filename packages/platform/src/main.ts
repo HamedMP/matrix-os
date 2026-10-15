@@ -1,3 +1,4 @@
+import { startGooglePurchaseDelivery } from './billing/google-purchases.js';
 import { registerFundedHostConfigRoutes } from "./funded-host-config-registration.js";
 import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
@@ -529,6 +530,8 @@ export function createApp(deps: {
     resolveAppDomainIdentity,
     getGatewayUrlForHandle,
   }));
+
+  posthogShutdowns.push(startGooglePurchaseDelivery(db, appEnv));
 
   const billingStripe=createAccountDeletionGuardedStripeClient(db, appEnv.STRIPE_SECRET_KEY
     ? createStripeBillingClient({secretKey:appEnv.STRIPE_SECRET_KEY})
