@@ -464,4 +464,40 @@ describe("durable Slack company requests use canonical shared Chat admission", (
     await service.drain();await service.drain();expect(sendReply).toHaveBeenCalledTimes(4);
     expect(await db.selectFrom("slack_company_outbox").select("state").where("state","=","uncertain").execute()).toHaveLength(1);
   });
+  it("waits for a platform receipt beyond three drains without spending the send retry budget",async()=>{
+    await service.receive(envelope);await service.drain();completed=true;
+    sendReply.mockResolvedValue({status:"retryable",reason:"receipt_not_ready"});
+    for(let attempt=0;attempt<5;attempt++){
+      await service.drain();
+      expect(await db.selectFrom("slack_company_outbox").select(["state","attempts"]).executeTakeFirstOrThrow()).toEqual({state:"pending",attempts:0});
+      currentTime=new Date(currentTime.getTime()+31_000);
+    }
+    sendReply.mockResolvedValue({status:"sent",messageTs:"1790766001.000001"});await service.drain();await service.drain();
+    expect(sendReply).toHaveBeenCalledTimes(6);
+    expect(await db.selectFrom("slack_company_outbox").select(["state","attempts"]).executeTakeFirstOrThrow()).toEqual({state:"sent",attempts:1});
+  });
+  it("honors a confirmed rate limit cooldown without refunding the ordinary send attempts",async()=>{
+    await service.receive(envelope);await service.drain();completed=true;
+    sendReply.mockResolvedValueOnce({status:"retryable",retryAfterMs:120_000});await service.drain();
+    for(const seconds of [30,60,119]){currentTime=new Date(now.getTime()+seconds*1000);await service.drain();expect(sendReply).toHaveBeenCalledTimes(1);}
+    currentTime=new Date(now.getTime()+120_000);await service.drain();expect(sendReply).toHaveBeenCalledTimes(2);
+    expect(await db.selectFrom("slack_company_outbox").select(["state","attempts"]).executeTakeFirstOrThrow()).toEqual({state:"sent",attempts:2});
+  });
+  it("expires known no-send waits after24 hours even if the inbox already completed",async()=>{
+    await service.receive(envelope);await service.drain();completed=true;sendReply.mockResolvedValue({status:"retryable",reason:"receipt_not_ready"});await service.drain();
+    currentTime=new Date(now.getTime()+86400_000);await service.drain();expect(sendReply).toHaveBeenCalledTimes(1);
+    expect((await db.selectFrom("slack_company_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("failed");
+  });
+  it("refunds only the exact live delivery lease and never makes attempts negative",async()=>{
+    await service.receive(envelope);await service.drain();completed=true;sendReply.mockResolvedValue({status:"retryable",reason:"receipt_not_ready"});await service.drain();currentTime=new Date(currentTime.getTime()+31_000);
+    const repository=new SlackCompanyRepository(db,actors.owner,()=>currentTime);const first=await repository.claimReply();expect(first).toBeTruthy();
+    await repository.waitForReceipt(first!.outbox.event_id,"00000000-0000-4000-8000-000000000000");
+    expect((await db.selectFrom("slack_company_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("sending");
+    await repository.waitForReceipt(first!.outbox.event_id,first!.outbox.lease);await repository.waitForReceipt(first!.outbox.event_id,first!.outbox.lease);
+    expect((await db.selectFrom("slack_company_outbox").select("attempts").executeTakeFirstOrThrow()).attempts).toBe(0);
+    currentTime=new Date(currentTime.getTime()+31_000);const second=await repository.claimReply();expect(second).toBeTruthy();
+    await repository.waitForReceipt(first!.outbox.event_id,first!.outbox.lease);
+    expect(await db.selectFrom("slack_company_outbox").select(["state","attempts","lease"]).executeTakeFirstOrThrow()).toMatchObject({state:"sending",attempts:1,lease:second!.outbox.lease});
+  });
+
 });

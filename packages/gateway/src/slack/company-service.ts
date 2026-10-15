@@ -28,7 +28,7 @@ export interface SlackCompanyOptions {
   onAdmitted?(envelope: SlackHomeEnvelope): Promise<void>;
   findAcceptedRequest?(input: { ownerId: string; scopeId: string; chatId: string; actorId: string; clientRequestId: string }): Promise<{ queuedTurnId: string; payloadHash: string | null } | null>;
   readResult(input: { ownerId: string; scopeId: string; chatId: string; queuedTurnId: string }): Promise<SlackCanonicalResult>;
-  sendReply(input: SlackReplyInput): Promise<{ status: "sent"; messageTs: string } | { status: "retryable" | "uncertain" }>;
+  sendReply(input: SlackReplyInput): Promise<{ status: "sent"; messageTs: string } | { status: "retryable"; reason?: "receipt_not_ready"; retryAfterMs?: number } | { status: "uncertain" }>;
   brain?: Pick<CompanyBrainService, "retrieveForRun" | "captureSlackMention" | "verifyEvidence">;
   now?: () => Date;
 }
@@ -270,8 +270,12 @@ export class SlackCompanyService {
       await this.chat(envelope, binding);
       await this.verifySources(inbox,envelope);
       const result = await this.options.sendReply({ envelope, scopeId: binding.scopeId, chatId: binding.chatId, queuedTurnId: inbox.queued_turn_id!, runId: outbox.run_id, text: outbox.text });
+      if (result.status === "retryable" && result.reason === "receipt_not_ready") {
+        await this.repository.waitForReceipt(outbox.event_id, outbox.lease);
+        return;
+      }
       await this.repository.replyStatus(outbox.event_id, outbox.lease, result.status === "sent" ? "sent" : result.status === "uncertain" ? "uncertain"
-        : outbox.attempts < 3 ? "pending" : "failed", result.status === "sent" ? result.messageTs : undefined);
+        : outbox.attempts < 3 ? "pending" : "failed", result.status === "sent" ? result.messageTs : undefined, result.status === "retryable" ? result.retryAfterMs : undefined);
     } catch (error: unknown) {
       console.warn("[slack-company] reply delivery unavailable", error instanceof Error ? error.name : "UnknownError");
       const denied = error instanceof SlackCompanyError && error.code === "forbidden"
