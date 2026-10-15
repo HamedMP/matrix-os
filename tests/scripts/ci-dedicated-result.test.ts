@@ -181,6 +181,33 @@ describe('stack lifecycle and retry evidence',()=>{
     expect(github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalledWith(expect.objectContaining({run_id:run.id}));
     expect((github.rest.actions as any).downloadArtifact).toHaveBeenCalled();
   });
+  it('selects the normalized check bound to the receipt rather than a newer same-attempt check',async()=>{
+    const {github,check,run}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;check.check_suite.id=800;
+    const other={...check,id:11,details_url:'https://github.com/HamedMP/matrix-os/runs/11',output:{summary:JSON.stringify({...JSON.parse(check.output.summary),leaseId:'7'.repeat(32)})}};
+    pinArtifactFixture(github,other,{...run,id:124});pinArtifactFixture(github,check,run);
+    github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[other,check]}});
+    await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
+  });
+  it.each(['queued','failure'])('rechecks a newer %s controller after normalized receipt authentication',async barrier=>{
+    const {github,check,run}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;check.check_suite.id=800;
+    const newer={...run,id:124,...(barrier==='queued'?{status:'queued'}:{conclusion:'failure'})};let superseded=false;
+    github.rest.actions.listWorkflowRuns.mockImplementation(async()=>({data:{workflow_runs:superseded?[newer,run]:[run]}}));
+    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?newer:run}));
+    const actions=github.rest.actions as any,download=actions.downloadArtifact;
+    actions.downloadArtifact=vi.fn(async(args:any)=>{const result=await download(args);superseded=true;return result;});
+    await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow(barrier==='queued'?/No verified/:/failed/);
+    expect(actions.downloadArtifact).toHaveBeenCalled();
+  });
+  it.each(['id','digest'])('rejects a replaced normalized artifact %s before reusing receipt bytes',async field=>{
+    const {github,check,run}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;check.check_suite.id=800;
+    const artifact={name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:run.id}};
+    let replaced=false;
+    github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async()=>({data:{artifacts:[replaced?{...artifact,[field]:field==='id'?56:'sha256:'+'1'.repeat(64)}:artifact]}}));
+    const actions=github.rest.actions as any,download=actions.downloadArtifact;
+    actions.downloadArtifact=vi.fn(async(args:any)=>{const result=await download(args);replaced=true;return result;});
+    await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('Immutable controller artifact changed during verification');
+    expect(actions.downloadArtifact).toHaveBeenCalledTimes(1);
+  });
   it('accepts only the current rerun attempt and its immutable artifact',async()=>{
     const {github,check,run}=fixture({controllerAttempt:2});run.run_attempt=2;pinArtifactFixture(github,check,run);
     github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt2`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
