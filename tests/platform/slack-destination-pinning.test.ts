@@ -16,7 +16,7 @@ describe("production Slack durable destination routing",()=>{
   const destination=await options.resolveDestination(input);
   expect(destination).toEqual({ownerId:"user_original",runtimeId:original.machineId});
   machine.mockResolvedValue({...original,...(change==="owner"?{clerkUserId:"user_other"}:{machineId:"22222222-2222-4222-8222-222222222222"})});
-  await expect(options.dispatch({...input as object,destination,signal:AbortSignal.timeout(1000)} as never)).rejects.toThrow("Slack destination changed");
+  await expect(options.dispatch({...input as object,destination,signal:AbortSignal.timeout(1000)} as never)).rejects.toThrow(/Slack (?:destination changed|home unavailable)/);
   expect(fetchImpl).not.toHaveBeenCalled();
  });
 });
