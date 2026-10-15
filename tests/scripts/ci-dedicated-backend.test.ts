@@ -11,7 +11,7 @@ it('waits for an authenticated backend before every delegated hosted lane',()=>{
 });
 it('does not accept a Linux infrastructure result without complete hosted aggregate coverage',()=>{
  const w=ci(),job=w.jobs['ci-results'];expect(job.needs).toContain('ci-backend');
- const step=job.steps[0];expect(step.env.CI_BACKEND_RESULT).toContain('needs.ci-backend.result');expect(step.env.CI_BACKEND_PROVIDER).toContain('needs.ci-backend.outputs.provider');
+ const step=job.steps.find((step:any)=>step.name==='Summarize required CI jobs');expect(step.env.CI_BACKEND_RESULT).toContain('needs.ci-backend.result');expect(step.env.CI_BACKEND_PROVIDER).toContain('needs.ci-backend.outputs.provider');
  expect(step.run).toContain('CI_BACKEND_PROVIDER');expect(step.run).toContain('INFRASTRUCTURE_FALLBACK');
 });
 it('keeps fixed main-only privileged helpers and exposes complete signed source shape',()=>{
