@@ -91,6 +91,39 @@ describe("reduceOnboardingWidget", () => {
     expect(connected.screen).toMatchObject({ kind: "run", appConnected: true });
   });
 
+  it("offers only Skip when the computer can't connect apps", () => {
+    const unavailable = run(fresh(), { type: "task.selected", taskId: "work-on-code", connectedServices: [], appsUnavailable: true });
+    expect(unavailable.screen).toEqual({ kind: "connect", taskId: "work-on-code", status: "unavailable" });
+    expect(run(unavailable, { type: "connect.started" }).screen).toEqual(unavailable.screen);
+    expect(run(unavailable, { type: "connect.skipped" }).screen).toEqual({ kind: "repo" });
+  });
+
+  it("switches a connect attempt to unavailable when the computer turns out to have no app connections", () => {
+    const discovered = run(
+      fresh(),
+      { type: "task.selected", taskId: "plan-week", connectedServices: [] },
+      { type: "connect.started" },
+      { type: "connect.unavailable", service: "google_calendar" },
+    );
+    expect(discovered.screen).toEqual({ kind: "connect", taskId: "plan-week", status: "unavailable" });
+    expect(run(discovered, { type: "connect.failed", service: "google_calendar" }).screen).toEqual(discovered.screen);
+    expect(run(fresh(), { type: "connect.unavailable", service: "google_calendar" }).screen).toEqual({ kind: "tasks" });
+  });
+
+  it("ignores an unavailable result for an app the current task does not need", () => {
+    const connecting = run(
+      fresh(),
+      { type: "task.selected", taskId: "plan-week", connectedServices: [] },
+      { type: "connect.started" },
+    );
+    expect(run(connecting, { type: "connect.unavailable", service: "github" }).screen).toEqual(connecting.screen);
+  });
+
+  it("still goes straight to the work when the app is connected, even if new connections are unavailable", () => {
+    const state = run(fresh(), { type: "task.selected", taskId: "work-on-code", connectedServices: ["github"], appsUnavailable: true });
+    expect(state.screen).toEqual({ kind: "repo" });
+  });
+
   it("connects GitHub and then picks a repo for Work on my code", () => {
     const picked = run(
       fresh(),

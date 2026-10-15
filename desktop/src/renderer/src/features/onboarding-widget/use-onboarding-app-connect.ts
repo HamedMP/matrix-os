@@ -1,15 +1,15 @@
 import type { OnboardingWidgetEvent } from "@matrix-os/contracts";
-import type { OnboardingAppConnect } from "@matrix-os/ui";
+import { activeConnectionIds, hasNewActiveConnection, startConnectPoll, type OnboardingAppConnect } from "@matrix-os/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
-import { startConnectPoll } from "../integrations/connect-poll";
 import { useIntegrations } from "../integrations/integrations-store";
 
 /** Opens the integration consent page and waits for the new connection to land. */
 export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event: OnboardingWidgetEvent) => void): OnboardingAppConnect {
   const [connectingService, setConnectingService] = useState<string | null>(null);
+  const appsUnavailable = useIntegrations((state) => state.status === "unavailable");
   const attemptRef = useRef(0);
   const cancelPollRef = useRef<(() => void) | null>(null);
 
@@ -28,14 +28,20 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
     const attempt = ++attemptRef.current;
     const generation = captureRuntimeGeneration();
     const isCurrent = () => attemptRef.current === attempt && isCurrentRuntimeGeneration(generation);
+    const servicePresent = () => useIntegrations.getState().status !== "unavailable";
+    if (!servicePresent()) {
+      setConnectingService(null);
+      dispatch({ type: "connect.unavailable", service: serviceId });
+      return;
+    }
     const fail = () => {
       if (!isCurrent()) return;
       setConnectingService(null);
-      dispatch({ type: "connect.failed", service: serviceId });
+      dispatch(servicePresent() ? { type: "connect.failed", service: serviceId } : { type: "connect.unavailable", service: serviceId });
     };
     setConnectingService(serviceId);
     dispatch({ type: "connect.started" });
-    const previousIds = new Set(useIntegrations.getState().connections.map((connection) => connection.id));
+    const previouslyActive = activeConnectionIds(useIntegrations.getState().connections, serviceId);
     void (async () => {
       const url = await useIntegrations.getState().startConnect(serviceId, api);
       if (!isCurrent()) return;
@@ -48,7 +54,7 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
           const result = await useIntegrations.getState().syncNow(api);
           if (result === "superseded") cancelPollRef.current?.();
         },
-        isDone: () => useIntegrations.getState().connections.some((connection) => connection.service === serviceId && !previousIds.has(connection.id)),
+        isDone: () => hasNewActiveConnection(useIntegrations.getState().connections, serviceId, previouslyActive),
         onSettled: (found) => {
           if (!isCurrent()) return;
           cancelPollRef.current = null;
@@ -63,5 +69,5 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
     });
   }, [api, dispatch]);
 
-  return { connectingService, connectApp };
+  return { connectingService, connectApp, appsUnavailable };
 }

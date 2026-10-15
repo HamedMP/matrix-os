@@ -49,6 +49,8 @@ export interface OnboardingWidgetProps {
   actions: OnboardingWidgetActions;
   userName?: string;
   apps: readonly OnboardingWidgetApp[];
+  /** This computer has no app connection service, so Connect can never finish. */
+  appsUnavailable?: boolean;
   repos: readonly OnboardingWidgetRepo[] | null;
   runView: OnboardingRunView | null;
   /** The AI a new task runs on; differs from `state.aiChoice` while Matrix AI can't run on this computer. */

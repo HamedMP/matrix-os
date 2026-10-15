@@ -6,6 +6,7 @@ import {
   onboardingWorkingLine,
   onboardingTask,
   type OnboardingAiChoice,
+  type OnboardingConnectStatus,
   type OnboardingRequiredService,
   type OnboardingRunScreen,
   type OnboardingTaskDefinition,
@@ -33,7 +34,7 @@ const TASK_ICONS: Record<OnboardingTaskDefinition["tone"], IconSvgElement> = {
   code: GithubIcon,
 };
 
-export function TasksScreen({ state, apps, userName, actions }: Pick<OnboardingWidgetProps, "state" | "apps" | "userName" | "actions">) {
+export function TasksScreen({ state, apps, appsUnavailable = false, userName, actions }: Pick<OnboardingWidgetProps, "state" | "apps" | "appsUnavailable" | "userName" | "actions">) {
   const connected = connectedServices(apps);
   const firstVisit = !state.started && !state.echo && !state.notice;
   return (
@@ -54,7 +55,12 @@ export function TasksScreen({ state, apps, userName, actions }: Pick<OnboardingW
               <button
                 type="button"
                 className="mxo-task"
-                onClick={() => actions.dispatch({ type: "task.selected", taskId: task.id, connectedServices: connected })}
+                onClick={() => actions.dispatch({
+                  type: "task.selected",
+                  taskId: task.id,
+                  connectedServices: connected,
+                  ...(appsUnavailable ? { appsUnavailable: true } : {}),
+                })}
               >
                 <span className={`mxo-tile mxo-tile--${task.tone}`}><Icon icon={TASK_ICONS[task.tone]} size={16} /></span>
                 <span className="mxo-task__label">{task.label}</span>
@@ -64,9 +70,11 @@ export function TasksScreen({ state, apps, userName, actions }: Pick<OnboardingW
           );
         })}
       </ul>
-      <button type="button" className="mxo-link" onClick={() => actions.dispatch({ type: "apps.opened" })}>
-        Connect apps first
-      </button>
+      {appsUnavailable ? null : (
+        <button type="button" className="mxo-link" onClick={() => actions.dispatch({ type: "apps.opened" })}>
+          Connect apps first
+        </button>
+      )}
     </>
   );
 }
@@ -147,10 +155,17 @@ export function QuestionScreen({ taskId, actions }: { taskId: OnboardingTaskDefi
   );
 }
 
-export function ConnectScreen({ taskId, status, apps, actions }: { taskId: OnboardingTaskDefinition["id"]; status: "idle" | "connecting" | "failed" } & Pick<OnboardingWidgetProps, "apps" | "actions">) {
+function ConnectStatusLine({ status, access }: { status: OnboardingConnectStatus; access: string }) {
+  if (status === "failed") return <span className="mxo-failed-line"><Icon icon={Alert02Icon} size={12} />Sign-in didn't finish</span>;
+  if (status === "unavailable") return <span className="mxo-muted">App connections aren't available on this computer</span>;
+  return <span className="mxo-muted">{access}</span>;
+}
+
+export function ConnectScreen({ taskId, status, apps, actions }: { taskId: OnboardingTaskDefinition["id"]; status: OnboardingConnectStatus } & Pick<OnboardingWidgetProps, "apps" | "actions">) {
   const needs = onboardingTask(taskId)?.needs;
   if (!needs) return null;
   const app = apps.find((candidate) => candidate.id === needs.service);
+  const unavailable = status === "unavailable";
   return (
     <>
       <p className="mxo-text">{needs.ask}</p>
@@ -159,18 +174,16 @@ export function ConnectScreen({ taskId, status, apps, actions }: { taskId: Onboa
           <AppLogo src={app?.logoUrl} name={needs.name} size={32} />
           <span className="mxo-result__text">
             <span className="mxo-result__title">{needs.name}</span>
-            {status === "failed" ? (
-              <span className="mxo-failed-line"><Icon icon={Alert02Icon} size={12} />Sign-in didn't finish</span>
-            ) : (
-              <span className="mxo-muted">{needs.access}</span>
-            )}
+            <ConnectStatusLine status={status} access={needs.access} />
           </span>
         </div>
         <ButtonRow>
-          <button type="button" className="mxo-btn mxo-btn--dark" disabled={status === "connecting"} onClick={() => actions.connectApp(needs.service)}>
-            {status === "connecting" ? "Connecting…" : status === "failed" ? "Try again" : "Connect"}
-          </button>
-          <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => actions.dispatch({ type: "connect.skipped" })}>Skip</button>
+          {unavailable ? null : (
+            <button type="button" className="mxo-btn mxo-btn--dark" disabled={status === "connecting"} onClick={() => actions.connectApp(needs.service)}>
+              {status === "connecting" ? "Connecting…" : status === "failed" ? "Try again" : "Connect"}
+            </button>
+          )}
+          <button type="button" className={`mxo-btn ${unavailable ? "mxo-btn--dark" : "mxo-btn--ghost"}`} onClick={() => actions.dispatch({ type: "connect.skipped" })}>Skip</button>
         </ButtonRow>
       </div>
     </>

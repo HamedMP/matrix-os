@@ -17,6 +17,7 @@ const AI_LABELS: Record<OnboardingAiChoice, string> = { matrix: "Matrix AI", cla
 export function onboardingAiLabel(choice: OnboardingAiChoice): string {
   return AI_LABELS[choice];
 }
+export type OnboardingConnectStatus = "idle" | "connecting" | "failed" | "unavailable";
 export type OnboardingRunPhase = "waiting_computer" | "starting" | "running" | "done" | "failed";
 
 export interface OnboardingRunScreen {
@@ -37,7 +38,8 @@ export type OnboardingScreen =
   | { kind: "tasks" }
   | { kind: "apps" }
   | { kind: "question"; taskId: OnboardingStarterTaskId }
-  | { kind: "connect"; taskId: OnboardingStarterTaskId; status: "idle" | "connecting" | "failed" }
+  /** `unavailable`: this computer has no app connection service, so only Skip can move on. */
+  | { kind: "connect"; taskId: OnboardingStarterTaskId; status: OnboardingConnectStatus }
   | { kind: "repo" }
   | OnboardingRunScreen;
 
@@ -65,12 +67,13 @@ export interface OnboardingWidgetState {
 }
 
 export type OnboardingWidgetEvent =
-  | { type: "task.selected"; taskId: OnboardingStarterTaskId; connectedServices: readonly OnboardingRequiredService[] }
+  | { type: "task.selected"; taskId: OnboardingStarterTaskId; connectedServices: readonly OnboardingRequiredService[]; appsUnavailable?: boolean }
   | { type: "answer.submitted"; text: string; context?: string }
   | { type: "freeform.submitted"; text: string }
   | { type: "connect.started" }
   | { type: "connect.succeeded"; service: string }
   | { type: "connect.failed"; service: string }
+  | { type: "connect.unavailable"; service: string }
   | { type: "connect.skipped" }
   | { type: "apps.opened" }
   | { type: "apps.closed"; connectedNames: readonly string[] }
@@ -211,7 +214,7 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
       if (!task) return state;
       const base = { ...state, ai: null, echo: task.label, notice: null };
       if (task.needs && !event.connectedServices.includes(task.needs.service)) {
-        return { ...base, screen: { kind: "connect", taskId: task.id, status: "idle" } };
+        return { ...base, screen: { kind: "connect", taskId: task.id, status: event.appsUnavailable ? "unavailable" : "idle" } };
       }
       return afterConnect(base, task.id, Boolean(task.needs));
     }
@@ -233,9 +236,13 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
       return startRun(state, { taskId: "custom", answer, appConnected: false, simpler: false }, { echo: answer, notice: null });
     }
     case "connect.started":
-      return screen.kind === "connect" ? { ...state, screen: { ...screen, status: "connecting" } } : state;
+      return screen.kind === "connect" && screen.status !== "unavailable" ? { ...state, screen: { ...screen, status: "connecting" } } : state;
     case "connect.failed":
-      return screen.kind === "connect" && connectsService(screen.taskId, event.service) ? { ...state, screen: { ...screen, status: "failed" } } : state;
+      return screen.kind === "connect" && screen.status !== "unavailable" && connectsService(screen.taskId, event.service)
+        ? { ...state, screen: { ...screen, status: "failed" } }
+        : state;
+    case "connect.unavailable":
+      return screen.kind === "connect" && connectsService(screen.taskId, event.service) ? { ...state, screen: { ...screen, status: "unavailable" } } : state;
     case "connect.succeeded":
       return screen.kind === "connect" && connectsService(screen.taskId, event.service) ? afterConnect(state, screen.taskId, true) : state;
     case "connect.skipped":

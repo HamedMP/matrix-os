@@ -3,6 +3,7 @@ import {
   OnboardingWidget,
   onboardingPrefsKey,
   readOnboardingPrefs,
+  useGettingStartedAutoOpenSuppression,
   useOnboardingWidgetSession,
   useOnboardingWidgetState,
   type OnboardingSettingsSection,
@@ -33,7 +34,9 @@ export default function OnboardingWidgetHost() {
   const api = useConnection((state) => state.api);
   const handle = useConnection((state) => state.handle);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
-  if (status !== "signed-in" || !api || !handle) return null;
+  const signedIn = status === "signed-in" && !!api && !!handle;
+  useGettingStartedAutoOpenSuppression(signedIn);
+  if (!signedIn) return null;
   const prefsKey = onboardingPrefsKey(handle, runtimeSlot);
   return <OnboardingWidgetLoader key={prefsKey} api={api} prefsKey={prefsKey} />;
 }

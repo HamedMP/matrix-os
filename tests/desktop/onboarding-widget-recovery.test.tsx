@@ -174,6 +174,41 @@ describe("onboarding app connect", () => {
     const offline = renderHook(() => useOnboardingAppConnect(null, dispatch));
     act(() => offline.result.current.connectApp("google_calendar"));
     expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "google_calendar" });
+
+    useIntegrations.setState({ status: "unavailable" } as never);
+    const missing = renderHook(() => useOnboardingAppConnect(api, dispatch));
+    act(() => missing.result.current.connectApp("gmail"));
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.unavailable", service: "gmail" });
+  });
+
+  it("waits for sign-in to finish before calling an app connected, including an account reconnecting", async () => {
+    const dispatch = vi.fn();
+    const syncs = [
+      [{ id: "conn_old", service: "gmail", status: "auth_required" }, { id: "conn_new", service: "github", status: "auth_required" }],
+      [{ id: "conn_old", service: "gmail", status: "auth_required" }, { id: "conn_new", service: "github", status: "active" }],
+      [{ id: "conn_old", service: "gmail", status: "active" }, { id: "conn_new", service: "github", status: "active" }],
+    ];
+    useIntegrations.setState({
+      status: "ready",
+      connections: [{ id: "conn_old", service: "gmail", status: "auth_required" }],
+      refresh: vi.fn(async () => undefined),
+      startConnect: vi.fn(async (service: string) => `https://connect.example.test/${service}`),
+      syncNow: vi.fn(async () => {
+        useIntegrations.setState({ connections: syncs.shift() ?? useIntegrations.getState().connections } as never);
+        return "synced";
+      }),
+    } as never);
+    const { result } = renderHook(() => useOnboardingAppConnect(api, dispatch));
+
+    act(() => result.current.connectApp("github"));
+    await flush(2_000);
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.succeeded", service: "github" });
+    await flush(3_000);
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "github" });
+
+    act(() => result.current.connectApp("gmail"));
+    await flush(2_000);
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "gmail" });
   });
 });
 

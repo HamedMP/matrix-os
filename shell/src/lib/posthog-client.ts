@@ -169,6 +169,36 @@ function findPostHogButton(selector: string): HTMLButtonElement | null {
   return document.getElementById(POSTHOG_WIDGET_ID)?.querySelector<HTMLButtonElement>(selector) ?? null;
 }
 
+export function isShellSupportOpen(): boolean {
+  return typeof document !== "undefined" && findPostHogButton(POSTHOG_CLOSE_SELECTOR) !== null;
+}
+
+export function closeShellSupport(): void {
+  findPostHogButton(POSTHOG_CLOSE_SELECTOR)?.click();
+}
+
+/** Notifies when the support panel may have opened or closed; observes only PostHog's own container. */
+export function subscribeShellSupportPanel(onChange: () => void): () => void {
+  if (typeof document === "undefined" || typeof MutationObserver === "undefined") return () => undefined;
+  const widgetObserver = new MutationObserver(onChange);
+  let observed: HTMLElement | null = null;
+  const attach = () => {
+    const container = document.getElementById(POSTHOG_WIDGET_ID);
+    if (container === observed) return;
+    widgetObserver.disconnect();
+    observed = container;
+    if (container) widgetObserver.observe(container, { childList: true, subtree: true });
+    onChange();
+  };
+  const bodyObserver = new MutationObserver(attach);
+  bodyObserver.observe(document.body, { childList: true });
+  attach();
+  return () => {
+    bodyObserver.disconnect();
+    widgetObserver.disconnect();
+  };
+}
+
 function closeSupportOnEscape(event: KeyboardEvent): void {
   if (event.key !== "Escape" || event.isComposing) return;
   const closeButton = findPostHogButton(POSTHOG_CLOSE_SELECTOR);

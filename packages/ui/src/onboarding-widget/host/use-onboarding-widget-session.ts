@@ -20,6 +20,8 @@ import { useOnboardingRun } from "./use-onboarding-run.js";
 export interface OnboardingAppConnect {
   connectingService: string | null;
   connectApp: (serviceId: string) => void;
+  /** The computer has no app connection service; hosts dispatch `connect.unavailable` instead of trying. */
+  appsUnavailable: boolean;
 }
 
 export type OnboardingSettingsSection = "agents-providers" | "billing";
@@ -83,10 +85,10 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
   const [repos, setRepos] = useState<OnboardingWidgetRepo[] | null>(null);
   useEffect(() => {
     if (!onRepoScreen) return;
-    if (!githubId || !githubLabel) { setRepos([]); return; }
     const controller = new AbortController();
     setRepos(null);
-    loadOnboardingRepos(repoSource, { id: githubId, accountLabel: githubLabel }, controller.signal).then(setRepos, (error: unknown) => {
+    const githubApp = githubId && githubLabel ? { id: githubId, accountLabel: githubLabel } : null;
+    loadOnboardingRepos(repoSource, githubApp, controller.signal).then(setRepos, (error: unknown) => {
       if (controller.signal.aborted) return;
       console.warn("[onboarding-widget] repo list failed:", error instanceof Error ? error.name : typeof error);
       setRepos([]);
@@ -130,6 +132,7 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     actions,
     ...(userName ? { userName } : {}),
     apps,
+    appsUnavailable: appConnect.appsUnavailable,
     repos,
     runView,
     activeAi,

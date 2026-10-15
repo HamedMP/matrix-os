@@ -15,6 +15,18 @@ real Matrix computer.
 - `electron-desktop-ai-menu.jpg`: the AI menu open while Matrix AI is
   available, with Claude and ChatGPT / Codex offered to connect.
 
+## Web Desktop and Web Canvas
+
+Captured on 2026-10-14 from #2523 at `74ea86f06` in headless Chromium at
+1440 × 900 against a local gateway, using `bun run dev` with the E2E auth
+bypass. No apps are connected, so the app-backed tasks show "Needs Calendar"
+and "Needs GitHub".
+
+- `web-desktop-widget.jpg`: the widget in the bottom-right corner of Web
+  Desktop, clear of the dock.
+- `web-canvas-widget.jpg`: the same widget on Web Canvas, with the canvas
+  toolbar and app launcher still reachable.
+
 ## Matrix AI unavailable
 
 Captured on 2026-10-14 in headless Chromium at 1440 × 900 against a local
