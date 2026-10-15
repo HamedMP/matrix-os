@@ -848,7 +848,7 @@ export function createHermesChatProviderAdapter(options: {
         }
         console.warn(
           "[chat/hermes] Provider Run failed:",
-          hermesFailureDiagnostic(stage, error, nativeErrorObserved),
+          JSON.stringify(hermesFailureDiagnostic(stage, error, nativeErrorObserved)),
         );
         const safeFailure = error instanceof ChatAgentContextError
           ? mapChatAgentContextError(error).safeError

@@ -4,8 +4,15 @@ import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat
 import { fakeGateway, baseInput } from "./hermes-test-gateway.js";
 
 afterEach(() => vi.restoreAllMocks());
-const secret = "synthetic private token /home/owner/auth.json";
+const secret = "synthetic private token /home/owner/auth.json\nprivate second line";
 async function collect(value: AsyncIterable<unknown>) { const rows = []; for await (const row of value) rows.push(row); return rows; }
+function diagnostic(calls: unknown[][]) {
+  const call = calls.find(row => row[0] === "[chat/hermes] Provider Run failed:")!;
+  expect(call).toHaveLength(2);
+  expect(typeof call[1]).toBe("string");
+  expect(String(call[1])).not.toContain("\n");
+  return JSON.parse(String(call[1]));
+}
 
 it("retains only the RPC method and numeric code when the native response fails", async () => {
   const gateway = fakeGateway({ ignoreMethods: ["session.create"] });
@@ -45,7 +52,7 @@ it.each([
   const request = gateway.requests.find(request => request.method === method)!;
   gateway.sendRaw(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: 5032, message: secret, data: { token: secret } } }) + "\n");
   expect((await work).at(-1)).toMatchObject({ type: "run.completed", outcome: "failed", error: { code: "provider_unavailable" } });
-  expect(warning).toHaveBeenCalledWith("[chat/hermes] Provider Run failed:", expect.objectContaining({ stage, kind: "rpc", method, code: 5032 }));
+  expect(diagnostic(warning.mock.calls)).toEqual({ stage, kind: "rpc", method, code: 5032, nativeErrorObserved: false });
   expect(JSON.stringify(warning.mock.calls)).not.toContain(secret);
   expect(gateway.requests.some(request => request.method === "prompt.submit")).toBe(false);
 });
@@ -58,7 +65,7 @@ it("distinguishes a native error event from local browser catalog refusal", asyn
   await vi.waitFor(() => expect(gateway.requests.some(request => request.method === "prompt.submit")).toBe(true));
   gateway.event("error", { message: secret });
   await work;
-  expect(warning).toHaveBeenCalledWith("[chat/hermes] Provider Run failed:", expect.objectContaining({ stage: "run", kind: "native_event" }));
+  expect(diagnostic(warning.mock.calls)).toEqual({ stage: "run", kind: "native_event", nativeErrorObserved: true });
   expect(JSON.stringify(warning.mock.calls)).not.toContain(secret);
 });
 
@@ -71,6 +78,6 @@ it("reports local catalog refusal separately and keeps inference unadmitted", as
   await vi.waitFor(() => expect(gateway.requests.some(request => request.method === "config.set")).toBe(true));
   gateway.event("session.info", { lazy: false, tools: { files: ["read_file"] } });
   expect((await work).at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
-  expect(warning).toHaveBeenCalledWith("[chat/hermes] Provider Run failed:", expect.objectContaining({ stage: "browser_catalog", kind: "local", nativeErrorObserved: false }));
+  expect(diagnostic(warning.mock.calls)).toEqual({ stage: "browser_catalog", kind: "local", errorType: "Error", nativeErrorObserved: false });
   expect(gateway.requests.some(request => request.method === "prompt.submit")).toBe(false);
 });

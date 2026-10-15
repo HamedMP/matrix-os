@@ -1639,7 +1639,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
     await eventsPromise;
     expect(warn).toHaveBeenCalledWith(
       "[chat/hermes] Provider Run failed:",
-      expect.objectContaining({ stage: "run", kind: "local", errorType: "HermesGatewayProtocolError", protocolReason: "event_invalid" }),
+      JSON.stringify({ stage: "run", kind: "local", errorType: "HermesGatewayProtocolError", protocolReason: "event_invalid", nativeErrorObserved: false }),
     );
     expect(JSON.stringify(warn.mock.calls)).not.toContain("42");
     warn.mockRestore();
