@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -15,7 +15,8 @@ function downloadFunction(deadlineSeconds = 3600) {
 }
 function runDownload(object, options = {}) {
   const { failOnceAt = -1, failAlwaysAt = -1, corruptRange = false, responseStatus = 206,
-    sleepSeconds = 0, sleepAt = -1, deadlineSeconds = 3600, incomingAttack = '', chunkDirectoryMode } = options;
+    sleepSeconds = 0, sleepAt = -1, deadlineSeconds = 3600, incomingAttack = '', chunkDirectoryMode,
+    headerMode = 'valid' } = options;
   const directory = mkdtempSync(join(tmpdir(), 'matrix-bounded-download-'));
   const bin = join(directory, 'bin'); mkdirSync(bin);
   const objectPath = join(directory, 'object'); const outputPath = join(directory, 'bundle.tar.gz');
@@ -39,7 +40,13 @@ if start==int(os.environ['FAIL_ALWAYS_AT']) or (start==int(os.environ['FAIL_ONCE
 data=open(os.environ['OBJECT_FILE'],'rb').read();body=data[start:end+1]
 actual_end=end+1 if os.environ['CORRUPT_RANGE']=='1' else end
 status=os.environ['RESPONSE_STATUS']
-open(headers,'w').write(f'HTTP/1.1 {status} Response\\r\\nContent-Range: bytes {start}-{actual_end}/{len(data)}\\r\\nContent-Length: {len(body)}\\r\\n\\r\\n')
+valid=f'HTTP/1.1 {status} Response\\r\\nContent-Range: bytes {start}-{actual_end}/{len(data)}\\r\\nContent-Length: {len(body)}\\r\\n\\r\\n'
+if os.environ['HEADER_MODE']=='redirect_forged_final_missing':
+ headers_text=f'HTTP/1.1 301 Redirect\\r\\nContent-Range: bytes {start}-{end}/{len(data)}\\r\\nLocation: https://storage.example/final\\r\\n\\r\\nHTTP/1.1 206 Response\\r\\nContent-Length: {len(body)}\\r\\n\\r\\n'
+elif os.environ['HEADER_MODE']=='final_conflicting':
+ headers_text=valid.replace('Content-Length:',f'Content-Range: bytes {start}-{end}/{len(data)}\\r\\nContent-Length:')
+else: headers_text=valid
+open(headers,'w').write(headers_text)
 open(out,'wb').write(body);sys.stdout.write(status)
 `, { mode: 0o755 });
   writeFileSync(join(bin, 'mktemp'), `#!/bin/bash
@@ -55,7 +62,9 @@ fi
 `, { mode: 0o755 });
   const digest = spawnSync('shasum', ['-a', '256', objectPath], { encoding: 'utf8' }).stdout.split(/\s/)[0];
   const chunkDirectory = `${outputPath}.chunks-${digest}`;
+  let initialChunkNlink;
   if (chunkDirectoryMode !== undefined) { mkdirSync(chunkDirectory, { mode: chunkDirectoryMode }); chmodSync(chunkDirectory, chunkDirectoryMode); }
+  if (chunkDirectoryMode !== undefined) initialChunkNlink = lstatSync(chunkDirectory).nlink;
   const script = `set -euo pipefail
 log(){ :; }
 write_update_error(){ :; }
@@ -72,10 +81,10 @@ exit "$rc"`;
     PATH: `${bin}:${process.env.PATH}`, OBJECT_FILE: objectPath, OUTPUT: outputPath, CURL_LOG: curlLog,
     ATTEMPTS: attempts, FAIL_ONCE_AT: String(failOnceAt), FAIL_ALWAYS_AT: String(failAlwaysAt),
     CORRUPT_RANGE: corruptRange ? '1' : '0', RESPONSE_STATUS: String(responseStatus), SLEEP_SECONDS: String(sleepSeconds), SLEEP_AT: String(sleepAt),
-    INCOMING_ATTACK: incomingAttack, PROTECTED_PATH: protectedPath, SHA256: digest, SIZE: String(object.length),
+    INCOMING_ATTACK: incomingAttack, HEADER_MODE: headerMode, PROTECTED_PATH: protectedPath, SHA256: digest, SIZE: String(object.length),
     REFRESHED_JSON: JSON.stringify({ version: 'v-test', sha256: digest, size: object.length, url: 'https://storage.example/fresh' }) } });
   return { result, output: result.status === 0 ? readFileSync(outputPath) : null,
-    ranges: readFileSync(curlLog, 'utf8').trim().split('\n').filter(Boolean), directory, chunkDirectory, protectedPath };
+    ranges: readFileSync(curlLog, 'utf8').trim().split('\n').filter(Boolean), directory, chunkDirectory, protectedPath, initialChunkNlink };
 }
 function cleanup(probe) { rmSync(probe.directory, { recursive: true, force: true }); }
 
@@ -94,6 +103,12 @@ describe('bounded host bundle download', () => {
       try { assert.notEqual(probe.result.status, 0); assert.equal(probe.output, null); } finally { cleanup(probe); }
     });
   }
+  for (const headerMode of ['redirect_forged_final_missing', 'final_conflicting']) {
+    it(`rejects untrusted Content-Range headers in ${headerMode}`, () => {
+      const probe = runDownload(Buffer.alloc(1024, 3), { headerMode });
+      try { assert.notEqual(probe.result.status, 0); assert.equal(probe.output, null); } finally { cleanup(probe); }
+    });
+  }
   it('enforces the whole-transfer deadline while retaining completed chunks', () => {
     const probe = runDownload(Buffer.alloc(8 * 1024 * 1024 + 17, 6), { deadlineSeconds: 2, sleepSeconds: 3, sleepAt: 8388608 });
     try { assert.notEqual(probe.result.status, 0); assert.equal(probe.ranges.length, 2); assert.deepEqual(readFileSync(join(probe.chunkDirectory, 'chunk-0')), Buffer.alloc(8 * 1024 * 1024, 6)); } finally { cleanup(probe); }
@@ -107,6 +122,11 @@ describe('bounded host bundle download', () => {
   it('rejects an existing chunk directory that is not private', () => {
     const probe = runDownload(Buffer.alloc(1024, 2), { chunkDirectoryMode: 0o755 });
     try { assert.notEqual(probe.result.status, 0); assert.deepEqual(probe.ranges, []); } finally { cleanup(probe); }
+  });
+  it('accepts a private Linux directory with the normal link count of two', { skip: process.platform !== 'linux' }, () => {
+    const probe = runDownload(Buffer.alloc(1024, 2), { chunkDirectoryMode: 0o700 });
+    try { assert.equal(probe.initialChunkNlink, 2); assert.equal(probe.result.status, 0, probe.result.stderr); }
+    finally { cleanup(probe); }
   });
   it('retains only completed chunks after retry exhaustion', () => {
     const probe = runDownload(Buffer.alloc(8 * 1024 * 1024 + 17, 5), { failAlwaysAt: 8388608 });

@@ -1164,7 +1164,7 @@ download_bundle() {
     if ! python3 - "$chunk_dir" <<'PY'
 import os, stat, sys
 s = os.lstat(sys.argv[1])
-raise SystemExit(0 if stat.S_ISDIR(s.st_mode) and s.st_uid == os.geteuid() and s.st_nlink == 1 and stat.S_IMODE(s.st_mode) == 0o700 else 1)
+raise SystemExit(0 if stat.S_ISDIR(s.st_mode) and s.st_uid == os.geteuid() and stat.S_IMODE(s.st_mode) == 0o700 else 1)
 PY
     then
       write_update_error "download_failed" "The release bundle download failed." "$version"
@@ -1250,8 +1250,15 @@ def read_regular(path, limit, exact=None):
         return data
 text = read_regular(headers, 65536).decode('iso-8859-1')
 read_regular(body, end - start + 1, end - start + 1)
-ranges = re.findall(r'(?im)^content-range:\s*bytes\s+(\d+)-(\d+)/(\d+)\s*$', text)
-if status_code != '206' or not ranges or tuple(map(int, ranges[-1])) != (start, end, total):
+blocks = [block for block in re.split(r'\r?\n\r?\n', text)
+          if re.match(r'^HTTP/\S+\s+\d{3}(?:\s|$)', block)]
+if not blocks:
+    raise SystemExit(1)
+final = blocks[-1]
+match = re.match(r'^HTTP/\S+\s+(\d{3})(?:\s|$)', final)
+ranges = re.findall(r'(?im)^content-range:\s*bytes\s+(\d+)-(\d+)/(\d+)\s*$', final)
+if (status_code != '206' or not match or match.group(1) != '206' or len(ranges) != 1 or
+        tuple(map(int, ranges[0])) != (start, end, total)):
     raise SystemExit(1)
 PY
       then
