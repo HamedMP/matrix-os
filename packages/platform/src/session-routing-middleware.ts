@@ -1,4 +1,5 @@
 import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
+import { whatsappPrimaryHandoffResponse } from "./whatsapp/primary-handoff.js";
 import {
   buildPreviewTerminalAccess,
   PREVIEW_TERMINAL_ACCESS_HEADER,
@@ -651,6 +652,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)));
     }
 
+    if (isAppDomain) {
+      const handoff = await whatsappPrimaryHandoffResponse(c, { db,
+        verifiedOwner: identity.source === 'auth' ? identity.userId : undefined });
+      if (handoff) return handoff;
+    }
     console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
     if (isAppDomain && path === '/vm') {
       return c.redirect('/runtime');
