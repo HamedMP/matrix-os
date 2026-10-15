@@ -68,3 +68,21 @@ describe("owner Slack composition",()=>{
  });
 
 });
+
+
+describe("Slack owner reply delivery recovery",()=>{
+ it.each([
+  [503,{error:"Delivery not ready",code:"receipt_not_ready"},"retryable"],
+  [503,{error:"Delivery unavailable"},"uncertain"],
+  [503,{error:"Delivery not ready",code:"receipt_not_ready",extra:true},"uncertain"],
+  [403,{error:"Delivery not ready",code:"receipt_not_ready"},"uncertain"],
+  [503,{error:"x".repeat(17*1024),code:"receipt_not_ready"},"uncertain"],
+  [503,{error:"Other",code:"receipt_not_ready"},"uncertain"],
+  [429,{error:"Rate limited"},"retryable"],
+ ])("classifies only bounded confirmed no-send replies (%s,%j)",async(status,body,expected)=>{
+  const {createSlackOwnerClient}=await import("../../packages/gateway/src/startup/slack-owner-client.js");
+  const callback=new Hono();callback.post("/internal/slack/replies",c=>c.json(body,status as 503));
+  const client=createSlackOwnerClient({platformUrl:"https://platform.example.test",handle:"pr-2079",token,fetchImpl:((url,init)=>callback.request(String(url),init)) as typeof fetch});
+  expect(await client.sendReply({envelope:{ownerId,actorId:ownerId,organizationId:"org_company",event} as never,text:"Reply"})).toEqual({status:expected});
+ });
+});

@@ -13,7 +13,7 @@ export function createSlackOwnerClient(options:{platformUrl:string;handle:string
   async function rpc(path:string,payload:unknown){
     const response=await fetchImpl(`${origin.origin}${path}`,{method:"POST",body:JSON.stringify(payload),redirect:"error",signal:AbortSignal.timeout(10_000),
       headers:{"content-type":"application/json",authorization:`Bearer ${options.token}`,"x-matrix-handle":options.handle}});
-    if(!response.ok){await response.body?.cancel();return{status:response.status,body:null};}
+    if(!response.ok && response.status!==503){await response.body?.cancel();return{status:response.status,body:null};}
     const reader=response.body?.getReader();if(!reader)throw new Error("Slack transport unavailable");
     const chunks:Uint8Array[]=[];let size=0;
     try{while(true){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;
@@ -43,7 +43,8 @@ export function createSlackOwnerClient(options:{platformUrl:string;handle:string
         const result=await rpc("/internal/slack/replies",{teamId:input.envelope.event.teamId,eventId:input.envelope.event.eventId,text:input.text});
         const sent=z.object({sent:z.literal(true),messageTs:z.string().regex(/^\d{1,16}\.\d{1,8}$/)}).strict().safeParse(result.body);
         if(sent.success)return{status:"sent",messageTs:sent.data.messageTs};
-        return{status:result.status===429?"retryable":"uncertain"};
+        const notReady=result.status===503 && z.object({error:z.literal("Delivery not ready"),code:z.literal("receipt_not_ready")}).strict().safeParse(result.body).success;
+        return{status:result.status===429||notReady?"retryable":"uncertain"};
       }catch(error:unknown){console.warn("[slack-owner] delivery outcome unknown",error instanceof Error?error.name:"UnknownError");return{status:"uncertain"};}
     },
   };

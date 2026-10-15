@@ -1709,7 +1709,7 @@ jobs:
           claim="$(script_command root scripts/preview-collaboration-guard.py 10000 claim "$nonce")"
           send "$claim" || { echo "Could not claim the rollback guard; host configuration is unchanged." >&2; exit 1; }
           guard_armed=true
-          binding="$(jq -cn --arg url "$PREVIEW_TAG_URL" --arg token "$preview_token" --arg origins "$PREVIEW_CLIENT_ORIGINS" '{PLATFORM_INTERNAL_URL:$url,UPGRADE_TOKEN:$token,MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins}')"
+          binding="$(jq -cn --arg url "$PREVIEW_TAG_URL" --arg token "$preview_token" --arg origins "$PREVIEW_CLIENT_ORIGINS" '{PLATFORM_INTERNAL_URL:$url,UPGRADE_TOKEN:$token,MATRIX_PREVIEW_PLATFORM_AUTH_TOKEN:$token,MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins}')"
           apply="$(script_command root scripts/preview-collaboration-home.py 15000 "$nonce" "$handle" "$PREVIEW_RUNTIME_OWNER_ID" "$PREVIEW_MACHINE_ID" "$binding")"
           send "$apply" || fail_and_restore "Could not bind the preview VM to the isolated PR backend."
           health="$(script_command user scripts/preview-collaboration-probe.py 30000 health)"
@@ -1725,6 +1725,8 @@ jobs:
             sleep 5
           done
           [ "$healthy" = true ] || fail_and_restore "The gateway did not restart healthy; restoring its previous configuration."
+          preview_auth="$(script_command user scripts/preview-collaboration-home.py 15000 probe)"
+          send "$preview_auth" || fail_and_restore "The preview owner API credential failed before commit; restoring its previous configuration."
           remaining=$((270 - (SECONDS - armed_at)))
           [ "$remaining" -gt 0 ] || fail_and_restore "The preview connection ran out of rollback-guard time before enrollment."
           enrollment_deadline="$(date -u -d "+${remaining} seconds" +%Y-%m-%dT%H:%M:%SZ)"
@@ -1735,6 +1737,13 @@ jobs:
           send_once "$disarm" || echo "::warning::The guard timer remains armed but will preserve the committed connection."
           # Publish only after the VM can no longer roll back behind an active route.
           SLACK_PREVIEW_DATABASE_URL="$preview_db" PREVIEW_HANDLE="$handle" node scripts/slack-preview-runtime.mjs register
+          # The tagged route needs canonical registration. Never expose routing
+          # metadata before the host binding is committed, even for a probe.
+          if ! curl --fail --silent --show-error --max-time 30 -o "$response" \
+            "${PREVIEW_TAG_URL}/vm/${handle}/api/system/info" -H "authorization: Bearer ${PREVIEW_SESSION_TOKEN}" \
+            || ! jq -e '.capabilities.collaboration == true' "$response" >/dev/null; then
+            fail_and_restore "The committed preview owner API is unavailable; retain the binding and retry connection setup."
+          fi
           # Registration or enrollment failures leave a committed binding for retry;
           # they never restore the VM while the database may already route to it.
           PREVIEW_DATABASE_URL="$preview_db" PREVIEW_HANDLE="$handle" PREVIEW_MACHINE_ID="$PREVIEW_MACHINE_ID" \
