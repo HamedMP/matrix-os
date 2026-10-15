@@ -195,11 +195,15 @@ export class SlackRepository {
   async getReplyDestination(key: SlackReceiptKey): Promise<SlackReplyDestination | null> {
     return this.getEventDestination(key, false);
   }
+  /** A pinned but unacknowledged delivery may recover after the home has durably committed it. */
+  async getPendingReplyDestination(key: SlackReceiptKey): Promise<SlackReplyDestination | null> {
+    return this.getEventDestination(key, "pending");
+  }
   /** Internal retry routing only; reply endpoints still require a completed receipt. */
-  async getEventDestination(key: SlackReceiptKey, includePending = true): Promise<SlackReplyDestination | null> {
+  async getEventDestination(key: SlackReceiptKey, includePending: boolean | "pending" = true): Promise<SlackReplyDestination | null> {
     let query = this.db.selectFrom("slack_event_receipts").selectAll().where("app_id", "=", key.appId).where("team_id", "=", key.teamId)
       .where("event_id", "=", key.eventId).where("expires_at", ">", this.now());
-    if (!includePending) query = query.where("state", "=", "completed");
+    if (includePending !== true) query = query.where("state", "=", includePending === "pending" ? "pending" : "completed");
     const row = await query.executeTakeFirst();
     if (!row?.destination_owner_id || !row.actor_id || !row.slack_user_id || !row.organization_id || !row.channel_id || !row.thread_ts || !row.installation_generation) return null;
     return { ...key, ...(row.destination_runtime_id ? {runtimeId:row.destination_runtime_id}:{}), ownerId: row.destination_owner_id, actorId: row.actor_id, slackUserId: row.slack_user_id, organizationId: row.organization_id,
@@ -223,6 +227,11 @@ export class SlackRepository {
     const row = await this.db.selectFrom("slack_reply_intents").select("delivery_ts").where("app_id", "=", key.appId)
       .where("team_id", "=", key.teamId).where("event_id", "=", key.eventId).where("state", "=", "sent").executeTakeFirst();
     return row?.delivery_ts ?? null;
+  }
+  /** Only a confirmed no-send response may release this exact prepared publication. */
+  async releaseRateLimitedReply(key: SlackReceiptKey, digest: string): Promise<void> {
+    await this.db.deleteFrom("slack_reply_intents").where("app_id", "=", key.appId).where("team_id", "=", key.teamId)
+      .where("event_id", "=", key.eventId).where("digest", "=", digest).where("state", "=", "prepared").execute();
   }
   async settleReply(key: SlackReceiptKey, ts: string | null): Promise<void> {
     await this.db.updateTable("slack_reply_intents").set({ state: ts ? "sent" : "unknown", delivery_ts: ts })

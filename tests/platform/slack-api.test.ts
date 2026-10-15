@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSlackApi, SLACK_BOT_SCOPES } from "../../packages/platform/src/slack/api.js";
+import { createSlackApi, SLACK_BOT_SCOPES, SlackApiRateLimitError } from "../../packages/platform/src/slack/api.js";
 import { loadSlackAppConfig } from "../../packages/platform/src/slack/wiring.js";
 
 describe("Slack API boundary", () => {
@@ -14,6 +14,17 @@ describe("Slack API boundary", () => {
     expect(request.body.get("thread_ts")).toBe("123.123");
     await expect(api.postMessage({ token: "xoxb-secret", channelId: "C123", text: "x".repeat(35_001) })).rejects.toThrow();
     expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+  it.each([["2", 2], ["999999", 3600], ["0", 1], ["private-provider-detail", 60], [null, 60]])("preserves only a confirmed rate limit with bounded delay (%s)", async (retryAfter, expected) => {
+    const response = new Response("private-provider-detail", { status: 429, headers: retryAfter === null ? {} : { "Retry-After": String(retryAfter) } });
+    const api = createSlackApi({ clientId: "123.456", clientSecret: "secret", fetchImpl: vi.fn().mockResolvedValue(response) });
+    await expect(api.postMessage({ token: "secret", channelId: "C123", text: "hello" })).rejects.toMatchObject({ name: "SlackApiRateLimitError", message: "Slack unavailable", retryAfterSeconds: expected });
+  });
+  it("retains the confirmed rate limit even if rejected-body cleanup fails", async () => {
+    const response = new Response("limited", { status: 429 });
+    vi.spyOn(response.body!, "cancel").mockRejectedValueOnce(new Error("cleanup failed"));
+    const api = createSlackApi({ clientId: "123.456", clientSecret: "secret", fetchImpl: vi.fn().mockResolvedValue(response) });
+    await expect(api.postMessage({ token: "secret", channelId: "C123", text: "hello" })).rejects.toBeInstanceOf(SlackApiRateLimitError);
   });
   it("rejects provider errors without exposing them and bounds oversized API responses", async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ok: false, error: "secret-path" })))

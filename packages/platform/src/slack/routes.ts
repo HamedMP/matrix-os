@@ -185,6 +185,18 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
             scopeId: binding?.scopeId ?? null, installationGeneration: activeInstallation.generation };
           await options.repository.recordDestination(key, claim.leaseToken, destination);
         }
+        // Membership, route discovery and receipt persistence can all wait. Fence
+        // local Slack authority after those waits, immediately before the home RPC.
+        if (!await options.isCurrentMember({ actorId: link.actorId, organizationId: activeInstallation.organizationId })) return;
+        const [currentInstallation, currentLink, currentBinding] = await Promise.all([
+          options.repository.getInstallation(appId, teamId),
+          options.repository.getLink(appId, teamId, inbound.userId),
+          inbound.kind === "mention" ? options.repository.getChannelBinding(appId, teamId, inbound.channelId) : Promise.resolve(null),
+        ]);
+        if (!currentInstallation || currentInstallation.state !== "active" || currentInstallation.generation !== activeInstallation.generation
+          || currentInstallation.organizationId !== activeInstallation.organizationId || !currentLink || currentLink.actorId !== link.actorId
+          || currentLink.organizationId !== link.organizationId || (inbound.kind === "mention" && (!currentBinding || !currentBinding.approvedOutput
+            || currentBinding.organizationId !== binding?.organizationId || currentBinding.scopeId !== binding?.scopeId))) return;
         signal.throwIfAborted();
         const dispatched = await options.dispatch({ installation: activeInstallation, link, binding, event: inbound, destination, signal });
         if (dispatched.ownerId !== destination.ownerId) throw new Error("Slack destination changed");

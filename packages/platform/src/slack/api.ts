@@ -9,6 +9,16 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 
 export class SlackApiError extends Error { constructor() { super("Slack unavailable"); this.name = "SlackApiError"; } }
 
+/** A received HTTP 429 confirms Slack rejected the write before publication. */
+export class SlackApiRateLimitError extends SlackApiError {
+  readonly retryAfterSeconds: number;
+  constructor(retryAfter: string | null) {
+    super(); this.name = "SlackApiRateLimitError";
+    const seconds = retryAfter !== null && /^\d{1,6}$/.test(retryAfter) ? Number(retryAfter) : 60;
+    this.retryAfterSeconds = Math.min(3600, Math.max(1, seconds));
+  }
+}
+
 export function createSlackApi(options: { clientId: string; clientSecret: string; fetchImpl?: typeof fetch }): SlackApi {
   const fetchImpl = options.fetchImpl ?? fetch;
   async function call(method: string, params: Record<string, string | number | boolean>, token?: string, signal?: AbortSignal): Promise<unknown> {
@@ -18,7 +28,12 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
         headers: { "content-type": "application/x-www-form-urlencoded", ...(token ? { authorization: `Bearer ${token}` } : {}) },
         body: new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)])),
       });
-      if (!response.ok) { await response.body?.cancel(); throw new SlackApiError(); }
+      if (!response.ok) {
+        const rateLimit = response.status === 429 ? new SlackApiRateLimitError(response.headers.get("retry-after")) : null;
+        try { await response.body?.cancel(); }
+        catch (error: unknown) { console.warn("[slack] rejected response cleanup failed", error instanceof Error ? error.name : "UnknownError"); }
+        throw rateLimit ?? new SlackApiError();
+      }
       const reader = response.body?.getReader();
       if (!reader) throw new SlackApiError();
       const chunks: Uint8Array[] = []; let size = 0;
@@ -35,6 +50,7 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
       return data;
     } catch (error: unknown) {
       console.warn("[slack] API request failed", error instanceof Error ? error.name : "UnknownError");
+      if (error instanceof SlackApiRateLimitError) throw error;
       throw new SlackApiError();
     }
   }
