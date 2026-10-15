@@ -6,7 +6,10 @@ import * as mockLayout from "./drawer-layout-test-utils";
 import { chatRows } from "./side-panel-test-utils";
 import DrawerLayout from "../app/(drawer)/_layout";
 
-jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: async () => "clerk-token" }) }));
+jest.mock("@clerk/clerk-expo", () => ({
+  useAuth: () => ({ getToken: async () => "clerk-token" }),
+  useOrganizationList: () => mockLayout.mocks.useOrganizationList(),
+}));
 jest.mock("@/lib/requests/collaboration", () => ({
   fetchCollaborationInbox: () => mockLayout.mocks.fetchCollaborationInbox(),
 }));
@@ -252,6 +255,41 @@ describe("side panel layout", () => {
 
       expect(mocks.navigate).toHaveBeenCalledWith(...SHOW_SHARED_SCREEN);
       expect(mocks.closeDrawer).toHaveBeenCalledTimes(1);
+    });
+
+    it("hides Shared with me when the membership list confirms no organizations", () => {
+      mocks.useSettingsSystemInfo.mockReturnValue({ systemInfo: { capabilities: { collaboration: true } } });
+      mocks.useOrganizationList.mockReturnValue({
+        isLoaded: true,
+        userMemberships: {
+          data: [],
+          hasNextPage: false,
+          isFetching: false,
+          isError: false,
+        },
+      });
+
+      render(<DrawerLayout />);
+
+      expect(screen.queryByLabelText(/Shared with me/)).toBeNull();
+      expect(mocks.fetchCollaborationInbox).not.toHaveBeenCalled();
+    });
+
+    it("keeps Shared with me when an empty membership listing failed", () => {
+      mocks.useSettingsSystemInfo.mockReturnValue({ systemInfo: { capabilities: { collaboration: true } } });
+      mocks.useOrganizationList.mockReturnValue({
+        isLoaded: true,
+        userMemberships: {
+          data: [],
+          hasNextPage: false,
+          isFetching: false,
+          isError: true,
+        },
+      });
+
+      render(<DrawerLayout />);
+
+      expect(screen.getByLabelText("Shared with me")).toBeTruthy();
     });
 
     it("counts the invitations that are still pending on the Shared with me row", async () => {
