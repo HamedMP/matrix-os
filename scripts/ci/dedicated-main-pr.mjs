@@ -46,7 +46,7 @@ export async function mainPrRunSource(github,repo,run,snapshot,workflow,options=
  const snapshotValue={...value,baseSha:parents[0],mergeParents:parents};
  const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});
  assertMainPrIdentity(repo,pull,snapshotValue,options.waitForProvenance===true);
- if(options.waitForProvenance&&(pull.merge_commit_sha!==snapshotValue.sourceSha||pull.base.sha!==snapshotValue.baseSha))await waitForCurrentMainSource(github,repo,snapshotValue,{delay:options.provenanceDelay});
+ if(options.waitForProvenance&&pull.merge_commit_sha!==snapshotValue.sourceSha)await waitForCurrentMainSource(github,repo,snapshotValue,{delay:options.provenanceDelay});
  await verifyMainPrSnapshot(github,repo,pull,snapshotValue);
  return {run,snapshot:snapshotValue};
 }
@@ -57,16 +57,38 @@ export function assertMainPrIdentity(repo,pull,snapshot,requireLabels=false){
 }
 
 export async function verifyMainPrSnapshot(github,repo,pull,snapshot,options={}){
- const fullName=`${repo.owner}/${repo.repo}`;
  assertMainPrIdentity(repo,pull,snapshot);
  const {data:merge}=await github.rest.repos.getCommit({...repo,ref:snapshot.sourceSha,request:{...request,signal:AbortSignal.timeout(10_000)}});
+ return verifyMainPrMerge(github,repo,pull,snapshot,options,merge);
+}
+
+// Only initial admission, journal and requester discovery resolve a new snapshot.
+// Existing lease, receipt and explicit refresh inputs keep their exact tuple.
+export async function resolveMainPrSnapshot(github,repo,pull,options={}){
+ const candidate=options.eventPull??pull,fullName=`${repo.owner}/${repo.repo}`;
+ const snapshot={prNumber:candidate.number,headSha:candidate.head?.sha,headRef:candidate.head?.ref,baseRef:candidate.base?.ref,baseSha:candidate.base?.sha,sourceSha:options.sourceSha??candidate.merge_commit_sha,
+  ...(!same(candidate.head?.repo?.full_name,fullName)?{headRepository:candidate.head?.repo?.full_name}:{})};
+ assertMainPrIdentity(repo,pull,snapshot);
+ const {data:merge}=await github.rest.repos.getCommit({...repo,ref:snapshot.sourceSha,request:{...request,signal:AbortSignal.timeout(10_000)}});
+ const parents=merge.parents?.map(parent=>parent.sha);
+ if(!Array.isArray(parents)||parents.length!==2||!parents.every(parent=>sha.test(parent||'')))throw new Error('Merge commit ordered parents do not bind the tested main PR source');
+ const resolved={...snapshot,baseSha:parents[0],mergeParents:parents};
+ await verifyMainPrMerge(github,repo,pull,resolved,options,merge);
+ return resolved;
+}
+async function verifyMainPrMerge(github,repo,pull,snapshot,options,merge){
+ const fullName=`${repo.owner}/${repo.repo}`;
+ assertMainPrIdentity(repo,pull,snapshot);
  const parents=merge.parents?.map(parent=>parent.sha);
  if(merge.sha!==snapshot.sourceSha||snapshot.baseSha===snapshot.headSha||JSON.stringify(parents)!==JSON.stringify([snapshot.baseSha,snapshot.headSha])||(snapshot.mergeParents!==undefined&&JSON.stringify(snapshot.mergeParents)!==JSON.stringify(parents)))throw new Error('Merge commit ordered parents do not bind the tested main PR source');
  // Only the trusted PTR caller supplies eventPull directly, never a serialized
  // lease/request snapshot or a workflow-run title. Later consumers use the App journal.
  const event=options.eventPull;
- const trustedEvent=event?.number===snapshot.prNumber&&event.head?.sha===snapshot.headSha&&event.base?.ref==='main'&&event.base.sha===snapshot.baseSha&&event.merge_commit_sha===snapshot.sourceSha&&same(event.head?.repo?.full_name,pull.head?.repo?.full_name)&&same(event.base?.repo?.full_name,fullName);
- const canonical=pull.merge_commit_sha===snapshot.sourceSha&&pull.base.sha===snapshot.baseSha;
+ const trustedEvent=event?.number===snapshot.prNumber&&event.head?.sha===snapshot.headSha&&event.base?.ref==='main'&&event.merge_commit_sha===snapshot.sourceSha&&same(event.head?.repo?.full_name,pull.head?.repo?.full_name)&&same(event.base?.repo?.full_name,fullName);
+ // GitHub can retain an older pull.base.sha while regenerating merge_commit_sha.
+ // The authenticated canonical pointer plus its verified ordered parents binds
+ // the actual tested main base; the stored PR base is not that authority.
+ const canonical=pull.merge_commit_sha===snapshot.sourceSha;
  if(!canonical&&!trustedEvent&&!await hasMainSourceProvenance(github,repo,{...snapshot,headRef:pull.head.ref}))throw new Error('Historical main source has no protected canonical provenance attestation');
  const main=await readCurrentBranchSha(github,repo,'main',request);
  if(main!==snapshot.baseSha){
@@ -83,11 +105,12 @@ export async function mainPrSourceBindings(github,repo,pull,prior,eventPull){
  const live={prNumber:pull.number,headSha:pull.head.sha,headRef:pull.head.ref,baseRef:pull.base.ref,baseSha:pull.base.sha,sourceSha:pull.merge_commit_sha,headRepository:pull.head.repo.full_name};
  const bindings=recordedMainSources(prior,live);
  if(live.baseRef!=='main')return [];
- const candidates=[live];
- if(eventPull?.number===pull.number&&eventPull.head?.sha===pull.head.sha&&eventPull.base?.ref==='main')candidates.unshift({...live,baseSha:eventPull.base.sha,sourceSha:eventPull.merge_commit_sha});
- for(const snapshot of candidates){
-  if(bindings.length>=MAIN_SOURCE_BINDING_LIMIT||bindings.some(value=>value.sourceSha===snapshot.sourceSha&&value.baseSha===snapshot.baseSha)||![snapshot.sourceSha,snapshot.baseSha].every(value=>sha.test(value||'')))continue;
-  try{await verifyMainPrSnapshot(github,repo,pull,snapshot,{eventPull});}
+ const candidates=[pull];
+ if(eventPull?.number===pull.number&&eventPull.head?.sha===pull.head.sha&&eventPull.base?.ref==='main')candidates.unshift(eventPull);
+ for(const candidate of candidates){
+  if(bindings.length>=MAIN_SOURCE_BINDING_LIMIT||bindings.some(value=>value.sourceSha===candidate.merge_commit_sha)||![candidate.merge_commit_sha,candidate.base?.sha].every(value=>sha.test(value||'')))continue;
+  let snapshot;
+  try{snapshot=await resolveMainPrSnapshot(github,repo,pull,candidate===eventPull?{eventPull}:{});}
   catch(error){if(!(error instanceof Error)||!bindings.length)throw error;logGateEvent('Retaining authenticated main PR provenance','canonical-source',error);continue;}
   bindings.push({baseSha:snapshot.baseSha,sourceSha:snapshot.sourceSha});
  }

@@ -39,6 +39,14 @@ snapshot; grants, renewals, result verification, metadata checks and source-gate
 reconciliation share the same source policy. A main-only update keeps the old
 base/source in the receipt and gate summary. Retargeting and a new PR head do not.
 
+GitHub may retain an older `pull.base.sha` after regenerating its canonical
+`merge_commit_sha`. Admission and journal discovery resolve the actual main base
+from that authenticated merge's ordered parents, then prove main ancestry.
+They never substitute the stored PR base for the source actually tested. Existing
+leases, requests and receipts still require their exact immutable parent pair;
+a source that is no longer canonical still requires the protected App journal.
+This also avoids waiting for historical provenance for a currently canonical source.
+
 Tests first reproduce main moving before admission and during execution. An
 integration test uses real internal helpers through admission, post-lock grant,
 renewal, immutable archive validation, backend settlement, protected source gate,

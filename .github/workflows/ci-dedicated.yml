@@ -153,7 +153,7 @@ jobs:
               if(data.base_ref==='main'&&Number(data.pr_number)>0){
                 const {data:pull}=await github.rest.pulls.get({...context.repo,pull_number:snapshot.prNumber,request:{timeout:10000}});
                 assertMainPrIdentity(context.repo,pull,snapshot,true);
-                if(pull.merge_commit_sha!==data.sha||pull.base.sha!==data.base_sha){
+                if(pull.merge_commit_sha!==data.sha){
                   await waitForCurrentMainSource(github,context.repo,{...snapshot,headRef:pull.head.ref});
                 }
               }
