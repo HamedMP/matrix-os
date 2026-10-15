@@ -170,6 +170,15 @@ function startRun(
   };
 }
 
+/** A new task gets its own chat; only retries and follow-ups go back into the previous one. */
+function startTask(
+  state: OnboardingWidgetState,
+  run: Parameters<typeof startRun>[1],
+  patch: Partial<OnboardingWidgetState> = {},
+): OnboardingWidgetState {
+  return startRun(state, run, { ...patch, chatId: null });
+}
+
 function connectsService(taskId: OnboardingStarterTaskId, service: string): boolean {
   return onboardingTask(taskId)?.needs?.service === service;
 }
@@ -179,7 +188,7 @@ function afterConnect(state: OnboardingWidgetState, taskId: OnboardingStarterTas
   const notice = connected && task?.needs ? `${task.needs.name} connected` : state.notice;
   if (taskId === "work-on-code") return { ...state, notice, screen: { kind: "repo" } };
   if (task?.question) return { ...state, notice, screen: { kind: "question", taskId } };
-  return startRun(state, { taskId, answer: "", appConnected: connected, simpler: false }, { notice });
+  return startTask(state, { taskId, answer: "", appConnected: connected, simpler: false }, { notice });
 }
 
 function joinNames(names: readonly string[]): string {
@@ -191,7 +200,7 @@ export function onboardingRunTitle(run: Pick<OnboardingRunScreen, "taskId" | "an
   return run.title ?? onboardingResultTitle(run.taskId, run.answer);
 }
 
-/** The shared chat admits one turn at a time; a second admission while this is true is rejected as busy. */
+/** The widget follows one run at a time, and a chat admits one turn at a time, so new messages wait while this is true. */
 export function onboardingRunInFlight(state: OnboardingWidgetState): boolean {
   return state.screen.kind === "run" && (state.screen.phase === "starting" || state.screen.phase === "running");
 }
@@ -222,18 +231,18 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
       const answer = boundedText(event.text);
       if (!answer) return state;
       if (screen.kind === "question") {
-        return startRun(state, { taskId: screen.taskId, answer, appConnected: true, simpler: false }, { echo: answer });
+        return startTask(state, { taskId: screen.taskId, answer, appConnected: true, simpler: false }, { echo: answer });
       }
       if (screen.kind === "repo") {
         const repo = event.context ? parseOnboardingRepoUrl(event.context) : null;
-        return startRun(state, { taskId: "work-on-code", answer, appConnected: true, simpler: false, ...(repo ? { context: repo.url } : {}) }, { echo: answer });
+        return startTask(state, { taskId: "work-on-code", answer, appConnected: true, simpler: false, ...(repo ? { context: repo.url } : {}) }, { echo: answer });
       }
       return reduceOnboardingWidget(state, { type: "freeform.submitted", text: answer });
     }
     case "freeform.submitted": {
       const answer = boundedText(event.text);
       if (!answer || onboardingRunInFlight(state)) return state;
-      return startRun(state, { taskId: "custom", answer, appConnected: false, simpler: false }, { echo: answer, notice: null });
+      return startTask(state, { taskId: "custom", answer, appConnected: false, simpler: false }, { echo: answer, notice: null });
     }
     case "connect.started":
       return screen.kind === "connect" && screen.status !== "unavailable" ? { ...state, screen: { ...screen, status: "connecting" } } : state;

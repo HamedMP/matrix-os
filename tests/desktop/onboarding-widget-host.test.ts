@@ -15,7 +15,6 @@ import {
   admitOnboardingTurn,
   isComputerStartingError,
   loadOnboardingRepos,
-  ONBOARDING_CHAT_TITLE,
   onboardingApps,
   onboardingConnectedProviders,
   onboardingCreditsExhausted,
@@ -43,6 +42,12 @@ describe("onboarding widget prefs", () => {
     expect(onboardingPrefsKey("a:b", "x/y")).toBe("matrix:onboarding-widget:v1:a%3Ab:x%2Fy");
   });
 
+  it("keeps two signed-in accounts apart when they share a browser", () => {
+    expect(onboardingPrefsKey("owner", "primary", "user_a")).toBe("matrix:onboarding-widget:v1:user_a:owner:primary");
+    expect(onboardingPrefsKey("owner", "primary", "user_a")).not.toBe(onboardingPrefsKey("owner", "primary", "user_b"));
+    expect(onboardingPrefsKey("a:b", "primary", "x:y")).toBe("matrix:onboarding-widget:v1:x%3Ay:a%3Ab:primary");
+  });
+
   it("round-trips valid prefs and returns null for anything unusable", () => {
     const storage = memoryStorage({ junk: "{not json", wrong: JSON.stringify({ keepInCorner: "yes" }), huge: "x".repeat(3000) });
     writeOnboardingPrefs("k", { ...DEFAULT_ONBOARDING_PREFS, chatId: "chat_1" }, storage);
@@ -51,6 +56,39 @@ describe("onboarding widget prefs", () => {
     expect(readOnboardingPrefs("junk", storage)).toBeNull();
     expect(readOnboardingPrefs("wrong", storage)).toBeNull();
     expect(readOnboardingPrefs("huge", storage)).toBeNull();
+  });
+
+  it("remembers where the widget was moved", () => {
+    const storage = memoryStorage();
+    const moved = { ...DEFAULT_ONBOARDING_PREFS, position: { x: "left", y: "top", dx: 320, dy: 140 } } as const;
+    writeOnboardingPrefs("k", moved, storage);
+    expect(readOnboardingPrefs("k", storage)).toEqual(moved);
+  });
+
+  it("reads prefs saved with the old left or right side as that bottom corner", () => {
+    const legacy = { keepInCorner: false, side: "left", showOnLogin: true, firstTaskCompleted: true, aiChoice: "claude", chatId: "chat_9" };
+    const storage = memoryStorage({ legacy: JSON.stringify(legacy), bad: JSON.stringify({ ...legacy, side: "top" }) });
+    expect(readOnboardingPrefs("legacy", storage)).toEqual({
+      keepInCorner: false,
+      position: { x: "left", y: "bottom", dx: 24, dy: 24 },
+      showOnLogin: true,
+      firstTaskCompleted: true,
+      aiChoice: "claude",
+      chatId: "chat_9",
+      pendingRun: null,
+    });
+    expect(readOnboardingPrefs("bad", storage)).toBeNull();
+  });
+
+  it("rejects a saved position that is not whole, bounded pixel offsets", () => {
+    const at = (position: unknown) => JSON.stringify({ ...DEFAULT_ONBOARDING_PREFS, position });
+    const storage = memoryStorage({
+      negative: at({ x: "left", y: "top", dx: -5, dy: 10 }),
+      huge: at({ x: "left", y: "top", dx: 1e9, dy: 10 }),
+      fractional: at({ x: "left", y: "top", dx: 1.5, dy: 10 }),
+      sideways: at({ x: "middle", y: "top", dx: 10, dy: 10 }),
+    });
+    for (const key of ["negative", "huge", "fractional", "sideways"]) expect(readOnboardingPrefs(key, storage)).toBeNull();
   });
 
   it("returns null when storage itself throws", () => {
@@ -244,26 +282,28 @@ describe("onboarding turn admission", () => {
   const admitted = (chatId: string) => ({ record: { chat: { id: chatId } }, run: { id: "run_1" } });
   const requestIds = { create: "req_create_1", turn: "req_turn_1" };
 
-  it("creates the Getting started chat on the first task", async () => {
+  it("creates a new chat named after the task", async () => {
     const client = {
       create: vi.fn().mockResolvedValue({ chat: { id: "chat_new", revision: 3 } }),
       getDetail: vi.fn(),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_new")),
     };
-    await expect(admitOnboardingTurn({ client: client as never, chatId: null, prompt: "Do it", selection, requestIds })).resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
-    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ title: ONBOARDING_CHAT_TITLE, clientRequestId: "req_create_1" }));
+    await expect(admitOnboardingTurn({ client: client as never, chatId: null, title: "Research: AI agent pricing", prompt: "Do it", selection, requestIds }))
+      .resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
+    expect(client.getDetail).not.toHaveBeenCalled();
+    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ title: "Research: AI agent pricing", clientRequestId: "req_create_1" }));
     expect(client.admitTurn).toHaveBeenCalledWith("chat_new", expect.objectContaining({
       clientRequestId: "req_turn_1", baseRevision: 3, parts: [{ type: "text", text: "Do it" }], selection: { instanceId: "hermes_default", model: "default" },
     }), { chatScope: "global" });
   });
 
-  it("reuses the existing chat at its current revision", async () => {
+  it("sends a retry or follow-up into the task's chat at its current revision", async () => {
     const client = {
       create: vi.fn(),
       getDetail: vi.fn().mockResolvedValue({ record: { chat: { revision: 9 } } }),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_old")),
     };
-    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Again", selection, requestIds });
+    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", title: "Week plan", prompt: "Again", selection, requestIds });
     expect(client.create).not.toHaveBeenCalled();
     expect(client.admitTurn).toHaveBeenCalledWith("chat_old", expect.objectContaining({ baseRevision: 9 }), { chatScope: "global" });
   });
@@ -274,9 +314,11 @@ describe("onboarding turn admission", () => {
       getDetail: vi.fn().mockRejectedValue(new AppError("notFound")),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_new")),
     };
-    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", prompt: "x", selection, requestIds })).resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
+    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", title: "Week plan", prompt: "x", selection, requestIds }))
+      .resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
+    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ title: "Week plan" }));
     client.getDetail.mockRejectedValue(new AppError("offline"));
-    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", prompt: "x", selection, requestIds })).rejects.toThrow(AppError);
+    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", title: "Week plan", prompt: "x", selection, requestIds })).rejects.toThrow(AppError);
   });
 
   it("treats only offline and timeout as the computer still starting", () => {

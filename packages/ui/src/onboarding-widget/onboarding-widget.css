@@ -13,6 +13,12 @@
   --mxo-amber: #d98c1f;
   --mxo-amber-soft: #fcf2e5;
   --mxo-red: #d6453d;
+  --mxo-ease: cubic-bezier(0.19, 1, 0.22, 1);
+  /* The card grows away from the corner it is anchored to, and enters from that corner. */
+  --mxo-origin-x: right;
+  --mxo-origin-y: bottom;
+  --mxo-enter-x: 10px;
+  --mxo-enter-y: 10px;
   position: fixed;
   right: 24px;
   bottom: 24px;
@@ -22,12 +28,29 @@
   font-family: "Geist", "Inter", system-ui, sans-serif;
   color: var(--mxo-text);
   -webkit-font-smoothing: antialiased;
+  /* Electron: stay clickable and draggable when moved over the window's title bar drag region. */
+  -webkit-app-region: no-drag;
 }
 
 .mxo-root--left {
+  --mxo-origin-x: left;
+  --mxo-enter-x: -10px;
   right: auto;
   left: 24px;
   align-items: flex-start;
+}
+
+.mxo-root--top {
+  --mxo-origin-y: top;
+  --mxo-enter-y: -10px;
+  top: 24px;
+  bottom: auto;
+}
+
+.mxo-root[data-dragging],
+.mxo-root[data-dragging] * {
+  cursor: grabbing;
+  user-select: none;
 }
 
 :where(.mxo-root),
@@ -67,15 +90,35 @@
   background: var(--mxo-bg);
   border-radius: 16px;
   box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.22);
-  animation: mxo-enter 200ms cubic-bezier(0.19, 1, 0.22, 1) both;
+  transform-origin: var(--mxo-origin-x) var(--mxo-origin-y);
+  animation: mxo-enter 260ms var(--mxo-ease) backwards;
+  /* Lets the card grow and shrink between its compact and tall sizes where the browser supports it. */
+  interpolate-size: allow-keywords;
+  transition: height 280ms var(--mxo-ease);
 }
 
 /* Conversation screens hold their height so the card does not jump as steps arrive. */
 .mxo-widget--tall { height: min(624px, calc(100vh - 48px)); }
 
+/* The offset comes from variables, so dropping the widget in a new spot does not replay the entrance. */
 @keyframes mxo-enter {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  from { opacity: 0; transform: translate(var(--mxo-enter-x), var(--mxo-enter-y)) scale(0.96); }
   to { opacity: 1; transform: none; }
+}
+
+@keyframes mxo-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes mxo-pop {
+  from { opacity: 0; transform: translateY(var(--mxo-pop-shift, -4px)) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes mxo-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(51, 158, 107, 0.45); }
+  50% { box-shadow: 0 0 0 4px rgba(51, 158, 107, 0); }
 }
 
 .mxo-header {
@@ -86,6 +129,9 @@
   min-height: 55px;
   padding: 12px 12px 12px 14px;
   border-bottom: 1px solid var(--mxo-border);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
 
 .mxo-header__text {
@@ -158,7 +204,7 @@
   border-radius: 999px;
 }
 
-.mxo-dot--working { background: var(--mxo-green); }
+.mxo-dot--working { background: var(--mxo-green); animation: mxo-pulse 1.6s ease-in-out infinite; }
 .mxo-dot--attention { background: var(--mxo-amber); }
 .mxo-dot--failed { background: var(--mxo-red); }
 
@@ -175,6 +221,40 @@
 
 /* Conversation sits at the bottom, like a chat; auto margins collapse once it overflows. */
 .mxo-body > :first-child { margin-top: auto; }
+
+/* Remounted for each new step, so every step change fades up into place. */
+.mxo-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: mxo-rise 240ms var(--mxo-ease) backwards;
+}
+
+.mxo-echo,
+.mxo-done-line,
+.mxo-log__step,
+.mxo-result { animation: mxo-rise 240ms var(--mxo-ease) backwards; }
+
+.mxo-tasks > *,
+.mxo-chips > * { animation: mxo-rise 280ms var(--mxo-ease) backwards; }
+.mxo-tasks > :nth-child(2),
+.mxo-chips > :nth-child(2) { animation-delay: 30ms; }
+.mxo-tasks > :nth-child(3),
+.mxo-chips > :nth-child(3) { animation-delay: 60ms; }
+.mxo-tasks > :nth-child(4),
+.mxo-chips > :nth-child(4) { animation-delay: 90ms; }
+.mxo-tasks > :nth-child(n + 5),
+.mxo-chips > :nth-child(n + 5) { animation-delay: 120ms; }
+
+.mxo-task,
+.mxo-chip,
+.mxo-btn,
+.mxo-icon-btn,
+.mxo-menu__row { transition: background-color 120ms ease, transform 120ms ease, opacity 120ms ease; }
+
+.mxo-task:active,
+.mxo-chip:active,
+.mxo-btn:active:not(:disabled) { transform: scale(0.98); }
 
 .mxo-greeting {
   margin: 0;
@@ -656,18 +736,23 @@
   border-radius: 12px;
   background: var(--mxo-surface);
   box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.2);
+  transform-origin: top right;
+  animation: mxo-pop 180ms var(--mxo-ease) backwards;
 }
 
 .mxo-ai-menu {
+  --mxo-pop-shift: 4px;
   right: 12px;
   bottom: calc(100% - 4px);
   left: 12px;
+  transform-origin: bottom center;
 }
 
 .mxo-more {
   top: calc(100% - 4px);
   right: 8px;
   width: 168px;
+  cursor: default;
 }
 
 .mxo-menu__row {
@@ -738,14 +823,19 @@
   background: var(--mxo-bg);
   box-shadow: 0 10px 30px -6px rgba(0, 0, 0, 0.2);
   text-align: left;
+  cursor: grab;
+  touch-action: none;
+  transform-origin: var(--mxo-origin-x) var(--mxo-origin-y);
   transition: box-shadow 150ms ease, transform 150ms ease;
-  animation: mxo-enter 180ms cubic-bezier(0.19, 1, 0.22, 1) both;
+  animation: mxo-enter 240ms var(--mxo-ease) backwards;
 }
 
 .mxo-bubble:hover {
   box-shadow: 0 14px 34px -6px rgba(0, 0, 0, 0.24);
   transform: translateY(-1px);
 }
+
+.mxo-root[data-dragging] .mxo-bubble { transform: none; }
 
 .mxo-bubble__text {
   display: flex;
@@ -793,12 +883,17 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mxo-widget,
-  .mxo-bubble,
-  .mxo-spin,
-  .mxo-progress span { animation: none; }
-  .mxo-bubble { transition: none; }
-  .mxo-bubble:hover { transform: none; }
+  .mxo-root,
+  .mxo-root * {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .mxo-bubble:hover,
+  .mxo-task:active,
+  .mxo-chip:active,
+  .mxo-btn:active { transform: none; }
 }
 
 .mxo-code {

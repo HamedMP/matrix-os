@@ -8,6 +8,7 @@ import {
   useOnboardingWidgetState,
   type OnboardingSettingsSection,
   type OnboardingStoredPrefs,
+  type OnboardingWidgetBox,
 } from "@matrix-os/ui";
 import { useCallback, useMemo, useState } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -75,8 +76,9 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
   });
 
   const chatMaximized = useChatMaximized();
-  useOnboardingSupportDock({ size: state.size, side: prefs.side, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
+  const [widgetSize, setWidgetSize] = useState<OnboardingWidgetBox | null>(null);
+  useOnboardingSupportDock({ size: state.size, position: prefs.position, widgetSize, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
   useOnboardingOverlayLease(state.size !== "bubble" && !chatMaximized);
   if (chatMaximized) return null;
-  return <OnboardingWidget {...widget} zIndex={DESKTOP_Z_INDEX.nativeDesktopTaskbar} />;
+  return <OnboardingWidget {...widget} zIndex={DESKTOP_Z_INDEX.nativeDesktopTaskbar} onSizeChange={setWidgetSize} />;
 }

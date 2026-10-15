@@ -7,8 +7,6 @@ import type {
 } from "@matrix-os/contracts";
 import type { CanonicalComposerSelection } from "../../canonical-composer-selection.js";
 
-export const ONBOARDING_CHAT_TITLE = "Getting started";
-
 /** What the onboarding widget needs from a host's canonical Chat transport. */
 export interface OnboardingChatPort {
   create(input: CanonicalCreateChatRequest): Promise<Pick<CanonicalChatRecord, "chat">>;
@@ -34,10 +32,14 @@ export function onboardingAdmissionRequestIds(): OnboardingAdmissionRequestIds {
   return { create: onboardingRequestId(), turn: onboardingRequestId() };
 }
 
-/** Retrying with the same `requestIds` replays an admission whose response was lost instead of starting it again. */
-export async function admitOnboardingTurn({ port, chatId, prompt, selection, requestIds }: {
+/**
+ * Sends the turn into `chatId`, or into a new chat named `title` when there is none yet or it was deleted.
+ * Retrying with the same `requestIds` replays an admission whose response was lost instead of starting it again.
+ */
+export async function admitOnboardingTurn({ port, chatId, title, prompt, selection, requestIds }: {
   port: Pick<OnboardingChatPort, "create" | "detail" | "admitTurn" | "isNotFound">;
   chatId: string | null;
+  title: string;
   prompt: string;
   selection: CanonicalComposerSelection;
   requestIds: OnboardingAdmissionRequestIds;
@@ -58,7 +60,7 @@ export async function admitOnboardingTurn({ port, chatId, prompt, selection, req
     }
   }
   if (!targetId) {
-    const created = await port.create({ clientRequestId: requestIds.create, title: ONBOARDING_CHAT_TITLE, currentSelection: modelSelection });
+    const created = await port.create({ clientRequestId: requestIds.create, title, currentSelection: modelSelection });
     targetId = created.chat.id;
     baseRevision = created.chat.revision;
   }

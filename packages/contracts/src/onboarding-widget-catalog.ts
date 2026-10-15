@@ -118,10 +118,24 @@ export function onboardingResultTitle(taskId: OnboardingTaskId, answer: string):
 }
 
 const RESULT_TITLE_MAX_CHARS = 48;
+const CHAT_TITLE_MAX_CHARS = 60;
 
-function clipTitle(text: string): string {
+function clipTitle(text: string, max = RESULT_TITLE_MAX_CHARS): string {
   const trimmed = text.trim();
-  return trimmed.length > RESULT_TITLE_MAX_CHARS ? `${trimmed.slice(0, RESULT_TITLE_MAX_CHARS - 1)}…` : trimmed;
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
+}
+
+const CHAT_TITLE_PREFIX = { research: "Research", "build-website": "Website", "work-on-code": "Code" } as const;
+
+/** The title of the chat a task creates, as it appears in the main Chat list. */
+export function onboardingChatTitle({ taskId, answer, title }: { taskId: OnboardingTaskId; answer: string; title?: string }): string {
+  if (title) return clipTitle(title, CHAT_TITLE_MAX_CHARS);
+  const subject = answer.trim();
+  switch (taskId) {
+    case "plan-week": return "Plan my week";
+    case "custom": return clipTitle(subject, CHAT_TITLE_MAX_CHARS) || "New chat";
+    default: return subject ? clipTitle(`${CHAT_TITLE_PREFIX[taskId]}: ${subject}`, CHAT_TITLE_MAX_CHARS) : onboardingTask(taskId)?.label ?? "New chat";
+  }
 }
 
 export function onboardingWorkingLine(taskId: OnboardingTaskId, answer: string): string {

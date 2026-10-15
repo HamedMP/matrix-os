@@ -10,6 +10,7 @@ import { useWindowManager } from "@/hooks/useWindowManager";
 import { CanonicalShellChatRequestError } from "@/lib/canonical-chat-client";
 import { isShellSupportOpen, subscribeShellSupportPanel } from "@/lib/posthog-client";
 import {
+  createShellOnboardingAiPort,
   createShellOnboardingRepoSource,
   isShellComputerStarting,
   isShellNotFound,
@@ -29,6 +30,7 @@ afterEach(() => {
   vi.useRealTimers();
   document.getElementById("ph-conversations-widget-container")?.remove();
   localStorage.clear();
+  window.history.replaceState({}, "", "/");
 });
 
 describe("web onboarding widget host", () => {
@@ -43,14 +45,57 @@ describe("web onboarding widget host", () => {
     }));
   }
 
-  function renderHost() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    return render(createElement(
+  function hostScene(client: QueryClient, accountId: string | null = "user_a") {
+    return createElement(
       QueryClientProvider,
       { client },
-      createElement(OnboardingWidgetHost, { onOpenChat: vi.fn(), onOpenSettings: vi.fn() }),
-    ));
+      createElement(OnboardingWidgetHost, { accountId, onOpenChat: vi.fn(), onOpenSettings: vi.fn() }),
+    );
   }
+
+  function renderHost() {
+    return render(hostScene(new QueryClient({ defaultOptions: { queries: { retry: false } } })));
+  }
+
+  it("re-reads identity and keeps prefs apart when another account signs in", async () => {
+    stubGateway();
+    const gateway = vi.mocked(fetch);
+    const answer = gateway.getMockImplementation()!;
+    let identityReads = 0;
+    gateway.mockImplementation(async (input) => {
+      if (!String(input).endsWith("/api/identity")) return answer(input);
+      identityReads += 1;
+      return json(identityReads === 1 ? { handle: "sahar", displayName: "Sahar K" } : { handle: "nima", displayName: "Nima R" });
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(hostScene(client, "user_a"));
+    await screen.findByText(/Sahar/);
+
+    view.rerender(hostScene(client, "user_b"));
+    expect(await screen.findByText(/Nima/)).toBeTruthy();
+    expect(identityReads).toBe(2);
+    expect(Object.keys(localStorage)).toEqual(expect.arrayContaining([
+      "matrix:onboarding-widget:v1:user_a:sahar:primary",
+      "matrix:onboarding-widget:v1:user_b:nima:primary",
+    ]));
+  });
+
+  it("stays on the computer the page loaded on when Shared with me changes the URL", async () => {
+    stubGateway();
+    window.history.replaceState({}, "", "/vm/alice");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(hostScene(client));
+    await screen.findByText(/Sahar/);
+    const greeting = screen.getByText(/Sahar/);
+
+    window.history.replaceState({}, "", "/shared");
+    view.rerender(hostScene(client));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const identityReads = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((url) => url.endsWith("/api/identity"));
+    expect(identityReads).toEqual([`${window.location.origin}/vm/alice/api/identity`]);
+    expect(screen.getByText(/Sahar/)).toBe(greeting);
+  });
 
   it("greets the owner on first visit and docks support above it", async () => {
     stubGateway();
@@ -117,7 +162,7 @@ describe("web onboarding widget host", () => {
       createElement(
         GettingStartedVisibilityProvider,
         { scope: "test" },
-        showHost ? createElement(OnboardingWidgetHost, { onOpenChat: vi.fn(), onOpenSettings: vi.fn() }) : null,
+        showHost ? createElement(OnboardingWidgetHost, { accountId: "user_a", onOpenChat: vi.fn(), onOpenSettings: vi.fn() }) : null,
         createElement(Probe),
       ),
     );
@@ -205,6 +250,19 @@ describe("web onboarding repo source", () => {
   });
 });
 
+describe("web onboarding AI port", () => {
+  it("keeps Claude and Codex sign-in on the computer the widget opened after Shared with me", async () => {
+    window.history.replaceState({}, "", "/vm/alice");
+    const gatewayUrl = `${window.location.origin}/vm/alice`;
+    const fetchFn = vi.fn().mockResolvedValue(json([]));
+    const port = createShellOnboardingAiPort(gatewayUrl, fetchFn);
+    window.history.replaceState({}, "", "/shared");
+
+    await expect(port.client.capabilities(new AbortController().signal)).resolves.toEqual([]);
+    expect(String(fetchFn.mock.calls[0]![0])).toBe(`${gatewayUrl}/api/ai/provider-settings/workflows/v2/capabilities`);
+  });
+});
+
 describe("web onboarding identity", () => {
   it("scopes prefs to the owner handle and runtime slot", () => {
     expect(shellOnboardingIdentity({ handle: "sahar", displayName: "Sahar K" }, { runtime: { runtimeSlot: "staging-2" } }))
@@ -266,6 +324,19 @@ describe("web onboarding app connect", () => {
     expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "github" });
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(result.current.connectingService).toBeNull();
+  });
+
+  it("refuses a malformed app id before opening a window or sending a request", async () => {
+    vi.spyOn(window, "open");
+    const fetchFn = vi.fn(async () => json([]));
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0] }));
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+
+    act(() => result.current.connectApp("../admin"));
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "../admin" });
+    expect(window.open).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   it("closes the popup and fails when the consent URL is not HTTPS", async () => {

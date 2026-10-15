@@ -1,5 +1,6 @@
 import { ONBOARDING_FREEFORM_MAX_CHARS, ONBOARDING_TASK_IDS, type OnboardingWidgetInit } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { DEFAULT_ONBOARDING_POSITION, ONBOARDING_POSITION_MAX, onboardingCornerPosition } from "../position.js";
 
 const STORAGE_PREFIX = "matrix:onboarding-widget:v1";
 const MAX_STORED_CHARS = 8_192;
@@ -15,21 +16,35 @@ const PendingRunSchema = z.strictObject({
   runId: z.string().min(1).max(128).regex(SAFE_ID),
 });
 
-const StoredPrefsSchema = z.strictObject({
+const PositionOffsetSchema = z.number().int().min(0).max(ONBOARDING_POSITION_MAX);
+
+/** Prefs saved before the widget could move freely held only `side`; read that as its bottom corner. */
+function withLegacySide(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || "position" in value) return value;
+  const { side, ...rest } = value as Record<string, unknown>;
+  return side === "left" || side === "right" ? { ...rest, position: onboardingCornerPosition(side) } : value;
+}
+
+const StoredPrefsSchema = z.preprocess(withLegacySide, z.strictObject({
   keepInCorner: z.boolean(),
-  side: z.enum(["right", "left"]),
+  position: z.strictObject({
+    x: z.enum(["left", "right"]),
+    y: z.enum(["top", "bottom"]),
+    dx: PositionOffsetSchema,
+    dy: PositionOffsetSchema,
+  }),
   showOnLogin: z.boolean(),
   firstTaskCompleted: z.boolean(),
   aiChoice: z.enum(["matrix", "claude", "codex"]),
   chatId: z.string().min(1).max(128).regex(SAFE_ID).nullable(),
   pendingRun: PendingRunSchema.nullable().default(null),
-});
+}));
 
 export type OnboardingStoredPrefs = z.infer<typeof StoredPrefsSchema>;
 
 export const DEFAULT_ONBOARDING_PREFS: OnboardingStoredPrefs = {
   keepInCorner: false,
-  side: "right",
+  position: DEFAULT_ONBOARDING_POSITION,
   showOnLogin: true,
   firstTaskCompleted: false,
   aiChoice: "matrix",
@@ -37,8 +52,10 @@ export const DEFAULT_ONBOARDING_PREFS: OnboardingStoredPrefs = {
   pendingRun: null,
 };
 
-export function onboardingPrefsKey(handle: string, runtimeSlot: string): string {
-  return `${STORAGE_PREFIX}:${encodeURIComponent(handle)}:${encodeURIComponent(runtimeSlot)}`;
+/** Pass the signed-in account wherever one browser profile can hold several accounts' prefs. */
+export function onboardingPrefsKey(handle: string, runtimeSlot: string, account?: string): string {
+  const scope = `${encodeURIComponent(handle)}:${encodeURIComponent(runtimeSlot)}`;
+  return account === undefined ? `${STORAGE_PREFIX}:${scope}` : `${STORAGE_PREFIX}:${encodeURIComponent(account)}:${scope}`;
 }
 
 /** Returns null when nothing usable is stored, so callers can tell a first visit apart. */

@@ -15,6 +15,7 @@ import type { OnboardingChatPort } from "./chat-port.js";
 import { onboardingSessionInit, writeOnboardingPrefs, type OnboardingStoredPrefs } from "./prefs.js";
 import { loadOnboardingRepos, type OnboardingRepoSource } from "./repos.js";
 import { useOnboardingAiConnect, type OnboardingAiConnectPort } from "./use-onboarding-ai-connect.js";
+import { useOnboardingChatHandoff } from "./use-onboarding-chat-handoff.js";
 import { useOnboardingRun } from "./use-onboarding-run.js";
 
 export interface OnboardingAppConnect {
@@ -33,7 +34,7 @@ function initialState(prefs: OnboardingStoredPrefs): OnboardingWidgetState {
 export function useOnboardingWidgetState(initialPrefs: OnboardingStoredPrefs) {
   const [state, dispatch] = useReducer(reduceOnboardingWidget, initialPrefs, initialState);
   const [prefs, setPrefs] = useState<OnboardingWidgetPrefs>(() => ({
-    keepInCorner: initialPrefs.keepInCorner, side: initialPrefs.side, showOnLogin: initialPrefs.showOnLogin,
+    keepInCorner: initialPrefs.keepInCorner, position: initialPrefs.position, showOnLogin: initialPrefs.showOnLogin,
   }));
   return { state, dispatch, prefs, setPrefs };
 }
@@ -110,6 +111,7 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     openChat(state.chatId);
     dispatch({ type: "size.changed", size: "bubble" });
   }, [dispatch, openChat, state.chatId]);
+  useOnboardingChatHandoff(state, showChat);
 
   const actions = useMemo<OnboardingWidgetActions>(() => ({
     dispatch,

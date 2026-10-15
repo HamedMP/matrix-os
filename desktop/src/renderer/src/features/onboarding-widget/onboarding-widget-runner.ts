@@ -13,7 +13,6 @@ import type { ApiClient } from "../../lib/api";
 import { createCanonicalChatEventSource, type CanonicalChatClient } from "../../lib/canonical-chat-client";
 
 export {
-  ONBOARDING_CHAT_TITLE,
   ONBOARDING_MAX_APPS,
   ONBOARDING_MAX_REPOS,
   onboardingAdmissionRequestIds,
@@ -85,12 +84,13 @@ export function createDesktopOnboardingChatPort(api: ApiClient, client: Canonica
   };
 }
 
-export function admitOnboardingTurn({ client, chatId, prompt, selection, requestIds }: {
+export function admitOnboardingTurn({ client, chatId, title, prompt, selection, requestIds }: {
   client: DesktopChatClient;
   chatId: string | null;
+  title: string;
   prompt: string;
   selection: CanonicalComposerSelection;
   requestIds: OnboardingAdmissionRequestIds;
 }): Promise<{ chatId: string; runId: string }> {
-  return admitSharedOnboardingTurn({ port: desktopChatTurns(client), chatId, prompt, selection, requestIds });
+  return admitSharedOnboardingTurn({ port: desktopChatTurns(client), chatId, title, prompt, selection, requestIds });
 }

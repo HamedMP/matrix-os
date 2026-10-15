@@ -16,6 +16,7 @@ import { Icon } from "./parts.js";
 import type { OnboardingWidgetProps } from "./types.js";
 import { useAppsVisit } from "./use-apps-visit.js";
 import { useMenuFocus } from "./use-menu-focus.js";
+import { useWidgetDrag, useWidgetPlacement } from "./use-widget-position.js";
 import { ModelLine, OnboardingBubble, WidgetBody, WidgetHeader } from "./widget-chrome.js";
 
 function headerStatus(state: OnboardingWidgetState, runView: OnboardingRunView | null): { tone: "working" | "attention"; label: string } | null {
@@ -45,7 +46,7 @@ function composerEvent(state: OnboardingWidgetState, text: string): OnboardingWi
 }
 
 export function OnboardingWidget(props: OnboardingWidgetProps) {
-  const { state, actions, prefs, runView, zIndex = 45 } = props;
+  const { state, actions, prefs, runView, zIndex = 45, onSizeChange } = props;
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const bubbleRef = useRef<HTMLButtonElement>(null);
@@ -57,6 +58,8 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
   const isBubble = state.size === "bubble";
   const keepInCorner = prefs.keepInCorner;
   const runInFlight = onboardingRunInFlight(state);
+  const placement = useWidgetPlacement(rootRef, prefs.position, onSizeChange);
+  const drag = useWidgetDrag(rootRef, (position) => actions.changePrefs({ ...prefs, position }));
 
   useEffect(() => {
     if (isBubble || keepInCorner) return;
@@ -116,12 +119,14 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     actions.dispatch(composerEvent(state, text));
   };
 
-  const sideClass = prefs.side === "left" ? " mxo-root--left" : "";
+  // `ph-no-capture` keeps sign-in codes, prompts and repo names out of session replay.
+  const rootClass = `mxo-root ph-no-capture${prefs.position.x === "left" ? " mxo-root--left" : ""}${prefs.position.y === "top" ? " mxo-root--top" : ""}`;
+  const rootStyle = { zIndex, ...placement };
 
   if (isBubble) {
     return (
-      <div className={`mxo-root${sideClass}`} style={{ zIndex }}>
-        <OnboardingBubble state={state} runView={runView} buttonRef={bubbleRef} onOpen={open} />
+      <div ref={rootRef} className={rootClass} style={rootStyle}>
+        <OnboardingBubble state={state} runView={runView} buttonRef={bubbleRef} dragHandle={drag.handle} onClickCapture={drag.onClickCapture} onOpen={open} />
       </div>
     );
   }
@@ -131,9 +136,17 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
   const showModelLine = state.screen.kind === "tasks" || choosingAi;
 
   return (
-    <div ref={rootRef} className={`mxo-root${sideClass}`} style={{ zIndex }} onKeyDown={onKeyDown}>
+    <div ref={rootRef} className={rootClass} style={rootStyle} onKeyDown={onKeyDown} onClickCapture={drag.onClickCapture}>
       <section className={`mxo-card mxo-widget${compact ? "" : " mxo-widget--tall"}`} aria-label="Matrix">
-        <WidgetHeader status={headerStatus(state, runView)} prefs={prefs} actions={actions} moreOpen={moreOpen} onMoreOpen={setMoreOpen} onMinimize={minimize} />
+        <WidgetHeader
+          status={headerStatus(state, runView)}
+          prefs={prefs}
+          actions={actions}
+          dragHandle={drag.handle}
+          moreOpen={moreOpen}
+          onMoreOpen={setMoreOpen}
+          onMinimize={minimize}
+        />
 
         <WidgetBody props={props} apps={appsVisit} runInFlight={runInFlight} />
 

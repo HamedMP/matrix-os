@@ -4,27 +4,39 @@ import {
   type OnboardingWidgetState,
 } from "@matrix-os/contracts";
 import { ArrowExpand01Icon, ArrowShrink02Icon, MinusSignIcon, MoreHorizontalIcon, PinIcon } from "@hugeicons/core-free-icons";
-import type { Ref } from "react";
+import type { MouseEvent as ReactMouseEvent, Ref } from "react";
 import { AiFlow } from "./ai-panel.js";
 import { activeAiName } from "./helpers.js";
 import { DoneLine, Icon, RabbitAvatar, StatusDot, UserEcho } from "./parts.js";
+import { isOnboardingCornerPosition, onboardingCornerPosition } from "./position.js";
 import { AppsScreen, ConnectScreen, QuestionScreen, RepoScreen, RunScreen, TasksScreen } from "./screens.js";
 import type { OnboardingWidgetPrefs, OnboardingWidgetProps } from "./types.js";
 import type { AppsVisit } from "./use-apps-visit.js";
+import type { WidgetDragHandle } from "./use-widget-position.js";
 
 function Toggle({ on }: { on: boolean }) {
   return <span className={`mxo-toggle${on ? " mxo-toggle--on" : ""}`} aria-hidden><span /></span>;
 }
 
-export function OnboardingBubble({ state, runView, buttonRef, onOpen }: {
+export function OnboardingBubble({ state, runView, buttonRef, dragHandle, onClickCapture, onOpen }: {
   state: OnboardingWidgetState;
   runView: OnboardingRunView | null;
   buttonRef: Ref<HTMLButtonElement>;
+  dragHandle: WidgetDragHandle;
+  onClickCapture(event: ReactMouseEvent): void;
   onOpen(): void;
 }) {
   const bubble = deriveOnboardingBubble(state, runView);
   return (
-    <button ref={buttonRef} type="button" className="mxo-bubble" onClick={onOpen} aria-label={`Open Matrix. ${bubble.title}. ${bubble.subtitle}`}>
+    <button
+      ref={buttonRef}
+      type="button"
+      className="mxo-bubble"
+      onClickCapture={onClickCapture}
+      onClick={onOpen}
+      {...dragHandle}
+      aria-label={`Open Matrix. ${bubble.title}. ${bubble.subtitle}`}
+    >
       <RabbitAvatar size={32} />
       <span className="mxo-bubble__text">
         <span className="mxo-bubble__title">
@@ -45,6 +57,7 @@ export function MoreMenu({ prefs, onPrefs, onFullChat, onShrink, onClose }: {
   onShrink(): void;
   onClose(): void;
 }) {
+  const otherSide = prefs.position.x === "left" ? "right" : "left";
   return (
     <div className="mxo-popover mxo-more" role="menu" aria-label="Matrix options" data-mxo-menu="more">
       <button type="button" role="menuitemcheckbox" aria-checked={prefs.keepInCorner} className="mxo-menu__row mxo-menu__row--compact"
@@ -58,9 +71,15 @@ export function MoreMenu({ prefs, onPrefs, onFullChat, onShrink, onClose }: {
         <Icon icon={ArrowShrink02Icon} size={14} /><span>Shrink to a bubble</span>
       </button>
       <div className="mxo-menu__sep" />
+      {isOnboardingCornerPosition(prefs.position) ? null : (
+        <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--compact"
+          onClick={() => { onClose(); onPrefs({ ...prefs, position: onboardingCornerPosition(prefs.position.x) }); }}>
+          <span>Move back to the corner</span>
+        </button>
+      )}
       <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--compact"
-        onClick={() => { onClose(); onPrefs({ ...prefs, side: prefs.side === "left" ? "right" : "left" }); }}>
-        <span>{prefs.side === "left" ? "Move to the right corner" : "Move to the left corner"}</span>
+        onClick={() => { onClose(); onPrefs({ ...prefs, position: onboardingCornerPosition(otherSide) }); }}>
+        <span>{`Move to the ${otherSide} corner`}</span>
       </button>
       <button type="button" role="menuitemcheckbox" aria-checked={prefs.showOnLogin} className="mxo-menu__row mxo-menu__row--compact"
         onClick={() => onPrefs({ ...prefs, showOnLogin: !prefs.showOnLogin })}>
@@ -70,16 +89,17 @@ export function MoreMenu({ prefs, onPrefs, onFullChat, onShrink, onClose }: {
   );
 }
 
-export function WidgetHeader({ status, prefs, actions, moreOpen, onMoreOpen, onMinimize }: {
+export function WidgetHeader({ status, prefs, actions, dragHandle, moreOpen, onMoreOpen, onMinimize }: {
   status: { tone: "working" | "attention"; label: string } | null;
   prefs: OnboardingWidgetPrefs;
   actions: OnboardingWidgetProps["actions"];
+  dragHandle: WidgetDragHandle;
   moreOpen: boolean;
   onMoreOpen(open: boolean): void;
   onMinimize(): void;
 }) {
   return (
-    <header className="mxo-header">
+    <header className="mxo-header" {...dragHandle}>
       <RabbitAvatar size={30} />
       <span className="mxo-header__text">
         <span className="mxo-header__name">Matrix</span>
@@ -125,6 +145,18 @@ function ScreenView({ props, apps }: { props: OnboardingWidgetProps; apps: AppsV
   }
 }
 
+/** Changes only when the widget moves to another step, so a run updating in place does not replay the transition. */
+function screenMotionKey(state: OnboardingWidgetState): string {
+  if (state.ai && state.ai.step !== "menu") return `ai:${state.ai.step}:${state.ai.provider}`;
+  const screen = state.screen;
+  switch (screen.kind) {
+    case "question":
+    case "connect": return `${screen.kind}:${screen.taskId}`;
+    case "run": return `run:${screen.taskId}:${screen.answer.slice(0, 64)}`;
+    default: return screen.kind;
+  }
+}
+
 export function WidgetBody({ props, apps, runInFlight }: {
   props: OnboardingWidgetProps;
   apps: AppsVisit;
@@ -135,24 +167,26 @@ export function WidgetBody({ props, apps, runInFlight }: {
   const showAllTasks = state.screen.kind !== "tasks" && state.screen.kind !== "apps" && !runInFlight;
   return (
     <div className="mxo-body" aria-live="polite">
-      {state.echo ? <UserEcho text={state.echo} /> : null}
-      {state.notice ? <DoneLine text={state.notice} /> : null}
-      {aiFlow ? (
-        <AiFlow
-          panel={aiFlow}
-          actions={actions}
-          keepName={activeAiName(props.activeAi, props.matrixAvailable)}
-          signInCode={props.aiSignInCode ?? null}
-          needsCode={props.aiSignInNeedsCode ?? false}
-        />
-      ) : (
-        <>
-          <ScreenView props={props} apps={apps} />
-          {showAllTasks ? (
-            <button type="button" className="mxo-link mxo-link--quiet" onClick={() => actions.dispatch({ type: "tasks.requested" })}>All tasks</button>
-          ) : null}
-        </>
-      )}
+      {state.echo ? <UserEcho key={state.echo} text={state.echo} /> : null}
+      {state.notice ? <DoneLine key={state.notice} text={state.notice} /> : null}
+      <div key={screenMotionKey(state)} className="mxo-screen">
+        {aiFlow ? (
+          <AiFlow
+            panel={aiFlow}
+            actions={actions}
+            keepName={activeAiName(props.activeAi, props.matrixAvailable)}
+            signInCode={props.aiSignInCode ?? null}
+            needsCode={props.aiSignInNeedsCode ?? false}
+          />
+        ) : (
+          <>
+            <ScreenView props={props} apps={apps} />
+            {showAllTasks ? (
+              <button type="button" className="mxo-link mxo-link--quiet" onClick={() => actions.dispatch({ type: "tasks.requested" })}>All tasks</button>
+            ) : null}
+          </>
+        )}
+      </div>
     </div>
   );
 }

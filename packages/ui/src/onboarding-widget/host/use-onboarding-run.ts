@@ -1,6 +1,7 @@
 import {
   buildOnboardingPrompt,
   deriveOnboardingRunView,
+  onboardingChatTitle,
   onboardingTask,
   type OnboardingRunView,
   type OnboardingWidgetEvent,
@@ -72,7 +73,7 @@ export function useOnboardingRun(
       ? pendingAdmission.current
       : { prompt, requestIds: onboardingAdmissionRequestIds() };
     pendingAdmission.current = pending;
-    void admitOnboardingTurn({ port, chatId: chatIdRef.current, prompt, selection, requestIds: pending.requestIds }).then(
+    void admitOnboardingTurn({ port, chatId: chatIdRef.current, title: onboardingChatTitle(screen), prompt, selection, requestIds: pending.requestIds }).then(
       (admitted) => {
         computerAttempts.current = 0;
         pendingAdmission.current = null;
