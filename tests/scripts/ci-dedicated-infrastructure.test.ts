@@ -22,6 +22,17 @@ describe('infrastructure-only exact-source hosted fallback',()=>{
  it('never infers infrastructure from a generic SSH255 or missing receipt',async()=>{
   const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});pending.catch(()=>{});c.emit('close',255);await expect(pending).rejects.toThrow();
  });
+ it.each([
+  [1,'remote_rejected'],
+  [255,'ssh_unclassified'],
+  [null,'terminated'],
+ ])('reports only coarse pre-control disconnect class for exit %s',async(code,classification)=>{
+  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000,transportHost:'ci.example.invalid'});pending.catch(()=>{});
+  c.stderr.write('private remote diagnostic must not escape');c.emit('close',code);
+  const error=await pending.catch(value=>value);
+  expect(error).toEqual(expect.objectContaining({message:`Linux disconnected without a complete trusted receipt (phase=initial,class=${classification})`}));
+  expect(error.message).not.toContain('private remote diagnostic');
+ });
 });
 
 describe('pinned local SSH unavailable before any grant',()=>{
