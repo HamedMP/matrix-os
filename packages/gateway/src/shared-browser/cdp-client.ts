@@ -41,6 +41,16 @@ const cdpEventSchema = z.object({
   params: cdpPayloadSchema,
   sessionId: z.string().min(1).max(256).optional(),
 }).passthrough();
+const cdpEventHeaderSchema = z.object({
+  method: z.string().min(1).max(127),
+  id: z.never().optional(),
+}).passthrough();
+const CONSUMED_CDP_EVENTS = new Set([
+  'Browser.downloadProgress', 'Browser.downloadWillBegin', 'DOM.documentUpdated',
+  'Fetch.requestPaused', 'Page.frameNavigated', 'Page.navigatedWithinDocument',
+  'Runtime.executionContextDestroyed', 'Runtime.executionContextsCleared',
+  'Target.attachedToTarget', 'Target.detachedFromTarget', 'Target.targetDestroyed',
+]);
 
 function hasBoundedJsonShape(root: unknown): boolean {
   const pending: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
@@ -100,6 +110,8 @@ export class BrowserCdpClient {
     let decoded: unknown;
     try { decoded = JSON.parse(bytes.toString('utf8')); }
     catch (error) { console.warn('[shared-browser] CDP frame unavailable', error instanceof SyntaxError ? 'invalid_frame' : 'operation_failed'); this.fail(); return; }
+    const eventHeader = cdpEventHeaderSchema.safeParse(decoded);
+    if (eventHeader.success && !CONSUMED_CDP_EVENTS.has(eventHeader.data.method)) return;
     if (!hasBoundedJsonShape(decoded)) { this.fail(); return; }
     const reply = cdpReplySchema.safeParse(decoded);
     if (reply.success) {

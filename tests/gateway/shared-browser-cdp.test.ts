@@ -91,7 +91,7 @@ describe('shared owner Chrome CDP driver', () => {
       const listener = vi.fn();
       client.onEvent(listener);
 
-      fake.raw({ method: 'Runtime.consoleAPICalled', params });
+      fake.raw({ method: 'Fetch.requestPaused', params });
 
       expect(listener).not.toHaveBeenCalled();
       expect(client.available).toBe(false);
@@ -103,14 +103,29 @@ describe('shared owner Chrome CDP driver', () => {
     const client = await connectBrowserCdp(fake);
     const listener = vi.fn();
     client.onEvent(listener);
-    fake.raw({ method: 'Runtime.consoleAPICalled', params: { args: [{ type: 'string', value: 'ok' }] }, sessionId: 'agent-session' });
-    expect(listener).toHaveBeenCalledWith({ method: 'Runtime.consoleAPICalled', params: { args: [{ type: 'string', value: 'ok' }] }, sessionId: 'agent-session' });
+    fake.raw({ method: 'Page.frameNavigated', params: { frame: { id: 'agent-frame', url: fixture } }, sessionId: 'agent-session' });
+    expect(listener).toHaveBeenCalledWith({ method: 'Page.frameNavigated', params: { frame: { id: 'agent-frame', url: fixture } }, sessionId: 'agent-session' });
 
     const pending = client.request('Target.getTargets');
     const sent = fake.messages.at(-1);
     fake.raw({ id: sent.id, result: [] });
     await expect(pending).rejects.toMatchObject({ code: 'browser_unavailable' });
     expect(client.available).toBe(false);
+  });
+
+  it('ignores unused bounded-size CDP event payloads without interrupting a pending reply', async () => {
+    const fake = chrome();
+    const client = await connectBrowserCdp(fake);
+    const listener = vi.fn();
+    client.onEvent(listener);
+    const pending = client.request('Target.getTargets');
+
+    fake.raw({ method: 'Runtime.consoleAPICalled', params: { args: [{ type: 'string', value: 'x'.repeat(64 * 1024 + 1) }] } });
+
+    await expect(pending).resolves.toEqual({});
+    expect(listener).not.toHaveBeenCalled();
+    expect(client.available).toBe(true);
+    await client.close();
   });
 
   it('ignores the global primary attach event before acknowledgement and still releases a later scoped duplicate', async () => {
