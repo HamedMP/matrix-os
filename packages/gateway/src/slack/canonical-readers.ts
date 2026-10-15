@@ -3,6 +3,9 @@ import type { ChatDatabase } from "../chat/database.js";
 import type { SlackCompanyOptions } from "./company-service.js";
 import { SlackCompanyError } from "./schemas.js";
 
+// Match the canonical chat_messages persisted-message bound; Slack response text remains separately capped.
+const MAX_CANONICAL_MESSAGE_BYTES = 128 * 1024;
+
 /** Exact canonical queued/run/message reads; requester identity comes from the queue, never Slack text. */
 export function createSlackCanonicalReaders(db: Kysely<ChatDatabase>): Pick<SlackCompanyOptions, "readResult" | "findAcceptedRequest"> {
   return {
@@ -29,7 +32,7 @@ export function createSlackCanonicalReaders(db: Kysely<ChatDatabase>): Pick<Slac
         .where("role","=","assistant").where("purpose","=","assistant").where("state","=","committed").orderBy("seq","asc").limit(20).execute();
       let text="";
       for (const message of messages) {
-        if (message.byte_count>65_536 || text.length>=12_000) break;
+        if (message.byte_count>MAX_CANONICAL_MESSAGE_BYTES || text.length>=12_000) break;
         const parts = typeof message.parts === "string" ? JSON.parse(message.parts) : message.parts;
         if (!Array.isArray(parts)) throw new SlackCompanyError("unavailable");
         for (const part of parts.slice(0,64)) if (part && typeof part==="object" && part.type==="text" && typeof part.text==="string") text+=part.text.slice(0,12_000-text.length);

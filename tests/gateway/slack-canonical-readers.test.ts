@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Kysely } from "kysely";
+import { CanonicalChatMessageSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase, type ChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createSlackCanonicalReaders } from "../../packages/gateway/src/slack/canonical-readers.js";
@@ -83,12 +84,33 @@ describe("Slack reads exact canonical queued requests and committed assistant ou
     await run(); await message(2, { not: "an array" });
     await expect(readers.readResult(resultInput)).rejects.toMatchObject({ code: "unavailable" });
   });
-  it("caps text, message bytes, message count and parts count", async () => {
+  it.each(["a".repeat(96 * 1024), "я".repeat(48 * 1024)])("preserves completed large canonical answers while bounding Slack text", async (answer) => {
+    await run();
+    const canonical = CanonicalChatMessageSchema.parse({ id: "msg_reader_2", chatId, seq: 2, role: "assistant", state: "committed",
+      purpose: "assistant", turnId: "cturn_reader", runId: "run_reader", createdAt: at.toISOString(),
+      parts: Array.from({ length: Math.ceil(answer.length / 32_000) }, (_, index) => ({ type: "text", text: answer.slice(index * 32_000, (index + 1) * 32_000) })) });
+    const parts = canonical.parts;
+    const bytes = Buffer.byteLength(JSON.stringify(parts));
+    expect(bytes).toBeGreaterThan(65_536);
+    expect(bytes).toBeLessThanOrEqual(128 * 1024);
+    await message(2, parts);
+    await message(3, [{ type: "text", text: "must not append after the returned text cap" }]);
+    expect(await readers.readResult(resultInput)).toEqual({ status: "completed", requestingActorId: actorId, runId: "run_reader", text: answer.slice(0, 12_000) });
+  });
+  it("accepts the whole canonical message-byte boundary", async () => {
+    await run();
+    const candidate = { id: "msg_reader_2", chatId, seq: 2, role: "assistant", state: "committed", purpose: "assistant",
+      turnId: "cturn_reader", runId: "run_reader", createdAt: at.toISOString(),
+      parts: Array.from({ length: 5 }, () => ({ type: "text", text: "b".repeat(26_000) })) };
+    candidate.parts[4]!.text += "b".repeat(128 * 1024 - Buffer.byteLength(JSON.stringify(candidate)));
+    const canonical = CanonicalChatMessageSchema.parse(candidate);
+    expect(Buffer.byteLength(JSON.stringify(canonical))).toBe(128 * 1024);
+    await message(2, canonical.parts);
+    expect((await readers.readResult(resultInput)).text).toBe("b".repeat(12_000));
+  });
+  it("caps returned text, message count and parts count", async () => {
     await run(); await message(2, [{ type: "text", text: "a".repeat(13000) }]); await message(3, [{ type: "text", text: "must not append" }]);
     expect((await readers.readResult(resultInput)).text).toBe("a".repeat(12000));
-    await fixture.db.deleteFrom("chat_messages").where("role", "=", "assistant").execute();
-    await message(2, [{ type: "text", text: "oversized" }], { byte_count: 65537 });
-    expect((await readers.readResult(resultInput)).text).toBe("");
     await fixture.db.deleteFrom("chat_messages").where("role", "=", "assistant").execute();
     await message(2, Array.from({ length: 65 }, () => ({ type: "text", text: "x" })));
     for (let seq = 3; seq <= 23; seq++) await message(seq, [{ type: "text", text: "y" }]);

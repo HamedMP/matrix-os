@@ -45,7 +45,7 @@ export class SlackPersonalRepository {
  async conversation(dmKey:string){return this.db.selectFrom("slack_personal_conversations").selectAll().where("owner_id","=",this.ownerId).where("dm_key","=",dmKey).executeTakeFirst();}
  async claim(){return this.db.transaction().execute(async trx=>{
   await trx.updateTable("slack_personal_inbox").set({state:"failed",lease:null,lease_until:null,updated_at:this.now()}).where("owner_id","=",this.ownerId).where("state","=","processing").where("attempts",">=",8).where("lease_until","<",this.now()).execute();
-  const row=await trx.selectFrom("slack_personal_inbox").selectAll().where("owner_id","=",this.ownerId).where("attempts","<",8)
+  const row=await trx.selectFrom("slack_personal_inbox").selectAll().where("owner_id","=",this.ownerId).where("attempts","<",8).where("created_at",">",new Date(this.now().getTime()-86400_000))
    .where(eb=>eb.or([eb.and([eb("state","=","pending"),eb.or([eb("lease_until","is",null),eb("lease_until","<=",this.now())])]),eb.and([eb("state","=","processing"),eb("lease_until","<",this.now())])]))
    .orderBy("created_at").forUpdate().skipLocked().executeTakeFirst();
   if(!row)return null;
@@ -69,7 +69,7 @@ export class SlackPersonalRepository {
  });}
  async accepted(row:SlackPersonalInbox,input:{kind:"run"|"queue";id:string}){await this.db.updateTable("slack_personal_inbox").set({state:"accepted",accepted_kind:input.kind,accepted_id:input.id,lease:null,lease_until:null,updated_at:this.now()}).where("id","=",row.id).where("owner_id","=",this.ownerId).where("lease","=",row.lease).execute();}
  async release(row:SlackPersonalInbox,retry:boolean){await this.db.updateTable("slack_personal_inbox").set({state:retry&&row.attempts<8?"pending":"failed",lease:null,lease_until:retry?new Date(this.now().getTime()+Math.min(300_000,5000*2**row.attempts)):null,updated_at:this.now()}).where("id","=",row.id).where("owner_id","=",this.ownerId).where("lease","=",row.lease).execute();}
- async waiting(){return this.db.selectFrom("slack_personal_inbox").selectAll().where("owner_id","=",this.ownerId).where("state","=","accepted").orderBy("updated_at").limit(20).execute();}
+ async waiting(){return this.db.selectFrom("slack_personal_inbox").selectAll().where("owner_id","=",this.ownerId).where("state","=","accepted").where("created_at",">",new Date(this.now().getTime()-86400_000)).orderBy("updated_at").limit(20).execute();}
  async deferResult(row:SlackPersonalInbox){await this.db.updateTable("slack_personal_inbox").set({updated_at:this.now()})
   .where("id","=",row.id).where("owner_id","=",this.ownerId).where("state","=","accepted").where("accepted_id","=",row.accepted_id).where("accepted_kind","=",row.accepted_kind).execute();}
  async finish(row:SlackPersonalInbox,result:{runId:string;text:string}|null){await this.db.transaction().execute(async trx=>{
@@ -91,9 +91,13 @@ export class SlackPersonalRepository {
   .where("event_id","in",this.db.selectFrom("slack_personal_inbox").select("id").where("owner_id","=",this.ownerId)).execute();}
  async replyStatus(id:string,lease:string|null,state:SlackPersonalOutboxTable["state"],messageTs?:string,retryAfterMs?:number){
   const delay=typeof retryAfterMs==="number"&&Number.isSafeInteger(retryAfterMs)?Math.max(30_000,Math.min(3600_000,retryAfterMs)):30_000;
-  await this.db.updateTable("slack_personal_outbox").set({state,lease:null,lease_until:state==="pending"?new Date(this.now().getTime()+delay):null,message_ts:messageTs??null,updated_at:this.now()}).where("event_id","=",id).where("lease","=",lease).execute();}
+  await this.db.updateTable("slack_personal_outbox").set({state,lease:null,lease_until:state==="pending"?new Date(this.now().getTime()+delay):null,message_ts:messageTs??null,updated_at:this.now()}).where("event_id","=",id).where("lease","=",lease).where("state","=","sending")
+   .where("event_id","in",this.db.selectFrom("slack_personal_inbox").select("id").where("owner_id","=",this.ownerId)).execute();}
  /** Retain ambiguous outcomes for review for 30 days, then expire without retrying. */
  async cleanup(){await this.db.transaction().execute(async trx=>{
+  // Polling and retries may refresh updated_at, but cannot extend an arrival's active lifetime.
+  await trx.updateTable("slack_personal_inbox").set({state:"failed",lease:null,lease_until:null,updated_at:this.now()}).where("owner_id","=",this.ownerId)
+   .where("state","in",["pending","processing","accepted"]).where("created_at","<=",new Date(this.now().getTime()-86400_000)).execute();
   // Receipt waiting cannot keep a completed inbox alive forever. Use immutable arrival time, not the refreshed outbox timestamp.
   await trx.updateTable("slack_personal_outbox").set({state:"failed",lease:null,lease_until:null,updated_at:this.now()}).where("state","=","pending")
    .where("event_id","in",trx.selectFrom("slack_personal_inbox").select("id").where("owner_id","=",this.ownerId).where("created_at","<=",new Date(this.now().getTime()-86400_000))).execute();
