@@ -29,6 +29,7 @@ export const SharedBrowserStateSchema = z.object({
   revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   run: z.object({ chatId: Reference, runId: Reference, harness: z.enum(["pi", "openclaw", "hermes"]) }).strict().nullable(),
   needsObservation: z.boolean(),
+  handoff: z.object({ content: z.string().min(1).max(32000) }).strict().optional(),
 }).strict();
 export type SharedBrowserState = z.infer<typeof SharedBrowserStateSchema>;
 export const SharedBrowserArtifactSchema=z.object({
