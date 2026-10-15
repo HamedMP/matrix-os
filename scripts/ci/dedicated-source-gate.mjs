@@ -8,6 +8,8 @@ import {readReviewedConfiguration} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
 import {reconcileMainSourceQualification} from './dedicated-main-source-gate.mjs';
 import {logGateEvent} from './gate-log.mjs';
+import {recordedMainSources,recordedControllerAttempt} from './dedicated-main-provenance.mjs';
+import {mainPrCoverage,mainPrRequest,mainPrRunSource,mainPrSourceBindings} from './dedicated-main-pr.mjs';
 const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const sha=/^[a-f0-9]{40}$/;
@@ -36,7 +38,7 @@ async function ownedGate(github,repo,pull,workflow,appId){
   let evidence;try{evidence=JSON.parse(check.output.summary);}catch(error){if(error instanceof SyntaxError)continue;throw error;}
   const runId=Number(check.details_url.slice(prefix.length));
   if(!id(runId)||evidence?.schemaVersion!==1||evidence.prNumber!==pull.number||evidence.controllerRef!=='refs/heads/main'||!sha.test(evidence.controllerSha||'')||!id(evidence.controllerAttempt))continue;
-  const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:runId,request});
+  const run=await recordedControllerAttempt(github,repo,runId,evidence.controllerAttempt);
   if(run.id!==runId||run.run_attempt!==evidence.controllerAttempt||run.workflow_id!==workflow.id||run.path!==path||!['pull_request_target','workflow_run','schedule','push'].includes(run.event)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))continue;
   // Scheduled/main-push definitions must never inherit a candidate-branch
   // run's app identity. PTR metadata describes the live PR head separately.
@@ -56,12 +58,19 @@ async function currentRequester(github,repo,snapshot,options={}){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refresh CI definition');
  return newestWorkflowRun(github,repo,workflow,run=>{
-  const authenticated=authenticatedRequestingRun(run,repo,snapshot,workflow)||(options.allModes&&authenticatedRequestingRun(run,repo,{...snapshot,executionMode:undefined},workflow));
+  const authenticated=snapshot.baseRef==='main'&&snapshot.sourceKind===undefined?Boolean(mainPrRequest(run,repo,snapshot,workflow,{executionMode:snapshot.executionMode,allModes:options.allModes})):authenticatedRequestingRun(run,repo,snapshot,workflow)||(options.allModes&&authenticatedRequestingRun(run,repo,{...snapshot,executionMode:undefined},workflow));
   if(!authenticated)return false;
   if(options.afterId!==undefined&&(run.id<=options.afterId||!Number.isFinite(Date.parse(run.created_at))||Date.parse(run.created_at)<Date.parse(options.notBefore)))return false;
   return true;
  },{kind:'requester',sourceKind:snapshot.sourceKind,headSha:snapshot.headSha,headRef:snapshot.headRef});
 }
+async function requesterSource(github,repo,run,snapshot){
+ if(snapshot.baseRef!=='main'||snapshot.sourceKind!==undefined)return snapshot;
+ const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
+ if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refresh CI definition');
+ return (await mainPrRunSource(github,repo,run,snapshot,workflow,{executionMode:snapshot.executionMode})).snapshot;
+}
+const sameSource=(a,b)=>a.headSha===b.headSha&&a.baseRef===b.baseRef&&a.baseSha===b.baseSha&&a.sourceSha===b.sourceSha;
 async function verifyHostedReplacement(github,repo,run){
  const {data}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,filter:'latest',per_page:100,request});
  if(!Number.isSafeInteger(data.total_count)||data.total_count>100||!Array.isArray(data.jobs)||data.jobs.length!==data.total_count)throw new Error('Hosted replacement job inventory incomplete');
@@ -99,28 +108,41 @@ export async function reconcileSourceQualification(github,repo,controller,option
   if(pull.head?.sha!==listed.head.sha)continue;
   examined++;
   const {prior,history}=await ownedGate(github,repo,pull,workflow,options.gateAppId);
-  const snapshot={prNumber:pull.number,headSha:pull.head.sha,headRef:pull.head.ref,baseSha:pull.base.sha,baseRef:pull.base.ref,sourceSha:pull.merge_commit_sha};
+  let snapshot={prNumber:pull.number,headSha:pull.head.sha,headRef:pull.head.ref,baseSha:pull.base.sha,baseRef:pull.base.ref,sourceSha:pull.merge_commit_sha};
   const admitted=config.admitted&&same(pull.head?.repo?.full_name,repo)&&pull.state==='open'&&pull.draft===false&&['ready-for-ci','fast-ci'].every(label=>pull.labels?.some(value=>value.name===label));
   const previouslyAdmitted=history||Boolean(prior&&(prior.evidence.admittedPreviously===true||prior.evidence.notApplicable!==true));
   const recovery=!admitted&&previouslyAdmitted;
   if(recovery)snapshot.executionMode='hosted-only';
-  const evidence={schemaVersion:1,admittedPreviously:previouslyAdmitted||admitted,...snapshot,controllerSha:controller.sha,controllerRef:controller.ref,controllerAttempt:options.runAttempt};
   const old=prior?.evidence;
-  const sameRecovery=recovery&&old?.executionMode==='hosted-only'&&old.headSha===snapshot.headSha&&old.baseSha===snapshot.baseSha&&old.sourceSha===snapshot.sourceSha&&Number.isFinite(Date.parse(old.recoveryStartedAt))&&Number.isSafeInteger(old.recoveryAfterRunId)&&old.recoveryAfterRunId>=0;
+  const sameRecovery=recovery&&old?.executionMode==='hosted-only'&&old.headSha===snapshot.headSha&&Number.isFinite(Date.parse(old.recoveryStartedAt))&&Number.isSafeInteger(old.recoveryAfterRunId)&&old.recoveryAfterRunId>=0&&((old.baseSha===snapshot.baseSha&&old.sourceSha===snapshot.sourceSha&&(old.baseRef===undefined||old.baseRef===snapshot.baseRef))||(snapshot.baseRef==='main'&&old.baseRef==='main'&&(old.headRef===undefined||old.headRef===snapshot.headRef)&&sha.test(old.baseSha||'')&&sha.test(old.sourceSha||'')));
+  // Main may advance while this generation's exact replacement is running.
+  // Prior hosted runs must not choose the new generation's dispatch source.
+  if(sameRecovery&&snapshot.baseRef==='main')snapshot={...snapshot,baseSha:old.baseSha,sourceSha:old.sourceSha};
+  let discoveryError,sourceBindings=recordedMainSources(old,snapshot);
+  if(snapshot.baseRef==='main'&&pull.state==='open'&&pull.draft===false)try{sourceBindings=await mainPrSourceBindings(github,repo,pull,old,options.eventPull);}catch(error){if(!(error instanceof Error))throw error;discoveryError=error;}
+  const evidence={schemaVersion:1,admittedPreviously:previouslyAdmitted||admitted,...snapshot,...(sourceBindings.length?{sourceBindings}:{}),controllerSha:controller.sha,controllerRef:controller.ref,controllerAttempt:options.runAttempt};
   // Keep the authenticated generation while source/API validation fails closed.
   // Otherwise its already-running hosted replacement becomes older than itself.
   if(sameRecovery){evidence.recoveryStartedAt=old.recoveryStartedAt;evidence.recoveryAfterRunId=old.recoveryAfterRunId;}
   let currentCheck=prior?.check;
   const write=async(conclusion,title,extra={})=>{
    const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,...(conclusion?{status:'completed',conclusion}:{status:'in_progress'}),request,output:{title,summary:JSON.stringify({...evidence,...extra})}};
+   if(args.output.summary.length>4096)throw new Error('Source gate evidence exceeds bounded summary');
    const update=currentCheck&&(conclusion||currentCheck.status==='in_progress');
    const {data:written}=update?await options.gateGithub.rest.checks.update({...args,check_run_id:currentCheck.id}):await options.gateGithub.rest.checks.create({...args,name,head_sha:pull.head.sha});
    if(written.app?.id!==options.gateAppId||written.app?.slug==='github-actions'||written.name!==name||written.head_sha!==pull.head.sha)throw new Error('Dedicated gate App issuer response mismatch');
    currentCheck=written;
   };
+  // Publish trusted event provenance before discovery can ask for an older source.
+  if(!discoveryError&&options.eventPull?.merge_commit_sha!==pull.merge_commit_sha&&sourceBindings.some(value=>value.sourceSha===options.eventPull?.merge_commit_sha))await write(null,'Recorded authenticated main PR source');
+  if(!discoveryError&&snapshot.baseRef==='main'&&admitted)try{
+   const coverage=await mainPrCoverage(github,repo,snapshot);
+   if(coverage){snapshot=coverage.snapshot;Object.assign(evidence,snapshot);}
+  }catch(error){if(!(error instanceof Error))throw error;discoveryError=error;}
+  if(discoveryError){logGateError(pull.number,'requester-discovery',discoveryError);await write('failure','Fresh requesting CI discovery failed');continue;}
   if(!admitted&&!recovery){
    // Unchanged N/A rewrites dominated the shared installation API budget.
-   const unchanged=prior?.check.status==='completed'&&prior.check.conclusion==='success'&&old?.notApplicable===true&&old.headSha===snapshot.headSha&&old.baseSha===snapshot.baseSha&&old.sourceSha===snapshot.sourceSha;
+   const unchanged=JSON.stringify(old?.sourceBindings??[])===JSON.stringify(sourceBindings)&&prior?.check.status==='completed'&&prior.check.conclusion==='success'&&old?.notApplicable===true&&old.headSha===snapshot.headSha&&old.baseSha===snapshot.baseSha&&old.sourceSha===snapshot.sourceSha;
    if(!unchanged)await write('success','Dedicated source qualification: not admitted',{notApplicable:true});
    continue;
   }
@@ -134,15 +156,29 @@ export async function reconcileSourceQualification(github,repo,controller,option
     const delegatedAgain=latest&&!latest.display_title.startsWith('CI hosted-refresh-v1 ')&&latest.id>(sameRecovery?old.recoveryAfterRunId:0);
     evidence.recoveryStartedAt=sameRecovery&&!delegatedAgain?old.recoveryStartedAt:new Date(Math.floor(Date.now()/1000)*1000).toISOString();
     evidence.recoveryAfterRunId=sameRecovery&&!delegatedAgain?old.recoveryAfterRunId:latest?.id??0;
+    if(delegatedAgain){
+     snapshot={...snapshot,baseSha:pull.base.sha,sourceSha:pull.merge_commit_sha};
+     delete snapshot.mergeParents;
+     Object.assign(evidence,snapshot);
+     delete evidence.mergeParents;
+     const current=await verifyCurrentHostedSource(github,repo,snapshot);
+     snapshot.mergeParents=current.mergeParents;evidence.mergeParents=current.mergeParents;
+    }
    }
    requester=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});
+   if(requester){
+    snapshot=await requesterSource(github,repo,requester,snapshot);
+    const current=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);
+    snapshot.mergeParents=current.mergeParents;
+    Object.assign(evidence,snapshot);
+   }
   }catch(error){if(error instanceof Error)logGateError(pull.number,'requester-discovery',error);await write('failure','Fresh requesting CI discovery failed');if(!(error instanceof Error))throw error;continue;}
   if(!requester){
    const duplicate=prior?.evidence.refreshDispatchFailed!==true&&prior?.evidence.refreshDispatchedAt&&prior.evidence.executionMode===snapshot.executionMode&&prior.evidence.sourceSha===snapshot.sourceSha&&prior.evidence.baseSha===snapshot.baseSha&&(!recovery||(prior.evidence.recoveryStartedAt===evidence.recoveryStartedAt&&prior.evidence.recoveryAfterRunId===evidence.recoveryAfterRunId))&&Date.now()-Date.parse(prior.evidence.refreshDispatchedAt)<30*60*1000;
    const refresh=duplicate?{refreshDispatchedAt:prior.evidence.refreshDispatchedAt}:{refreshDispatchedAt:new Date().toISOString()};
    await write(null,recovery?'Waiting for fresh exact-source hosted replacement':'Waiting for fresh exact-source hosted and Linux coverage',refresh);
    try{
-    if(!duplicate){await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:pull.head.sha,base_sha:pull.base.sha,source_sha:pull.merge_commit_sha,...(recovery?{execution_mode:'hosted-only'}:{})},request});dispatched++;}
+    if(!duplicate){await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:snapshot.headSha,base_sha:snapshot.baseSha,source_sha:snapshot.sourceSha,...(recovery?{execution_mode:'hosted-only'}:{})},request});dispatched++;}
    }catch(error){await write('failure','Fresh requesting CI could not be dispatched',{...refresh,refreshDispatchFailed:true});throw error;}
    continue;
   }
@@ -163,6 +199,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
      await verifyCurrentDedicatedSource(github,repo,snapshot);
      const latest=await currentRequester(github,repo,snapshot,{});
      if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
+     if(!sameSource(await requesterSource(github,repo,latest,snapshot),snapshot))throw new Error('Requesting source superseded coverage');
      phase='write';
      await write('neutral','Shadow Linux qualification not verified; hosted CI passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,shadowUnverified:true});
      continue;
@@ -174,9 +211,14 @@ export async function reconcileSourceQualification(github,repo,controller,option
    if(recovery&&(await settings(github,repo)).admitted&&['fast-ci','ready-for-ci'].every(label=>currentPull.labels?.some(value=>value.name===label)))throw new Error('Admission changed during hosted recovery');
    const latest=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});
    if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
-   if(recovery){const newest=await currentRequester(github,repo,snapshot,{allModes:true});if(newest?.id!==requester.id||newest.run_attempt!==requester.run_attempt)throw new Error('A newer admission superseded hosted recovery');}
+   if(!sameSource(await requesterSource(github,repo,latest,snapshot),snapshot))throw new Error('Requesting source superseded coverage');
+   if(recovery){
+    const newest=await currentRequester(github,repo,snapshot,{allModes:true});
+    if(newest?.id!==requester.id||newest.run_attempt!==requester.run_attempt)throw new Error('A newer admission superseded hosted recovery');
+    if(!sameSource(await requesterSource(github,repo,newest,snapshot),snapshot))throw new Error('Requesting source superseded hosted recovery');
+   }
    phase='write';
-   await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
+   await write('success',snapshot.baseRef==='main'?'Unchanged PR head passed against its recorded main source':recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
   }catch(error){if(error instanceof Error)logGateError(pull.number,phase,error);await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
  }
  if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,{...config,mode:config.mainMode},workflow,{ownedGate,currentRequester});

@@ -2,6 +2,7 @@
 // Only data is taken from input; privileged helpers never come from the PR.
 import {resolveMainSource} from './dedicated-main.mjs';
 import {verifyCurrentDedicatedSource,verifyCurrentHostedSource} from './dedicated-admission.mjs';
+import {mainPrRunSource,assertMainPrIdentity,waitForCurrentMainSource} from './dedicated-main-pr.mjs';
 const sha=/^[a-f0-9]{40}$/;
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const same=(value,repo)=>typeof value==='string'&&value.toLowerCase()===`${repo.owner}/${repo.repo}`.toLowerCase();
@@ -18,7 +19,7 @@ export function authenticatedRequestingRun(run,repo,value,workflow){
  // A delegated PR aggregate can be genuinely green with hosted lanes skipped.
  // Rollback requires an explicit main dispatch that forces every hosted lane.
  if(value.executionMode==='hosted-only')return false;
- return run.event==='pull_request'&&run.head_sha===value.headSha&&run.display_title===`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`&&run.pull_requests?.some(pull=>pull.number===value.prNumber&&pull.head?.sha===value.headSha&&pull.base?.sha===value.baseSha&&pull.base?.ref===value.baseRef)===true;
+ return run.event==='pull_request'&&run.head_sha===value.headSha&&run.display_title===`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`&&run.pull_requests?.some(pull=>pull.number===value.prNumber&&pull.head?.sha===value.headSha&&(value.baseRef==='main'||pull.base?.sha===value.baseSha)&&pull.base?.ref===value.baseRef)===true;
 }
 export async function resolveRequestingSource(github,repo,context,inputs){
  if(context.ref!=='refs/heads/main'||!sha.test(context.sha||'')||context.workflowRef!==`${repo.owner}/${repo.repo}/.github/workflows/ci.yml@refs/heads/main`)throw new Error('Fresh CI must use the default main workflow definition');
@@ -81,9 +82,12 @@ export async function admitRefreshController(github,repo,event,options={}){
   if(!source||!row)return null;
   if(source&&row)snapshot={prNumber:row.number,headSha:row.head?.sha,baseSha:row.base?.sha,baseRef:row.base?.ref,sourceSha:source[1]};
  }
+ if(snapshot?.baseRef==='main'&&run.event==='pull_request'){
+  ({snapshot}=await mainPrRunSource(github,repo,run,{...snapshot,headRef:run.head_branch},workflow,{waitForProvenance:true,provenanceDelay:options.provenanceDelay}));
+ }
  if(snapshot?.executionMode==='hosted-only')return null;
  if(!snapshot||!authenticatedRequestingRun(run,repo,snapshot,workflow)||!['queued','requested','waiting','pending','in_progress'].includes(run.status))throw new Error('Refresh requester is not currently admitted');
- if(snapshot.sourceKind!=='main'){const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});snapshot.baseRef=pull.base.ref;}
+ if(snapshot.sourceKind!=='main'){const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});snapshot.baseRef=pull.base.ref;snapshot.headRef=pull.head.ref;if(snapshot.baseRef==='main')assertMainPrIdentity(repo,pull,snapshot,true);if(run.event==='workflow_dispatch'&&snapshot.baseRef==='main'&&(pull.merge_commit_sha!==snapshot.sourceSha||pull.base.sha!==snapshot.baseSha))await waitForCurrentMainSource(github,repo,snapshot,{delay:options.provenanceDelay});}
  const current=await verifyCurrentDedicatedSource(github,repo,snapshot);
  snapshot.mergeParents=current.mergeParents;
  return snapshot;

@@ -145,12 +145,20 @@ jobs:
           script: |
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
-            const {verifyCurrentDedicatedSource}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
+            const {verifyCurrentDedicatedSource,assertMainPrIdentity,waitForCurrentMainSource}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             const data=JSON.parse(process.env.SNAPSHOT);
+            const snapshot={sourceSha:data.sha,headSha:data.head_sha,baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number),...(data.source_kind==='main'?{sourceKind:'main'}:{}),mergeParents:JSON.parse(data.merge_parents)};
             const raceLost=error=>error instanceof Error&&JSON.parse(process.env.RACE_LOST_ERRORS).includes(error.message);
-            try{await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:data.sha,headSha:data.head_sha,
-              baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number),...(data.source_kind==='main'?{sourceKind:'main'}:{}),mergeParents:JSON.parse(data.merge_parents)});}
-            catch(error){if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('superseded','true');return;}
+            try{
+              if(data.base_ref==='main'&&Number(data.pr_number)>0){
+                const {data:pull}=await github.rest.pulls.get({...context.repo,pull_number:snapshot.prNumber,request:{timeout:10000}});
+                assertMainPrIdentity(context.repo,pull,snapshot,true);
+                if(pull.merge_commit_sha!==data.sha||pull.base.sha!==data.base_sha){
+                  await waitForCurrentMainSource(github,context.repo,{...snapshot,headRef:pull.head.ref});
+                }
+              }
+              await verifyCurrentDedicatedSource(github,context.repo,snapshot);
+            }catch(error){if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('superseded','true');return;}
             core.setOutput('current','true');
 
       - name: Dispatch authenticated PR qualification lease
@@ -416,7 +424,7 @@ jobs:
                 ?{prNumber:ciPulls[0].number}:{};
             const gate=await reconcileSourceQualification(sourceGithub,context.repo,
               {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
-              {gateGithub,gateAppId:Number(process.env.GATE_APP_ID),runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...scope});
+              {gateGithub,gateAppId:Number(process.env.GATE_APP_ID),runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...(context.eventName==='pull_request_target'?{eventPull:context.payload.pull_request}:{}),...scope});
             core.info(`Examined ${gate.examined} source gates; refreshed ${gate.dispatched} exact-source requests.`);
 
       - name: Revoke configuration read token

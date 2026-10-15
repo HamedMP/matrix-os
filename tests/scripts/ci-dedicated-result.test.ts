@@ -9,6 +9,12 @@ function fixture(change:Record<string,unknown>={}) {
   const check={id:10,name:"Dedicated CI Results",head_sha:headSha,status:"completed",conclusion:"success",app:{slug:"github-actions"},details_url:"https://github.com/HamedMP/matrix-os/actions/runs/123",output:{summary:JSON.stringify(summary)}};
   const run={id:123,head_branch:"feature/source",display_title:`dedicated-ci-v2 pr=2440 head=${headSha} base=${baseSha} requested=true`,run_attempt:1,workflow_id:99,event:"pull_request_target",path:".github/workflows/ci-dedicated.yml@main",status:"completed",conclusion:"success",head_sha:headSha,repository:{full_name:"HamedMP/matrix-os"},head_repository:{full_name:"HamedMP/matrix-os"}};
   const github={rest:{repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:baseSha}}})),getCommit:vi.fn(async()=>({data:{sha:sourceSha,parents:[{sha:baseSha},{sha:headSha}]}}))},pulls:{get:vi.fn(async()=>({data:{number:2440,state:"open",draft:false,labels:[{name:"ready-for-ci"},{name:"fast-ci"}],head:{sha:headSha,ref:"feature/source",repo:{full_name:"HamedMP/matrix-os"}},base:{sha:baseSha,ref:"main",repo:{full_name:"HamedMP/matrix-os"}},merge_commit_sha:sourceSha}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:".github/workflows/ci-dedicated.yml"}})),getWorkflowRun:vi.fn(async(_args:{run_id:number})=>({data:run})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[run]}})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{jobs:[{name:"benchmark",status:"completed",conclusion:"success"}]}}))}}};
+  const ci={...run,id:321,workflow_id:98,event:'pull_request',path:'.github/workflows/ci.yml',display_title:`CI coverage-v1 · ${sourceSha}`,pull_requests:[{number:2440,head:{sha:headSha},base:{sha:baseSha,ref:'main'}}]};
+  github.rest.actions.getWorkflow.mockImplementation(async(args:any)=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+args.workflow_id}}));
+  // Controller-history perturbations below remain scoped to that workflow;
+  // independently serve the genuine requester stream for supersession checks.
+  const controllerHistory=github.rest.actions.listWorkflowRuns;
+  github.rest.actions.listWorkflowRuns=new Proxy(controllerHistory,{apply(target,receiver,args){return args[0].workflow_id===98?Promise.resolve({data:{workflow_runs:[ci]}}):Reflect.apply(target,receiver,args);}});
   pinArtifactFixture(github,check,run);if(Object.hasOwn(change,'requestDigest'))check.output.summary=JSON.stringify({...JSON.parse(check.output.summary),requestDigest:change.requestDigest});
   return {github,check,run};
 }
@@ -113,8 +119,8 @@ describe('stack lifecycle and retry evidence',()=>{
     github.rest.pulls.get.mockResolvedValue({data:pull});
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow(/stale/);
   });
-  it('rejects a live parent move even when old authenticated evidence passed',async()=>{
-    const {github}=fixture();const {data:pull}=await github.rest.pulls.get();pull.base.sha='e'.repeat(40);
+  it('rejects retargeting even when old authenticated evidence passed',async()=>{
+    const {github}=fixture();const {data:pull}=await github.rest.pulls.get();pull.base.ref='other-parent';
     github.rest.pulls.get.mockResolvedValue({data:pull});
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow(/stale/);
   });

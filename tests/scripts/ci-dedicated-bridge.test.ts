@@ -2,6 +2,7 @@ import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
+import * as provenanceHelpers from '../../scripts/ci/dedicated-main-provenance.mjs';
 import * as outcomeHelpers from '../../scripts/ci/dedicated-outcome.mjs';
 import * as admissionHelpers from '../../scripts/ci/dedicated-admission.mjs';
 import * as configurationHelpers from '../../scripts/ci/dedicated-config-token.mjs';
@@ -15,7 +16,7 @@ async function execute(name:string,github:unknown,context:unknown,core:unknown,h
  // Vitest's VM has no native dynamic-import callback. Inject only that loader,
  // checking the actual workflow-resolved path and executing the real helper.
  const script=source.replaceAll('await import(', 'await loadHelper(');
- const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers,'scripts/ci/dedicated-config-token.mjs':configurationHelpers,...helperOverrides};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
+ const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-main-provenance.mjs':provenanceHelpers,'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers,'scripts/ci/dedicated-config-token.mjs':configurationHelpers,...helperOverrides};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
  return new AsyncFunction('github','context','core','require','loadHelper',script)(github,context,core,nodeRequire,loadHelper);
 }
@@ -44,8 +45,8 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   const {outputs,github}=await admit(patch);
   expect(outputs).toEqual({admitted:'false'});expect(github.rest.checks.create).not.toHaveBeenCalled();expect(github.rest.repos.getCommit).not.toHaveBeenCalled();
  });
- it.each([{merge_commit_sha:null},{merge_commit_sha:'e'.repeat(40)}])('rejects unavailable or mismatched merge provenance %j',async patch=>{
-  await expect(admit(patch)).rejects.toThrow(/merge commit|Merge commit/i);
+ it.each([{merge_commit_sha:null},{merge_commit_sha:'e'.repeat(40)}])('retains the immutable event source despite a later mutable merge %j',async patch=>{
+  const f=await admit(patch);expect(f.outputs).toMatchObject({admitted:'true',sha:merge,base_sha:base});
  });
  it('rejects a controller outside default main before creating a source check',async()=>{
   await expect(admit({},'refs/heads/stack/parent')).rejects.toThrow(/default.branch/);
@@ -66,11 +67,11 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   const value=workflow();expect(value.on.pull_request_target.types).toEqual(expect.arrayContaining(['edited','reopened','closed','unlabeled','converted_to_draft']));
   const text=readFileSync('.github/workflows/ci-dedicated.yml','utf8');expect(text).toContain('dispatch fresh main-defined CI');expect(text).toContain('the root lease kills owned CPU');
  });
- it('revalidates after admission and refuses dispatch when the parent moved',async()=>{
+ it('revalidates after admission and refuses dispatch when the target branch changes',async()=>{
   const {outputs,github,pull,context,core}=await admit();vi.stubEnv('SNAPSHOT',JSON.stringify(outputs));
   await execute('Revalidate exact PR snapshot before dispatch',github,context,core);expect(outputs.current).toBe('true');
-  pull.base.sha='e'.repeat(40);delete outputs.current;
-  // A moved parent stands the controller down: no dispatch credit, neutral settlement.
+  pull.base.ref='another-parent';delete outputs.current;
+  // A retarget stands the controller down: no dispatch credit, neutral settlement.
   await execute('Revalidate exact PR snapshot before dispatch',github,context,core);
   expect(outputs.current).toBeUndefined();expect(outputs.superseded).toBe('true');
  });
@@ -222,4 +223,13 @@ it.each(['Authenticate reviewed controller pin before helper or secret use','Aut
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
  await expect(new AsyncFunction('github','context','core',step.with.script)(github,context,core)).rejects.toThrow(/branch identity/);
  expect(github.rest.repos.compareCommitsWithBasehead).not.toHaveBeenCalled();expect(core.setOutput).not.toHaveBeenCalled();
+});
+
+it.each(['head','target','draft','closed','labels'])('stands down before waiting for provenance when %s changes after admission',async kind=>{
+ const f=await admit();vi.stubEnv('SNAPSHOT',JSON.stringify(f.outputs));
+ if(kind==='head')f.pull.head.sha='e'.repeat(40);if(kind==='target')f.pull.base.ref='another-parent';if(kind==='draft')f.pull.draft=true;if(kind==='closed')f.pull.state='closed';if(kind==='labels')f.pull.labels=[];
+ f.pull.merge_commit_sha='f'.repeat(40);
+ await execute('Revalidate exact PR snapshot before dispatch',f.github,f.context,f.core);
+ expect(f.outputs.superseded).toBe('true');expect(f.outputs.current).toBeUndefined();
+ expect(f.core.setFailed).not.toHaveBeenCalled();
 });
