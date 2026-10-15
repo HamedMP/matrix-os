@@ -1,3 +1,4 @@
+import { authorizeDeletedBrainOwnerData, ownerDataScopeAvailable, type BrainOwnerAvailability } from "./owner-data.js";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { SlackBridgeEnvelopeSchema } from "@matrix-os/contracts/slack-bridge";
@@ -60,6 +61,13 @@ export class CompanyBrainService {
     return context;
   }
 
+  private async authorizeOwnerData(scopeId: string, actorId: string, action: "read" | "publish_snapshot") {
+    BrainScopeIdSchema.parse(scopeId);
+    const deleted = await authorizeDeletedBrainOwnerData({ db: this.options.db, ownerId: this.options.ownerId, scopeId,
+      actorId, action, organizationPrecondition: this.options.authority.organizationPrecondition, now: this.now });
+    return { context: deleted ?? await this.authorize(scopeId, actorId, action, true), deleted: deleted !== undefined };
+  }
+
   private async binding(context: AuthorizedCollaborationContext, db: Kysely<CompanyBrainDatabase> | Transaction<CompanyBrainDatabase>) {
     const bound = await db.selectFrom("company_brain_scopes").selectAll().where("scope_id", "=", context.scopeId).executeTakeFirst();
     if (bound && (bound.organization_id !== context.organizationId || bound.owner_id !== context.ownerId
@@ -80,10 +88,10 @@ export class CompanyBrainService {
   }
 
   /** Authority callbacks can outlive a source erasure; validate loaded content after they settle. */
-  private async assertCurrentSources(scopeId:string,rows:Array<Pick<Selectable<CompanyBrainDocumentsTable>,"source_id"|"incarnation"|"revision">>) {
+  private async assertCurrentSources(scopeId:string,rows:Array<Pick<Selectable<CompanyBrainDocumentsTable>,"source_id"|"incarnation"|"revision">>,db: Kysely<CompanyBrainDatabase> | Transaction<CompanyBrainDatabase> = this.options.db) {
     if(!rows.length) return;
     if(rows.length>1000) throw new CompanyBrainError("capacity");
-    const current=await this.options.db.selectFrom("company_brain_documents").select(["source_id","incarnation","revision"])
+    const current=await db.selectFrom("company_brain_documents").select(["source_id","incarnation","revision"])
       .where("scope_id","=",scopeId).where("source_id","in",rows.map(row=>row.source_id)).where("deleted_at","is",null).execute();
     if(rows.some(row=>!current.some(source=>source.source_id===row.source_id
       && source.incarnation===row.incarnation && source.revision===row.revision))) throw new CompanyBrainError("forbidden");
@@ -95,7 +103,7 @@ export class CompanyBrainService {
     if(evidence.membershipEpoch!==context.membershipEvidenceEpoch) throw new CompanyBrainError("forbidden");
   }
 
-  private async fenceOwner(context: AuthorizedCollaborationContext,trx: Transaction<CompanyBrainDatabase>) {
+  private async fenceOwner(context: AuthorizedCollaborationContext,trx: Transaction<CompanyBrainDatabase>,mode: BrainOwnerAvailability = "shared") {
     // Project assignment locks its parent before the Chat; all Brain writes follow that order.
     const membership=await trx.selectFrom("collaboration_scopes").selectAll()
       .where("id","=",context.membershipScopeId).forUpdate().executeTakeFirst();
@@ -103,8 +111,10 @@ export class CompanyBrainService {
       .where("id","=",context.scopeId).forUpdate().executeTakeFirst();
     const member=await trx.selectFrom("collaboration_members").selectAll().where("scope_id","=",context.membershipScopeId)
       .where("actor_id","=",context.ownerId).forUpdate().executeTakeFirst();
-    if(!scope || !membership || !member || context.actorId!==context.ownerId || scope.deleted_at || membership.deleted_at
-      || scope.lifecycle!=="shared" || membership.lifecycle!=="shared" || scope.owner_id!==context.ownerId
+    if(!scope || !membership || !member || context.actorId!==context.ownerId
+      || !ownerDataScopeAvailable(scope,mode) || !ownerDataScopeAvailable(membership,mode)
+      || (mode==="deleted" && (scope.lifecycle!=="deleted" || scope.deleted_at===null))
+      || scope.owner_type!=="personal" || membership.owner_type!=="personal" || scope.owner_id!==context.ownerId
       || scope.resource_id!==context.resourceId || scope.kind!==context.resourceKind || scope.organization_id!==context.organizationId
       || scope.authority_runtime_id!==context.authorityRuntimeId || Number(scope.authority_generation)!==context.authorityGeneration
       || membership.owner_id!==context.ownerId || membership.organization_id!==context.organizationId
@@ -115,13 +125,15 @@ export class CompanyBrainService {
       || Number(membership.auth_epoch)!==(context.membershipAuthEpoch ?? context.authEpoch)
       || member.organization_id!==context.organizationId || member.role!=="owner" || member.status!=="accepted" || member.dispositioned_at!==null
       || (member.expires_at!==null && new Date(member.expires_at).getTime()<=this.now().getTime())) throw new CompanyBrainError("forbidden");
+    return scope;
   }
   private async fenceRun(context: AuthorizedCollaborationContext,trx: Transaction<CompanyBrainDatabase>) {
     const membership=await trx.selectFrom("collaboration_scopes").selectAll().where("id","=",context.membershipScopeId).forUpdate().executeTakeFirst();
     const scope=await trx.selectFrom("collaboration_scopes").selectAll().where("id","=",context.scopeId).forUpdate().executeTakeFirst();
     // Refuse a reparented Chat before the shared fence could lock a different parent after the Chat.
     if(!scope || !membership || membership.kind!=="project" || scope.membership_mode!=="inherited"
-      || scope.parent_scope_id!==membership.id) throw new CompanyBrainError("forbidden");
+      || scope.parent_scope_id!==membership.id || scope.execution_generation===null
+      || scope.execution_eligibility===null) throw new CompanyBrainError("forbidden");
     await fenceSharedChatAuthority(trx as unknown as Transaction<OwnerCollaborationDatabase>,scope,context,context.actorId,"request_ai");
   }
 
@@ -270,15 +282,27 @@ export class CompanyBrainService {
   }
 
   async export(scopeId: string, actorId: string) {
-    const context = await this.authorize(scopeId, actorId, "read", true);
+    const { context, deleted } = await this.authorizeOwnerData(scopeId, actorId, "read");
     await this.binding(context, this.options.db);
-    const rows = await this.options.db.selectFrom("company_brain_documents").selectAll().where("scope_id", "=", scopeId)
-      .where("deleted_at", "is", null).orderBy("source_id", "asc").limit(1001).execute();
-    if (rows.length > 1000 || rows.reduce((n, row) => n + row.byte_count, 0) > MAX_SCOPE_BYTES) throw new CompanyBrainError("capacity");
-    await this.recheck(context, true);
-    await this.assertCurrentSources(scopeId,rows);
-    return { version: 1, hosting: "owner_hosted" as const, organizationId: context.organizationId, ownerId: context.ownerId,
-      scopeId, exportedAt: this.now().toISOString(), documents: rows.map((row) => ({ ...citation(row), text: row.text })) };
+    const proofs = await this.options.db.selectFrom("company_brain_documents").select(["source_id", "incarnation", "revision"])
+      .where("scope_id", "=", scopeId).where("deleted_at", "is", null).limit(1001).execute();
+    if (!deleted) await this.recheck(context, true);
+    return this.options.db.transaction().execute(async (trx) => {
+      await trx.selectFrom("company_brain_scopes").select("scope_id").where("scope_id", "=", scopeId).forUpdate().execute();
+      await this.recheckOrganization(context);
+      const scope = await this.fenceOwner(context, trx, deleted ? "deleted" : "export");
+      if (!await this.binding(context, trx) && deleted) throw new CompanyBrainError("not_found");
+      // Preserve evidence-incarnation freshness while including sources added during authorization.
+      await this.assertCurrentSources(scopeId, proofs, trx);
+      const rows = await trx.selectFrom("company_brain_documents").selectAll().where("scope_id", "=", scopeId)
+        .where("deleted_at", "is", null).orderBy("source_id", "asc").limit(1001).execute();
+      if (rows.length > 1000 || rows.reduce((n, row) => n + row.byte_count, 0) > MAX_SCOPE_BYTES) throw new CompanyBrainError("capacity");
+      const result = { version: 1, hosting: "owner_hosted" as const, organizationId: context.organizationId, ownerId: context.ownerId,
+        scopeId, exportedAt: this.now().toISOString(), documents: rows.map((row) => ({ ...citation(row), text: row.text })) };
+      await trx.insertInto("collaboration_audit").values({ scope_id: scopeId, actor_id: context.actorId, action: "brain.exported",
+        outcome: "completed", revision: Number(scope.revision), reason_code: null, created_at: result.exportedAt }).execute();
+      return result;
+    });
   }
 
   async remove(scopeId: string, actorId: string, sourceId: string, expectedRevision: number) {
@@ -302,12 +326,12 @@ export class CompanyBrainService {
   }
 
   async erase(scopeId: string, actorId: string) {
-    const context = await this.authorize(scopeId, actorId, "publish_snapshot", true);
+    const { context, deleted } = await this.authorizeOwnerData(scopeId, actorId, "publish_snapshot");
     await this.options.db.transaction().execute(async (trx) => {
       await trx.selectFrom("company_brain_scopes").select("scope_id").where("scope_id", "=", scopeId).forUpdate().execute();
       await this.recheckOrganization(context);
-      await this.fenceOwner(context,trx);
-      await this.binding(context, trx);
+      await this.fenceOwner(context,trx,deleted ? "deleted" : "shared");
+      if (!await this.binding(context, trx) && deleted) throw new CompanyBrainError("not_found");
       await trx.deleteFrom("company_brain_documents").where("scope_id", "=", scopeId).execute();
       await trx.deleteFrom("company_brain_scopes").where("scope_id", "=", scopeId).execute();
     });
