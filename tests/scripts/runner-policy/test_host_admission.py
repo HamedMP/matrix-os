@@ -31,6 +31,86 @@ class HostAdmissionContracts(unittest.TestCase):
     with patch('qualification_host.open',return_value=io.StringIO('MemTotal: 120000000 kB\n')):
      with self.assertRaises(ValueError):host.preflight()
     self.assertFalse((host.lease_dir/'started.json').exists())
+ def test_result_cap_counts_exactly_the_lease_directories_retention_manages(self):
+  from lease_outcome import HostRejection
+  # Manual evidence, look-alike names and symlinks that retention never removes must not hold slots.
+  with tempfile.TemporaryDirectory() as td:
+   results=Path(td)/'results';results.mkdir(mode=0o700)
+   for name in ('run.1','web-final.2','main-baseline','gallery-qualification-3','pr-current-4','lease.abc-old','lease.'+'0'*31):
+    (results/name).mkdir(mode=0o700)
+   (results/('lease.'+'e'*32+'.tar')).write_text('archive')
+   (results/('lease.'+'d'*32)).symlink_to(results/'run.1')
+   for i in range(31):(results/f'lease.{i:032x}').mkdir(mode=0o700)
+   host=QualificationHost(Path(td),'f'*32,envelope()['request'])
+   self.assertEqual(host.lease_dir.name,'lease.'+'f'*32)
+  with tempfile.TemporaryDirectory() as td:
+   results=Path(td)/'results';results.mkdir(mode=0o700)
+   for i in range(32):(results/f'lease.{i:032x}').mkdir(mode=0o700)
+   # A full cap stays red with a coded reason; it is never an availability fallback.
+   with self.assertRaises(HostRejection) as error:QualificationHost(Path(td),'f'*32,envelope()['request'])
+   self.assertEqual(error.exception.reason,'result_cap')
+   self.assertNotIsInstance(error.exception,InfrastructureUnavailable)
+   # A retained lease directory may always be reopened by its own lease.
+   QualificationHost(Path(td),f'{0:032x}',envelope()['request'])
+ def test_result_directory_entry_cap_is_the_same_coded_rejection(self):
+  from lease_outcome import HostRejection
+  with tempfile.TemporaryDirectory() as td:
+   results=Path(td)/'results';results.mkdir(mode=0o700)
+   for i in range(512):(results/f'manual-{i}').mkdir(mode=0o700)
+   with self.assertRaises(HostRejection) as error:QualificationHost(Path(td),'f'*32,envelope()['request'])
+   self.assertEqual(error.exception.reason,'result_cap')
+   self.assertFalse((results/('lease.'+'f'*32)).exists())
+ def test_prunable_completed_leases_free_a_full_host_before_admission(self):
+  import os,time
+  from lease_store import LeaseStore
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);results=root/'results';results.mkdir(mode=0o700);store=LeaseStore(root/'leases');old=time.time()-900000
+   for i in range(485):(results/f'manual-{i}').mkdir(mode=0o700)
+   for i in range(32):
+    lease=f'{i:032x}';path=results/('lease.'+lease);path.mkdir(mode=0o700)
+    store._write(lease,dict(status='completed',leaseId=lease,created=old,cancelled=False),create=True);os.utime(path,(old,old))
+   # 517 entries and 32 lease slots, all reclaimable: retention runs first, so admission succeeds.
+   host=QualificationHost(root,'f'*32,envelope()['request'])
+   self.assertTrue(host.lease_dir.is_dir())
+   self.assertEqual(len([p for p in results.iterdir() if p.name.startswith('lease.')]),1)
+ def test_retention_reports_usage_and_never_raises_on_a_full_directory(self):
+  from lease_retention import cleanup_results
+  with tempfile.TemporaryDirectory() as td:
+   results=Path(td)/'results';results.mkdir(mode=0o700)
+   for i in range(600):(results/f'manual-{i}').mkdir(mode=0o700)
+   (results/('lease.'+'a'*32)).mkdir(mode=0o700)
+   self.assertEqual(cleanup_results(Path(td)),(601,1))
+  with tempfile.TemporaryDirectory() as td:self.assertEqual(cleanup_results(Path(td)),(0,0))
+ def test_lease_entries_removed_after_listing_hold_no_slot(self):
+  from lease_retention import lease_directories
+  with tempfile.TemporaryDirectory() as td:
+   kept=Path(td)/('lease.'+'a'*32);kept.mkdir()
+   gone=Path(td)/('lease.'+'b'*32) # listed, then pruned by an operator before lstat
+   self.assertEqual([lease for _,lease,_ in lease_directories([gone,kept,Path(td)/'manual'])],['a'*32])
+ def test_retention_counts_exclude_entries_removed_during_the_scan(self):
+  import shutil
+  import lease_retention
+  from lease_retention import cleanup_results
+  with tempfile.TemporaryDirectory() as td:
+   results=Path(td)/'results';results.mkdir(mode=0o700)
+   for i in range(3):(results/f'manual-{i}').mkdir(mode=0o700)
+   for lease in ('a'*32,'b'*32):(results/('lease.'+lease)).mkdir(mode=0o700)
+   real=lease_retention.lease_directories
+   def operator_prunes(entries):
+    # An operator removes one lease and one manual entry after the listing.
+    shutil.rmtree(results/('lease.'+'b'*32));shutil.rmtree(results/'manual-0')
+    return real(entries)
+   with patch('lease_retention.lease_directories',operator_prunes):
+    self.assertEqual(cleanup_results(Path(td)),(3,1))
+ def test_failure_reasons_cover_every_code_the_lease_manager_sends(self):
+  import re
+  from lease_outcome import FAILURE_REASONS,REJECTIONS
+  source=(Path(__file__).resolve().parents[3]/'scripts/ci/runner/lease_manager.py').read_text()
+  sent=set(re.findall(r"\d+, '(failed|cancelled)', '(\w+)'",source))
+  declared={(kind,reason) for kind,reasons in FAILURE_REASONS.items() for reason in reasons}
+  self.assertEqual(sent|{('failed',reason) for reason in REJECTIONS},declared)
+  self.assertIn("'failed', error.reason",source)
+  self.assertLessEqual(REJECTIONS,FAILURE_REASONS['failed'])
  def host(self,td,failure):
   request=envelope()['request']
   def execute(args,**kwargs):

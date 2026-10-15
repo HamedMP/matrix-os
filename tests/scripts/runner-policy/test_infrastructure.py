@@ -24,8 +24,21 @@ class InfrastructureContracts(unittest.TestCase):
    status=manager.run();return status,pipe.records[-1],manager.child
  def test_typed_preflight_outcome_binds_request_and_proves_no_cpu(self):
   from lease_outcome import InfrastructureUnavailable
-  def unavailable():raise InfrastructureUnavailable('host_capacity_unavailable')
+  self.assert_preflight_outcome('host_capacity_unavailable')
+ def test_coded_host_rejection_stays_red_with_its_reason(self):
+  from lease_outcome import HostRejection
+  def full():raise HostRejection('result_cap')
+  status,record,child=self.run_manager(full)
+  self.assertEqual((status,record['type'],record['reason']),(70,'failed','result_cap'))
+  self.assertNotIn('stage',record);self.assertIsNone(child)
+ def test_unknown_rejection_reasons_are_refused(self):
+  from lease_outcome import HostRejection
+  with self.assertRaises(ValueError):HostRejection('see https://example.test')
+ def assert_preflight_outcome(self,reason):
+  from lease_outcome import InfrastructureUnavailable
+  def unavailable():raise InfrastructureUnavailable(reason)
   status,record,child=self.run_manager(unavailable)
+  self.assertEqual(record['reason'],reason)
   self.assertEqual(status,76);self.assertEqual(record['type'],'infrastructure-unavailable');self.assertEqual(record['stage'],'preflight')
   self.assertIs(record['workloadStarted'],False);self.assertIs(record['containerGone'],True);self.assertIsNone(child)
   self.assertEqual(record['requestDigest'],canonical_digest(envelope()['request']));self.assertNotIn(envelope()['capability'],str(record))

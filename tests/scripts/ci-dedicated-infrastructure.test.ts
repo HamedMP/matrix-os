@@ -2,7 +2,10 @@ import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
 import {createHash} from 'node:crypto';
 import {describe,expect,it,vi} from 'vitest';
-import {canonicalRequest,runDedicatedLeaseSession} from '../../scripts/ci/dedicated-ssh.mjs';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {canonicalRequest,LEASE_FAILURE_REASONS,runDedicatedLeaseSession} from '../../scripts/ci/dedicated-ssh.mjs';
+import {validInfrastructureProof} from '../../scripts/ci/dedicated-outcome.mjs';
 const request={repository:'HamedMP/matrix-os',prNumber:2454,headSha:'a'.repeat(40),baseSha:'b'.repeat(40),baseRef:'main',mergeSha:'c'.repeat(40),mergeParents:['b'.repeat(40),'a'.repeat(40)],requestingRunId:321,requestingRunAttempt:1,controllerRunId:123,controllerRunAttempt:1,controllerSha:'d'.repeat(40),controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),mode:'delegated',suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
 const envelope={protocolVersion:1,leaseId:'1'.repeat(32),capability:'2'.repeat(64),request};
 const proof={protocolVersion:1,type:'infrastructure-unavailable',leaseId:envelope.leaseId,requestDigest:createHash('sha256').update(canonicalRequest(request)).digest('hex'),status:76,reason:'queue_timeout',stage:'admission',workloadStarted:false,containerGone:true};
@@ -13,6 +16,40 @@ describe('infrastructure-only exact-source hosted fallback',()=>{
   c.stdout.write(JSON.stringify(proof)+'\n');c.emit('close',76);
   await expect(pending).resolves.toMatchObject({outcome:'infrastructure-unavailable',reason:'queue_timeout',workloadStarted:false,containerGone:true});
   expect(revalidate).toHaveBeenCalledWith(request,{unconditional:true});
+ });
+ it('accepts exactly the infrastructure outcomes the host can sign, at their stages',()=>{
+  const printed=spawnSync('python3',['-I','-B','-c',`import json,sys\nsys.path.insert(0,${JSON.stringify(fileURLToPath(new URL('../../scripts/ci/runner',import.meta.url)))})\nfrom lease_outcome import STAGES\nprint(json.dumps(STAGES))`],{encoding:'utf8',timeout:10000});
+  expect(printed.status,printed.stderr).toBe(0);
+  const host=JSON.parse(printed.stdout) as Record<string,string>;
+  expect(Object.keys(host).length).toBeGreaterThan(4);
+  const signed=(reason:string,stage:string)=>validInfrastructureProof({outcome:'infrastructure-unavailable',status:76,workloadStarted:false,containerGone:true,reason,stage});
+  for(const [reason,stage] of Object.entries(host)){
+   expect(signed(reason,stage),reason).toBe(true);
+   expect(signed(reason,stage==='admission'?'preflight':'admission'),reason).toBe(false);
+  }
+  // A full result directory stays red: it must never become a hosted fallback.
+  expect(signed('result_cap','preflight')).toBe(false);
+  expect(signed('test_failed','preflight')).toBe(false);
+ });
+ it.each([['execution_failed','failed'],['cleanup_failed','failed'],['evidence_failed','failed'],['result_cap','failed'],['lease_revoked','cancelled']])('names the host reason %s when a lease ends %s',async(reason,type)=>{
+  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});const rejected=expect(pending).rejects.toThrow(`Owned Linux qualification did not complete (${reason})`);
+  c.stdout.write(JSON.stringify({protocolVersion:1,type,leaseId:envelope.leaseId,requestDigest:proof.requestDigest,status:type==='failed'?70:75,reason})+'\n');c.emit('close',70);
+  await rejected;
+ });
+ it('repeats exactly the host reasons lease_outcome.py declares, per record type',()=>{
+  const printed=spawnSync('python3',['-I','-B','-c',`import json,sys\nsys.path.insert(0,${JSON.stringify(fileURLToPath(new URL('../../scripts/ci/runner',import.meta.url)))})\nfrom lease_outcome import FAILURE_REASONS\nprint(json.dumps({k:sorted(v) for k,v in FAILURE_REASONS.items()}))`],{encoding:'utf8',timeout:10000});
+  expect(printed.status,printed.stderr).toBe(0);
+  expect(Object.fromEntries(Object.entries(LEASE_FAILURE_REASONS).map(([k,v])=>[k,[...v].sort()]))).toEqual(JSON.parse(printed.stdout));
+ });
+ it.each([['cancelled','result_cap',75],['failed','lease_revoked',70]])('does not repeat a %s record carrying %s',async(type,reason,status)=>{
+  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});const rejected=expect(pending).rejects.toThrow(/^Owned Linux qualification did not complete$/);
+  c.stdout.write(JSON.stringify({protocolVersion:1,type,leaseId:envelope.leaseId,requestDigest:proof.requestDigest,status,reason})+'\n');c.emit('close',status);
+  await rejected;
+ });
+ it('never repeats an unknown host reason',async()=>{
+  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});const rejected=expect(pending).rejects.toThrow(/^Owned Linux qualification did not complete$/);
+  c.stdout.write(JSON.stringify({protocolVersion:1,type:'failed',leaseId:envelope.leaseId,requestDigest:proof.requestDigest,status:70,reason:'see https://example.test/x'})+'\n');c.emit('close',70);
+  await rejected;
  });
  it.each(['started','cleanup','reason','stage','digest','status','unknownKey','auth'])('does not allow %s failure to become hosted success',async kind=>{
   const c=client(),revalidate=vi.fn(async()=>{if(kind==='auth')throw new Error('source stale');}),pending=runDedicatedLeaseSession(c,envelope,{revalidate,maxMilliseconds:1000});pending.catch(()=>{});

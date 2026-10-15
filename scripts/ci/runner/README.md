@@ -142,7 +142,13 @@ Evidence under `/var/lib/matrix-ci/results/lease.<id>/evidence` is fixed-name,
 regular-only, exclusively written, bounded at 50 MiB/file and 150 MiB total;
 execution logs are 20 MiB and smoke streams 1 MiB each. Treat reports as data.
 Recurring cleanup protects active leases, rejects symlinks and retains bounded
-completed evidence. Root-only `start-ephemeral.sh` remains available for manual
+completed evidence. At most 32 `lease.<id>` result directories are retained;
+other entries (manual operator evidence) never count toward that cap.
+Retention prunes first; a new lease that would still exceed it, or a result
+directory holding 512 entries, fails red with reason `result_cap` and never
+falls back to hosted coverage. Lease directories with unknown ownership and
+manual evidence are never pruned automatically: prune
+`/var/lib/matrix-ci/results` on the host. Root-only `start-ephemeral.sh` remains available for manual
 partial diagnostics; it cannot satisfy automatic qualification.
 
 ## Availability fallback and rollout
