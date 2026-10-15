@@ -102,6 +102,87 @@ it('preserves a later same-frame original arriving after the first completed dur
   expect(await readFile(join(homePath, result.recoveryPath, 'invoice-guid-123'))).toEqual(original);
   expect(await readFile(join(homePath, result.recoveryPath, 'invoice-guid-later'))).toEqual(second);
 });
+it('bounds and cancels incomplete secondary captures before recovery listener teardown', async () => {
+  const { options, homePath, emit, original, messages, downloadPath } = await rig();
+  const second = Buffer.from('%PDF-1.4\npartial second original\n');
+  options.trigger = async () => {
+    await writeFile(join(downloadPath(), 'invoice-guid-123'), original);
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-123', url: options.sourceUrl });
+    emit('Browser.downloadProgress', { guid: 'invoice-guid-123', receivedBytes: original.length, totalBytes: original.length, state: 'completed' });
+    await writeFile(join(downloadPath(), 'invoice-guid-456'), second);
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-456', url: options.sourceUrl });
+    emit('Browser.downloadProgress', { guid: 'invoice-guid-456', receivedBytes: 10 * 1024 * 1024 + 1, totalBytes: 0, state: 'inProgress' });
+  };
+  const result = await collectChromeDownload(options);
+  expect(result).toHaveProperty('recoveryPath');
+  if (!('recoveryPath' in result)) throw new Error('Secondary capture was reported as one successful download');
+  expect(messages.filter(message => message.method === 'Browser.cancelDownload')).toEqual([
+    { method: 'Browser.cancelDownload', params: { guid: 'invoice-guid-456' } },
+  ]);
+  expect(await readFile(join(homePath, result.recoveryPath, 'invoice-guid-456'))).toEqual(second);
+});
+it('cancels a secondary capture that begins while restoring default download behavior', async () => {
+  const { options, emit, original, messages, downloadPath } = await rig();
+  const request = options.client.request; let injected = false;
+  options.client.request = async (method, params) => {
+    if (method === 'Browser.setDownloadBehavior' && params.behavior === 'default' && !injected) {
+      injected = true;
+      await writeFile(join(downloadPath(), 'invoice-guid-late-running'), '%PDF-partial');
+      emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-late-running', url: options.sourceUrl });
+      emit('Browser.downloadProgress', { guid: 'invoice-guid-late-running', receivedBytes: 12, totalBytes: 0, state: 'inProgress' });
+    }
+    return request(method, params);
+  };
+  options.trigger = async () => {
+    await writeFile(join(downloadPath(), 'invoice-guid-123'), original);
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-123', url: options.sourceUrl });
+    await writeFile(join(downloadPath(), 'invoice-guid-456'), '%PDF-partial');
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-456', url: options.sourceUrl });
+  };
+  await expect(collectChromeDownload(options)).resolves.toHaveProperty('recoveryPath');
+  expect(messages.filter(message => message.method === 'Browser.cancelDownload').map(message => message.params.guid).sort()).toEqual([
+    'invoice-guid-123', 'invoice-guid-456', 'invoice-guid-late-running',
+  ]);
+});
+it('fails closed but preserves recovery files when a secondary cancellation is not acknowledged', async () => {
+  const { options, homePath, emit, original, downloadPath } = await rig();
+  const request = options.client.request;
+  options.client.request = async (method, params) => {
+    if (method === 'Browser.cancelDownload') throw new Error('synthetic cancellation failure');
+    return request(method, params);
+  };
+  options.trigger = async () => {
+    await writeFile(join(downloadPath(), 'invoice-guid-123'), original);
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-123', url: options.sourceUrl });
+    emit('Browser.downloadProgress', { guid: 'invoice-guid-123', receivedBytes: original.length, totalBytes: original.length, state: 'completed' });
+    await writeFile(join(downloadPath(), 'invoice-guid-456'), '%PDF-partial');
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-456', url: options.sourceUrl });
+  };
+  await expect(collectChromeDownload(options)).rejects.toMatchObject({ code: 'browser_unavailable' });
+  const entries = await readdir(join(homePath, 'data/browser-artifacts'));
+  expect(entries).toHaveLength(1); expect(entries[0]).toMatch(/^recovery-[a-f0-9-]{36}$/);
+  expect(await readFile(join(homePath, 'data/browser-artifacts', entries[0]!, 'invoice-guid-456'), 'utf8')).toBe('%PDF-partial');
+});
+it('does not report recovery when an overflow capture cannot be cancelled', async () => {
+  const { options, homePath, emit, original, downloadPath } = await rig();
+  const request = options.client.request;
+  options.client.request = async (method, params) => {
+    if (method === 'Browser.cancelDownload' && params.guid === 'invoice-guid-9') throw new Error('synthetic overflow cancellation failure');
+    return request(method, params);
+  };
+  options.trigger = async () => {
+    for (let index = 1; index <= 9; index++) {
+      const capturedGuid = `invoice-guid-${index}`;
+      await writeFile(join(downloadPath(), capturedGuid), index === 1 ? original : '%PDF-partial');
+      emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: capturedGuid, url: options.sourceUrl });
+      if (index < 9) emit('Browser.downloadProgress', { guid: capturedGuid, receivedBytes: index === 1 ? original.length : 12, totalBytes: index === 1 ? original.length : 12, state: 'completed' });
+    }
+  };
+  await expect(collectChromeDownload(options)).rejects.toMatchObject({ code: 'browser_unavailable' });
+  const entries = await readdir(join(homePath, 'data/browser-artifacts'));
+  expect(entries).toHaveLength(1); expect(entries[0]).toMatch(/^recovery-[a-f0-9-]{36}$/);
+  expect(await readFile(join(homePath, 'data/browser-artifacts', entries[0]!, 'invoice-guid-9'), 'utf8')).toBe('%PDF-partial');
+});
 it('does not turn a repeated first download notification into multiple-download recovery', async () => {
   const { options, emit, trigger } = await rig();
   options.trigger = async () => {

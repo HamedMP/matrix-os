@@ -8,6 +8,7 @@ import { SharedBrowserError } from './broker.js';
 import { validateBrowserUrl, type BrowserResolver } from './url-policy.js';
 
 const MAX_BYTES = 10 * 1024 * 1024;
+const MAX_CAPTURED_DOWNLOADS = 8;
 const unavailable = () => new SharedBrowserError('browser_unavailable');
 const report = (error: unknown) => console.warn('[shared-browser] Download cleanup unavailable', error instanceof SharedBrowserError ? error.code : 'cleanup_failed');
 export type Directory = { fd: FileHandle; canonical: string; access: string };
@@ -111,8 +112,11 @@ export async function collectChromeDownload(options: {
   let directory: Directory | undefined, temporary: Directory | undefined;
   const temporaryName = `.download-${randomUUID()}`;
   let guid: string | undefined, sourceUrl = checked.sourceUrl, validated = false, complete = false, configured = false;
+  const captures = new Map<string, { receivedBytes: number; terminal: boolean; cancelRequested: boolean }>();
+  const overflowCancellations = new Set<Promise<void>>();
+  let overflowCleanupFailed = false;
   let recoveryReason: 'another_chrome_tab' | 'multiple_chrome_downloads' | undefined;
-  let recoveryRestore: Promise<unknown> | undefined;
+  let recoveryDeny: Promise<unknown> | undefined;
   let unsubscribe: (() => unknown) | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   let finish!: () => void, fail!: (error: Error) => void;
   const completion = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
@@ -122,20 +126,43 @@ export async function collectChromeDownload(options: {
   const onAbort = () => fail(unavailable());
   const recover = (reason: NonNullable<typeof recoveryReason>) => {
     recoveryReason ??= reason;
-    // Stop redirecting subsequent downloads, retaining every file already
-    // captured in this directory for owner review rather than picking one.
-    recoveryRestore ??= options.client.request('Browser.setDownloadBehavior', { behavior: 'default', eventsEnabled: false });
-    void recoveryRestore.catch(report); fail(unavailable());
+    // Deny new downloads while retaining progress events for every file already
+    // captured in this directory. Defaults return only after bounded cleanup.
+    recoveryDeny ??= options.client.request('Browser.setDownloadBehavior', { behavior: 'deny', eventsEnabled: true });
+    void recoveryDeny.catch(report); fail(unavailable());
   };
+  const cancelCaptured = async () => {
+    let failed = false;
+    const pending = [...captures].filter(([, capture]) => !capture.terminal && !capture.cancelRequested);
+    await Promise.all(pending.map(async ([capturedGuid, capture]) => {
+      capture.cancelRequested = true;
+      try { await options.client.request('Browser.cancelDownload', { guid: capturedGuid }); capture.terminal = true; }
+      catch (error) { report(error); failed = true; }
+    }));
+    return !failed;
+  };
+  const cancelOverflow = (capturedGuid: string) => {
+    if (overflowCancellations.size >= MAX_CAPTURED_DOWNLOADS) { overflowCleanupFailed = true; return; }
+    const cancellation = options.client.request('Browser.cancelDownload', { guid: capturedGuid }).then(() => undefined, error => {
+      report(error); overflowCleanupFailed = true;
+    });
+    overflowCancellations.add(cancellation);
+  };
+  const drainOverflow = async () => { await Promise.all(overflowCancellations); return !overflowCleanupFailed; };
   const begin = async (event: CdpEvent) => {
     const params = event.params;
+    if (typeof params.guid !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(params.guid)) { fail(unavailable()); return; }
+    if (!captures.has(params.guid)) {
+      if (captures.size >= MAX_CAPTURED_DOWNLOADS) { recover('multiple_chrome_downloads'); cancelOverflow(params.guid); return; }
+      captures.set(params.guid, { receivedBytes: 0, terminal: false, cancelRequested: false });
+    }
     if (params.frameId !== options.frameId) {
       // Chrome's download behavior applies to the shared default context, not
       // one target. Never read or discard another tab's captured download.
       recover('another_chrome_tab'); return;
     }
     if (guid) { if (params.guid !== guid) recover('multiple_chrome_downloads'); return; }
-    if (typeof params.guid !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(params.guid) || typeof params.url !== 'string') { fail(unavailable()); return; }
+    if (typeof params.url !== 'string') { fail(unavailable()); return; }
     guid = params.guid;
     try { sourceUrl = (await validateBrowserUrl(params.url, options.resolveHost)).sourceUrl; validated = true; if (complete) finish(); }
     catch (error) { if (!(error instanceof SharedBrowserError)) report(error); fail(unavailable()); }
@@ -145,10 +172,21 @@ export async function collectChromeDownload(options: {
     temporary = await childDirectory(directory, temporaryName, true);
     unsubscribe = options.client.onEvent(event => {
       if (event.method === 'Browser.downloadWillBegin') void begin(event);
-      if (event.method === 'Browser.downloadProgress' && event.params.guid === guid) {
+      if (event.method === 'Browser.downloadProgress' && typeof event.params.guid === 'string' && captures.has(event.params.guid)) {
         const { receivedBytes, totalBytes, state } = event.params;
-        if (![receivedBytes, totalBytes].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= MAX_BYTES) || state === 'canceled') fail(unavailable());
-        else if (state === 'completed') { complete = true; if (validated) finish(); }
+        const capture = captures.get(event.params.guid)!;
+        if (![receivedBytes, totalBytes].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= MAX_BYTES)) {
+          if (captures.size > 1 || recoveryReason) recover('multiple_chrome_downloads'); else fail(unavailable());
+        }
+        else {
+          capture.receivedBytes = receivedBytes;
+          if ([...captures.values()].reduce((sum, item) => sum + item.receivedBytes, 0) > MAX_BYTES) recover('multiple_chrome_downloads');
+          if (state === 'canceled') { capture.terminal = true; fail(unavailable()); }
+          else if (state === 'completed') {
+            capture.terminal = true;
+            if (event.params.guid === guid) { complete = true; if (validated) finish(); }
+          }
+        }
       }
     });
     options.signal.addEventListener('abort', onAbort, { once: true });
@@ -171,10 +209,20 @@ export async function collectChromeDownload(options: {
     let restoreFailed = false;
     if (configured) {
       try {
-        await recoveryRestore;
+        await recoveryDeny;
+        if (recoveryReason) {
+          const overflowDrained = await drainOverflow();
+          const capturedDrained = await cancelCaptured();
+          if (!overflowDrained || !capturedDrained) restoreFailed = true;
+        }
         await options.client.request('Browser.setDownloadBehavior', { behavior: 'default', eventsEnabled: false });
         // A second begin event can arrive while the final reset is awaiting its ACK.
-        await recoveryRestore;
+        await recoveryDeny;
+        if (recoveryReason) {
+          const overflowDrained = await drainOverflow();
+          const capturedDrained = await cancelCaptured();
+          if (!overflowDrained || !capturedDrained) restoreFailed = true;
+        }
       }
       catch (error) { report(error); restoreFailed = true; }
     }
