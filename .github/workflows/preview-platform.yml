@@ -1722,7 +1722,7 @@ jobs:
           disarm="$(jq -cn --arg unit "${guard_unit}.timer" '{command:["/usr/bin/sudo","/usr/bin/systemctl","stop",$unit],timeoutMs:10000}')"
           send_once "$disarm" || echo "::warning::The guard timer remains armed but will preserve the committed connection."
           # Publish only after the VM can no longer roll back behind an active route.
-          SLACK_PREVIEW_DATABASE_URL="$preview_db" node scripts/slack-preview-runtime.mjs register
+          SLACK_PREVIEW_DATABASE_URL="$preview_db" PREVIEW_HANDLE="$handle" node scripts/slack-preview-runtime.mjs register
           # Registration or enrollment failures leave a committed binding for retry;
           # they never restore the VM while the database may already route to it.
           PREVIEW_DATABASE_URL="$preview_db" PREVIEW_HANDLE="$handle" PREVIEW_MACHINE_ID="$PREVIEW_MACHINE_ID" \
