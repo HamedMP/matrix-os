@@ -28,6 +28,7 @@ import {
   type AgentRuntimeController,
 } from "./runtime-controller.js";
 import { readAgentConfig, readConfig } from "./runtime-files.js";
+import { createRuntimeObservation } from "./runtime-observation.js";
 import type { MessagingRuntimeAdapter } from "./runtime-types.js";
 import type {
   AgentRuntimeSettingsSnapshot,
@@ -418,15 +419,27 @@ export function createAgentRuntimeServices(options: {
     },
   });
   const adapters = { hermes, openclaw };
-  const source = createUnifiedRuntimeSource({
+  const observation = createRuntimeObservation(createUnifiedRuntimeSource({
     homePath: options.homePath,
     adapters,
     hostControl,
-  });
-  const controller = createAgentRuntimeController({
+  }));
+  const runtimeController = createAgentRuntimeController({
     homePath: options.homePath,
     adapters,
     timeoutMs: 75_000,
   });
-  return { source, controller, systemRuntimeSources: { hermes: hermesSource } };
+  const controller: AgentRuntimeController = {
+    update: update => observation.mutate(() => runtimeController.update(update)),
+    updateKernel: patch => observation.mutate(() => runtimeController.updateKernel(patch)),
+    reconcile: () => observation.mutate(() => runtimeController.reconcile()),
+    async close() {
+      try {
+        await observation.close();
+      } finally {
+        await runtimeController.close();
+      }
+    },
+  };
+  return { source: observation.source, controller, systemRuntimeSources: { hermes: hermesSource } };
 }
