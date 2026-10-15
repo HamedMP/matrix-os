@@ -77,7 +77,7 @@ export function buildBotSystemPrompt(input: {
     `Services this job uses:\n${input.audience === "group" ? "Only services explicitly granted for this shared Chat are available." : integrationLines(input.recipe)}`,
     `Expected result:\n${input.recipe.output}`,
   ];
-  if (input.recipe.identitySource === "owner_soul" && input.ownerSoul) base.push(ownerPersonalitySection(input.ownerSoul));
+  if (input.audience !== "group" && input.recipe.identitySource === "owner_soul" && input.ownerSoul) base.push(ownerPersonalitySection(input.ownerSoul));
   if (estimatePromptTokens(base.join("\n\n")) > BOT_SYSTEM_PROMPT_TOKEN_BUDGET) throw new BotSystemPromptError("too_large");
   // Memory arrives in priority order; the lowest-priority lines give way to the budget.
   const memory = input.audience === "group" ? [] : [...(input.memory ?? [])];

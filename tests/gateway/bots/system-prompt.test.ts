@@ -84,14 +84,14 @@ describe("bot system prompt", () => {
     expect(buildBotSystemPrompt({ botName: "Rick", instructions: writing.instructions, recipe: writing, ownerSoul, now: NOW })).not.toContain(ownerSoul);
   });
 
-  it("uses shared audience rules and drops private memory even when supplied by mistake", () => {
-    const recipe = { integrations: [], output: "Answer with cited company evidence" };
+  it("uses shared audience rules and drops private memory and personality even when supplied by mistake", () => {
+    const recipe = { integrations: [], output: "Answer with cited company evidence", identitySource: "owner_soul" as const };
     const prompt = buildBotSystemPrompt({ botName: "Company Brain", instructions: "Answer the company question", recipe,
-      now: NOW, audience: "group", memory: ["PRIVATE OWNER PREFERENCE"] });
+      now: NOW, audience: "group", memory: ["PRIVATE OWNER PREFERENCE"], ownerSoul: "PRIVATE OWNER PERSONALITY" });
     expect(prompt).toContain("shared company thread");
     expect(prompt).toContain("ask the question directly in your reply");
     expect(prompt).toContain("Cite the provided evidence");
-    for (const privateText of ["private chat", "PRIVATE OWNER PREFERENCE", "question interaction", "connection request", "remember tool", "files in your workspace"]) {
+    for (const privateText of ["private chat", "PRIVATE OWNER PREFERENCE", "PRIVATE OWNER PERSONALITY", "question interaction", "connection request", "remember tool", "files in your workspace"]) {
       expect(prompt).not.toContain(privateText);
     }
     expect(prompt).toContain("Only explicit grants for this shared Chat authorize integration access");
