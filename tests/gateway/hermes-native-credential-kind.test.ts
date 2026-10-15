@@ -1,6 +1,6 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { chmod, mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, writeFile, rm, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -25,7 +25,7 @@ function evaluate(extra='') {
 }
 describe('Hermes credential kind metadata',()=>{
  it('resolves the managed bash launcher and rejects a modified launcher', async()=>{
-  const home=await mkdtemp(join(tmpdir(),'matrix-hermes-reader-'));
+  const home=await mkdtemp(join(await realpath(tmpdir()),'matrix-hermes-reader-'));
   try {
    const root=join(home,'.hermes/hermes-agent');
    await mkdir(join(home,'.local/bin'),{recursive:true});
