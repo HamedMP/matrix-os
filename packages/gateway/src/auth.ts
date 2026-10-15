@@ -152,6 +152,16 @@ function readPlatformVerifiedUserId(c: Context, token: string): string | undefin
   return timingSafeCompare(proof, expected) ? userId : undefined;
 }
 
+function isPreviewOwnerApiPath(path: string, webSocket: boolean): boolean {
+  try {
+    const decoded = decodeURIComponent(path);
+    return !decoded.startsWith("/api/internal") && (decoded.startsWith("/api/") || webSocket);
+  } catch (error: unknown) {
+    if (!(error instanceof URIError)) throw error;
+    return false;
+  }
+}
+
 function isPreviewTerminalPath(path: string): boolean {
   return path.startsWith("/api/terminal/") || path === "/ws/terminal/tab";
 }
@@ -224,11 +234,11 @@ export function authMiddleware(
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
 
   return async (c, next) => {
-    const setTerminalAccess = (actorId: string) => {
-      if (!token || !isPreviewTerminalPath(c.req.path)) return;
+    const setTerminalAccess = (actorId: string, accessKey = token) => {
+      if (!accessKey || !isPreviewTerminalPath(c.req.path)) return;
       const ownerId = verifyPreviewTerminalAccess({
         value: c.req.header(PREVIEW_TERMINAL_ACCESS_HEADER),
-        key: token,
+        key: accessKey,
         actorId,
         configuredOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID],
         runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
@@ -430,6 +440,26 @@ export function authMiddleware(
         }
         return unauthorized(c);
       }
+    }
+
+    // A proven disposable home may trust its isolated preview platform for
+    // owner APIs without replacing production's runtime/control credential.
+    const previewToken = process.env.MATRIX_PREVIEW_PLATFORM_AUTH_TOKEN;
+    if (process.env.MATRIX_PREVIEW_RUNTIME === "true"
+      && /^pr-[1-9][0-9]{0,8}$/.test(expectedHandle ?? "") && expectedRuntimeSlot === expectedHandle
+      && previewToken && /^[a-f0-9]{64}$/.test(previewToken)
+      && presentedToken && timingSafeCompare(presentedToken, previewToken)
+      && isPreviewOwnerApiPath(normalizedPath, isWsUpgrade)) {
+      const actor = readPlatformVerifiedUserId(c, previewToken);
+      const owners = [...new Set([process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(Boolean))];
+      if (!actor || owners.length !== 1 || actor !== owners[0]) {
+        if (!rateLimiter.check(getClientIp(c))) return tooManyRequests(c);
+        return unauthorized(c);
+      }
+      markVerifiedRuntimeBearer(c);
+      setPlatformVerifiedPrincipal(c, actor);
+      setTerminalAccess(actor, previewToken);
+      return nextWithReady(c, next);
     }
 
     const legacyHeaderOk =
