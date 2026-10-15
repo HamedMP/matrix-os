@@ -14,6 +14,7 @@ No endpoint or auth change. Relay `/ready` requires the existing control credent
 
 - Regression: a valid response at 21.4s stays pending past 8s and succeeds once; a stalled request aborts at 25s.
 - Gateway shared observations terminate at 31s; a later read can recover and a late response cannot restore revoked readiness.
+- Canonical V3 and Settings share the original 31s native observation deadline; explicit shorter caller budgets and queue time still count. Native discovery stays capped at 6.5s, Hermes renewal at 6.5s and Pi/OpenCode renewal at 1s within that deadline. Fresh metadata receives only its existing five-second lifetime; cancellation, revoked credentials and late completions never restore expired proof.
 - Existing expired/future/missing policy and funding, stale receipts and renderer cancellation checks continue passing.
 - Release together through reviewed Relay, Platform, runtime and Electron artifacts. Older clients retain a 15s deadline until updated; warm cached reads may succeed but do not establish cold-read compatibility.
 - UI behavior uses shared contracts for Web Canvas, Web Desktop, Electron Desktop and applicable mobile surfaces. No layout or copy changes. Capture live slow-read validation on a reviewed test runtime before production rollout.
