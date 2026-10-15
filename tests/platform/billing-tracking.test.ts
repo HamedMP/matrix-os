@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkoutTrackingEvent, invoiceTrackingEvent, withCheckoutSessionId } from '../../packages/platform/src/billing/tracking-events.js';
+import { checkoutTrackingEvent, invoiceTrackingEvent, invoiceAcquisitionIdentity, withCheckoutSessionId } from '../../packages/platform/src/billing/tracking-events.js';
 
 export const trackingMetadata = {
   matrix_plan_slug: 'matrix_builder', matrix_billing_interval: 'monthly', matrix_trial_days: '3',
@@ -19,6 +19,9 @@ export function invoice(overrides: Record<string, unknown> = {}) {
 }
 
 describe('verified billing tracking', () => {
+  it.each([{ amount_paid: 0, total: 0 }, { livemode: false }, { livemode: undefined }])('does not consume acquisition eligibility for trials or test payments: %j', overrides => {
+    expect(invoiceAcquisitionIdentity(invoice(overrides))).toBeNull();
+  });
   it.each([false, undefined])('excludes test and unknown payment modes from all acquisition events: %j', livemode => {
     const plan = { planSlug: 'matrix_builder', interval: 'monthly' } as const;
     expect(checkoutTrackingEvent(checkout({ livemode }), plan)).toBeNull();

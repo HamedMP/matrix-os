@@ -31,6 +31,26 @@ describe('billing tracking lifecycle isolation', () => {
   }
   const request = { method: 'POST', headers: { 'stripe-signature': 'signed' }, body: '{}' };
 
+  it('does not turn a renewal into an acquisition after an excluded first positive payment', async () => {
+    const constructWebhookEvent = vi.fn()
+      .mockReturnValueOnce({ id: 'evt_partial', type: 'invoice.paid', created: epoch,
+        data: { object: { ...invoice, amount_paid: 5000 } } })
+      .mockReturnValueOnce({ id: 'evt_renewal', type: 'invoice.paid', created: epoch + 2592000,
+        data: { object: { ...invoice, id: 'in_renewal' } } });
+    const retrieveTrackingInvoice = vi.fn().mockResolvedValue({ ...invoice, id: 'in_renewal' });
+    const send = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', send);
+    const app = webhook({ constructWebhookEvent, retrieveTrackingInvoice }, {
+      GOOGLE_ANALYTICS_MEASUREMENT_ID: 'G-TEST', GOOGLE_ANALYTICS_API_SECRET: 'test',
+    });
+    expect((await app.request('/billing/webhooks/stripe', request)).status).toBe(200);
+    expect((await app.request('/billing/webhooks/stripe', request)).status).toBe(200);
+    expect(await db.executor.selectFrom('billing_google_purchases').selectAll().execute())
+      .toEqual([expect.objectContaining({ transaction_id: 'in_recovered', payload: null, sent_at: null })]);
+    expect(retrieveTrackingInvoice).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('does not start background database work when constructing an HTTP app', async () => {
     const transaction = vi.spyOn(db, 'transaction');
     const app = createApp({ db, orchestrator: stubOrchestrator(), env: {} });

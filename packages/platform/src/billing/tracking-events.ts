@@ -87,9 +87,20 @@ export function checkoutTrackingEvent(value: unknown, plan: { planSlug: MatrixBi
     currency: session.currency, presentment: session.presentment_details, ...plan, trial });
 }
 
-const InvoiceSchema = z.object({ id, livemode: z.literal(true), status: z.literal('paid'), billing_reason: z.enum(['subscription_create', 'subscription_cycle']),
-  amount_paid: minor.positive(), total: minor.positive(), currency, total_taxes: z.array(z.object({ amount: minor })).nullish(),
+const InvoiceIdentitySchema = z.object({ id, livemode: z.literal(true), status: z.literal('paid'), billing_reason: z.enum(['subscription_create', 'subscription_cycle']),
+  amount_paid: minor.positive(), total: minor.positive(), currency,
   parent: z.object({ subscription_details: z.object({ subscription: expandedId, metadata: selection }) }),
+});
+export interface InvoiceAcquisitionIdentity { subscriptionId: string; transactionId: string }
+/** Remember the first positive payment even when its allocation cannot be measured. */
+export function invoiceAcquisitionIdentity(value: unknown): InvoiceAcquisitionIdentity | null {
+  const parsed = InvoiceIdentitySchema.safeParse(value);
+  if (!parsed.success || Number(parsed.data.parent.subscription_details.metadata.matrix_google_expires_at) <= Date.now()) return null;
+  const subscription = parsed.data.parent.subscription_details.subscription;
+  return { subscriptionId: typeof subscription === 'string' ? subscription : subscription.id, transactionId: parsed.data.id };
+}
+const InvoiceSchema = InvoiceIdentitySchema.extend({
+  total_taxes: z.array(z.object({ amount: minor })).nullish(),
   payments: z.object({ data: z.array(z.object({ status: z.string(), payment: z.object({ payment_intent: z.union([z.string(), z.object({
     amount_received: minor, currency, presentment_details: presentment,
   })]).nullish() }) })) }).optional(),

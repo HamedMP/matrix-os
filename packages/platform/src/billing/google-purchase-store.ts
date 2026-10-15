@@ -1,16 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import type { PlatformDB } from '../db.js';
-import type { InvoiceTrackingPurchase } from './tracking-events.js';
+import type { InvoiceTrackingPurchase, InvoiceAcquisitionIdentity } from './tracking-events.js';
 
 export interface GooglePurchaseSender { send(purchase: InvoiceTrackingPurchase): Promise<'sent' | 'disabled' | 'skipped'> }
 
 export async function enqueueGooglePurchase(db: PlatformDB, purchase: InvoiceTrackingPurchase,
   at = new Date().toISOString(), clerkUserId = ''): Promise<void> {
+  await insertGoogleAcquisition(db, { subscriptionId: purchase.subscriptionId,
+    transactionId: purchase.event.ecommerce.transaction_id }, JSON.stringify(purchase), at, clerkUserId);
+}
+
+export async function rememberSkippedGoogleAcquisition(db: PlatformDB, identity: InvoiceAcquisitionIdentity,
+  at: string, clerkUserId: string): Promise<void> {
+  await insertGoogleAcquisition(db, identity, null, at, clerkUserId);
+}
+
+async function insertGoogleAcquisition(db: PlatformDB, identity: InvoiceAcquisitionIdentity,
+  payload: string | null, at: string, clerkUserId: string): Promise<void> {
   await db.ready;
   // One acquisition per subscription, regardless of webhook ID, delivery retries or invoice renewals.
   await db.executor.insertInto('billing_google_purchases').values({
-    subscription_id: purchase.subscriptionId, transaction_id: purchase.event.ecommerce.transaction_id,
-    clerk_user_id: clerkUserId, payload: JSON.stringify(purchase), created_at: at, sent_at: null,
+    subscription_id: identity.subscriptionId, transaction_id: identity.transactionId,
+    clerk_user_id: clerkUserId, payload, created_at: at, sent_at: null,
     attempts: 0, available_at: at, lease_until: null, lease_token: null,
   }).onConflict(oc => oc.doNothing()).execute();
 }
