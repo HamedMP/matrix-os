@@ -80,6 +80,10 @@ class EpochTests(unittest.TestCase):
         self.apply();self.path.write_bytes(self.path.read_bytes().replace(b'MATRIX_HANDLE=test-main',b'MATRIX_HANDLE=other-main'))
         with self.assertRaises(Exception):self.rollback()
 
+    def test_rollback_refuses_changed_sync_credential(self):
+        self.apply();self.path.write_bytes(self.path.read_bytes().replace(b'd'*64,b'e'*64))
+        with self.assertRaises(Exception):self.rollback()
+
     def test_rollback_preserves_unrelated_later_edit(self):
         self.apply();self.path.write_bytes(self.path.read_bytes()+b'LATER=preserved\n')
         self.assertEqual(self.rollback(),self.old+b'LATER=preserved\n')

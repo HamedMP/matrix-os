@@ -49,6 +49,13 @@ def resolve_host_epoch(values, sync_token, source):
     return validate_epoch_response(response, expected, source, time.time()), (response, expected)
 
 
+def epoch_sync_token(data):
+    tokens = re.findall(rb'^MATRIX_SYNC_RUNTIME_TOKEN=([a-f0-9]{64})$', data, re.MULTILINE)
+    assignments = re.findall(rb'^\s*(?:export\s+)?MATRIX_SYNC_RUNTIME_TOKEN\s*=', data, re.MULTILINE)
+    require(len(tokens) == 1 and len(assignments) == 1)
+    return tokens[0]
+
+
 def epoch_rollback_image(repair, directory, name, data, values, identity, uid, gid, info):
     """Validate the complete absent-epoch baseline, even after unrelated edits."""
     raw, _ = repair.read_file(directory, name, uid, gid, 0o600, 131072)
@@ -61,6 +68,7 @@ def epoch_rollback_image(repair, directory, name, data, values, identity, uid, g
     original = base64.b64decode(journal['original'], validate=True)
     require(len(original) <= repair.LIMIT and digest(original) == journal['beforeSha256'])
     _, before, lines = repair.parse(original)
+    require(epoch_sync_token(original) == epoch_sync_token(data))
     require(all(values.get(key) == str(identity[field]) for field, key in repair.IDENTITY.items() if field != 'epoch'))
     require(EPOCH_KEY not in before and all(before.get(key) == str(identity[field])
             for field, key in repair.IDENTITY.items() if field != 'epoch'))
