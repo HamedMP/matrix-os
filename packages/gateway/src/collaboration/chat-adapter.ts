@@ -21,7 +21,7 @@ import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } 
 import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "./database.js";
 import { CollaborationDiscussionError } from "./discussion-error.js";
 import { CollaborationRepositoryError } from "./repository.js";
-import { fenceSharedChatAuthority } from "./shared-chat-authority.js";
+import { lockSharedChatMembershipScope, fenceSharedChatAuthority } from "./shared-chat-authority.js";
 import { authorizedSharedChatBindingMatches } from "./shared-chat-binding.js";
 import { redactAssistantParts, redactSharedAssistantText } from "../chat/safe-activity-projection.js";
 
@@ -490,6 +490,7 @@ async function lockScope(
   trx: Transaction<OwnerCollaborationDatabase>,
   context: AuthorizedCollaborationContext,
 ): Promise<Selectable<CollaborationScopesTable>> {
+  await lockSharedChatMembershipScope(trx, context);
   const scope = await trx.selectFrom("collaboration_scopes").selectAll()
     .where("id", "=", context.scopeId)
     .where("kind", "=", "chat")
