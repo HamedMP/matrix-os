@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
@@ -63,6 +64,15 @@ suite("Electron Getting started overlay coexistence", () => {
     await page.keyboard.press("Enter");
     await card.waitFor();
     await menu.waitFor({ state: "hidden" });
+  });
+
+  it("dismisses the checklist through Help before unrelated actions", async () => {
+    await dismissGettingStartedOnInteraction(page);
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await page.getByRole("dialog", { name: "Command palette", exact: true }).waitFor();
+    expect(await page.getByRole("dialog", { name: "Getting started", exact: true }).isVisible()).toBe(false);
+    await page.keyboard.press("Escape");
+    await page.removeLocatorHandler(page.getByRole("dialog", { name: "Getting started", exact: true }));
   });
 
   it("restores the checklist across both presentations without taking launcher or palette focus", async () => {
