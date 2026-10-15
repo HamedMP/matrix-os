@@ -134,7 +134,10 @@ export function createSharedBrowserBroker(options: {
           if(options.exportArtifacts)try{value.collectionManifest=await options.exportArtifacts(row.collectionId,[...row.artifacts]);}
           catch(error){report(error);value.success=false;value.content="The original document was saved, but its collection manifest needs owner review before continuing.";}
         }
-        if(registered(binding,signal)!==row)throw new SharedBrowserError("run_unavailable");
+        // A completed recovery handoff must reach owner control even when the
+        // individual action was cancelled. The run registration still has to
+        // be live; only the already-finished action signal is ignored here.
+        if(registered(binding,value.success||!value.handoffRequested?signal:undefined)!==row)throw new SharedBrowserError("run_unavailable");
         if(phase==="agent")needsObservation=parsed.data.action!=="snapshot" || !value.success || !value.observationId;return value;
       })();
       running=request;
@@ -157,7 +160,10 @@ export function createSharedBrowserBroker(options: {
       }
       // A credential or download-recovery handoff must finish controller cleanup
       // before acknowledging owner input; do not drain our own running promise.
-      if(!value.success && active===row && phase==="agent")await control(options.ownerId,{action:"takeover"});
+      if(!value.success && active===row && phase==="agent"){
+        await control(options.ownerId,{action:"takeover"});
+        if(signal.aborted)throw new SharedBrowserError("run_unavailable");
+      }
       return value;
     }).finally(()=>{queued--;});
     actionTail=result.then(()=>{},report);return result;

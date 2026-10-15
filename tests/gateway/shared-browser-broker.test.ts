@@ -54,6 +54,21 @@ describe("shared Chrome broker ownership and takeover",()=>{
     expect(s.broker.status().needsObservation).toBe(true);expect(s.gates).toEqual([false,true]);
     expect(s.driver.detach).toHaveBeenCalledOnce();await s.broker.close();
   });
+  it("finishes download recovery handoff before propagating action cancellation",async()=>{
+    const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);
+    const action=new AbortController();
+    s.driver.execute.mockImplementationOnce(async()=>{
+      action.abort();
+      return{success:false,handoffRequested:true,content:"Owner review required."};
+    });
+    const recovery=s.broker.execute(binding,{action:"download",observationId:"obs-1",ref:"r1",documentId:"INV-1"},action.signal).catch(error=>error);
+    const queued=s.broker.execute(binding,{action:"click",observationId:"obs-1",ref:"r1"},s.controller.signal).catch(error=>error);
+    expect((await recovery).code).toBe("run_unavailable");
+    expect((await queued).code).toBe("browser_changed");
+    expect(s.broker.status()).toMatchObject({phase:"human",needsObservation:true});
+    expect(s.driver.execute.mock.calls.map(call=>(call[0] as {action:string}).action)).toEqual(["snapshot","download"]);
+    expect(s.driver.detach).toHaveBeenCalledOnce();expect(s.gates).toEqual([false,true]);await s.broker.close();
+  });
   it("binds a native capability to one registered owner/chat/run",async()=>{
     const s=setup(); expect(s.broker.resolveCapability(s.grant.token)).toEqual(binding);
     expect(()=>s.broker.openRun({...binding,ownerId:"foreign",runId:"foreign"},new AbortController().signal)).toThrow();
