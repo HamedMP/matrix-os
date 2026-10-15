@@ -9,11 +9,11 @@ import { restrictedHermesPythonArguments } from "./jev-hermes-python.js";
 import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
 import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { createHermesInputController } from "./hermes-input-control.js";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { CanonicalChatModelReferenceSchema } from "@matrix-os/contracts";
-import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
+import { buildHermesNativeEnvironment } from "../hermes-native-environment.js";
 import { createHermesSelectedRouteGate } from "./hermes-selected-route.js";
 import { issueHermesIntegrationCapability, resolveHermesIntegrationCapability } from "./hermes-integration-capability.js";
 import { jevScopeForRun } from "./jev-run-scope.js";
@@ -610,7 +610,6 @@ export function createHermesChatProviderAdapter(options: {
     };
 
     const hermesRoot = join(options.homePath, ".hermes", "hermes-agent");
-    const existingPythonPath = process.env.PYTHONPATH?.trim();
     const credentials = jevScope ? await options.jev!.resolveCredentials(input.owner.ownerId, input.selection, input.signal) : undefined;
     if (credentials) await options.jev!.verifyRuntime(hermesRoot, input.signal, credentials.apiMode);
     const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId, jevScope);
@@ -628,16 +627,15 @@ export function createHermesChatProviderAdapter(options: {
       command: join(hermesRoot, "venv", "bin", "python"),
       args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache")) : browserRun?.args ?? ["-u", "-m", "tui_gateway.entry"],
       cwd: executionCwd,
-      inheritEnvironment: !restrictedProfile,
+      inheritEnvironment: false,
       env: {
-        ...(restrictedProfile?.env ?? buildAgentRuntimeEnvironment(options.homePath)),
+        ...(restrictedProfile?.env ?? buildHermesNativeEnvironment(options.homePath, hermesRoot)),
         ...browserRun?.env,
         // The MCP child receives a short-lived bearer scoped to this run's
         // authenticated actor and only the integrations/Jev Gateway routes.
         MATRIX_CLERK_USER_ID: input.owner.ownerId,
         MATRIX_AGENT_INTEGRATIONS_TOKEN: integrationCapability.token,
         HERMES_PYTHON_SRC_ROOT: hermesRoot,
-        ...(!restrictedProfile ? { PYTHONPATH: existingPythonPath ? `${hermesRoot}${delimiter}${existingPythonPath}` : hermesRoot } : {}),
         PYTHONUNBUFFERED: "1",
         // This adapter owns one finite turn, not a persistent notification consumer.
         // Hermes joins parallel children inline instead of detaching their results.

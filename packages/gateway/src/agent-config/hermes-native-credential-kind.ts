@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod/v4';
-import { buildAgentRuntimeEnvironment } from '../agent-launcher.js';
+import { buildHermesNativeEnvironment } from '../hermes-native-environment.js';
 
 const Observation = z.object({ providerId: z.literal('anthropic'), modelId: z.string().min(1).max(160),
   credentialKind: z.literal('api_key') }).strict();
@@ -138,9 +138,7 @@ export function createHermesNativeCredentialKindReader(input: {
     if (!pending) pending = (async () => {
       try {
         const root = await (input.resolveRoot ?? resolveHermesNativeRoot)(homePath);
-        const environment = buildAgentRuntimeEnvironment(homePath);
-        const env = Object.fromEntries(Object.entries(environment).filter(([key]) =>
-          ['HOME', 'MATRIX_HOME', 'PATH', 'LANG', 'LC_ALL', 'TMPDIR', 'MATRIX_NODE_PREFIX'].includes(key)));
+        const env = buildHermesNativeEnvironment(homePath, root);
         const { stdout } = await promisify(input.execute ?? execFile)(join(root, 'venv/bin/python'), ['-c', HERMES_NATIVE_CREDENTIAL_KIND_SCRIPT], {
           cwd: root, env: { ...env, HERMES_HOME: join(homePath, '.hermes') },
           timeout: 1000, maxBuffer: 1024, killSignal: 'SIGKILL', windowsHide: true,
