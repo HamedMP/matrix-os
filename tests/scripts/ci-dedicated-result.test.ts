@@ -147,6 +147,12 @@ describe('stack lifecycle and retry evidence',()=>{
     github.rest.actions.getWorkflowRun.mockImplementation(async ({run_id}: {run_id:number})=>({data:{...run,id:run_id,conclusion:run_id===124?'failure':'success'}}));
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow(/failed/);
   });
+  it('ignores a completed successful stand-down controller with no result check',async()=>{
+    const {github,run}=fixture();const stoodDown={...run,id:124,status:'completed',conclusion:'success'};
+    github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[stoodDown,run]}});
+    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?stoodDown:run}));
+    await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
+  });
   it('accepts only the current rerun attempt and its immutable artifact',async()=>{
     const {github,check,run}=fixture({controllerAttempt:2});run.run_attempt=2;pinArtifactFixture(github,check,run);
     github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt2`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});

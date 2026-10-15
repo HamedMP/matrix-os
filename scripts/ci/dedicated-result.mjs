@@ -58,8 +58,8 @@ function trustedController(run, expected, workflow) {
   return positiveId(run.run_attempt)&&authenticatedControllerRun(run,{owner:expected.owner,repo:expected.repo},expected,workflow,expected.headRef);
 }
 
-async function newestRequest(github,repo,expected,workflow){
- return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow),{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef});
+async function newestRequest(github,repo,expected,workflow,beforeId){
+ return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow)&&(!beforeId||run.id<beforeId),{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef});
 }
 
 async function newestController(github, repo, expected, workflow, latest) {
@@ -85,6 +85,18 @@ async function newestController(github, repo, expected, workflow, latest) {
   if(!trustedController(run,expected,workflow) || run.id!==latest.id ||
       run.run_attempt!==selected.evidence.controllerAttempt)return undefined;
   return {...selected,run};
+}
+
+async function newestResultController(github,repo,expected,workflow){
+ let latest=await newestRequest(github,repo,expected,workflow);
+ for(let skipped=0;latest;skipped++){
+  if(latest.status==='completed'&&latest.conclusion!=='success')return{latest};
+  const selected=await newestController(github,repo,expected,workflow,latest);
+  if(selected||latest.status!=='completed')return{latest,selected};
+  if(skipped>=9)throw new Error('Completed controller history without result exceeds bounded coverage');
+  latest=await newestRequest(github,repo,expected,workflow,latest.id);
+ }
+ return{};
 }
 
 export async function waitForDedicatedResult(github,expected,options={}) {
@@ -122,11 +134,10 @@ async function waitWithinDeadline(github, expected, options={}) {
   for(let attempt=0;attempt<maxAttempts;attempt++) {
     const currentSource=await verifyCurrentDedicatedSource(github,repo,expected);
     await verifyMainRequester(currentSource);
-    const latest=await newestRequest(github,repo,expected,workflow);
+    const {latest,selected}=await newestResultController(github,repo,expected,workflow);
     if(latest?.status==='completed' && latest.conclusion!=='success') {
       throw new Error('Verified dedicated Linux qualification failed');
     }
-    const selected=await newestController(github,repo,expected,workflow,latest);
     if(!selected&&options.admissionAttempts&&attempt+1>=options.admissionAttempts)throw new Error('No Linux controller admitted within the admission window');
     if(selected?.run.status==='completed') {
       const {check,evidence,run}=selected;
@@ -145,12 +156,12 @@ async function waitWithinDeadline(github, expected, options={}) {
             if(dispatch.conclusion!=='success')throw new Error('Verified dedicated Linux qualification failed');
             const receipt=await downloadControllerReceipt(github,repo,provenance);
             const infrastructure=verifyControllerArtifact(receipt,evidence,expected,run,currentSource.mergeParents,check);
-            const current=await newestRequest(github,repo,expected,workflow);
+            const {latest:current,selected:currentSelected}=await newestResultController(github,repo,expected,workflow);
             if(current?.status==='completed' && current.conclusion!=='success') {
               throw new Error('Verified dedicated Linux qualification failed');
             }
             // A retry may have been queued while artifacts/jobs were fetched.
-            if(current?.id===run.id && current.run_attempt===run.run_attempt &&
+            if(currentSelected?.run.id===run.id && current?.id===run.id && current.run_attempt===run.run_attempt &&
                 current.head_sha===run.head_sha && current.status==='completed' && current.conclusion==='success') {
               await verifyMainRequester(await verifyCurrentDedicatedSource(github,repo,expected));
               options.metrics?.(api.metrics());
