@@ -15,6 +15,7 @@ import {
   SCOPE_RUNTIME_BOT_ADAPTER_ID,
   SCOPE_RUNTIME_BOT_HARNESS_VERSION,
   SCOPE_RUNTIME_BOT_PROFILE_ID,
+  SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID,
 } from "@matrix-os/scope-runtime/bot-profile";
 import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
 import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
@@ -167,7 +168,9 @@ export function createPrivateBotAdmission(deps: {
       try {
         runtime = await deps.host.client.createRuntime({
           scopeHandle,
-          profileId: SCOPE_RUNTIME_BOT_PROFILE_ID,
+          // Shared roots use the independently pinned managed Pi mount policy.
+          // Private recipes retain their bots-only profile and root restriction.
+          profileId: group ? SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID : SCOPE_RUNTIME_BOT_PROFILE_ID,
           workload: "bot_agent",
           adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID,
           harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION,
