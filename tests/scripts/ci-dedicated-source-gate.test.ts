@@ -207,8 +207,12 @@ it('denies a new delegated admission that races hosted recovery settlement',asyn
 });
 it('updates an authenticated owned gate without scanning hundreds of unrelated check records',async()=>{
  const f=completeFixture();const prior={id:15,name:'CI Source Qualification',head_sha:head,app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124',output:{summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,admittedPreviously:true})}};
- f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[prior,f.check,...Array.from({length:98},(_,i)=>({id:i+20,name:'Unrelated check',head_sha:head,app:{slug:'other'}}))]}});
+ const checks:any[]=[prior,f.check,...Array.from({length:98},(_,i)=>({id:i+20,name:'Unrelated check',head_sha:head,app:{slug:'other'}}))];
+ f.github.rest.checks.listForRef.mockImplementation(async({check_name,app_id,page=1,per_page=100}:any)=>({data:{check_runs:checks.filter(check=>check.name===check_name&&(!app_id||check.app?.id===app_id)).slice((page-1)*per_page,page*per_page)}}));
  await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:15,conclusion:'success'}));
+ expect(f.github.rest.checks.listForRef).toHaveBeenCalledWith(expect.objectContaining({check_name:'CI Source Qualification',app_id:777,page:1,per_page:100}));
+ expect(f.github.rest.checks.listForRef).toHaveBeenCalledWith(expect.objectContaining({check_name:'Dedicated CI Results',filter:'all',page:1,per_page:100}));
+ expect(f.github.rest.checks.listForRef).not.toHaveBeenCalledWith(expect.objectContaining({page:2}));
 });
 
 it('dispatches immediately when a new Linux admission interrupts pending hosted recovery',async()=>{
