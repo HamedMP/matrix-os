@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { SlackApiRateLimitError } from "./api.js";
 import { authorizeSlackDestination } from "./destination-authority.js";
 import { decryptSlackToken } from "./security.js";
 import { ActorIdSchema, SlackTeamIdSchema } from "./types.js";
@@ -24,7 +25,14 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
     const digest = createHash("sha256").update(parsed.data.text).digest("hex");
     const publication = { textDigest: digest };
     const authorized = await authorizeSlackDestination(options, key, runtime.ownerId, publication);
-    if (!authorized) return c.json({ error: "Forbidden" }, 403);
+    if (!authorized) {
+      const pending = await options.repository.getPendingReplyDestination(key);
+      if (pending?.ownerId === runtime.ownerId) {
+        c.header("Retry-After", "1");
+        return c.json({ error: "Delivery not ready", code: "receipt_not_ready" }, 503);
+      }
+      return c.json({ error: "Forbidden" }, 403);
+    }
     const { installed, destination } = authorized;
     const token = decryptSlackToken(installed.encryptedBotToken, options.config.tokenEncryptionKey, `${key.appId}:${key.teamId}`);
     const channel = await options.api.conversationInfo({ token, channelId: destination.channelId });
@@ -46,6 +54,11 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
       await options.repository.settleReply(key, response.ts);
       return c.json({ sent: true, messageTs: response.ts });
     } catch (error: unknown) {
+      if (error instanceof SlackApiRateLimitError) {
+        await options.repository.releaseRateLimitedReply(key, digest);
+        c.header("Retry-After", String(error.retryAfterSeconds));
+        return c.json({ error: "Try again later" }, 429);
+      }
       console.warn("[slack] reply outcome unknown", error instanceof Error ? error.name : "UnknownError");
       // A network failure may occur after Slack committed. Never automatically replay an uncertain external effect.
       await options.repository.settleReply(key, null); return c.json({ error: "Delivery needs review" }, 503);
