@@ -2,11 +2,18 @@ import type { ReactNode } from "react";
 import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
-// The same artwork, at the same size and position, as the native splash screen
-// (see the expo-splash-screen plugin in app.json), so the rabbit stays put
-// when the splash hands over to this screen.
-const splashArtwork = require("../assets/splash-icon.png");
-const SPLASH_LOGO_SIZE = 100;
+import { AppStatusBar } from "@/components/AppStatusBar";
+import { useStartupColors, useStartupMode } from "@/lib/use-startup-colors";
+
+// The same artwork, at the same size and position and on the same ground, as
+// the native splash screen (see the expo-splash-screen plugin in app.json), so
+// nothing moves or changes colour when the splash hands over to this screen.
+// Like the splash, it is drawn for the device's appearance, not the app theme.
+const SPLASH_LOGO_SIZE = 160;
+const splashByMode = {
+  light: { artwork: require("../assets/splash-icon.png"), backgroundColor: "#FAFAFA" },
+  dark: { artwork: require("../assets/splash-icon-dark.png"), backgroundColor: "#0E3422" },
+} as const;
 
 interface StartupScreenProps {
   /**
@@ -21,18 +28,23 @@ interface StartupScreenProps {
 
 /** The launch screen shown while the app boots: the rabbit, the Matrix OS title, and a status. */
 export function StartupScreen({ showTitle = true, children }: StartupScreenProps) {
+  const mode = useStartupMode();
+  const colors = useStartupColors();
+  const splash = splashByMode[mode];
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: splash.backgroundColor }]} testID="startup-screen">
+      <AppStatusBar surface={mode} />
       <View style={styles.logoRow}>
         <Image
-          source={splashArtwork}
+          source={splash.artwork}
           style={styles.logo}
           resizeMode="contain"
           accessibilityLabel="Matrix OS logo"
           testID="startup-logo"
         />
         <View style={styles.details} testID="startup-details">
-          {showTitle ? <Text style={styles.title}>Matrix OS</Text> : null}
+          {showTitle ? <Text style={[styles.title, { color: colors.text }]}>Matrix OS</Text> : null}
           {children}
         </View>
       </View>
@@ -44,7 +56,6 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     justifyContent: "center",
-    backgroundColor: theme.colors.background,
   },
   logoRow: {
     height: SPLASH_LOGO_SIZE,
@@ -66,7 +77,6 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     fontFamily: theme.fonts.display,
     fontSize: 30,
-    color: theme.colors.foreground,
     letterSpacing: -0.5,
   },
 }));

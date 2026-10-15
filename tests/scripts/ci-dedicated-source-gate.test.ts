@@ -9,6 +9,7 @@ function fixture(){
  const reviewed={rest:{...github.rest,actions:{...github.rest.actions,listRepoVariables:vi.fn(async()=>({data:{total_count:5,variables:await Promise.all(['MATRIX_CI_CONTROLLER_SHA','MATRIX_CI_DEDICATED_ENABLED','MATRIX_CI_DEDICATED_SHADOW','MATRIX_CI_RUNNER_IMAGE_DIGEST','MATRIX_CI_RUNNER_HARNESS_DIGEST'].map(async name=>(await github.rest.actions.getRepoVariable({name})).data))}}))}}};
  const gateGithub={rest:{checks:{create:vi.fn(async(args:any)=>({data:{id:10,...args,app:{id:777}}})),update:vi.fn(async(args:any)=>({data:{id:args.check_run_id,name:'CI Source Qualification',head_sha:head,...args,app:{id:777}}}))}}};return{pull,github:reviewed,gateGithub};
 }
+const lastWrite=(f:ReturnType<typeof fixture>)=>[f.gateGithub.rest.checks.create,f.gateGithub.rest.checks.update].flatMap(mock=>mock.mock.calls.map((args,index)=>({order:mock.mock.invocationCallOrder[index],args:args[0]}))).sort((a,b)=>b.order-a.order)[0].args;
 const reconcile=(f:ReturnType<typeof fixture>)=>gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,prNumber:2454,gateAppId:777,gateGithub:f.gateGithub});
 describe('always-required default-controller source gate',()=>{
  it('creates explicit N/A success on an unlabeled ordinary PR without dispatch or Actions-owned edits',async()=>{const f=fixture();await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',head_sha:head,conclusion:'success'}));expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();});
@@ -39,7 +40,7 @@ describe('always-required default-controller source gate',()=>{
   const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
   try{await reconcile(f);expect(warn).toHaveBeenCalledWith('Source qualification failed for PR #2454 at requester-discovery: runs unavailable');}finally{warn.mockRestore();}
  });
- it('fails the freshness gate and dispatches main CI for current same-head/new-parent merge',async()=>{const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',head_sha:head,conclusion:'failure'}));expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({workflow_id:'ci.yml',ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:base,source_sha:merge},request:{timeout:10000}}));});
+ it('keeps the freshness gate pending and dispatches main CI for current same-head/new-parent merge',async()=>{const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',head_sha:head,status:'in_progress'}));expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({workflow_id:'ci.yml',ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:base,source_sha:merge},request:{timeout:10000}}));});
  it('does not dispatch when live parent ref moved before the PR merge snapshot updates',async()=>{const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:main}}}));await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));});
  it.each(['origin','api'])('fails closed on %s and never synthesizes CI Results',async kind=>{const f=fixture();if(kind==='api')f.github.rest.actions.getRepoVariable.mockRejectedValue(new Error('API denied'));await expect(gate.reconcileSourceQualification(f.github,repo,kind==='origin'?{...origin,ref:'refs/heads/child'}:origin,{runId:123,runAttempt:1,prNumber:2454,gateAppId:777,gateGithub:f.gateGithub})).rejects.toThrow();expect(f.gateGithub.rest.checks.create.mock.calls.every(([args])=>args.name!=='CI Results')).toBe(true);});
  it('never updates another app or another workflow source gate',async()=>{const f=fixture();f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[{id:9,name:'CI Source Qualification',head_sha:head,app:{slug:'other'},output:{summary:'{}'}}]}});await reconcile(f);expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();});
@@ -49,7 +50,7 @@ it('reuses only authenticated source gate ownership and revokes parent-only old 
  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
  const prior={id:9,name:'CI Source Qualification',head_sha:head,app:{slug:'matrix-ci-gate',id:777},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,headSha:head,baseSha:main,sourceSha:main})}};
  f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[prior,{id:8,name:'CI Results',head_sha:head,app:{slug:'github-actions'},status:'completed',conclusion:'success'}]}});
- await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:9,conclusion:'failure'}));
+ await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({status:'in_progress'}));
  expect(f.gateGithub.rest.checks.update.mock.calls.every(([args]:any[])=>args.check_run_id!==8)).toBe(true);
 });
 function completeFixture(){
@@ -69,12 +70,15 @@ it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshn
  try{await reconcile(f);if(kind==='missing')expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Source qualification observed a shadow Linux miss for PR #2454 at shadow-linux: /));}finally{warn.mockRestore();}
  const written=f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args);expect(written.length).toBeGreaterThan(0);expect(written.every(args=>args.conclusion!=='success')).toBe(true);
  // Shadow observes: hosted success with missing Linux evidence is neutral; hosted failure or stale source still fails.
- expect(written.every(args=>args.conclusion===(['attempt','missing'].includes(kind)?'neutral':'failure'))).toBe(true);});
+ if(kind==='pending')expect(written[0]).toMatchObject({status:'in_progress'});
+ else expect(written.every(args=>args.conclusion===(['attempt','missing'].includes(kind)?'neutral':'failure'))).toBe(true);});
 it.each(['failed','pending','attempt','missing','stale'])('blocks %s coverage in delegated mode',async kind=>{const f=completeFixture();
  f.github.rest.actions.getRepoVariable.mockImplementation(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?main:args.name.includes('IMAGE')?'sha256:'+'e'.repeat(64):args.name.includes('HARNESS')?'f'.repeat(64):'true'}}));
  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
  try{
-  degrade(f,kind);await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.every(([args]:any[])=>args.conclusion==='failure')).toBe(true);
+  degrade(f,kind);await reconcile(f);
+  if(kind==='pending')expect(lastWrite(f)).toMatchObject({status:'in_progress'});
+  else expect(f.gateGithub.rest.checks.create.mock.calls.every(([args]:any[])=>args.conclusion==='failure')).toBe(true);
   if(kind==='missing')expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Source qualification failed for PR #2454 at qualification: \S/));
  }finally{warn.mockRestore();}
 });
@@ -110,28 +114,33 @@ it.each(['unlabel','switch-off'])('keeps old delegated green blocked after paren
  const prior={id:9,name:'CI Source Qualification',head_sha:head,app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,admittedPreviously:true,headSha:head,baseSha:base,sourceSha:merge})},conclusion:'success'};
  f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[prior,{id:8,name:'CI Results',head_sha:head,app:{slug:'github-actions'},conclusion:'success'}]}});
  f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{Object.assign(prior,args);return{data:prior};});
+ persistCreatedGate(f,prior);
  const nextBase='6'.repeat(40),nextMerge='7'.repeat(40);f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:nextBase}}}));await reconcile(f);expect(prior.conclusion).toBe('failure');
  f.pull.base.sha=nextBase;f.pull.merge_commit_sha=nextMerge;f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:nextMerge,parents:[{sha:nextBase},{sha:head}]}});
  if(kind==='unlabel')f.pull.labels=[{name:'ready-for-ci'}];else f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
- await reconcile(f);expect(prior.conclusion).toBe('failure');expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:nextBase,source_sha:nextMerge,execution_mode:'hosted-only'}}));
+ await reconcile(f);expect(prior.status).toBe('in_progress');expect(prior).not.toHaveProperty('conclusion');expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:nextBase,source_sha:nextMerge,execution_mode:'hosted-only'}}));
  const ci={created_at:new Date().toISOString(),id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI hosted-refresh-v1 pr=2454 head=${head} base=${nextBase} merge=${nextMerge}`,status:'queued',conclusion:'success'};
- f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[ci]}});await reconcile(f);expect(prior.conclusion).toBe('failure');ci.status='completed';ci.conclusion='failure';await reconcile(f);expect(prior.conclusion).toBe('failure');ci.conclusion='success';
+ f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[ci]}});await reconcile(f);expect(prior.status).toBe('in_progress');ci.status='completed';ci.conclusion='failure';await reconcile(f);expect(prior.conclusion).toBe('failure');ci.conclusion='success';
  const check={id:88,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',app:{slug:'github-actions'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/321/job/44'};
  const github={rest:{...f.github.rest,actions:{...f.github.rest.actions,listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[{id:44,run_id:321,run_attempt:1,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',check_run_url:'https://api.github.com/repos/HamedMP/matrix-os/check-runs/88'}]}}))},checks:{...f.github.rest.checks,get:vi.fn(async()=>({data:check}))}}};
- await reconcile({...f,github});expect(prior.conclusion).toBe('success');expect(JSON.parse(prior.output.summary)).toMatchObject({hostedRecovery:true,admittedPreviously:true,requestingRunId:321,requestingRunAttempt:1,sourceSha:nextMerge});expect(f.github.rest.checks.create).not.toHaveBeenCalled();expect(f.github.rest.checks.update).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update.mock.calls.every(([args]:any[])=>args.check_run_id===9)).toBe(true);
+ await reconcile({...f,github});expect(prior.conclusion).toBe('success');expect(JSON.parse(prior.output.summary)).toMatchObject({hostedRecovery:true,admittedPreviously:true,requestingRunId:321,requestingRunAttempt:1,sourceSha:nextMerge});expect(f.github.rest.checks.create).not.toHaveBeenCalled();expect(f.github.rest.checks.update).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update.mock.calls.every(([args]:any[])=>[9,10].includes(args.check_run_id))).toBe(true);
 });
 it('recovers old delegated history conservatively during App-issuer migration',async()=>{
- const f=fixture();f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[{id:12,name:'Dedicated CI Results',head_sha:head,app:{slug:'github-actions'},conclusion:'success'}]}});await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({inputs:expect.objectContaining({execution_mode:'hosted-only'})}));
+ const f=fixture();f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[{id:12,name:'Dedicated CI Results',head_sha:head,app:{slug:'github-actions'},conclusion:'success'}]}});await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({status:'in_progress'}));expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({inputs:expect.objectContaining({execution_mode:'hosted-only'})}));
 });
+function persistCreatedGate(f:ReturnType<typeof fixture>,prior:any){
+ const create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+ f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{const result=await create(args);Object.assign(prior,result.data);if(args.status!=='completed')delete prior.conclusion;return{data:prior};});
+}
 function hostedFixture(){
  const f=fixture();const prior={id:9,name:'CI Source Qualification',head_sha:head,app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,admittedPreviously:true,headSha:head,baseSha:base,sourceSha:merge,executionMode:'hosted-only',recoveryStartedAt:new Date(Date.now()-20000).toISOString(),recoveryAfterRunId:320})}};f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[prior]}});
  const run={created_at:new Date(Date.now()-10000).toISOString(),id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI hosted-refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`,status:'completed',conclusion:'success'};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[run]}});const job={id:44,run_id:321,run_attempt:1,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',check_run_url:'https://api.github.com/repos/HamedMP/matrix-os/check-runs/88'};const check={id:88,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',app:{slug:'github-actions'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/321/job/44'};
- const github={rest:{...f.github.rest,actions:{...f.github.rest.actions,listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[job]}}))},checks:{...f.github.rest.checks,get:vi.fn(async()=>({data:check}))}}};return{...f,github,run,job,check};
+ const github={rest:{...f.github.rest,actions:{...f.github.rest.actions,listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[job]}}))},checks:{...f.github.rest.checks,get:vi.fn(async()=>({data:check}))}}};persistCreatedGate(f,prior);return{...f,github,run,job,check};
 }
 it.each(['job-failed','job-skipped','job-attempt','job-run','job-source','check-app','check-run','newer-pending','inventory','denial'])('never restores hosted recovery from %s aggregate evidence',async kind=>{
  const f=hostedFixture();if(kind==='job-failed')f.job.conclusion='failure';if(kind==='job-skipped')f.job.conclusion='skipped';if(kind==='job-attempt')f.job.run_attempt=2;if(kind==='job-run')f.job.run_id=999;if(kind==='job-source')f.job.head_sha=head;if(kind==='check-app')f.check.app.slug='other';if(kind==='check-run')f.check.details_url='https://github.com/HamedMP/matrix-os/actions/runs/999/job/44';if(kind==='newer-pending')f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[f.run,{...f.run,id:322,status:'queued'}]}});if(kind==='inventory')f.github.rest.actions.listJobsForWorkflowRun.mockResolvedValue({data:{total_count:101,jobs:[f.job]}});if(kind==='denial')f.github.rest.checks.get.mockRejectedValue(new Error('API denied'));
- await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));expect(f.github.rest.checks.update).not.toHaveBeenCalled();
+ await reconcile(f);expect(lastWrite(f)).toMatchObject(kind==='newer-pending'?{status:'in_progress'}:{conclusion:'failure'});expect(f.github.rest.checks.update).not.toHaveBeenCalled();
 });
 it('cannot fall back to a GITHUB_TOKEN writer if the dedicated App response has another issuer',async()=>{
  const f=fixture();f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>({data:{id:10,...args,app:{id:15368,slug:'github-actions'}}}));await expect(reconcile(f)).rejects.toThrow(/issuer/);expect(f.github.rest.checks.create).not.toHaveBeenCalled();
@@ -146,14 +155,14 @@ it.each(['unlabel','switch-off'])('requires a fresh main hosted dispatch after u
  f.github.rest.actions.listJobsForWorkflowRun.mockResolvedValue({data:{total_count:2,jobs:[previousJob,{...previousJob,id:45,name:'Build production shell',conclusion:'skipped'}]}});
  f.github.rest.checks.get.mockResolvedValue({data:previousCheck});
  await reconcile(f);
- expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure'}));
+ expect(lastWrite(f)).toMatchObject({status:'in_progress'});
  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:base,source_sha:merge,execution_mode:'hosted-only'}}));
  expect(f.github.rest.actions.listJobsForWorkflowRun).not.toHaveBeenCalled();
  // The unchanged tuple is eligible only through the explicit full-hosted marker.
  const fresh={...f.run,id:322,status:'queued',created_at:new Date(Date.now()+1000).toISOString()};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[previous,fresh]}});
- await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure'}));
+ await reconcile(f);expect(lastWrite(f)).toMatchObject({status:'in_progress'});
  fresh.status='completed';fresh.conclusion='failure';await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure'}));
  fresh.conclusion='success';
  f.github.rest.actions.listJobsForWorkflowRun.mockResolvedValue({data:{total_count:1,jobs:[{...f.job,run_id:322}]}});
@@ -171,9 +180,9 @@ it.each(['unlabel','switch-off'])('never reuses a previous hosted recovery after
  f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
  const delegated={...f.run,id:400,status:'queued',display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`,created_at:new Date().toISOString()};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[delegated,f.run]}});
- await reconcile(f);expect(prior.conclusion).toBe('failure');
+ await reconcile(f);expect(lastWrite(f)).toMatchObject({status:'in_progress'});
  if(kind==='unlabel')f.pull.labels=[{name:'ready-for-ci'}];else f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
- await reconcile(f);expect(prior.conclusion).toBe('failure');expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenLastCalledWith(expect.objectContaining({inputs:expect.objectContaining({execution_mode:'hosted-only'})}));
+ await reconcile(f);expect(prior.status).toBe('in_progress');expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenLastCalledWith(expect.objectContaining({inputs:expect.objectContaining({execution_mode:'hosted-only'})}));
  expect(JSON.parse(prior.output.summary)).toMatchObject({recoveryAfterRunId:400});
  await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
  const fresh={...f.run,id:401,created_at:new Date(Date.now()+1000).toISOString()};
@@ -207,7 +216,7 @@ it('dispatches immediately when a new Linux admission interrupts pending hosted 
  prior.output.summary=JSON.stringify({...JSON.parse(prior.output.summary),refreshDispatchedAt:new Date().toISOString()});
  const delegated={...f.run,id:400,status:'queued',display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[delegated,f.run]}});
- await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));
+ await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);expect(lastWrite(f)).toMatchObject({status:'in_progress'});
 });
 
 it('dispatches fresh native source proof retaining direct branchbase and cumulative mergeSHA',async()=>{
@@ -246,9 +255,10 @@ it('retains the same hosted recovery generation across a temporary source API fa
  f.github.rest.repos.getCommit.mockRejectedValueOnce(new Error('Temporary source API failure'));
  await reconcile(f);expect(prior.conclusion).toBe('failure');
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
- await reconcile(f);expect(prior.conclusion).toBe('failure');
+ await reconcile(f);expect(prior.status).toBe('in_progress');expect(prior).not.toHaveProperty('conclusion');
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
- expect(JSON.parse(prior.output.summary)).toMatchObject({recoveryStartedAt:saved.recoveryStartedAt,recoveryAfterRunId:saved.recoveryAfterRunId,requestingRunId:321});
+ expect(lastWrite(f)).toMatchObject({status:'in_progress'});
+ expect(JSON.parse(lastWrite(f).output.summary)).toMatchObject({recoveryStartedAt:saved.recoveryStartedAt,recoveryAfterRunId:saved.recoveryAfterRunId,requestingRunId:321});
  f.run.status='completed';await reconcile(f);
  expect(prior.conclusion).toBe('success');
  expect(JSON.parse(prior.output.summary)).toMatchObject({hostedRecovery:true,requestingRunId:321,requestingRunAttempt:1,recoveryStartedAt:saved.recoveryStartedAt,recoveryAfterRunId:saved.recoveryAfterRunId});
@@ -298,4 +308,100 @@ describe('scoped reconciliation after a PR push',()=>{
   const f=fixture();
   await expect(gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub,childrenOf} as any)).rejects.toThrow('Invalid source gate scope');
  });
+});
+
+
+describe('large repository reconciliation',()=>{
+ it('qualifies all 306 open PRs without imposing the old 300-PR repository ceiling',async()=>{
+  const f=fixture();
+  const pulls=Array.from({length:306},(_,index)=>({...structuredClone(f.pull),number:3000+index}));
+  f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
+  f.github.rest.pulls.list.mockImplementation(async(args:any)=>({data:pulls.slice((args.page-1)*100,args.page*100)}));
+  f.github.rest.pulls.get.mockImplementation(async(args:any)=>({data:pulls.find(p=>p.number===args.pull_number)!}));
+  const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
+  expect(result).toEqual({examined:306,dispatched:0});
+  expect(f.github.rest.pulls.list).toHaveBeenCalledTimes(4);
+  expect(f.gateGithub.rest.checks.create).toHaveBeenCalledTimes(306);
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('uses the API base filter for direct children and gets the pushed PR separately',async()=>{
+  const f=fixture();
+  const pushed={...structuredClone(f.pull),number:2422,head:{...structuredClone(f.pull.head),ref:'stack/parent'}};
+  const child={...structuredClone(f.pull),number:2423};
+  f.github.rest.pulls.list.mockImplementation(async(args:any)=>{
+   if(args.base!=='stack/parent')throw new Error('Unscoped scan would exceed 300 unrelated PRs');
+   return{data:[child]};
+  });
+  f.github.rest.pulls.get.mockImplementation(async(args:any)=>({data:args.pull_number===2422?pushed:child}));
+  const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub,childrenOf:{number:2422,headRef:'stack/parent'}});
+  expect(result.examined).toBe(2);
+  expect(f.github.rest.pulls.list).toHaveBeenCalledWith(expect.objectContaining({state:'open',base:'stack/parent',per_page:100,page:1,request:{timeout:10000}}));
+  expect(f.github.rest.pulls.get.mock.calls.map(([args]:any[])=>args.pull_number)).toEqual([2422,2423]);
+ });
+ it('propagates an unavailable later page rather than claiming complete reconciliation',async()=>{
+  const f=fixture();
+  f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
+  f.github.rest.pulls.list.mockImplementation(async(args:any)=>{
+   if(args.page===2)throw new Error('Next page unavailable');
+   return{data:Array.from({length:100},(_,index)=>({...structuredClone(f.pull),number:3000+index}))};
+  });
+  await expect(gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub})).rejects.toThrow('Next page unavailable');
+ });
+});
+
+it.each(['queued','in_progress','waiting'])('keeps %s requesting CI pending without a passing or failing conclusion',async status=>{
+ const f=completeFixture();f.ci.status=status;
+ await reconcile(f);
+ const written=f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args);
+ expect(written).toHaveLength(1);
+ expect(written[0]).toMatchObject({status:'in_progress',output:{title:'Waiting for current requesting CI to finish'}});
+ expect(written[0]).not.toHaveProperty('conclusion');
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+
+it('creates pending coverage separately from an old completed success, then settles that pending check',async()=>{
+ const f=hostedFixture();const prior=(await f.github.rest.checks.listForRef()).data.check_runs[0];
+ Object.assign(prior,{status:'completed',conclusion:'success'});f.run.status='queued';
+ await reconcile(f);
+ const pending=f.gateGithub.rest.checks.create.mock.results[0];
+ const check=(await pending.value).data;
+ expect(check.status).toBe('in_progress');expect(check).not.toHaveProperty('conclusion');
+ expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+ f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[check,prior]}});
+ f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:{id:123,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'schedule',head_sha:main,head_branch:'main',run_attempt:1,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}}});
+ f.run.status='completed';await reconcile(f);
+ expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:check.id,status:'completed',conclusion:'success'}));
+});
+
+it('keeps a successfully dispatched fresh requester pending, but fails closed if dispatch fails',async()=>{
+ const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+ await reconcile(f);expect(lastWrite(f)).toMatchObject({status:'in_progress'});expect(lastWrite(f)).not.toHaveProperty('conclusion');
+ const rejected=fixture();rejected.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+ rejected.github.rest.actions.createWorkflowDispatch.mockRejectedValue(new Error('Dispatch denied'));
+ await expect(reconcile(rejected)).rejects.toThrow('Dispatch denied');
+ expect(lastWrite(rejected)).toMatchObject({status:'completed',conclusion:'failure',output:{title:'Fresh requesting CI could not be dispatched'}});
+});
+it('keeps the full open-PR scan bounded and never silently truncates an oversized repository',async()=>{
+ const f=fixture();f.github.rest.pulls.list.mockResolvedValue({data:Array.from({length:100},()=>({...f.pull,base:{...f.pull.base,repo:{full_name:'foreign/repository'}}}))});
+ await expect(gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub})).rejects.toThrow('Open pull request scan exceeds bounded coverage');
+ expect(f.github.rest.pulls.list).toHaveBeenCalledTimes(100);
+ expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();
+});
+
+it('does not refresh an already active requester when a ready PR still has its draft N/A gate',async()=>{
+ const f=completeFixture();f.ci.status='in_progress';
+ const prior={id:9,name:'CI Source Qualification',head_sha:head,status:'completed',conclusion:'success',app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124',output:{summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,headSha:head,baseSha:base,sourceSha:merge,notApplicable:true})}};
+ f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.check_name==='CI Source Qualification'?[prior]:[f.check]}}));
+ await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ expect(lastWrite(f)).toMatchObject({status:'in_progress'});
+});
+it('retries a denied dispatch instead of treating its failed timestamp as accepted work',async()=>{
+ const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+ f.github.rest.actions.createWorkflowDispatch.mockRejectedValueOnce(new Error('Dispatch denied'));
+ await expect(reconcile(f)).rejects.toThrow('Dispatch denied');
+ const prior={id:10,name:'CI Source Qualification',head_sha:head,...lastWrite(f),app:{id:777,slug:'matrix-ci-gate'}};
+ f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.check_name==='CI Source Qualification'?[prior]:[]}}));
+ await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(2);
+ expect(lastWrite(f)).toMatchObject({status:'in_progress'});
+ expect(JSON.parse(lastWrite(f).output.summary)).not.toHaveProperty('refreshDispatchFailed');
 });

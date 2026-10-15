@@ -1,6 +1,6 @@
 ---
 name: worktree-pr-monitor
-description: Create or continue an isolated Matrix OS worktree PR, validate it, push it, monitor CI and GitHub review feedback, iterate until the latest trusted Greptile result is 5/5, then add ready-for-ci and wait for triggered CI to pass before pinging completion. Use when asked to run a worktree to PR to monitor workflow, get a PR to Greptile 5/5 plus CI pass, or publish changes while keeping main clean.
+description: Create or continue an isolated Matrix OS worktree PR, validate it, push it, monitor CI and GitHub review feedback, iterate until the latest trusted Greptile result is 5/5, then mark the PR ready for review and wait for its CI to pass before pinging completion. Use when asked to run a worktree to PR to monitor workflow, get a PR to Greptile 5/5 plus CI pass, or publish changes while keeping main clean.
 ---
 
 # Worktree PR Monitor
@@ -17,8 +17,6 @@ manual git worktree flow for isolated PR publication.
 
 - `gh` is installed and authenticated.
 - The current repository is `HamedMP/matrix-os`.
-- The repository has a label exactly named `ready-for-ci`; if it is missing,
-  stop and report the blocker instead of creating the label silently.
 - The requester wants a PR in a worktree, not only a local patch.
 - The requester explicitly asked for a worktree or invoked this workflow.
 
@@ -39,13 +37,12 @@ manual git worktree flow for isolated PR publication.
   its gates; never loop `gh pr merge`.
 - If Greptile has reviewed the PR, the loop is complete only when the latest
   trusted Greptile result is `5/5`.
-- Add the `ready-for-ci` label only after the latest trusted Greptile result is
-  `5/5`; this label triggers the broader PR CI workflows.
-- If the repository label `ready-for-ci` is missing, report the blocker instead
-  of creating the label or treating the PR as CI-ready.
-- If label-triggered CI fails, remove `ready-for-ci`, fix the failures, commit
-  and push, then return to the Greptile fulfillment loop before re-adding the
-  label.
+- Open the PR as a draft. Full PR CI runs on every non-draft head, so mark it
+  ready for review (`gh pr ready`) only after the latest trusted Greptile
+  result is `5/5`.
+- If CI fails after the PR is ready, convert it back to draft
+  (`gh pr ready --undo`), fix the failures, commit and push, then return to the
+  Greptile fulfillment loop before marking it ready again.
 - Treat unresolved human review threads, Codex review issue comments, and
   Greptile findings as blockers until they are fixed, acknowledged, or
   explicitly deferred by the requester.
@@ -85,7 +82,8 @@ manual git worktree flow for isolated PR publication.
 
 6. Open or update the PR.
    - Use `gh pr view` to detect an existing PR for the branch.
-   - Create or edit the PR with a semantic title.
+   - Create the PR as a draft (`gh pr create --draft`) or edit it, with a
+     semantic title.
    - PR body must include:
      - `Summary`
      - `Tests`
@@ -101,20 +99,16 @@ manual git worktree flow for isolated PR publication.
      result is below `5/5`, implement fixes, rerun relevant checks, commit,
      push, and continue monitoring.
 
-8. Trigger and monitor label-gated CI.
-   - Before labeling, verify that the repository label exists:
-     `gh label list --search ready-for-ci --json name`. If the exact
-     `ready-for-ci` label is missing, stop and report the blocker.
-   - Once the latest trusted Greptile result is `5/5`, add the `ready-for-ci`
-     label with `gh pr edit --add-label ready-for-ci`.
+8. Mark the PR ready and monitor its CI.
+   - Once the latest trusted Greptile result is `5/5`, mark the PR ready for
+     review with `gh pr ready`. That starts full PR CI.
    - Wait for the triggered checks with `gh pr checks --watch` or equivalent
      GitHub API status reads.
    - If every required triggered check passes, the PR is ready.
-   - If any triggered check fails, remove the `ready-for-ci` label with
-     `gh pr edit --remove-label ready-for-ci`, inspect the failure, implement
-     the fix, rerun relevant local checks, commit, push, and return to step 7.
-     Do not re-add `ready-for-ci` until Greptile is again `5/5` on the latest
-     commit.
+   - If any triggered check fails, convert the PR back to draft with
+     `gh pr ready --undo`, inspect the failure, implement the fix, rerun
+     relevant local checks, commit, push, and return to step 7. Do not mark it
+     ready again until Greptile is again `5/5` on the latest commit.
 
 9. Ping completion.
    - Reply with:
@@ -123,7 +117,7 @@ manual git worktree flow for isolated PR publication.
      - latest commit SHA
      - checks run and result
      - latest Greptile status, explicitly `5/5`
-     - `ready-for-ci` status and triggered CI result
+     - ready-for-review status and CI result
      - skipped checks or residual risk
    - If blocked, reply with the exact blocker and the next action needed.
 
@@ -138,8 +132,8 @@ bun run check:patterns
 bun run test
 git push -u origin HEAD
 gh pr view --json number,url,title,state,headRefName,baseRefName
-gh label list --search ready-for-ci --json name
-gh pr edit --add-label ready-for-ci
-gh pr edit --remove-label ready-for-ci
+gh pr create --draft
+gh pr ready
+gh pr ready --undo
 gh pr checks --watch
 ```

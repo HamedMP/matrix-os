@@ -18,10 +18,12 @@ model or provider credential does not add missing harness tools.
 | Jev Inbox recipe | Receipt-bound preview workflow | Intentionally excludes general Drive actions |
 
 Funded canonical Chat uses the owned Pi worker; the retired SDK-funded Chat route
-remains denied. The separate Claude Chat Matrix AI option uses a native relay
-lease bound to its Run, isolated from the owner's subscription session profile.
-Model discovery does not lease credit. A user-installed Pi CLI is independent
-of the managed worker.
+remains denied. Matrix AI's Claude models run through Matrix Pi. Native Claude
+Code Chat uses only the owner's Claude subscription; it does not acquire a
+funded lease or fall back to an API key. Historical funded Claude Chat bindings
+remain readable, but require a new Chat with an explicitly selected route to run
+again. Existing credentials and session profiles are retained. Model discovery
+does not lease credit. A user-installed Pi CLI is independent of the managed worker.
 
 This table records implementation/configuration paths, not a live pass for every
 model, account or release. Record exact versions and actual tool outcomes when

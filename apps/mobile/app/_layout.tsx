@@ -43,6 +43,7 @@ import { addNotificationResponseListener, handleNotificationTap } from "@/lib/pu
 import { AppStatusBar } from "@/components/AppStatusBar";
 import { StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
+import { useStartupColors } from "@/lib/use-startup-colors";
 import { OtaUpdatePrompt } from "@/components/OtaUpdatePrompt";
 import {
   captureScreen,
@@ -177,7 +178,7 @@ function RootContent({ fontsLoaded }: { fontsLoaded: boolean }) {
 // nothing to protect before the user has signed in, so the sign-in screen
 // itself never prompts for biometrics.
 function BiometricGate({ children }: { children: React.ReactNode }) {
-  const { theme } = useUnistyles();
+  const startupColors = useStartupColors();
   const { isLoaded, isSignedIn } = useAuth();
   const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
 
@@ -200,7 +201,7 @@ function BiometricGate({ children }: { children: React.ReactNode }) {
   if (!isLoaded || authenticated === undefined) {
     return (
       <StartupScreen>
-        <ActivityIndicator size="large" color={theme.v2.colors.textSubtle} style={styles.loadingSpinner} />
+        <ActivityIndicator size="large" color={startupColors.textSubtle} style={styles.loadingSpinner} />
       </StartupScreen>
     );
   }
@@ -208,8 +209,8 @@ function BiometricGate({ children }: { children: React.ReactNode }) {
   if (!authenticated) {
     return (
       <StartupScreen>
-        <Text style={styles.loadingSubtitle}>Authenticating…</Text>
-        <ActivityIndicator size="large" color={theme.v2.colors.textSubtle} style={styles.loadingSpinner} />
+        <Text style={[styles.loadingSubtitle, { color: startupColors.textSubtle }]}>Authenticating…</Text>
+        <ActivityIndicator size="large" color={startupColors.textSubtle} style={styles.loadingSpinner} />
       </StartupScreen>
     );
   }
@@ -242,10 +243,11 @@ function AnalyticsScreenTracker() {
 }
 
 function MissingClerkConfigScreen() {
+  const startupColors = useStartupColors();
   return (
     <StartupScreen>
-      <Text style={styles.configTitle}>Missing mobile auth config</Text>
-      <Text style={styles.configBody}>
+      <Text style={[styles.configTitle, { color: startupColors.text }]}>Missing mobile auth config</Text>
+      <Text style={[styles.configBody, { color: startupColors.textSubtle }]}>
         Set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY before starting Expo.
       </Text>
     </StartupScreen>
@@ -439,7 +441,6 @@ const styles = StyleSheet.create((theme) => ({
   loadingSubtitle: {
     fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: theme.colors.mutedForeground,
     marginTop: 8,
   },
   loadingSpinner: {
@@ -448,13 +449,11 @@ const styles = StyleSheet.create((theme) => ({
   configTitle: {
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 16,
-    color: theme.colors.foreground,
     marginTop: 16,
   },
   configBody: {
     fontFamily: theme.fonts.sans,
     fontSize: 14,
-    color: theme.colors.mutedForeground,
     marginTop: 8,
     maxWidth: 300,
     textAlign: "center",
