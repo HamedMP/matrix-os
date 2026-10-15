@@ -1,4 +1,5 @@
 import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
+import AlertCircleIcon from "@hugeicons/core-free-icons/AlertCircleIcon";
 import Archive02Icon from "@hugeicons/core-free-icons/Archive02Icon";
 import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
 import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
@@ -46,6 +47,7 @@ describe("role icons", () => {
       InfoIcon: InformationCircleIcon,
       MoreIcon: MoreHorizontalIcon,
       CloseIcon: Cancel01Icon,
+      AlertIcon: AlertCircleIcon,
       AddIcon: Add01Icon,
       PhotoIcon: Image01Icon,
       SkillIcon: CubeIcon,
@@ -71,8 +73,8 @@ describe("role icons", () => {
     });
   });
 
-  it("exports nothing but the 33 roles", () => {
-    expect(Object.keys(icons)).toHaveLength(33);
+  it("exports nothing but the 34 roles", () => {
+    expect(Object.keys(icons)).toHaveLength(34);
     for (const icon of Object.values(icons)) {
       expect(Array.isArray(icon)).toBe(true);
     }

@@ -1,17 +1,22 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { Alert, KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
+import { KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
 
+import * as mockContextMenu from "./context-menu-test-utils";
 import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
 import { Icon } from "../components/ui/Icon";
 import { SidePanelIcon } from "../components/ui/icons";
+
+import { menuItem } from "./context-menu-test-utils";
 
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: false }) }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+// Jest resolves the iOS files, so each message sits in a native context menu.
+jest.mock("@expo/ui/swift-ui", () => mockContextMenu.swiftUiContextMenuModule());
 
 const mockSendMessage = jest.fn();
 const mockOpenSidePanel = jest.fn();
@@ -107,12 +112,8 @@ describe("drawer home screen", () => {
     mockDetail = { record: { chat: { id: mockActiveChatId, title: "Native failure" } }, runs: [], turns: [], activities: [],
       messages: [{ id: "msg_native_copy", chatId: mockActiveChatId, role: "user", state: "committed", seq: 1,
         parts: [{ type: "text", text: "Inspect native failure" }], createdAt: "2026-09-09T00:00:00.000Z" }] };
-    const alert = jest.spyOn(Alert, "alert");
     render(<ChatScreen />);
-    fireEvent(screen.getByText("Inspect native failure"), "longPress");
-    const action = alert.mock.calls[0]?.[2]?.find((button) => button.text === "Copy chat ID");
-    expect(action).toBeDefined();
-    action!.onPress?.();
+    fireEvent.press(menuItem(screen.getByText("Inspect native failure"), "Copy chat ID"));
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat_native_content");
   });
 

@@ -1,8 +1,7 @@
 import { useCallback, type ReactNode } from "react";
-import { FlatList, Pressable, Text, type ListRenderItemInfo } from "react-native";
+import { FlatList, Text, type ListRenderItemInfo } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
-import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { AnalyticsMask } from "@/lib/analytics";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 
@@ -13,7 +12,7 @@ import { UserMessage } from "./UserMessage";
 export interface MessageListProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
   /** Newest first: the list is drawn from the bottom up. */
   messages: TranscriptMessage[];
-  /** The chat the long-press menu acts on. None for a chat that does not exist yet. */
+  /** The chat a message's long-press menu offers to copy the ID of. None for a chat that does not exist yet. */
   chatId?: string | null;
   /** Draws a message that asks the person something, in place of its text. Null for any other message. */
   renderRequest?: (message: TranscriptMessage) => ReactNode;
@@ -35,15 +34,16 @@ export function MessageList({
   footer,
 }: MessageListProps) {
   const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
-    <ChatContextMenu chatId={chatId}>
-      <Pressable accessible={false}>
-        <AnalyticsMask>
-          {renderRequest?.(item) ?? (
-            <Message message={item} renderResults={renderResults} renderComputerPhoto={renderComputerPhoto} />
-          )}
-        </AnalyticsMask>
-      </Pressable>
-    </ChatContextMenu>
+    <AnalyticsMask>
+      {renderRequest?.(item) ?? (
+        <Message
+          message={item}
+          chatId={chatId}
+          renderResults={renderResults}
+          renderComputerPhoto={renderComputerPhoto}
+        />
+      )}
+    </AnalyticsMask>
   ), [chatId, renderRequest, renderResults, renderComputerPhoto]);
 
   return (
@@ -66,14 +66,22 @@ export function MessageList({
 
 function Message({
   message,
+  chatId,
   renderResults,
   renderComputerPhoto,
-}: Pick<MessageListProps, "renderResults" | "renderComputerPhoto"> & { message: TranscriptMessage }) {
+}: Pick<MessageListProps, "chatId" | "renderResults" | "renderComputerPhoto"> & { message: TranscriptMessage }) {
   if (message.role === "user") {
-    return <UserMessage text={message.text} attachments={message.attachments} renderComputerPhoto={renderComputerPhoto} />;
+    return (
+      <UserMessage
+        text={message.text}
+        attachments={message.attachments}
+        chatId={chatId}
+        renderComputerPhoto={renderComputerPhoto}
+      />
+    );
   }
   if (message.role === "assistant") {
-    return <AssistantMessage message={message} results={renderResults?.(message)} />;
+    return <AssistantMessage message={message} chatId={chatId} results={renderResults?.(message)} />;
   }
   return (
     <Text style={[styles.note, message.role === "system" && styles.noteCentred]}>{message.text}</Text>

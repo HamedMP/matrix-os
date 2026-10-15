@@ -13,6 +13,7 @@ export { default as BackIcon } from "@hugeicons/core-free-icons/ArrowLeft01Icon"
 export { default as InfoIcon } from "@hugeicons/core-free-icons/InformationCircleIcon";
 export { default as MoreIcon } from "@hugeicons/core-free-icons/MoreHorizontalIcon";
 export { default as CloseIcon } from "@hugeicons/core-free-icons/Cancel01Icon";
+export { default as AlertIcon } from "@hugeicons/core-free-icons/AlertCircleIcon";
 
 export { default as AddIcon } from "@hugeicons/core-free-icons/Add01Icon";
 export { default as PhotoIcon } from "@hugeicons/core-free-icons/Image01Icon";

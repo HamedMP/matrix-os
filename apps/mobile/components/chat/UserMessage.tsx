@@ -1,6 +1,7 @@
-import { Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { Pressable, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
+import { ChatContextMenu } from "@/components/ChatContextMenu";
 import type { TranscriptAttachment } from "@/lib/chat-attachments";
 
 import { MessageAttachments, type MessageAttachmentsProps } from "./MessageAttachments";
@@ -9,24 +10,36 @@ export interface UserMessageProps extends Pick<MessageAttachmentsProps, "renderC
   text: string;
   /** The photos and files sent with it, shown above the text. */
   attachments?: readonly TranscriptAttachment[];
+  /** The chat the bubble's long-press menu offers to copy the ID of. */
+  chatId?: string | null;
 }
 
 /** What the person sent: a bubble against the right edge, under anything sent with it. */
-export function UserMessage({ text, attachments, renderComputerPhoto }: UserMessageProps) {
-  if (!attachments || attachments.length === 0) return <Bubble text={text} />;
+export function UserMessage({ text, attachments, chatId, renderComputerPhoto }: UserMessageProps) {
+  if (!attachments || attachments.length === 0) return <Bubble text={text} chatId={chatId} />;
   return (
     <View testID="user-message-with-attachments" style={styles.group}>
       <MessageAttachments attachments={attachments} renderComputerPhoto={renderComputerPhoto} />
-      {text ? <Bubble text={text} /> : null}
+      {text ? <Bubble text={text} chatId={chatId} /> : null}
     </View>
   );
 }
 
-function Bubble({ text }: { text: string }) {
+function Bubble({ text, chatId }: { text: string; chatId?: string | null }) {
+  const { theme } = useUnistyles();
+
   return (
-    <View testID="user-message" style={styles.bubble}>
-      <Text style={styles.text}>{text}</Text>
-    </View>
+    // A long press lifts the bubble alone, with its own corners.
+    <ChatContextMenu
+      chatId={chatId}
+      messageText={text}
+      fit="end"
+      cornerRadius={theme.v2.radius.bubble}
+    >
+      <Pressable accessible={false} testID="user-message" style={styles.bubble}>
+        <Text style={styles.text}>{text}</Text>
+      </Pressable>
+    </ChatContextMenu>
   );
 }
 
