@@ -196,13 +196,14 @@ export function createSharedBrowserBroker(options: {
     let value:SharedBrowserActionResult;
     try { value=await result; }
     catch(error) {
-      if(!(error instanceof SharedBrowserInterruptedError) || error.action!=="pause")throw error;
+      if(!(error instanceof SharedBrowserInterruptedError) || !["pause","takeover"].includes(error.action))throw error;
       // Physical cleanup and actionTail are complete. Keep only the logical
       // tool call pending, so Resume can safely return a fresh observation.
       const resumedSignal=AbortSignal.any([signal,AbortSignal.timeout(SHARED_BROWSER_ACTION_DEADLINE_MS)]);
       await controlTail;
-      if(registered(binding,resumedSignal)!==row || active!==row || phase!=="paused")throw new SharedBrowserError("run_unavailable");
-      await awaitResume(row,resumedSignal);await controlTail;
+      if(registered(binding,resumedSignal)!==row || active!==row)throw new SharedBrowserError("run_unavailable");
+      if(["paused","human"].includes(phase)){await awaitResume(row,resumedSignal);await controlTail;}
+      else if(phase!=="agent")throw new SharedBrowserError("run_unavailable");
       if(registered(binding,resumedSignal)!==row || active!==row || status().phase!=="agent")throw new SharedBrowserError("browser_changed");
       const resumed=await execute(binding,{action:"snapshot"},resumedSignal);
       if(!error.content)return resumed;

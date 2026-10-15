@@ -152,9 +152,10 @@ describe("shared Chrome broker ownership and takeover",()=>{
     const queued=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(e=>e);
     const takeover=s.broker.control("owner",{action:"takeover"});
     expect(s.broker.status().phase).toBe("pausing"); expect(s.gates).toEqual([false]);
-    completed.resolve({success:true,observationId:"old-obs",content:"Invoices"});expect((await first).code).toBe("browser_changed");await takeover;
+    completed.resolve({success:true,observationId:"old-obs",content:"Invoices"});await takeover;
     expect(s.gates).toEqual([false,true]);expect(s.broker.status().phase).toBe("human");
-    expect((await queued).code).toBe("browser_changed");expect(s.driver.execute).toHaveBeenCalledOnce();await s.broker.close();
+    expect((await queued).code).toBe("browser_changed");expect(s.driver.execute).toHaveBeenCalledOnce();
+    await s.broker.control("owner",{action:"resume"});expect(await first).toMatchObject({success:true,observationId:"obs-1"});expect(s.driver.execute).toHaveBeenCalledTimes(2);await s.broker.close();
   });
   it("aborts and cleans an in-flight download, rejects its queued successor, then resumes the pending tool with a fresh snapshot",async()=>{
     const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);
@@ -198,6 +199,22 @@ describe("shared Chrome broker ownership and takeover",()=>{
     await entered.promise;await s.broker.control("owner",{action:"pause"});await s.broker.control("owner",{action:"stop"});
     expect((await action).code).toBe("run_unavailable");expect(s.broker.status().phase).toBe("idle");expect(s.broker.resolveCapability(s.grant.token)).toBeNull();await s.broker.close();
   });
+  it("keeps a takeover-interrupted download pending through manual control and resumes with a fresh snapshot",async()=>{
+    const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);const entered=deferred<void>();
+    s.driver.execute.mockImplementationOnce(async(_input,signal)=>{entered.resolve();await new Promise<void>(resolve=>signal.addEventListener("abort",resolve,{once:true}));return{success:false,handoffRequested:true,content:"Review the preserved file."};});
+    let settled=false;const action=s.broker.execute(binding,{action:"download",observationId:"obs-1",ref:"r1",documentId:"INV-4"},s.controller.signal).finally(()=>{settled=true;});
+    await entered.promise;await s.broker.control("owner",{action:"takeover"});expect(settled).toBe(false);expect(s.broker.status()).toMatchObject({phase:"human",handoff:{content:"Review the preserved file."}});
+    await s.broker.control("owner",{action:"resume"});expect(await action).toMatchObject({success:true,observationId:"obs-1"});expect((await action).content).toContain("Review the preserved file.");
+    expect(s.driver.execute.mock.calls.map(call=>(call[0] as {action:string}).action)).toEqual(["snapshot","download","snapshot"]);await s.broker.close();
+  });
+  it("accepts Resume already queued behind an in-flight Pause cleanup",async()=>{
+    const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);const entered=deferred<void>(),cleanup=deferred<void>();
+    s.driver.execute.mockImplementationOnce(async(_input,signal)=>{entered.resolve();await new Promise<void>(resolve=>signal.addEventListener("abort",resolve,{once:true}));await cleanup.promise;return{success:false};});
+    const action=s.broker.execute(binding,{action:"download",observationId:"obs-1",ref:"r1",documentId:"INV-5"},s.controller.signal);
+    await entered.promise;const pause=s.broker.control("owner",{action:"pause"});const resume=s.broker.control("owner",{action:"resume"});cleanup.resolve();
+    await pause;await resume;expect(await action).toMatchObject({success:true,observationId:"obs-1"});expect(s.broker.status().phase).toBe("agent");
+    expect(s.driver.execute.mock.calls.map(call=>(call[0] as {action:string}).action)).toEqual(["snapshot","download","snapshot"]);await s.broker.close();
+  });
   it("requires a fresh observation after explicit owner resume",async()=>{
     const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);
     await s.broker.control("owner",{action:"takeover"});await s.broker.control("owner",{action:"resume"});
@@ -237,7 +254,7 @@ describe("shared Chrome broker ownership and takeover",()=>{
     const first=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(error=>error);await started.promise;
     await expect(s.broker.control("owner",{action:"takeover"})).rejects.toHaveProperty("code","browser_unavailable");
     expect(s.gates).toEqual([false]);expect(s.broker.status().phase).toBe("unavailable");
-    never.resolve({success:true,observationId:"late",content:"late"});expect((await first).code).toBe("browser_changed");await s.broker.close();
+    never.resolve({success:true,observationId:"late",content:"late"});expect((await first).code).toBe("run_unavailable");await s.broker.close();
   });
   it("drains an agent claim still waiting for the input gate before acknowledging takeover",async()=>{
     const entered=deferred<void>();const release=deferred<void>();const gates:boolean[]=[];
