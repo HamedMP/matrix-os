@@ -121,14 +121,15 @@ export async function configureOpenClawSharedBrowser(options) {
       const extensions=await directory(join(state.access,'extensions'),!legacy);directories.push(extensions);
       plugin=await directory(join(extensions.access,ID),!legacy);directories.push(plugin);await sweep(plugin);
       files={
-        'index.mjs':`export { default } from ${JSON.stringify(options.compiledEntry)};\n`,
+        'index.mjs':`import { resolveGatewayAuth } from "openclaw/plugin-sdk/gateway-runtime";\nimport { createOpenClawSharedBrowserPlugin } from ${JSON.stringify(options.compiledEntry)};\nexport default createOpenClawSharedBrowserPlugin(resolveGatewayAuth);\n`,
         'package.json':JSON.stringify({name:'@matrix-os/openclaw-shared-browser',version:'1.0.0',type:'module',openclaw:{extensions:['./index.mjs']}},null,2)+'\n',
         'openclaw.plugin.json':JSON.stringify(manifest,null,2)+'\n',
       };
       previous={};
       for(const[name,content]of Object.entries(files)) {
         const current=await read(join(plugin.access,name));previous[name]=current;
-        if(legacy&&(!current||!current.equals(Buffer.from(content))||marker.files[name]!==hash(current)))throw unavailable();
+        const legacyIndex=name==='index.mjs'&&current?.equals(Buffer.from(`export { default } from ${JSON.stringify(options.compiledEntry)};\n`));
+        if(legacy&&(!current||(!current.equals(Buffer.from(content))&&!legacyIndex)||marker.files[name]!==hash(current)))throw unavailable();
         if(marker&&current===null)return{state:'owner_uninstalled'};
         if(current&&!current.equals(Buffer.from(content))&&marker?.files[name]!==hash(current))throw unavailable();
       }

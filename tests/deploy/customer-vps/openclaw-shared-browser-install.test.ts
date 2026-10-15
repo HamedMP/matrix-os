@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { configureOpenClawSharedBrowser } from "../../../distro/customer-vps/host-bin/matrix-configure-openclaw-shared-browser.mjs";
 import { OPENCLAW_SHARED_BROWSER_MANIFEST } from "../../../packages/gateway/src/chat/openclaw-shared-browser-plugin-entry.js";
@@ -23,7 +24,7 @@ it("installs only the fixed contained Matrix plugin, preserving owner model/conf
     expect(config.plugins).not.toHaveProperty("installs");
     const dir = join(f.stateDir, "extensions", ID); const pkg = JSON.parse(await readFile(join(dir,"package.json"),"utf8"));
     expect(pkg.openclaw.extensions).toEqual(["./index.mjs"]);
-    expect(await readFile(join(dir, "index.mjs"), "utf8")).toContain('export { default } from "/opt/matrix/app/packages/gateway/dist/chat/openclaw-shared-browser-plugin-entry.js"');
+    expect(await readFile(join(dir, "index.mjs"), "utf8")).toBe('import { resolveGatewayAuth } from "openclaw/plugin-sdk/gateway-runtime";\nimport { createOpenClawSharedBrowserPlugin } from "/opt/matrix/app/packages/gateway/dist/chat/openclaw-shared-browser-plugin-entry.js";\nexport default createOpenClawSharedBrowserPlugin(resolveGatewayAuth);\n');
     expect(JSON.parse(await readFile(join(dir, "openclaw.plugin.json"), "utf8"))).toEqual(OPENCLAW_SHARED_BROWSER_MANIFEST);
     const bytes = await readFile(f.configPath); await configureOpenClawSharedBrowser(f.options); expect(await readFile(f.configPath)).toEqual(bytes);
   } finally { await f.close(); }
@@ -335,3 +336,33 @@ printf 'started' > '${started}'
     await expect(readFile(started)).rejects.toMatchObject({ code: "ENOENT" });
   } finally { await f.close(); }
 }, 15_000);
+
+it("upgrades only a fingerprinted legacy managed index to inject the official native resolver", async () => {
+  const f = await fixture(); try {
+    await configureOpenClawSharedBrowser(f.options);
+    const dir = join(f.stateDir, "extensions", ID), markerPath = join(f.stateDir, ".matrix-shared-browser-installed.json");
+    const legacyIndex = `export { default } from ${JSON.stringify(f.options.compiledEntry)};\n`;
+    await writeFile(join(dir, "index.mjs"), legacyIndex);
+    const marker = JSON.parse(await readFile(markerPath, "utf8"));
+    marker.files["index.mjs"] = createHash("sha256").update(legacyIndex).digest("hex");
+    await writeFile(markerPath, JSON.stringify(marker));
+    const config = JSON.parse(await readFile(f.configPath, "utf8"));
+    config.plugins.installs = { [ID]: { source: "path", sourcePath: dir, installPath: dir, version: "1.0.0", installedAt: "2026-01-01T00:00:00.000Z" } };
+    await writeFile(f.configPath, JSON.stringify(config));
+    const before = await readFile(f.configPath);
+    const customIndex = "// owner customized index\n";
+    await writeFile(join(dir, "index.mjs"), customIndex);
+    await writeFile(markerPath, JSON.stringify({ ...marker, files: { ...marker.files, "index.mjs": createHash("sha256").update(customIndex).digest("hex") } }));
+    await expect(configureOpenClawSharedBrowser(f.options)).rejects.toThrow();
+    expect(await readFile(f.configPath)).toEqual(before);
+    expect(await readFile(join(dir, "index.mjs"), "utf8")).toBe(customIndex);
+    await writeFile(join(dir, "index.mjs"), legacyIndex); await writeFile(markerPath, JSON.stringify(marker));
+    expect(await configureOpenClawSharedBrowser(f.options)).toMatchObject({ state: "installed" });
+    delete config.plugins.installs;
+    expect(JSON.parse(await readFile(f.configPath, "utf8"))).toEqual(config);
+    const index = await readFile(join(dir, "index.mjs"), "utf8");
+    expect(index).toBe(`import { resolveGatewayAuth } from "openclaw/plugin-sdk/gateway-runtime";\nimport { createOpenClawSharedBrowserPlugin } from ${JSON.stringify(f.options.compiledEntry)};\nexport default createOpenClawSharedBrowserPlugin(resolveGatewayAuth);\n`);
+    const updated = JSON.parse(await readFile(markerPath, "utf8"));
+    expect(updated.files["index.mjs"]).toBe(createHash("sha256").update(index).digest("hex"));
+  } finally { await f.close(); }
+});
