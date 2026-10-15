@@ -27,9 +27,12 @@ describe("shared Chrome broker ownership and takeover",()=>{
     let settled=false;const result=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).finally(()=>{settled=true;});
     try {
       await vi.waitFor(()=>expect(s.broker.status().phase).toBe("human"));await Promise.resolve();
+      expect(s.broker.status()).toMatchObject({handoff:{content:"Owner sign-in required."}});
       expect(settled).toBe(false);expect(s.driver.detach).toHaveBeenCalledOnce();expect(s.gates).toEqual([false,true]);
       await s.broker.control("owner",{action:"resume"});
-      expect(await result).toMatchObject({success:true,observationId:"obs-1",content:"Invoices"});
+      expect(await result).toMatchObject({success:true,observationId:"obs-1"});
+      expect((await result).content).toContain("Owner sign-in required.");
+      expect((await result).content).toContain("Invoices");
       expect(s.driver.execute.mock.calls.map(call=>(call[0] as {action:string}).action)).toEqual(["snapshot","snapshot"]);
       expect(s.broker.status()).toMatchObject({phase:"agent",needsObservation:false});
     } finally {await closeAfterResult(s.broker,result);}

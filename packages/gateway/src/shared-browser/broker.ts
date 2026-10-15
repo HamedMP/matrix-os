@@ -31,12 +31,13 @@ export function createSharedBrowserBroker(options: {
   const drainMs = Math.min(options.drainTimeoutMs ?? 8000,8000);
   let active: Registered | undefined;
   let phase: SharedBrowserState["phase"]="idle", revision=0, needsObservation=true, closed=false;
+  let handoff: SharedBrowserState["handoff"];
   let actionTail:Promise<void>=Promise.resolve(), running:Promise<unknown>|undefined, queued=0;
   let controlTail:Promise<void>=Promise.resolve(), controls=0;
   let waitingResume: { row: Registered; finish(error?:SharedBrowserError):void } | undefined;
   const report=(error:unknown)=>console.warn("[shared-browser] Operation unavailable",error instanceof SharedBrowserError?error.code:"operation_failed");
-  const status=():SharedBrowserState=>({phase,revision,needsObservation,run:active?{chatId:active.binding.chatId,runId:active.binding.runId,harness:active.binding.harness}:null});
-  const changed=(next:SharedBrowserState["phase"])=>{phase=next;revision++;needsObservation=true;options.driver.invalidateObservation();};
+  const status=():SharedBrowserState=>({phase,revision,needsObservation,run:active?{chatId:active.binding.chatId,runId:active.binding.runId,harness:active.binding.harness}:null,...(handoff?{handoff}:{})});
+  const changed=(next:SharedBrowserState["phase"])=>{phase=next;if(["idle","agent","unavailable"].includes(next))handoff=undefined;revision++;needsObservation=true;options.driver.invalidateObservation();};
   const unavailable=()=>{changed("unavailable");return new SharedBrowserError("browser_unavailable");};
   function registered(binding:SharedBrowserBinding,caller?:AbortSignal):Registered {
     const row=runs.get(binding.runId);
@@ -161,6 +162,7 @@ export function createSharedBrowserBroker(options: {
       // A credential or download-recovery handoff must finish controller cleanup
       // before acknowledging owner input; do not drain our own running promise.
       if(!value.success && active===row && phase==="agent"){
+        if(value.handoffRequested&&value.content)handoff={content:value.content};
         await control(options.ownerId,{action:"takeover"});
         if(signal.aborted)throw new SharedBrowserError("run_unavailable");
       }
@@ -180,7 +182,9 @@ export function createSharedBrowserBroker(options: {
     if(registered(binding,resumedSignal)!==row)throw new SharedBrowserError("run_unavailable");
     await controlTail;
     if(active!==row || phase!=="agent")throw new SharedBrowserError("browser_changed");
-    return execute(binding,{action:"snapshot"},resumedSignal);
+    const resumed=await execute(binding,{action:"snapshot"},resumedSignal);
+    if(!value.content)return resumed;
+    return{...resumed,content:[value.content,resumed.content].filter((content):content is string=>Boolean(content)).join("\n\n").slice(0,32_000)};
   }
   async function control(ownerId:string,raw:SharedBrowserControl):Promise<SharedBrowserState> {
     if(closed || ownerId!==options.ownerId)throw new SharedBrowserError("run_unavailable");
