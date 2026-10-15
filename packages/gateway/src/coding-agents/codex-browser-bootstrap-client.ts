@@ -13,11 +13,14 @@ export async function prepareCodexBrowser(input: {
   const bootstrap = beginNativeBrowserBootstrap(input.ownerId);
   const signal = bootstrap ? AbortSignal.any([input.signal, bootstrap.signal]) : input.signal;
   try {
+    signal.throwIfAborted();
     if (!input.browser.isLive() || !input.control.prepareBrowser) throw new Error("Browser startup unavailable");
     await input.control.prepareBrowser({ sessionId: input.sessionId, signal,
       browser: { attemptId: input.browser.attemptId, token: input.browser.token,
         gatewayPort: Number(input.browser.mcpServer.env.MATRIX_SHARED_BROWSER_GATEWAY_PORT) },
     });
+    signal.throwIfAborted();
+    if (!input.browser.isLive()) throw new Error("Browser startup unavailable");
   } catch (error: unknown) {
     try {
       const stopped = await boundedOperation(() => input.runtime.stopSession(input.sessionId), 5_000);

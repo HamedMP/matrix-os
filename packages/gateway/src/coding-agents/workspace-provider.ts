@@ -370,12 +370,14 @@ export function createWorkspaceCodingAgentProvider(
             "[coding-agents] Codex turn control failed; restarting session",
             { errorName: safeRecoveryErrorName(error) },
           );
+          const recovery = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
+          const recoverySignal = recovery ? AbortSignal.any([signal, recovery.signal]) : signal;
           try {
-            const session = await recoverCodexWorkspace(options.runtime, context, sessionId, prompt);
-            const browser = nativeBrowserExecution(principal.userId);
+            if (browser && !options.codexControl.prepareBrowser) throw new Error("Browser startup unavailable");
+            const session = await recoverCodexWorkspace(options.runtime, { ...context, signal: recoverySignal }, sessionId, prompt,
+              browser ? () => markNativeBrowserCleanupUnconfirmed(principal.userId) : undefined);
             if (browser) {
-              if (!options.codexControl.prepareBrowser) throw new Error("Browser startup unavailable");
-              await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control: options.codexControl, runtime: options.runtime, signal });
+              await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control: options.codexControl, runtime: options.runtime, signal: recoverySignal });
             }
             const terminalRef = terminalRefFor(session);
             return { events: terminalRef ? [AgentThreadEventSchema.parse({
@@ -387,7 +389,7 @@ export function createWorkspaceCodingAgentProvider(
           } catch (recoveryError: unknown) {
             options.codexEvents.unwatch(sessionId);
             throw recoveryError;
-          }
+          } finally { recovery?.finish(); }
         }
         return { events: [], outcome: "delivered", resumeState };
       }
