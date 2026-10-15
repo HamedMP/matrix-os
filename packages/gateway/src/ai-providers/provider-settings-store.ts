@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   ProviderConnectionAttemptSchema,
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
@@ -308,7 +309,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     if (this.#observationScope?.() === "canonical_matrix") options = { ...options, admissionScope: "canonical_matrix" };
     if (options.admissionScope === "managed_matrix" || options.admissionScope === "canonical_matrix") return await this.#managedMatrixSnapshot(options);
     const refresh = options.refresh === true;
-    const observationScope = { signal: options.signal, deadline: Math.min(+this.#now() + 13000,
+    const observationScope = { signal: options.signal, deadline: Math.min(+this.#now() + FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs,
       Number.isFinite(options.nativeObservationDeadline) ? options.nativeObservationDeadline! : Infinity) };
     await this.#serialize(() => this.#readRuntimeRecovery(refresh));
     // All inventory, funding, catalog and native probes run outside mutation
