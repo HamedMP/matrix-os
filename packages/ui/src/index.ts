@@ -252,3 +252,5 @@ export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMen
 export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./chat/attachment-input.js";
 
 export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
+
+export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";

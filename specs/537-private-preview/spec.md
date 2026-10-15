@@ -418,3 +418,21 @@ Public docs are N/A. This is an internal engineering tool, and its reference is
 7. **Wrong / correct:** do not dispatch provisioning to obtain a bundle for an
    independently owned test VPS. Publish bundle-only, then perform a separately
    scoped deploy of the verified immutable version.
+
+
+## Owner-managed update discovery
+
+A Private Preview update base serves only the owner-confirmed immutable release.
+Its missing channel manifests and release list are policy, not an installation
+failure. Gateway update discovery must report `managedByOwner: true`, retain the
+installed version, and skip those forbidden upstream reads for the exact configured
+private update base. Web Desktop, Web Canvas and Electron Desktop System views share the
+owner-confirmed version notice and hides channel/check/release-selection controls;
+installed and running provenance remains visible. Ordinary computer update checks
+and the controller's owner-confirmed version fence stay unchanged.
+
+Regression coverage: `tests/gateway/private-preview-system-update.test.ts` keeps
+the controller channel/list denial and proves no forbidden fetch occurs;
+the Web and Electron `private-preview-system-updates.test.tsx` suites exercise
+actual System components, provenance, shared policy notice and absent controls.
+Local tests do not replace fresh device evidence for the changed source.
