@@ -320,7 +320,7 @@ it("preserves a pending Chat through account setup before selecting its main com
   await flush();
   expect(mockSavePrimary).toHaveBeenCalledWith(main);
   expect(mockReplace).toHaveBeenCalledWith({
-    pathname: "/(drawer)", params: { chat: "chat_12345678" },
+    pathname: "/(drawer)/(tabs)/(chats)", params: { chat: "chat_12345678" },
   });
   expect(mockFetchMobileJourney.mock.invocationCallOrder[1]).toBeLessThan(
     mockFetchComputers.mock.invocationCallOrder[0],
