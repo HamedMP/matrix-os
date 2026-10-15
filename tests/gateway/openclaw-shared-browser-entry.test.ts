@@ -1,9 +1,33 @@
-import { expect, it, vi } from "vitest";
+import { afterAll, beforeEach, expect, it, vi } from "vitest";
 import plugin, { OPENCLAW_SHARED_BROWSER_MANIFEST } from "../../packages/gateway/src/chat/openclaw-shared-browser-plugin-entry.js";
+const originalBrowserLab = process.env.MATRIX_BROWSER_LAB;
+beforeEach(() => { process.env.MATRIX_BROWSER_LAB = "true"; });
+afterAll(() => {
+  if (originalBrowserLab === undefined) delete process.env.MATRIX_BROWSER_LAB;
+  else process.env.MATRIX_BROWSER_LAB = originalBrowserLab;
+});
 function nativeApi() {
   const services: Array<{ stop(): Promise<void> }> = [];
   return { services, config: { gateway: { bind: "loopback", mode: "local", port: 18789, auth: { mode: "token", token: "b".repeat(64) } } }, registerService: (service: { stop(): Promise<void> }) => services.push(service), lifecycle: { registerRuntimeLifecycle: vi.fn() } };
 }
+it("registers no browser authority unless the host explicitly enables the feature", () => {
+  const original = process.env.MATRIX_BROWSER_LAB;
+  try {
+    for (const value of [undefined, "", "false", "1"]) {
+      if (value === undefined) delete process.env.MATRIX_BROWSER_LAB;
+      else process.env.MATRIX_BROWSER_LAB = value;
+      const api = { ...nativeApi(), pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: vi.fn() };
+      plugin.register(api as never);
+      expect(api.registerGatewayMethod).not.toHaveBeenCalled();
+      expect(api.registerTool).not.toHaveBeenCalled();
+      expect(api.on).not.toHaveBeenCalled();
+      expect(api.services).toEqual([]);
+    }
+  } finally {
+    if (original === undefined) delete process.env.MATRIX_BROWSER_LAB;
+    else process.env.MATRIX_BROWSER_LAB = original;
+  }
+});
 it("declares exact pinned native tool ownership and startup activation for protected bind RPC", async () => {
   expect(OPENCLAW_SHARED_BROWSER_MANIFEST).toMatchObject({ id: "matrix-shared-browser", activation: { onStartup: true }, contracts: { tools: ["shared_browser"] } });
   const hooks = new Map<string, () => void>();

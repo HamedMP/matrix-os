@@ -13,6 +13,7 @@ export const OPENCLAW_SHARED_BROWSER_MANIFEST = {
 export default {
   id: "matrix-shared-browser", name: "Matrix shared Chrome",
   register(api: SharedBrowserRelayApi & { pluginConfig?: unknown; config?: unknown }) {
+    if (process.env.MATRIX_BROWSER_LAB !== "true") return;
     const config = Config.parse(api.pluginConfig ?? {});
     registerOpenClawSharedBrowserRelay(api, {
       rpc: createOpenClawSharedBrowserRelayClient(api.config),
