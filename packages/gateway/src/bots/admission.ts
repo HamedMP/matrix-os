@@ -212,7 +212,7 @@ export function createPrivateBotAdmission(deps: {
       return { ...runtime, rootFingerprint: root.fingerprint };
     },
     release,
-    ownsDirectChat: (input: { ownerId: string; botId: string; chatId: string }) => ownsChat(input),
+    ownsDirectChat: ({ ownerId, botId, chatId }: { ownerId: string; botId: string; chatId: string }) => ownsChat({ ownerId, botId, chatId }),
   };
 }
 
