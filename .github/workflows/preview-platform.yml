@@ -131,10 +131,6 @@ jobs:
             echo "connect_collaboration_preview runs only together with connect_share_preview for the same PR." >&2
             exit 1
           fi
-          if [ "${CONNECT_SLACK_PILOT:-false}" = "true" ] && [ "${CONNECT_SHARE_PREVIEW:-false}" = "true" ]; then
-            echo "connect_slack_pilot is a separate operation; do not combine it with connect_share_preview." >&2
-            exit 1
-          fi
           if [ -z "${CLOUD_RUN_PREVIEW_SERVICE:-}" ]; then
             if [ "${REQUIRE_EXISTING_SERVICE:-false}" = "true" ]; then
               echo "An existing preview service must be configured; refusing to continue." >&2
@@ -729,6 +725,16 @@ jobs:
       PR_NUMBER: ${{ inputs.pr }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Validate preview connection inputs
+        env:
+          CONNECT_SLACK_PILOT: ${{ inputs.connect_slack_pilot && 'true' || 'false' }}
+          CONNECT_SHARE_PREVIEW: ${{ inputs.connect_share_preview && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ "${CONNECT_SLACK_PILOT:-false}" = "true" ] && [ "${CONNECT_SHARE_PREVIEW:-false}" = "true" ]; then
+            echo "connect_slack_pilot is a separate operation; do not combine it with connect_share_preview." >&2
+            exit 1
+          fi
       - name: Select exact-head preview runtime artifact
         id: runtime
         run: |
@@ -1563,6 +1569,12 @@ jobs:
             and any(.spec.containers[0].env[]?; .name == "PLATFORM_SECRET" and .valueFrom.secretKeyRef.name == "platform-preview-secret")
             and any(.spec.containers[0].env[]?; .name == "PLATFORM_DATABASE_URL" and .valueFrom.secretKeyRef.name == $db)
           ' <<< "$revision_json" >/dev/null || { echo "The tagged revision is not isolated to this Slack pilot." >&2; exit 1; }
+          database_secret_version="$(jq -er --arg db "slack-preview-pr${PR_NUMBER}-platform-database-url" '
+            [.spec.containers[0].env[]? | select(.name == "PLATFORM_DATABASE_URL")]
+            | select(length == 1) | .[0].valueFrom.secretKeyRef
+            | select(.name == $db) | .key
+            | select(type == "string" and test("^[1-9][0-9]{0,18}$"))
+          ' <<< "$revision_json")" || { echo "The checked Slack revision requires one immutable database secret version." >&2; exit 1; }
           client_origins="$(jq -er --arg alias "https://pr-${PR_NUMBER}-preview.matrix-os.com" '
             [.spec.containers[0].env[]?] as $env
             | [$env[] | select(.name == "MATRIX_COLLABORATION_ALLOWED_ORIGINS") | .value] as $allowed
@@ -1577,6 +1589,7 @@ jobs:
             | $allowed[0]
           ' <<< "$revision_json")" || { echo "The tagged preview has not enabled collaboration from the pilot's exact browser origin." >&2; exit 1; }
           [[ "$url" =~ ^https://[A-Za-z0-9.-]+$ ]]
+          echo "database_secret_version=$database_secret_version" >> "$GITHUB_OUTPUT"
           echo "platform_url=$url" >> "$GITHUB_OUTPUT"
           echo "client_origins=$client_origins" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
@@ -1590,12 +1603,14 @@ jobs:
       - name: Prove the Slack link and preview home have the same owner
         id: owner
         env:
+          PREVIEW_DATABASE_SECRET_VERSION: ${{ steps.target.outputs.database_secret_version }}
           PREVIEW_RUNTIME_OWNER_ID: ${{ env.PREVIEW_RUNTIME_OWNER_ID }}
         run: |
           set -euo pipefail
+          [[ "${PREVIEW_DATABASE_SECRET_VERSION:-}" =~ ^[1-9][0-9]{0,18}$ ]]
           handle="pr-${PR_NUMBER}"
           jq -e --arg handle "$handle" 'type == "object" and keys == ["address", "handle"] and .handle == $handle and (.address | test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))' preview-share-route.json >/dev/null
-          preview_db="$(gcloud secrets versions access latest --secret "slack-preview-pr${PR_NUMBER}-platform-database-url" --project "$GCP_PROJECT_ID" --quiet)"
+          preview_db="$(gcloud secrets versions access "$PREVIEW_DATABASE_SECRET_VERSION" --secret "slack-preview-pr${PR_NUMBER}-platform-database-url" --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
           SLACK_PREVIEW_DATABASE_URL="$preview_db" node scripts/slack-preview-runtime.mjs verify
           sessions="$(curl --fail --silent --show-error --max-time 30 \
@@ -1629,6 +1644,7 @@ jobs:
           echo "address=$(jq -r '.address' preview-share-route.json)" >> "$GITHUB_OUTPUT"
       - name: Connect the preview VM to the isolated Slack backend under a rollback guard
         env:
+          PREVIEW_DATABASE_SECRET_VERSION: ${{ steps.target.outputs.database_secret_version }}
           PREVIEW_RUNTIME_OWNER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           PREVIEW_TAG_URL: ${{ steps.target.outputs.platform_url }}
@@ -1637,6 +1653,7 @@ jobs:
           PREVIEW_ADDRESS: ${{ steps.owner.outputs.address }}
         run: |
           set -euo pipefail
+          [[ "${PREVIEW_DATABASE_SECRET_VERSION:-}" =~ ^[1-9][0-9]{0,18}$ ]]
           handle="pr-${PR_NUMBER}"
           route="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"
           response="$(mktemp)"
@@ -1679,7 +1696,7 @@ jobs:
           send "$identity" || { echo "The target VM could not prove its owner; no runtime was changed." >&2; exit 1; }
           observed_machine="$(jq -er '.stdout | fromjson | .machineId' "$response")"
           test "$observed_machine" = "$PREVIEW_MACHINE_ID"
-          preview_db="$(gcloud secrets versions access latest --secret "slack-preview-pr${PR_NUMBER}-platform-database-url" --project "$GCP_PROJECT_ID" --quiet)"
+          preview_db="$(gcloud secrets versions access "$PREVIEW_DATABASE_SECRET_VERSION" --secret "slack-preview-pr${PR_NUMBER}-platform-database-url" --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
           preview_secret="$(gcloud secrets versions access latest --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_secret"

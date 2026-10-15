@@ -78,7 +78,7 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
     const result = spawnSync("bash", ["-euc", script], {
       cwd: directory, encoding: "utf8", timeout: 20_000,
       env: { PATH: `${directory}:${process.env.PATH}`, ROOT: directory, FAILURE: failure,
-        PR_NUMBER: "2079", GCP_PROJECT_ID: "synthetic", GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1",
+        PR_NUMBER: "2079", PREVIEW_DATABASE_SECRET_VERSION: "1", GCP_PROJECT_ID: "synthetic", GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1",
         GITHUB_STEP_SUMMARY: join(directory, "summary"), PREVIEW_VPS_CONTROL_URL: "https://control.example.test",
         PREVIEW_RUNTIME_OWNER_ID: "user_synthetic", CLERK_SECRET_KEY: "sk_synthetic", SLACK_PILOT_APP_ID: "A123456",
         PREVIEW_TAG_URL: "https://preview.example.test", PREVIEW_CLIENT_ORIGINS: "https://preview.example.test",
