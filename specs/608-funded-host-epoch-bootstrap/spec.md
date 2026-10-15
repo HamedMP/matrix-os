@@ -39,3 +39,15 @@ Protected helper holds the existing exclusive environment writer lock, anchored 
 ## Rollout and documentation
 
 Require exact-source disposable VPS + Electron Desktop evidence, then fresh bounded owner-safe fleet inventory; DB status and old task lists do not prove online/idle. Cohorts retain existing <=100 UUID and <=7-day limits; defer busy/unknown/untrusted/custom/disabled/ineligible hosts, keep journals and report reasons. No credit, IAM, probe-budget or route shortcuts. Include separate public product-behavior documentation PR in `FinnaAI/matrix-os-site/content/docs/`; keep recipient details and operator commands private.
+
+### Review regressions and fixture scope
+
+Rollback uses protected attempt identity and local before-image proof; it must not
+need Platform to clean an unchanged failed bootstrap. Both apply and rollback
+must enforce the 64 KiB final environment bound before publication. The emitted
+program suite runs both epoch-present and epoch-absent complete lifecycles,
+including outage before publication, unavailable inspection after publication,
+resume, rollback and later updater recovery. The large existing serial fixture
+remains the shared emitted-program harness; missing-epoch entry coverage lives
+in a focused separate suite. Future scenario growth should extract archive and
+updater-recovery phases from that harness instead of duplicating it.

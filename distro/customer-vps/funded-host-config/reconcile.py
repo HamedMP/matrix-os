@@ -155,7 +155,16 @@ def run(action='apply', attempt=None):
         expected = {'sha256': digest(data), 'inode': info.st_ino, 'device': info.st_dev}
         if action == 'inspect':
             return digest(data)  # Epoch-absent baseline inspection never performs network I/O.
-        epoch, epoch_proof = resolve_host_epoch(values, sync_tokens[0].decode(), receipt['sourceSha'])
+        applied = None
+        if action == 'rollback':
+            # Cleanup authority is the protected attempt, including an epoch-absent
+            # before-image. Platform unavailability must not strand an unchanged host.
+            applied = json_bytes(state.read('applied.json'))
+            repair.validate({'action': 'rollback', 'rolloutId': applied.get('rolloutId'),
+                'identity': applied.get('identity'), 'expectedFile': expected, 'quiescentWindow': True})
+            epoch, epoch_proof = applied['identity']['epoch'], None
+        else:
+            epoch, epoch_proof = resolve_host_epoch(values, sync_tokens[0].decode(), receipt['sourceSha'])
         identity = {'handle': values['MATRIX_HANDLE'], 'machineId': values['MATRIX_MACHINE_ID'],
                     'runtimeSlot': 'primary', 'runtimeTokenEpoch': epoch}
         local_identity = {'handle': identity['handle'], 'machineId': identity['machineId'],
@@ -199,7 +208,6 @@ def run(action='apply', attempt=None):
                 state.write('applied.json', json.dumps({'rolloutId': rollout, 'identity': local_identity,
                             'afterSha256': result['afterSha256']}, separators=(',', ':')).encode(), 0o600)
         else:
-            applied = json_bytes(state.read('applied.json'))
             require(applied.get('identity') == local_identity)
             require(attempt is None or (re.fullmatch(r'(?:repair|epoch)-[a-f0-9]{32}', attempt.get('rolloutId', ''))
                     and applied.get('rolloutId') == attempt['rolloutId']))

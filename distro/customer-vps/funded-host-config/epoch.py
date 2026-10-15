@@ -132,6 +132,7 @@ def execute_epoch_image(repair, anchor, identity, rollout, expected, activity_gu
             # Validate our journal through the exact rollback path before publishing.
             _, new_values, _ = repair.parse(new)
             require(epoch_rollback_image(repair, directory, name, new, new_values, identity, uid, private_gid, info) == data)
+        require(len(new) <= repair.LIMIT)
         if new != data:
             temporary = '.host.env.funded.tmp-' + secrets.token_hex(12)
             repair.create_file(directory, temporary, new, uid, gid, 0o640, cleanup=True)

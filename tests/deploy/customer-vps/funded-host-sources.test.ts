@@ -23,6 +23,7 @@ describe("portable protected funded host contracts", () => {
 describe.skipIf(!disposableRootLinux)("protected funded host root contracts (explicit disposable Linux only)", () => {
   it("executes root lifecycle cases", () => execute("funded-host-component.test.py", "RootLifecycleTests"));
   it.each([
+    "funded-host-generated-epoch.test.py",
     "funded-host-restoration.test.py",
     "funded-host-artifact-repair.test.py",
     "funded-host-install-serialization.test.py",

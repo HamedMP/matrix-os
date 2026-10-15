@@ -87,6 +87,21 @@ class EpochTests(unittest.TestCase):
     def test_rollback_preserves_unrelated_later_edit(self):
         self.apply();self.path.write_bytes(self.path.read_bytes()+b'LATER=preserved\n')
         self.assertEqual(self.rollback(),self.old+b'LATER=preserved\n')
+    def test_oversized_rollback_preserves_readable_current_file(self):
+        self.old += b'MATRIX_FUNDED_AI_RUNTIME_TOKEN='+b'a'*2048+b'\n'
+        self.path.write_bytes(self.old)
+        self.apply()
+        current=self.path.read_bytes()
+        current += b'FILL='+b'x'*(REPAIR.LIMIT-len(current)-6)+b'\n'
+        self.assertEqual(len(current),REPAIR.LIMIT)
+        self.path.write_bytes(current)
+        info=self.path.stat()
+        expected={'sha256':REPAIR.sha(current),'inode':info.st_ino,'device':info.st_dev}
+        with self.assertRaises(Exception):
+            EPOCH['execute_epoch_image'](REPAIR,self.anchor,self.identity,self.id,expected,lambda:None,None,os.getuid(),os.getgid())
+        self.assertEqual(self.path.read_bytes(),current)
+        self.assertEqual(len(self.path.read_bytes()),REPAIR.LIMIT)
+
     def test_preexisting_temporary_is_not_deleted_when_exclusive_create_fails(self):
         path=self.path.with_name('.host.env.funded.tmp-'+'b'*24)
         path.write_bytes(b'previous operation evidence')

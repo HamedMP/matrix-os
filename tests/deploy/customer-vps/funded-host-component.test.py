@@ -381,6 +381,25 @@ class RootLifecycleTests(unittest.TestCase):
         runtime.run('rollback')
         self.assertEqual(Path(self.env).read_bytes(), self.original)
 
+    def test_failed_unpublished_bootstrap_cleans_attempt_without_platform(self):
+        self.original = self.original.replace(b'MATRIX_RUNTIME_TOKEN_EPOCH=2\n', b'')
+        Path(self.env).write_bytes(self.original)
+        installer.install(VERSION, SHA)
+        self.admission()
+        def fail(*args, **kwargs):
+            self.enabled = False
+            raise installer.ConfigError('injected Platform outage before publish')
+        with patch.object(runtime, 'apply_missing_epoch', fail), self.assertRaises(installer.ConfigError):
+            runtime.maintenance()
+        self.assertEqual(Path(self.env).read_bytes(), self.original)
+        self.assertFalse(Path(self.root + '/var/lib/matrix-funded-host-config/applied.json').exists())
+        self.assertFalse(Path(self.root + '/var/lib/matrix-funded-host-config/resume.json').exists())
+        self.assertEqual(self.states['matrix-gateway.service'], 'active')
+        self.enabled = True
+        self.admission()
+        runtime.maintenance()
+        self.assertIn(b'MATRIX_FUNDED_AI_ENABLED=true\n', Path(self.env).read_bytes())
+
     def test_failed_bootstrap_after_publish_rolls_back_whole_image_and_resumes(self):
         self.original = self.original.replace(b'MATRIX_RUNTIME_TOKEN_EPOCH=2\n', b'')
         Path(self.env).write_bytes(self.original)
