@@ -1142,9 +1142,11 @@ PY
 }
 
 download_bundle() {
+  (
   local version="$1" expected_sha256="$2" expected_size="$3" bundle_url="$4" bundle_file="$5"
   local chunk_size=8388608 max_bundle_size=8589934592 chunk_dir chunk_file chunk_temp
-  local header_file incoming_file start end expected_chunk index attempt status
+  local transfer_deadline_seconds=3600 transfer_started_at=$SECONDS remaining_seconds
+  local header_file incoming_file start end expected_chunk index attempt status curl_max_time curl_timeout
   local refreshed refreshed_version refreshed_sha256 refreshed_size refreshed_url downloaded=false
   if ! bundle_url_is_https "$bundle_url"; then
     write_update_error "download_metadata_changed" \
@@ -1159,7 +1161,12 @@ download_bundle() {
   umask 077
   chunk_dir="${bundle_file}.chunks-${expected_sha256}"
   if [ -e "$chunk_dir" ] || [ -L "$chunk_dir" ]; then
-    if [ ! -d "$chunk_dir" ] || [ -L "$chunk_dir" ]; then
+    if ! python3 - "$chunk_dir" <<'PY'
+import os, stat, sys
+s = os.lstat(sys.argv[1])
+raise SystemExit(0 if stat.S_ISDIR(s.st_mode) and s.st_uid == os.geteuid() and s.st_nlink == 1 and stat.S_IMODE(s.st_mode) == 0o700 else 1)
+PY
+    then
       write_update_error "download_failed" "The release bundle download failed." "$version"
       return 1
     fi
@@ -1188,8 +1195,16 @@ PY
     fi
     downloaded=false
     for attempt in 1 2 3; do
+      remaining_seconds=$((transfer_deadline_seconds - (SECONDS - transfer_started_at)))
+      if [ "$remaining_seconds" -le 0 ]; then
+        break
+      fi
       if ! refreshed="$(fetch_manifest "$(release_url_for_version "$version")")"; then
         continue
+      fi
+      remaining_seconds=$((transfer_deadline_seconds - (SECONDS - transfer_started_at)))
+      if [ "$remaining_seconds" -le 0 ]; then
+        break
       fi
       refreshed_version="$(json_field "$refreshed" version)"
       refreshed_sha256="$(json_field "$refreshed" sha256)"
@@ -1208,9 +1223,12 @@ PY
       chunk_temp="$(mktemp "$chunk_dir/.chunk-$index.XXXXXX")" || return 1
       header_file="$(mktemp "$chunk_dir/.headers-$index.XXXXXX")" || { rm -f -- "$chunk_temp"; return 1; }
       status=""
-      if status="$(/usr/bin/timeout --signal=KILL 330 curl --fail --location \
+      curl_max_time=300
+      [ "$remaining_seconds" -ge "$curl_max_time" ] || curl_max_time="$remaining_seconds"
+      curl_timeout=$((curl_max_time + 30))
+      if status="$(/usr/bin/timeout --signal=KILL "$curl_timeout" curl --fail --location \
       --proto '=https' --proto-redir '=https' --max-redirs 3 \
-      --connect-timeout 10 --max-time 300 --http1.1 \
+      --connect-timeout 10 --max-time "$curl_max_time" --http1.1 \
       --range "$start-$end" --max-filesize "$expected_chunk" \
       --dump-header "$header_file" --write-out '%{http_code}' \
       "$bundle_url" -o "$chunk_temp")" &&
@@ -1218,17 +1236,29 @@ PY
 import os, re, stat, sys
 headers, body, status_code, start, end, total = sys.argv[1:]
 start, end, total = map(int, (start, end, total))
-hs, bs = os.lstat(headers), os.lstat(body)
-if not stat.S_ISREG(hs.st_mode) or hs.st_nlink != 1 or hs.st_size > 65536:
-    raise SystemExit(1)
-if not stat.S_ISREG(bs.st_mode) or bs.st_nlink != 1 or bs.st_size != end - start + 1:
-    raise SystemExit(1)
-text = open(headers, 'rb').read(65537).decode('iso-8859-1')
+def read_regular(path, limit, exact=None):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb', buffering=0) as source:
+        info = os.fstat(source.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or
+                info.st_nlink != 1 or info.st_size > limit or
+                (exact is not None and info.st_size != exact)):
+            raise SystemExit(1)
+        data = source.read(limit + 1)
+        if len(data) != info.st_size or source.read(1):
+            raise SystemExit(1)
+        return data
+text = read_regular(headers, 65536).decode('iso-8859-1')
+read_regular(body, end - start + 1, end - start + 1)
 ranges = re.findall(r'(?im)^content-range:\s*bytes\s+(\d+)-(\d+)/(\d+)\s*$', text)
 if status_code != '206' or not ranges or tuple(map(int, ranges[-1])) != (start, end, total):
     raise SystemExit(1)
 PY
       then
+        if [ "$((SECONDS - transfer_started_at))" -ge "$transfer_deadline_seconds" ]; then
+          rm -f -- "$chunk_temp" "$header_file"
+          break
+        fi
         mv -f -- "$chunk_temp" "$chunk_file"
         rm -f -- "$header_file"
         downloaded=true
@@ -1249,7 +1279,14 @@ PY
 import os, stat, sys
 directory, destination, total, chunk_size = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 written = 0
-with open(destination, 'wb', buffering=0) as output:
+fd = os.open(destination, os.O_WRONLY | os.O_NOFOLLOW)
+initial = os.fstat(fd)
+if (not stat.S_ISREG(initial.st_mode) or initial.st_uid != os.geteuid() or
+        initial.st_nlink != 1 or stat.S_IMODE(initial.st_mode) != 0o600):
+    os.close(fd)
+    raise SystemExit(1)
+os.ftruncate(fd, 0)
+with os.fdopen(fd, 'wb', buffering=0) as output:
     index = 0
     while written < total:
         expected = min(chunk_size, total - written)
@@ -1271,7 +1308,10 @@ with open(destination, 'wb', buffering=0) as output:
         written += expected
         index += 1
 info = os.lstat(destination)
-raise SystemExit(0 if stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size == total else 1)
+raise SystemExit(0 if stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and
+                 info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o600 and
+                 info.st_dev == initial.st_dev and info.st_ino == initial.st_ino and
+                 info.st_size == total else 1)
 PY
   then
     rm -f -- "$incoming_file"
@@ -1281,6 +1321,7 @@ PY
   mv -f -- "$incoming_file" "$bundle_file"
   rm -rf -- "$chunk_dir"
   return 0
+  )
 }
 
 prepare_triggered_update_action=apply
