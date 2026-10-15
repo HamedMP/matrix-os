@@ -62,7 +62,7 @@ describe("selected Provider admission discovery", () => {
 
   it("rejects invented or retired SDK instance ids without triggering other discovery", async () => {
     const input = sources(); const service = createChatProviderCatalogService(input);
-    for (const instanceId of ["codex_invented", "kernel_matrix_included"]) {
+    for (const instanceId of ["codex_invented", "claude_code_invented", "kernel_matrix_included", "claude_code_matrix_included"]) {
       const selection = { ...selected, instanceId };
       expect(validateChatProviderSelection({ catalog: await service.getCatalog(principal, selection), selection }).ok).toBe(false);
     }

@@ -7,19 +7,21 @@ import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {readReviewedConfiguration} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
 import {reconcileMainSourceQualification} from './dedicated-main-source-gate.mjs';
+import {logGateEvent} from './gate-log.mjs';
 const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const sha=/^[a-f0-9]{40}$/;
 const same=(value,repo)=>typeof value==='string'&&value.toLowerCase()===`${repo.owner}/${repo.repo}`.toLowerCase();
 const name='CI Source Qualification',path='.github/workflows/ci-dedicated.yml';
-async function boundedPages(load,key){
- const rows=[];
- for(let page=1;page<=3;page++){
-  const {data}=await load(page),values=key?data[key]:data;
-  if(!Array.isArray(values)||values.length>100)throw new Error('Invalid bounded source gate API list');
-  rows.push(...values);if(values.length<100)return rows;
+// Stream one API page at a time; the job timeout and 10,000-PR scan cap stay bounded.
+async function* openPulls(github,repo,base){
+ for(let page=1;page<=100;page++){
+  const {data}=await github.rest.pulls.list({...repo,state:'open',...(base?{base}:{}),per_page:100,page,request});
+  if(!Array.isArray(data)||data.length>100)throw new Error('Invalid bounded source gate API list');
+  yield* data;
+  if(data.length<100)return;
  }
- throw new Error('Source gate API history exceeds bounded coverage');
+ throw new Error('Open pull request scan exceeds bounded coverage');
 }
 async function ownedGate(github,repo,pull,workflow,appId){
  const {data:legacy}=await github.rest.checks.listForRef({...repo,ref:pull.head.sha,check_name:'Dedicated CI Results',filter:'latest',per_page:100,page:1,request});
@@ -48,6 +50,8 @@ async function ownedGate(github,repo,pull,workflow,appId){
  }
  throw new Error('Relevant source gate history exceeds bounded coverage');
 }
+// Logged before the failure write, so a failing write cannot hide the root cause.
+function logGateError(prNumber,stage,error){logGateEvent(`Source qualification failed for PR #${prNumber}`,stage,error);}
 async function currentRequester(github,repo,snapshot,options={}){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refresh CI definition');
@@ -82,15 +86,16 @@ export async function reconcileSourceQualification(github,repo,controller,option
  const config=await settings(github,repo);
  const children=options.childrenOf;
  if(children!==undefined&&(!id(children?.number)||typeof children.headRef!=='string'||!children.headRef))throw new Error('Invalid source gate scope');
- const listOpen=()=>boundedPages(page=>github.rest.pulls.list({...repo,state:'open',per_page:100,page,request}));
  // A push only changes the pushed PR and the merge source of PRs stacked directly on its branch.
  const pulls=options.prNumber?[ (await github.rest.pulls.get({...repo,pull_number:options.prNumber,request})).data ]
-  :children?(await listOpen()).filter(pull=>pull.number===children.number||pull.base?.ref===children.headRef)
-  :await listOpen();
+  :children?(async function*(){
+   yield (await github.rest.pulls.get({...repo,pull_number:children.number,request})).data;
+   for await(const child of openPulls(github,repo,children.headRef))if(child.number!==children.number&&child.base?.ref===children.headRef)yield child;
+  })():openPulls(github,repo);
  let examined=0,dispatched=0;
- for(const listed of pulls){
+ for await(const listed of pulls){
   if(!id(listed.number)||typeof listed.head?.repo?.full_name!=='string'||!same(listed.base?.repo?.full_name,repo)||!sha.test(listed.head.sha||''))continue;
-  const {data:pull}=await github.rest.pulls.get({...repo,pull_number:listed.number,request});
+  const pull=children&&listed.number===children.number?listed:(await github.rest.pulls.get({...repo,pull_number:listed.number,request})).data;
   if(pull.head?.sha!==listed.head.sha)continue;
   examined++;
   const {prior,history}=await ownedGate(github,repo,pull,workflow,options.gateAppId);
@@ -105,10 +110,13 @@ export async function reconcileSourceQualification(github,repo,controller,option
   // Keep the authenticated generation while source/API validation fails closed.
   // Otherwise its already-running hosted replacement becomes older than itself.
   if(sameRecovery){evidence.recoveryStartedAt=old.recoveryStartedAt;evidence.recoveryAfterRunId=old.recoveryAfterRunId;}
+  let currentCheck=prior?.check;
   const write=async(conclusion,title,extra={})=>{
-   const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,status:'completed',conclusion,request,output:{title,summary:JSON.stringify({...evidence,...extra})}};
-   const {data:written}=prior?await options.gateGithub.rest.checks.update({...args,check_run_id:prior.check.id}):await options.gateGithub.rest.checks.create({...args,name,head_sha:pull.head.sha});
+   const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,...(conclusion?{status:'completed',conclusion}:{status:'in_progress'}),request,output:{title,summary:JSON.stringify({...evidence,...extra})}};
+   const update=currentCheck&&(conclusion||currentCheck.status==='in_progress');
+   const {data:written}=update?await options.gateGithub.rest.checks.update({...args,check_run_id:currentCheck.id}):await options.gateGithub.rest.checks.create({...args,name,head_sha:pull.head.sha});
    if(written.app?.id!==options.gateAppId||written.app?.slug==='github-actions'||written.name!==name||written.head_sha!==pull.head.sha)throw new Error('Dedicated gate App issuer response mismatch');
+   currentCheck=written;
   };
   if(!admitted&&!recovery){
    // Unchanged N/A rewrites dominated the shared installation API budget.
@@ -118,7 +126,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
   }
   if(admitted&&(!sha.test(config.controllerSha||'')||config.controllerSha!==controller.sha||!/^sha256:[a-f0-9]{64}$/.test(config.imageDigest||'')||!/^[a-f0-9]{64}$/.test(config.harnessDigest||''))){await write('failure','Reviewed execution configuration is incomplete');continue;}
   try{const current=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);snapshot.mergeParents=current.mergeParents;evidence.mergeParents=current.mergeParents;}
-  catch(error){await write('failure','Current source candidate is not available');if(!(error instanceof Error))throw error;continue;}
+  catch(error){if(error instanceof Error)logGateError(pull.number,'current-source',error);await write('failure','Current source candidate is not available');if(!(error instanceof Error))throw error;continue;}
   let requester;
   try{
    if(recovery){
@@ -128,14 +136,19 @@ export async function reconcileSourceQualification(github,repo,controller,option
     evidence.recoveryAfterRunId=sameRecovery&&!delegatedAgain?old.recoveryAfterRunId:latest?.id??0;
    }
    requester=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});
-  }catch(error){await write('failure','Fresh requesting CI discovery failed');if(!(error instanceof Error))throw error;continue;}
+  }catch(error){if(error instanceof Error)logGateError(pull.number,'requester-discovery',error);await write('failure','Fresh requesting CI discovery failed');if(!(error instanceof Error))throw error;continue;}
   if(!requester){
-   const duplicate=prior?.evidence.refreshDispatchedAt&&prior.evidence.executionMode===snapshot.executionMode&&prior.evidence.sourceSha===snapshot.sourceSha&&prior.evidence.baseSha===snapshot.baseSha&&(!recovery||(prior.evidence.recoveryStartedAt===evidence.recoveryStartedAt&&prior.evidence.recoveryAfterRunId===evidence.recoveryAfterRunId))&&Date.now()-Date.parse(prior.evidence.refreshDispatchedAt)<30*60*1000;
-   await write('failure',recovery?'Fresh exact-source hosted replacement required':'Fresh exact-source hosted and Linux coverage required',duplicate?{refreshDispatchedAt:prior.evidence.refreshDispatchedAt}:{refreshDispatchedAt:new Date().toISOString()});
-   if(!duplicate){await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:pull.head.sha,base_sha:pull.base.sha,source_sha:pull.merge_commit_sha,...(recovery?{execution_mode:'hosted-only'}:{})},request});dispatched++;}
+   const duplicate=prior?.evidence.refreshDispatchFailed!==true&&prior?.evidence.refreshDispatchedAt&&prior.evidence.executionMode===snapshot.executionMode&&prior.evidence.sourceSha===snapshot.sourceSha&&prior.evidence.baseSha===snapshot.baseSha&&(!recovery||(prior.evidence.recoveryStartedAt===evidence.recoveryStartedAt&&prior.evidence.recoveryAfterRunId===evidence.recoveryAfterRunId))&&Date.now()-Date.parse(prior.evidence.refreshDispatchedAt)<30*60*1000;
+   const refresh=duplicate?{refreshDispatchedAt:prior.evidence.refreshDispatchedAt}:{refreshDispatchedAt:new Date().toISOString()};
+   await write(null,recovery?'Waiting for fresh exact-source hosted replacement':'Waiting for fresh exact-source hosted and Linux coverage',refresh);
+   try{
+    if(!duplicate){await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:pull.head.sha,base_sha:pull.base.sha,source_sha:pull.merge_commit_sha,...(recovery?{execution_mode:'hosted-only'}:{})},request});dispatched++;}
+   }catch(error){await write('failure','Fresh requesting CI could not be dispatched',{...refresh,refreshDispatchFailed:true});throw error;}
    continue;
   }
-  if(requester.status!=='completed'||requester.conclusion!=='success'){await write('failure','Current requesting CI is pending or failed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
+  if(requester.status!=='completed'){await write(null,'Waiting for current requesting CI to finish',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
+  if(requester.conclusion!=='success'){await write('failure','Current requesting CI failed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
+  let phase='qualification';
   try{
    if(recovery)await verifyHostedReplacement(github,repo,requester);
    else {
@@ -144,21 +157,27 @@ export async function reconcileSourceQualification(github,repo,controller,option
     catch(error){
      // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block the PR.
      if(config.mode!=='shadow'||!(error instanceof Error))throw error;
+     // Shadow mode only observes Linux, so a miss is logged as observed rather than failed.
+     logGateEvent(`Source qualification observed a shadow Linux miss for PR #${pull.number}`,'shadow-linux',error);
+     phase='shadow-supersede';
      await verifyCurrentDedicatedSource(github,repo,snapshot);
      const latest=await currentRequester(github,repo,snapshot,{});
      if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
+     phase='write';
      await write('neutral','Shadow Linux qualification not verified; hosted CI passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,shadowUnverified:true});
      continue;
     }
     if(result.infrastructure){await verifyFullHostedCoverage(github,repo,requester);evidence.infrastructureFallback=true;evidence.infrastructure=result.infrastructure;}
    }
+   phase='supersede';
    const currentPull=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);
    if(recovery&&(await settings(github,repo)).admitted&&['fast-ci','ready-for-ci'].every(label=>currentPull.labels?.some(value=>value.name===label)))throw new Error('Admission changed during hosted recovery');
    const latest=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});
    if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
    if(recovery){const newest=await currentRequester(github,repo,snapshot,{allModes:true});if(newest?.id!==requester.id||newest.run_attempt!==requester.run_attempt)throw new Error('A newer admission superseded hosted recovery');}
+   phase='write';
    await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
-  }catch(error){await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
+  }catch(error){if(error instanceof Error)logGateError(pull.number,phase,error);await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
  }
  if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,{...config,mode:config.mainMode},workflow,{ownedGate,currentRequester});
  return{examined,dispatched};

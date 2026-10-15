@@ -50,7 +50,7 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
-  it("passes the selected instance to credential resolution on funded and personal runs", async () => {
+  it("passes the subscription instance to credential resolution on fresh and resumed runs", async () => {
     const resolveCredentialLaunch = vi.fn(async () => ({ env: {} }));
     const adapter = createClaudeChatProviderAdapter({
       homePath: "/home/matrix/home",
@@ -59,11 +59,8 @@ describe("Claude canonical Chat Provider adapter", () => {
       ])),
       resolveCredentialLaunch,
     });
-    for await (const _event of adapter.start({
-      ...baseInput, selection: { ...baseInput.selection,
-        instanceId: "claude_code_matrix_included", model: "claude-sonnet-5" },
-    })) { /* Drain the Run. */ }
-    expect(resolveCredentialLaunch).toHaveBeenCalledWith({ instanceId: "claude_code_matrix_included", runId: baseInput.runId });
+    for await (const _event of adapter.start(baseInput)) { /* Drain the Run. */ }
+    expect(resolveCredentialLaunch).toHaveBeenCalledWith({ instanceId: "claude_code_default", runId: baseInput.runId });
     for await (const _event of adapter.resume!({ ...baseInput, runId: "run_owner_resumed",
       resumeState: { sessionId: "funded_session" } })) { /* Drain the resumed owner Run. */ }
     expect(resolveCredentialLaunch).toHaveBeenLastCalledWith({ instanceId: "claude_code_default", runId: "run_owner_resumed" });

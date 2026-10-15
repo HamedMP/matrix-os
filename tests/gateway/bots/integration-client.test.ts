@@ -59,7 +59,9 @@ describe("bot integration client", () => {
     const client = createBotIntegrationClient(createPlatformIntegrationTransport({
       baseUrl: "https://platform.internal/internal/containers/handle/integrations/", machineToken: "machine-token", fetchImpl: fetchImpl as never,
     }));
-    await expect(client.inventory(OWNER)).resolves.toEqual([{ connectionId: "conn_1", service: "gmail", label: "Work" }]);
+    await expect(client.inventory(OWNER)).resolves.toEqual([{
+      connectionId: "conn_1", service: "gmail", label: "Work", email: "me@example.com",
+    }]);
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://platform.internal/internal/containers/handle/integrations");
     const headers = new Headers(init.headers);
@@ -139,7 +141,9 @@ describe("bot integration client", () => {
       return context.json([{ id: "conn_1", service: "gmail", account_label: "Work", status: "active" }]);
     });
     const client = createBotIntegrationClient(createLocalIntegrationTransport(routes));
-    await expect(client.inventory(OWNER)).resolves.toEqual([{ connectionId: "conn_1", service: "gmail", label: "Work" }]);
+    await expect(client.inventory(OWNER)).resolves.toEqual([{
+      connectionId: "conn_1", service: "gmail", label: "Work", email: null,
+    }]);
     expect(seen).toHaveBeenCalledWith(OWNER);
   });
 });

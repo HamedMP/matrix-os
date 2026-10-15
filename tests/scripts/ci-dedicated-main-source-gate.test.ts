@@ -196,14 +196,14 @@ it('qualifies delegated main through full hosted fallback coverage when Linux ev
  await reconcile(f);expect(history.current()).toMatchObject({conclusion:'success',output:{title:'Current exact-main full hosted fallback coverage passed'}});
  expect(JSON.parse(history.current().output.summary)).toMatchObject({linuxFallback:true,qualificationMode:'delegated'});
 });
-it('waits neutrally when the push reconcile runs before CI is visible',async()=>{
+it('stays pending when the push reconcile runs before CI is visible',async()=>{
  const f=fixture();f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{total_count:0,workflow_runs:[]}} as any);
- await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral',output:{title:'Waiting for exact-main CI to finish'}});
+ await reconcile(f);expect(written(f)).toMatchObject({status:'in_progress',output:{title:'Waiting for exact-main CI to finish'}});expect(written(f)).not.toHaveProperty('conclusion');
 });
-it.each(['delegated','shadow'])('waits neutrally instead of failing while exact-main CI is still running (%s)',async mode=>{
+it.each(['delegated','shadow'])('stays pending while exact-main CI is still running (%s)',async mode=>{
  const f=fixture();f.ci.status='in_progress';
  if(mode==='shadow'){const configuration=(await f.github.rest.actions.listRepoVariables()).data;configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_ENABLED')!.value='false';configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_SHADOW')!.value='true';f.github.rest.actions.listRepoVariables.mockResolvedValue({data:configuration});}
- await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral',output:{title:'Waiting for exact-main CI to finish'}});
+ await reconcile(f);expect(written(f)).toMatchObject({status:'in_progress',output:{title:'Waiting for exact-main CI to finish'}});expect(written(f)).not.toHaveProperty('conclusion');
  expect(JSON.parse(written(f).output.summary)).toMatchObject({waitingForRequester:true,requestingRunId:321});
 });
 
@@ -286,5 +286,31 @@ describe('shadow mode observes without blocking main',()=>{
   if(kind==='requester-pending')f.ci.status='in_progress';
   if(kind==='main-moved'){const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{f.github.rest.repos.getBranch.mockImplementation(async(a:any)=>({data:{name:a.branch,commit:{sha:base}}}));return original(args);});}
   await reconcile(f);expect(written(f)).toMatchObject({conclusion:'failure'});
+ });
+ it('logs which stage left fresh main evidence missing',async()=>{
+  const f=fixture();await shadow(f);dropLinuxReceipt(f);
+  const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
+  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{f.github.rest.repos.getBranch.mockImplementation(async(a:any)=>({data:{name:a.branch,commit:{sha:base}}}));return original(args);});
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{
+   await reconcile(f);
+   expect(written(f)).toMatchObject({conclusion:'failure',output:{title:'Fresh exact-main qualification evidence is missing or stale'}});
+   expect(warn).toHaveBeenCalledWith('Main source qualification failed at shadow-supersede: Current main source is stale');
+  }finally{warn.mockRestore();}
+ });
+ it('logs why Linux did not verify before falling back to hosted coverage',async()=>{
+  const f=fixture();await shadow(f);dropLinuxReceipt(f);
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{await reconcile(f);expect(written(f)).toMatchObject({conclusion:'neutral'});expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Main source qualification fell back at linux: \S/));}finally{warn.mockRestore();}
+ });
+ it('labels a failing main gate write as the write stage',async()=>{
+  const f=fixture();f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{if(args.conclusion==='success')throw new Error('gate write rejected');return{data:{id:100,...args,app:{id:777,slug:'matrix-ci-gate'}}};});
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{await reconcile(f);expect(warn).toHaveBeenCalledWith('Main source qualification failed at write: gate write rejected');}finally{warn.mockRestore();}
+ });
+ it('logs the decision stage when the main coverage receipt is missing',async()=>{
+  const f=fixture();f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{total_count:0,artifacts:[]}} as any);
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+  try{await reconcile(f);expect(written(f)).toMatchObject({conclusion:'failure'});expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Main source qualification failed at decision: /));}finally{warn.mockRestore();}
  });
 });
