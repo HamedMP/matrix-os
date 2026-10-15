@@ -16,7 +16,7 @@ function fixture(change:Record<string,unknown>={}) {
   const controllerHistory=github.rest.actions.listWorkflowRuns;
   github.rest.actions.listWorkflowRuns=new Proxy(controllerHistory,{apply(target,receiver,args){return args[0].workflow_id===98?Promise.resolve({data:{workflow_runs:[ci]}}):Reflect.apply(target,receiver,args);}});
   pinArtifactFixture(github,check,run);if(Object.hasOwn(change,'requestDigest'))check.output.summary=JSON.stringify({...JSON.parse(check.output.summary),requestDigest:change.requestDigest});
-  return {github,check,run};
+  return {github,check,run,ci};
 }
 const options={maxAttempts:2,delay:async()=>{}};
 describe("exact merge revision dedicated qualification evidence",()=>{
@@ -159,6 +159,27 @@ describe('stack lifecycle and retry evidence',()=>{
     github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[stoodDown,run]}});
     github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?stoodDown:run}));
     await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
+  });
+  it.each([1,2])('authenticates a mismatched-suite receipt past stand-down attempt %s without reviving an older failure',async standDownAttempt=>{
+    const {github,check,run,ci}=fixture({requestingRunAttempt:6,controllerAttempt:2});
+    ci.run_attempt=6;
+    Object.assign(run,{run_attempt:2,check_suite_id:900,event:'workflow_run',head_branch:'main',head_sha:controllerSha,
+      display_title:`dedicated-refresh-v2 execution=true request=321 title=CI coverage-v1 · ${sourceSha}`});
+    // A manually created candidate-head check belongs to a different suite from
+    // the main controller. Its immutable receipt supplies the run/attempt binding.
+    check.check_suite.id=800;
+    check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
+    pinArtifactFixture(github,check,run);
+    const stoodDown={...run,id:124,run_attempt:standDownAttempt,check_suite_id:901};
+    const olderFailure={...run,id:122,run_attempt:1,check_suite_id:899,conclusion:'failure'};
+    github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[stoodDown,run,olderFailure]}});
+    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?stoodDown:run_id===122?olderFailure:run}));
+    const artifact={name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-6-attempt2`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:run.id}};
+    github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async(args?:{run_id:number})=>({data:{artifacts:args?.run_id===run.id?[artifact]:[]}}));
+
+    await expect(waitForDedicatedResult(github,{...expected,requestingRunAttempt:6},options)).resolves.toEqual({runId:run.id,sourceSha});
+    expect(github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalledWith(expect.objectContaining({run_id:run.id}));
+    expect((github.rest.actions as any).downloadArtifact).toHaveBeenCalled();
   });
   it('accepts only the current rerun attempt and its immutable artifact',async()=>{
     const {github,check,run}=fixture({controllerAttempt:2});run.run_attempt=2;pinArtifactFixture(github,check,run);
