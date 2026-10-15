@@ -24,6 +24,28 @@ if (workerFlags?.length !== 1 || workerFlags[0].value !== "false") {
 }
 workerFlags[0].value = "true";
 
+const accountDeletionConfigured = spec.containers[0].env?.filter(
+  (entry) => entry.name === "ACCOUNT_DELETION_CONFIGURED",
+);
+if (
+  accountDeletionConfigured?.length !== 1 ||
+  !["true", "false"].includes(accountDeletionConfigured[0].value)
+) {
+  throw new Error("Candidate must have an exact account deletion configuration flag");
+}
+if (accountDeletionConfigured[0].value === "true") {
+  const accountDeletionEnabled = spec.containers[0].env?.filter(
+    (entry) => entry.name === "ACCOUNT_DELETION_ENABLED",
+  );
+  if (
+    accountDeletionEnabled?.length !== 1 ||
+    !["true", "false"].includes(accountDeletionEnabled[0].value)
+  ) {
+    throw new Error("Configured account deletion requires an exact API enablement flag");
+  }
+  accountDeletionEnabled[0].value = "true";
+}
+
 const annotations = { ...sourceAnnotations };
 delete annotations["run.googleapis.com/client-name"];
 delete annotations["run.googleapis.com/client-version"];
