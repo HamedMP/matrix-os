@@ -61,6 +61,7 @@ def epoch_rollback_image(repair, directory, name, data, values, identity, uid, g
     original = base64.b64decode(journal['original'], validate=True)
     require(len(original) <= repair.LIMIT and digest(original) == journal['beforeSha256'])
     _, before, lines = repair.parse(original)
+    require(all(values.get(key) == str(identity[field]) for field, key in repair.IDENTITY.items() if field != 'epoch'))
     require(EPOCH_KEY not in before and all(before.get(key) == str(identity[field])
             for field, key in repair.IDENTITY.items() if field != 'epoch'))
     patch = journal['patch']
@@ -89,6 +90,7 @@ def execute_epoch_image(repair, anchor, identity, rollout, expected, activity_gu
                   'expectedFile': expected, 'quiescentWindow': True}
     repair.validate(validation)
     directory, lock, temporary = anchor.fds[-1], None, None
+    created = False
     try:
         lock = os.open('.host.env.funded-repair.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
                        0o600, dir_fd=directory)
@@ -125,6 +127,7 @@ def execute_epoch_image(repair, anchor, identity, rollout, expected, activity_gu
         if new != data:
             temporary = '.host.env.funded.tmp-' + secrets.token_hex(12)
             repair.create_file(directory, temporary, new, uid, gid, 0o640, cleanup=True)
+            created = True
             activity_guard()
             anchor.verify()
             current, current_info = repair.read_file(directory, 'host.env', uid, gid)
@@ -136,7 +139,7 @@ def execute_epoch_image(repair, anchor, identity, rollout, expected, activity_gu
                 'restartRequired': new != data, 'beforeSha256': digest(data), 'afterSha256': digest(new),
                 'backup': name if new != data else None}
     finally:
-        if temporary is not None:
+        if created:
             try:
                 os.unlink(temporary, dir_fd=directory)
             except FileNotFoundError:

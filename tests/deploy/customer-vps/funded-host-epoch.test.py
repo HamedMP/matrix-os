@@ -76,9 +76,21 @@ class EpochTests(unittest.TestCase):
         with self.assertRaises(Exception):self.apply()
         after=self.path.read_bytes();self.path.write_bytes(after.replace(b'c'*64,b'f'*64))
         with self.assertRaises(Exception):self.rollback()
+    def test_rollback_refuses_changed_non_epoch_identity(self):
+        self.apply();self.path.write_bytes(self.path.read_bytes().replace(b'MATRIX_HANDLE=test-main',b'MATRIX_HANDLE=other-main'))
+        with self.assertRaises(Exception):self.rollback()
+
     def test_rollback_preserves_unrelated_later_edit(self):
         self.apply();self.path.write_bytes(self.path.read_bytes()+b'LATER=preserved\n')
         self.assertEqual(self.rollback(),self.old+b'LATER=preserved\n')
+    def test_preexisting_temporary_is_not_deleted_when_exclusive_create_fails(self):
+        path=self.path.with_name('.host.env.funded.tmp-'+'b'*24)
+        path.write_bytes(b'previous operation evidence')
+        with patch.object(EPOCH['secrets'],'token_hex',return_value='b'*24),self.assertRaises(FileExistsError):
+            self.apply()
+        self.assertEqual(path.read_bytes(),b'previous operation evidence')
+        self.assertEqual(self.path.read_bytes(),self.old)
+
     def test_rename_failure_keeps_original_and_journal(self):
         with patch.object(os,'replace',side_effect=OSError('injected failure')),self.assertRaises(OSError):self.apply()
         self.assertEqual(self.path.read_bytes(),self.old)
