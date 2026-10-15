@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -47,7 +47,7 @@ describe('native standalone typecheck', () => {
     expect(runTypechecks({ root, compiler: 'legacy', run: (binary: string, args: string[], options: { cwd: string }) => { calls.push({ binary, args, cwd: options.cwd }); return { status: 0 }; } })).toBe(0);
     expect(calls.map(call => join(call.cwd, call.args[call.args.indexOf('-p') + 1]).slice(root.length + 1))).toEqual(configs);
     expect(calls.every(call => call.binary === 'pnpm' && call.args.slice(0, 2).join(' ') === 'exec tsc' && !call.args.includes('--types') && !call.args.includes('--noUncheckedSideEffectImports'))).toBe(true);
-    expect(JSON.parse(readFileSync(join(root, 'packages/gateway/package.json'), 'utf8')).devDependencies.typescript).toBe('^5.9.3');
+    for (const { cwd } of calls) expect(existsSync(join(cwd, 'package.json')) && JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8')).devDependencies?.typescript, cwd).toBe('^5.9.3');
   });
 
   it('propagates a project failure and never silently falls back to a different compiler', async () => {
