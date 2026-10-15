@@ -69,7 +69,7 @@ describe('fresh platform test database snapshots', () => {
     const seed = await sql<{ policy_id: string; enabled: boolean; revision: number }>`SELECT policy_id, enabled, revision FROM ai_funded_global_policy`.execute(db.kysely);
     expect(seed.rows).toEqual([{ policy_id: 'default', enabled: false, revision: 0 }]);
     const revisions = await sql<{ scope: string }>`SELECT scope FROM platform_schema_revisions ORDER BY scope`.execute(db.kysely);
-    expect(revisions.rows.map(row => row.scope)).toEqual(['core', 'funded-probe-cache', 'whatsapp']);
+    expect(revisions.rows.map(row => row.scope)).toEqual(['billing-google-purchases', 'core', 'funded-probe-cache', 'whatsapp']);
     const insert = await sql<{ id: string; plan: string; status: string }>`INSERT INTO users (clerk_id, handle, display_name, email, container_id)
       VALUES ('fixture_user', 'fixture_user', 'Fixture', 'fixture@example.test', 'fixture_container') RETURNING id, plan, status`.execute(db.kysely);
     expect(insert.rows[0]).toMatchObject({ id: expect.any(String), plan: 'free', status: 'active' });
@@ -91,7 +91,7 @@ describe('fresh platform test database snapshots', () => {
     expect(bootstrap).toHaveBeenCalledTimes(2);
     expect(first.instance.client).not.toBe(second.instance.client);
     const revisions = await sql<{ scope: string }>`SELECT scope FROM platform_schema_revisions ORDER BY scope`.execute(second.db.kysely);
-    expect(revisions.rows.map(row => row.scope)).toEqual(['core', 'funded-probe-cache', 'whatsapp']);
+    expect(revisions.rows.map(row => row.scope)).toEqual(['billing-google-purchases', 'core', 'funded-probe-cache', 'whatsapp']);
     await fixture();
     expect(create).toHaveBeenCalledTimes(4);
   });
