@@ -161,16 +161,24 @@ describe("drawer apps screen", () => {
     expect(artwork.findByType(Icon).props.icon).toBe(AppWindowIcon);
   });
 
-  it("falls back to the plain squircle when an icon fails, and tries again at a new address", () => {
+  it("falls back to the plain squircle when an icon fails, and tries again whenever its address changes", () => {
+    const apps = mockUseComputerApps();
+    const showIconFrom = (gatewayUrl: string) => {
+      mockUseComputerApps.mockReturnValue({ ...apps, gatewayUrl });
+      screen.rerender(<AppsScreen />);
+    };
     render(<AppsScreen />);
     const chessIcon = () => screen.getByTestId("app-icon-Chess");
 
     fireEvent(chessIcon().findByType(Image), "error");
     expect(chessIcon().findByType(Icon).props.icon).toBe(AppWindowIcon);
 
-    mockUseComputerApps.mockReturnValue({ ...mockUseComputerApps(), gatewayUrl: "https://app.matrix-os.com/vm/new-vale" });
-    screen.rerender(<AppsScreen />);
+    showIconFrom("https://app.matrix-os.com/vm/new-vale");
     expect(chessIcon().findByType(Image).props.source.uri).toContain("/vm/new-vale/");
+
+    // Back to the address that failed: it gets another try too.
+    showIconFrom(apps.gatewayUrl);
+    expect(chessIcon().findByType(Image).props.source.uri).toContain("/vm/solar-vale/");
   });
 
   it("opens Chat, Terminal and Settings on their own tabs", () => {

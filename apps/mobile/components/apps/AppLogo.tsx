@@ -8,37 +8,41 @@ import { Icon } from "@/components/ui";
 
 import { APP_ARTWORK_FOOTPRINT, APP_ICON_SQUIRCLE } from "./app-icon-shape";
 
-export function AppLogo({
-  name,
-  uri,
-  authorization,
-}: {
+interface AppLogoProps {
   name: string;
   uri: string | null;
   authorization?: string;
-}) {
-  // The address that failed, so a new address gets its own try.
-  const [failedUri, setFailedUri] = useState<string | null>(null);
-  const { theme } = useUnistyles();
-  const imageUri = uri && uri !== failedUri ? uri : null;
+}
 
+export function AppLogo({ name, uri, authorization }: AppLogoProps) {
   return (
     <View testID={`app-logo-${name}`} style={styles.container}>
-      <View testID={`app-icon-${name}`} style={[styles.artwork, !imageUri && styles.placeholder]}>
-        {imageUri ? (
-          <Image
-            source={{
-              uri: imageUri,
-              headers: authorization ? { Authorization: authorization } : undefined,
-            }}
-            contentFit="contain"
-            onError={() => setFailedUri(imageUri)}
-            style={styles.image}
-          />
-        ) : (
-          <Icon icon={AppWindowIcon} size={24} color={theme.v2.appColors.ink} />
-        )}
-      </View>
+      {/* Keyed by address, so every change of address, back to an earlier one included, gets a fresh try. */}
+      <AppIcon key={uri ?? ""} name={name} uri={uri} authorization={authorization} />
+    </View>
+  );
+}
+
+function AppIcon({ name, uri, authorization }: AppLogoProps) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const { theme } = useUnistyles();
+  const imageUri = uri && !imageFailed ? uri : null;
+
+  return (
+    <View testID={`app-icon-${name}`} style={[styles.artwork, !imageUri && styles.placeholder]}>
+      {imageUri ? (
+        <Image
+          source={{
+            uri: imageUri,
+            headers: authorization ? { Authorization: authorization } : undefined,
+          }}
+          contentFit="contain"
+          onError={() => setImageFailed(true)}
+          style={styles.image}
+        />
+      ) : (
+        <Icon icon={AppWindowIcon} size={24} color={theme.v2.appColors.ink} />
+      )}
     </View>
   );
 }
