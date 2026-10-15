@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createAiFundedRuntimeRoutes } from "../../packages/platform/src/ai-funded-policy-routes.js";
@@ -100,10 +101,10 @@ describe("cold funded relay readiness", () => {
   });
 
   it("aborts a stalled checkout probe and keeps its single admission counted", async () => {
-    const f = await fixture(20000);
+    const f = await fixture(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs + 10_000);
     const result = isAiCreditCheckoutRouteHealthy({ repository: f.repository, identity, modelProbes: f.probes });
     await waitForProbe(f.relayFetch);
-    await vi.advanceTimersByTimeAsync(10001);
+    await vi.advanceTimersByTimeAsync(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs + 1);
     expect(await result).toBe(false);
     expect(f.relayFetch.mock.calls[0]![1]!.signal!.aborted).toBe(true);
     expect(f.relayResolved).not.toHaveBeenCalled();
@@ -135,10 +136,10 @@ describe("cold funded relay readiness", () => {
   });
 
   it("aborts a relay beyond the bounded window without retrying or refunding its counted attempt", async () => {
-    const f = await fixture(20000);
+    const f = await fixture(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs + 10_000);
     const result = f.reader.read();
     await waitForProbe(f.relayFetch);
-    await vi.advanceTimersByTimeAsync(10001);
+    await vi.advanceTimersByTimeAsync(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs + 1);
     expect(await result).toMatchObject({ readiness: { state: "unavailable" }, allowedModelIds: [] });
     expect(f.relayFetch.mock.calls[0]![1]!.signal!.aborted).toBe(true);
     expect(f.relayFetch).toHaveBeenCalledOnce();

@@ -120,7 +120,7 @@ describe("native Chat catalog freshness", () => {
     expect(get).toHaveBeenCalledTimes(1);
     refreshCatalog();
     await screen.findByText("Disabled in Settings");
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 32_000 }));
     expect(screen.queryByText("Owner model")).toBeNull();
     expect(screen.queryByText("Connect Pi")).toBeNull();
     // Closing and reopening reuse the current catalog, without another read.
@@ -204,7 +204,7 @@ describe("native Chat catalog freshness", () => {
     act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
     await screen.findByText("Disabled in Settings");
     expect(get).toHaveBeenCalledTimes(2);
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 32_000 }));
     expect(screen.queryByText("Owner model")).toBeNull();
   });
 
