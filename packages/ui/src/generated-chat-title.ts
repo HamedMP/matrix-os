@@ -34,7 +34,8 @@ function structuredPromptTitle(prompt: string): string | null {
 
 export function generatedChatTitle(text: string, fallback?: string): string {
   const visiblePrompt = text
-    .replace(/\[([^\]]+)\]\([^\s)]+\)/g, "$1")
+    // Bracket-free link text and URLs keep this linear on unmatched `[` / `](` runs.
+    .replace(/\[([^[\]]+)\]\([^\s)[]+\)/g, "$1")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^(?:\/[a-z][a-z0-9_-]*\s+)+/i, "")

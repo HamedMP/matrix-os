@@ -36,8 +36,8 @@ export async function extractWithReadability(
 }
 
 function stripRawElements(html: string, tag: "script" | "style"): string {
-  const openings = new RegExp(`<${tag}`, "gi");
-  const closings = new RegExp(`</${tag}>`, "gi");
+  const openings = new RegExp(`<${tag}(?=[\\s/>])`, "gi");
+  const closings = new RegExp(`</${tag}(?=[\\s/>])`, "gi");
   let copiedUntil = 0;
   let output = "";
   let opening: RegExpExecArray | null;
@@ -47,8 +47,10 @@ function stripRawElements(html: string, tag: "script" | "style"): string {
     // Preserve unmatched openings for ordinary tag stripping. The suffix is
     // searched only once, rather than again for every remaining opening.
     if (!closing) break;
+    const closingEnd = html.indexOf(">", closings.lastIndex);
+    if (closingEnd === -1) break;
     output += html.slice(copiedUntil, opening.index);
-    copiedUntil = closings.lastIndex;
+    copiedUntil = closingEnd + 1;
     openings.lastIndex = copiedUntil;
   }
   return output + html.slice(copiedUntil);
