@@ -4,6 +4,7 @@ import { registerNativeAppCapabilityIpc } from "./native-app-capabilities";
 export { createNativeAppAiRequester } from "./native-app-ai";
 import { z } from "zod/v4";
 import { nativeBrowserProduct } from "../../shared/browser-products";
+import { renewBrowserProductSession } from "./browser-product-bootstrap";
 import { NATIVE_APP_OPEN_CHANNEL, NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
 import {
   NATIVE_APP_QUERY_CHANNEL,
@@ -186,6 +187,13 @@ export function createNativeAppGatewayRequester(
     if (origin.protocol !== "https:" && origin.protocol !== "http:") {
       throw new Error("invalid gateway origin");
     }
+    if (nativeBrowserProduct(slug, routeSlug)) {
+      const isCurrent = () => options.getToken() === token && new URL(options.getGatewayOrigin()).toString() === origin.toString()
+        && options.getAuthGeneration?.() === generation;
+      if (!options.installBrowserSessionCookie) throw new Error("browser session unavailable");
+      return renewBrowserProductSession({ origin: origin.toString(), token, isCurrent, fetchFn,
+        install: options.installBrowserSessionCookie });
+    }
     const response = await fetchFn(new URL(request.url, origin).toString(), {
       method: request.init?.method ?? "GET",
       redirect: "error",
@@ -195,12 +203,6 @@ export function createNativeAppGatewayRequester(
     });
     if (!response.ok) throw new Error(`gateway request failed (${response.status})`);
     const value = await readBoundedJson(response);
-    if (nativeBrowserProduct(slug, routeSlug)) {
-      const isCurrent = () => options.getToken() === token && new URL(options.getGatewayOrigin()).toString() === origin.toString()
-        && options.getAuthGeneration?.() === generation;
-      if (!isCurrent() || !options.installBrowserSessionCookie) throw new Error("browser session unavailable");
-      await options.installBrowserSessionCookie(response.headers.getSetCookie(), origin.origin, isCurrent);
-    }
     return value;
   };
 }
