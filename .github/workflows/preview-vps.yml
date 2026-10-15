@@ -319,11 +319,13 @@ jobs:
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
+      PREVIEW_CLERK_OWNER_OVERRIDES: ${{ vars.PREVIEW_CLERK_OWNER_OVERRIDES || '{}' }}
       PREVIEW_COLLABORATION: ${{ needs.gate.outputs.collaboration }}
       PREVIEW_COLLABORATION_OWNER_USER_ID: ${{ needs.gate.outputs.collaboration == 'true' && secrets.PREVIEW_COLLABORATION_OWNER_USER_ID || '' }}
       PREVIEW_PROVISION_TIMEOUT_SECONDS: 3900
       PREVIEW_INSTALL_TIMEOUT_SECONDS: 600
       HANDLE: ${{ needs.gate.outputs.handle }}
+      PR: ${{ needs.gate.outputs.pr }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
     steps:
       - name: Checkout preview source
@@ -389,6 +391,29 @@ jobs:
             # No preview access list: access proofs must not mask organization checks.
             preview_owner="$PREVIEW_COLLABORATION_OWNER_USER_ID"
             access_user_ids='[]'
+          else
+            owner_overrides="${PREVIEW_CLERK_OWNER_OVERRIDES:-}"
+            if [ -z "$owner_overrides" ]; then owner_overrides='{}'; fi
+            if ! preview_owner_override="$(jq -er --arg pr "$PR" '
+              if (
+                type == "object" and length <= 16
+                and all(to_entries[];
+                  (.key | test("^[0-9]+$"))
+                  and (.value | type == "string" and test("^user_[A-Za-z0-9]+$")))
+              ) then .[$pr] // "" else error("invalid owner overrides") end
+            ' <<< "$owner_overrides")"; then
+              echo "PREVIEW_CLERK_OWNER_OVERRIDES must map up to 16 PR numbers to Clerk user IDs." >&2
+              exit 1
+            fi
+            if [ -n "$preview_owner_override" ]; then
+              preview_owner="$preview_owner_override"
+            fi
+            if ! access_user_ids="$(jq -ce --arg owner "$preview_owner" '
+              if type == "array" then map(select(. != $owner)) else error("invalid access list") end
+            ' <<< "$access_user_ids")"; then
+              echo "PREVIEW_CLERK_ACCESS_USER_IDS must be a JSON array." >&2
+              exit 1
+            fi
           fi
           if ! jq -e --arg owner "$preview_owner" '
             type == "array" and length <= 8
@@ -827,8 +852,10 @@ jobs:
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
+      PREVIEW_CLERK_OWNER_OVERRIDES: ${{ vars.PREVIEW_CLERK_OWNER_OVERRIDES || '{}' }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://api.matrix-os.com' }}
       HANDLE: ${{ needs.gate.outputs.handle }}
+      PR: ${{ needs.gate.outputs.pr }}
     steps:
       - name: Verify authenticated inventory projection
         run: |
@@ -837,16 +864,29 @@ jobs:
             echo "Preview inventory verification is not configured." >&2
             exit 1
           fi
-          access_user_ids="${PREVIEW_CLERK_ACCESS_USER_IDS:-[]}"
-          if ! preview_user_ids_json="$(jq -ce --arg owner "$PREVIEW_CLERK_USER_ID" '
+          owner_overrides="${PREVIEW_CLERK_OWNER_OVERRIDES:-}"
+          if [ -z "$owner_overrides" ]; then owner_overrides='{}'; fi
+          if ! preview_owner="$(jq -er --arg pr "$PR" --arg default "$PREVIEW_CLERK_USER_ID" '
             if (
-              type == "array" and length <= 8
-              and all(.[]; type == "string" and test("^user_[A-Za-z0-9]+$"))
-              and (unique | length) == length
-              and (index($owner) == null)
-            ) then [$owner] + . else error("invalid access list") end
+              type == "object" and length <= 16
+              and all(to_entries[];
+                (.key | test("^[0-9]+$"))
+                and (.value | type == "string" and test("^user_[A-Za-z0-9]+$")))
+            ) then .[$pr] // $default else error("invalid owner overrides") end
+          ' <<< "$owner_overrides")"; then
+            echo "PREVIEW_CLERK_OWNER_OVERRIDES must map up to 16 PR numbers to Clerk user IDs." >&2
+            exit 1
+          fi
+          access_user_ids="${PREVIEW_CLERK_ACCESS_USER_IDS:-[]}"
+          if ! preview_user_ids_json="$(jq -ce --arg owner "$preview_owner" '
+            if type == "array" then map(select(. != $owner)) else error("invalid access list") end
+            | if (
+                length <= 8
+                and all(.[]; type == "string" and test("^user_[A-Za-z0-9]+$"))
+                and (unique | length) == length
+              ) then [$owner] + . else error("invalid access list") end
           ' <<< "$access_user_ids")"; then
-            echo "PREVIEW_CLERK_ACCESS_USER_IDS must be a JSON array of up to eight unique non-owner Clerk user IDs." >&2
+            echo "PREVIEW_CLERK_ACCESS_USER_IDS must be a JSON array of up to eight unique Clerk user IDs." >&2
             exit 1
           fi
           mapfile -t preview_user_ids < <(jq -r '.[]' <<< "$preview_user_ids_json")

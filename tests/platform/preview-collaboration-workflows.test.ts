@@ -29,6 +29,7 @@ function executable(directory: string, name: string, body: string) {
 
 const OWNER = "user_collaborationowner";
 const PREVIEW_OWNER = "user_previewowner";
+const OVERRIDE_OWNER = "user_overrideowner";
 const HANDLE = "pr-1990";
 const MACHINE = "3f6b1a2c-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 
@@ -121,9 +122,9 @@ if [ -n "$write" ]; then printf '202'; fi
       const script = provision.replaceAll("/tmp/provision.json", join(directory, "provision.json"));
       const result = spawnSync("bash", ["-euc", script], { encoding: "utf8", timeout: 10_000, env: {
         PATH: `${directory}:${process.env.PATH}`, PLATFORM_PUBLIC_URL: "https://platform.example.test", PLATFORM_SECRET: "synthetic",
-        HANDLE, VERSION: "v2026.09.28-pr1990-1-1-aaaaaaa", PREVIEW_CLERK_USER_ID: PREVIEW_OWNER,
+        HANDLE, PR: "1990", VERSION: "v2026.09.28-pr1990-1-1-aaaaaaa", PREVIEW_CLERK_USER_ID: PREVIEW_OWNER,
         PREVIEW_CLERK_ACCESS_USER_IDS: JSON.stringify(["user_collaboratorone"]), PREVIEW_COLLABORATION: "false",
-        PREVIEW_COLLABORATION_OWNER_USER_ID: "", CAPTURE: capture, STATE: join(directory, "provisioned"),
+        PREVIEW_CLERK_OWNER_OVERRIDES: "{}", PREVIEW_COLLABORATION_OWNER_USER_ID: "", CAPTURE: capture, STATE: join(directory, "provisioned"),
         FLEET_BEFORE: JSON.stringify(fleetBefore), FLEET_AFTER: JSON.stringify(fleetAfter), ...env,
       } });
       return { ...result, body: existsSync(capture) ? JSON.parse(readFileSync(capture, "utf8")) : undefined };
@@ -134,6 +135,56 @@ if [ -n "$write" ]; then printf '202'; fi
     const result = runProvision({});
     expect(result.status, result.stderr).toBe(0);
     expect(result.body).toMatchObject({ clerkUserId: PREVIEW_OWNER, accessClerkUserIds: ["user_collaboratorone"], handle: HANDLE, runtimeSlot: HANDLE });
+  });
+
+  it("uses a validated per-PR owner override and removes that owner from shared access", () => {
+    expect(vpsWorkflow.jobs.deploy!.env?.PREVIEW_CLERK_OWNER_OVERRIDES)
+      .toBe("${{ vars.PREVIEW_CLERK_OWNER_OVERRIDES || '{}' }}");
+    const result = runProvision({
+      PREVIEW_CLERK_OWNER_OVERRIDES: JSON.stringify({ "1990": OVERRIDE_OWNER }),
+      PREVIEW_CLERK_ACCESS_USER_IDS: JSON.stringify([OVERRIDE_OWNER, "user_collaboratorone"]),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.body).toMatchObject({
+      clerkUserId: OVERRIDE_OWNER,
+      accessClerkUserIds: ["user_collaboratorone"],
+      handle: HANDLE,
+      runtimeSlot: HANDLE,
+    });
+  });
+
+  it.each([
+    ["a non-object", "[]"],
+    ["a malformed PR number", JSON.stringify({ "pr-1990": OVERRIDE_OWNER })],
+    ["a malformed Clerk user ID", JSON.stringify({ "1990": "override-owner" })],
+    ["more than sixteen entries", JSON.stringify(Object.fromEntries(
+      Array.from({ length: 17 }, (_, index) => [String(2000 + index), `user_owner${index}`]),
+    ))],
+  ])("rejects %s in the per-PR owner overrides", (_label, overrides) => {
+    const result = runProvision({ PREVIEW_CLERK_OWNER_OVERRIDES: overrides });
+    expect(result.status).not.toBe(0);
+    expect(result.body).toBeUndefined();
+    expect(result.stderr).toContain("PREVIEW_CLERK_OWNER_OVERRIDES");
+  });
+
+  it("keeps protected collaboration ownership independent from repository overrides", () => {
+    const result = runProvision({
+      PREVIEW_COLLABORATION: "true",
+      PREVIEW_COLLABORATION_OWNER_USER_ID: OWNER,
+      PREVIEW_CLERK_OWNER_OVERRIDES: "not-json",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.body).toMatchObject({ clerkUserId: OWNER, accessClerkUserIds: [] });
+  });
+
+  it("uses the same owner override for authenticated inventory verification", () => {
+    const verify = vpsWorkflow.jobs.verify_inventory!;
+    expect(verify.env?.PREVIEW_CLERK_OWNER_OVERRIDES)
+      .toBe("${{ vars.PREVIEW_CLERK_OWNER_OVERRIDES || '{}' }}");
+    expect(verify.env?.PR).toBe("${{ needs.gate.outputs.pr }}");
+    const verification = stepRun(verify, "Verify authenticated inventory projection");
+    expect(verification).toContain('.[$pr] // $default');
+    expect(verification).toContain('map(select(. != $owner))');
   });
 
   it("provisions a collaboration preview under the collaboration owner with an empty access list", () => {

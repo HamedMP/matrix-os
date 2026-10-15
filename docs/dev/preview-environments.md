@@ -116,6 +116,15 @@ blocks subsequent HTTP requests and new WebSocket handshakes after that deploy.
 An already-established WebSocket remains connected until it disconnects or is
 closed; active connection draining is intentionally deferred.
 
+`PREVIEW_CLERK_OWNER_OVERRIDES` is an optional repository variable containing a
+JSON object that maps at most 16 PR numbers to Clerk user IDs. It is intended for
+owner-only validation on a specific disposable preview without changing the
+repository-wide preview owner. The configured owner is removed from the shared
+access list automatically. Changing an existing preview's owner still requires
+tearing down that preview before re-running the workflow; ownership is never
+reassigned in place. Collaboration previews ignore this variable and continue
+to use their protected-environment owner.
+
 Preview VPSes cannot use machine credentials alone for personal Integrations or
 Custom MCP accounts. A collaborator with a shared Terminal can read the machine credential,
 so the platform rejects personal-account requests on both internal routes,
