@@ -70,7 +70,8 @@ Native Mobile only: the Chats tab and an agent's chat.
   Once the screen moves on (the next message there creates its chat, the user
   opens another chat, or another project's new chat), it goes back as text
   into the next new chat's composer once that is empty, as a failed send
-  always did. It keeps its ids: the computer may have admitted it in a chat of
+  always did, and once its attachments fit beside the places held there for
+  messages that were not sent. It keeps its ids: the computer may have admitted it in a chat of
   its own, and turn ids are told apart per chat, so it is never retried in
   another chat. Sent unchanged, it reaches its own chat.
 - Typing the same words again is a new message, not a retry. Only Retry, or

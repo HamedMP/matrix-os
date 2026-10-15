@@ -210,9 +210,12 @@ function reconcile(
     };
   }
   // A held send returns once the new chat's composer is free -- and not
-  // during a send, whose leftover text follows it into the chat it creates.
+  // during a send, whose leftover text follows it into the chat it creates --
+  // and only when its attachments fit beside the places held for messages
+  // there that were not sent, which "Edit" puts back.
   if (on.activeChatId === null && !on.isSending && newChatComposerIsFree(next)) {
-    const held = next.failed.find((failed) => failed.held);
+    const room = MAX_MESSAGE_ATTACHMENTS - reservedAttachments(next, NEW_CHAT_DRAFT_KEY);
+    const held = next.failed.find((failed) => failed.held && failed.attachments.length <= room);
     if (held) {
       next = {
         ...next,
