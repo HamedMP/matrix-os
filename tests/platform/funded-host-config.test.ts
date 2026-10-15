@@ -58,6 +58,41 @@ describe("funded host configuration", () => {
       pricing_version: null, period_start: now, status, created_at: now, started_at: null, expires_at: now,
       settled_at: null, released_at: null }).execute();
   }
+  async function epochRequest(overrides: Record<string, string> = {}, options: NodeJS.ProcessEnv = {}) {
+    const { "x-matrix-runtime-token-epoch": _epoch, ...fields } = headers();
+    return app(options).request("/internal/containers/alice/funded-host-epoch", { headers: { ...fields, ...overrides } });
+  }
+  it("bootstraps only current epoch metadata without issuing a credential or financial writes", async () => {
+    const before = await db.executor.selectFrom("user_machines").selectAll().execute();
+    const response = await epochRequest();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store, private");
+    expect(await response.json()).toEqual({ contractVersion: 1, kind: "matrix-funded-host-epoch", source: "platform",
+      sourceSha: "a".repeat(40), issuedAt: now, expiresAt: "2026-10-08T12:00:30.000Z",
+      identity: { ...identity, ownerId: "user_alice", runtimeTokenEpoch: 2 } });
+    expect(await db.executor.selectFrom("user_machines").selectAll().execute()).toEqual(before);
+    expect(await db.executor.selectFrom("ai_runtime_credentials").selectAll().execute()).toEqual([]);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual([]);
+  });
+  it.each([
+    buildPlatformVerificationToken("alice", secret),
+    buildPlatformSyncVerificationToken(identity, secret, 1),
+    buildPlatformRuntimeVerificationToken(identity, secret, 2),
+    buildPlatformSyncVerificationToken({ ...identity, runtimeSlot: "pr-1" }, secret, 2),
+  ])("does not bootstrap legacy, stale or differently scoped credentials", async token => {
+    expect((await epochRequest({ authorization: `Bearer ${token}` })).status).toBe(401);
+  });
+  it("rejects an epoch hint for metadata bootstrap instead of trusting caller epoch", async () => {
+    expect((await epochRequest({ "x-matrix-runtime-token-epoch": "2" })).status).toBe(400);
+  });
+  it("applies cohort, disabled policy and unresolved obligation gates to epoch metadata", async () => {
+    expect((await epochRequest({}, { MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS: "" })).status).toBe(503);
+    await db.executor.updateTable("ai_funded_runtime_policies").set({ enabled: false }).execute();
+    expect((await epochRequest()).status).toBe(503);
+    await db.executor.updateTable("ai_funded_runtime_policies").set({ enabled: true }).execute();
+    await seedReservation("in_flight");
+    expect((await epochRequest()).status).toBe(503);
+  });
   it("returns exact short-lived epoch-bound fields without financial writes", async () => {
     const before = await db.executor.selectFrom("ai_funded_runtime_policies").selectAll().execute();
     const response = await request();

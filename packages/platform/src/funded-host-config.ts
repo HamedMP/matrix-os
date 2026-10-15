@@ -28,6 +28,12 @@ export const FundedHostConfigResponseSchema = z.object({
   }).strict(),
 }).strict().refine(value => Date.parse(value.expiresAt) > Date.parse(value.issuedAt)
   && Date.parse(value.expiresAt) - Date.parse(value.issuedAt) <= 30_000);
+export const FundedHostEpochResponseSchema = z.object({
+  contractVersion: z.literal(1), kind: z.literal("matrix-funded-host-epoch"), source: z.literal("platform"),
+  sourceSha: ShaSchema, issuedAt: TimestampSchema, expiresAt: TimestampSchema,
+  identity: IdentitySchema.extend({ ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/) }).strict(),
+}).strict().refine(value => Date.parse(value.expiresAt) > Date.parse(value.issuedAt)
+  && Date.parse(value.expiresAt) - Date.parse(value.issuedAt) <= 30_000);
 export type FundedHostConfigResponse = z.infer<typeof FundedHostConfigResponseSchema>;
 export type FundedHostConfig = { enabled: false } | {
   enabled: true; machineIds: readonly string[]; relayOrigin: string; validThrough: string; sourceSha: string;
@@ -60,6 +66,7 @@ const RequestSchema = IdentitySchema.extend({
   runtimeTokenEpoch: z.string().regex(/^[1-9][0-9]{0,9}$/).transform(Number).pipe(EpochSchema),
   authorization: z.string().regex(/^Bearer [a-f0-9]{64}$/),
 });
+const EpochRequestSchema = RequestSchema.omit({ runtimeTokenEpoch: true });
 const SupportedChatModels = ["anthropic/claude-sonnet-5", "@cf/zai-org/glm-5.3-flash"] as readonly string[];
 function permittedModels(globalRaw: string, runtimeRaw: string): boolean {
   const models = z.array(z.string().max(128)).max(16);
@@ -94,10 +101,14 @@ export function createFundedHostConfigRoutes(options: {
     c.header("Cloudflare-CDN-Cache-Control", "no-store");
     return next();
   });
-  app.get("/funded-host-config", async c => {
-    const parsed = RequestSchema.safeParse({ handle: c.req.param("handle"),
+  for (const epochOnly of [false, true]) app.get(epochOnly ? "/funded-host-epoch" : "/funded-host-config", async c => {
+    const fields = { handle: c.req.param("handle"),
       machineId: c.req.header("x-matrix-machine-id"), runtimeSlot: c.req.header("x-matrix-runtime-slot"),
-      runtimeTokenEpoch: c.req.header("x-matrix-runtime-token-epoch"), authorization: c.req.header("authorization") });
+      authorization: c.req.header("authorization") };
+    const epochHeader = c.req.header("x-matrix-runtime-token-epoch");
+    if (epochOnly && (epochHeader !== undefined || c.req.raw.body !== null)) return c.json({ error: "Invalid request" }, 400);
+    const parsed = (epochOnly ? EpochRequestSchema.safeParse(fields)
+      : RequestSchema.safeParse({ ...fields, runtimeTokenEpoch: epochHeader }));
     if (!parsed.success || new URL(c.req.url).search !== "") return c.json({ error: "Invalid request" }, 400);
     if (!config.enabled || config.machineIds.length === 0 || Date.parse(config.validThrough) <= now().getTime()) {
       return c.json({ error: "Service unavailable" }, 503);
@@ -107,8 +118,10 @@ export function createFundedHostConfigRoutes(options: {
     // Cheap rejection before entering the database pool. This proves only the
     // supplied token identity; current DB state and epoch remain authoritative.
     const suppliedIdentity = { handle: request.handle, machineId: request.machineId, runtimeSlot: request.runtimeSlot };
-    if (!timingSafeTokenEquals(request.authorization.slice(7),
-      buildPlatformSyncVerificationToken(suppliedIdentity, platformSecret, request.runtimeTokenEpoch))) {
+    const suppliedEpoch = "runtimeTokenEpoch" in request && typeof request.runtimeTokenEpoch === "number"
+      ? request.runtimeTokenEpoch : undefined;
+    if (suppliedEpoch !== undefined && !timingSafeTokenEquals(request.authorization.slice(7),
+      buildPlatformSyncVerificationToken(suppliedIdentity, platformSecret, suppliedEpoch))) {
       return c.json({ error: "Unauthorized" }, 401);
     }
     try {
@@ -124,7 +137,7 @@ export function createFundedHostConfigRoutes(options: {
           .where("machine.runtime_slot", "=", "primary").where("machine.status", "=", "running")
           .where("machine.provisioning_class", "=", "customer").where("machine.activation_state", "=", "authorized")
           .where("machine.deleted_at", "is", null).executeTakeFirst();
-        if (!machine || machine.runtime_token_epoch !== request.runtimeTokenEpoch) return { status: "unauthorized" as const };
+        if (!machine || (suppliedEpoch !== undefined && machine.runtime_token_epoch !== suppliedEpoch)) return { status: "unauthorized" as const };
         const identity = { handle: machine.handle, machineId: machine.machine_id, runtimeSlot: machine.runtime_slot };
         if (!timingSafeTokenEquals(request.authorization.slice(7), buildPlatformSyncVerificationToken(identity, platformSecret, machine.runtime_token_epoch))) {
           return { status: "unauthorized" as const };
@@ -161,6 +174,11 @@ export function createFundedHostConfigRoutes(options: {
         const expires = Math.min(checked.getTime() + 30_000, Date.parse(config.validThrough),
           policy.expires_at === null ? Infinity : Date.parse(policy.expires_at));
         if (expires <= checked.getTime()) return { status: "deferred" as const };
+        if (epochOnly) return { status: "ready" as const, response: FundedHostEpochResponseSchema.parse({
+          contractVersion: 1, kind: "matrix-funded-host-epoch", source: "platform", sourceSha: config.sourceSha,
+          issuedAt: checked.toISOString(), expiresAt: new Date(expires).toISOString(),
+          identity: { ...identity, ownerId: machine.clerk_user_id, runtimeTokenEpoch: machine.runtime_token_epoch },
+        }) };
         return { status: "ready" as const, response: FundedHostConfigResponseSchema.parse({
           contractVersion: 1, kind: "matrix-funded-host-config", source: "platform", sourceSha: config.sourceSha,
           issuedAt: checked.toISOString(), expiresAt: new Date(expires).toISOString(),
