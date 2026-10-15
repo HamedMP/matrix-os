@@ -107,7 +107,7 @@ export function BrainConfirm({ open, onClose, label, trigger, children }: {
       <span ref={anchor} className="contents">{trigger}</span>
       {open && (
         <div ref={panel} role="dialog" aria-label={label} tabIndex={-1}
-          className={`absolute inset-x-0 top-full z-10 mt-2 grid gap-2 rounded-md border p-3 text-sm outline-none ${BRAIN_TONE.border} ${BRAIN_TONE.overlay}`}>
+          className={`absolute inset-x-0 top-full z-10 mt-2 grid gap-3 p-4 outline-none ${BRAIN_TYPE.label} ${BRAIN_TONE.overlay}`}>
           {children}
         </div>
       )}
