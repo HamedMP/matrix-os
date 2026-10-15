@@ -105,7 +105,7 @@ export function BrainApp({
             return (
               <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]">
                 <nav aria-label="Company Brain"
-                  className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b px-5 py-2 ${BRAIN_TONE.border}`}>
+                  className={`flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-b px-5 py-2 ${BRAIN_TONE.border}`}>
                   <label className={`flex min-w-0 items-center gap-2 font-medium ${BRAIN_TYPE.label} ${BRAIN_TONE.secondary}`}>
                     Project
                     <BrainSelect
@@ -132,12 +132,11 @@ export function BrainApp({
                         aria-controls={`${baseId}-panel`}
                         tabIndex={value === screen ? 0 : -1}
                         onClick={() => setScreen(value)}
-                        className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-[8px] px-3 ${BRAIN_TYPE.label} ${
-                          value === "chat" ? "font-semibold text-foreground" : `font-medium ${BRAIN_TONE.secondary}`
-                        } hover:text-[var(--brain-text)] ${BRAIN_TONE.motion} ${BRAIN_TONE.hover} ${BRAIN_TONE.focus} ${
-                          BRAIN_TONE.selected}`}
+                        className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-[8px] px-3 font-medium ${
+                          BRAIN_TYPE.label} ${BRAIN_TONE.secondary} hover:text-[var(--brain-text)] ${BRAIN_TONE.motion} ${
+                          BRAIN_TONE.hover} ${BRAIN_TONE.focus} ${BRAIN_TONE.selected}`}
                       >
-                        {value === "chat" && <MessageSquare className={`size-4 ${BRAIN_TONE.accentText}`} aria-hidden="true" />}
+                        {value === "chat" && <MessageSquare className="size-4" aria-hidden="true" />}
                         {SCREEN_LABELS[value]}
                       </button>
                     ))}

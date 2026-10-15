@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { BRAIN_CHECK, BRAIN_CHECK_ROW, BrainButton, BrainInput } from "./brain-controls.js";
+import { BRAIN_CHECK, BRAIN_CHECK_ROW, BrainButton, BrainChip, BrainInput } from "./brain-controls.js";
 import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import {
   BrainAlertText, BrainBadge, BrainCite, BrainEmpty, BrainLoadMore, BrainView, type BrainScreenProps,
@@ -70,12 +70,11 @@ export function BrainClaims({ api, projectId, onOpenSources, kind, onKindChange 
       <div className="flex flex-wrap items-center gap-2">
         <h2 className={`mr-auto ${BRAIN_TYPE.subheading}`}>{text.plural}</h2>
         {onKindChange && (
-          <div role="group" aria-label="Claim kind" className="flex flex-wrap gap-1">
+          <div role="group" aria-label="Claim kind" className="flex flex-wrap gap-2">
             {SHOWN_KINDS.map((value) => (
-              <BrainButton key={value} size="sm" variant={kind === value ? "secondary" : "ghost"}
-                aria-pressed={kind === value} onClick={() => onKindChange(value)}>
+              <BrainChip key={value} selected={kind === value} onClick={() => onKindChange(value)}>
                 {KIND_TEXT[value].plural}
-              </BrainButton>
+              </BrainChip>
             ))}
           </div>
         )}
