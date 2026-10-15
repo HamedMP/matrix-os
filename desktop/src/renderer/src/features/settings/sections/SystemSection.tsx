@@ -1,3 +1,4 @@
+import { OwnerManagedUpdateNotice } from "@matrix-os/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readSystemVersionIdentity } from "../../../lib/system-version";
 import { useConnection } from "../../../stores/connection";
@@ -29,6 +30,7 @@ interface SystemInfo {
 }
 
 interface SystemUpdateStatus {
+  managedByOwner?: boolean;
   channel?: string;
   latest?: SystemRelease | null;
   updateAvailable?: boolean;
@@ -74,6 +76,7 @@ export default function SystemSection() {
   const [state, setState] = useState<{ info: SystemInfo | null; error: boolean }>({ info: null, error: false });
   const [selectedChannel, setSelectedChannel] = useState<ReleaseChannel>("stable");
   const [update, setUpdate] = useState<SystemUpdateStatus | null>(null);
+  const updatesManagedByOwner = update?.managedByOwner === true;
   const [releaseList, setReleaseList] = useState<ReleaseList | null>(null);
   const [loadingReleases, setLoadingReleases] = useState(false);
   const [installingVersion, setInstallingVersion] = useState<string | null>(null);
@@ -242,14 +245,14 @@ export default function SystemSection() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <h4 className="text-md font-normal" style={{ color: "var(--text-primary)" }}>Updates</h4>
-            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose a release channel or install a specific version.</p>
+            {updatesManagedByOwner ? <OwnerManagedUpdateNotice className="text-sm" style={{ color: "var(--text-secondary)" }}/> : <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose a release channel or install a specific version.</p>}
           </div>
-          <button type="button" aria-label="Refresh releases" onClick={() => void loadReleases(selectedChannel)} disabled={loadingReleases || installingVersion !== null} className="rounded-md p-1.5 disabled:opacity-50">
+          {!updatesManagedByOwner && <button type="button" aria-label="Refresh releases" onClick={() => void loadReleases(selectedChannel)} disabled={loadingReleases || installingVersion !== null} className="rounded-md p-1.5 disabled:opacity-50">
             <RefreshCw size={16} />
-          </button>
+          </button>}
         </div>
 
-        <div className="flex items-end gap-3">
+        {!updatesManagedByOwner && <div className="flex items-end gap-3">
           <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm" style={{ color: "var(--text-secondary)" }}>
             <span>Release channel</span>
             <select aria-label="Release channel" value={selectedChannel} onChange={(event) => {
@@ -265,11 +268,11 @@ export default function SystemSection() {
               <ArrowUpCircleIcon size={16} /> Upgrade
             </button>
           )}
-        </div>
+        </div>}
 
         <div className="flex flex-col gap-1 text-sm">
           <Row label="Current version" value={currentVersion ?? "–"} />
-          <Row label={`Latest ${selectedChannel} release`} value={latest?.version ?? (loadingReleases ? "Checking…" : "–")} />
+          {!updatesManagedByOwner && <Row label={`Latest ${selectedChannel} release`} value={latest?.version ?? (loadingReleases ? "Checking…" : "–")} />}
         </div>
 
         {(update?.error || releaseList?.error || upgradeError) && <p className="text-sm" style={{ color: "var(--text-danger, #b42318)" }}>{upgradeError ?? update?.error ?? releaseList?.error}</p>}
@@ -298,7 +301,7 @@ export default function SystemSection() {
           </div>
         )}
 
-        <div className="flex flex-col gap-2 border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
+        {!updatesManagedByOwner && <div className="flex flex-col gap-2 border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
           <span className="text-sm" style={{ color: "var(--text-secondary)" }}>Available {selectedChannel} releases</span>
           {releases.length === 0 && <Empty text={loadingReleases ? "Loading releases…" : "No releases found."} />}
           {releases.slice(0, 12).map((release) => {
@@ -317,7 +320,7 @@ export default function SystemSection() {
               </div>
             );
           })}
-        </div>
+        </div>}
       </Card>
     </>
   );
