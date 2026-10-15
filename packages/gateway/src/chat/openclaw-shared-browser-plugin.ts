@@ -21,15 +21,37 @@ export interface SharedBrowserPluginApi {
 interface RevokedGuard { sessionKey: string; bindingId?: string; nativeObserved: boolean }
 interface Lease extends z.infer<typeof Bind> { controller: AbortController; browserStarted: boolean; authenticated: boolean; nativeObserved: boolean; cancelledBindGuard?: RevokedGuard }
 interface Ticket { lease: Lease; toolCallId: string; expiresAt: number; input: string }
-export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi, options: { gatewayPort: number; fetcher?: typeof fetch; now?: () => number }): () => void {
+export type SharedBrowserLifecycleDiagnostic = {
+  event: "bind_result" | "before_tool_call" | "agent_end" | "revoke" | "gateway_stop";
+  generation: string;
+  leaseCount: number;
+  revokedCount: number;
+  ticketCount: number;
+  exactRunLeaseFound?: boolean;
+  sameSessionLeasePresent?: boolean;
+  success?: boolean;
+};
+export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi, options: {
+  gatewayPort: number; fetcher?: typeof fetch; now?: () => number;
+  onDiagnostic?: (event: SharedBrowserLifecycleDiagnostic) => void;
+}): () => void {
   sharedBrowserEndpoint(options.gatewayPort);
   const now = options.now ?? Date.now;
+  const generation = options.onDiagnostic ? randomBytes(8).toString("hex") : "";
   const leases = new Map<string, Lease>(); // <=64, terminal/revoke/shutdown/30m TTL.
   // Shares the 64-run cap with leases. Native termination (or gateway stop)
   // evicts these credential-free guards; an elapsed TTL does not prove exit.
   const revoked = new Map<string, RevokedGuard>();
   const tickets = new Map<string, Ticket>(); // <=128, one-use, 10s TTL and lease removal.
   let closed = false;
+  function diagnostic(event: SharedBrowserLifecycleDiagnostic["event"], extra: Partial<Omit<SharedBrowserLifecycleDiagnostic, "event" | "generation" | "leaseCount" | "revokedCount" | "ticketCount">> = {}) {
+    if (!options.onDiagnostic) return;
+    try {
+      options.onDiagnostic({ event, generation, leaseCount: leases.size, revokedCount: revoked.size, ticketCount: tickets.size, ...extra });
+    } catch (error: unknown) {
+      console.warn("[shared-browser-openclaw] Lifecycle diagnostic callback failed", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
   function release(runId: string) { const lease = leases.get(runId); if (!lease) return; leases.delete(runId); lease.controller.abort();
     for (const [id,ticket] of tickets) if (ticket.lease === lease) tickets.delete(id); }
   function revoke(runId: string, proof?: z.infer<typeof Revoke>) {
@@ -68,21 +90,29 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
       await callSharedBrowser({ ...options, token: parsed.token, action: { action: "status" }, signal: pending.controller.signal });
       if (closed || parsed.expiresAt <= now() || pending.controller.signal.aborted || leases.get(parsed.runId) !== pending) throw new Error("Browser binding unavailable");
       pending.authenticated = true; respond(true, { bound: true });
+      diagnostic("bind_result", { success: true, exactRunLeaseFound: leases.get(parsed.runId) === pending });
     } catch (error: unknown) {
       // A failed bind cannot start native inference, so it needs no tombstone.
       if (pending && leases.get(pending.runId) === pending) release(pending.runId);
       if (pending && !pending.authenticated && pending.cancelledBindGuard
         && revoked.get(pending.runId) === pending.cancelledBindGuard) revoked.delete(pending.runId);
       console.warn("[shared-browser-openclaw] Binding refused", error instanceof Error ? error.name : "UnknownError");
-      respond(false, undefined, { code: "INVALID_REQUEST", message: "Browser binding unavailable." }); }
+      respond(false, undefined, { code: "INVALID_REQUEST", message: "Browser binding unavailable." });
+      diagnostic("bind_result", { success: false, exactRunLeaseFound: pending !== undefined && leases.get(pending.runId) === pending }); }
   }, { scope: "operator.admin" });
   api.registerGatewayMethod("matrix.browser.revoke", async ({ params, respond }) => {
     const parsed = Revoke.safeParse(params);
     if (!parsed.success) { respond(false, undefined, { code: "INVALID_REQUEST", message: "Browser binding unavailable." }); return; }
+    const exactRunLeaseFound = leases.has(parsed.data.runId);
     revoke(parsed.data.runId, parsed.data); respond(true, { revoked: true });
+    diagnostic("revoke", { exactRunLeaseFound });
   }, { scope: "operator.admin" });
   api.on("before_tool_call", (event, context) => {
     sweep(); const lease = context.runId ? leases.get(context.runId) : undefined;
+    diagnostic("before_tool_call", {
+      exactRunLeaseFound: lease !== undefined,
+      sameSessionLeasePresent: context.sessionKey !== undefined && [...leases.values()].some(candidate => candidate.sessionKey === context.sessionKey),
+    });
     if (lease && lease.sessionKey === context.sessionKey) lease.nativeObserved = true;
     const guard = context.runId ? revoked.get(context.runId) : undefined;
     if (guard && guard.sessionKey === context.sessionKey) guard.nativeObserved = true;
@@ -110,8 +140,12 @@ export function registerOpenClawSharedBrowserPlugin(api: SharedBrowserPluginApi,
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }], details: undefined };
       } };
   }, { names: ["shared_browser"], optional: false });
-  api.on("agent_end", (_event, context) => { if (context.runId) { release(context.runId); revoked.delete(context.runId); } });
-  function close() { if (closed) return; closed = true; clearInterval(timer); for (const runId of leases.keys()) release(runId); revoked.clear(); tickets.clear(); }
+  api.on("agent_end", (_event, context) => {
+    const exactRunLeaseFound = context.runId !== undefined && leases.has(context.runId);
+    if (context.runId) { release(context.runId); revoked.delete(context.runId); }
+    diagnostic("agent_end", { exactRunLeaseFound });
+  });
+  function close() { if (closed) return; closed = true; clearInterval(timer); for (const runId of leases.keys()) release(runId); revoked.clear(); tickets.clear(); diagnostic("gateway_stop"); }
   api.on("gateway_stop", close);
   return close;
 }

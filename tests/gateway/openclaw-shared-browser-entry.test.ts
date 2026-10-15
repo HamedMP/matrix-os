@@ -10,3 +10,26 @@ it("declares exact pinned native tool ownership and startup activation for prote
   hooks.get("gateway_stop")!();
   expect(() => plugin.register({ ...api, pluginConfig: { gatewayPort: 70000 } } as never)).toThrow();
 });
+it("enables safe diagnostics only for the exact opt-in environment value", () => {
+  const original = process.env.MATRIX_BROWSER_DIAGNOSTICS;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    for (const value of [undefined, "0", "true"]) {
+      if (value === undefined) delete process.env.MATRIX_BROWSER_DIAGNOSTICS;
+      else process.env.MATRIX_BROWSER_DIAGNOSTICS = value;
+      const hooks = new Map<string, (event?: unknown, context?: unknown) => void>();
+      plugin.register({ pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: (name: string, handler: never) => hooks.set(name, handler) } as never);
+      hooks.get("gateway_stop")!();
+    }
+    expect(warn).not.toHaveBeenCalledWith("[shared-browser-openclaw] lifecycle", expect.anything());
+    process.env.MATRIX_BROWSER_DIAGNOSTICS = "1";
+    const hooks = new Map<string, (event?: unknown, context?: unknown) => void>();
+    plugin.register({ pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: (name: string, handler: never) => hooks.set(name, handler) } as never);
+    hooks.get("gateway_stop")!();
+    expect(warn).toHaveBeenCalledWith("[shared-browser-openclaw] lifecycle", expect.stringMatching(/^\{"event":"gateway_stop","generation":"[a-f0-9]{16}",/));
+  } finally {
+    if (original === undefined) delete process.env.MATRIX_BROWSER_DIAGNOSTICS;
+    else process.env.MATRIX_BROWSER_DIAGNOSTICS = original;
+    warn.mockRestore();
+  }
+});

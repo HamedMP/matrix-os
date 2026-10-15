@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { registerOpenClawSharedBrowserPlugin } from "../../packages/gateway/src/chat/openclaw-shared-browser-plugin.js";
 
-function setup(now?: () => number) {
+function setup(now?: () => number, onDiagnostic?: (event: unknown) => void) {
   const methods = new Map<string, (input: { params: unknown; respond: (...args: unknown[]) => void }) => Promise<void>>();
   const hooks = new Map<string, (event: unknown, context: unknown) => unknown>();
   let factory: (context: { sessionKey: string }) => { execute: (id: string, input: unknown, signal?: AbortSignal) => Promise<unknown> };
@@ -10,10 +10,49 @@ function setup(now?: () => number) {
     registerTool: (value: typeof factory) => { factory = value; },
     on: (name: string, handler: (event: unknown, context: unknown) => unknown) => hooks.set(name, handler),
     lifecycle: { registerRuntimeLifecycle: vi.fn() } };
-  const close = registerOpenClawSharedBrowserPlugin(api as never, { gatewayPort: 4000, fetcher, now });
+  const close = registerOpenClawSharedBrowserPlugin(api as never, { gatewayPort: 4000, fetcher, now, onDiagnostic });
   const bind = async () => { const respond = vi.fn(); await methods.get("matrix.browser.bind")!({ params: { runId: "run_qa", sessionKey: "agent:main:qa", token: "a".repeat(43), expiresAt: (now?.() ?? Date.now()) + 60000 }, respond }); return respond; };
   return { methods, hooks, fetcher, close, bind, tool: () => factory!({ sessionKey: "agent:main:qa" }) };
 }
+it("emits only bounded lifecycle diagnostics without using same-session observations as authority", async () => {
+  const events: unknown[] = [];
+  const s = setup(undefined, event => events.push(event));
+  await s.bind();
+  const before = { runId: "missing_run", sessionKey: "agent:main:qa", toolCallId: "call_1" };
+  s.hooks.get("before_tool_call")!({ toolName: "shared_browser", params: { action: "status", secret: "must-not-escape" } }, before);
+  await s.methods.get("matrix.browser.revoke")!({ params: { runId: "run_qa" }, respond: vi.fn() });
+  s.hooks.get("agent_end")!({}, { runId: "run_qa", sessionKey: "agent:main:qa" });
+  s.close();
+  expect(events).toEqual([
+    expect.objectContaining({ event: "bind_result", success: true, leaseCount: 1, exactRunLeaseFound: true }),
+    expect.objectContaining({ event: "before_tool_call", leaseCount: 1, exactRunLeaseFound: false, sameSessionLeasePresent: true }),
+    expect.objectContaining({ event: "revoke", exactRunLeaseFound: true, leaseCount: 0, revokedCount: 1 }),
+    expect.objectContaining({ event: "agent_end", exactRunLeaseFound: false, leaseCount: 0, revokedCount: 0 }),
+    expect.objectContaining({ event: "gateway_stop", leaseCount: 0, revokedCount: 0, ticketCount: 0 }),
+  ]);
+  const serialized = JSON.stringify(events);
+  expect(serialized).not.toContain("missing_run");
+  expect(serialized).not.toContain("run_qa");
+  expect(serialized).not.toContain("agent:main:qa");
+  expect(serialized).not.toContain("must-not-escape");
+  const exactKeys: Record<string, string[]> = {
+    bind_result: ["event", "exactRunLeaseFound", "generation", "leaseCount", "revokedCount", "success", "ticketCount"],
+    before_tool_call: ["event", "exactRunLeaseFound", "generation", "leaseCount", "revokedCount", "sameSessionLeasePresent", "ticketCount"],
+    revoke: ["event", "exactRunLeaseFound", "generation", "leaseCount", "revokedCount", "ticketCount"],
+    agent_end: ["event", "exactRunLeaseFound", "generation", "leaseCount", "revokedCount", "ticketCount"],
+    gateway_stop: ["event", "generation", "leaseCount", "revokedCount", "ticketCount"],
+  };
+  for (const event of events as Array<Record<string, unknown>>) {
+    expect(event.generation).toMatch(/^[a-f0-9]{16}$/);
+    expect(Object.keys(event).sort()).toEqual(exactKeys[String(event.event)]);
+  }
+});
+it("is silent by default and ignores diagnostic callback failures", async () => {
+  const silent = setup(); await silent.bind(); silent.close();
+  const broken = setup(undefined, () => { throw new Error("diagnostic failed"); });
+  await expect(broken.bind()).resolves.toBeDefined();
+  expect(() => broken.close()).not.toThrow();
+});
 it.each(["revoke", "expire"])("keeps native bypasses blocked after %s until the native run ends", async reason => {
   let now = Date.now();
   const s = setup(() => now); await s.bind();

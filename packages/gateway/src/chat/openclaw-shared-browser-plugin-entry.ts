@@ -13,6 +13,11 @@ export default {
   id: "matrix-shared-browser", name: "Matrix shared Chrome",
   register(api: SharedBrowserPluginApi & { pluginConfig?: unknown }) {
     const config = Config.parse(api.pluginConfig ?? {});
-    registerOpenClawSharedBrowserPlugin(api, config);
+    registerOpenClawSharedBrowserPlugin(api, {
+      ...config,
+      ...(process.env.MATRIX_BROWSER_DIAGNOSTICS === "1" ? {
+        onDiagnostic: (event: unknown) => console.warn("[shared-browser-openclaw] lifecycle", JSON.stringify(event)),
+      } : {}),
+    });
   },
 };
