@@ -14,6 +14,7 @@
  */
 import { createHash } from "node:crypto";
 import { storeBotGmailAttachment } from "./integration-attachment.js";
+import { parseSharedGmailAttachmentParams, sharedGmailAttachmentResult } from "./shared-integration-attachment.js";
 import type { BotAudience, BotEffect, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import { getAction, getService } from "../integrations/registry.js";
@@ -82,18 +83,24 @@ export function createBotIntegrationTools(deps: {
   agents: Pick<ChatAgentStore, "get">;
   /** Live source check at the last local checkpoint before service invocation. */
   assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>;
+  assertSharedAttachmentSource?: (binding: BotRuntimeBinding, signal: AbortSignal) => Promise<void>;
   now?: () => Date;
 }) {
   const now = () => deps.now?.() ?? new Date();
 
-  async function qualifySource(binding: BotRuntimeBinding, signal?: AbortSignal) {
-    if (!deps.assertSource) return;
+  async function qualifySource(binding: BotRuntimeBinding, signal?: AbortSignal, sharedAttachment = false) {
+    if (!deps.assertSource && !sharedAttachment) return;
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), SOURCE_CHECK_TIMEOUT_MS);
     const bounded = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
     try {
       if (bounded.aborted) throw new BotBrokerActionError("timeout");
-      await untilAborted(deps.assertSource(binding, bounded), bounded);
+      if (deps.assertSource) await untilAborted(deps.assertSource(binding, bounded), bounded);
+      if (sharedAttachment) {
+        if (!deps.assertSharedAttachmentSource) throw new BotBrokerActionError("unavailable");
+        await untilAborted(deps.assertSharedAttachmentSource(binding, bounded), bounded);
+      }
+      if (bounded.aborted) throw new BotBrokerActionError("timeout");
     } catch (error: unknown) {
       if (bounded.aborted) throw new BotBrokerActionError("timeout");
       throw error;
@@ -291,6 +298,9 @@ export function createBotIntegrationTools(deps: {
 
     /** `integration.call`: one action on a granted account. */
     async call(binding: BotRuntimeBinding, args: CallArgs, signal?: AbortSignal): Promise<BotToolResult> {
+      const attachment = binding.group && args.service === "gmail" && args.action === "get_attachment"
+        ? parseSharedGmailAttachmentParams(args.params) : undefined;
+      if (attachment && !deps.assertSharedAttachmentSource) throw new BotBrokerActionError("unavailable");
       const effect = effectOf(args.service, args.action);
       if (!effect) throw new BotBrokerActionError("invalid_arguments");
       // Group effects need an explicit group approval flow; the private owner prompt is never reused.
@@ -315,28 +325,35 @@ export function createBotIntegrationTools(deps: {
         const decision = await approved(binding, args, grant, preview);
         if (!decision.approved) return text(decision.message);
       }
-      // A revoked grant must be reread after awaited source preparation.
-      await qualifySource(binding, signal);
-      await deps.transact(binding.ownerId, async (tx) => {
-        const live = await createBotGrantsRepository(tx.db).findUsable({
-          ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
-          audience: audienceFor(binding), effect, now: now().toISOString(), lockForDispatch: true,
-        }, tx.db);
-        if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
-          throw new BotBrokerActionError("not_granted");
-        }
-        // Recheck source changes during the grant read while its row lock
-        // prevents revocation/revision updates. This is the joint authority
-        // checkpoint; commit/release precedes any network transport.
-        await qualifySource(binding, signal);
-        if (live.expiresAt && Date.parse(live.expiresAt) <= now().getTime()) {
-          throw new BotBrokerActionError("not_granted");
-        }
-      });
+      const revalidateAccess = async () => {
+        await qualifySource(binding, signal, attachment !== undefined);
+        await deps.transact(binding.ownerId, async (tx) => {
+          const live = await createBotGrantsRepository(tx.db).findUsable({
+            ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
+            audience: audienceFor(binding), effect, now: now().toISOString(), lockForDispatch: true,
+          }, tx.db);
+          if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
+            throw new BotBrokerActionError("not_granted");
+          }
+          // Recheck source changes during the grant read while its row lock
+          // prevents revocation/revision updates. This is the joint authority
+          // checkpoint; commit/release precedes any network transport.
+          await qualifySource(binding, signal, attachment !== undefined);
+          if (live.expiresAt && Date.parse(live.expiresAt) <= now().getTime()) {
+            throw new BotBrokerActionError("not_granted");
+          }
+        });
+      };
+      await revalidateAccess();
       try {
         const result = await deps.client.call(binding.ownerId, {
-          service: args.service, action: args.action, label: grant.accountLabel, connectionId: grant.connectionId, params: args.params, read: effect === "read",
+          service: args.service, action: args.action, label: grant.accountLabel, connectionId: grant.connectionId, params: attachment?.params ?? args.params, read: effect === "read",
         }, signal);
+        if (attachment) {
+          // A read may finish after grant, canonical root or source revocation. Expose no bytes until refreshed.
+          await revalidateAccess();
+          return sharedGmailAttachmentResult(result.data, attachment.chunk);
+        }
         if (args.service === "gmail" && args.action === "get_attachment") {
           const reference = await storeBotGmailAttachment(deps.homePath, binding, result.data, signal);
           return text(JSON.stringify(reference));

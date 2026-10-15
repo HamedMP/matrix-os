@@ -50,7 +50,9 @@ describe("bot recipe catalog", () => {
   it("company recipe has no private memory or file tools and requires citations",()=>{
     const recipe=createBotRecipeCatalog().resolve({recipeId:"company-brain",version:"2026-09-30.1"});
     expect(recipe.capabilities).toEqual(["integration.inventory","integration.call"]);
-    expect(recipe.integrations).toEqual([]);
+    expect(recipe.integrations).toHaveLength(8);
+    expect(recipe.integrations.every(service => service.required === false
+      && service.effects.length === 1 && service.effects[0] === "read")).toBe(true);
     expect(recipe.instructions).toContain("source");
     expect(recipe.instructions).toContain("untrusted");
   });

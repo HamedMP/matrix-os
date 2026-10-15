@@ -7,21 +7,21 @@ import {
   SCOPE_RUNTIME_PROFILE_VERSION,
 } from "@matrix-os/scope-runtime/profile";
 import { z } from "zod/v4";
-import { SCOPE_RUNTIME_BOT_PROFILE_ID, SCOPE_RUNTIME_BOT_PROFILE_VERSION, SCOPE_RUNTIME_BOT_PROFILE_DIGEST, SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION } from "@matrix-os/scope-runtime/bot-profile";
+import { SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID, SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION, SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST, SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION } from "@matrix-os/scope-runtime/bot-profile";
 import { MATRIX_BOT_INSTANCE_ID } from "../bots/selection.js";
 
-/** Pi is qualified under its own profile/workload, never added to the standard adapter array. */
+/** Shared group runs qualify the managed Pi profile their launcher executes. */
 export const SHARED_MATRIX_BOT_ELIGIBILITY = {
-  profileId: SCOPE_RUNTIME_BOT_PROFILE_ID,
-  profileVersion: SCOPE_RUNTIME_BOT_PROFILE_VERSION,
-  profileDigest: SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
+  profileId: SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID,
+  profileVersion: SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION,
+  profileDigest: SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST,
   adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID,
   harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION,
   workload: "bot_agent",
 } as const;
 const MatrixBotProfileSchema = z.object({
-  profileId: z.literal(SCOPE_RUNTIME_BOT_PROFILE_ID), profileVersion: z.literal(SCOPE_RUNTIME_BOT_PROFILE_VERSION),
-  profileDigest: z.literal(SCOPE_RUNTIME_BOT_PROFILE_DIGEST), adapterId: z.literal(SCOPE_RUNTIME_BOT_ADAPTER_ID),
+  profileId: z.literal(SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID), profileVersion: z.literal(SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION),
+  profileDigest: z.literal(SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST), adapterId: z.literal(SCOPE_RUNTIME_BOT_ADAPTER_ID),
   harnessVersion: z.literal(SCOPE_RUNTIME_BOT_HARNESS_VERSION), workload: z.literal("bot_agent"),
 }).strict();
 
