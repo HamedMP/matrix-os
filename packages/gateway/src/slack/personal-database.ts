@@ -80,17 +80,26 @@ export class SlackPersonalRepository {
  });}
  async claimReply(){return this.db.transaction().execute(async trx=>{
   await trx.updateTable("slack_personal_outbox").set({state:"uncertain",lease:null,lease_until:null,updated_at:this.now()}).where("event_id","in",trx.selectFrom("slack_personal_inbox").select("id").where("owner_id","=",this.ownerId)).where("state","=","sending").where("lease_until","<",this.now()).execute();
-  const row=await trx.selectFrom("slack_personal_outbox as outbox").innerJoin("slack_personal_inbox as inbox","inbox.id","outbox.event_id").selectAll("outbox").where("inbox.owner_id","=",this.ownerId).where("outbox.state","=","pending").where("outbox.attempts","<",3).where(eb=>eb.or([eb("outbox.lease_until","is",null),eb("outbox.lease_until","<=",this.now())])).orderBy("outbox.updated_at").forUpdate("outbox").skipLocked().executeTakeFirst();
+  const row=await trx.selectFrom("slack_personal_outbox as outbox").innerJoin("slack_personal_inbox as inbox","inbox.id","outbox.event_id").selectAll("outbox").where("inbox.owner_id","=",this.ownerId).where("inbox.created_at",">",new Date(this.now().getTime()-86400_000)).where("outbox.state","=","pending").where("outbox.attempts","<",3).where(eb=>eb.or([eb("outbox.lease_until","is",null),eb("outbox.lease_until","<=",this.now())])).orderBy("outbox.updated_at").forUpdate("outbox").skipLocked().executeTakeFirst();
   if(!row)return null;
   const outbox=await trx.updateTable("slack_personal_outbox").set({state:"sending",attempts:row.attempts+1,lease:randomUUID(),lease_until:new Date(this.now().getTime()+30_000),updated_at:this.now()}).where("event_id","=",row.event_id).returningAll().executeTakeFirstOrThrow();
   return {outbox,inbox:await trx.selectFrom("slack_personal_inbox").selectAll().where("id","=",row.event_id).executeTakeFirstOrThrow()};
  });}
- async replyStatus(id:string,lease:string|null,state:SlackPersonalOutboxTable["state"],messageTs?:string){await this.db.updateTable("slack_personal_outbox").set({state,lease:null,lease_until:state==="pending"?new Date(this.now().getTime()+30_000):null,message_ts:messageTs??null,updated_at:this.now()}).where("event_id","=",id).where("lease","=",lease).execute();}
+ /** An explicit receipt-not-ready response confirms no publication: refund only this sending lease, with normal polling backoff. */
+ async waitForReceipt(id:string,lease:string|null){await this.db.updateTable("slack_personal_outbox").set({state:"pending",attempts:sql<number>`GREATEST(attempts - 1, 0)`,lease:null,lease_until:new Date(this.now().getTime()+30_000),updated_at:this.now()})
+  .where("event_id","=",id).where("lease","=",lease).where("state","=","sending")
+  .where("event_id","in",this.db.selectFrom("slack_personal_inbox").select("id").where("owner_id","=",this.ownerId)).execute();}
+ async replyStatus(id:string,lease:string|null,state:SlackPersonalOutboxTable["state"],messageTs?:string,retryAfterMs?:number){
+  const delay=typeof retryAfterMs==="number"&&Number.isSafeInteger(retryAfterMs)?Math.max(30_000,Math.min(3600_000,retryAfterMs)):30_000;
+  await this.db.updateTable("slack_personal_outbox").set({state,lease:null,lease_until:state==="pending"?new Date(this.now().getTime()+delay):null,message_ts:messageTs??null,updated_at:this.now()}).where("event_id","=",id).where("lease","=",lease).execute();}
  /** Retain ambiguous outcomes for review for 30 days, then expire without retrying. */
- async cleanup(){
+ async cleanup(){await this.db.transaction().execute(async trx=>{
+  // Receipt waiting cannot keep a completed inbox alive forever. Use immutable arrival time, not the refreshed outbox timestamp.
+  await trx.updateTable("slack_personal_outbox").set({state:"failed",lease:null,lease_until:null,updated_at:this.now()}).where("state","=","pending")
+   .where("event_id","in",trx.selectFrom("slack_personal_inbox").select("id").where("owner_id","=",this.ownerId).where("created_at","<=",new Date(this.now().getTime()-86400_000))).execute();
   const cutoff=new Date(this.now().getTime()-30*86400_000);
-  await this.db.deleteFrom("slack_personal_inbox").where("owner_id","=",this.ownerId).where("state","in",["completed","failed"])
-   .where("updated_at","<",cutoff).where("id","not in",this.db.selectFrom("slack_personal_outbox").select("event_id")
+  await trx.deleteFrom("slack_personal_inbox").where("owner_id","=",this.ownerId).where("state","in",["completed","failed"])
+   .where("updated_at","<",cutoff).where("id","not in",trx.selectFrom("slack_personal_outbox").select("event_id")
     .where(eb=>eb.or([eb("state","in",["pending","sending"]),eb.and([eb("state","=","uncertain"),eb("updated_at",">=",cutoff)])]))).execute();
- }
+ });}
 }

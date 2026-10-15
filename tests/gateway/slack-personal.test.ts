@@ -139,6 +139,54 @@ describe("durable private Slack personal transport",()=>{
   sendReply.mockRejectedValueOnce("socket failed");await service.receive({...envelope,event:{...envelope.event,eventId:"EvUnknown"}});await service.drain();
   expect((await db.selectFrom("slack_personal_outbox").select("state").execute()).map(row=>row.state)).toContain("uncertain");
  });
+ it("waits through more than three pending receipts then sends once without consuming delivery attempts",async()=>{
+  let clock=now;
+  service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>clock,resolvePersonalChat,submitPersonal,sendReply,
+   readResult:async()=>({status:"completed",requestingActorId:envelope.ownerId,runId:"run_private",text:"Answer"})});
+  sendReply.mockResolvedValue({status:"retryable",reason:"receipt_not_ready"});
+  await service.receive(envelope);
+  for(let index=0;index<5;index++){clock=new Date(now.getTime()+index*31_000);await service.drain();}
+  expect(sendReply).toHaveBeenCalledTimes(5);
+  expect(await db.selectFrom("slack_personal_outbox").select(["state","attempts"]).executeTakeFirstOrThrow()).toEqual({state:"pending",attempts:0});
+  sendReply.mockResolvedValue({status:"sent",messageTs:"1790766200.000001"});
+  clock=new Date(now.getTime()+156_000);await service.drain();await service.drain();
+  expect(sendReply).toHaveBeenCalledTimes(6);
+  expect(await db.selectFrom("slack_personal_outbox").select(["state","attempts"]).executeTakeFirstOrThrow()).toEqual({state:"sent",attempts:1});
+ });
+ it("honors a confirmed 120-second cooldown without spending early attempts",async()=>{
+  let clock=now;
+  service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>clock,resolvePersonalChat,submitPersonal,sendReply,
+   readResult:async()=>({status:"completed",requestingActorId:envelope.ownerId,runId:"run_private",text:"Answer"})});
+  sendReply.mockResolvedValueOnce({status:"retryable",retryAfterMs:120_000}).mockResolvedValue({status:"sent",messageTs:"1790766120.000001"});
+  await service.receive(envelope);await service.drain();
+  for(const seconds of [30,60,119]){clock=new Date(now.getTime()+seconds*1000);await service.drain();}
+  expect(sendReply).toHaveBeenCalledOnce();
+  clock=new Date(now.getTime()+120_000);await service.drain();await service.drain();expect(sendReply).toHaveBeenCalledTimes(2);
+  expect(await db.selectFrom("slack_personal_outbox").select(["state","attempts"]).executeTakeFirstOrThrow()).toEqual({state:"sent",attempts:2});
+ });
+ it("expires a pending receipt wait after24 hours and permits terminal retention cleanup",async()=>{
+  let clock=now;
+  service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>clock,resolvePersonalChat,submitPersonal,sendReply,
+   readResult:async()=>({status:"completed",requestingActorId:envelope.ownerId,runId:"run_private",text:"Answer"})});
+  sendReply.mockResolvedValue({status:"retryable",reason:"receipt_not_ready"});
+  await service.receive(envelope);await service.drain();
+  clock=new Date(now.getTime()+86400_000);await service.drain();
+  expect(sendReply).toHaveBeenCalledOnce();
+  expect(await db.selectFrom("slack_personal_outbox").select("state").executeTakeFirstOrThrow()).toEqual({state:"failed"});
+  clock=new Date(now.getTime()+32*86400_000);await service.drain();
+  expect(await db.selectFrom("slack_personal_inbox").selectAll().execute()).toEqual([]);
+ });
+ it("does not refund or reopen a reply after another lease replaced the sender",async()=>{
+  const replacement="11111111-1111-4111-8111-111111111111";
+  service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>now,resolvePersonalChat,submitPersonal,sendReply,
+   readResult:async()=>({status:"completed",requestingActorId:envelope.ownerId,runId:"run_private",text:"Answer"})});
+  sendReply.mockImplementationOnce(async()=>{
+   await db.updateTable("slack_personal_outbox").set({lease:replacement}).execute();
+   return {status:"retryable",reason:"receipt_not_ready"};
+  });
+  await service.receive(envelope);await service.drain();
+  expect(await db.selectFrom("slack_personal_outbox").select(["state","attempts","lease"]).executeTakeFirstOrThrow()).toEqual({state:"sending",attempts:1,lease:replacement});
+ });
  it("revalidates the accepted run again immediately before private delivery",async()=>{
   const readResult=vi.fn().mockResolvedValueOnce({status:"completed",requestingActorId:envelope.ownerId,runId:"run_private",text:"Answer"}).mockResolvedValueOnce({status:"pending",requestingActorId:envelope.ownerId});
   service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>now,resolvePersonalChat,submitPersonal,readResult,sendReply});
