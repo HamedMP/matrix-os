@@ -37,6 +37,31 @@ Normal expiry maintenance stops only expired sessions and does not create a glob
 
 Protected credential-file rotation changes the native generation, including an ordinary CLI refresh that changes those bytes. Existing runs then fail closed and require explicit reconnect/reconfirmation. Seamless refresh is not claimed by this implementation.
 
+### Public workspace session starts
+
+Authenticated `POST /api/sessions` establishes the current principal and any
+project-operation authority before native admission. Public Codex starts use the
+same manager and orchestrator as coding-agent threads. Reserve the exact
+owner/session through the existing `withSessionStart` scope, then register native
+admission before sandbox or Terminal effects. Final manager dispatch revalidates
+the private account, consent, configuration and session binding before passing
+native intent to the launcher.
+
+Keep registration, dispatch and failed-start cleanup inside that reservation:
+older cleanup must not remove a newer same-ID session's binding. Release a
+failed start only with the existing private clean-start proof, including proved
+project/worktree/sandbox failures. Thrown or uncertain acquisition retains its
+reference. Logout drains the exact shared runtime; unavailable or unconfirmed
+cleanup stays fenced. Repeated starts cannot rebind a live owner/account. Shell,
+other agents and independently verified legacy key starts preserve their
+existing behavior. The default route dispatch preserves its runtime receiver.
+
+Regression coverage: `tests/gateway/public-native-codex-session-admission.test.ts`
+exercises the real route, manager, orchestrator and admission, including Off,
+missing consent, principal drift, duplicate starts, cleanup certainty and
+concurrent failure cleanup. Fixture results do not establish live OAuth or
+inference acceptance.
+
 ## Authentication matrix
 
 | Path | Authority | Required behavior |
@@ -44,6 +69,7 @@ Protected credential-file rotation changes the native generation, including an o
 | V1/V2 native Terminal workflow | Current writable Computer owner, installed native harness and profile lease | Official owner CLI handoff only; reject embedded or forged methods |
 | Private native completion | Foreground coordinator plus fresh privately bound native identity | Exact revisioned source/account selection; no renderer proof |
 | Direct Settings/Terminal login | Same owner, harness and writer authority | No alternate embedded OAuth path or implicit account replacement |
+| Existing `POST /api/sessions` native Codex start | Authenticated request principal, existing project authority and current native owner consent | Shared start reservation, exact registered intent and shared logout runtime; no dispatch while Off or unconfirmed |
 | Native launch/turn/steer/approval/input/defer | Current exact owner/Computer/source/account/generation | Identity drift and revoke deny continuation; no key/funded fallback |
 | Native logout/removal | Exact current native principal under writer lease | Independent lifecycle; stale account cannot log out a replacement |
 | Matrix AI invocation/revoke | Independent Matrix AI peer/account grant | Native state confers no authority and is not the revocation target |
