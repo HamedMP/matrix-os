@@ -28,6 +28,11 @@ authentication, so it returns misleading authentication-required guidance.
 - Accept unprobed (`unknown`) kernel catalog readiness only after the existing
   fresh native subscription authentication and bounded profile checks succeed.
   Retain negative readiness, expiry and model/source eligibility checks.
+- Once the exact native Claude row has verified `authenticated` state, display
+  **Connected** independently of unknown/pending Bot discovery, saved Off or an
+  older Connecting receipt. Off remains an execution choice; this label must
+  not enable the row or grant Bot/background use. A saved email/logout action
+  without verified row authentication remains insufficient.
 
 Existing owner authentication, profile guards, Bot consent/revision checks,
 background consent, restricted native task execution and separate coordinator
