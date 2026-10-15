@@ -300,6 +300,41 @@ describe("desktop billing settings", () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
   });
 
+  it("ignores an older focus refresh after abandonment returns newer state", async () => {
+    const openCheckout = {
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+      activeCheckout: {
+        status: "open",
+        planSlug: "matrix_starter",
+        interval: "monthly",
+        regionSlug: "region_nbg1",
+        developerTools: ["codex"],
+      },
+    };
+    const releasedCheckout = { ...openCheckout, activeCheckout: null };
+    let resolveOlderRead!: (value: unknown) => void;
+    const api = makeApi(openCheckout);
+    api.get
+      .mockResolvedValueOnce(openCheckout)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderRead = resolve; }))
+      .mockResolvedValueOnce(releasedCheckout);
+    api.post.mockResolvedValueOnce({ abandoned: true });
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+    await screen.findByRole("button", { name: /Resume checkout/i });
+    fireEvent.focus(window);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: /Choose different options/i }));
+
+    await screen.findByRole("button", { name: /Continue to checkout/i });
+    resolveOlderRead(openCheckout);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("button", { name: /Resume checkout/i })).toBeNull();
+  });
+
   it.each([
     { selection: "suggested Asia location", explicitRegion: null, expectedRegion: "region_hil" },
     { selection: "explicit EU location over the Asia suggestion", explicitRegion: "region_fsn1", expectedRegion: "region_fsn1" },

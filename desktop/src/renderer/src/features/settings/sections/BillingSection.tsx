@@ -5,7 +5,7 @@ import {
   type MatrixBillingPublicEntitlement,
   type MatrixBillingStatus,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { Button } from "../../../design/primitives";
 import { invoke } from "../../../lib/operator";
@@ -127,8 +127,10 @@ function useBillingStatus() {
   const [status, setStatus] = useState<MatrixBillingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const refreshSequenceRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const refreshSequence = ++refreshSequenceRef.current;
     if (!api) {
       setStatus(null);
       setLoading(false);
@@ -140,13 +142,15 @@ function useBillingStatus() {
     try {
       const raw = await api.get<unknown>("/billing/status");
       const parsed = MatrixBillingStatusSchema.parse(raw);
+      if (refreshSequence !== refreshSequenceRef.current) return;
       setStatus(parsed);
     } catch (err: unknown) {
+      if (refreshSequence !== refreshSequenceRef.current) return;
       console.warn("[billing] status unavailable:", err instanceof Error ? err.message : String(err));
       setStatus(null);
       setError(true);
     } finally {
-      setLoading(false);
+      if (refreshSequence === refreshSequenceRef.current) setLoading(false);
     }
   }, [api]);
 

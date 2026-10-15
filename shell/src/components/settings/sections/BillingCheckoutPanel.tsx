@@ -80,7 +80,7 @@ export function BillingCheckoutPanel({
   developerTools: DeveloperToolId[];
   trialDurationDays: number | null;
   activeCheckout?: MatrixBillingActiveCheckout | null;
-  onCheckoutAbandoned?: () => void;
+  onCheckoutAbandoned?: (errorMessage?: string) => void;
 }) {
   const planSlug = selectedProfile.planSlug;
   const regionSlug = selectedRegion.featureSlug;
@@ -214,22 +214,24 @@ export function BillingCheckoutPanel({
         body: JSON.stringify({ runtimeSlot: checkoutRuntimeSlot ?? "primary" }),
       });
       if (!response.ok) {
+        const message = response.status === 409
+          ? "Checkout is already being confirmed and cannot be changed."
+          : "We couldn't release this checkout. Try again in a moment.";
         reportCheckoutError(
           `abandon_http_${response.status}`,
-          response.status === 409
-            ? "Checkout is already being confirmed and cannot be changed."
-            : "We couldn't release this checkout. Try again in a moment.",
+          message,
         );
-        onCheckoutAbandoned?.();
+        onCheckoutAbandoned?.(message);
         return;
       }
       onCheckoutAbandoned?.();
     } catch (error: unknown) {
+      const message = "We couldn't release this checkout. Try again in a moment.";
       reportCheckoutError(
         error instanceof Error ? `abandon_${error.name}` : "abandon_unknown",
-        "We couldn't release this checkout. Try again in a moment.",
+        message,
       );
-      onCheckoutAbandoned?.();
+      onCheckoutAbandoned?.(message);
     } finally {
       window.clearTimeout(timeoutId);
       setAbandonLoading(false);

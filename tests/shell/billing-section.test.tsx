@@ -294,6 +294,44 @@ describe("BillingSection", () => {
     expect(statusReads).toBeGreaterThanOrEqual(2);
   });
 
+  it("keeps the release error visible when the authoritative checkout remains open", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    let statusReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout/abandon") {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      statusReads += 1;
+      return new Response(JSON.stringify({
+        access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+        entitlement: null,
+        trialOffer: { eligible: true, durationDays: 3 },
+        activeCheckout: {
+          status: "open",
+          planSlug: "matrix_starter",
+          interval: "monthly",
+          regionSlug: "region_nbg1",
+          developerTools: ["codex"],
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await screen.findByRole("button", { name: "Resume checkout" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose different options" }));
+
+    await waitFor(() => expect(statusReads).toBeGreaterThanOrEqual(2));
+    expect(screen.getByRole("button", { name: "Resume checkout" })).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain(
+      "We couldn't release this checkout. Try again in a moment.",
+    );
+  });
+
   it.each([1, 7])("shows a concise %i-day trial summary before opening Checkout", async (durationDays) => {
     const trialEnd = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
     const formattedTrialEnd = new Intl.DateTimeFormat(undefined, {

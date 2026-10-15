@@ -487,6 +487,7 @@ export function BillingPanel({
   accessReason,
   accessIssue,
   onRetry,
+  onCheckoutStateRefresh,
   mode = "settings",
   onCheckoutIntent,
   onCheckoutNavigate,
@@ -500,6 +501,7 @@ export function BillingPanel({
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   onRetry?: () => void;
+  onCheckoutStateRefresh?: (errorMessage?: string) => void;
   mode?: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -519,6 +521,7 @@ export function BillingPanel({
     accessReason,
     accessIssue,
     onRetry,
+    onCheckoutStateRefresh,
     mode,
     onCheckoutIntent,
     onCheckoutNavigate,
@@ -539,6 +542,7 @@ function ManagedBillingPanel(props: {
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   onRetry?: () => void;
+  onCheckoutStateRefresh?: (errorMessage?: string) => void;
   mode: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -557,6 +561,7 @@ function BillingPanelInner({
   accessReason,
   accessIssue,
   onRetry,
+  onCheckoutStateRefresh,
   mode = "settings",
   onCheckoutIntent,
   onCheckoutNavigate,
@@ -571,6 +576,7 @@ function BillingPanelInner({
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   onRetry?: () => void;
+  onCheckoutStateRefresh?: (errorMessage?: string) => void;
   mode?: BillingPanelMode;
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -847,7 +853,7 @@ function BillingPanelInner({
         developerTools={effectiveDeveloperTools}
         trialDurationDays={trialDurationDays}
         activeCheckout={activeCheckout}
-        onCheckoutAbandoned={onRetry}
+        onCheckoutAbandoned={onCheckoutStateRefresh ?? onRetry}
       />
     </div>
   );
