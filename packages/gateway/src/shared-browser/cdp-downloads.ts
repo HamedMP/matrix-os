@@ -115,7 +115,7 @@ export async function collectChromeDownload(options: {
   const captures = new Map<string, { receivedBytes: number; terminal: boolean; cancelRequested: boolean }>();
   const overflowCancellations = new Set<Promise<void>>();
   let overflowCleanupFailed = false;
-  let recoveryReason: 'another_chrome_tab' | 'multiple_chrome_downloads' | undefined;
+  let recoveryReason: 'another_chrome_tab' | 'multiple_chrome_downloads' | 'original_store_failed' | undefined;
   let recoveryDeny: Promise<unknown> | undefined;
   let unsubscribe: (() => unknown) | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   let finish!: () => void, fail!: (error: Error) => void;
@@ -198,7 +198,14 @@ export async function collectChromeDownload(options: {
     await options.client.request('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath, eventsEnabled: true });
     await options.trigger(); await completion; options.signal.throwIfAborted();
     if (!guid || recoveryReason) throw unavailable();
-    const stored = await storeOriginal(directory, temporary, guid, options.documentId);
+    let stored: Awaited<ReturnType<typeof storeOriginal>>;
+    try { stored = await storeOriginal(directory, temporary, guid, options.documentId); }
+    catch (error) {
+      // Chrome has acknowledged a complete original, but Matrix could not make
+      // its durable copy. Retain the GUID source for bounded owner recovery.
+      recoveryReason = 'original_store_failed';
+      throw error;
+    }
     return { ...stored, documentId: options.documentId, sourceUrl, retrievedAt: new Date().toISOString(), original: true };
   } catch (error) {
     if (guid && !complete && !recoveryReason) await options.client.request('Browser.cancelDownload', { guid }).catch(report);

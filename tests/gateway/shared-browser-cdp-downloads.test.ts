@@ -29,6 +29,24 @@ it('preserves verified original bytes, strips source secrets, deduplicates and r
   expect(await readdir(join(homePath, 'data/browser-artifacts'))).toEqual([artifact.path.split('/').at(-1)]);
   expect(messages.at(-1)).toMatchObject({ method: 'Browser.setDownloadBehavior', params: { behavior: 'default', eventsEnabled: false } });
 });
+it('preserves a completed original for owner recovery when durable artifact storage fails', async () => {
+  const { options, homePath, original, emit, downloadPath } = await rig();
+  const sha256 = createHash('sha256').update(original).digest('hex');
+  options.trigger = async () => {
+    await writeFile(join(downloadPath(), 'invoice-guid-123'), original);
+    await mkdir(join(homePath, 'data/browser-artifacts', `INV-001-${sha256}.pdf`));
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-123', url: options.sourceUrl });
+    emit('Browser.downloadProgress', { guid: 'invoice-guid-123', receivedBytes: original.length, totalBytes: original.length, state: 'completed' });
+  };
+
+  const result = await collectChromeDownload(options);
+  expect(result).toHaveProperty('recoveryPath');
+  if (!('recoveryPath' in result)) throw new Error('Failed durable storage was reported as a successful download');
+  expect(await readFile(join(homePath, result.recoveryPath, 'invoice-guid-123'))).toEqual(original);
+  expect(JSON.parse(await readFile(join(homePath, result.recoveryPath, 'recovery.json'), 'utf8'))).toMatchObject({
+    reason: 'original_store_failed', ownerReviewRequired: true,
+  });
+});
 it('cancels oversized and incomplete downloads, removes temporary files and restores defaults', async () => {
   for (const oversized of [true, false]) {
     const { options, homePath, emit, messages } = await rig();
