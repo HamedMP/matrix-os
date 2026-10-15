@@ -224,6 +224,48 @@ describe("desktop billing settings", () => {
     expect(screen.getByRole("option", { name: "🇺🇸 Ashburn, Virginia" })).not.toBeNull();
   });
 
+  it("restores, resumes, and abandons the authoritative open checkout", async () => {
+    const activeCheckout = {
+      status: "open",
+      planSlug: "matrix_starter",
+      interval: "monthly",
+      regionSlug: "region_nbg1",
+      developerTools: ["codex"],
+    };
+    const api = makeApi({
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+      activeCheckout,
+    });
+    api.post.mockImplementation(async (path: string) => path === "/billing/checkout/abandon"
+      ? { abandoned: true }
+      : { url: "https://checkout.stripe.test/resume" });
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /Resume checkout/i })).not.toBeNull());
+    expect((screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement).value).toBe("matrix_starter");
+    expect((screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /Resume checkout/i }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/billing/checkout", {
+      planSlug: "matrix_starter",
+      interval: "monthly",
+      regionSlug: "region_nbg1",
+      developerTools: ["codex"],
+    }));
+    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
+      url: "https://checkout.stripe.test/resume",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Choose different options/i }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/billing/checkout/abandon",
+      { runtimeSlot: "primary" },
+    ));
+  });
+
   it.each([
     { selection: "suggested Asia location", explicitRegion: null, expectedRegion: "region_hil" },
     { selection: "explicit EU location over the Asia suggestion", explicitRegion: "region_fsn1", expectedRegion: "region_fsn1" },

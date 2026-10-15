@@ -74,6 +74,7 @@ export interface StripeBillingClient {
     url: string;
     id: string;
   }>;
+  expireCheckoutSession?(id: string): Promise<StripeCheckoutSessionProjection>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;
   retrieveRecurringPrice(id: string): Promise<StripeRecurringPriceProjection>;
   createPortalSession(input: {
