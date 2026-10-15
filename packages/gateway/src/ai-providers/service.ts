@@ -8,6 +8,7 @@ import { projectChatGptPlanSnapshot } from "../app-ai/chatgpt-plan-projection.js
 import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   AiProviderDriverViewSchema,
   type AiAccessSourceView,
   type AiProviderAccountView,
@@ -400,9 +401,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
     const managedMatrixOnly = canonicalOnly || options.admissionScope === "managed_matrix";
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
+    // Aggregate funding can outlive native evidence. Renew within the outer
+    // observation budget; discovery and each renewal retain their own caps.
     const nativeScope = {
       signal: options.signal,
-      deadline: Math.min(+snapshotTime + 13000,
+      deadline: Math.min(+snapshotTime + FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs,
         Number.isFinite(options.nativeObservationDeadline) ? options.nativeObservationDeadline! : Infinity),
       deferRenewal: true,
     };

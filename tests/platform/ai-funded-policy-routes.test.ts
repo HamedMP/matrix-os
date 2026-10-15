@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  FUNDED_AI_READINESS_TIMEOUTS,
   FundedAiAuthorizationResponseSchema,
   JEV_MODEL_ID,
   FundedAiOperatorGlobalPolicyResponseSchema,
@@ -237,7 +238,7 @@ describe("funded AI policy routes", () => {
     });
     expect(response.status).toBe(503);
     expect(probe).not.toHaveBeenCalled();
-  }, 15_000);
+  }, FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs + 5_000);
 
   it("normalizes relay control token transport whitespace without changing identity or hash secrets", () => {
     expect(loadAiFundedControlPlaneConfig({

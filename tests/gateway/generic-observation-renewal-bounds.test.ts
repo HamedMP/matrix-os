@@ -26,7 +26,7 @@ it.each(["error", "timeout", "abort"] as const)("coding observation renewal fail
   });
   const reader = createCanonicalNativeHarnessCatalogReader({ getCatalog: async () => fixture(), renewObservations }, { now: () => new Date(clock) });
   const original = await reader(false);
-  clock += 6_001;
+  clock += 21_400;
   const controller = new AbortController();
   const request = reader.renewStale(original, { deadline: clock + 2_000, signal: controller.signal });
   if (mode === "abort") {

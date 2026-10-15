@@ -206,6 +206,14 @@ describe("drawer home screen", () => {
       expect(screen.queryByText("What should we work on?")).toBeNull();
     });
 
+    it("sends a draft of several lines with its line breaks, trimming only the ends", () => {
+      render(<ChatScreen />);
+      sendDraft("\nPlan the week:\n\n- gym\n- groceries\n");
+
+      expect(mockSendMessage.mock.calls[0][0]).toMatchObject({ text: "Plan the week:\n\n- gym\n- groceries" });
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
+    });
+
     it("puts the text back in the composer when the send fails", () => {
       render(<ChatScreen />);
       sendDraft("Ship it");
@@ -360,11 +368,13 @@ describe("drawer home screen", () => {
       expect(screen.queryByText("Ship it")).toBeNull();
     });
 
-    it("does not send from the keyboard while the provider catalog is still loading", () => {
+    it("does not send while the provider catalog is still loading", () => {
       mockCatalogLoading = true;
       render(<ChatScreen />);
       fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
-      fireEvent(screen.getByLabelText("Message Matrix"), "submitEditing");
+      const send = screen.getByRole("button", { name: "Send message" });
+      expect(send.props.accessibilityState).toMatchObject({ disabled: true });
+      fireEvent.press(send);
 
       expect(mockSendMessage).not.toHaveBeenCalled();
       expect(screen.queryByText("Ship it")).toBeNull();
@@ -375,7 +385,9 @@ describe("drawer home screen", () => {
       mockSendPending = true;
       render(<ChatScreen />);
       fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
-      fireEvent(screen.getByLabelText("Message Matrix"), "submitEditing");
+      // The send button is Stop until the send is answered.
+      expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
 
       expect(mockSendMessage).not.toHaveBeenCalled();
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
