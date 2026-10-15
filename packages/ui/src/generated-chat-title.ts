@@ -39,7 +39,7 @@ function markdownLinkText(text: string): string {
   let labelStart = -1;
   let link: { start: number; labelEnd: number; destinationStart: number } | null = null;
   for (let index = 0; index < text.length; index++) {
-    const character = text[index];
+    const character = text.charAt(index);
     if (link && (character === ")" || /\s/.test(character))) {
       if (character === ")" && index > link.destinationStart) {
         output += text.slice(copiedUntil, link.start) + text.slice(link.start + 1, link.labelEnd);
