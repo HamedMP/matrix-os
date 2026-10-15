@@ -20,6 +20,11 @@ browser fallback remains available. Both pass through normal authentication
 and computer readiness checks. A WhatsApp Chat belongs to the main computer:
 Web explicitly selects `primary`; Native selects the verified owner's available
 main customer computer before opening the Chat. References grant no access.
+The Web continuation resolves the authenticated owner's running primary customer
+computer and redirects to its explicit `/vm/<handle>` route before loading Chat.
+An existing session for an additional computer cannot capture the handoff;
+missing or unavailable main computers fail closed. Ordinary API requests retain
+their existing signed-session runtime authority.
 
 ## Sources of truth and security
 
