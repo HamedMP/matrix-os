@@ -96,9 +96,11 @@ export class CompanyBrainService {
   }
 
   private async fenceOwner(context: AuthorizedCollaborationContext,trx: Transaction<CompanyBrainDatabase>) {
-    const scope=await trx.selectFrom("collaboration_scopes").selectAll().where("id","=",context.scopeId).forUpdate().executeTakeFirst();
-    const membership=scope?.id===context.membershipScopeId ? scope : await trx.selectFrom("collaboration_scopes").selectAll()
+    // Project assignment locks its parent before the Chat; all Brain writes follow that order.
+    const membership=await trx.selectFrom("collaboration_scopes").selectAll()
       .where("id","=",context.membershipScopeId).forUpdate().executeTakeFirst();
+    const scope=membership?.id===context.scopeId ? membership : await trx.selectFrom("collaboration_scopes").selectAll()
+      .where("id","=",context.scopeId).forUpdate().executeTakeFirst();
     const member=await trx.selectFrom("collaboration_members").selectAll().where("scope_id","=",context.membershipScopeId)
       .where("actor_id","=",context.ownerId).forUpdate().executeTakeFirst();
     if(!scope || !membership || !member || context.actorId!==context.ownerId || scope.deleted_at || membership.deleted_at
@@ -115,8 +117,11 @@ export class CompanyBrainService {
       || (member.expires_at!==null && new Date(member.expires_at).getTime()<=this.now().getTime())) throw new CompanyBrainError("forbidden");
   }
   private async fenceRun(context: AuthorizedCollaborationContext,trx: Transaction<CompanyBrainDatabase>) {
+    const membership=await trx.selectFrom("collaboration_scopes").selectAll().where("id","=",context.membershipScopeId).forUpdate().executeTakeFirst();
     const scope=await trx.selectFrom("collaboration_scopes").selectAll().where("id","=",context.scopeId).forUpdate().executeTakeFirst();
-    if(!scope) throw new CompanyBrainError("forbidden");
+    // Refuse a reparented Chat before the shared fence could lock a different parent after the Chat.
+    if(!scope || !membership || membership.kind!=="project" || scope.membership_mode!=="inherited"
+      || scope.parent_scope_id!==membership.id) throw new CompanyBrainError("forbidden");
     await fenceSharedChatAuthority(trx as unknown as Transaction<OwnerCollaborationDatabase>,scope,context,context.actorId,"request_ai");
   }
 

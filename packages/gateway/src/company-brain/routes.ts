@@ -14,7 +14,8 @@ export interface CompanyBrainRouteOptions {
 /** Mount behind gateway auth. Identity comes only from the trusted request principal. */
 export function createCompanyBrainRoutes(options: CompanyBrainRouteOptions): Hono {
   const app = new Hono();
-  const limit = bodyLimit({ maxSize: 140_000, onError: (c) => c.json({ error: "Request too large" }, 413) });
+  // JSON can encode one decoded UTF-8 byte as six wire bytes (\uXXXX); reserve bounded metadata overhead too.
+  const limit = bodyLimit({ maxSize: 6 * 65_536 + 16_384, onError: (c) => c.json({ error: "Request too large" }, 413) });
   app.onError((caught, c) => {
     const error: unknown = caught;
     if (isRequestPrincipalError(error)) {

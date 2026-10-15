@@ -42,12 +42,27 @@ describe("Company Brain route validation and verified actor binding", () => {
   });
   it("limits POST and all DELETE bodies before service calls", async () => {
     for (const [path, method] of [[`${base}/sources`, "POST"], [`${base}/sources/${sourceId}?expectedRevision=1`, "DELETE"], [base, "DELETE"]]) {
-      const response = await app().request(path, { method, body: "x".repeat(150_000) });
+      const response = await app().request(path, { method, body: "x".repeat(450_000) });
       expect(response.status).toBe(413);
     }
     expect(service.publish).not.toHaveBeenCalled();
     expect(service.remove).not.toHaveBeenCalled();
     expect(service.erase).not.toHaveBeenCalled();
+  });
+  it.each(["Ж".repeat(30_000), "\u0001".repeat(65_528)])("accepts a valid decoded source even when JSON escaping expands its wire size", async (text) => {
+    const input = { ...source, text };
+    const body = JSON.stringify(input).replace(/[^\u0000-\u007f]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+    expect(Buffer.byteLength(body)).toBeGreaterThan(140_000);
+    expect(Buffer.byteLength(input.text) + Buffer.byteLength(input.title)).toBeLessThanOrEqual(65_536);
+    service.publish.mockResolvedValue({ sourceId, revision: 1 });
+    const response = await app().request(`${base}/sources`, { method: "POST", headers: { "content-type": "application/json" }, body });
+    expect(response.status).toBe(201);
+    expect(service.publish).toHaveBeenCalledWith(scope, "user_owner", input);
+  });
+  it("rejects decoded source content above 64 KiB even within the wire cap", async () => {
+    const response = await app().request(`${base}/sources`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...source, text: "x".repeat(65_536) }) });
+    expect(response.status).toBe(400);
+    expect(service.publish).not.toHaveBeenCalled();
   });
   it("maps service conflict and unexpected errors to safe responses", async () => {
     service.publish.mockRejectedValueOnce(new CompanyBrainError("conflict"));
