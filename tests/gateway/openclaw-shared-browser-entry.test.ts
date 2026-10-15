@@ -1,33 +1,15 @@
-import { afterAll, beforeEach, expect, it, vi } from "vitest";
-import plugin, { OPENCLAW_SHARED_BROWSER_MANIFEST } from "../../packages/gateway/src/chat/openclaw-shared-browser-plugin-entry.js";
-const originalBrowserLab = process.env.MATRIX_BROWSER_LAB;
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import plugin, { OPENCLAW_SHARED_BROWSER_MANIFEST, createOpenClawSharedBrowserPlugin } from "../../packages/gateway/src/chat/openclaw-shared-browser-plugin-entry.js";
+const originalBrowserLabFlag = process.env.MATRIX_BROWSER_LAB;
 beforeEach(() => { process.env.MATRIX_BROWSER_LAB = "true"; });
-afterAll(() => {
-  if (originalBrowserLab === undefined) delete process.env.MATRIX_BROWSER_LAB;
-  else process.env.MATRIX_BROWSER_LAB = originalBrowserLab;
+afterEach(() => {
+  if (originalBrowserLabFlag === undefined) delete process.env.MATRIX_BROWSER_LAB;
+  else process.env.MATRIX_BROWSER_LAB = originalBrowserLabFlag;
 });
 function nativeApi() {
   const services: Array<{ stop(): Promise<void> }> = [];
   return { services, config: { gateway: { bind: "loopback", mode: "local", port: 18789, auth: { mode: "token", token: "b".repeat(64) } } }, registerService: (service: { stop(): Promise<void> }) => services.push(service), lifecycle: { registerRuntimeLifecycle: vi.fn() } };
 }
-it("registers no browser authority unless the host explicitly enables the feature", () => {
-  const original = process.env.MATRIX_BROWSER_LAB;
-  try {
-    for (const value of [undefined, "", "false", "1"]) {
-      if (value === undefined) delete process.env.MATRIX_BROWSER_LAB;
-      else process.env.MATRIX_BROWSER_LAB = value;
-      const api = { ...nativeApi(), pluginConfig: { gatewayPort: 4000 }, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: vi.fn() };
-      plugin.register(api as never);
-      expect(api.registerGatewayMethod).not.toHaveBeenCalled();
-      expect(api.registerTool).not.toHaveBeenCalled();
-      expect(api.on).not.toHaveBeenCalled();
-      expect(api.services).toEqual([]);
-    }
-  } finally {
-    if (original === undefined) delete process.env.MATRIX_BROWSER_LAB;
-    else process.env.MATRIX_BROWSER_LAB = original;
-  }
-});
 it("declares exact pinned native tool ownership and startup activation for protected bind RPC", async () => {
   expect(OPENCLAW_SHARED_BROWSER_MANIFEST).toMatchObject({ id: "matrix-shared-browser", activation: { onStartup: true }, contracts: { tools: ["shared_browser"] } });
   const hooks = new Map<string, () => void>();
@@ -65,4 +47,26 @@ it("enables safe diagnostics only for the exact opt-in environment value", async
     else process.env.MATRIX_BROWSER_DIAGNOSTICS = original;
     warn.mockRestore();
   }
+});
+
+it("injects the native SDK resolver before registering mode-only owner gateway auth", async () => {
+  const resolveNativeAuth = vi.fn(() => ({ mode: "token", token: "c".repeat(64) }));
+  const hooks = new Map<string, () => void>();
+  const base = nativeApi(); const modeOnly = { ...base.config, gateway: { ...base.config.gateway, auth: { mode: "token" } } };
+  const api = { ...base, config: modeOnly, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), on: (name: string, handler: () => void) => hooks.set(name, handler) };
+  createOpenClawSharedBrowserPlugin(resolveNativeAuth).register(api as never);
+  expect(resolveNativeAuth).toHaveBeenCalledExactlyOnceWith({ authConfig: { mode: "token" }, tailscaleMode: "off" });
+  expect(api.registerGatewayMethod).toHaveBeenCalledTimes(6);
+  expect(modeOnly.gateway.auth).toEqual({ mode: "token" });
+  await hooks.get("gateway_stop")!(); await api.services[0]!.stop();
+});
+
+it.each([undefined, "false", "1", "TRUE"])("does not resolve auth or register any authority without the trusted optional flag (%s)", value => {
+  if (value === undefined) delete process.env.MATRIX_BROWSER_LAB;
+  else process.env.MATRIX_BROWSER_LAB = value;
+  const resolver = vi.fn(); const api = { config: {}, pluginConfig: {}, registerGatewayMethod: vi.fn(), registerTool: vi.fn(), registerService: vi.fn(), on: vi.fn() };
+  expect(() => createOpenClawSharedBrowserPlugin(resolver).register(api as never)).not.toThrow();
+  expect(() => plugin.register(api as never)).not.toThrow();
+  expect(resolver).not.toHaveBeenCalled(); expect(api.registerGatewayMethod).not.toHaveBeenCalled();
+  expect(api.registerTool).not.toHaveBeenCalled(); expect(api.registerService).not.toHaveBeenCalled(); expect(api.on).not.toHaveBeenCalled();
 });
