@@ -80,6 +80,7 @@
     "#legacy-contract-primitives": "./src/legacy-contract-primitives.ts",
     "#kernel-conversations": "./src/kernel-conversations.ts",
     "#provider-settings": "./src/provider-settings.ts",
+    "#provider-managed-credit": "./src/provider-managed-credit.ts",
     "#funded-ai": "./src/funded-ai.ts",
     "#funded-ai-execution-recovery": "./src/funded-ai-execution-recovery.ts",
     "#jev": "./src/jev.ts",

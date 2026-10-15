@@ -1,4 +1,5 @@
 import {
+  ProviderManagedCreditObservationSchema,
   ProviderConnectionAttemptActionSchema,
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
@@ -10,7 +11,7 @@ import {
   type ProviderSettingsSnapshot,
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
-import { openProviderAgentSetup, canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath } from "@matrix-os/ui";
+import { openProviderAgentSetup, canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath, providerSettingsManagedCreditPath } from "@matrix-os/ui";
 import type {
   ProviderSettingsTransport,
   ProviderSettingsTransportErrorCode,
@@ -57,6 +58,22 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
   mutate(mutation: ProviderSettingsMutation, signal: AbortSignal): Promise<ProviderSettingsMutationResponse>;
 } {
   return {
+    async getManagedCredit(signal) {
+      try {
+        const value = await api.get<unknown>(providerSettingsManagedCreditPath, {
+          maxBytes: 16 * 1024, signal, timeoutMs: 10_000, cache: "no-store", omitErrorBody: true,
+        });
+        const parsed = ProviderManagedCreditObservationSchema.safeParse(value);
+        if (!parsed.success) throw new DesktopProviderSettingsTransportError("invalid_response");
+        return parsed.data;
+      } catch (error) {
+        if (error instanceof AppError) {
+          if (error.httpStatus === 404 || error.httpStatus === 405 || error.category === "notFound") throw new DesktopProviderSettingsTransportError("managed_credit_unsupported");
+          if (error.category === "unauthorized") throw new DesktopProviderSettingsTransportError("managed_credit_unauthorized");
+        }
+        throw mapTransportError(error);
+      }
+    },
     async getSnapshot(signal, options = {}) {
       try {
         const value = await api.get<unknown>(providerSettingsSnapshotPath(options.refresh), {
