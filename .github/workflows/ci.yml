@@ -1,4 +1,5 @@
 name: CI
+# Main PR requests retain the generated merge's verified parents when main advances.
 run-name: >-
   ${{ (github.event_name == 'pull_request' && (github.event.pull_request.draft == true || (github.event.action == 'edited' && github.event.changes.base == null))) && format('CI metadata-v1 · {0}', github.sha) || inputs.pr_number && (inputs.execution_mode == 'hosted-only' && format('CI hosted-refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha) || format('CI refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha)) || format('CI coverage-v1 · {0}', github.sha) }}
 
