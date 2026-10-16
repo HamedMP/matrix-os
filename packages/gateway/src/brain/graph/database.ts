@@ -47,6 +47,8 @@ export async function bootstrapBrainGraphDatabase(db: Kysely<BrainDatabase>): Pr
     // other documents' refs, so a path ref added or gone makes the row pending).
     await sql`ALTER TABLE brain_graph_state ADD COLUMN IF NOT EXISTS
       decision_paths JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(decision_paths) = 'object')`.execute(trx);
+    // The source time its links and entities carry: a sync can move it and keep the revision. Null reads as pending.
+    await sql`ALTER TABLE brain_graph_state ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ`.execute(trx);
 
     // Document entities carry document_id (cascade); every other kind leaves it null (the FK is then not checked).
     await sql`

@@ -47,13 +47,13 @@ describe("brain document refs", () => {
     const replay = await repository.applySyncBatch(scopeA, batch(source.sourceId, {
       expectedCursor: "c1", upserts: [{ ...pr, refs: [...refs].reverse() }],
     }));
-    expect(replay.unchanged).toBe(1);
+    expect(replay).toMatchObject({ unchanged: 1, refsChanged: 0 });
     expect(await xmins()).toEqual(before);
 
     const refsOnly = await repository.applySyncBatch(scopeA, batch(source.sourceId, {
       expectedCursor: "c1", upserts: [{ ...pr, refs: [path("c.ts")] }],
     }));
-    expect(refsOnly).toMatchObject({ unchanged: 1, updated: 0 });
+    expect(refsOnly).toMatchObject({ unchanged: 1, updated: 0, refsChanged: 1 });
     expect((await repository.getDocument(scopeA, pr.documentId))?.revision).toBe(1);
     expect(await repository.listDocumentRefs(scopeA, pr.documentId)).toEqual([path("c.ts")]);
 

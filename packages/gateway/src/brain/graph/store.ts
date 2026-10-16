@@ -286,7 +286,7 @@ export async function deriveGraphDocument(
   const state = {
     incarnation: document.incarnation, revision: document.revision, claims_digest: document.claims_digest,
     refs_digest: document.refs_digest, identities: sql`${JSON.stringify(identities)}::jsonb`,
-    decision_paths: sql`${JSON.stringify(decisionPaths)}::jsonb`,
+    decision_paths: sql`${JSON.stringify(decisionPaths)}::jsonb`, source_updated_at: document.at,
     link_count: derivation.links.length, derived_at: now.toISOString(),
   };
   await trx.insertInto("brain_graph_state")
