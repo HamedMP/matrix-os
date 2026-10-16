@@ -56,6 +56,14 @@ it("redacts a failing native resolver's exception", () => {
   const resolve = vi.fn(() => { throw new Error("native-token-sentinel"); });
   expect(() => createOpenClawSharedBrowserRelayClient(native, vi.fn(), resolve)).toThrow(/^Native browser connection unavailable$/);
 });
+it.each([new Error("native-token-sentinel"), { name: "private-sentinel" }])("logs only a fixed safe category when native resolution throws", error => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect(() => createOpenClawSharedBrowserRelayClient(native, vi.fn(), () => { throw error; })).toThrow("Native browser connection unavailable");
+    expect(warn).toHaveBeenCalledWith("[shared-browser] Native resolver unavailable", error instanceof Error ? "error" : "non_error");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("sentinel");
+  } finally { warn.mockRestore(); }
+});
 
 it("does not resolve a mode-only profile from unrelated config credentials without the native SDK", () => {
   const factory = vi.fn();
