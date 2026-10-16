@@ -5,6 +5,7 @@ import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity
 import { useShellSessions } from "../../stores/shell-sessions";
 import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 import { useTabs } from "../../stores/tabs";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export default function DatabaseAdapter() {
   const api = useConnection(state => state.api);
@@ -23,7 +24,7 @@ export default function DatabaseAdapter() {
     },
   }), [runtimeApi, identityKey]);
   const client = useMemo(() => createDatabaseClient(transport), [transport]);
-  return <DatabaseSettings identityKey={identityKey} client={client} onDownload={downloadDatabaseExport} onOpenTerminal={async (command, signal) => {
+  return <DatabaseSettings identityKey={identityKey} client={client} dialogLayer={DESKTOP_Z_INDEX.dialog} onDownload={downloadDatabaseExport} onOpenTerminal={async (command, signal) => {
     if (!runtimeApi || signal.aborted || desktopProviderIdentityKey(useConnection.getState()) !== identityKey) throw new Error(DATABASE_ERROR);
     await openDatabaseTerminal(transport, command, signal, sessionId => {
       useShellSessions.getState().adoptCreatedSession(sessionId);

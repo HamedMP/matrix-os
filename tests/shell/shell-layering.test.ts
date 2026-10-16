@@ -9,7 +9,8 @@ describe("shell layer ordering", () => {
     expect(SHELL_WINDOW_Z_INDEX_MAX).toBeLessThan(SHELL_Z_INDEX.fullscreenWindow);
     expect(SHELL_Z_INDEX.fullscreenWindow).toBeLessThan(SHELL_Z_INDEX.fullscreenExit);
     expect(SHELL_Z_INDEX.fullscreenExit).toBeLessThan(SHELL_Z_INDEX.settings);
-    expect(SHELL_Z_INDEX.settings).toBeLessThan(SHELL_Z_INDEX.hardGate);
+    expect(SHELL_Z_INDEX.settings).toBeLessThan(SHELL_Z_INDEX.settingsDialog);
+    expect(SHELL_Z_INDEX.settingsDialog + 1).toBeLessThan(SHELL_Z_INDEX.hardGate);
     expect(SHELL_Z_INDEX.hardGate).toBeLessThan(SHELL_Z_INDEX.notifications);
     expect(SHELL_Z_INDEX.notifications).toBeLessThan(SHELL_Z_INDEX.popover);
   });

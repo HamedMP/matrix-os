@@ -10,6 +10,7 @@ import { DATABASE_ERROR, type DatabaseClient, type DatabaseCredential, type Data
 export interface DatabaseSettingsProps {
   client: DatabaseClient;
   identityKey: string;
+  dialogLayer: number;
   onOpenTerminal?: (command: string, signal: AbortSignal) => Promise<void>;
   onDownload: (blob: Blob, signal: AbortSignal) => Promise<void>;
 }
@@ -24,6 +25,10 @@ const brandStyle = {
   "--db-font": `var(--font-geist-sans, ${desktopFonts.sans})`,
   "--db-mono": `var(--font-geist-mono, ${desktopFonts.mono})`,
 } as CSSProperties;
+function reportDatabaseFailure(action: string, error: unknown): void {
+  const category = error instanceof TypeError ? "TypeError" : error instanceof SyntaxError ? "SyntaxError" : error instanceof Error ? "Error" : "UnknownError";
+  console.warn(`[database-access] ${action} failed`, category);
+}
 function databaseConfirmationCopy(kind: "reset" | "export" | null, creating: boolean) {
   if (kind === "reset" && creating) return {
     title: "Create owner password?", action: "Create password",
@@ -68,7 +73,7 @@ function DatabaseConnectionSummary({ snapshot, busy, terminalAvailable, onOpen }
 }
 /** Keying the inner view removes secrets before the new identity's first paint. */
 export function DatabaseSettings(props: DatabaseSettingsProps) { return <DatabaseSettingsView key={props.identityKey} {...props} />; }
-function DatabaseSettingsView({ client, onOpenTerminal, onDownload }: DatabaseSettingsProps) {
+function DatabaseSettingsView({ client, dialogLayer, onOpenTerminal, onDownload }: DatabaseSettingsProps) {
   const [snapshot, setSnapshot] = useState<DatabaseSnapshot | null>(null);
   const [credential, setCredential] = useState<DatabaseCredential | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +88,7 @@ function DatabaseSettingsView({ client, onOpenTerminal, onDownload }: DatabaseSe
   const hide = () => { sensitiveEpoch.current += 1; setCredential(null); };
   useEffect(() => {
     const controller = new AbortController(); lifetime.current = controller;
-    void client.get(controller.signal).then(value => { if (!controller.signal.aborted) setSnapshot(value); }).catch(() => { if (!controller.signal.aborted) setError(DATABASE_ERROR); });
+    void client.get(controller.signal).then(value => { if (!controller.signal.aborted) setSnapshot(value); }).catch((error: unknown) => { if (!controller.signal.aborted) { reportDatabaseFailure("load", error); setError(DATABASE_ERROR); } });
     const hidePassword = () => { sensitiveEpoch.current += 1; setCredential(null); };
     window.addEventListener("blur", hidePassword);
     document.addEventListener("visibilitychange", hidePassword);
@@ -110,7 +115,7 @@ function DatabaseSettingsView({ client, onOpenTerminal, onDownload }: DatabaseSe
         const blob = await client.export(scope.signal);
         if (!scope.signal.aborted) await onDownload(blob, scope.signal);
       }
-    } catch { if (!scope.signal.aborted) setError(DATABASE_ERROR); }
+    } catch (error: unknown) { if (!scope.signal.aborted) { reportDatabaseFailure(kind, error); setError(DATABASE_ERROR); } }
     finally {
       inFlight.current = false;
       if (!scope.signal.aborted) {
@@ -184,8 +189,8 @@ function DatabaseSettingsView({ client, onOpenTerminal, onDownload }: DatabaseSe
       )}
       <Dialog.Root open={confirmation !== null} onOpenChange={(open) => { if (!open) setConfirmation(null); }}>
         <Dialog.Portal>
-          <Dialog.Overlay className="matrix-database-overlay" style={brandStyle} />
-          <Dialog.Content role="alertdialog" className="matrix-database-dialog matrix-database-surface" style={brandStyle} onOpenAutoFocus={(event) => { event.preventDefault(); cancelButton.current?.focus(); }} onCloseAutoFocus={(event) => { event.preventDefault(); confirmationTrigger.current?.focus(); }}>
+          <Dialog.Overlay className="matrix-database-overlay" style={{ ...brandStyle, zIndex: dialogLayer }} />
+          <Dialog.Content role="alertdialog" className="matrix-database-dialog matrix-database-surface" style={{ ...brandStyle, zIndex: dialogLayer + 1 }} onOpenAutoFocus={(event) => { event.preventDefault(); cancelButton.current?.focus(); }} onCloseAutoFocus={(event) => { event.preventDefault(); confirmationTrigger.current?.focus(); }}>
             <Dialog.Title>{confirmationCopy.title}</Dialog.Title>
             <Dialog.Description>{confirmationCopy.description}</Dialog.Description>
             <div className="matrix-database-dialog-actions">

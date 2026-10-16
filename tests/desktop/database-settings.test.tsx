@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, it, vi } from "vitest";
 import DatabaseAdapter from "../../desktop/src/renderer/src/features/settings/DatabaseAdapter";
 import { createApiClient } from "../../desktop/src/renderer/src/lib/api";
+import { DESKTOP_Z_INDEX } from "../../desktop/src/renderer/src/design/layering";
 const mocks = vi.hoisted(()=>({state:{} as Record<string,unknown>,openTab:vi.fn(()=>"terminal-tab"),request:vi.fn(),adopt:vi.fn(),activate:vi.fn()}));
 vi.mock("@matrix-os/ui",async()=>({...await import("../../packages/ui/src/database-access/client"),...await import("../../packages/ui/src/database-access/DatabaseSettings")}));
 vi.mock("../../desktop/src/renderer/src/stores/connection",()=>({useConnection:Object.assign((selector:(s:unknown)=>unknown)=>selector(mocks.state),{getState:()=>mocks.state})}));
@@ -20,6 +21,9 @@ it("Electron Desktop uses the shared owner panel and runtime-pinned SQL session"
   });
   mocks.state={status:"signed-in",handle:"owner",userId:"owner",platformHost:"https://app.example",runtimeSlot:"pr-42",authGeneration:1,api:createApiClient({baseUrl:"https://app.example",getRuntimeSlot:()=>"primary",fetchFn})};
   render(<DatabaseAdapter/>); await screen.findByText("matrix_owner");
+  fireEvent.click(screen.getByRole("button", { name:"Export database" }));
+  expect(Number(screen.getByRole("alertdialog").style.zIndex)).toBe(DESKTOP_Z_INDEX.dialog + 1);
+  fireEvent.click(screen.getByRole("button", { name:"Cancel" }));
   fireEvent.click(screen.getByRole("button",{name:"Open SQL Terminal"}));
   await waitFor(()=>expect(mocks.request).toHaveBeenCalledWith(`tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`));
   expect(fetchFn.mock.calls.every(([url])=>url.includes("runtime=pr-42"))).toBe(true);

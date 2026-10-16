@@ -85,8 +85,8 @@
 .matrix-database-feedback { display: flex; gap: 8px; align-items: center; padding: 12px 0; color: var(--db-muted); }
 .matrix-database-loading { display: flex; align-items: center; gap: 12px; min-height: 120px; color: var(--db-muted); }
 .matrix-database-working { padding-top: 16px; color: var(--db-muted); font-size: 13px; line-height: 18px; }
-.matrix-database-overlay { position: fixed; inset: 0; z-index: 100; background: color-mix(in srgb, var(--db-brand-action) 30%, transparent); }
-.matrix-database-dialog { position: fixed; z-index: 101; left: 50%; top: 50%; transform: translate(-50%, -50%); width: calc(100% - 40px); max-width: 440px; padding: 24px; border-radius: 20px; background: var(--db-background); }
+.matrix-database-overlay { position: fixed; inset: 0; background: color-mix(in srgb, var(--db-brand-action) 30%, transparent); }
+.matrix-database-dialog { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: calc(100% - 40px); max-width: 440px; padding: 24px; border-radius: 20px; background: var(--db-background); }
 .matrix-database-dialog h2 { font-size: 18px; line-height: 25px; font-weight: 600; }
 .matrix-database-dialog > p { margin-top: 10px; color: var(--db-muted); font-size: 14px; line-height: 22px; }
 .matrix-database-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }

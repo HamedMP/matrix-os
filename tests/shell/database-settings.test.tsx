@@ -3,6 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { DatabaseSection } from "../../shell/src/components/settings/sections/DatabaseSection";
+import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering";
 // pnpm can give the Web package a different peer-resolved Clerk installation.
 vi.mock("../../shell/node_modules/@clerk/nextjs",()=>({useAuth:()=>({userId:"owner",sessionId:"session"})}));
 vi.mock("../../shell/src/lib/self-host-mode",()=>({isSelfHostedRuntime:()=>false}));
@@ -29,6 +30,8 @@ it.each(["Web Canvas","Web Desktop"])("%s uses owner API and creates a password-
   const tabBody=JSON.parse(fetcher.mock.calls.at(-1)![1].body);
   expect(tabBody.command).toEqual(["sh","-lc","psql -h 127.0.0.1 -p 5432 -U matrix_owner -d matrix -W"]);
   expect(fetcher.mock.calls.some(([url])=>url.includes("credentials"))).toBe(false);
+  fireEvent.click(screen.getByRole("button", {name:"Export database"}));
+  expect(Number(screen.getByRole("alertdialog").style.zIndex)).toBeGreaterThan(SHELL_Z_INDEX.settings);
 });
 it("renders neutral server markup before choosing hosted authentication",async()=>{
   const {renderToString}=await import("react-dom/server");

@@ -7,7 +7,7 @@ import { createDatabaseClient, createDatabaseFetchTransport } from "../../packag
 const snapshot = { connection: { host: "127.0.0.1", port: 5432, database: "matrix", username: "matrix_owner" }, credentialReady: true };
 function setup(extra = {}) {
   const client = { get: vi.fn().mockResolvedValue(snapshot), reveal: vi.fn().mockResolvedValue({ username: "matrix_owner", password: "owner-secret" }), reset: vi.fn().mockResolvedValue({ username: "matrix_owner", password: "new-secret" }), terminal: vi.fn().mockResolvedValue("psql -h 127.0.0.1 -p 5432 -U matrix_owner -d matrix -W"), export: vi.fn().mockResolvedValue(new Blob(["dump"])), ...extra };
-  const props = { client, identityKey: "one", onOpenTerminal: vi.fn().mockResolvedValue(undefined), onDownload: vi.fn().mockResolvedValue(undefined) };
+  const props = { client, identityKey: "one", dialogLayer: 720, onOpenTerminal: vi.fn().mockResolvedValue(undefined), onDownload: vi.fn().mockResolvedValue(undefined) };
   return { ...render(<DatabaseSettings {...props} />), client, props };
 }
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -103,9 +103,21 @@ it("focuses confirmation controls and restores the triggering action on cancel",
   setup(); await screen.findByText("matrix_owner");
   const reset=screen.getByRole("button",{name:"Reset password"});
   fireEvent.click(reset);
+  expect(screen.getByRole("alertdialog").style.zIndex).toBe("721");
+  expect((document.querySelector(".matrix-database-overlay") as HTMLElement).style.zIndex).toBe("720");
   await waitFor(()=>expect(document.activeElement).toBe(screen.getByRole("button",{name:"Cancel"})));
   fireEvent.click(screen.getByRole("button",{name:"Cancel"}));
   await waitFor(()=>expect(document.activeElement).toBe(reset));
+});
+
+it("reports only bounded error categories without exposing custom names or messages", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const failure = new Error("postgres://private-secret"); failure.name = "credential-bearing-name";
+  setup({ get: vi.fn().mockRejectedValue(failure) });
+  await screen.findByRole("alert");
+  expect(warn).toHaveBeenCalledWith("[database-access] load failed", "Error");
+  expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private-secret|credential-bearing-name/);
+  warn.mockRestore();
 });
 it("restores focus to a guarded trigger while reset is pending", async () => {
   let resolve!: (value:{username:string;password:string}) => void;

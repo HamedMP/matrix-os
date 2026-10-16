@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useSyncExternalStore } from "react";
 import { DatabaseSettings, createDatabaseClient, createDatabaseFetchTransport, downloadDatabaseExport, openDatabaseTerminal } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isSelfHostedRuntime } from "@/lib/self-host-mode";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 const subscribeToRuntimeDocument = () => () => {};
 
@@ -23,5 +24,5 @@ function DatabaseAdapter({ onOpenTerminal, accountKey }: { onOpenTerminal?: (ses
   const launch = useCallback((command: string, signal: AbortSignal) => openDatabaseTerminal(
     transport, command, signal, sessionId => onOpenTerminal?.(sessionId), () => getGatewayUrl() === baseUrl,
   ), [baseUrl, transport, onOpenTerminal]);
-  return <DatabaseSettings client={client} identityKey={identityKey} onOpenTerminal={onOpenTerminal ? launch : undefined} onDownload={downloadDatabaseExport} />;
+  return <DatabaseSettings client={client} identityKey={identityKey} dialogLayer={SHELL_Z_INDEX.settingsDialog} onOpenTerminal={onOpenTerminal ? launch : undefined} onDownload={downloadDatabaseExport} />;
 }
