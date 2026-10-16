@@ -1,3 +1,4 @@
+import { chatBotCreationVersionUrl } from "#bot-creation-wire";
 import { z } from "zod/v4";
 import type { CanonicalChatMessage, CanonicalChatRunActivity } from "#canonical-chat";
 import type { CanonicalChatTransportFrame } from "#canonical-chat-content";
@@ -10,7 +11,7 @@ export const ChatInputWireVersionSchema = z.enum(["0", "1"]).default("0");
 export type ChatInputWireVersion = z.infer<typeof ChatInputWireVersionSchema>;
 
 export function chatMessageVersionUrl(path: string): string {
-  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1`;
+  return chatBotCreationVersionUrl(`${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1`);
 }
 
 function legacyMessage<T extends CanonicalChatMessage>(message: T) {

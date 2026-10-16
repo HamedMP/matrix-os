@@ -17,7 +17,8 @@ import { recipeSkillsFit } from "./recipe-skills.js";
 import { activeConnections } from "./recipe-integrations.js";
 import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe, jevAgentSelection } from "./jev-agent-template.js";
 import { editableAgentRecipe, agentRecipePatch } from "./recipe-edit.js";
-import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
+import { AgentEditor } from "./AgentEditor.js";
+import { copyAgentDraft, patchAgentDraft, type AgentDraft } from "./agent-draft.js";
 import { AgentAvatar } from "./AgentAvatar.js";
 import { AgentRecipesPanel } from "./AgentRecipesPanel.js";
 export { ChatAgentsRailSection } from "./ChatAgentsRailSection.js";
@@ -159,6 +160,11 @@ export function ChatAgentsPanel(props: ChatAgentsPanelProps) {
 function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, onTitleChange }: ChatAgentsPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const scratchTrigger = useRef<HTMLButtonElement | null>(null);
+  const draftGeneration = useRef(0);
+  const draftMounted = useRef(true);
+  useEffect(() => { draftMounted.current = true; return () => { draftMounted.current = false; }; }, []);
+  const currentDraftGeneration = draftGeneration.current;
+  const draftIsCurrent = () => draftMounted.current && draftGeneration.current === currentDraftGeneration;
   const [creationView, setCreationView] = useState(view === "recipes");
   const [dailyRecipe, setDailyRecipe] = useState<{ client: ChatAgentClient; recipe: BotRecipeSummary } | null>(null);
   const customCreated = useRef<{ client: ChatAgentClient; result: InstantiateBotResponse } | null>(null);
@@ -299,6 +305,8 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
       });
   };
   const edit = (agent: ChatAgent | "new") => {
+    if (!draftIsCurrent()) return;
+    draftGeneration.current += 1;
     customCreated.current = null;
     modelCatalog.refresh();
     const recipeBot = agent !== "new" && !!agent.recipeRef;
@@ -307,19 +315,21 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
     // A connected subscription remains an explicit source choice for a new custom Bot.
     const choice = managedNew ? choices.find(candidate => candidate.instanceId === "matrix_pi_default") : choices[0];
     const selection: CanonicalChatModelSelection | null = choice ? matrixBotModelSelection(choice) : null;
-    patch({ editing: agent, notice: "", error: "", draft: agent === "new" ? {
+    patch({ editing: agent, notice: "", error: "", draft: copyAgentDraft(agent === "new" ? {
       name: "", description: "", instructions: "", requestId: requestId(),
       selection,
     } : { name: agent.name, description: agent.description, instructions: agent.instructions, selection: agent.selection,
-      requestId: requestId(), ...(agent.recipe ? { recipe: editableAgentRecipe(agent) } : {}) } });
+      requestId: requestId(), ...(agent.recipe ? { recipe: editableAgentRecipe(agent) } : {}) }) });
   };
   const change = (value: Partial<Draft>) => {
+    if (!draftIsCurrent()) return;
     const nextRequestId = requestId();
-    setState((current) => ({ ...current, error: "",
-      draft: current.draft ? { ...current.draft, ...value, requestId: nextRequestId } : null,
-    }));
+    setState((current) => draftIsCurrent() ? ({ ...current, error: "",
+      draft: current.draft ? patchAgentDraft(current.draft, value, () => nextRequestId) : null,
+    }) : current);
   };
   const save = async () => {
+    if (!draftIsCurrent()) return;
     const draft = state.draft;
     const recipeBot = state.editing !== null && state.editing !== "new" && Boolean(state.editing.recipeRef);
     if (state.pending || !draft?.selection || !draft.name.trim() || !draft.instructions.trim()
@@ -334,17 +344,20 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
       if (customManaged && !managedCreated) {
         if (!client.bots?.createCustom) throw new Error("Managed Bot creation unavailable");
         managedCreated = await client.bots.createCustom({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) });
+        if (!draftIsCurrent()) return;
         customCreated.current = { client, result: managedCreated };
       }
       const saved = managedCreated
-        ? await recoverCreatedCustomBot(client, managedCreated, draft)
+        ? await recoverCreatedCustomBot(client, managedCreated, draft, draftIsCurrent)
         : state.editing === "new"
         ? await client.create({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) })
         : await client.update(state.editing!.id, { ...fields,
           ...(JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
           ...agentRecipePatch(state.editing!, draft.recipe) });
+      if (!draftIsCurrent()) return;
       if (!saved) throw new Error("Created Bot readback unavailable");
       customCreated.current = null;
+      draftGeneration.current += 1;
       setCreationView(false);
       setState((current) => ({ ...current, pending: false, editing: null, draft: null,
         agents: [...current.agents.filter((agent) => agent.id !== saved.id), saved],
@@ -352,6 +365,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
           : `Saved. Type @${saved.name} in a Chat to give this Agent a request.`,
       }));
     } catch (failure: unknown) {
+      if (!draftIsCurrent()) return;
       console.warn("[chat-agents] Save failed:", failure instanceof Error ? failure.name : "UnknownError");
       patch({ pending: false, error: customCreated.current?.client === client
         ? "Bot was created, but setup could not finish. Your changes are still here. Try again to finish this Bot."
@@ -359,15 +373,19 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
     }
   };
   const archive = async () => {
+    if (!draftIsCurrent()) return;
     if (state.pending || !state.editing || state.editing === "new") return;
     const agent = state.editing;
     patch({ pending: true, error: "" });
     try {
       await client.update(agent.id, { baseRevision: agent.revision, archived: true });
+      if (!draftIsCurrent()) return;
+      draftGeneration.current += 1;
       setState((current) => ({ ...current, pending: false, editing: null, draft: null,
         agents: current.agents.filter((candidate) => candidate.id !== agent.id), notice: "Agent archived. Previous Chat replies are preserved.",
       }));
     } catch (failure: unknown) {
+      if (!draftIsCurrent()) return;
       console.warn("[chat-agents] Archive failed:", failure instanceof Error ? failure.name : "UnknownError");
       patch({ pending: false, error: "Agent could not be archived. Try again." });
     }
@@ -403,7 +421,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
         : state.editing && state.editing !== "new" && state.editing.recipeRef ? botModels : models}
       openDailyBrief={client.bots && onOpenBotChat ? openDailyBrief : undefined}
       chooser={recipes} newAgent={() => setCreationView(true)} edit={edit} change={change} save={save} archive={archive}
-      back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes} refreshModels={modelCatalog.refresh} setupPaused={setupPaused}
+      back={() => { if (draftIsCurrent()) { draftGeneration.current += 1; patch({ editing: null, draft: null, error: "" }); } }} retryRecipes={retryRecipes} refreshModels={modelCatalog.refresh} setupPaused={setupPaused}
       setup={onSetup ? () => { setSetupPaused(true); onSetup(); } : undefined} />
     {state.error && !state.editing ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 min-w-0 truncate text-sm" title={state.notice}>{state.notice}</p> : null}
     </div> : null}

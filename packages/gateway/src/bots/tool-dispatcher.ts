@@ -53,6 +53,7 @@ function rememberScanOffset(directory: string, offset: number): void {
 }
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
+  "bot.creation.propose": "read",
   "agent.task": "write",
   "artifact.read": "read",
   "artifact.write": "write",
