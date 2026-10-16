@@ -27,8 +27,27 @@ describe('trusted Sync initialization composition', () => {
     const program = readFileSync(join(root, 'component', 'reconcile.py'), 'utf8');
     expect(program).toContain('def initialize_scoped_sync(');
     expect(program).toContain("'--initialize-sync'");
-    expect(program).not.toMatch(/(?:import|run_path).*\/opt\/matrix\/app/);
-    const syntax = spawnSync('python3', ['-I', '-c', 'import sys;compile(sys.stdin.read(),"<protected>","exec")'], {
+    // Inspect executable loader arguments, including the embedded repair program,
+    // rather than matching unrelated words inside its serialized source literal.
+    const syntax = spawnSync('python3', ['-I', '-c', `
+import ast, sys
+loaders = {'run_path', 'run_module', 'spec_from_file_location', 'SourceFileLoader',
+           'SourcelessFileLoader', 'load_source', 'exec', 'eval', 'compile', '__import__', 'import_module'}
+def assert_self_contained(source):
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'REPAIR_SOURCE' for target in node.targets):
+            assert_self_contained(ast.literal_eval(node.value))
+        if not isinstance(node, ast.Call):
+            continue
+        name = ast.unparse(node.func)
+        if name.rsplit('.', 1)[-1] in loaders or name.startswith('sys.path.'):
+            assert not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
+                           and '/opt/matrix/app' in value.value for value in ast.walk(node)), name
+source = sys.stdin.read()
+compile(source, '<protected>', 'exec')
+assert_self_contained(source)
+`], {
       input: program, encoding: 'utf8', timeout: 10_000,
     });
     expect(syntax.status, syntax.stderr).toBe(0);
