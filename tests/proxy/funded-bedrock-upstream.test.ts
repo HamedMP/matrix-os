@@ -241,6 +241,81 @@ describe("AWS Bedrock funded upstream", () => {
     expect(client.destroy).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["missing usage", { inputTokens: undefined, outputTokens: undefined, totalTokens: undefined }],
+    ["inconsistent usage", { inputTokens: 100, outputTokens: 20, totalTokens: 121 }],
+  ] as const)("leaves %s conservative instead of emitting exact settlement usage", async (_label, usage) => {
+    const client = {
+      send: vi.fn(async () => output([
+        { messageStart: { role: "assistant" } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "Hello" } } },
+        { messageStop: { stopReason: "end_turn" } },
+        { metadata: { usage } },
+      ])),
+      destroy: vi.fn(),
+    };
+    const tracker = createFundedOpenAiUsageTracker({
+      contentType: "text/event-stream",
+      nativeModelId: route().clientModelId,
+      canonicalModelId: route().canonicalModelId,
+      pricingVersion: route().pricing.version,
+      priceUsage: (trackedUsage) => priceBedrockUsageMicrousd({
+        route: route(), pricingVersion: route().pricing.version, usage: trackedUsage,
+      }),
+    });
+    const upstream = createBedrockFundedUpstream(route(), { client });
+    const result = await upstream.dispatch({
+      request: request(), requestId: "matrix-request-invalid-usage", signal: AbortSignal.timeout(5_000),
+    });
+    const reader = result.response.body!.getReader();
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      tracker.push(next.value);
+    }
+    expect(tracker.complete()).toEqual({ mode: "conservative" });
+    upstream.close();
+  });
+
+  it.each([
+    ["a truncated stream", [
+      { messageStart: { role: "assistant" } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "partial" } } },
+    ] satisfies ConverseStreamOutput[], undefined],
+    ["the response-byte cap", [
+      { messageStart: { role: "assistant" } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "x".repeat(512) } } },
+      { messageStop: { stopReason: "end_turn" } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 } } },
+    ] satisfies ConverseStreamOutput[], 128],
+  ] as const)("fails %s without producing exact usage", async (_label, events, maxResponseBytes) => {
+    const client = { send: vi.fn(async () => output([...events])), destroy: vi.fn() };
+    const tracker = createFundedOpenAiUsageTracker({
+      contentType: "text/event-stream",
+      nativeModelId: route().clientModelId,
+      canonicalModelId: route().canonicalModelId,
+      pricingVersion: route().pricing.version,
+      priceUsage: (trackedUsage) => priceBedrockUsageMicrousd({
+        route: route(), pricingVersion: route().pricing.version, usage: trackedUsage,
+      }),
+    });
+    const upstream = createBedrockFundedUpstream(route(), { client,
+      ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }) });
+    const result = await upstream.dispatch({
+      request: request(), requestId: "matrix-request-stream-failure", signal: AbortSignal.timeout(5_000),
+    });
+    const reader = result.response.body!.getReader();
+    await expect((async () => {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) return;
+        tracker.push(next.value);
+      }
+    })()).rejects.toMatchObject({ name: "BedrockUpstreamError", kind: "invalid_response" });
+    expect(tracker.complete()).toEqual({ mode: "conservative" });
+    upstream.close();
+  });
+
   it("cancels the SDK stream when the downstream response is cancelled", async () => {
     let iteratorReturned = false;
     let sdkSignal: AbortSignal | undefined;
