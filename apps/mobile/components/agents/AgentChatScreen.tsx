@@ -89,8 +89,9 @@ export function AgentChatScreen({
       />
       {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
       {state === "loading" ? (
-        <View testID="agent-chat-loading" style={styles.body}>
-          {/* The shapes of a short exchange, as the main chat shows while it loads. */}
+        <View testID="agent-chat-loading" style={styles.loading}>
+          {/* The shapes of a short exchange, as the main chat shows while it loads,
+              inset like the messages that replace them. */}
           <ChatMessagesSkeleton />
         </View>
       ) : state === "failed" ? (
@@ -132,6 +133,9 @@ const styles = StyleSheet.create((theme) => ({
   body: {
     flex: 1,
     paddingHorizontal: theme.v2.space[20],
+  },
+  loading: {
+    flex: 1,
   },
   failed: {
     alignItems: "center",
