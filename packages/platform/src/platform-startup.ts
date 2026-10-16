@@ -14,6 +14,7 @@ import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
 import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
+import { resolvePlatformObjectStorage } from './object-storage-config.js';
 import { runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -211,15 +212,7 @@ interface GatewayIntegrationRegistryModule {
 type GatewayR2Client = import("./r2-client.js").R2Client;
 
 interface GatewayR2ClientModule {
-  createR2Client(config: {
-    accountId?: string;
-    accessKeyId: string;
-    secretAccessKey: string;
-    bucket: string;
-    endpoint?: string;
-    publicEndpoint?: string;
-    forcePathStyle?: boolean;
-  }): Promise<GatewayR2Client>;
+  createR2Client(config: import('./r2-client.js').R2ClientConfig): Promise<GatewayR2Client>;
 }
 
 type CreatePlatformApp = (deps: {
@@ -739,27 +732,15 @@ async function startPlatformServerWithCleanup(
   let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
   let primaryStorageGate: R2CapabilityGate | undefined;
-  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
-  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
-  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
-  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? 'matrixos-sync';
-  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
+  const storageConfig = resolvePlatformObjectStorage(process.env);
   let createR2Client: GatewayR2ClientModule['createR2Client'] | undefined;
-  if (s3AccessKey && s3SecretKey && platformSecret) {
+  if (storageConfig.primary && platformSecret) {
     const [r2ClientModule, { createInternalSyncRoutes }] = await Promise.all([
       importRuntimeModule<GatewayR2ClientModule>('./r2-client.js'),
       import('./internal-sync-routes.js'),
     ]);
     createR2Client = r2ClientModule.createR2Client;
-    const r2 = await createR2Client({
-      accessKeyId: s3AccessKey,
-      secretAccessKey: s3SecretKey,
-      bucket: s3Bucket,
-      endpoint: s3Endpoint,
-      publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
-      accountId: process.env.R2_ACCOUNT_ID,
-      forcePathStyle: s3ForcePathStyle,
-    });
+    const r2 = await createR2Client(storageConfig.primary);
     internalSyncRoutes = createInternalSyncRoutes({
       db,
       r2,
@@ -771,22 +752,11 @@ async function startPlatformServerWithCleanup(
     primaryStorageGate = createR2CapabilityGate({ storage: r2 });
   }
 
-  const bundleS3Bucket = process.env.S3_BUNDLES_BUCKET ?? process.env.R2_BUNDLES_BUCKET;
-  const bundleS3AccessKey = process.env.S3_BUNDLES_ACCESS_KEY_ID ?? process.env.R2_BUNDLES_ACCESS_KEY_ID;
-  const bundleS3SecretKey = process.env.S3_BUNDLES_SECRET_ACCESS_KEY ?? process.env.R2_BUNDLES_SECRET_ACCESS_KEY;
-  if (bundleS3Bucket && bundleS3AccessKey && bundleS3SecretKey) {
+  if (storageConfig.bundles) {
     createR2Client ??= (
       await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js')
     ).createR2Client;
-    hostBundleObjectStore = await createR2Client({
-      accessKeyId: bundleS3AccessKey,
-      secretAccessKey: bundleS3SecretKey,
-      bucket: bundleS3Bucket,
-      endpoint: process.env.S3_BUNDLES_ENDPOINT ?? process.env.R2_BUNDLES_ENDPOINT,
-      publicEndpoint: process.env.S3_BUNDLES_PUBLIC_ENDPOINT ?? process.env.R2_BUNDLES_PUBLIC_ENDPOINT,
-      accountId: process.env.S3_BUNDLES_ACCOUNT_ID ?? process.env.R2_BUNDLES_ACCOUNT_ID ?? process.env.R2_ACCOUNT_ID,
-      forcePathStyle: process.env.S3_BUNDLES_FORCE_PATH_STYLE === 'true',
-    });
+    hostBundleObjectStore = await createR2Client(storageConfig.bundles);
   }
 
   let customerVpsService: CustomerVpsService | undefined;
