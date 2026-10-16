@@ -12,6 +12,19 @@ function loadConfigured(origin?: string) {
   return require("../lib/storage") as typeof import("../lib/storage");
 }
 
+it("preserves canonical HTTPS operator ports for Native hosted Settings and WebSockets", async () => {
+  const origin = "https://platform.example.com:8443";
+  const storage = loadConfigured(origin);
+  expect(storage.HOSTED_GATEWAY_URL).toBe(origin);
+  const fetcher = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ connected: false, admission: "public" }) });
+  global.fetch = fetcher;
+  const { fetchWhatsAppSettings } = require("../lib/requests/messaging") as typeof import("../lib/requests/messaging");
+  await fetchWhatsAppSettings("synthetic-token");
+  expect(fetcher).toHaveBeenCalledWith(origin + "/api/whatsapp/settings", expect.anything());
+  const { GatewayClient } = require("../lib/gateway-client") as typeof import("../lib/gateway-client");
+  expect(new GatewayClient(origin + "/vm/pr-919?runtime=pr-919").wsUrl).toBe("wss://platform.example.com:8443/ws?runtime=pr-919");
+});
+
 afterEach(() => {
   if (originalOrigin === undefined) delete process.env.EXPO_PUBLIC_MATRIX_APP_URL;
   else process.env.EXPO_PUBLIC_MATRIX_APP_URL = originalOrigin;
@@ -139,4 +152,44 @@ it("does not load or evict production collaboration drafts for the same owner an
   await saveCollaborationDraft(storage, { ...identity, text: "Stage draft" });
   expect(data.get(productionKey)).toBe("Production draft");
   expect(storage.setItem).not.toHaveBeenCalledWith("matrix:collaboration:draft-index:v1", expect.anything());
+});
+
+it("does not restore or delete production push registration state from a configured build", async () => {
+  loadConfigured(CONFIGURED);
+  const secure = require("expo-secure-store") as typeof SecureStore;
+  const data = new Map([["matrix_os_expo_push_token", "ExponentPushToken[synthetic-production]"]]);
+  jest.mocked(secure.getItemAsync).mockImplementation(async (key) => data.get(key) ?? null);
+  jest.mocked(secure.deleteItemAsync).mockImplementation(async (key) => { data.delete(key); });
+  const fetcher = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+  global.fetch = fetcher;
+  const push = require("../lib/push") as typeof import("../lib/push");
+  expect(await push.isPushNotificationsEnabled()).toBe(false);
+  await push.disablePushNotifications({ clerkToken: "synthetic-owner-token", gatewayUrl: CONFIGURED });
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(data.get("matrix_os_expo_push_token")).toBe("ExponentPushToken[synthetic-production]");
+});
+
+it.each([undefined, CONFIGURED])("keeps push enable/disable storage and registration scoped to platform %s", async (configured) => {
+  const storage = loadConfigured(configured);
+  const secure = require("expo-secure-store") as typeof SecureStore;
+  const productionToken = "ExponentPushToken[synthetic-production]";
+  const data = new Map([["matrix_os_expo_push_token", productionToken]]);
+  jest.mocked(secure.getItemAsync).mockImplementation(async (key) => data.get(key) ?? null);
+  jest.mocked(secure.setItemAsync).mockImplementation(async (key, value) => { data.set(key, value); });
+  jest.mocked(secure.deleteItemAsync).mockImplementation(async (key) => { data.delete(key); });
+  const fetcher = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+  global.fetch = fetcher;
+  const push = require("../lib/push") as typeof import("../lib/push");
+  const input = { clerkToken: "synthetic-owner-token", gatewayUrl: storage.HOSTED_GATEWAY_URL };
+  await push.enablePushNotifications(input);
+  expect(await push.isPushNotificationsEnabled()).toBe(true);
+  if (configured) expect(data.get("matrix_os_expo_push_token")).toBe(productionToken);
+  else expect(data.get("matrix_os_expo_push_token")).toBe("ExponentPushToken[test]");
+  await push.disablePushNotifications(input);
+  expect(await push.isPushNotificationsEnabled()).toBe(false);
+  expect(fetcher).toHaveBeenLastCalledWith(`${configured ?? PRODUCTION}/api/push/register`, expect.objectContaining({
+    method: "DELETE", body: JSON.stringify({ token: "ExponentPushToken[test]" }),
+  }));
+  if (configured) expect(data.get("matrix_os_expo_push_token")).toBe(productionToken);
+  else expect(data.has("matrix_os_expo_push_token")).toBe(false);
 });
