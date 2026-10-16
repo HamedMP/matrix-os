@@ -1,3 +1,4 @@
+import { resolveHermesPython } from "./hermes-python-environment.js";
 import { ChatAgentContextError } from "./agent-context.js";
 import { mapChatAgentContextError } from "./orchestration-errors.js";
 import { createHermesSubagentActivity } from "./hermes-subagent-activity.js";
@@ -673,14 +674,15 @@ export function createHermesChatProviderAdapter(options: {
     const existingPythonPath = process.env.PYTHONPATH?.trim();
     const credentials = jevScope ? await options.jev!.resolveCredentials(input.owner.ownerId, input.selection, input.signal) : undefined;
     if (credentials) await options.jev!.verifyRuntime(hermesRoot, input.signal, credentials.apiMode);
+    const python = await resolveHermesPython(hermesRoot);
     const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId, jevScope);
     let restrictedProfile: Awaited<ReturnType<typeof createJevHermesProfile>> | undefined;
     try { if (credentials) restrictedProfile = await createJevHermesProfile(credentials, integrationCapability.token); }
     catch (error) { integrationCapability.revoke(); throw error; }
     const executionCwd = restrictedProfile?.homePath ?? input.executionRoot ?? options.homePath;
     const clientOptions = {
-      command: join(hermesRoot, "venv", "bin", "python"),
-      args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache")) : ["-u", "-m", "tui_gateway.entry"],
+      command: python,
+      args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache"), python) : ["-u", "-m", "tui_gateway.entry"],
       cwd: executionCwd,
       inheritEnvironment: !restrictedProfile,
       env: {
