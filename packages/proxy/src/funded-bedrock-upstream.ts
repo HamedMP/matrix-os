@@ -60,6 +60,15 @@ export function bedrockRouteProvenance(
   };
 }
 
+export function bedrockRuntimeClientConfig(route: BedrockRouteConfig) {
+  return {
+    region: route.region,
+    // A later throttle cannot prove zero usage if the SDK retried an earlier
+    // paid attempt whose outcome was lost before response headers arrived.
+    maxAttempts: 1,
+  } satisfies ConstructorParameters<typeof BedrockRuntimeClient>[0];
+}
+
 function textParts(content: FundedOpenAiRequest["messages"][number]["content"]): string[] {
   if (content === null || content === undefined) return [];
   if (typeof content === "string") return content === "" ? [] : [content];
@@ -416,7 +425,7 @@ export function createBedrockFundedUpstream(
     maxResponseBytes?: number;
   } = {},
 ): FundedGenerationUpstream {
-  const client = options.client ?? new BedrockRuntimeClient({ region: route.region });
+  const client = options.client ?? new BedrockRuntimeClient(bedrockRuntimeClientConfig(route));
   const now = options.now ?? (() => new Date());
   const maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
   return {
