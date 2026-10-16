@@ -7,8 +7,8 @@ import { CODEX_EXEC_CONTRACT } from '../../packages/gateway/src/coding-agents/co
 import { CODEX_APP_SERVER_CONTRACT } from '../../packages/gateway/src/coding-agents/codex-app-server-version.js';
 
 describe('explicitly promoted managed Codex version', () => {
-  it('uses 0.162.1 only after both protocol contracts record it on both native targets', () => {
-    expect(CODEX_VERIFIED_VERSION).toBe('0.162.1');
+  it('uses 0.163.0 only after both protocol contracts record it on both native targets', () => {
+    expect(CODEX_VERIFIED_VERSION).toBe('0.163.0');
     expect(CODEX_EXEC_CONTRACT.verifiedVersions[CODEX_VERIFIED_VERSION]).toBeDefined();
     const app = CODEX_APP_SERVER_CONTRACT.verifiedVersions[CODEX_VERIFIED_VERSION];
     expect(app).toHaveProperty('schemaSha256ByTarget.linux-x64');

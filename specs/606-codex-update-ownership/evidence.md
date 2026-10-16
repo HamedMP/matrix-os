@@ -1,68 +1,50 @@
-# ENG-298 — Terminal Codex update ownership and explicit runtime promotion
+# ENG-298 — English local cases and evidence
 
-Source baseline: `0348437bc120a37d861904fa7969066e8bbe9222` (2026-10-14). This packet describes an isolated code candidate, not an installed customer fix.
+This is an unpublished local candidate on Maine8cc2cb1e19a6b0afc0d9e30490aaced9a8d8aaf. The exact candidate commit and measured totals live in the final local receipt. It is not a customer installation or production acceptance.
 
-## Report and root cause
+## Verified source distinctions
 
-[ENG-298](https://linear.app/matrix-os/issue/ENG-298/codex-pinned-at-01561-on-customer-vpses-npm-i-g-openaicodex-lands-in-a) and its complete exploration/plan describe one customer VPS on bundle `v2026.10.14-1767`: `/opt/matrix/runtime/node/bin/codex` and its `/usr/local/bin` link report 0.156.1, while a user npm install created 0.162.1 under `~/.local`. This task read the [complete Slack thread](https://app.slack.com/client/T0C11D9M36Z/C0C459830FJ/thread/C0C459830FJ-1791983925.023589); handoff-to-Chat is a separate request and remains outside this fix. No fleet count or customer-host state was measured here.
+[ENG-298](https://linear.app/matrix-os/issue/ENG-298/codex-pinned-at-01561-on-customer-vpses-npm-i-g-openaicodex-lands-in-a) and the complete [original Slack thread](https://app.slack.com/client/T0C11D9M36Z/C0C459830FJ/thread/C0C459830FJ-1791983925.023589) reported managed0.156.1 and a user npm0.162.1 duplicate on bundlev2026.10.14-1767. Handoff-to-Chat remains separate. No fleet measurement or live affected-host inspection was performed here.
 
-The pinned Hermes installer writes its private Node's npm global prefix to `~/.local` and links its Node/npm/npx commands into that bin directory. An unprefixed `npm install -g` can therefore update a second copy while managed consumers retain the old copy. A shell hash can contribute to selection, but rehashing cannot change an absolute-path consumer or the platform's version policy.
+Main#2657 qualifies0.163.0 exec/app-server payloads, while managed installation remains0.156.1 and the scope worker separately remains0.154.0. The candidate preserves all new protocol records and promotes installed/shared pins to0.163.0. Protocol qualification does not grant any account model entitlement.
 
-Current main differs from the earlier ticket exploration: both Codex protocol records already include 0.162.1, including Linux x64 and Darwin arm64 full-schema digests. The customer installers and shared runtime contract remain at 0.156.1. The scope worker independently remains at 0.154.0 despite defaulting to the same managed executable. Protocol records alone do not prove every consumer's CLI options work.
+Hermes's old installer redirects global npm to owner.local. v0.22 source e06df9c2eae6901f4c88f464e0ae6e753c0428b8 packages Node26.7.0 and npm12.0.2 separately. Actual npm globalconfig derives from the PM Node prefix, despite npm's different package path. PM verifies whole tool-tree digests on explicit installs, so adding node-entry/etc/npmrc is not durable. Independent review caught that first design; it was replaced with an external Matrix default and unchanged package trees/facts.
 
-## Resolution and ownership map
+## Runtime map
 
-| Entry or consumer | Baseline resolution | Candidate behavior |
-|---|---|---|
-| Terminal agent menu | `codex --no-alt-screen`; shell PATH/hash decides executable | Same user-visible command; recognized local npm shim points at managed Codex after install |
-| Terminal install action | Explicit runtime npm prefix and `CODEX_VERIFIED_NPM_PACKAGE` | Installs exact promoted 0.162.1 into that prefix |
-| User `npm -g` through Hermes npm | Hermes private npmrc redirects to `~/.local` | Hermes npmrc points to managed prefix; private Node/npm/npx links remain |
-| Tool-pack and boot developer-tools reconciliation | Exact 0.156.1 install/check | Exact 0.162.1 install/check; no automatic arbitrary-latest promotion |
-| Server-configured native Chat and event bridge | `codexExecutableFromEnv`: absolute managed executable; version gates differ by consumer | Same executable; launcher/child exact gate advances to 0.162.1; retained protocol records still govern parsing |
-| Generic workspace routes/startup fallback | Bare Codex, owner local bin before runtime bin | Recognized npm shim migration converges these; custom commands intentionally remain owner-controlled |
-| Isolated scope worker | Absolute `/opt/matrix/runtime/node/bin/codex`, separate exact 0.154.0 gate | Exact 0.162.1 gate and corrected strict-config invocation |
-| Docker development images | Independent 0.156.1 build argument | Same promoted 0.162.1; Docker remains a development/CI surface |
+| Consumer | Candidate behavior |
+|---|---|
+| Terminal Codex / generic PATH callers | Recognized old npm shim reaches managed Codex; custom commands survive |
+| Tool-pack / boot reconciliation | Exact0.163.0 package, explicit runtime prefix, failed repair retries |
+| Native Chat/event consumers | Same managed executable and retained protocol parsing records |
+| Isolated scope worker | Exact0.163.0 gate; obsolete strict config remains removed |
+| Legacy Hermes npm | Owner-local node/etc/npmrc repaired; private tools remain |
+| Hermes v0.22 PM npm | External matrix-npm/npmrc selected in fresh non-root Matrix owner environments |
+| Restricted Hermes profile | Environment admission unchanged; no new npm configuration authority |
 
-Owner `~/.npmrc`, project npm config and environment overrides remain authoritative. Their presence must be diagnosed with `npm prefix -g`, not by printing credential-bearing config. A custom command or unrelated symlink is preserved. A recognized npm shim is redirected only when the managed executable exists; old package bytes remain. Repointing the same path also handles a cached local command path, but a running process must be restarted when idle. This is not a universal `hash -r` workaround.
+## Cases and observations
 
-## Implemented boundaries
+| Case | Expected and observed local result |
+|---|---|
+| Legacy repair | Atomic prefix convergence, existing runtime npmrc unchanged, private links and unrelated options retained |
+| PM repair | Active facts selected safely; external default created; no edits to Node/npm trees or PM facts |
+| PM lifetime | Configuration is outside package entries; copied-real-Node/npm tree digests remain unchanged |
+| Owner choice | User prefix and environment prefix override remain effective; custom user globalconfig choice respected at fresh startup; pre-existing PM/runtime global files suppress activation; explicit globalconfig env values, including empty, retained |
+| PM failures | Malformed/oversized/unknown facts, traversal entries and symlinked store/config paths rejected |
+| Partial install | Missing Node fact creates no new PM state; absent managed Codex preserves old shim; failed Codex repair retried |
+| Root boundary | Failing-first marker test exposed owner PM execution in root startup; shell EUID and direct Node effective-UID guards now skip it. UID observations are simulated, not actual root/sudo execution |
+| Promotion | Installer, contract, Docker development, scope gate and profile/acceptance constants agree at0.163.0; unknown versions stay rejected |
+| Exact process | No0.163.0 CLI installed/executed in this round; the opt-in scope native process test is intentionally skipped |
+| Live model/surfaces | Not tested; no sol6.1 entitlement, live GUI, Linux isolation or rollout claim |
 
-- Ship an explicit runtime npmrc for new bundles. On legacy hosts, do not create or rewrite root-owned runtime configuration: runtime npm already derives its managed prefix. Repair only owner-local Hermes npmrc and the recognized local Codex shim.
-- Invoke the helper as the runtime owner after successful Codex or Hermes installation. Include the helper in the host bundle's explicit scripts allowlist. Failed required reconciliation fails the installer and can be retried.
-- Replace npmrc atomically, preserve unrelated options and file mode, reject configuration symlinks, and keep custom commands and old package data.
-- Explicitly promote all shared-executable pins to 0.162.1; retain exact version checks and unknown-version rejection. Broad qualified-version admission and automatic future promotion are deferred design work.
-- Remove scope worker's obsolete `disable_response_storage` override. The actual 0.162.1 process rejected it under strict config. A loopback-only real-binary fixture now verifies a completed synthetic response, no offered tools, no Authorization header and `store=false` without that obsolete option.
+The first PM TDD run failed16 assertions as expected. The next coherence run caught the changed scope profile digest; a broader run exposed one more stale supervisor digest assertion (390 passed,4 skipped,1 failed). That assertion was corrected and the next affected run passed398 tests with4 skips. Final affected-scope result after all corrections: **33 files (32 passed, one opt-in file skipped);400 tests passed,4 skipped,0 failed** under isolated Node24.18.0. This is an affected-scope receipt, not a full-repository test claim.
 
-## English cases and observed evidence
+The independent local review found the digest-bound write (P2) and then root execution of owner PM tools (P1). Both received failing regressions and corrections. Local review is not a GitHub approving review. Workspace native typechecks and pattern/syntax checks were run locally; exact final results are in the local receipt. No full-repository local green is claimed from affected tests.
 
-| Case | Steps and expected result | Observed result |
-|---|---|---|
-| C1 — Hermes global destination | Start with Hermes npm prefix pointing at owner `.local`; reconcile; global prefix should match managed runtime | Real task-local Node/npm fixture: Hermes prefix changes from owner `.local` to managed prefix; runtime npm prefix stays correct without creating runtime npmrc |
-| C2 — Recognized duplicate shim | Create relative or absolute npm Codex link; provide executable managed CLI; reconcile and invoke old command path | Both link forms reach managed version; no package deletion |
-| C3 — Owner command preservation | Use a regular custom command, unrelated symlink and owner npmrc | Contents/targets and owner override remain unchanged |
-| C4 — Missing managed CLI | Leave old npm shim and remove managed executable | Old shim remains; no broken replacement |
-| C5 — Legacy permissions | Make runtime prefix read-only with no etc directory; keep owner-local Hermes config writable | Repair passes without privileged runtime writes |
-| C6 — Config symlink | Point Hermes npmrc at another file | Fails safely; target file unchanged |
-| C7 — Version consistency | Check installers, Docker, contracts and scope worker against explicit promoted pin | 0.162.1 across consumers; unknown-version checks retained |
-| C8 — Actual scope process | Exact published binary, empty HOME, fake loopback Responses server, fixed production args | Red: strict config rejects removed field. Green: completed synthetic answer, zero offered tools, no Authorization header, `store=false` |
-| C9 — Packaging | Inspect host bundle's scripts allowlist and installer wiring | Red before explicit helper copy; green after packaging fix |
-| C10 — Failed repair recovery | Upgrade the binary, fail post-install reconciliation, then rerun developer-tools | Failing-first two-process fixture confirms the second run retries repair despite a current binary; a failed Codex pack clears its prior installed marker |
-| C11 — Model visibility | Inspect the affected account's official model catalog on its actual Terminal runtime | Not performed. No claim that this fix alone grants sol 6.1 or any account entitlement |
+The real PM probe copies existing isolated tool bytes into a disposable task fixture. It performs version/config reads only, exercises the production owner-env/helper activation, asserts unchanged tool digests, and removes the copy. It does not install packages, modify ENG-306's fixture, read real owner credentials, contact providers or spend inference budget.
 
-Final affected-scope serial run after the retry correction under Node 24.18.0: **31 files passed; 369 tests passed; 3 intentionally skipped**. The preceding `7b90acba` receipt was 30 files / 368 passed / 3 skipped. This includes the actual published binary case with `CODEX_CONTRACT_BINARY` set. Its default unit invocation skips that case unless an exact isolated binary is supplied; it never borrows a user's authenticated CLI from PATH.
+## Publication and acceptance gates
 
-One unchanged `tests/scope-runtime/server.test.ts` client-close assertion failed once in a concurrent rerun; the isolated file passed all four tests and the complete final serial affected-scope run passed. No production supervisor-server code was changed.
+Published#2593 remains at historicalaadfe9b6. Its historical5/5 and CI38581647436 remain real but do not qualify this changed/rebased local candidate. Main#2666 removed automatic Claude review; this round still authorizes no push/CI/external review. Before future publication/landing, establish exact source freshness, review, real green CI, no unresolved findings and independent non-author approval last. Preserve the original checkpoint backup/bundle; do not silently force-push its rewritten history.
 
-Workspace native typechecks and explicit scope-runtime `tsc --noEmit` passed. Pattern scans reported zero violations (five existing full-tree warnings, two changed-scope warnings). Shell syntax and `git diff --check` passed. The complete Node 24 run lost its execution transport (`pong_timeout` / unknown session) before producing its final JSON report. Its process was confirmed absent after reconnection. The complete result is uncertain and is not a green receipt. Its log also contains macOS `mv -T` incompatibility output. Do not infer full-suite or CI success from the focused results.
-
-The machine's default Node 25 caused 52 WorkRail failures (`localStorage.clear is not a function`) on both candidate and unchanged main. Unchanged main under the repository's Node 24.18.0 passed both WorkRail and Task Manager suites: 96 tests. The Node 25 run was interrupted; it is not a valid green receipt.
-
-Published Darwin arm64 0.162.1 reports `codex-cli 0.162.1`. Its generated full app-server schema SHA-256 is `e4e7f0c7d3fd77c48cd8619cad2bf2b315d860ab006ad5a7ebe44f6e32e666c1`, matching the retained record; all consumed semantic digests passed the verifier. Hosted [Codex provider-contract run 38576473538](https://github.com/HamedMP/matrix-os/actions/runs/38576473538) passed on both Linux x64 and Darwin arm64 at `7b90acba`. Those source/schema checks do not establish Linux scope execution or live customer acceptance, and are separate from CI Results. The local scope fixture excludes loopback from macOS system proxy fallback; no host proxy settings were changed.
-
-## Independent review and landing gates
-
-The independent review of the initial implementation found three P1 issues: missing bundle copy, legacy prefix EACCES, and the real CLI's removed config option. Each received a failing regression before its correction. A further version-coherence assertion caught the disposable acceptance harness retaining 0.154.0 and its old profile digest; its constants and documentation were synchronized without executing the host script. Greptile reviewed `f472102e` as 4/5 and identified the post-install retry gap: a previous installed marker could survive a repair failure and make the next run skip. The marker is now cleared for a failed Codex pack, with a two-process failing-first recovery test. This does not count as a GitHub approving review of the final head.
-
-ENG-268 PRs #2547/#2548/#2549/#2545 were read for metadata and changed files. This branch changes no files in that stack's auth/UI diff. The shared promoted contract affects their runtime dependency, so they must still be tested against the final installed CLI; none of those PRs was changed or merged here.
-
-Follow `docs/dev/fast-ci.md`: current main baseline, current-head Greptile 5/5 (or formally accepted carry-over), no unresolved review threads, add fast-ci before ready-for-ci, actual green CI Results, and an independent approving review last. No merge, publish, deployment, Main/customer change or Slack message occurred while producing this packet. Live Linux scope isolation, Hermes browser/bridge acceptance, affected-account model visibility and public documentation coordination remain distinct acceptance work.
+ENG-306 retains its sole upgrade author. It should consume the one shared reconciler and owner-env integration; no duplicate PM implementation. ENG-268 and waiting PRs2514/2545/2622/2578 were not changed. No Main machine, customer/production service, Electron, Private repo, Slack or paid/provider call was used. Public docs and live surface/account acceptance remain separately coordinated deliverables.

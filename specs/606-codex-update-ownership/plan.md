@@ -1,49 +1,23 @@
-# ENG-298: Codex update ownership implementation plan
+# ENG-298 — local implementation plan
 
-> Execute inline with the executing-plans and test-driven-development skills.
+Ticket: https://linear.app/matrix-os/issue/ENG-298/codex-pinned-at-01561-on-customer-vpses-npm-i-g-openaicodex-lands-in-a
+Existing PR: https://github.com/HamedMP/matrix-os/pull/2593
 
-**Goal:** Make Terminal updates and managed Codex consumers resolve the same explicitly promoted CLI without Hermes redirecting npm globals to a second installation.
-**Spec:** Linear ENG-298 description and Hamed's complete 2026-10-14 exploration/plan; Slack thread 1791983925.023589.
-**Architecture:** Preserve Hermes's private Node and command links because its own tools may need them. Ship the runtime-local npm default for new images and reconcile Hermes-local global npm configuration to the managed prefix, preserving existing runtime config, unrelated options and owner npm overrides. Redirect only recognized npm-created local Codex shims to the managed binary after it exists. Explicitly promote the already recorded 0.162.1 contracts; retain exact runtime version gates.
-**Stack:** Bash host installers, Node filesystem APIs, TypeScript/Vitest.
+## Current scope and base
 
-## Global constraints
+Resume the original worktree only. Preserve original checkpoint5ee65261, old publishedaadfe9b6 and the pre-rebase source/patch. Rebase local work onto maine8cc2cb1e19a6b0afc0d9e30490aaced9a8d8aaf; do not force-push the existing remote branch. Main#2657 already qualifies0.163.0 protocols but retains installer0.156.1 and scope0.154.0 pins. Preserve all Main protocol records and promote the shared managed executable consistently to0.163.0.
 
-- Work only in this manual worktree, starting at main 0348437bc120a37d861904fa7969066e8bbe9222.
-- Do not change user Main, customer VPSes, production, Slack, handoff behavior, or ENG-268 auth/UI code.
-- Current main contains exec/app-server 0.162.1 records for linux-x64 and darwin-arm64; qualification records are not live model-availability evidence.
-- Retain explicit version admission; no arbitrary latest or automatic future-version promotion.
-- Local regression evidence cannot replace current-head Greptile 5/5, actual green CI Results, current-main freshness and an independent approving review. Follow docs/dev/fast-ci.md; approval last.
+1. Write failing ownership/PM/consistency fixtures, implement the minimum repair, and record RED→GREEN.
+2. Keep legacy Hermes config support. For v0.22 PM, select only validated active owner-local Node/npm entries from bounded schema1 facts. Never mutate their digest-bound trees or recorded facts.
+3. Put the Matrix PM default outside the store. Activate it only in fresh non-root Matrix owner environments when no explicit environment/owner globalconfig choice exists. Bound the read-only npm config probe; reject symlinks/path escapes. Preserve private tool links, owner/project prefix settings and CLI overrides.
+4. Retain exact recognized local Codex shim migration, atomic replacement and the failed-pack retry fix. Ship helper in the explicit bundle allowlist.
+5. Run copied-real-PM Node/npm process fixtures without installation or credentials, affected regression suites, native typecheck, shell syntax and pattern checks. Obtain independent local read-only review and fix its findings.
+6. Save a local candidate, English cases, immutable receipt and recovery bundle. This round authorizes no push, new CI, external review, model/provider call, installation, GUI, Private repository, Slack, machine/service mutation, merge or substitute task.
 
-## Task 1: npm ownership and migration
+## ENG-306 ownership
 
-Files: scripts/reconcile-agent-npm-prefix.mjs; tests/platform/agent-npm-prefix.test.ts; distro/customer-vps/host-bin/matrix-install-hermes and matrix-install-tool-pack; scripts/build-host-bundle.sh.
-Interface: CLI reads MATRIX_RUNTIME_HOME, HERMES_HOME and MATRIX_NODE_PREFIX, all absolute; invoked as the runtime owner by both installers. Managed prefix defaults to /opt/matrix/runtime/node.
+ENG-298/#2593 owns the single npm reconciler and owner-environment activation. ENG-306's original author alone owns the Hermes upgrade flags, managed Python resolution and credential compatibility. Its installer must retain the shared reconciler hook after successful provisioning; no copied implementation. Standard native Hermes inherits the owner environment via hermes-stdio-client. Restricted profiles remain unchanged and do not inherit that environment. Custom PM payload/runtime overrides are not claimed supported.
 
-- [ ] Write failing subprocess tests: Hermes npmrc prefix converges while existing runtime config is preserved; other options persist; Hermes node/npm/npx links persist; old npm Codex shim redirects; unrelated command stays; missing managed binary preserves old shim; repeat repair is idempotent; config symlinks fail without writing their target.
-- [ ] Run tests and record expected failures before implementation.
-- [ ] Implement atomic npmrc rewrite and exact recognized-shim migration, with no credential reads and no package deletion. Wire after successful installs and ship runtime npmrc for new bundles.
-- [ ] Run focused tests and existing host-bundle/developer-tools tests. Commit.
+## Deferred qualification and landing
 
-## Task 2: explicit promotion and evidence
-
-Files: managed installers, Dockerfile/Dockerfile.dev, packages/contracts/src/index.ts, packages/scope-runtime/src/worker-common.ts, relevant version tests, docs/dev/vps-deployment.md; evidence in this spec.
-Interface: all shared-runtime consumers use the promoted 0.162.1; scope-runtime's separate stale 0.154.0 gate must be aligned rather than widened.
-
-- [ ] Write failing version-coherence assertions covering all installation surfaces and scope-runtime, retaining unknown-version rejection.
-- [ ] Run failing assertions, promote explicit pins, rerun regression suites and protocol verifier where available.
-- [ ] Document update command, owner overrides, restart/rehash needs, retention of old package bytes, future unqualified-version behavior, scope-runtime compatibility and model-availability limits.
-- [ ] Run appropriate typechecks/pattern scan, review final diff and prepare an English case/evidence packet. Commit.
-
-## Review focus
-
-Existing owner npmrc overrides remain authoritative; report them without reading credentials. Preserve custom Codex commands. Do not repoint a shim before a managed binary exists. Do not let symlink config redirect an atomic write outside its intended file. Process/schema fixtures establish compatibility only within their exercised scope. Independent live Hermes/browser and account-specific model checks remain separate acceptance work.
-
-## Decisions
-
-- Use the existing visible `matrix-install-tool-pack codex` command rather than adding a new public CLI command.
-- Preserve Hermes Node/npm links and change its npm prefix; upstream's pinned installer explicitly documents that its own globals pass an explicit --prefix and are unaffected.
-- Explicit 0.162.1 promotion is the bounded implementation of ENG-298; automatic qualification/promotion and broad version-gate relaxation are deferred design changes.
-
-- Review ruling: existing runtime npm derives the correct prefix without an npmrc. Preserve its root-owned config and do not create etc on old hosts; only repair the owner-local Hermes configuration. Cost if wrong: a non-default runtime global npmrc remains an explicit operator configuration, diagnosable with npm prefix -g.
-- Review ruling: the scope worker's removed disable_response_storage key must be removed for 0.162.1. The real-binary loopback test confirms store=false and no tools/authorization without it; preserving the obsolete key would prevent execution. Cost if wrong: upstream transport privacy/feature drift must be caught by rerunning the exact-binary contract before another promotion.
+An exact0.163.0 scope-process fixture remains required before landing; this local round supplies no new native CLI and explicitly skips that opt-in test. User account model visibility, native Linux isolation, live Hermes/browser surfaces and rollout need separate coordinated acceptance. Main removed automatic Claude review in#2666; do not reuse the old push-side-effect statement. Publication remains separately authorized, with current-head review/CI and a non-author approval last. Public docs coordination in FinnaAI/matrix-os-site is a separate deliverable, blocked this round by the explicit no-Private/no-publication scope.

@@ -27,7 +27,7 @@ describe('managed Codex update recovery', () => {
 count=$(cat "$TEST_CODEX_ATTEMPTS")
 count=$((count + 1))
 printf '%s\\n' "$count" > "$TEST_CODEX_ATTEMPTS"
-printf 'codex-cli 0.162.1\\n' > "$TEST_CODEX_VERSION"
+printf 'codex-cli 0.163.0\\n' > "$TEST_CODEX_VERSION"
 # Reproduce an installed binary followed by a failed npm-prefix migration.
 [ "$count" -gt 1 ]
 `);
