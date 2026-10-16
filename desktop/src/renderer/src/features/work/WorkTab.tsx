@@ -47,6 +47,7 @@ import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
+import { ElectronBotCreationChat } from "../chat/ElectronBotCreationChat";
 
 type WorkLayout = "wide" | "medium" | "narrow";
 type NarrowWorkPane = "rail" | "chat" | "inspector";
@@ -919,6 +920,7 @@ function WorkTabContent({
           <BotHeaderBindingContext.Provider value={sharedScopeId ? null : reportContentBinding}>
           <BotHeaderContext.Provider value={!agentsOpen && headerAgentId ? botHeaderContainer : null}>
           <ChatAgentsContent hostedChrome client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
+            renderCreationChat={creation => <ElectronBotCreationChat key={creation.sessionId} creation={creation} client={client}/>}
             onOpenBotChat={openBotChat}>
             {content}
             {draftInspector}

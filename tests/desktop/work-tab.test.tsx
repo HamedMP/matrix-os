@@ -265,15 +265,27 @@ describe("WorkTab rail integration", () => {
   it("creates a recipe bot and navigates to its saved Chat from the real WorkTab", async () => {
     const api = useConnection.getState().api!;
     const originalGet = api.get;
+    let createdDefinition: (typeof saved & { recipeRef: { recipeId: string; version: string } }) | null = null;
     let finishDiscovery!: (catalog: typeof providerCatalog) => void;
     const discovery = new Promise<typeof providerCatalog>(resolve => { finishDiscovery = resolve; });
     api.get = vi.fn(async (path: string) => {
+      if (path === "/api/chat-agents") return { enabled: true, agents: createdDefinition ? [createdDefinition] : [] };
       if (path === canonicalChatProviderCatalogPath()) return providerCatalog;
       if (path === canonicalChatProviderCatalogPath(true)) return discovery;
       if (path === "/api/chat-agents/bot-recipes") return { recipes: [{ recipeId: "competitor-watch", version: "1", name: "Competitor Watch", description: "Watch pages", output: "Change report" }] };
+      if (path === "/api/chat-agents/bot-recipes/competitor-watch/1/creation-seed") return {
+        recipe: { recipeId: "competitor-watch", version: "1" },
+        editable: true,
+        draft: { name: "Competitor Watch", description: "Watch pages", instructions: "Watch competitor pages." },
+      };
       return originalGet(path);
     }) as typeof api.get;
-    api.post = vi.fn(async () => ({ chatId: "chat_bot_created", operation: "created", agent: { id: "bot_competitor1", name: "Competitor Watch", avatarSeed: "a".repeat(16), revision: 1, status: "active" } })) as typeof api.post;
+    api.post = vi.fn(async (_path: string, body: unknown) => {
+      const fields = body as Pick<typeof saved, "name" | "description" | "instructions" | "selection">;
+      createdDefinition = { ...saved, id: "bot_competitor1", name: fields.name, description: fields.description,
+        instructions: fields.instructions, selection: fields.selection, recipeRef: { recipeId: "custom-coordinator", version: "1" } };
+      return { chatId: "chat_bot_created", operation: "created", agent: { id: "bot_competitor1", name: "Competitor Watch", avatarSeed: "a".repeat(16), revision: 1, status: "active" } };
+    }) as typeof api.post;
     render(<WorkTab route="chat" active />);
     fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     const recipe = (await screen.findByText("Watch pages")).closest("article")!;
@@ -282,25 +294,30 @@ describe("WorkTab rail integration", () => {
     HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
     HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
     fireEvent.click(create);
-    const model = screen.getByRole("combobox", { name: "Bot model" });
+    expect(screen.getByLabelText("Agent creation introduction")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    const model = screen.getByRole("combobox", { name: "Model" });
     await waitFor(() => expect(api.get).toHaveBeenCalledWith(canonicalChatProviderCatalogPath(true)));
     expect((model as HTMLSelectElement).disabled).toBe(true);
-    // Native selection/submission obey the same discovery barrier as visible controls.
+    // Details selection and explicit Create obey the same discovery barrier.
     fireEvent.change(model, { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
-    fireEvent.submit(model.closest("form")!);
-    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/managed-custom")).toHaveLength(0);
     await act(async () => finishDiscovery(providerCatalog));
     await waitFor(() => expect((model as HTMLSelectElement).disabled).toBe(false));
     fireEvent.change(model, { target: { value: "" } });
-    expect((screen.getByRole("button", { name: "Create bot" }) as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/chat-agents/instantiate", expect.objectContaining({
+    fireEvent.click(screen.getByRole("button", { name: "Back to draft" }));
+    expect((screen.getByRole("button", { name: "Create agent" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/chat-agents/managed-custom", expect.objectContaining({
       selection: { instanceId: "matrix_bot_default", model: "auto" },
+      seedRecipe: { recipeId: "competitor-watch", version: "1" },
+      instructions: "Watch competitor pages.",
     })));
     await waitFor(() => expect(activeWorkTab()?.chatId).toBe("chat_bot_created"));
     expect(activeWorkTab()?.chatView).toBe("conversation");
-    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(1);
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/managed-custom")).toHaveLength(1);
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
   });
 
   beforeEach(() => {

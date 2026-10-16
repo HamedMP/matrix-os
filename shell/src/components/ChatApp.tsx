@@ -15,6 +15,8 @@ import { ChatQueuedRequests } from "./chat/ChatQueuedRequests";
 import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
+import { AssistantBubble } from "./chat/AssistantBubble";
+import { WebBotCreationChat } from "./chat/WebBotCreationChat";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
 import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
@@ -43,15 +45,8 @@ import {
   Message,
   MessageContent,
 } from "@/components/ai-elements/message";
-import { Reasoning } from "@/components/ai-elements/reasoning";
-import { extractThinking } from "@/components/ai-elements/reasoning-utils";
 import { SuggestionChips } from "@/components/ai-elements/suggestions";
 import { getMessageSuggestions } from "@/components/ai-elements/suggestions-utils";
-import { Plan } from "@/components/ai-elements/plan";
-import { parsePlan } from "@/components/ai-elements/plan-utils";
-import { Task } from "@/components/ai-elements/task";
-import { parseTask } from "@/components/ai-elements/task-utils";
-import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Button } from "@/components/ui/button";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
@@ -156,6 +151,7 @@ interface ChatAppProps {
     options?: ChatSubmitOptions,
   ) => void | Promise<boolean>;
   agentClient?: ChatAgentClient;
+  creationConversationClient?: import("@/hooks/useChatState").ChatState["creationConversationClient"];
   agentSummaryClient?: ChatAgentClient;
   authorityKey?: string;
   composerIdentity?: object;
@@ -204,7 +200,7 @@ function ChatAppContent({
   onSubmit,
   providerSelection,
   boundProviderInstanceId,
-  agentClient, agentSummaryClient, authorityKey, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn,
+  agentClient, creationConversationClient, agentSummaryClient, authorityKey, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -500,7 +496,8 @@ function ChatAppContent({
       </aside></ChatRailOrderContext.Provider>
 
       {/* Main content */}
-      <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={JSON.stringify([authorityKey, sessionId ?? "draft"])} onOpenBotChat={onSwitchConversation}>
+      <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={JSON.stringify([authorityKey, sessionId ?? "draft"])} onOpenBotChat={onSwitchConversation}
+        renderCreationChat={creation => <WebBotCreationChat key={creation.sessionId} creation={creation} client={creationConversationClient ?? null} connected={connected}/> }>
       <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
         {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
@@ -857,42 +854,5 @@ function EmptyState({
         )}
       </div>
     </div>
-  );
-}
-
-function AssistantBubble({
-  content,
-  attachments,
-  openAttachment,
-  loadImage,
-  onAction,
-}: {
-  content: string;
-  attachments?: ChatMessage["attachments"];
-  openAttachment?: (path: string) => boolean | void;
-  loadImage?: (src: string) => Promise<Blob>;
-  onAction?: (text: string) => void;
-}) {
-  const { thinking, rest } = extractThinking(content);
-  const planSteps = parsePlan(rest);
-  const taskData = parseTask(rest);
-  const displayContent = planSteps
-    ? rest.replace(/```plan\n[\s\S]*?```/, "").trim()
-    : taskData
-      ? rest.replace(/```task\n[\s\S]*?```/, "").trim()
-      : rest;
-
-  return (
-    <Message from="assistant">
-      <MessageContent>
-        {attachments?.length ? <ChatAttachments align="start" attachments={attachments} open={openAttachment} loadImage={loadImage} /> : null}
-        {thinking && <Reasoning content={thinking} />}
-        {planSteps && <Plan steps={planSteps} />}
-        {taskData && <Task task={taskData} />}
-        {displayContent && (
-          <RichContent onAction={onAction} openFile={openAttachment}>{displayContent}</RichContent>
-        )}
-      </MessageContent>
-    </Message>
   );
 }

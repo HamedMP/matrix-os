@@ -44,6 +44,7 @@ export function ChatInput({
   onDraftConsumed,
   unavailablePlaceholder,
   attachmentsEnabled,
+  attachmentsUnavailableLabel = "Attachments are unavailable for this harness",
   driveContextEnabled = false,
   botContext = false,
   botControls, botConsentResources = [], botRequiresFullAccess = false,
@@ -67,6 +68,7 @@ export function ChatInput({
   onDraftConsumed?: (id: number) => void;
   unavailablePlaceholder?: string;
   attachmentsEnabled: boolean;
+  attachmentsUnavailableLabel?: string;
   driveContextEnabled?: boolean;
   botContext?: boolean;
   botControls?: React.ReactNode;
@@ -201,7 +203,7 @@ export function ChatInput({
         <AttachmentButton
           onFilesSelected={addFiles}
           disabled={!connected || !attachmentsEnabled}
-          title={attachmentsEnabled ? "Attach files" : "Attachments are unavailable for this harness"}
+          title={attachmentsEnabled ? "Attach files" : attachmentsUnavailableLabel}
           className="mb-2.5 ml-3"
         />
         <Textarea
