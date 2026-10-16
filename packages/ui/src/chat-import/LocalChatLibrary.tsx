@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { RefreshCw, Search } from "lucide-react";
+import { MessageSquare, RefreshCw, Search } from "lucide-react";
 import { type ImportHarness } from "@matrix-os/contracts/local-chat-import";
 import { ChatImportSourceIcon } from "../chat/ChatImportSource.js";
 import { importBytes, type LocalChatCandidate, type LocalChatLibraryState, type LocalImportOutcome, type LocalImportUpdate } from "./import-state.js";
@@ -49,9 +49,13 @@ function LocalSourceRow({source,selected,disabled,outcome,active,toggle,preview,
 function LocalSourceList({loading,error,total,matches,children}: {loading:boolean;error:string|null;total:number;matches:number;children:React.ReactNode}) {
     if(loading)return <p className="matrix-import-library-message" role="status">Finding local conversations…</p>;
     if(error)return <p className="matrix-import-error" role="alert">{error}</p>;
-    if(!total)return <div className="matrix-import-library-message"><strong>No local conversations found.</strong><p>Use Claude Code or Codex on this computer, then refresh. Your other computer’s history won’t appear here.</p></div>;
-    if(!matches)return <p className="matrix-import-library-message">No conversations match this search.</p>;
+    if(!total)return <LocalLibraryEmpty title="No local conversations found." description="Use Claude Code or Codex on this computer, then refresh. Your other computer’s history won’t appear here."/>;
+    if(!matches)return <LocalLibraryEmpty title="No conversations match this search." description="Try another search or choose a different tool."/>;
     return <ul className="matrix-import-candidates" aria-label="Local conversations">{children}</ul>;
+}
+
+function LocalLibraryEmpty({title,description}:{title:string;description:string}) {
+    return <div className="matrix-import-empty"><MessageSquare size={22} aria-hidden="true"/><div><strong>{title}</strong><p>{description}</p></div></div>;
 }
 
 function LibraryPagination({count,page,lastPage,onPage}:{count:number;page:number;lastPage:number;onPage(page:number):void}) {

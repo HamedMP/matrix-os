@@ -8,6 +8,30 @@ afterEach(async () => { await Promise.all(dirs.splice(0).map(path => rm(path, {r
 async function fixture() { const home = await mkdtemp(join(tmpdir(), "matrix-discovery-")); dirs.push(home); return home; }
 async function transcript(home: string, relative: string, records: unknown[]) { const path = join(home, relative); await mkdir(path.slice(0,path.lastIndexOf("/")), {recursive:true}); await writeFile(path, records.map(record=>JSON.stringify(record)).join("\n")+"\n"); return path; }
 describe("local conversation discovery", () => {
+    it.each([
+        "# AGENTS.md instructions for /synthetic\n<INSTRUCTIONS>Project rules</INSTRUCTIONS>",
+        "<environment_context>Synthetic environment</environment_context>",
+        "<recommended_plugins>Tools</recommended_plugins>\n<environment_context>Synthetic environment</environment_context>",
+        "<recommended_plugins>Tools</recommended_plugins>\n# AGENTS.md instructions for /synthetic\n<INSTRUCTIONS>Project rules</INSTRUCTIONS>",
+    ])("uses the human prompt as the title after injected context: %s", async (context) => {
+        const home = await fixture();
+        await transcript(home, ".codex/sessions/conversation.jsonl", [
+            {type:"session_meta",payload:{id:"019eb0ae-9a30-7541-bdb8-db4d17e65146",cwd:"/synthetic"}},
+            {type:"response_item",payload:{type:"message",role:"user",content:[{type:"input_text",text:context}]}},
+            {type:"response_item",payload:{type:"message",role:"user",content:[{type:"input_text",text:"Fix the upload progress"}]}},
+        ]);
+        const result = await discoverLocalChats({home}, new AbortController().signal);
+        expect(result.sources.map(source => source.title)).toEqual(["Fix the upload progress"]);
+    });
+    it("preserves an ordinary human prompt discussing instructions and ignores legacy injected context", async () => {
+        const home = await fixture();
+        await transcript(home, ".codex/sessions/legacy.jsonl", [
+            {type:"UserMessage",content:"<environment_context>Synthetic setup</environment_context>"},
+            {type:"UserMessage",content:"Explain # AGENTS.md instructions and <environment_context> tags"},
+        ]);
+        const result = await discoverLocalChats({home}, new AbortController().signal);
+        expect(result.sources.map(source => source.title)).toEqual(["Explain # AGENTS.md instructions and <environment_context> tags"]);
+    });
     it("finds both harnesses and reads bounded display metadata without scanning history, credentials or subagents", async () => {
         const home = await fixture();
         await transcript(home, ".codex/sessions/2026/10/09/rollout.jsonl", [{type:"session_meta",payload:{id:"session",cwd:"/work/codex"}},{type:"response_item",payload:{type:"message",role:"user",content:[{type:"input_text",text:"Fix upload progress"}]}}]);
