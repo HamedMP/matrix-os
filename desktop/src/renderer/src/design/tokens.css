@@ -70,6 +70,7 @@
   /* ── Brand & semantic ───────────────────────────────────────── */
   --accent: #242323;
   --accent-hover: #475926;
+  --accent-text: #242323;
   --accent-muted: #f3f2f2;
   --highlight: #475926;
   --highlight-muted: #f3f2f2;
@@ -210,6 +211,7 @@
 
   --accent: #fafafa;
   --accent-hover: #bed77b;
+  --accent-text: #fafafa;
   --accent-muted: #413e3e;
   --highlight: #bed77b;
   --highlight-muted: #413e3e;
