@@ -42,3 +42,18 @@ it('requires the verified edge proof before reads or form forwarding', async () 
   expect(await response.text()).toBe('app');
   expect(asset).toHaveBeenCalledOnce();
 });
+it('limits public form lookups to four in flight before invoking the service', async () => {
+  const { app, admitted } = fixture(edgeSecret);
+  const finish = Promise.withResolvers<void>();
+  admitted.mockImplementation(async () => { await finish.promise; return new Response('accepted'); });
+  const pending = Array.from({ length: 4 }, () => app.request(paths[3]!, request(paths[3]!, edgeSecret)));
+  try {
+    await vi.waitFor(() => expect(admitted).toHaveBeenCalledTimes(4));
+    const extraRequest = app.request(paths[3]!, request(paths[3]!, edgeSecret));
+    pending.push(extraRequest);
+    const extra = await Promise.race([extraRequest, new Promise<null>(resolve => setTimeout(() => resolve(null), 300))]);
+    expect(extra?.status).toBe(429);
+    expect(admitted).toHaveBeenCalledTimes(4);
+  } finally { finish.resolve(); await Promise.all(pending); }
+  expect((await app.request(paths[3]!, request(paths[3]!, edgeSecret))).status).toBe(200);
+});
