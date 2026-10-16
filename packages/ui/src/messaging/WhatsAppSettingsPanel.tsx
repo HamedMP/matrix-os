@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   WhatsAppSettingsSchema,
   whatsAppSettingsView,
-  WHATSAPP_CONNECT_URL,
+  messagingPlatformUrl,
+  resolveMessagingPlatformOrigin,
   WHATSAPP_GUIDE_URL,
   WHATSAPP_AI_GUIDANCE,
   WHATSAPP_AGENT_GUIDANCE,
@@ -14,15 +15,21 @@ export function WhatsAppSettingsPanel(props: {
   scope: string;
   load: () => Promise<unknown>;
   onOpen?: (url: string) => Promise<void>;
+  platformOrigin?: string | null;
+  allowDevelopmentOrigin?: boolean;
 }) {
   return <OwnerWhatsAppSettings key={props.scope} {...props} />;
 }
 function OwnerWhatsAppSettings({
   load,
   onOpen,
+  platformOrigin,
+  allowDevelopmentOrigin = false,
 }: {
   load: () => Promise<unknown>;
   onOpen?: (url: string) => Promise<void>;
+  platformOrigin?: string | null;
+  allowDevelopmentOrigin?: boolean;
 }) {
   const [loaded, setSnapshot] = useState<WhatsAppSettings | null>(null);
   const [error, setError] = useState(false);
@@ -92,6 +99,7 @@ function OwnerWhatsAppSettings({
     !loaded && !error,
     error,
   );
+  const { chatUrl, connectUrl } = settingsLinks(snapshot, platformOrigin, allowDevelopmentOrigin);
   const open = async (url: string) => {
     const generation = ++openGeneration.current;
     setFailedLink(null);
@@ -200,12 +208,11 @@ function OwnerWhatsAppSettings({
         style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 20 }}
       >
         {snapshot?.startUrl && link("Open WhatsApp", snapshot.startUrl, true)}
-        {snapshot?.chatId && link("Open Matrix Chat", whatsAppChatUrl(snapshot.chatId))}
-        {snapshot &&
-          snapshot.admission !== "unavailable" &&
+        {chatUrl && link("Open Matrix Chat", chatUrl)}
+        {connectUrl &&
           link(
-            snapshot.connected ? "Manage connection" : "Connect WhatsApp",
-            WHATSAPP_CONNECT_URL,
+            snapshot?.connected ? "Manage connection" : "Connect WhatsApp",
+            connectUrl,
           )}
         {link("Connection guide", WHATSAPP_GUIDE_URL)}
       </div>
@@ -219,4 +226,12 @@ function OwnerWhatsAppSettings({
         )}
     </section>
   );
+}
+
+function settingsLinks(snapshot: WhatsAppSettings | null, configured: string | null | undefined, development: boolean) {
+  const origin = resolveMessagingPlatformOrigin(configured, development);
+  return {
+    chatUrl: snapshot?.chatId && origin ? whatsAppChatUrl(snapshot.chatId, origin, development) : null,
+    connectUrl: snapshot && snapshot.admission !== "unavailable" ? messagingPlatformUrl("/whatsapp/connect", configured, development) : null,
+  };
 }

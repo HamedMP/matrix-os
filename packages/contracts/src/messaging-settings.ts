@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { CanonicalChatIdSchema } from "#canonical-chat";
+import { resolveMessagingPlatformOrigin } from "#messaging-origin";
 
 export const WhatsAppSettingsSchema = z
   .object({
@@ -35,8 +36,8 @@ export const WHATSAPP_AI_GUIDANCE =
   "Your Matrix computer and AI connection must be ready. Check Agents & providers if a reply needs attention.";
 export const WHATSAPP_AGENT_GUIDANCE =
   "New conversations use Matrix Agent. Existing conversations keep their selected agent; open the Chat in Matrix to change it.";
-export function whatsAppChatUrl(chatId: string): string {
-  return matrixChatHandoffUrl("https://app.matrix-os.com", chatId);
+export function whatsAppChatUrl(chatId: string, origin = "https://app.matrix-os.com", allowDevelopmentOrigin = false): string {
+  return matrixChatHandoffUrl(origin, chatId, allowDevelopmentOrigin);
 }
 
 /** Navigation references grant no access; normal owner authorization still applies. */
@@ -52,10 +53,10 @@ export function parseMatrixHandoff(
   const parsed = CanonicalChatIdSchema.safeParse(params.get("chat"));
   return parsed.success ? { chatId: parsed.data } : null;
 }
-export function matrixChatHandoffUrl(origin: string, chatId: string): string {
-  const url = new URL("/open", origin);
-  if (url.protocol !== "https:" || url.username || url.password)
-    throw new Error("Invalid Matrix origin");
+export function matrixChatHandoffUrl(origin: string, chatId: string, allowDevelopmentOrigin = false): string {
+  const resolved = resolveMessagingPlatformOrigin(origin, allowDevelopmentOrigin);
+  if (!resolved) throw new Error("Invalid Matrix origin");
+  const url = new URL("/open", resolved);
   url.searchParams.set("chat", CanonicalChatIdSchema.parse(chatId));
   return url.href;
 }
