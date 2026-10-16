@@ -124,8 +124,20 @@ export function createFundedAiFundingSummaryClient(
           body,
         });
         let response = await request(JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }));
-        // Older strict platforms reject the opt-in field. Retry only once,
-        // sharing the original deadline and returning unknown Chat availability.
+        // Negotiate one field at a time so a gateway update cannot disable
+        // Chat against a platform that understands Chat availability but not
+        // the newer preference projection. Every attempt shares one deadline.
+        if (response.status === 400) {
+          const rejection = FundedAiSafeErrorSchema.safeParse(await readBoundedFundedJson(response));
+          if (!rejection.success || rejection.data.error.code !== "invalid_request") {
+            throw new FundedAiFundingSummaryClientError();
+          }
+          signal.throwIfAborted();
+          response = await request(JSON.stringify({ includeChatAvailability: true }));
+        }
+        // Only ordinary reads may fall all the way back to the legacy shape.
+        // Canonical reads require the Chat projection and retain their binding
+        // headers on the negotiated attempt above.
         if (response.status === 400 && !scope.canonical) {
           const rejection = FundedAiSafeErrorSchema.safeParse(await readBoundedFundedJson(response));
           if (!rejection.success || rejection.data.error.code !== "invalid_request") {
