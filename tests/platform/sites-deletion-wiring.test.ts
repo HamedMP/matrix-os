@@ -1,3 +1,5 @@
+import { resolveSitesObjectStorage } from '../../packages/platform/src/sites/storage-config.js';
+import { createR2Client } from '../../packages/platform/src/r2-client.js';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
@@ -69,4 +71,40 @@ it('signs deletion exports with only the explicit store session token', async ()
  const store = actual.createAccountDeletionObjectStore({bucket:'private-sites',accessKeyId:'sites-key',secretAccessKey:'sites-secret',sessionToken:'sites-session',endpoint:'https://r2.example.test'});
  try { expect(new URL(await store.getPresignedGetUrl!('synthetic-fixture.txt')).searchParams.get('X-Amz-Security-Token')).toBe('sites-session'); }
  finally { store.destroy?.(); }
+});
+
+it('uses the dedicated Sites session through real SDK signing, independent of all other tokens', async () => {
+ const config = resolveSitesObjectStorage({...env,R2_SESSION_TOKEN:'sync-session',R2_BUNDLES_SESSION_TOKEN:'bundle-session',S3_SESSION_TOKEN:'s3-session',AWS_SESSION_TOKEN:'ambient'});
+ expect(config).toMatchObject({bucket:'private-sites',sessionToken:'sites-session'});
+ const client = await createR2Client(config!);
+ try { expect(new URL(await client.getPresignedGetUrl('synthetic-fixture.txt')).searchParams.get('X-Amz-Security-Token')).toBe('sites-session'); }
+ finally {client.destroy();}
+ const permanent=resolveSitesObjectStorage({...env,R2_SITES_SESSION_TOKEN:undefined,R2_SESSION_TOKEN:'sync-session',R2_BUNDLES_SESSION_TOKEN:'bundle-session',AWS_SESSION_TOKEN:'ambient'});
+ expect(permanent).not.toHaveProperty('sessionToken');
+});
+it('rejects configured bucket aliases even when primary or bundle credentials are incomplete', () => {
+ for(const unrelated of [{R2_BUCKET:'private-sites'},{S3_BUCKET:'private-sites'},{R2_BUNDLES_BUCKET:'private-sites'},{S3_BUNDLES_BUCKET:'private-sites'},{R2_BUCKET:' private-sites '}]) {
+  expect(()=>resolveSitesObjectStorage({...env,R2_ACCESS_KEY_ID:undefined,R2_SECRET_ACCESS_KEY:undefined,R2_BUNDLES_ACCESS_KEY_ID:undefined,R2_BUNDLES_SECRET_ACCESS_KEY:undefined,...unrelated})).toThrow('Dedicated sites');
+ }
+ expect(()=>resolveSitesObjectStorage({...env,R2_SITES_BUCKET:' matrixos-sync '})).toThrow('Dedicated sites');
+});
+it('never enables or fills incomplete Sites credentials from another store or ambient session', () => {
+ expect(resolveSitesObjectStorage({R2_ACCESS_KEY_ID:'sync-key',R2_SECRET_ACCESS_KEY:'sync-secret',R2_SESSION_TOKEN:'sync-session',AWS_SESSION_TOKEN:'ambient'})).toBeNull();
+ for(const config of [{R2_SITES_SESSION_TOKEN:'sites-session'},{...env,R2_SITES_SECRET_ACCESS_KEY:undefined},{...env,R2_SITES_ACCESS_KEY_ID:' '},{...env,R2_SITES_BUCKET:undefined}]) {
+  expect(()=>resolveSitesObjectStorage(config)).toThrow('Dedicated sites');
+ }
+});
+it('passes primary and Sites sessions separately to configured deletion stores', async () => {
+ const runtime=await createConfiguredAccountDeletionRuntime({db,env:{...env,R2_SESSION_TOKEN:'sync-session',R2_BUNDLES_SESSION_TOKEN:'bundle-session',AWS_SESSION_TOKEN:'ambient'},backgroundWorkersEnabled:false});
+ try {
+  expect(configured).toHaveBeenCalledWith(expect.objectContaining({accessKeyId:'sync-key',sessionToken:'sync-session'}));
+  expect(configured).toHaveBeenCalledWith(expect.objectContaining({bucket:'private-sites',accessKeyId:'sites-key',sessionToken:'sites-session'}));
+ } finally {runtime?.stop();await runtime?.drain();runtime?.close();}
+});
+it('preserves selected S3 family token for primary deletion without borrowing it for Sites', async () => {
+ const runtime=await createConfiguredAccountDeletionRuntime({db,env:{...env,S3_ACCESS_KEY_ID:'s3-key',S3_SECRET_ACCESS_KEY:'s3-secret',S3_SESSION_TOKEN:'s3-session',R2_SESSION_TOKEN:'wrong-family'},backgroundWorkersEnabled:false});
+ try {
+  expect(configured).toHaveBeenCalledWith(expect.objectContaining({accessKeyId:'s3-key',sessionToken:'s3-session'}));
+  expect(configured).toHaveBeenCalledWith(expect.objectContaining({bucket:'private-sites',sessionToken:'sites-session'}));
+ } finally {runtime?.stop();await runtime?.drain();runtime?.close();}
 });
