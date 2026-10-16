@@ -1,16 +1,17 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
-import { FlatList, StyleSheet as NativeStyleSheet, Text, View } from "react-native";
+import { AccessibilityInfo, FlatList, StyleSheet as NativeStyleSheet, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { contentShape, shapes } from "@expo/ui/swift-ui/modifiers";
 
 import * as mockContextMenu from "./context-menu-test-utils";
 import { MessageList } from "../components/chat/MessageList";
+import { messageEntering, messageEnteringReduced, messageListLayout } from "../components/chat/message-motion";
 import { AnalyticsMask } from "../lib/analytics";
 import type { TranscriptMessage } from "../lib/canonical-chat-transcript";
 
 import { drawnTestIds } from "./chat-test-utils";
 import { CONTEXT_MENU_TEST_IDS, menuAround, menuItem, menuItemLabels } from "./context-menu-test-utils";
-import { flat } from "./ui-test-utils";
+import { flat, resetReduceMotion } from "./ui-test-utils";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
@@ -266,5 +267,74 @@ describe("MessageList", () => {
     fireEvent.press(menuItem(screen.getByText("Build an app that tracks my habits"), "Copy text"));
 
     await waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenCalledWith("Build an app that tracks my habits"));
+  });
+});
+
+describe("MessageList motion", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    resetReduceMotion();
+  });
+  afterEach(() => {
+    act(() => jest.runOnlyPendingTimers());
+    cleanup();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  const sending = message({ id: "msg_sending", role: "user", text: "Hi", delivery: "sending" });
+  const writing = message({ id: "msg_writing", role: "assistant", text: "", isRunning: true });
+  const motion = (id: string) => screen.getByTestId(`message-motion-${id}`);
+
+  it("rises a message on its way into place above the composer", () => {
+    render(<MessageList messages={[sending, reply, question]} chatId="chat_1" />);
+
+    expect(motion("msg_sending").props.entering).toBe(messageEntering);
+  });
+
+  it("fades a reply in as it starts to be written", () => {
+    render(<MessageList messages={[writing, sending, reply, question]} chatId="chat_1" />);
+
+    expect(motion("msg_writing").props.entering).toBe(messageEntering);
+  });
+
+  // The list draws rows again as they scroll back into view; only a message
+  // that is still arriving may animate, so a scroll never replays one.
+  it("draws messages that have arrived as they are, sent, failed or finished", () => {
+    const failed = message({ id: "msg_failed", role: "user", text: "Hello?", delivery: "failed" });
+    render(<MessageList messages={[failed, reply, question]} chatId="chat_1" />);
+
+    expect(motion("msg_failed").props.entering).toBeUndefined();
+    expect(motion("msg_reply").props.entering).toBeUndefined();
+    expect(motion("msg_user").props.entering).toBeUndefined();
+  });
+
+  it("lets the earlier messages glide up to make room for a new one", () => {
+    render(<MessageList messages={[sending, reply, question]} chatId="chat_1" />);
+
+    expect(screen.UNSAFE_getByType(FlatList).props.itemLayoutAnimation).toBe(messageListLayout);
+  });
+
+  it("only fades a new message in, and moves nothing, with reduced motion on", async () => {
+    jest.mocked(AccessibilityInfo.isReduceMotionEnabled).mockResolvedValue(true);
+    render(<MessageList messages={[sending, reply, question]} chatId="chat_1" />);
+    await act(async () => {});
+
+    expect(motion("msg_sending").props.entering).toBe(messageEnteringReduced);
+    expect(screen.UNSAFE_getByType(FlatList).props.itemLayoutAnimation).toBeUndefined();
+  });
+
+  it("animates a message the screen draws as a request like any other", () => {
+    const request = message({ id: "msg_request", role: "assistant", text: "", isRunning: true });
+    render(
+      <MessageList
+        messages={[request]}
+        chatId="chat_1"
+        renderRequest={(item) => (item.id === "msg_request" ? <Text>Approval card</Text> : null)}
+      />,
+    );
+
+    expect(motion("msg_request").props.entering).toBe(messageEntering);
+    expect(within(motion("msg_request")).getByText("Approval card")).toBeTruthy();
   });
 });
