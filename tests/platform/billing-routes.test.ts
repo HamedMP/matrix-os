@@ -118,7 +118,7 @@ describe('platform billing routes', () => {
         utm_source: 'reddit',
         utm_campaign: 'launch',
       }),
-      successUrl: 'https://app.matrix-os.com/?billing=success&checkout=success',
+      successUrl: 'https://app.matrix-os.com/?billing=success&checkout=success&session_id={CHECKOUT_SESSION_ID}',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
     }));
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
@@ -661,7 +661,7 @@ describe('platform billing routes', () => {
 
     expect(res.status).toBe(200);
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
-      successUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success',
+      successUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success&session_id={CHECKOUT_SESSION_ID}',
       cancelUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=canceled',
     }));
   });
@@ -684,7 +684,7 @@ describe('platform billing routes', () => {
 
     expect(res.status).toBe(200);
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
-      successUrl: 'https://staging.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success',
+      successUrl: 'https://staging.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success&session_id={CHECKOUT_SESSION_ID}',
       cancelUrl: 'https://staging.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=canceled',
     }));
   });
@@ -708,7 +708,7 @@ describe('platform billing routes', () => {
 
     expect(res.status).toBe(200);
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
-      successUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success',
+      successUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=success&checkout=success&session_id={CHECKOUT_SESSION_ID}',
       cancelUrl: 'https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&billing=canceled',
     }));
   });

@@ -17,6 +17,12 @@ jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn()
 const mockSendMessage = jest.fn();
 const mockPickPhotos = jest.fn();
 const mockCancelRun = jest.fn();
+const mockRetryTurn = jest.fn();
+const mockReloadChat = jest.fn();
+let mockRetryPending = false;
+let mockRetryFailed = false;
+let mockRetried: unknown;
+let mockChatReadFailed = false;
 const mockStartDraftChat = jest.fn();
 const mockPush = jest.fn();
 let mockBotSnapshot: unknown = null;
@@ -53,6 +59,8 @@ jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
     detail: mockDetail,
     computer: { handle: "amin", runtimeSlot: "primary", gatewayPath: "/vm/amin" },
     refresh: jest.fn(),
+    isError: mockChatReadFailed,
+    reload: mockReloadChat,
   }),
 }));
 jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ chats: mockChats }) }));
@@ -74,6 +82,11 @@ jest.mock("@expo/ui", () => {
 jest.mock("@/lib/chat-attachment-picker", () => ({
   pickPhotos: (...args: unknown[]) => mockPickPhotos(...args),
   pickFiles: jest.fn(),
+}));
+jest.mock("@/lib/queries/use-retry-chat-turn", () => ({
+  useRetryChatTurn: () => ({
+    mutate: mockRetryTurn, isPending: mockRetryPending, isError: mockRetryFailed, variables: mockRetried,
+  }),
 }));
 jest.mock("@/lib/queries/use-cancel-run", () => ({
   useCancelRun: () => ({ mutate: mockCancelRun, isPending: mockCancelPending }),
@@ -152,6 +165,12 @@ afterEach(() => {
   mockCancelRun.mockReset();
   mockStartDraftChat.mockReset();
   mockPush.mockReset();
+  mockRetryTurn.mockReset();
+  mockReloadChat.mockReset();
+  mockRetryPending = false;
+  mockRetryFailed = false;
+  mockRetried = undefined;
+  mockChatReadFailed = false;
 });
 
 describe("chat screen: new chat", () => {
@@ -534,5 +553,145 @@ describe("chat screen: an agent's chat", () => {
 
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText("Agent model")).toBeTruthy();
+  });
+});
+
+describe("chat screen: recovering from failures", () => {
+  const at = "2026-09-09T00:00:00.000Z";
+  const prompt = { id: "msg_1", chatId: "chat_habits", role: "user", state: "committed", seq: 1,
+    parts: [{ type: "text", text: "Build the habit tracker" }], createdAt: at };
+  const turn = { id: "cturn_1", chatId: "chat_habits", clientRequestId: "req_first", inputMessageId: "msg_1",
+    baseMessageSeq: 0, status: "failed", createdAt: at, updatedAt: at };
+  const failedRun = { id: "run_failed", chatId: "chat_habits", turnId: "cturn_1", attempt: 1, status: "failed",
+    selection: { model: "sonnet" }, createdAt: at, updatedAt: at, startedAt: at, completedAt: at };
+  const connectionLost = { id: "act_error", type: "run.error", runId: "run_failed", sequence: 3, occurredAt: at,
+    error: { code: "service_unavailable", safeMessage: "Connection lost. Reconnect or try again.", retryable: true,
+      recoveryActions: ["retry"] } };
+
+  function typeAndSend(text: string) {
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), text);
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+  }
+
+  /** Settles the latest send as the mutation would. */
+  function failLatestSend() {
+    const options = mockSendMessage.mock.calls.at(-1)![1] as { onError: (error: Error) => void };
+    act(() => options.onError(new Error("Could not send message. Try again.")));
+  }
+
+  it("shows the chat loading until it has been read, and sends nothing to it meanwhile", () => {
+    mockActiveChatId = "chat_habits";
+    mockDetail = null;
+    mockChats = [{ chat: { id: "chat_habits", title: "Habit tracker app" } }];
+    render(<ChatScreen />);
+
+    expect(screen.getByLabelText("Loading chat")).toBeTruthy();
+    expect(screen.getByRole("header", { name: "Habit tracker app" })).toBeTruthy();
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
+    const send = screen.getByRole("button", { name: "Send message" });
+    expect(send.props.accessibilityState).toMatchObject({ disabled: true });
+    fireEvent.press(send);
+    expect(mockSendMessage).not.toHaveBeenCalled();
+  });
+
+  it("says a chat that could not be read is unavailable, and reads it again on request", () => {
+    mockActiveChatId = "chat_habits";
+    mockDetail = null;
+    mockChatReadFailed = true;
+    const view = render(<ChatScreen />);
+
+    expect(screen.getByRole("alert", { name: "Chat unavailable" })).toBeTruthy();
+    fireEvent.press(screen.getByRole("button", { name: "Try again" }));
+    expect(mockReloadChat).toHaveBeenCalledTimes(1);
+
+    // Read again, the chat is loading once more until it answers.
+    mockChatReadFailed = false;
+    view.rerender(<ChatScreen />);
+    expect(screen.getByLabelText("Loading chat")).toBeTruthy();
+  });
+
+  it("keeps a message that could not be sent in the chat, sends it again as the same send, or takes it back to edit", () => {
+    openChat();
+    render(<ChatScreen />);
+    typeAndSend("Ship it");
+    failLatestSend();
+
+    expect(screen.getByText("Ship it")).toBeTruthy();
+    expect(screen.getByRole("alert", { name: "Not sent" })).toBeTruthy();
+    expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
+
+    fireEvent.press(screen.getByRole("button", { name: "Retry sending" }));
+    expect(mockSendMessage).toHaveBeenCalledTimes(2);
+    const [first, second] = mockSendMessage.mock.calls.map((call) => call[0] as { turnRequestId: string; text: string });
+    expect(second).toMatchObject({ chatId: "chat_habits", text: "Ship it", turnRequestId: first!.turnRequestId });
+    expect(screen.queryByText("Not sent")).toBeNull();
+
+    failLatestSend();
+    fireEvent.press(screen.getByRole("button", { name: "Edit message" }));
+    expect(screen.queryByText("Not sent")).toBeNull();
+    expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
+  });
+
+  it("holds the Retry of a message that was not sent while a run is active", () => {
+    openChat();
+    const view = render(<ChatScreen />);
+    typeAndSend("Ship it");
+    failLatestSend();
+
+    mockDetail = chatDetail({ runs: [runningRun] });
+    view.rerender(<ChatScreen />);
+    const retry = screen.getByRole("button", { name: "Retry sending" });
+    expect(retry.props.accessibilityState).toMatchObject({ disabled: true });
+    fireEvent.press(retry);
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+
+    // Once the run is over, it can be sent again.
+    mockDetail = chatDetail({ runs: [finishedRun] });
+    view.rerender(<ChatScreen />);
+    fireEvent.press(screen.getByRole("button", { name: "Retry sending" }));
+    expect(mockSendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers to run a failed turn again, at the chat's revision, as the same retry when pressed again", () => {
+    openChat({ messages: [prompt], turns: [turn], runs: [failedRun], activities: [connectionLost] });
+    render(<ChatScreen />);
+
+    expect(screen.getByText("Agent work failed")).toBeTruthy();
+    expect(screen.getByText("Connection lost. Reconnect or try again.")).toBeTruthy();
+    fireEvent.press(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.press(screen.getByRole("button", { name: "Retry" }));
+
+    expect(mockRetryTurn).toHaveBeenCalledTimes(2);
+    const [first, second] = mockRetryTurn.mock.calls.map((call) => call[0]);
+    expect(first).toMatchObject({ chatId: "chat_habits", turnId: "cturn_1", baseRevision: 4 });
+    expect(first.clientRequestId).toMatch(/^req_/);
+    expect(second.clientRequestId).toBe(first.clientRequestId);
+  });
+
+  it("says when a retry did not go through", () => {
+    openChat({ messages: [prompt], turns: [turn], runs: [failedRun], activities: [connectionLost] });
+    mockRetryFailed = true;
+    mockRetried = { chatId: "chat_habits", turnId: "cturn_1" };
+    render(<ChatScreen />);
+
+    expect(screen.getByRole("alert", { name: "Could not retry. Try again." })).toBeTruthy();
+  });
+
+  it("keeps Retry off while a message is on its way", () => {
+    openChat({ messages: [prompt], turns: [turn], runs: [failedRun], activities: [connectionLost] });
+    render(<ChatScreen />);
+    typeAndSend("Try something else");
+
+    expect(screen.getByRole("button", { name: "Retry" }).props.accessibilityState).toMatchObject({ disabled: true });
+  });
+
+  it("does not offer Retry for a failure a retry does not help", () => {
+    const modelGone = { ...connectionLost, error: { code: "model_unavailable", safeMessage: "Model unavailable. Choose another model.",
+      retryable: false, recoveryActions: ["select_provider"] } };
+    openChat({ messages: [prompt], turns: [turn], runs: [failedRun], activities: [modelGone] });
+    render(<ChatScreen />);
+
+    expect(screen.getByText("Model unavailable. Choose another model.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });

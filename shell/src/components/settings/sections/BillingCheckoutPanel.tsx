@@ -138,6 +138,7 @@ export function BillingCheckoutPanel({
           regionSlug,
           developerTools,
           attribution: getCheckoutAttribution(),
+          googleAnalytics: (window as Window & { matrixGetGoogleAttribution?: () => unknown }).matrixGetGoogleAttribution?.(),
           ...(checkoutRuntimeSlot ? { runtimeSlot: checkoutRuntimeSlot } : {}),
           ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
         }),
