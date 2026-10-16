@@ -13,6 +13,7 @@ const limits={unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,h
 const electronFiles=['file-download','canonical-input','provider-auth-terminal','agents-providers-figma','agents-providers-button-contrast','provider-settings-idle','project-folder-picker-layout','terminal-file-drop','terminal-snapshot','release-alignment','chat-title-layout','terminal-clipboard'].map(name=>`tests/e2e/desktop/${name}.e2e.test.ts`).concat('tests/e2e/provider-authorization-electron.e2e.test.ts').sort();
 const reports=['unit','general','grid','electron-download','electron-input','electron-providers','electron-folder','electron-clipboard','electron-drop','electron-snapshot','electron-release','electron-title'];
 const integer=value=>Number.isSafeInteger(value)&&value>=0;
+const disconnectClass=(code,state,bytes,grantSent)=>code===null?'terminated':state==='initial'&&bytes===0&&!grantSent?(code===255?'ssh_unclassified':'remote_rejected'):'control_incomplete';
 export async function writeSshPrivateKey(path,key){
  if(typeof key!=='string'||!key||key.length>16384)throw new Error('Pinned SSH connection is not configured');
  // Secret transport may trim the PEM/OpenSSH final newline. Preserve every
@@ -104,7 +105,7 @@ export async function runDedicatedLeaseSession(child,envelope,options){
     if(reason){await revalidate({type:'transport-unavailable'},true);terminal=transportOutcome(envelope,digest,reason);}
     const unavailable=(code===76&&terminal?.outcome==='infrastructure-unavailable')||
      (code===255&&terminal?.outcome==='transport-unavailable');
-    if((code!==0&&!unavailable)||buffer||!terminal){finish(new Error('Linux disconnected without a complete trusted receipt'));return;}
+    if((code!==0&&!unavailable)||buffer||!terminal){finish(new Error(`Linux disconnected without a complete trusted receipt (phase=${state},class=${disconnectClass(code,state,bytes,grantSent)})`));return;}
     clearTimeout(timer);options.signal?.removeEventListener('abort',abort);child.stdin.end();resolve(terminal);
    }).catch(finish);
   });

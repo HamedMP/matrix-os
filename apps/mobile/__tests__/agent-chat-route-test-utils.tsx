@@ -96,6 +96,9 @@ export function chatDetail(overrides: Record<string, unknown> = {}) {
 export const runningRun = { id: "run_live", turnId: "cturn_2", status: "running", selection: { model: "auto" },
   createdAt: "2026-09-09T00:01:00.000Z", startedAt: "2026-09-09T00:01:00.000Z" };
 
+/** Reads the chat's detail again. */
+export const chatReload = jest.fn();
+
 /** What the mocked hooks answer with. `reset` puts it back before each test. */
 export const state = {
   agentId: "bot_research1",
@@ -104,6 +107,8 @@ export const state = {
   ensure: { isError: false } as { data?: string; variables?: string; isError: boolean },
   archivePending: false,
   detail: undefined as unknown,
+  /** Reading the chat's detail failed. */
+  detailFailed: false,
   botSnapshot: null as unknown,
   botError: false,
   /** Every chat id the chat's detail and the agent's status were read for. */
@@ -130,6 +135,7 @@ export function reset() {
   state.ensure = { isError: false };
   state.archivePending = false;
   state.detail = chatDetail();
+  state.detailFailed = false;
   state.botSnapshot = snapshot();
   state.botError = false;
   state.detailChatIds.length = 0;
@@ -199,6 +205,8 @@ export function chatDetailModule() {
         detail: chatId ? state.detail : null,
         computer: { handle: "amin", runtimeSlot: "primary", gatewayPath: "/vm/amin" },
         refresh: jest.fn(),
+        isError: state.detailFailed,
+        reload: chatReload,
       };
     },
   };
