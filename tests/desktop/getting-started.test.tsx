@@ -169,6 +169,22 @@ describe("GettingStartedPopover", () => {
     vi.unstubAllGlobals();
   });
 
+  it("replaces Help with the checklist and lets Help reopen without overlapping", async () => {
+    render(<GettingStartedPopover helpMenu={{ onSupport: vi.fn(), discordIcon: <span /> }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
+    fireEvent.click(await screen.findByRole("button", { name: "Getting started — 3 of 5" }));
+    expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Support chat" })).toBeNull();
+    expect(useUi.getState().rendererOverlayCount).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
+    expect(screen.getByRole("dialog", { name: "Help" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Getting started —/ }));
+    expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
+  });
+
   it("stays open until the title-bar button is clicked again", async () => {
     render(<><button type="button">Outside</button><GettingStartedPopover /></>);
 

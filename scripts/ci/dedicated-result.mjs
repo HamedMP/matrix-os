@@ -17,13 +17,22 @@ const positiveId = value => Number.isSafeInteger(value) && value > 0;
 function parseEvidence(check, expected, latest) {
   if (!positiveId(check.id) || check.name !== 'Dedicated CI Results' || check.head_sha !== expected.headSha ||
       check.app?.slug !== 'github-actions' || !['queued','in_progress','completed'].includes(check.status)) return null;
+  const summary = check.output?.summary;
+  if (typeof summary !== 'string' || summary.length > 4096) return null;
+  let evidence;
+  try { evidence = JSON.parse(summary); }
+  catch (error) { if (error instanceof SyntaxError) return null; throw error; }
   const repositoryUrl = `${expected.serverUrl}/${expected.owner}/${expected.repo}`;
   let runId;
   if (check.details_url === `${repositoryUrl}/runs/${check.id}`) {
-    // GitHub normalizes manually created Actions checks to their own URL.
-    // This check is only an index: discovery already authenticated latest,
-    // and the immutable receipt must bind that exact controller/run attempt.
+    // Actions can place manually created checks in a different suite from the
+    // creating workflow. Its explicit run ID is only an index: independently
+    // authenticate that exact controller/attempt, then require its immutable
+    // artifact before awarding any coverage. Legacy indexes retain suite proof.
     if (!positiveId(latest?.id)) return null;
+    if (evidence?.controllerRunId !== undefined) {
+      if (!positiveId(evidence.controllerRunId) || evidence.controllerRunId !== latest.id) return null;
+    } else if (!positiveId(check.check_suite?.id) || check.check_suite.id !== latest.check_suite_id) return null;
     runId = latest.id;
   } else {
     const prefix = `${repositoryUrl}/actions/runs/`;
@@ -32,11 +41,8 @@ function parseEvidence(check, expected, latest) {
     if (!/^[1-9][0-9]{0,15}$/.test(id) || !positiveId(Number(id))) return null;
     runId = Number(id);
   }
-  const summary = check.output?.summary;
-  if (typeof summary !== 'string' || summary.length > 4096) return null;
-  let evidence;
-  try { evidence = JSON.parse(summary); }
-  catch (error) { if (error instanceof SyntaxError) return null; throw error; }
+  if (evidence?.controllerRunId !== undefined &&
+      (!positiveId(evidence.controllerRunId) || evidence.controllerRunId !== runId)) return null;
   if (!evidence || evidence.schemaVersion !== 3 || evidence.suite !== 'qualification' ||
       evidence.sourceSha !== expected.sourceSha || evidence.headSha !== expected.headSha ||
       evidence.baseSha !== expected.baseSha || evidence.baseRef !== expected.baseRef ||
@@ -58,8 +64,8 @@ function trustedController(run, expected, workflow) {
   return positiveId(run.run_attempt)&&authenticatedControllerRun(run,{owner:expected.owner,repo:expected.repo},expected,workflow,expected.headRef);
 }
 
-async function newestRequest(github,repo,expected,workflow){
- return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow),{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef});
+async function newestRequest(github,repo,expected,workflow,beforeId){
+ return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow)&&(!beforeId||run.id<beforeId),{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef});
 }
 
 async function newestController(github, repo, expected, workflow, latest) {
@@ -87,11 +93,24 @@ async function newestController(github, repo, expected, workflow, latest) {
   return {...selected,run};
 }
 
+async function newestResultController(github,repo,expected,workflow){
+ let latest=await newestRequest(github,repo,expected,workflow);
+ for(let skipped=0;latest;skipped++){
+  if(latest.status==='completed'&&latest.conclusion!=='success')return{latest};
+  const selected=await newestController(github,repo,expected,workflow,latest);
+  if(selected||latest.status!=='completed')return{latest,selected};
+  if(skipped>=9)throw new Error('Completed controller history without result exceeds bounded coverage');
+  latest=await newestRequest(github,repo,expected,workflow,latest.id);
+ }
+ return{};
+}
+
 export async function waitForDedicatedResult(github,expected,options={}) {
   const maximum=options.maxMilliseconds??3_900_000;
   if(!Number.isSafeInteger(maximum)||maximum<1||maximum>3_900_000)throw new Error('Invalid waiter deadline');
+  const started=performance.now(),remainingMilliseconds=()=>Math.max(0,maximum-(performance.now()-started));
   const aborter=new AbortController();let timer;
-  try{return await Promise.race([waitWithinDeadline(github,expected,{...options,signal:aborter.signal}),new Promise((_,reject)=>{timer=setTimeout(()=>{aborter.abort();reject(new Error('No verified dedicated Linux qualification completed within the bounded wait'));},maximum);timer.unref?.();})]);}
+  try{return await Promise.race([waitWithinDeadline(github,expected,{...options,signal:aborter.signal,remainingMilliseconds}),new Promise((_,reject)=>{timer=setTimeout(()=>{aborter.abort();reject(new Error('No verified dedicated Linux qualification completed within the bounded wait'));},maximum);timer.unref?.();})]);}
   finally{clearTimeout(timer);aborter.abort();}
 }
 async function waitWithinDeadline(github, expected, options={}) {
@@ -102,7 +121,7 @@ async function waitWithinDeadline(github, expected, options={}) {
       typeof expected.headRef!=='string' || !expected.headRef) {
     throw new Error('Invalid dedicated qualification revision');
   }
-  const api=createConditionalGithub(github,{authenticationContext:`requester-${expected.requestingRunId}-${expected.requestingRunAttempt}`,signal:options.signal});github=api.github;
+  const api=createConditionalGithub(github,{authenticationContext:`requester-${expected.requestingRunId}-${expected.requestingRunAttempt}`,signal:options.signal,waiterBackoff:{remainingMilliseconds:options.remainingMilliseconds}});github=api.github;
   const maxAttempts=options.maxAttempts ?? 130;
   if(!Number.isSafeInteger(maxAttempts) || maxAttempts<1 || maxAttempts>130)throw new Error('Invalid wait bound');
   const delay=options.delay ?? (()=>new Promise(resolve=>setTimeout(resolve,30_000)));
@@ -122,11 +141,10 @@ async function waitWithinDeadline(github, expected, options={}) {
   for(let attempt=0;attempt<maxAttempts;attempt++) {
     const currentSource=await verifyCurrentDedicatedSource(github,repo,expected);
     await verifyMainRequester(currentSource);
-    const latest=await newestRequest(github,repo,expected,workflow);
+    const {latest,selected}=await newestResultController(github,repo,expected,workflow);
     if(latest?.status==='completed' && latest.conclusion!=='success') {
       throw new Error('Verified dedicated Linux qualification failed');
     }
-    const selected=await newestController(github,repo,expected,workflow,latest);
     if(!selected&&options.admissionAttempts&&attempt+1>=options.admissionAttempts)throw new Error('No Linux controller admitted within the admission window');
     if(selected?.run.status==='completed') {
       const {check,evidence,run}=selected;
@@ -145,12 +163,12 @@ async function waitWithinDeadline(github, expected, options={}) {
             if(dispatch.conclusion!=='success')throw new Error('Verified dedicated Linux qualification failed');
             const receipt=await downloadControllerReceipt(github,repo,provenance);
             const infrastructure=verifyControllerArtifact(receipt,evidence,expected,run,currentSource.mergeParents,check);
-            const current=await newestRequest(github,repo,expected,workflow);
+            const {latest:current,selected:currentSelected}=await newestResultController(github,repo,expected,workflow);
             if(current?.status==='completed' && current.conclusion!=='success') {
               throw new Error('Verified dedicated Linux qualification failed');
             }
             // A retry may have been queued while artifacts/jobs were fetched.
-            if(current?.id===run.id && current.run_attempt===run.run_attempt &&
+            if(currentSelected?.run.id===run.id && current?.id===run.id && current.run_attempt===run.run_attempt &&
                 current.head_sha===run.head_sha && current.status==='completed' && current.conclusion==='success') {
               await verifyMainRequester(await verifyCurrentDedicatedSource(github,repo,expected));
               options.metrics?.(api.metrics());

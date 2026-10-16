@@ -32,6 +32,9 @@ jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
 jest.mock("@/lib/queries/use-send-chat-message", () => ({
   useSendChatMessage: () => ({ mutate: mockRoute.shell.sendMessage, isPending: false }),
 }));
+jest.mock("@/lib/queries/use-retry-chat-turn", () => ({
+  useRetryChatTurn: () => ({ mutate: jest.fn(), isPending: false, isError: false, variables: undefined }),
+}));
 jest.mock("@/lib/queries/use-cancel-run", () => ({
   useCancelRun: () => ({ mutate: mockRoute.shell.cancelRun, isPending: false }),
 }));

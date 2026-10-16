@@ -22,6 +22,34 @@ describe('infrastructure-only exact-source hosted fallback',()=>{
  it('never infers infrastructure from a generic SSH255 or missing receipt',async()=>{
   const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000});pending.catch(()=>{});c.emit('close',255);await expect(pending).rejects.toThrow();
  });
+ it.each([
+  [1,'remote_rejected'],
+  [255,'ssh_unclassified'],
+  [null,'terminated'],
+ ])('reports only coarse pre-control disconnect class for exit %s',async(code,classification)=>{
+  const c=client(),pending=runDedicatedLeaseSession(c,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000,transportHost:'ci.example.invalid'});pending.catch(()=>{});
+  c.stderr.write('private remote diagnostic must not escape');c.emit('close',code);
+  const error=await pending.catch(value=>value);
+  expect(error).toEqual(expect.objectContaining({message:`Linux disconnected without a complete trusted receipt (phase=initial,class=${classification})`}));
+  expect(error.message).not.toContain('private remote diagnostic');
+ });
+ it('classifies disconnects after queued, granted, and partial control progress',async()=>{
+  const queued=client(),queuedPending=runDedicatedLeaseSession(queued,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000,transportHost:'ci.example.invalid'});queuedPending.catch(()=>{});
+  queued.stdout.write(JSON.stringify({...proof,type:'queued'})+'\n');await new Promise(resolve=>setTimeout(resolve,0));queued.emit('close',1);
+  await expect(queuedPending).rejects.toThrow('Linux disconnected without a complete trusted receipt (phase=queued,class=control_incomplete)');
+
+  const granted=client(),grantedPending=runDedicatedLeaseSession(granted,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000,transportHost:'ci.example.invalid'});grantedPending.catch(()=>{});
+  granted.stdout.write(JSON.stringify({...proof,type:'queued'})+'\n');granted.stdout.write(JSON.stringify({...proof,type:'locked',challenge:'3'.repeat(64),deadlineUnixMs:Date.now()+30000})+'\n');await new Promise(resolve=>setTimeout(resolve,0));granted.emit('close',1);
+  await expect(grantedPending).rejects.toThrow('Linux disconnected without a complete trusted receipt (phase=granted,class=control_incomplete)');
+
+  const partial=client(),partialPending=runDedicatedLeaseSession(partial,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000,transportHost:'ci.example.invalid'});partialPending.catch(()=>{});
+  partial.stdout.write('{');partial.emit('close',1);
+  await expect(partialPending).rejects.toThrow('Linux disconnected without a complete trusted receipt (phase=initial,class=control_incomplete)');
+
+  const terminated=client(),terminatedPending=runDedicatedLeaseSession(terminated,envelope,{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000,transportHost:'ci.example.invalid'});terminatedPending.catch(()=>{});
+  terminated.stdout.write(JSON.stringify({...proof,type:'queued'})+'\n');await new Promise(resolve=>setTimeout(resolve,0));terminated.emit('close',null);
+  await expect(terminatedPending).rejects.toThrow('Linux disconnected without a complete trusted receipt (phase=queued,class=terminated)');
+ });
 });
 
 describe('pinned local SSH unavailable before any grant',()=>{
