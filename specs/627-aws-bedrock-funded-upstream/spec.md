@@ -101,7 +101,13 @@ never authority.
    models are exposed through Matrix Pi's OpenAI-compatible route and excluded
    from the Claude SDK's Anthropic Messages instance. Settings clients must
    opt in to the preference field and matching mutation together; legacy
-   clients receive neither.
+   clients receive neither. Raw Provider V3 reads negotiate the same additive
+   preference truth independently so older strict provider readers also keep
+   their historical response shape.
+   If route readiness refreshes Bedrock health after the concurrent funding
+   summary was read, the gateway re-reads bounded platform truth and requires
+   an exact effective Bedrock model match before exposing a custom model or
+   choosing the OpenAI-compatible request protocol.
 3. The relay calculates a conservative liability ceiling using the maximum
    configured input and requested output bounds plus a 20% margin. Pricing must
    be inside its reviewed time window.
