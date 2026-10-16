@@ -3,7 +3,8 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { DatabaseSection } from "../../shell/src/components/settings/sections/DatabaseSection";
-vi.mock("@clerk/nextjs",()=>({useAuth:()=>({userId:"owner",sessionId:"session"})}));
+// pnpm can give the Web package a different peer-resolved Clerk installation.
+vi.mock("../../shell/node_modules/@clerk/nextjs",()=>({useAuth:()=>({userId:"owner",sessionId:"session"})}));
 vi.mock("../../shell/src/lib/self-host-mode",()=>({isSelfHostedRuntime:()=>false}));
 vi.mock("@matrix-os/ui",async()=>({
   ...await import("../../packages/ui/src/database-access/client"),
