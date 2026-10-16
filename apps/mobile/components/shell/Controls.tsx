@@ -188,6 +188,7 @@ interface ListRowProps {
   action?: ReactNode;
   accessibilityLabel?: string;
   onPress?: () => void;
+  onLongPress?: () => void;
 }
 
 /** Rows 12pt apart. The space is a gap rather than views between them, so a row that comes or goes moves alone. */
@@ -227,6 +228,7 @@ export function ListRow({
   action,
   accessibilityLabel,
   onPress,
+  onLongPress,
 }: ListRowProps) {
   const { theme } = useUnistyles();
   const resolvedAccent = accent ?? theme.v2.appColors.soft;
@@ -276,6 +278,7 @@ export function ListRow({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? `Open ${title}`}
       onPress={onPress}
+      onLongPress={onLongPress}
       pressedScale={motion.rowPressScale}
       style={styles.row}
     >

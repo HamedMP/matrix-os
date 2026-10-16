@@ -9,7 +9,7 @@ import type { ChatMenuActionId, ChatMenuTriggerProps } from "./chat-menu-actions
 const SYSTEM_IMAGES = {
   "copy-text": "doc.on.doc",
   "copy-chat-id": "number",
-} satisfies Record<Exclude<ChatMenuActionId, "share">, ComponentProps<typeof Button>["systemImage"]>;
+} satisfies Record<Exclude<ChatMenuActionId, "share" | "item">, ComponentProps<typeof Button>["systemImage"]>;
 
 /**
  * iOS's chat menu: the system context menu. A long press lifts what is hosted
@@ -54,17 +54,29 @@ export function ChatMenuTrigger({
       <Host matchContents={hug ? true : { vertical: true }} ignoreSafeArea="all">
         <ContextMenu>
           <ContextMenu.Items>
-            {actions.map((action) => (action.id === "share" ? (
+            {actions.map((action) => {
               // The system's own Share row: its label, and the share sheet it opens.
-              <ShareLink key={action.id} item={action.text} />
-            ) : (
-              <Button
-                key={action.id}
-                label={action.label}
-                systemImage={SYSTEM_IMAGES[action.id]}
-                onPress={action.onSelect}
-              />
-            )))}
+              if (action.id === "share") return <ShareLink key={action.id} item={action.text} />;
+              if (action.id === "item") {
+                return (
+                  <Button
+                    key={action.key}
+                    label={action.label}
+                    systemImage={action.systemImage}
+                    role={action.destructive ? "destructive" : undefined}
+                    onPress={action.onSelect}
+                  />
+                );
+              }
+              return (
+                <Button
+                  key={action.id}
+                  label={action.label}
+                  systemImage={SYSTEM_IMAGES[action.id]}
+                  onPress={action.onSelect}
+                />
+              );
+            })}
           </ContextMenu.Items>
           <ContextMenu.Trigger>
             {/* The lifted preview takes these corners rather than the system's own. */}

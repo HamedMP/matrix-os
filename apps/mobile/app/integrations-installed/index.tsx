@@ -1,13 +1,5 @@
 import { useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import CheckmarkCircle02Icon from "@hugeicons/core-free-icons/CheckmarkCircle02Icon";
 import Delete02Icon from "@hugeicons/core-free-icons/Delete02Icon";
@@ -21,12 +13,12 @@ import {
   ListRowStack,
 } from "@/components/shell/Controls";
 import { Page } from "@/components/shell/Page";
-import { Icon, ListItemMotion, SettleIn, Spacer } from "@/components/ui";
+import { ConfirmDialog, Icon, ListItemMotion, SettleIn } from "@/components/ui";
 import { useComputerIntegrations } from "@/lib/queries/use-computer-integrations";
 import type { ConnectedIntegration, IntegrationService } from "@/lib/requests";
+import { showToast } from "@/lib/toast";
 
 export default function InstalledIntegrationsScreen() {
-  const { theme } = useUnistyles();
   const [pendingDelete, setPendingDelete] = useState<ConnectedIntegration | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const pendingDeleteSwipeRef = useRef<(() => void) | null>(null);
@@ -42,6 +34,7 @@ export default function InstalledIntegrationsScreen() {
     deletingConnectionId = null,
   } = useComputerIntegrations();
   const servicesById = new Map(available.map((service) => [service.id, service]));
+
 
   const refresh = async (connection: ConnectedIntegration) => {
     setActionError(null);
@@ -63,6 +56,7 @@ export default function InstalledIntegrationsScreen() {
     setActionError(null);
     try {
       await deleteConnection(connectionId);
+      showToast("Connection deleted");
     } catch {
       setActionError("Could not delete connection. Try again.");
     } finally {
@@ -112,14 +106,12 @@ export default function InstalledIntegrationsScreen() {
         </SettleIn>
       ) : null}
 
-      <DeleteConnectionPopup
+      <DeleteConnectionDialog
         connection={pendingDelete}
-        service={pendingDelete
-          ? servicesById.get(pendingDelete.service) ?? fallbackService(pendingDelete.service)
-          : null}
+        serviceName={(connection) => (servicesById.get(connection.service) ?? fallbackService(connection.service)).name}
+        busy={isMutating}
         error={actionError}
-        isSubmitting={isMutating}
-        onClose={closeDeletePopup}
+        onCancel={closeDeletePopup}
         onConfirm={() => void confirmDelete()}
       />
     </Page>
@@ -227,93 +219,42 @@ function SwipeableConnectionRow({
   );
 }
 
-function DeleteConnectionPopup({
+/** Asks before revoking Matrix's access to a connected account. */
+function DeleteConnectionDialog({
   connection,
-  service,
+  serviceName,
+  busy,
   error,
-  isSubmitting,
-  onClose,
+  onCancel,
   onConfirm,
 }: {
   connection: ConnectedIntegration | null;
-  service: IntegrationService | null;
+  serviceName: (connection: ConnectedIntegration) => string;
+  busy: boolean;
   error: string | null;
-  isSubmitting: boolean;
-  onClose: () => void;
+  onCancel: () => void;
   onConfirm: () => void;
 }) {
-  return (
-    <Modal
-      transparent
-      animationType="fade"
-      visible={connection !== null}
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.popupOverlay}
-      >
-        <Pressable accessibilityLabel="Close delete connection popup" onPress={onClose} style={styles.popupBackdrop} />
-        <View style={styles.popupCard}>
-          <Spacer size="xl" />
-          <Text style={styles.popupTitle}>Delete connection?</Text>
-          <Spacer size="sm" />
-          <Text style={styles.popupBody}>
-            {`This revokes Matrix access to ${connection?.accountEmail ?? connection?.accountLabel ?? "this account"} in ${service?.name ?? "this service"}.`}
-          </Text>
-          {error ? (
-            <>
-              <Spacer size="sm" />
-              <Text style={styles.errorText}>{error}</Text>
-            </>
-          ) : null}
-          <Spacer size="xl" />
-          <View style={styles.popupButtons}>
-            <PopupButton label="Cancel" onPress={onClose} disabled={isSubmitting} />
-            <PopupButton
-              label="Delete"
-              accessibilityLabel="Confirm delete connection"
-              destructive
-              onPress={onConfirm}
-              disabled={isSubmitting}
-            />
-          </View>
-          <Spacer size="xl" />
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
+  // The connection it last asked about, kept while it fades away.
+  const [shown, setShown] = useState(connection);
+  if (connection && connection !== shown) setShown(connection);
+  const drawn = connection ?? shown;
+  const account = drawn?.accountEmail ?? drawn?.accountLabel ?? "this account";
 
-function PopupButton({
-  label,
-  accessibilityLabel,
-  destructive = false,
-  disabled = false,
-  onPress,
-}: {
-  label: string;
-  accessibilityLabel?: string;
-  destructive?: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.popupButton,
-        destructive ? styles.popupButtonDestructive : styles.popupButtonNeutral,
-        pressed && styles.pressed,
-        disabled && styles.disabled,
-      ]}
-    >
-      <Text style={[styles.popupButtonText, destructive && styles.popupButtonTextDestructive]}>{label}</Text>
-    </Pressable>
+    <ConfirmDialog
+      visible={connection !== null}
+      title="Delete connection?"
+      message={`This revokes Matrix access to ${account} in ${drawn ? serviceName(drawn) : "this service"}.`}
+      confirmLabel="Delete"
+      confirmAccessibilityLabel="Confirm delete connection"
+      dismissAccessibilityLabel="Close delete connection popup"
+      destructive
+      busy={busy}
+      error={error}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
   );
 }
 
@@ -359,71 +300,6 @@ const styles = StyleSheet.create((theme) => ({
   deleteButton: {
     backgroundColor: theme.v2.mode === "dark" ? theme.v2.palette.coral[900] : theme.v2.palette.coral[50],
     borderColor: theme.v2.mode === "dark" ? theme.v2.palette.coral[700] : theme.v2.palette.coral[200],
-  },
-  popupOverlay: {
-    flex: 1,
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-  popupBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(13, 12, 12, 0.36)",
-  },
-  popupCard: {
-    width: "100%",
-    maxWidth: 420,
-    alignSelf: "center",
-    paddingHorizontal: 20,
-    backgroundColor: theme.v2.palette.neutral[50],
-    borderWidth: 1,
-    borderColor: theme.v2.palette.neutral[300],
-    borderRadius: 20,
-    shadowColor: theme.v2.palette.neutral[900],
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 12,
-  },
-  popupTitle: {
-    fontFamily: theme.v2.fonts.semibold,
-    fontSize: 19,
-    color: theme.v2.appColors.ink,
-  },
-  popupBody: {
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 14,
-    lineHeight: 20,
-    color: theme.v2.appColors.muted,
-  },
-  popupButtons: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    columnGap: 8,
-  },
-  popupButton: {
-    minWidth: 88,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderRadius: 12,
-  },
-  popupButtonNeutral: {
-    backgroundColor: theme.v2.palette.neutral[50],
-    borderColor: theme.v2.palette.neutral[300],
-  },
-  popupButtonDestructive: {
-    backgroundColor: theme.v2.palette.coral[700],
-    borderColor: theme.v2.palette.coral[700],
-  },
-  popupButtonText: {
-    fontFamily: theme.v2.fonts.semibold,
-    fontSize: 14,
-    color: theme.v2.appColors.ink,
-  },
-  popupButtonTextDestructive: {
-    color: theme.v2.palette.neutral[50],
   },
   pressed: {
     opacity: 0.7,

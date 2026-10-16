@@ -1,7 +1,8 @@
 import { useEffect } from "react";
-import { AccessibilityInfo, Text, View } from "react-native";
+import { AccessibilityInfo, Platform, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { FullWindowOverlay } from "react-native-screens";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { useReduceMotion } from "@/lib/use-reduce-motion";
@@ -20,19 +21,25 @@ const TOAST_GAP = 8;
 
 /**
  * Draws the toast from `showToast` near the top of the screen, over whatever
- * is there and without taking its taps. Mounted once, at the root: it sits
- * above the tabs and the side panel, under screens shown as native modals.
+ * is there and without taking its taps. Mounted once, at the root, above the
+ * tabs and the side panel.
  */
 export function ToastHost() {
   const toast = useToast();
   const insets = useSafeAreaInsets();
 
-  return (
-    <View pointerEvents="box-none" style={[styles.host, { top: insets.top + TOAST_GAP }]}>
+  const host = (
+    <View testID="toast-host" pointerEvents="box-none" style={[styles.host, { top: insets.top + TOAST_GAP }]}>
       {/* A new toast starts its own fade rather than taking over one half done. */}
       {toast ? <ToastPill key={toast.id} toast={toast} /> : null}
     </View>
   );
+  // iOS draws a native modal over the whole app, this host included. While a
+  // toast shows, it goes in an overlay above the window's contents, put there
+  // as it appears so it lands above a modal already open. The overlay takes no
+  // taps of its own.
+  if (toast && Platform.OS === "ios") return <FullWindowOverlay>{host}</FullWindowOverlay>;
+  return host;
 }
 
 function ToastPill({ toast }: { toast: Toast }) {
