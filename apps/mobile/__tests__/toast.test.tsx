@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react-native";
 import * as Haptics from "expo-haptics";
-import { AccessibilityInfo, StyleSheet } from "react-native";
-import type { ReactTestRendererJSON } from "react-test-renderer";
+import { AccessibilityInfo, Platform, StyleSheet } from "react-native";
+import { FullWindowOverlay } from "react-native-screens";
 
 import { Icon } from "../components/ui/Icon";
 import { AlertIcon, CheckIcon } from "../components/ui/icons";
@@ -25,6 +25,34 @@ describe("ToastHost", () => {
 
     expect(screen.queryByTestId("toast")).toBeNull();
     expect(screen.toJSON()).toMatchObject({ props: { pointerEvents: "box-none" } });
+  });
+
+  // iOS draws a native modal (a sheet such as Installed integrations) over the
+  // whole app, this host included; a toast shown there has to go above it.
+  it("draws a toast above native modals on iOS, only while there is one", () => {
+    render(<ToastHost />);
+    expect(screen.UNSAFE_queryByType(FullWindowOverlay)).toBeNull();
+
+    act(() => showToast("Connection deleted"));
+    expect(screen.UNSAFE_getByType(FullWindowOverlay)).toBeTruthy();
+    expect(screen.getByText("Connection deleted")).toBeTruthy();
+
+    act(() => jest.advanceTimersByTime(SHOWN_FOR));
+    expect(screen.UNSAFE_queryByType(FullWindowOverlay)).toBeNull();
+  });
+
+  it("draws it in place on Android, where a modal screen is part of the app's own window", () => {
+    const platform = Platform.OS;
+    Platform.OS = "android";
+    try {
+      render(<ToastHost />);
+      act(() => showToast("Connection deleted"));
+
+      expect(screen.getByText("Connection deleted")).toBeTruthy();
+      expect(screen.UNSAFE_queryByType(FullWindowOverlay)).toBeNull();
+    } finally {
+      Platform.OS = platform;
+    }
   });
 
   it("shows a toast with a tick, says it aloud, and takes it away by itself", () => {
@@ -121,8 +149,7 @@ describe("ToastHost", () => {
 
     act(() => showToast("Text copied"));
 
-    const host = screen.toJSON() as ReactTestRendererJSON;
-    expect(StyleSheet.flatten(host.props.style)).toMatchObject({
+    expect(StyleSheet.flatten(screen.getByTestId("toast-host").props.style)).toMatchObject({
       position: "absolute",
       left: 0,
       right: 0,
