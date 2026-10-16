@@ -58,7 +58,8 @@ All under `/api/brain`, `:projectId` an id or slug, success 200 (201 for a creat
 - Startup: `startBrainServices` runs `bootstrapBrainSourceTables` (a failed group leaves only its kinds off), then
   `createBrainSourcesService`; `createBrainApiRoutes` mounts `createBrainSourcesRoutes` in place of the placeholder.
 - Cross-package: none. Config injection: the late-bound integration and account lookups (unbound: integration kinds
-  read `not_configured`), the Notes reader, chat repository and home path; no environment reads.
+  read `not_configured`), the Notes reader, chat repository, home path and `homeOwnerIds` (only the gateway's owner
+  reads its Notes and home); no environment reads.
 
 ## Failure modes
 

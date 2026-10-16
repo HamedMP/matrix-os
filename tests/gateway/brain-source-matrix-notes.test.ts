@@ -52,7 +52,9 @@ describe("matrix notes source", () => {
     await addNote(2, { title: null, content: "## First line wins\nmore", tags: "home" });
     await addNote(3, { title: "  ", content: "   ", tags: null });
     await addNote(4, { title: "Long", content: "x".repeat(80_000), tags: "work" });
-    const handler = createBrainMatrixNotesHandler({ kysely: harness.db, notes: createBrainMatrixNotesReader(appDb) });
+    const handler = createBrainMatrixNotesHandler({
+      kysely: harness.db, notes: createBrainMatrixNotesReader(appDb), ownerIds: ["owner_a"],
+    });
     const config = handler.parseConfig({});
     const { externalRef } = handler.identify(project, config);
     const sourceId = await createMatrixSource(harness, "matrix_notes", externalRef);
@@ -202,8 +204,16 @@ describe("matrix notes source", () => {
     await handler.saveConfig(matrixScope, sourceId, { folders: ["work"] });
     await handler.saveConfig(matrixScope, sourceId, { folders: ["home"] });
     expect(await handler.loadConfig(matrixScope, sourceId)).toEqual({ folders: ["home"] });
-    const ready = createBrainMatrixNotesHandler({ kysely: harness.db, notes: createBrainMatrixNotesReader(appDb) });
+    const ready = createBrainMatrixNotesHandler({
+      kysely: harness.db, notes: createBrainMatrixNotesReader(appDb), ownerIds: ["owner_a"],
+    });
     expect(await ready.availability("owner_a")).toEqual({ available: true });
+    // The notes are the gateway owner's: any other principal reads the kind as unavailable and gets no adapter.
+    expect(await ready.availability("collaborator")).toEqual({ available: false, reason: "not_configured" });
+    expect(await ready.createAdapter("collaborator", project, { folders: [] })).toEqual({ ok: false, code: "not_connected" });
+    const unowned = createBrainMatrixNotesHandler({ kysely: harness.db, notes: createBrainMatrixNotesReader(appDb) });
+    expect(await unowned.availability("owner_a")).toEqual({ available: false, reason: "not_configured" });
+    expect(await unowned.createAdapter("owner_a", project, { folders: [] })).toEqual({ ok: false, code: "not_connected" });
     await ready.saveConfig(matrixScope, sourceId, { folders: [] });
     expect(await ready.loadConfig(matrixScope, sourceId)).toEqual({ folders: [] });
     expect(noteTags("a, bb #cc,Bad_tag,dd")).toEqual(["bb", "cc", "dd"]);

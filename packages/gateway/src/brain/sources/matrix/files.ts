@@ -210,6 +210,7 @@ export function createBrainMatrixFilesHandler(
   deps: BrainMatrixFilesHandlerDeps,
 ): BrainSourceKindHandler<BrainMatrixFilesSourceConfig> {
   const now = deps.now ?? (() => new Date());
+  const owners = new Set(deps.ownerIds ?? []);
   return {
     kind: KIND,
     parseConfig: parseFilesConfig,
@@ -219,16 +220,19 @@ export function createBrainMatrixFilesHandler(
       const raw = await loadMatrixConfig(deps.kysely, KIND, scope, sourceId);
       return raw === null ? null : parseFilesConfig(raw);
     },
-    async createAdapter() {
+    async createAdapter(ownerId) {
+      if (!owners.has(ownerId)) return { ok: false, code: "not_connected" };
       return { ok: true, adapter: createMatrixFilesAdapter(deps.homePath) };
     },
     viewConfig: (config) => ({
       roots: [...config.roots], extensions: [...config.extensions], maxFileBytes: config.maxFileBytes,
     }),
-    async availability() {
-      return deps.homePath === "" ? { available: false, reason: "not_configured" } : { available: true };
+    async availability(ownerId) {
+      if (deps.homePath === "" || !owners.has(ownerId)) return { available: false, reason: "not_configured" };
+      return { available: true };
     },
-    async listOptions(_ownerId, _project, query) {
+    async listOptions(ownerId, _project, query) {
+      if (!owners.has(ownerId)) return { kind: KIND, items: [], nextCursor: null };
       const page = await folderOptions(deps.homePath, query.q, query.cursor);
       return { kind: KIND, ...page };
     },

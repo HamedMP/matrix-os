@@ -92,7 +92,7 @@ function start(extra: Partial<BrainSourcesStartDeps> = {}): Promise<BrainSources
   return startBrainSourcesService({
     kysely: harness.db, repository: harness.repository, resolver: sourcesResolver(home), hooks: recordingHooks(),
     integrations: integrations(), isConnected: async () => true, accounts: async () => ["work"], homePath: home, notes, chats,
-    capture, env: {}, ...extra,
+    homeOwnerIds: [OWNER], capture, env: {}, ...extra,
   });
 }
 

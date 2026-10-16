@@ -169,7 +169,7 @@ describe("matrix sources shared pieces", () => {
 
     // The folder picker passes file system failures that are not a missing entry through as well.
     faults.realpath.set(home, io());
-    const handler = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: home });
+    const handler = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: home, ownerIds: ["owner_a"] });
     const project = { projectId: "proj_a", slug: "a", name: "A", scope: matrixScope };
     await expect(handler.listOptions!("owner_a", project, {}, new AbortController().signal)).rejects.toThrow("io");
   });

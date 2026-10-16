@@ -4,6 +4,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { Hono } from "hono";
 import { z } from "zod/v4";
 import type { Dispatcher, DispatchContext } from "../dispatcher.js";
+import { getOptionalRequestPrincipal, isRequestPrincipalError } from "../request-principal.js";
 import type { KernelEvent } from "@matrix-os/kernel";
 
 const ApiMessageBodySchema = z.object({
@@ -82,10 +83,17 @@ export function registerMessageLayoutRoutes(options: MessageLayoutRouteOptions):
       ? { senderId: body.from.handle, senderName: body.from.displayName ?? body.from.handle }
       : undefined;
 
+    // The authenticated caller, never body.from: only a brain owner's run gets the brain tools.
+    let callerId: string | undefined;
+    try {
+      callerId = getOptionalRequestPrincipal(c)?.userId;
+    } catch (err: unknown) {
+      if (!isRequestPrincipalError(err)) throw err;
+    }
     try {
       await dispatcher.dispatch(body.text, body.sessionId, (event) => {
         events.push(event);
-      }, context);
+      }, context, undefined, callerId === undefined ? undefined : { callerId });
     } catch (err: unknown) {
       console.error("[gateway] Message dispatch failed:", err);
       return c.json({ error: "Message dispatch failed" }, 500);
