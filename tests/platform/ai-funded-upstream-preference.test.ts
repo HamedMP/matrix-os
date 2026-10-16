@@ -23,6 +23,12 @@ describe("funded AI upstream preference", () => {
   });
 
   function repository(probeReady = true) {
+    const observeBedrock = async () => ({
+      ready: probeReady,
+      checkedAt: NOW.toISOString(),
+      staleAfter: new Date(NOW.getTime() + 30_000).toISOString(),
+      ...(probeReady ? { priceValidThrough: VALID_THROUGH } : {}),
+    });
     return createAiFundedUpstreamPreferenceRepository({
       db,
       now: () => NOW,
@@ -33,12 +39,7 @@ describe("funded AI upstream preference", () => {
         bedrockModelIds: [MODEL_ID],
         validThrough: VALID_THROUGH,
       },
-      probeBedrock: async () => ({
-        ready: probeReady,
-        checkedAt: NOW.toISOString(),
-        staleAfter: new Date(NOW.getTime() + 30_000).toISOString(),
-        ...(probeReady ? { priceValidThrough: VALID_THROUGH } : {}),
-      }),
+      readCachedBedrock: observeBedrock,
     });
   }
 
@@ -154,7 +155,7 @@ describe("funded AI upstream preference", () => {
         bedrockModelIds: [MODEL_ID],
         validThrough: VALID_THROUGH,
       },
-      probeBedrock: async () => {
+      readCachedBedrock: async () => {
         observedNow += 1_000;
         return {
           ready: true,

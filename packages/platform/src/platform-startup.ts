@@ -391,7 +391,14 @@ async function startPlatformServerWithCleanup(
         db,
         config: upstreamPreferenceConfig,
         selectionSecret: process.env.AI_FUNDED_UPSTREAM_SELECTION_SECRET ?? "",
-        probeBedrock: modelId => fundedModelProbes!.probe(modelId, { upstream: "aws_bedrock" }),
+        readCachedBedrock: modelId => {
+          const deadlineAtMs = Date.now() + 1_500;
+          return fundedModelProbes!.readCached!(modelId, {
+            upstream: "aws_bedrock",
+            signal: AbortSignal.timeout(1_500),
+            deadlineAtMs,
+          });
+        },
       });
     }
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
