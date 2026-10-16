@@ -2,6 +2,7 @@ import { constants, createDecipheriv, createHash, generateKeyPairSync, privateDe
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { Kysely, PostgresDialect } from 'kysely';
 import { buildPlatformSyncVerificationToken, buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 
 const modulePath = fileURLToPath(new URL('../../scripts/ops/runtime-token-sync-initialization.ts', import.meta.url));
@@ -85,5 +86,68 @@ describe('operator prepare-only missing Sync enrollment', () => {
     const otherKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey;
     input.recipientPublicKey = otherKey.export({ type: 'spki', format: 'pem' }).toString();
     expect(() => prepare(input)).toThrow();
+  });
+});
+
+// Cross-language contract: real Node encryption and the exact protected Python decryptor.
+describe('protected initialization envelope cryptography', () => {
+  it.each(['valid', 'tampered', 'wrong-kind-version', 'wrong-recipient'])('handles %s without secret output', async mode => {
+    const prepare = await preparation();
+    const envelope = prepare(options());
+    if (mode === 'tampered') {
+      const bytes = Buffer.from(envelope.ciphertext, 'base64'); bytes[0] ^= 1;
+      envelope.ciphertext = bytes.toString('base64');
+    }
+    if (mode === 'wrong-kind-version') envelope.version = 1;
+    const recipient = mode === 'wrong-recipient' ? generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey : privateKey;
+    const { spawnSync } = await import('node:child_process');
+    const program = `import json,runpy,sys
+from pathlib import Path
+n=runpy.run_path('distro/customer-vps/funded-host-config/install.py',run_name='crypto_test')
+exec(compile(Path('distro/customer-vps/funded-host-config/sync-initialization.py').read_text(),'initialization','exec'),n)
+request=json.load(sys.stdin)
+try:
+ value,recipient=n['decrypt_sync_initialization'](json.dumps(request['envelope']).encode(),request['key'].encode())
+ print(json.dumps({'recipient':recipient,'epoch':value['identity']['runtimeTokenEpoch'],'kind':value['kind']}))
+except Exception:
+ print('configuration_deferred',file=sys.stderr);sys.exit(1)
+`;
+    const result = spawnSync('python3', ['-I', '-c', program], { encoding: 'utf8', timeout: 10_000,
+      input: JSON.stringify({ envelope, key: recipient.export({ type: 'pkcs8', format: 'pem' }).toString() }) });
+    expect(result.status, result.stderr).toBe(mode === 'valid' ? 0 : 1);
+    if (mode === 'valid') expect(JSON.parse(result.stdout)).toEqual({ recipient: recipientSha256, epoch: 1, kind: 'matrix-sync-initialization' });
+    else expect(result.stderr.trim()).toBe('configuration_deferred');
+    expect(result.stdout + result.stderr).not.toContain(buildPlatformSyncVerificationToken(identity, secret, 1));
+    expect(result.stdout + result.stderr).not.toContain('PRIVATE KEY');
+  });
+});
+
+describe('operator initialization database boundary', () => {
+  it('reads actual identity and epoch in a bounded read-only transaction, with no activation write', async () => {
+    await preparation();
+    const { prepareSyncInitializationFromDatabase } = await import(pathToFileURL(modulePath).href);
+    const queries: Array<{ sql: string; parameters: unknown[] }> = [];
+    const input = options(7);
+    const client = {
+      async query(sql: string, parameters: unknown[] = []) {
+        queries.push({ sql, parameters });
+        expect(queries.length).toBeLessThan(20);
+        return { rows: /select.*"user_machines"/i.test(sql) ? [input.machine] : [], rowCount: 0 };
+      },
+      release() {}, on() {}, removeListener() {},
+    };
+    const pool = { async connect() { return client; }, async end() {} };
+    const db = new Kysely({ dialect: new PostgresDialect({ pool: pool as never }) });
+    try {
+      const payload = decrypt(await prepareSyncInitializationFromDatabase(db, machineId, input, () => now));
+      expect(payload.identity.runtimeTokenEpoch).toBe(7);
+      expect(queries.some(query => query.sql === 'SET TRANSACTION READ ONLY')).toBe(true);
+      expect(queries.some(query => query.sql === "SET LOCAL statement_timeout = '5000ms'")).toBe(true);
+      expect(queries.some(query => /repeatable read/i.test(query.sql))).toBe(true);
+      expect(queries.some(query => /\b(insert|update|delete)\b/i.test(query.sql))).toBe(false);
+      const selection = queries.find(query => /select.*"user_machines"/i.test(query.sql));
+      expect(selection?.parameters).toEqual([machineId]);
+      expect(input.machine.runtime_token_epoch).toBe(7);
+    } finally { await db.destroy(); }
   });
 });
