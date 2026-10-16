@@ -1,6 +1,7 @@
 import { whatsAppSettingsView } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createWhatsAppSettingsRoutes } from "../../packages/platform/src/whatsapp/settings-routes.js";
+import { readWhatsAppConfig } from "../../packages/platform/src/whatsapp/config.js";
 import {
   WhatsAppSettingsSchema,
   matrixChatHandoffUrl,
@@ -24,6 +25,15 @@ function setup(enabled = true) {
   return { app, getConnection, resolveOwner };
 }
 describe("owner WhatsApp settings", () => {
+  it.each(["https://platform.example.com:8443", `https://${["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(61)].join(".")}:8443`])(
+    "preserves an existing valid WhatsApp operator origin through real config and handoff: %s", (origin) => {
+    const config = readWhatsAppConfig({ WHATSAPP_APP_SECRET: "synthetic-secret", WHATSAPP_VERIFY_TOKEN: "synthetic-verify",
+      WHATSAPP_ACCESS_TOKEN: "synthetic-access", WHATSAPP_PHONE_NUMBER_ID: "12345678", WHATSAPP_GRAPH_API_VERSION: "v23.0",
+      WHATSAPP_ENCRYPTION_KEY: "01".repeat(32), WHATSAPP_PUBLIC_URL: origin,
+      WHATSAPP_ALLOWED_SENDERS: "SE.syntheticOwner" });
+    expect(config?.publicUrl).toBe(origin);
+    expect(matrixChatHandoffUrl(config!.publicUrl, "chat_stage")).toBe(`${origin}/open?chat=chat_stage`);
+  });
   it("builds Chat handoff only from strict configured authority, with an explicit dev exception", () => {
     expect(matrixChatHandoffUrl("https://stage.example.com", "chat_stage")).toBe("https://stage.example.com/open?chat=chat_stage");
     for (const origin of ["https://user@stage.example.com", "https://stage.example.com/path", "https://stage.example.com?runtime=primary", "http://localhost:3000"]) {
