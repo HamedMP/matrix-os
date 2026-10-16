@@ -6,6 +6,19 @@ const entityTag=value=>typeof value==='string'&&value.length<=512?/^(?:W\/)?("[\
 const sameEntityTag=(a,b)=>entityTag(a)!==undefined&&entityTag(a)===entityTag(b);
 const bounded=(value,maximum)=>Number.isSafeInteger(value)&&value>0&&value<=maximum;
 const sleep=(ms,signal)=>new Promise((resolve,reject)=>{const abort=()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);reject(new Error('Controller API cycle cancelled'));};const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},ms);signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();});
+// Only the result waiter opts in. Controller admission/renewal must fail promptly.
+function rateLimitPause(error){
+ if(error?.response?.status!==error?.status||typeof error?.response?.url!=='string'||!error.response.url.startsWith('https://api.github.com/'))return undefined;
+ const headers=error.response.headers??{};let until;
+ if(error.status===403&&headers['x-ratelimit-remaining']==='0'&&typeof headers['x-ratelimit-reset']==='string'&&/^[1-9][0-9]{0,10}$/.test(headers['x-ratelimit-reset'])){
+  until=Number(headers['x-ratelimit-reset'])*1000;
+ }else if(error.status===429&&typeof headers['retry-after']==='string'){
+  const value=headers['retry-after'];
+  if(/^[1-9][0-9]{0,5}$/.test(value))until=Date.now()+Number(value)*1000;
+  else{const date=Date.parse(value);if(Number.isFinite(date)&&new Date(date).toUTCString()===value)until=date;}
+ }
+ const pause=until-Date.now();return Number.isSafeInteger(pause)&&pause>0&&pause<=120000?pause:undefined;
+}
 export function createConditionalGithub(source,options={}){
  const context=options.authenticationContext;
  if(typeof context!=='string'||!context||context.length>256)throw new Error('Invalid conditional API authentication context');
@@ -13,6 +26,11 @@ export function createConditionalGithub(source,options={}){
  if(!bounded(cap,64)||!bounded(byteCap,8*1024*1024)||!bounded(ttl,300000))throw new Error('Invalid conditional API cache bounds');
  const entries=new Map();let bytes=0,unconditional=false;
  const stats={requests:0,charged200:0,conditionalHits:0,errors:0,minimumRemaining:null,maximumPollIntervalSeconds:0};
+ const backoff=options.waiterBackoff;
+ if(backoff!==undefined){
+  if(!backoff||typeof backoff.remainingMilliseconds!=='function'||!(options.signal instanceof AbortSignal))throw new Error('Invalid result waiter backoff scope');
+  Object.assign(stats,{rateLimitRetries:0,rateLimitWaitMilliseconds:0});
+ }
  const drop=key=>{const value=entries.get(key);if(value){bytes-=value.bytes;entries.delete(key);}};
  const sweep=()=>{for(const [key,value]of entries)if(Date.now()-value.storedAt>=ttl)drop(key);};
  const metrics=()=>({...stats,cacheEntries:entries.size,cacheBytes:bytes});
@@ -22,10 +40,28 @@ export function createConditionalGithub(source,options={}){
   if(cached&&cached.pollSeconds){const delay=cached.checkedAt+cached.pollSeconds*1000-Date.now();if(delay>0)await sleep(delay,options.signal);sweep();cached=entries.get(key);}
   if(options.signal?.aborted)throw new Error('Controller API cycle cancelled');
   const headers={...args.headers};if(cached?.etag&&!unconditional)headers['if-none-match']=cached.etag;
-  const parameters={...args,...(Object.keys(headers).length?{headers}:{}),...(options.signal?{request:{...args.request,signal:options.signal}}:{})};
-  stats.requests++;let response;
-  try{response=await source.rest[namespace][method](parameters);}
-  catch(error){if(error?.status===304&&error.response)response=error.response;else{stats.errors++;drop(key);throw error;}}
+  let parameters={...args,...(Object.keys(headers).length?{headers}:{}),...(options.signal?{request:{...args.request,signal:options.signal}}:{})};
+  let response;
+  for(;;){
+   stats.requests++;
+   try{response=await source.rest[namespace][method](parameters);break;}
+   catch(error){
+    if(error?.status===304&&error.response){response=error.response;break;}
+    stats.errors++;drop(key);
+    const pause=backoff?rateLimitPause(error):undefined,remaining=backoff?.remainingMilliseconds();
+    if(pause===undefined||stats.rateLimitRetries>=3||!Number.isFinite(remaining)||pause>remaining||options.signal?.aborted)throw error;
+    stats.rateLimitRetries++;stats.rateLimitWaitMilliseconds+=pause;
+    await sleep(pause,options.signal);
+    const remainingAfter=backoff.remainingMilliseconds();
+    if(options.signal.aborted||!Number.isFinite(remainingAfter)||remainingAfter<=0)throw error;
+    // The error cannot authorize cached data. Retry without the old validator;
+    // only a newly authenticated response can re-enter normal proof checks.
+    cached=undefined;
+    const retryHeaders={...parameters.headers};
+    for(const name of Object.keys(retryHeaders))if(name.toLowerCase()==='if-none-match')delete retryHeaders[name];
+    parameters={...parameters,headers:retryHeaders};
+   }
+  }
   const status=response.status??200,values=response.headers??{};
   const poll=values['x-poll-interval']===undefined?0:Number(values['x-poll-interval']);
   if(!Number.isSafeInteger(poll)||poll<0||poll>60){drop(key);throw new Error('GitHub poll interval exceeds reviewed lease policy');}

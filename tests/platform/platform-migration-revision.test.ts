@@ -23,3 +23,9 @@ describe("platform schema revision", () => {
     expect(PLATFORM_SCHEMA_REVISION.fingerprint).toBe(digest.digest("hex"));
   });
 });
+
+it('binds the Google tracking migration to its independent revision', async () => {
+  const { GOOGLE_TRACKING_REVISION } = await import('../../packages/platform/src/billing/google-tracking-revision.js');
+  const source = await readFile('packages/platform/src/billing/google-tracking-migration.ts');
+  expect(GOOGLE_TRACKING_REVISION.fingerprint).toBe(createHash('sha256').update(source).digest('hex'));
+});

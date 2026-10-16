@@ -41,6 +41,8 @@ function deploy(enabled: boolean) {
     encoding: 'utf8', env: { PATH: process.env.PATH, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map((key) => [key, 'fixture'])),
       DEPLOY_ENVIRONMENT: 'staging', IMAGE_DIGEST: 'image@sha256:fixture',
+      GOOGLE_TAG_MANAGER_ID: 'GTM-TEST123', GOOGLE_ANALYTICS_MEASUREMENT_ID: '',
+      GOOGLE_ANALYTICS_API_SECRET_VERSION: '1',
       WHATSAPP_ENABLED: 'false', WHATSAPP_ENCRYPTION_KEY_VERSION: '1',
       CUSTOM_MCP_ENABLED: String(enabled), MCP_OAUTH_CLIENT_ID: '', MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: '1',
       MCP_OAUTH_CALLBACK_URL: 'https://app.example.com/api/mcp-servers/oauth/callback' },

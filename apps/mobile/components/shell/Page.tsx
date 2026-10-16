@@ -5,7 +5,8 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Spacer } from "@/components/ui";
 
 interface PageProps {
-  title: string;
+  /** Left out where a navigator header already names the screen. */
+  title?: string;
   subtitle?: string;
   children: ReactNode;
   scroll?: boolean;
@@ -25,16 +26,20 @@ export function Page({
   const content = (
     <View testID="page-content" style={styles.content}>
       <Spacer size="lg" />
-      <View testID="page-heading" style={styles.heading}>
-        <Text style={styles.title}>{title}</Text>
-        {subtitle ? (
-          <>
-            <Spacer size="xs" />
-            <Text style={styles.subtitle}>{subtitle}</Text>
-          </>
-        ) : null}
-      </View>
-      <Spacer size="xl" />
+      {title ? (
+        <>
+          <View testID="page-heading" style={styles.heading}>
+            <Text style={styles.title}>{title}</Text>
+            {subtitle ? (
+              <>
+                <Spacer size="xs" />
+                <Text style={styles.subtitle}>{subtitle}</Text>
+              </>
+            ) : null}
+          </View>
+          <Spacer size="xl" />
+        </>
+      ) : null}
       {children}
       <Spacer size="3xl" />
     </View>

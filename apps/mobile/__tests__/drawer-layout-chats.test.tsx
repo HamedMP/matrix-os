@@ -4,7 +4,10 @@ import * as mockLayout from "./drawer-layout-test-utils";
 import { C2_CHATS, chatRecord, chatRows, search } from "./side-panel-test-utils";
 import DrawerLayout from "../app/(drawer)/_layout";
 
-jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: async () => "clerk-token" }) }));
+jest.mock("@clerk/clerk-expo", () => ({
+  useAuth: () => ({ getToken: async () => "clerk-token" }),
+  useOrganizationList: () => mockLayout.mocks.useOrganizationList(),
+}));
 jest.mock("@/lib/requests/collaboration", () => ({
   fetchCollaborationInbox: () => mockLayout.mocks.fetchCollaborationInbox(),
 }));
