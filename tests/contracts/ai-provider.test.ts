@@ -100,6 +100,20 @@ function snapshotFixture(): AiProviderSnapshotV3 {
 }
 
 describe("AI provider snapshot V3", () => {
+  it("carries bounded platform upstream truth before renderer projections", () => {
+    const fixture = snapshotFixture();
+    const upstreamPreference = {
+      selectedUpstream: "aws_bedrock" as const,
+      effectiveUpstream: "aws_bedrock" as const,
+      effectiveBedrockModelIds: ["claude-sonnet-5"],
+      revision: 3,
+      updatedAt: now,
+      validThrough: "2026-09-30T00:00:00.000Z",
+    };
+    expect(AiProviderSnapshotV3Schema.parse({ ...fixture, upstreamPreference }).upstreamPreference)
+      .toEqual(upstreamPreference);
+  });
+
   it("keeps Matrix-funded readiness separate from owner account connection state", () => {
     const parsed = AiProviderSnapshotV3Schema.parse(snapshotFixture());
 

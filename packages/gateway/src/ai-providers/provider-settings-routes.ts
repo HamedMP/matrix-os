@@ -19,11 +19,17 @@ const ManagedCreditQuerySchema = z.object({}).strict();
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
 function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeModels = false,
-  includeInventory = false, includeFundingState = false, includeAccountDetails = false, includeChatFunding = false, includeMatrixConnection = false, includeClaudeAccountDetails = false): ProviderSettingsSnapshot {
-  const { matrixModelInventory, matrixAnthropicConnection, ...baseSnapshot } = snapshot;
+  includeInventory = false, includeFundingState = false, includeAccountDetails = false, includeChatFunding = false, includeMatrixConnection = false, includeClaudeAccountDetails = false, includeUpstreamPreference = false): ProviderSettingsSnapshot {
+  const { matrixModelInventory, matrixAnthropicConnection, upstreamPreference, ...baseSnapshot } = snapshot;
   const publicSnapshot = {
     ...baseSnapshot,
-    ...(includeMatrixConnection && matrixAnthropicConnection ? { matrixAnthropicConnection: projectConnectionModelInputs(matrixAnthropicConnection) } : {}),
+    supportedActions: includeUpstreamPreference
+      ? snapshot.supportedActions
+      : snapshot.supportedActions.filter((action) => action !== "set_gateway_upstream"),
+    ...(includeMatrixConnection && matrixAnthropicConnection
+      ? { matrixAnthropicConnection: projectConnectionModelInputs(matrixAnthropicConnection) }
+      : {}),
+    ...(includeUpstreamPreference && upstreamPreference ? { upstreamPreference } : {}),
     accounts: snapshot.accounts.map(({ connectionDetails, ...account }) => {
       // Historical details clients have a closed ChatGPT-only plan enum. Email
       // remains compatible; new Claude plan names require their own opt-in.
@@ -214,7 +220,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const chatFunding = RefreshQuerySchema.safeParse(context.req.query("includeChatFunding"));
     const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
     const matrixConnection = RefreshQuerySchema.safeParse(context.req.query("includeMatrixAnthropicConnection"));
-    if (!claudeAccountDetails.success || !accountDetails.success || !refresh.success || !capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success) return invalidRequest(context);
+    const upstreamPreference = RefreshQuerySchema.safeParse(context.req.query("includeUpstreamPreference"));
+    if (!claudeAccountDetails.success || !accountDetails.success || !refresh.success || !capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success || !upstreamPreference.success) return invalidRequest(context);
     try {
       const ownerMetadata = options.canReadNativeAccountMetadata?.(context) === true;
       const snapshot = await options.store.getSnapshot({ refresh: refresh.data === "true", ...(ownerMetadata ? { includeNativeAccountMetadata: true, recoverNativeConnection: true } : {}) });
@@ -228,7 +235,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
           : account.accessSourceId === "owner_openai_profile"
             ? { ...account, displayName: account.authMethod === "api_key" ? "API key" : "Codex account" } : account);
       }
-      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", ownerMetadata && accountDetails.data === "true", chatFunding.data === "true", ownerMetadata && matrixConnection.data === "true", ownerMetadata && claudeAccountDetails.data === "true"));
+      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", ownerMetadata && accountDetails.data === "true", chatFunding.data === "true", ownerMetadata && matrixConnection.data === "true", ownerMetadata && claudeAccountDetails.data === "true", upstreamPreference.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -243,12 +250,13 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const chatFunding = RefreshQuerySchema.safeParse(context.req.query("includeChatFunding"));
     const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
     const matrixConnection = RefreshQuerySchema.safeParse(context.req.query("includeMatrixAnthropicConnection"));
-    if (!capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success) return invalidRequest(context);
+    const upstreamPreference = RefreshQuerySchema.safeParse(context.req.query("includeUpstreamPreference"));
+    if (!capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success || !upstreamPreference.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse(await readJson(context));
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true", matrixConnection.data === "true" && options.canReadNativeAccountMetadata?.(context) === true) });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true", matrixConnection.data === "true" && options.canReadNativeAccountMetadata?.(context) === true, false, upstreamPreference.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -263,7 +271,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const chatFunding = RefreshQuerySchema.safeParse(context.req.query("includeChatFunding"));
     const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
     const matrixConnection = RefreshQuerySchema.safeParse(context.req.query("includeMatrixAnthropicConnection"));
-    if (!capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success) return invalidRequest(context);
+    const upstreamPreference = RefreshQuerySchema.safeParse(context.req.query("includeUpstreamPreference"));
+    if (!capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success || !upstreamPreference.success) return invalidRequest(context);
     const body = DeleteAccountBodySchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse({
@@ -277,7 +286,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true", matrixConnection.data === "true" && options.canReadNativeAccountMetadata?.(context) === true) });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true", matrixConnection.data === "true" && options.canReadNativeAccountMetadata?.(context) === true, false, upstreamPreference.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
