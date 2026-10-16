@@ -32,6 +32,7 @@ import {
   createTranscribeAudioToolHandler,
   type OwnerAudioTranscriber,
 } from "./tools/transcribe-audio.js";
+import { createBrainIpcTools, type BrainAgentReadTools, type BrainAgentTools } from "./tools/brain-ipc-tools.js";
 import {
   connectServiceHandler,
   callServiceHandler,
@@ -83,6 +84,8 @@ export async function createIpcServer(
   homePath?: string,
   osViewTools?: OsViewAgentTools,
   ownerAudioTranscriber?: OwnerAudioTranscriber,
+  brainTools?: BrainAgentTools,
+  brainReadTools?: BrainAgentReadTools,
 ) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   const transcribeOwnerAudio = homePath && ownerAudioTranscriber
@@ -1094,6 +1097,8 @@ export async function createIpcServer(
           }),
         ),
       ] : []),
+
+      ...createBrainIpcTools(tool, brainTools, brainReadTools),
 
       ...(await createWebTools(homePath, tool)),
 
