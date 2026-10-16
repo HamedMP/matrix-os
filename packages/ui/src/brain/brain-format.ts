@@ -10,8 +10,10 @@ import {
 } from "./brain-types.js";
 import type { BrainLoad } from "./use-brain-load.js";
 
-/** Conflicts read once per claims screen; the gateway's BRAIN_CONFLICTS_MAX_LIMIT. */
+/** One page of conflicts; the gateway's BRAIN_CONFLICTS_MAX_LIMIT. */
 export const BRAIN_CONFLICTS_LIMIT = 50;
+/** Conflicts a claims screen reads in all, page by page (the 500-item list limit). */
+export const BRAIN_CONFLICTS_MAX = 500;
 /** Recent syncs a source card reads and shows. */
 export const BRAIN_RECEIPTS_SHOWN = 5;
 
@@ -81,7 +83,7 @@ export function brainTabIndexForKey(key: string, index: number, count: number): 
 export function brainConflictFlags(state: BrainLoad<BrainConflictsView>): ReadonlyMap<string, string> {
   const flags = new Map<string, string>();
   if (state.status !== "ready") return flags;
-  for (const conflict of state.data.items.slice(0, BRAIN_CONFLICTS_LIMIT)) {
+  for (const conflict of state.data.items.slice(0, BRAIN_CONFLICTS_MAX)) {
     for (const side of conflict.sides) {
       if (side.claimId !== null) flags.set(side.claimId, conflict.summary);
     }
@@ -101,8 +103,12 @@ export const BRAIN_SOURCE_CHOICES_MAX: Readonly<Record<BrainConnectableSourceKin
   matrix_chat: 50,
 };
 
-export interface BrainTypedSourceInput { readonly label: string; readonly example: string; readonly hint: string; readonly pattern: RegExp }
-/** Kinds whose handler may list no options: the owner types the value instead, and the gateway checks it again. */
+export interface BrainTypedSourceInput {
+  readonly label: string; readonly example: string; readonly hint: string; readonly pattern: RegExp;
+  /** How one typed value is written before the pattern check (a tag lowercased, a team key uppercased). */
+  readonly normalize?: (value: string) => string;
+}
+/** Kinds typed when they list no options (Linear, Drive and Calendar list none yet); the gateway checks them again. */
 export const BRAIN_TYPED_SOURCE_INPUTS: Partial<Record<BrainConnectableSourceKind, BrainTypedSourceInput>> = {
   github: {
     label: "Repository (owner/name)", example: "owner/name", hint: "The GitHub repository of this project.",
@@ -115,19 +121,32 @@ export const BRAIN_TYPED_SOURCE_INPUTS: Partial<Record<BrainConnectableSourceKin
   },
   matrix_notes: {
     label: "Tags (optional)", example: "design, roadmap", hint: "Leave empty to include every note.",
-    pattern: /^[a-z][a-z0-9-]{1,40}$/,
+    pattern: /^[a-z][a-z0-9-]{1,40}$/, normalize: (value) => value.replace(/^#/, "").toLowerCase(),
+  },
+  // The gateway's LinearConfigSchema, GoogleDriveConfigSchema and GoogleCalendarConfigSchema item patterns.
+  linear: {
+    label: "Team keys", example: "ENG, DESIGN", hint: "The key in each team's issue ids (ENG-123).",
+    pattern: /^[A-Z][A-Z0-9]{0,9}$/, normalize: (value) => value.toUpperCase(),
+  },
+  google_drive: {
+    label: "Folder ids", example: "1aBcD2eFgH3iJkL4mNoP5qRsT6uVwXyZ7",
+    hint: "The part after /folders/ in each folder's link.", pattern: /^[A-Za-z0-9_-]{1,256}$/,
+  },
+  google_calendar: {
+    label: "Calendar ids", example: "primary",
+    hint: "primary is your own calendar; another calendar shows its id in its settings.",
+    pattern: /^(?!\.{1,2}$)[^\s\p{Cc}]{1,256}$/u,
   },
 };
 
 /**
- * What the owner typed for a kind: one value, or for Matrix notes tags split on commas or spaces (a leading "#"
- * dropped, lowercased, de-duplicated). Empty when nothing was typed; null when a value is not valid.
+ * What the owner typed for a kind: one value, or for a kind that takes several, values split on commas or spaces,
+ * each normalized and de-duplicated. Empty when nothing was typed; null when a value is not valid.
  */
 export function brainTypedValues(kind: BrainConnectableSourceKind, text: string): readonly string[] | null {
   const input = BRAIN_TYPED_SOURCE_INPUTS[kind];
-  const values = kind === "matrix_notes"
-    ? text.split(/[\s,]+/).map((value) => value.replace(/^#/, "").toLowerCase()).filter((value) => value !== "")
-    : [text.trim()].filter((value) => value !== "");
+  const typed = BRAIN_SOURCE_CHOICES_MAX[kind] > 1 ? text.split(/[\s,]+/) : [text.trim()];
+  const values = typed.map((value) => input?.normalize?.(value) ?? value).filter((value) => value !== "");
   if (input === undefined) return values.length === 0 ? [] : null;
   return values.every((value) => input.pattern.test(value)) ? [...new Set(values)] : null;
 }
@@ -145,6 +164,19 @@ export const BRAIN_SOURCE_INCLUDE: Partial<Record<BrainConnectableSourceKind, re
   github: [["pullRequests", "Pull requests"], ["reviews", "Reviews"], ["issues", "Issues"]],
   linear: [["issues", "Issues"], ["comments", "Comments"], ["projectUpdates", "Project updates"]],
 };
+/** An item type read only with another: a GitHub review belongs to a pull request, and the gateway refuses it alone. */
+const BRAIN_SOURCE_INCLUDE_NEEDS: Partial<Record<BrainConnectableSourceKind, Readonly<Record<string, string>>>> = {
+  github: { reviews: "pullRequests" },
+};
+/** Whether a kind reads an item type: on unless switched off, and off while the type it needs is off. */
+export function brainIncludeOn(kind: BrainConnectableSourceKind, settings: BrainSourceSettings, key: string): boolean {
+  const need = BRAIN_SOURCE_INCLUDE_NEEDS[kind]?.[key];
+  return (settings.include[key] ?? true) && (need === undefined || brainIncludeOn(kind, settings, need));
+}
+/** The item type `key` is read only with (pull requests for GitHub reviews), or undefined. */
+export function brainIncludeNeed(kind: BrainConnectableSourceKind, key: string): string | undefined {
+  return BRAIN_SOURCE_INCLUDE_NEEDS[kind]?.[key];
+}
 /** Matrix files size choices, up to the gateway ceiling (1 MiB). */
 export const BRAIN_FILE_SIZE_CHOICES = [[65_536, "64 KiB"], [262_144, "256 KiB"], [1_048_576, "1 MiB"]] as const;
 /** The gateway's calendar window bound, each way. */
@@ -164,7 +196,7 @@ const validDays = (days: number) => Number.isInteger(days) && days >= 0 && days 
 /** Null when a kind's settings can be sent; else what to fix. */
 export function brainSourceSettingsProblem(kind: BrainConnectableSourceKind, settings: BrainSourceSettings): string | null {
   const include = BRAIN_SOURCE_INCLUDE[kind];
-  if (include !== undefined && !include.some(([key]) => settings.include[key] ?? true)) return "Pick at least one.";
+  if (include !== undefined && !include.some(([key]) => brainIncludeOn(kind, settings, key))) return "Pick at least one.";
   if (kind === "matrix_files" && brainExtensions(settings.extensions) === null) return "List 1 to 32 file endings.";
   if (kind === "google_calendar" && !(validDays(settings.pastDays) && validDays(settings.futureDays))) {
     return `Days run from 0 to ${BRAIN_CALENDAR_DAYS_MAX}.`;
@@ -179,7 +211,7 @@ export function brainSourceSettingsProblem(kind: BrainConnectableSourceKind, set
  */
 export function brainSourceConfig(kind: BrainConnectableSourceKind, ids: readonly string[],
   settings: BrainSourceSettings = BRAIN_SOURCE_DEFAULT_SETTINGS): unknown {
-  const on = (key: string) => settings.include[key] ?? true;
+  const on = (key: string) => brainIncludeOn(kind, settings, key);
   switch (kind) {
     case "github": return {
       repo: ids[0], mode: "integration", include: { pullRequests: on("pullRequests"), reviews: on("reviews"), issues: on("issues") },

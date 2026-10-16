@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
 import { CircleAlert, ExternalLink, Inbox, LoaderCircle, TriangleAlert } from "lucide-react";
 import { BrainButton } from "./brain-controls.js";
 import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
@@ -61,16 +61,57 @@ export function BrainLoading({ label }: { readonly label: string }) {
   );
 }
 
-/** An empty state: icon, headline, and (children) what to do next. */
+/** An empty state: a quiet icon, the headline and what to do next. */
 export function BrainEmpty({ title, children }: { readonly title: string; readonly children?: ReactNode }) {
   return (
     <div data-slot="brain-empty" className={`flex items-start gap-3 p-4 ${BRAIN_TONE.fill} ${BRAIN_TYPE.label}`}>
-      <Inbox className={`mt-0.5 size-5 shrink-0 ${BRAIN_TONE.secondary}`} aria-hidden="true" />
-      <div className="min-w-0">
+      <Inbox className={`mt-0.5 size-4 shrink-0 ${BRAIN_TONE.secondary}`} aria-hidden="true" />
+      <div className="min-w-0 flex-1">
         <p className={`font-semibold ${BRAIN_TYPE.callout}`}>{title}</p>
         {children && <div className={`mt-1.5 ${BRAIN_TONE.secondary}`}>{children}</div>}
       </div>
     </div>
+  );
+}
+
+/**
+ * A confirm just under the trigger, spanning the nearest positioned ancestor, above what follows (z-10 in the app's
+ * `isolate` root), so opening it moves nothing. The trigger toggles `open`; a click outside trigger and panel, or
+ * Escape, calls `onClose`. Focus moves into the panel on open, and back to the trigger when closing drops it.
+ */
+export function BrainConfirm({ open, onClose, label, trigger, children }: {
+  readonly open: boolean; readonly onClose: () => void; readonly label: string; readonly trigger: ReactNode;
+  readonly children: ReactNode;
+}) {
+  const anchor = useRef<HTMLSpanElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useEffectEvent(onClose);
+  useEffect(() => {
+    if (!open) return undefined;
+    panel.current?.focus();
+    const inside = (target: EventTarget | null) => target instanceof Node
+      && (anchor.current?.contains(target) === true || panel.current?.contains(target) === true);
+    const onPointerDown = (event: PointerEvent) => { if (!inside(event.target)) close(); };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+      // The panel is gone by now, so focus it held has fallen to the body.
+      if (document.activeElement === document.body) anchor.current?.querySelector<HTMLElement>("button")?.focus();
+    };
+  }, [open]);
+  return (
+    <>
+      <span ref={anchor} className="contents">{trigger}</span>
+      {open && (
+        <div ref={panel} role="dialog" aria-label={label} tabIndex={-1}
+          className={`absolute inset-x-0 top-full z-10 mt-2 grid gap-3 p-4 outline-none ${BRAIN_TYPE.label} ${BRAIN_TONE.overlay}`}>
+          {children}
+        </div>
+      )}
+    </>
   );
 }
 

@@ -48,6 +48,8 @@ export const BRAIN_TONE = {
   card: "rounded-[14px] border border-[var(--brain-border)] bg-[var(--brain-canvas)]",
   /** A filled box with no line: empty states, notices, the brief summary, a confirm inside a list. */
   fill: "rounded-[14px] bg-[var(--brain-fill)]",
+  /** A panel over the content (the confirms): no shadow, so the stronger line sets it off. */
+  overlay: "rounded-[14px] border border-[var(--brain-border-strong)] bg-[var(--brain-canvas)] text-[var(--brain-text)]",
   text: "text-[var(--brain-text)]",
   secondary: "text-[var(--brain-text-secondary)]",
   /** Placeholders and times only: it is below AA for small text. */

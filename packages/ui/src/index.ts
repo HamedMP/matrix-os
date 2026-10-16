@@ -248,3 +248,21 @@ export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
+export { BrainApp, type BrainAppProps } from "./brain/BrainApp.js";
+export {
+  brainShellError,
+  createBrainShellApi,
+  listBrainProjects,
+  type BrainHttpTransport,
+  type BrainRequestOptions,
+} from "./brain/brain-client.js";
+export {
+  BRAIN_APP_KEYWORDS,
+  BRAIN_SHELL_SCREENS,
+  BRAIN_SHELL_VIEW,
+  type BrainProjectOption,
+  type BrainShellApi,
+  type BrainShellClient,
+  type BrainShellErrorState,
+  type BrainShellScreen,
+} from "./brain/brain-types.js";

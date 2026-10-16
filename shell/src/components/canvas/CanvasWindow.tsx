@@ -13,6 +13,7 @@ import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
+import { BrainApp } from "../brain";
 import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
 import { useThemeStyle } from "../window/useThemeStyle";
@@ -510,6 +511,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         </div>
       ) : win.path === "__activity-monitor__" ? (
         <ActivityMonitorApp />
+      ) : win.path === "__brain__" ? (
+        <BrainApp showHeading={false} />
       ) : deferAppContent ? (
         <div
           className="h-full w-full flex items-center justify-center bg-card"

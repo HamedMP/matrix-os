@@ -28,6 +28,7 @@ const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__file-browser__",
   "__preview-window__",
   "__activity-monitor__",
+  "__brain__",
 ]);
 
 function readLaunchPathFromLocation(): string | null {

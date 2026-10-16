@@ -82,6 +82,12 @@ describe("web Desktop built-in app launch routing", () => {
     );
   });
 
+  it("lists Company Brain once after the default icons, so ?launch=__brain__ finds it", () => {
+    const icons = buildWebDesktopIconApps([{ name: "Brain", path: "__brain__" }]);
+    expect(icons.filter((app) => app.path === "__brain__")).toEqual([{ name: "Company Brain", path: "__brain__" }]);
+    expect(icons.findIndex((app) => app.path === "__brain__")).toBe(10);
+  });
+
   it("routes launcher OS-view destinations as presentation switches", () => {
     expect(resolveWebDesktopBuiltInLaunch("__os-view-canvas__")).toEqual({
       kind: "os-view",

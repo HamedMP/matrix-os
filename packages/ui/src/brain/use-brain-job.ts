@@ -123,28 +123,25 @@ export async function brainStartOrRun(api: BrainShellClient, projectId: string, 
 }
 
 /**
- * Follows, once, a job that was still queued or running when the screen opened (`active`, from brainActiveJobs), so a
- * reload or a reopen shows it and keeps the card's buttons off while it runs. `names` maps the card's slots to the
- * run names it starts; the newest matching job wins. Nothing happens once the card already follows a job.
+ * The job of one slot (brainJobKey) of a card, which also follows, once, the run of that slot still queued or running
+ * when the screen opened (`active`, from brainActiveJobs) as `name`, unless a run already started; so a reload or a
+ * reopen shows it. A card follows each of its slots with its own job.
  */
-export function useBrainJobResume(job: Pick<ReturnType<typeof useBrainJob>, "watch" | "start">,
-  active: BrainActiveJobs, names: Readonly<Record<string, string>>): void {
+export function useBrainSlotJob(api: BrainShellClient, projectId: string, active: BrainActiveJobs, slot: string,
+  name: string, onFinished: (name: string, view: BrainJobView) => void) {
+  const job = useBrainJob({
+    poll: (jobId) => api.job(projectId, jobId), cancel: (jobId) => api.cancelJob(projectId, jobId), onFinished,
+  });
   const done = useRef(false);
-  const resume = useEffectEvent((jobs: ReadonlyMap<string, BrainJobView>) => {
-    if (job.watch !== null) return;
-    for (const [key, view] of jobs) {
-      const name = Object.hasOwn(names, key) ? names[key] : undefined;
-      if (name !== undefined) {
-        job.start(name, view);
-        return;
-      }
-    }
+  const resume = useEffectEvent((view: BrainJobView | undefined) => {
+    if (view !== undefined && job.watch === null) job.start(name, view);
   });
   useEffect(() => {
     if (active === null || done.current) return;
     done.current = true;
-    resume(active);
-  }, [active]);
+    resume(active.get(slot));
+  }, [active, slot]);
+  return job;
 }
 
 function finishOnce(finished: { round: number; readonly onFinished: (name: string, view: BrainJobView) => void },

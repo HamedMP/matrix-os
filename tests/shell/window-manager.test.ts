@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
+  getEffectiveMinimumWindowSize,
   useWindowManager,
   resetWindowManagerLayoutPersistenceForTests,
   type AppWindow,
@@ -253,6 +254,11 @@ describe("Window Manager Store", () => {
         height: 142,
       });
       expect(windowRecord.y + 38 + windowRecord.height).toBeLessThanOrEqual(window.innerHeight - 86);
+    });
+
+    it("keeps the Company Brain at its own minimum size in Canvas", () => {
+      useDesktopMode.setState({ mode: "canvas" });
+      expect(getEffectiveMinimumWindowSize("__brain__")).toEqual({ width: 360, height: 420 });
     });
 
     it("leaves spatial Canvas windows unchanged", () => {
