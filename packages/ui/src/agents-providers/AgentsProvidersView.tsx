@@ -11,6 +11,7 @@ import { AccountsPanel } from "./AccountsPanel.js";
 import { AccountLifecycleActions } from "./AccountLifecycleActions.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
+import { CheckedAt } from "./CheckedAt.js";
 import { YourSubscriptions } from "./YourSubscriptions.js";
 import { managedConnectionCapability } from "./managed-connection-capability.js";
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
@@ -24,7 +25,7 @@ import { HarnessRail } from "./HarnessRail.js";
 import { ConnectionChoices } from "./ConnectionChoices.js";
 import { settingsErrorPresentation } from "./settings-error-presentation.js";
 import type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
-import { relativeCheckedAt, selectedHarness, titleCase } from "./utils.js";
+import { selectedHarness, titleCase } from "./utils.js";
 
 export type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 
@@ -149,7 +150,7 @@ export function AgentsProvidersView({
           <p>Connect an agent, choose a model, and start a chat.</p>
         </div>
         <div className="matrix-ap-refresh">
-          <span>Checked {relativeCheckedAt(snapshot.refreshedAt)}</span>
+          <CheckedAt key={snapshot.refreshedAt} value={snapshot.refreshedAt} />
           {supports("add_harness") && configurationHarnessKinds.length > 0 ? (
             <button type="button" className="matrix-ap-icon-button" aria-label="Add agent" title="Add agent" onClick={() => setAddOpen(true)} disabled={mutationsDisabled}>+</button>
           ) : null}
