@@ -125,6 +125,10 @@ export function translateOpenAiToBedrock(
     || request.seed !== undefined || request.n !== undefined && request.n !== 1) {
     throw new Error("Unsupported Bedrock request option");
   }
+  if (request.tool_choice === "none" && request.messages.some((message) =>
+    message.role === "tool" || message.role === "assistant" && (message.tool_calls?.length ?? 0) > 0)) {
+    throw new Error("Bedrock tool-disabled requests cannot retain tool history");
+  }
   const system: SystemContentBlock[] = [];
   const messages: Message[] = [];
   const pendingToolResults: ContentBlock[] = [];

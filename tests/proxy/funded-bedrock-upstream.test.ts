@@ -227,6 +227,11 @@ describe("AWS Bedrock funded upstream", () => {
     ]);
   });
 
+  it("rejects tool-disabled follow-ups that retain Bedrock tool history", () => {
+    expect(() => translateOpenAiToBedrock({ ...request(), tool_choice: "none" }, route()))
+      .toThrow(/tool history/i);
+  });
+
   it("rejects non-streaming requests instead of returning an unexpected SSE shape", () => {
     expect(() => translateOpenAiToBedrock({ ...request(), stream: false }, route()))
       .toThrow(/streaming/i);
