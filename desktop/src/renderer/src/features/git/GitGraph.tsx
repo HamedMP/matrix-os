@@ -244,7 +244,7 @@ export const GitGraph = memo(function GitGraph({
               onClick={onLoadMore}
               disabled={loadingMore}
               className="text-xs font-medium"
-              style={{ color: "var(--accent-text)" }}
+              style={{ color: "var(--text-primary)" }}
             >
               {loadingMore ? "Loading…" : "Load more"}
             </button>

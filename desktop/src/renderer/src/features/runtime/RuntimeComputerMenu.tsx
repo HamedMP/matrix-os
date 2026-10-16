@@ -176,7 +176,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
                     </span>
                     <span className="flex w-4 items-center justify-center">
                       <DropdownMenu.ItemIndicator>
-                        <Check size={13} className="shrink-0" style={{ color: "var(--accent-text)" }} aria-hidden="true" />
+                        <Check size={13} className="shrink-0" style={{ color: "var(--text-primary)" }} aria-hidden="true" />
                       </DropdownMenu.ItemIndicator>
                     </span>
                   </DropdownMenu.RadioItem>
