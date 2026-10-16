@@ -228,6 +228,36 @@ class SyncInitializationTests(unittest.TestCase):
         with self.assertRaises(Exception): self.apply()
         self.assertEqual(self.path.read_bytes(), self.old)
 
+    def test_post_rename_fsync_failure_preserves_committed_image_and_blocks_blind_replay(self):
+        replace, fsync = os.replace, os.fsync
+        committed = False
+
+        def commit(*args, **kwargs):
+            nonlocal committed
+            replace(*args, **kwargs)
+            committed = True
+
+        def fail_after_commit(fd):
+            if committed:
+                raise OSError('injected post-rename fsync failure')
+            fsync(fd)
+
+        with patch.object(os, 'replace', commit), patch.object(os, 'fsync', fail_after_commit):
+            with self.assertRaises(OSError): self.apply()
+        after = self.old + b'MATRIX_SYNC_RUNTIME_TOKEN=' + b'b' * 64 + b'\n'
+        self.assertEqual(self.path.read_bytes(), after)
+        journals = list(self.path.parent.glob('.host.env.sync-init-*.json'))
+        self.assertEqual(len(journals), 1)
+        journal = json.loads(journals[0].read_bytes())
+        self.assertEqual(base64.b64decode(journal['original']), self.old)
+        self.assertEqual(journal['afterSha256'], hashlib.sha256(after).hexdigest())
+        with self.assertRaises(Exception): self.apply()
+        self.assertEqual(self.path.read_bytes(), after)
+        self.assertEqual(list(self.path.parent.glob('.host.env.sync-init-*.json')), journals)
+        rollback = NS['sync_initialization_rollback_image']
+        self.assertEqual(rollback(REPAIR, self.anchor.fds[-1], journals[0].name, after,
+                                  self.identity, os.getuid(), os.getgid()), self.old)
+
     def test_rollback_image_preserves_unrelated_edits_and_refuses_token_or_funding_conflict(self):
         result = self.apply(); after = self.path.read_bytes()
         rollback = NS['sync_initialization_rollback_image']
