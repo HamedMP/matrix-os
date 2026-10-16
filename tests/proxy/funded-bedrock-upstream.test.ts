@@ -4,6 +4,7 @@ import type {
 } from "@aws-sdk/client-bedrock-runtime";
 import { describe, expect, it, vi } from "vitest";
 import {
+  bedrockRuntimeClientConfig,
   BedrockUpstreamError,
   createBedrockFundedUpstream,
   translateOpenAiToBedrock,
@@ -89,6 +90,10 @@ function output(events: ConverseStreamOutput[], requestId = "aws-request-1"): Co
 }
 
 describe("AWS Bedrock funded upstream", () => {
+  it("disables automatic SDK retries for paid dispatch", () => {
+    expect(bedrockRuntimeClientConfig(route())).toMatchObject({ region: "eu-west-1", maxAttempts: 1 });
+  });
+
   it("fails closed on stale pricing and prices bounded exact usage with integer arithmetic", () => {
     expect(isBedrockPricingCurrent(route(), NOW)).toBe(true);
     expect(isBedrockPricingCurrent(route(), new Date("2026-10-21T00:00:00.000Z"))).toBe(false);
