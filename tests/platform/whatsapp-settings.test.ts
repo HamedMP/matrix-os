@@ -24,6 +24,14 @@ function setup(enabled = true) {
   return { app, getConnection, resolveOwner };
 }
 describe("owner WhatsApp settings", () => {
+  it("builds Chat handoff only from strict configured authority, with an explicit dev exception", () => {
+    expect(matrixChatHandoffUrl("https://stage.example.com", "chat_stage")).toBe("https://stage.example.com/open?chat=chat_stage");
+    for (const origin of ["https://user@stage.example.com", "https://stage.example.com/path", "https://stage.example.com?runtime=primary", "http://localhost:3000"]) {
+      expect(() => matrixChatHandoffUrl(origin, "chat_stage")).toThrow("Invalid Matrix origin");
+    }
+    expect(matrixChatHandoffUrl("http://localhost:3000", "chat_dev", true)).toBe("http://localhost:3000/open?chat=chat_dev");
+    expect(() => matrixChatHandoffUrl("https://stage.example.com", "../unsafe")).toThrow();
+  });
   it("returns a masked owner link without claiming AI readiness", async () => {
     const { app, getConnection } = setup();
     const res = await app.request("/api/whatsapp/settings");

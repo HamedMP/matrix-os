@@ -67,3 +67,16 @@ The broader Web Mobile launcher and Chat navigation redesign is a separate
 follow-up; this change aligns Settings and messaging behavior.
 
 Follow-up: [Web Mobile navigation and verified Android handoff](https://github.com/HamedMP/matrix-os/issues/2372).
+# Operator authority for Messaging entry actions
+
+Settings connection/install links use one operator-configured platform app
+origin, with the production default preserved. Web reads explicit
+`NEXT_PUBLIC_MATRIX_APP_URL`; Electron uses the main-owned authenticated profile
+from `OPERATOR_GATEWAY_URL`; Native uses `EXPO_PUBLIC_MATRIX_APP_URL` for both
+links and hosted requests/WebSockets. Selected computers, API payloads and URL
+query parameters cannot select this authority. Invalid explicit configuration
+fails closed. Development-only exact loopback HTTP/ports are supported.
+Native nonproduction runtime/Chat persistence is origin-scoped without changing
+production keys or Clerk credentials. In-app Native Chat navigation stays local
+and continues to select the owner's primary computer. Public setup documentation
+must be updated in the existing companion site documentation PR before release.
