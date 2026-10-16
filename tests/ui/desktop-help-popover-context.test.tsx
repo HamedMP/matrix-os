@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import * as Popover from "@radix-ui/react-popover";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React, { createRef, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopHelpMenu } from "../../packages/ui/src/desktop-top-bar.js";
@@ -29,7 +29,11 @@ function ScopedChecklist() {
   );
 }
 
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  // Radix restores focus on a deferred timer after unmount.
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+});
 
 describe("Help menu popover context ownership", () => {
   it("mounts and opens the checklist when its owner has an isolated context", () => {
