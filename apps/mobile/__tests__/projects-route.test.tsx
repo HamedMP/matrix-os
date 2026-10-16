@@ -85,6 +85,26 @@ describe("projects route", () => {
       expect(sheet.isPresented).toBe(false);
     });
 
+    it("leaves a New project form opened after it alone when a rename it was dragged away from finishes", async () => {
+      const renamed = pendingRequest<typeof portfolio>();
+      requests.renameProject.mockReturnValue(renamed.promise);
+      await renderWithToasts();
+      fireEvent.press(menuItem(portfolioRow(), "Rename"));
+      fireEvent.changeText(nameField(), "Case studies");
+      fireEvent.press(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(requests.renameProject).toHaveBeenCalledTimes(1));
+
+      act(() => sheet.onDismiss());
+      fireEvent.press(screen.getByRole("button", { name: "New project" }));
+      fireEvent.changeText(nameField(), "Field notes");
+      await act(async () => renamed.resolve({ ...portfolio, name: "Case studies" }));
+
+      await waitFor(() => expect(screen.getByText("Project renamed")).toBeTruthy());
+      expect(sheet.isPresented).toBe(true);
+      expect(screen.getByRole("header", { name: "New project" })).toBeTruthy();
+      expect(nameField().props.value).toBe("Field notes");
+    });
+
     it("archives it after asking, as its screen does, and says so", async () => {
       const alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
       requests.archiveProject.mockResolvedValue({ ...portfolio, archived: true });
@@ -275,6 +295,27 @@ describe("projects route", () => {
       expect(router.push).toHaveBeenCalledWith({ pathname: "/projects/[projectId]", params: { projectId: "proj_fresh" } });
       expect(router.push).toHaveBeenCalledTimes(1);
       expect(rowNames()[0]).toBe("Field notes");
+    });
+
+    it("leaves a rename opened after it alone, and stays on the list, when a create it was dragged away from finishes", async () => {
+      const created = pendingRequest<typeof fresh>();
+      requests.createProject.mockReturnValue(created.promise);
+      mockRoutes.renderWithQueries(<><ProjectsRoute /><ToastHost /></>);
+      await waitFor(() => expect(screen.getByTestId("projects-list")).toBeTruthy());
+      fireEvent.press(screen.getByRole("button", { name: "New project" }));
+      fireEvent.changeText(nameField(), "Field notes");
+      fireEvent.press(createButton());
+      await waitFor(() => expect(requests.createProject).toHaveBeenCalledTimes(1));
+
+      act(() => sheet.onDismiss());
+      fireEvent.press(menuItem(screen.getByTestId("project-row-proj_portfolio"), "Rename"));
+      requests.fetchProjects.mockResolvedValue([fresh, portfolio, matrix, admin]);
+      await act(async () => created.resolve(fresh));
+
+      await waitFor(() => expect(screen.getByText("Project created")).toBeTruthy());
+      expect(sheet.isPresented).toBe(true);
+      expect(screen.getByRole("header", { name: "Rename project" })).toBeTruthy();
+      expect(router.push).not.toHaveBeenCalled();
     });
 
     it("keeps the sheet and the name, and says the name is taken, when the server says so", async () => {
