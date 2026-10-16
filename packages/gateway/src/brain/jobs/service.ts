@@ -30,7 +30,9 @@ export function createBrainJobsService(deps: BrainJobsServiceDeps): BrainJobsSer
       const runnable = deps.workerOwnerId === undefined || deps.workerOwnerId === ownerId;
       if (!runnable || !deps.kinds.includes(request.kind)) throw new BrainJobError("job_kind_unavailable");
       const project = await deps.resolver.resolve(ownerId, projectRef);
-      const { job, created } = await deps.store.enqueue(project.scope, project.projectId, request);
+      // Resolved again under the job lock, so a project deleted since gets no job after its erase.
+      const { job, created } = await deps.store.enqueue(project.scope, project.projectId, request,
+        () => deps.resolver.resolve(ownerId, project.projectId));
       if (created) deps.wake();
       return { job, deduped: !created };
     },
