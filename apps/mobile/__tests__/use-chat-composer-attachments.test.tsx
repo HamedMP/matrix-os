@@ -124,6 +124,16 @@ describe("chat composer attachments", () => {
     return composer.result.current.attachments.map((attachment) => attachment.name);
   }
 
+  /** The attachments of the chat's messages that were not sent, by message. */
+  function unsent(composer: ReturnType<typeof renderComposer>) {
+    return composer.result.current.optimisticMessages
+      .filter((message) => message.failed)
+      .map((message) => (message.attachments ?? []).map((attachment) => attachment.name));
+  }
+
+  // The first send's keys are req_1 (the chat) and req_2 (the turn).
+  const FIRST_SEND = "optimistic-req_2";
+
   beforeEach(() => {
     mockRequestIdCount = 0;
     queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false, gcTime: Infinity } } });
@@ -256,7 +266,7 @@ describe("chat composer attachments", () => {
     expect(composer.result.current.optimisticMessages).toEqual([]);
   });
 
-  it("creates no chat and admits no turn when an upload fails, removes the uploads that arrived, and gives everything back", async () => {
+  it("creates no chat and admits no turn when an upload fails, removes the uploads that arrived, and keeps everything in the message", async () => {
     mockUploadChatAttachment
       .mockResolvedValueOnce({ path: placeOf("flowers"), created: true })
       .mockRejectedValueOnce(new Error("Could not upload the attachment. Try again."));
@@ -265,13 +275,17 @@ describe("chat composer attachments", () => {
     act(() => { composer.result.current.setDraft("What are these?"); });
 
     act(() => { composer.result.current.send(); });
-    await waitFor(() => expect(composer.result.current.draft).toBe("What are these?"));
+    await waitFor(() => expect(unsent(composer)).toEqual([["flowers.jpg", "falls.jpg"]]));
 
-    expect(waiting(composer)).toEqual(["flowers.jpg", "falls.jpg"]);
-    expect(composer.result.current.optimisticMessages).toEqual([]);
+    expect(composer.result.current.optimisticMessages).toMatchObject([{ text: "What are these?", failed: true }]);
     expect(mockCreateChat).not.toHaveBeenCalled();
     expect(mockAdmitChatTurn).not.toHaveBeenCalled();
     expect(mockRemoveChatAttachment.mock.calls).toEqual([["clerk-token", gatewayUrl, placeOf("flowers")]]);
+
+    // "Edit" gives everything back to the composer.
+    act(() => { composer.result.current.editUnsent(FIRST_SEND); });
+    expect(composer.result.current.draft).toBe("What are these?");
+    expect(waiting(composer)).toEqual(["flowers.jpg", "falls.jpg"]);
   });
 
   it("removes the uploads when the chat cannot be created, since no turn was asked for", async () => {
@@ -280,13 +294,13 @@ describe("chat composer attachments", () => {
     attach(composer, "flowers");
 
     act(() => { composer.result.current.send(); });
-    await waitFor(() => expect(waiting(composer)).toEqual(["flowers.jpg"]));
+    await waitFor(() => expect(unsent(composer)).toEqual([["flowers.jpg"]]));
 
     expect(mockAdmitChatTurn).not.toHaveBeenCalled();
     expect(mockRemoveChatAttachment.mock.calls.map((call) => call[2])).toEqual([placeOf("flowers")]);
   });
 
-  it("still gives everything back when an unused upload cannot be removed", async () => {
+  it("still keeps the message when an unused upload cannot be removed", async () => {
     mockCreateChat.mockRejectedValueOnce(new Error("Could not start a new chat. Try again."));
     mockRemoveChatAttachment.mockRejectedValue(new Error("Could not remove the attachment."));
     const composer = renderComposer();
@@ -294,7 +308,7 @@ describe("chat composer attachments", () => {
 
     act(() => { composer.result.current.send(); });
 
-    await waitFor(() => expect(waiting(composer)).toEqual(["flowers.jpg"]));
+    await waitFor(() => expect(unsent(composer)).toEqual([["flowers.jpg"]]));
     expect(composer.result.current.isSending).toBe(false);
   });
 
@@ -305,13 +319,12 @@ describe("chat composer attachments", () => {
     act(() => { composer.result.current.setDraft("What is this?"); });
 
     act(() => { composer.result.current.send(); });
-    await waitFor(() => expect(composer.result.current.draft).toBe("What is this?"));
+    await waitFor(() => expect(unsent(composer)).toEqual([["flowers.jpg"]]));
 
     // The answer may only have been lost, and the turn it admitted names the upload.
     expect(mockRemoveChatAttachment).not.toHaveBeenCalled();
-    expect(waiting(composer)).toEqual(["flowers.jpg"]);
 
-    act(() => { composer.result.current.send(); });
+    act(() => { composer.result.current.retrySend(FIRST_SEND); });
     await waitFor(() => expect(mockBindDraftChatId).toHaveBeenCalledWith("chat_new"));
 
     // The same request ids and the same upload place, so the computer sees one message.
@@ -328,7 +341,7 @@ describe("chat composer attachments", () => {
       mockAdmitChatTurn.mockRejectedValueOnce(new Error("Could not send message. Try again."));
       attach(composer, "flowers", "falls");
       act(() => { composer.result.current.send(); });
-      await waitFor(() => expect(waiting(composer)).toEqual(["flowers.jpg", "falls.jpg"]));
+      await waitFor(() => expect(unsent(composer)).toEqual([["flowers.jpg", "falls.jpg"]]));
       mockUploadChatAttachment.mockReset();
     }
 
@@ -340,12 +353,12 @@ describe("chat composer attachments", () => {
         .mockResolvedValueOnce({ path: placeOf("flowers"), created: false })
         .mockRejectedValueOnce(new Error("Could not upload the attachment. Try again."));
 
-      act(() => { composer.result.current.send(); });
+      act(() => { composer.result.current.retrySend(FIRST_SEND); });
       await waitFor(() => expect(mockUploadChatAttachment).toHaveBeenCalledTimes(2));
       await waitFor(() => expect(composer.result.current.isSending).toBe(false));
 
       expect(mockRemoveChatAttachment).not.toHaveBeenCalled();
-      expect(waiting(composer)).toEqual(["flowers.jpg", "falls.jpg"]);
+      expect(unsent(composer)).toEqual([["flowers.jpg", "falls.jpg"]]);
     });
 
     it("removes nothing when the chat cannot be reached on the second try", async () => {
@@ -356,7 +369,7 @@ describe("chat composer attachments", () => {
         .mockResolvedValueOnce({ path: placeOf("falls"), created: false });
       mockCreateChat.mockRejectedValueOnce(new Error("Could not start a new chat. Try again."));
 
-      act(() => { composer.result.current.send(); });
+      act(() => { composer.result.current.retrySend(FIRST_SEND); });
       await waitFor(() => expect(mockCreateChat).toHaveBeenCalledTimes(2));
       await waitFor(() => expect(composer.result.current.isSending).toBe(false));
 
@@ -372,7 +385,7 @@ describe("chat composer attachments", () => {
         .mockResolvedValueOnce({ path: placeOf("falls"), created: true });
       mockCreateChat.mockRejectedValueOnce(new Error("Could not start a new chat. Try again."));
 
-      act(() => { composer.result.current.send(); });
+      act(() => { composer.result.current.retrySend(FIRST_SEND); });
       await waitFor(() => expect(mockRemoveChatAttachment).toHaveBeenCalledTimes(1));
 
       expect(mockRemoveChatAttachment.mock.calls[0][2]).toBe(placeOf("falls"));
@@ -385,7 +398,9 @@ describe("chat composer attachments", () => {
     attach(composer, "flowers");
     act(() => { composer.result.current.setDraft("What is this?"); });
     act(() => { composer.result.current.send(); });
-    await waitFor(() => expect(composer.result.current.draft).toBe("What is this?"));
+    await waitFor(() => expect(unsent(composer)).toEqual([["flowers.jpg"]]));
+    act(() => { composer.result.current.editUnsent(FIRST_SEND); });
+    expect(composer.result.current.draft).toBe("What is this?");
 
     act(() => { composer.result.current.removeAttachment(photo("flowers").id); });
     attach(composer, "falls");
@@ -405,7 +420,7 @@ describe("chat composer attachments", () => {
 
     const eight = Array.from({ length: MAX_MESSAGE_ATTACHMENTS }, (_, index) => `p${index}`);
 
-    it("is held for what is being sent, so that nothing added meanwhile is lost if it comes back", async () => {
+    it("is held for what is being sent, and stays held while it waits as not sent, so nothing is lost when it comes back", async () => {
       const settle = pendingAdmission();
       const composer = renderComposer({ activeChatId: "chat_a", detail: detailFor("chat_a") });
       attach(composer, ...eight);
@@ -421,7 +436,11 @@ describe("chat composer attachments", () => {
       expect(waiting(composer)).toEqual([]);
 
       await act(async () => { settle().fail(new Error("Could not send message. Try again.")); });
-      await waitFor(() => expect(waiting(composer)).toHaveLength(MAX_MESSAGE_ATTACHMENTS));
+      await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+      expect(unsent(composer)).toEqual([eight.map((name) => `${name}.jpg`)]);
+      expect(composer.result.current.attachmentRoom).toBe(0);
+
+      act(() => { composer.result.current.editUnsent(FIRST_SEND); });
       expect(waiting(composer)).toEqual(eight.map((name) => `${name}.jpg`));
     });
 
@@ -438,7 +457,11 @@ describe("chat composer attachments", () => {
       // Five of the eight fit beside the three that may come back.
       expect(waiting(composer)).toHaveLength(5);
       await act(async () => { settle().fail(new Error("Could not send message. Try again.")); });
-      await waitFor(() => expect(waiting(composer)).toHaveLength(MAX_MESSAGE_ATTACHMENTS));
+      await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+      expect(composer.result.current.attachmentRoom).toBe(0);
+
+      act(() => { composer.result.current.editUnsent(FIRST_SEND); });
+      expect(waiting(composer)).toHaveLength(MAX_MESSAGE_ATTACHMENTS);
       expect(waiting(composer).slice(0, 3)).toEqual(["a.jpg", "b.jpg", "c.jpg"]);
     });
 
@@ -520,6 +543,26 @@ describe("chat composer attachments", () => {
       expect(mockUploadChatAttachment).not.toHaveBeenCalled();
     });
 
+    it("keep a message that was not sent from being sent again, until the model reads them", async () => {
+      mockAdmitChatTurn.mockRejectedValueOnce(new Error("Could not send message. Try again."));
+      const inChat = { activeChatId: "chat_a", detail: detailFor("chat_a"), attachmentKinds: ["image", "file"] as const };
+      const composer = renderComposer(inChat);
+      attach(composer, "flowers");
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(unsent(composer)).toEqual([["flowers.jpg"]]));
+      expect(composer.result.current.optimisticMessages).toMatchObject([{ retryBlocked: false }]);
+
+      composer.rerender({ ...newChat, ...inChat, attachmentKinds: ["file"] });
+      expect(composer.result.current.optimisticMessages).toMatchObject([{ retryBlocked: true }]);
+      act(() => { composer.result.current.retrySend(FIRST_SEND); });
+      expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1);
+
+      mockAdmitChatTurn.mockResolvedValue(admissionFor("chat_a", "msg_a"));
+      composer.rerender({ ...newChat, ...inChat });
+      act(() => { composer.result.current.retrySend(FIRST_SEND); });
+      await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(2));
+    });
+
     it("are none where the screen does not say what the model reads", () => {
       const composer = renderComposer();
       attach(composer, "flowers");
@@ -528,7 +571,7 @@ describe("chat composer attachments", () => {
     });
   });
 
-  it("puts returned attachments ahead of any added while the send was on its way", async () => {
+  it("puts attachments taken back from a message ahead of any added while it was on its way", async () => {
     let fail: (error: Error) => void = () => {};
     mockAdmitChatTurn.mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
     const composer = renderComposer({ activeChatId: "chat_a", detail: detailFor("chat_a") });
@@ -538,8 +581,10 @@ describe("chat composer attachments", () => {
     await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
     attach(composer, "added-meanwhile");
     await act(async () => { fail(new Error("Could not send message. Try again.")); });
+    await waitFor(() => expect(unsent(composer)).toEqual([["sent.jpg"]]));
 
-    await waitFor(() => expect(waiting(composer)).toEqual(["sent.jpg", "added-meanwhile.jpg"]));
+    act(() => { composer.result.current.editUnsent(FIRST_SEND); });
+    expect(waiting(composer)).toEqual(["sent.jpg", "added-meanwhile.jpg"]);
     // Only attachments were sent, so the draft gains no stray space.
     expect(composer.result.current.draft).toBe("");
   });
@@ -560,6 +605,45 @@ describe("chat composer attachments", () => {
     expect(waiting(composer)).toEqual([]);
     composer.rerender({ ...newChat, activeChatId: "chat_new", detail: detailFor("chat_new") });
     expect(waiting(composer)).toEqual(["next.jpg"]);
+  });
+
+  it("keeps a held send waiting until its attachments fit beside those of a message that was not sent", async () => {
+    let failFirst: (error: Error) => void = () => {};
+    mockAdmitChatTurn.mockReturnValueOnce(new Promise((_resolve, reject) => { failFirst = reject; }));
+    const composer = renderComposer();
+    attach(composer, "a1", "a2", "a3", "a4", "a5");
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+
+    // The person leaves and comes back to a new chat, and starts another message there.
+    composer.rerender({ ...newChat, activeChatId: "chat_other", detail: detailFor("chat_other") });
+    composer.rerender(newChat);
+    act(() => { composer.result.current.setDraft("Second"); });
+    await act(async () => { failFirst(new Error("Could not send message. Try again.")); });
+    await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+
+    // The second message fails too, and stays here with its four attachments.
+    mockAdmitChatTurn.mockRejectedValueOnce(new Error("Could not send message. Try again."));
+    attach(composer, "b1", "b2", "b3", "b4");
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(unsent(composer)).toEqual([["b1.jpg", "b2.jpg", "b3.jpg", "b4.jpg"]]));
+
+    // The first message's five would not fit beside the four held for it.
+    expect(waiting(composer)).toEqual([]);
+    expect(composer.result.current.draft).toBe("");
+
+    // Taking the second one back gives back all four of its attachments.
+    act(() => { composer.result.current.editUnsent("optimistic-req_4"); });
+    expect(composer.result.current.draft).toBe("Second");
+    expect(waiting(composer)).toEqual(["b1.jpg", "b2.jpg", "b3.jpg", "b4.jpg"]);
+
+    // Once the composer is free and there is room, the first one comes back whole.
+    act(() => { composer.result.current.setDraft(""); });
+    for (const name of ["b1", "b2", "b3", "b4"]) {
+      act(() => { composer.result.current.removeAttachment(photo(name).id); });
+    }
+    expect(composer.result.current.draft).toBe("");
+    expect(waiting(composer)).toEqual(["a1.jpg", "a2.jpg", "a3.jpg", "a4.jpg", "a5.jpg"]);
   });
 
   it("holds a failed new chat's attachments until the new chat's composer is free again", async () => {

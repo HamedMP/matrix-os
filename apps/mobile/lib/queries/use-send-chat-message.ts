@@ -143,27 +143,39 @@ export function useSendChatMessage() {
         // result. Bind only once the turn is actually admitted, below.
       }
 
+      const computerKey = `${computer.handle}:${computer.runtimeSlot}`;
+      const uid = userId ?? "signed-out";
+
       // Uploads stay if this fails: the answer may only have been lost, and
       // the turn it admitted names them. Sending again finds them in place.
-      const admission = await admitChatTurn(sendToken, gatewayUrl, targetChatId, {
-        clientRequestId: turnRequestId,
-        baseRevision: revision,
-        parts: [
-          ...(text ? [{ type: "text" as const, text }] : []),
-          ...attachmentParts.flatMap((part) => (part ? [part] : [])),
-        ],
-        selection,
-        interactionMode,
-        permissionMode,
-      });
+      let admission;
+      try {
+        admission = await admitChatTurn(sendToken, gatewayUrl, targetChatId, {
+          clientRequestId: turnRequestId,
+          baseRevision: revision,
+          parts: [
+            ...(text ? [{ type: "text" as const, text }] : []),
+            ...attachmentParts.flatMap((part) => (part ? [part] : [])),
+          ],
+          selection,
+          interactionMode,
+          permissionMode,
+        });
+      } catch (error: unknown) {
+        // Read an existing chat again: if the computer did admit the turn,
+        // its message shows up and takes the place of the one marked as not
+        // sent. Not awaited -- the failure is reported either way.
+        if (chatId) {
+          void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChatDetail(uid, computerKey, chatId) });
+        }
+        throw error;
+      }
 
       if (!chatId) {
         bindDraftChatId(targetChatId);
         onChatCreated?.(targetChatId);
       }
 
-      const computerKey = `${computer.handle}:${computer.runtimeSlot}`;
-      const uid = userId ?? "signed-out";
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChats(uid, computerKey) }),
         queryClient.invalidateQueries({

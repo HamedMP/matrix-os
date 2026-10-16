@@ -11,6 +11,7 @@ import UserIcon from "@hugeicons/core-free-icons/UserIcon";
 import { Page } from "@/components/shell/Page";
 import { TabScreen } from "@/components/shell/TabScreen";
 import { SettingsCardStack, SettingsRow } from "@/components/settings/SettingsSurface";
+import { ConnectAppsIcon } from "@/components/ui";
 import { resetAnalytics } from "@/lib/analytics";
 import { clearAllScrollback } from "@/lib/terminal-scrollback";
 
@@ -69,6 +70,13 @@ function SettingsScreen() {
           detail="Theme, security, and notifications"
           icon={Settings02Icon}
           onPress={() => router.push("/settings-detail/app-settings" as never)}
+        />
+        <SettingsRow
+          card
+          title="Connect Apps"
+          detail="Accounts and tools Matrix can use"
+          icon={ConnectAppsIcon}
+          onPress={() => router.push("/settings-detail/connect-apps" as never)}
         />
         <SettingsRow
           card

@@ -1,12 +1,12 @@
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { TextInput } from "react-native";
 import { useAuth } from "@clerk/clerk-expo";
 
 import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agents/chat-draft-request";
 import { ChatScreenView } from "@/components/chat/ChatScreenView";
-import { chatScreenTitle, composerPlaceholder } from "@/components/chat/chat-screen-state";
+import { activeChatRun, chatLoadState, chatScreenTitle, composerPlaceholder } from "@/components/chat/chat-screen-state";
 import { CHAT_SUGGESTIONS } from "@/components/chat/chat-suggestions";
 import { composerAddProps } from "@/components/chat/composer-add";
 import { ModelTrigger } from "@/components/chat/ModelTrigger";
@@ -37,7 +37,15 @@ export default function ChatScreen() {
     selectedProjectId,
   } = useCanonicalChatSession();
 
-  const { detail, computer, refresh } = useCanonicalChatDetail(activeChatId);
+  const {
+    detail, computer, refresh, isError: chatReadFailed, reload: reloadChat,
+  } = useCanonicalChatDetail(activeChatId);
+  // An open chat is sent to at the revision it was read at, so nothing is
+  // sent to it before it has been read -- nor while a run is active, which
+  // the computer would refuse. Holding sends back holds Retry of a message
+  // that was not sent as well as the Send button.
+  const chatUnread = activeChatId !== null && !detail;
+  const runActive = activeChatRun(detail) !== undefined;
   const { chats } = useCanonicalChats();
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   const botChat = useBotChat(activeChatId, gatewayUrl);
@@ -61,7 +69,7 @@ export default function ChatScreen() {
 
   const {
     draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments,
-    sentAttachments, send, isSending, optimisticMessages,
+    sentAttachments, canSend: composerCanSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = useChatComposer({
     scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
     activeChatId,
@@ -71,8 +79,9 @@ export default function ChatScreen() {
     projectId: selectedProjectId,
     attachmentKinds,
     // The selection is not final until the provider catalog has loaded.
-    disabled: providerCatalogLoading,
+    disabled: providerCatalogLoading || chatUnread || runActive,
   });
+  const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
 
   const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
     chatId: activeChatId,
@@ -84,8 +93,13 @@ export default function ChatScreen() {
   });
   const busy = isSending || running;
   const isConnected = Boolean(isSignedIn);
-  const canSend = !providerCatalogLoading && (draft.trim().length > 0 || attachments.length > 0) && isConnected
-    && unreadableAttachments.length === 0 && Boolean(selection) && Boolean(turnModes) && !busy;
+  const canSend = composerCanSend && isConnected;
+  const chatState = chatLoadState({
+    chatId: activeChatId,
+    loaded: !chatUnread,
+    failed: chatReadFailed,
+    shownMessages: messages.length,
+  });
 
   const inputRef = useRef<TextInput>(null);
   // The composer takes the cursor, and with it the keyboard, only when the
@@ -138,6 +152,9 @@ export default function ChatScreen() {
       renderRequest={renderRequest}
       renderResults={renderResults}
       renderComputerPhoto={renderComputerPhoto}
+      chatState={chatState}
+      onReloadChat={reloadChat}
+      unsentActions={unsentActions}
       composer={{
         inputRef,
         draft,

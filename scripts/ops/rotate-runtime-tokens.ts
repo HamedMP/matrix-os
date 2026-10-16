@@ -11,6 +11,8 @@ import {
 } from '../../packages/platform/src/platform-token.ts';
 import { encryptRuntimeTokenRotation } from './runtime-token-envelope.mjs';
 import { targetRuntimeTokenEpoch } from './runtime-token-epoch.mjs';
+import { prepareSyncInitializationFromDatabase, type SyncInitializationRequest, type SyncInitializationMachine } from './runtime-token-sync-initialization.ts';
+import { parseUniqueOperatorJson, readProtectedOperatorInput } from './runtime-token-protected-input.ts';
 
 type Machine = {
   machine_id: string;
@@ -20,7 +22,7 @@ type Machine = {
   status: string;
   deleted_at: string | null;
 };
-type Database = { user_machines: Machine };
+type Database = { user_machines: Machine & SyncInitializationMachine };
 
 async function protectedText(path: string): Promise<string> {
   const info = await lstat(path);
@@ -31,14 +33,16 @@ async function protectedText(path: string): Promise<string> {
 function flags(): Record<string, string> {
   const args = process.argv.slice(2);
   const action = args.shift();
-  if (action !== 'prepare' && action !== 'prepare-recovery' && action !== 'activate') throw new Error('Expected prepare, prepare-recovery, or activate');
+  if (!['prepare', 'prepare-recovery', 'activate', 'prepare-sync-initialization'].includes(action ?? '')) throw new Error('Unknown runtime credential action');
   if (args.length % 2) throw new Error('Expected flag/value pairs');
-  const values: Record<string, string> = { action };
+  const values: Record<string, string> = { action: action! };
   for (let i = 0; i < args.length; i += 2) {
     if (!/^--[a-z-]+$/.test(args[i]) || values[args[i].slice(2)]) throw new Error('Invalid flag');
     values[args[i].slice(2)] = args[i + 1];
   }
-  const required = action === 'prepare'
+  const required = action === 'prepare-sync-initialization'
+    ? ['machine-id', 'db-file', 'secret-file', 'public-key-file', 'request-file', 'out']
+    : action === 'prepare'
     ? ['machine-id', 'db-file', 'secret-file', 'public-key-file', 'verifier-digest', 'out']
     : action === 'prepare-recovery'
       ? ['machine-id', 'db-file', 'secret-file', 'public-key-file', 'verifier-digest', 'host-epoch', 'out']
@@ -52,10 +56,32 @@ function flags(): Record<string, string> {
 
 async function main(): Promise<void> {
   const options = flags();
-  const connectionString = (await protectedText(options['db-file'])).trim();
+  const connectionString = (await (options.action === 'prepare-sync-initialization'
+    ? readProtectedOperatorInput(options['db-file']) : protectedText(options['db-file']))).trim();
   const pool = new pg.Pool({ connectionString, max: 1, connectionTimeoutMillis: 10000 });
   const db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
   try {
+    if (options.action === 'prepare-sync-initialization') {
+      const [rawRequest, platformSecret, recipientPublicKey] = await Promise.all([
+        readProtectedOperatorInput(options['request-file']), readProtectedOperatorInput(options['secret-file']),
+        readProtectedOperatorInput(options['public-key-file']),
+      ]);
+      const request = parseUniqueOperatorJson(rawRequest) as Record<string, unknown>;
+      if (!request || Object.keys(request).sort().join(',') !== 'expectedFile,expectedIdentity,expectedRelease,expiresAt,nonce,recipientSha256,verifierDigest') {
+        throw new Error('Invalid Sync initialization request');
+      }
+      const envelope = await prepareSyncInitializationFromDatabase(db, options['machine-id'], {
+        expectedIdentity: request.expectedIdentity as SyncInitializationRequest['expectedIdentity'],
+        expectedRelease: request.expectedRelease as SyncInitializationRequest['expectedRelease'],
+        expectedFile: request.expectedFile as SyncInitializationRequest['expectedFile'],
+        recipientSha256: request.recipientSha256 as string, verifierDigest: request.verifierDigest as string,
+        nonce: request.nonce as string, platformSecret, recipientPublicKey,
+        expiresAt: new Date(typeof request.expiresAt === 'string' ? request.expiresAt : NaN),
+      });
+      await writeFile(options.out, JSON.stringify(envelope), { flag: 'wx', mode: 0o600 });
+      process.stdout.write('Prepared encrypted Sync initialization. No runtime epoch changed.\n');
+      return;
+    }
     const machine = await db.selectFrom('user_machines')
       .select(['machine_id', 'handle', 'runtime_slot', 'runtime_token_epoch', 'status', 'deleted_at'])
       .where('machine_id', '=', options['machine-id'])
