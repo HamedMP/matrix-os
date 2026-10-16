@@ -206,6 +206,13 @@ workflow's package-version stamping is exempt; dirty local builds report unknown
 provenance. This metadata is exposed through the bounded `app:get-version`
 IPC response; installed apps do not need Git or GitHub access to compare releases.
 
+A dirty release rejection also carries bounded build-time diagnostics in its
+error cause: tracked and untracked repository-relative path names, total counts,
+and a truncated-path count. Names are escaped and limited to 16 per class and
+240 characters per emitted name. These diagnostics use the existing Git results
+without reading file contents or changing the checkout; they do not relax the
+release check or establish which process created a change.
+
 The update reminder first compares that source with the running gateway's
 `/api/system/info.build.sha`. Native host bundles may return `"unknown"` for
 this legacy image-environment field. In that case the shared contract reads
