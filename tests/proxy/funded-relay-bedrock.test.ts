@@ -133,6 +133,59 @@ describe("funded Bedrock relay", () => {
     expect(bedrockUpstream.close).toHaveBeenCalledOnce();
   });
 
+  it("rejects a conservatively oversized Bedrock input before reservation or start", async () => {
+    const control = platform();
+    const bedrockUpstream: FundedGenerationUpstream = { dispatch: vi.fn(), close: vi.fn() };
+    const relay = createFundedRelay({ ...config(), bedrockRoute: { ...ROUTE, maxInputTokens: 1_000 },
+      now: () => NOW, requestIdFactory: () => "request_1",
+      platformClient: control as unknown as FundedPlatformClient, bedrockUpstream });
+    const app = new Hono(); relay.register(app);
+    const result = await app.fetch(new Request("https://relay.example/v1/chat/completions", { method: "POST",
+      headers: { authorization: `Bearer ${CREDENTIAL}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "x".repeat(5_000) }],
+        max_tokens: 20, stream: true }) }));
+    expect(result.status).toBe(400);
+    expect(control.authorize).not.toHaveBeenCalled();
+    expect(control.start).not.toHaveBeenCalled();
+    expect(bedrockUpstream.dispatch).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
+  it("never settles exact usage or falls back when the Bedrock stream fails", async () => {
+    const control = platform();
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulls++ === 0) {
+          controller.enqueue(new TextEncoder().encode('data: {"id":"response_1","model":"matrix-bedrock-qualified","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}\n\n'));
+          return;
+        }
+        controller.error(new BedrockUpstreamError("invalid_response"));
+      },
+    });
+    const bedrockUpstream: FundedGenerationUpstream = {
+      dispatch: vi.fn(async () => ({ response: new Response(body, {
+        headers: { "content-type": "text/event-stream" },
+      }), provenance: {
+        upstream: "aws_bedrock", routeId: ROUTE.routeId, resolvedModel: ROUTE.resolvedModel,
+        inferenceProfile: ROUTE.inferenceProfile, region: ROUTE.region,
+        pricingVersion: ROUTE.pricing.version, providerRequestId: "aws-stream-failure",
+      } })), close: vi.fn(),
+    };
+    const fetchMock = vi.fn();
+    const relay = createFundedRelay({ ...config(), fetch: fetchMock, now: () => NOW,
+      requestIdFactory: () => "request_1", platformClient: control as unknown as FundedPlatformClient,
+      bedrockUpstream });
+    const app = new Hono(); relay.register(app);
+    const result = await app.fetch(request());
+    expect(result.status).toBe(200);
+    await expect(result.text()).rejects.toThrow("AI response stream failed");
+    await vi.waitFor(() => expect(control.finalize).toHaveBeenCalled());
+    expect(control.finalize).not.toHaveBeenCalledWith(expect.objectContaining({ mode: "exact" }), expect.anything());
+    expect(fetchMock).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
   it("does not dispatch or fall back when policy rejects the model", async () => {
     const control = platform();
     control.check.mockRejectedValue(new FundedControlPlaneError(403));

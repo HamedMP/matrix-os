@@ -21,6 +21,10 @@ import {
 } from "./funded-relay-upstream.js";
 
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+const INPUT_FRAMING_BASE_TOKENS = 4_096;
+const INPUT_FRAMING_MESSAGE_TOKENS = 256;
+const INPUT_FRAMING_BLOCK_TOKENS = 128;
+const INPUT_FRAMING_TOOL_TOKENS = 512;
 interface BedrockRuntimeClientLike {
   send(
     command: ConverseStreamCommand,
@@ -149,6 +153,32 @@ export function translateOpenAiToBedrock(
       },
     }),
   };
+}
+
+/**
+ * Fail closed before reservation when the translated request could exceed the
+ * reviewed route ceiling. UTF-8 bytes conservatively bound caller-controlled
+ * tokenizer output; the additional per-structure allowance covers provider
+ * message/tool framing that is not represented in caller text.
+ */
+export function assertBedrockInputWithinRoute(
+  request: FundedOpenAiRequest,
+  route: BedrockRouteConfig,
+): void {
+  const translated = translateOpenAiToBedrock(request, route);
+  const payloadBytes = Buffer.byteLength(JSON.stringify(translated), "utf8");
+  const messages = translated.messages ?? [];
+  const messageBlocks = messages.reduce((total, message) => total + (message.content?.length ?? 0), 0);
+  const systemBlocks = translated.system?.length ?? 0;
+  const tools = translated.toolConfig?.tools?.length ?? 0;
+  const conservativeTokens = payloadBytes
+    + INPUT_FRAMING_BASE_TOKENS
+    + messages.length * INPUT_FRAMING_MESSAGE_TOKENS
+    + (messageBlocks + systemBlocks) * INPUT_FRAMING_BLOCK_TOKENS
+    + tools * INPUT_FRAMING_TOOL_TOKENS;
+  if (!Number.isSafeInteger(conservativeTokens) || conservativeTokens > route.maxInputTokens) {
+    throw new Error("Bedrock input exceeds the configured token ceiling");
+  }
 }
 
 function classifyBedrockError(error: unknown): BedrockUpstreamError {
