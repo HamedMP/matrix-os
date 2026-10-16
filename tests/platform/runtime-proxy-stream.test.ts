@@ -6,6 +6,10 @@ describe("runtime proxy response streaming", () => {
     ["POST", "/api/sync/commit", 300_000],
     ["GET", "/api/sync/commit", 30_000],
     ["POST", "/api/sync/presign", 30_000],
+    ["POST", "/api/apps/event/site", 285_000],
+    ["GET", "/api/apps/event/site", 30_000],
+    ["POST", "/api/apps/event/site/rollback", 30_000],
+    ["POST", "/api/apps/invalid!app/site", 30_000],
   ])("bounds %s %s with the appropriate operation budget", async (method, path, expected) => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
