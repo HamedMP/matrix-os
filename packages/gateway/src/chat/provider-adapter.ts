@@ -84,6 +84,7 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("approval.resolved"),
     approvalId: SafeProviderRefSchema,
     decision: CanonicalChatApprovalDecisionSchema,
+    reason: z.enum(["expired", "session_revoked"]).optional(),
   }).strict(),
   z.object({
     type: z.literal("input.requested"),

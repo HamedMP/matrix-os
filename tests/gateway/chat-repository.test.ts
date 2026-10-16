@@ -2362,6 +2362,59 @@ describe("ChatRepository", () => {
     expect(events.map((event) => event.id)).toContain(approval.id);
   });
 
+  it("records Undo on the existing chat grant and then closes the approval", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_session_grant_undo",
+      clientRequestId: "req_create_session_grant_undo",
+      title: "Session grant undo",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.kysely.updateTable("chat_runs").set({
+      status: "running", started_at: now, updated_at: now,
+    }).where("id", "=", acceptedRun.id).execute();
+    const request: CanonicalChatRunActivity = {
+      id: "activity_session_grant_request", chatId: created.chat.id, runId: acceptedRun.id,
+      occurredAt: now, type: "approval.requested", approvalId: "approval_session_grant",
+      title: "Search the web", risk: "low",
+      allowedDecisions: ["approve", "approve_for_session", "decline", "cancel"],
+    };
+    const resolved: CanonicalChatRunActivity = {
+      id: "activity_session_grant_resolved", chatId: created.chat.id, runId: acceptedRun.id,
+      occurredAt: now, type: "approval.resolved", approvalId: "approval_session_grant",
+      decision: "approve_for_session",
+    };
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [request, resolved]);
+    await expect(repository.getPendingApproval(owner, {
+      chatId: created.chat.id, runId: acceptedRun.id, approvalId: "approval_session_grant",
+    })).resolves.toMatchObject({ approvalId: "approval_session_grant", allowedDecisions: ["decline"] });
+
+    await expect(repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
+      ...resolved, reason: "session_revoked",
+    }])).resolves.toBe(1);
+    await expect(repository.getPendingApproval(owner, {
+      chatId: created.chat.id, runId: acceptedRun.id, approvalId: "approval_session_grant",
+    })).resolves.toBeNull();
+    const stored = await repository.kysely.selectFrom("chat_run_events").select("event")
+      .where("id", "=", resolved.id).executeTakeFirstOrThrow();
+    const event = typeof stored.event === "string" ? JSON.parse(stored.event) as unknown : stored.event;
+    expect(event).toMatchObject({ decision: "approve_for_session", reason: "session_revoked" });
+    const outcome = await repository.kysely.selectFrom("chat_approval_outcomes").select("decision")
+      .where("approval_id", "=", "approval_session_grant").executeTakeFirstOrThrow();
+    expect(outcome.decision).toBe("approve_for_session");
+    await expect(repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
+      ...resolved, decision: "decline", reason: "session_revoked",
+    }])).rejects.toBeInstanceOf(ChatConflictError);
+  });
+
   it("keeps adapter state behind the exact Driver and Instance boundary", async () => {
     const created = await repository.create(owner, {
       id: "chat_adapter_state",

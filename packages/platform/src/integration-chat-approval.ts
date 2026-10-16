@@ -5,7 +5,7 @@ import { CUSTOM_MCP_APPROVAL_PROOF_HEADER, verifyCustomMcpApprovalProof } from "
 
 const ref = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const Decision = z.strictObject({ chatId: ref, runId: ref, approvalId: ref, clientRequestId: ref,
-  decision: z.enum(["approve", "decline", "cancel"]) });
+  decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]) });
 
 /** Mount inside the existing machine-authenticated, Preview-denying integration boundary. */
 export function createIntegrationChatApprovalRoutes(platformSecret: string) {
