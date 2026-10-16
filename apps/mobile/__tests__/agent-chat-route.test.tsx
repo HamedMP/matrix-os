@@ -33,6 +33,9 @@ jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
 jest.mock("@/lib/queries/use-send-chat-message", () => ({
   useSendChatMessage: () => ({ mutate: mockRoute.shell.sendMessage, isPending: false }),
 }));
+jest.mock("@/lib/queries/use-retry-chat-turn", () => ({
+  useRetryChatTurn: () => ({ mutate: jest.fn(), isPending: false, isError: false, variables: undefined }),
+}));
 jest.mock("@/lib/queries/use-cancel-run", () => ({
   useCancelRun: () => ({ mutate: mockRoute.shell.cancelRun, isPending: false }),
 }));
@@ -101,6 +104,26 @@ describe("agent chat route", () => {
 
       expect(shell.ensure).toHaveBeenCalledTimes(1);
       expect(shell.ensure).toHaveBeenCalledWith("bot_research1");
+    });
+
+    it("shows skeleton rows while the found chat is read, and no composer to send from yet", () => {
+      state.detail = null;
+      render(<AgentChatRoute />);
+
+      expect(screen.getAllByTestId("agent-chat-skeleton-row").length).toBeGreaterThan(0);
+      expect(screen.queryByTestId("composer")).toBeNull();
+    });
+
+    it("says the found chat could not be read, and reads it again on Try again", () => {
+      state.detail = null;
+      state.detailFailed = true;
+      render(<AgentChatRoute />);
+
+      expect(screen.getByRole("alert").props.children).toBe("This agent's chat could not be opened.");
+      fireEvent.press(screen.getByRole("button", { name: "Try again" }));
+
+      expect(mockRoute.chatReload).toHaveBeenCalledTimes(1);
+      expect(shell.ensure).not.toHaveBeenCalled();
     });
 
     it("goes back from the top bar", () => {

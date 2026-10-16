@@ -66,6 +66,17 @@ export function createStripeBillingClient(options: {
           ? { matrix_prebilling_intent_id: input.prebillingIntentId }
           : {}),
         ...stripeAttributionMetadata(input.attribution),
+        ...(input.planSlug && input.interval ? {
+          matrix_plan_slug: input.planSlug, matrix_billing_interval: input.interval,
+          matrix_trial_days: String(input.trialPeriodDays ?? 0),
+        } : {}),
+        ...(input.googleAnalytics ? {
+          matrix_google_client_id: input.googleAnalytics.clientId,
+          matrix_google_analytics_consent: input.googleAnalytics.analyticsConsent,
+          matrix_google_ad_user_data: input.googleAnalytics.adUserData,
+          matrix_google_ad_personalization: input.googleAnalytics.adPersonalization,
+          matrix_google_expires_at: String(input.googleAnalytics.expiresAt),
+        } : {}),
       };
       const session = await stripe.checkout.sessions.create({
         mode: input.mode,
@@ -157,6 +168,12 @@ export function createStripeBillingClient(options: {
       return { url: session.url, id: session.id };
     },
 
+    async retrieveTrackingCheckout(id) {
+      return stripe.checkout.sessions.retrieve(id, { expand: ['line_items.data.price', 'subscription'] });
+    },
+    async retrieveTrackingInvoice(id) {
+      return stripe.invoices.retrieve(id, { expand: ['payments.data.payment.payment_intent'] });
+    },
     async retrieveCheckoutSession(id) {
       const session = await stripe.checkout.sessions.retrieve(id, {
         expand: ['line_items.data.price'],

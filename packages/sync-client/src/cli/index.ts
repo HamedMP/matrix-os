@@ -12,6 +12,7 @@ import { whoamiCommand } from "./commands/whoami.js";
 import { statusCommand } from "./commands/status.js";
 import { completionCommand } from "./commands/completion.js";
 import { mcpCommand } from "./commands/mcp.js";
+import { updateCommand } from "./commands/update.js";
 import { previewCommand } from "./commands/preview.js";
 import { runCommand } from "./commands/run.js";
 import { uploadCommand } from "./commands/upload.js";
@@ -49,6 +50,7 @@ const subCommands = {
   completion: completionCommand,
   mcp: mcpCommand,
   preview: previewCommand,
+  update: updateCommand,
 };
 
 const main = defineCommand({
