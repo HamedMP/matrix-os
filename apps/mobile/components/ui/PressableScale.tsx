@@ -1,5 +1,5 @@
 import type { GestureResponderEvent, PressableProps, StyleProp, ViewStyle } from "react-native";
-import { Pressable } from "react-native";
+import { Pressable, StyleSheet } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
 
 import { motion } from "@/lib/theme-v2";
@@ -30,11 +30,14 @@ export function PressableScale({
   const reduceMotion = useReduceMotion();
   // 0 at rest, 1 while held.
   const held = useSharedValue(0);
+  // The dimming goes on top of the caller's own opacity (a disabled button's), not in its place.
+  const ownOpacity = StyleSheet.flatten(style)?.opacity;
+  const restOpacity = typeof ownOpacity === "number" ? ownOpacity : 1;
 
   const animatedStyle = useAnimatedStyle(() => {
     const progress = held.get();
     return reduceMotion
-      ? { opacity: 1 - progress * (1 - PRESSED_OPACITY) }
+      ? { opacity: restOpacity * (1 - progress * (1 - PRESSED_OPACITY)) }
       : { transform: [{ scale: 1 - progress * (1 - pressedScale) }] };
   });
 

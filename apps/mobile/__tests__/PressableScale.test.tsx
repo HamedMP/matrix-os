@@ -61,6 +61,18 @@ describe("PressableScale", () => {
     expect(style.opacity).toBeCloseTo(PRESSED_OPACITY);
   });
 
+  it("keeps the caller's own opacity under the dimming, with reduced motion on", async () => {
+    jest.spyOn(AccessibilityInfo, "isReduceMotionEnabled").mockResolvedValue(true);
+    const faded = { padding: 4, opacity: 0.5 };
+    const view = render(<Subject style={faded} />);
+    await act(async () => {});
+    expect(drawnStyle("subject").opacity).toBeCloseTo(0.5);
+
+    fireEvent(screen.getByTestId("subject"), "pressIn");
+    view.rerender(<Subject style={faded} />);
+    expect(drawnStyle("subject").opacity).toBeCloseTo(0.5 * PRESSED_OPACITY);
+  });
+
   it("passes presses and the caller's own press-in and press-out through", () => {
     const onPress = jest.fn();
     const onPressIn = jest.fn();
