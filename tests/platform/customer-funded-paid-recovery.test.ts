@@ -162,4 +162,70 @@ describe('explicit paid-primary missing starter recovery', () => {
     await db.executor.updateTable('ai_funded_global_policy').set({ revision: 2, allowed_model_ids: '[]' }).execute();
     await unchanged(() => recover(input, { apply: true, reviewedFingerprint: prepared.fingerprint }));
   });
+
+  describe('explicit attested disabled deletion namespace', () => {
+    const authority = { servingRevision: 'matrix-platform-fixture-reviewed', imageDigest: `sha256:${'c'.repeat(64)}` };
+    function configure() {
+      const actualEnv: NodeJS.ProcessEnv = { ...env,
+        MATRIX_PAID_STARTER_RECOVERY_PLATFORM_REVISION: authority.servingRevision,
+        MATRIX_PAID_STARTER_RECOVERY_PLATFORM_IMAGE_DIGEST: authority.imageDigest };
+      delete actualEnv.ACCOUNT_DELETION_SECRET;
+      const input: Review = { ...review(targets), accountDeletionMode: 'disabled', disabledDeletionAuthority: { ...authority } };
+      recover = api.createPaidStarterRecovery({ db, env: actualEnv, sourceSha, now: () => new Date(at) });
+      return { input, actualEnv };
+    }
+    it.each([undefined, 'false'])('admits the exact paid cohort with explicit authority and scheduling flag %s', async scheduling => {
+      const { input, actualEnv } = configure();
+      if (scheduling !== undefined) actualEnv.ACCOUNT_DELETION_ENABLED = scheduling;
+      const before = await financialSnapshot(db);
+      expect(await recover(input)).toMatchObject({ mode: 'dry-run', targetCount: 3, grantedMicrousd: 0 });
+      expect(await financialSnapshot(db)).toEqual(before);
+      expect(await apply(input)).toMatchObject({ mode: 'applied', targetCount: 3, grantedMicrousd: 15_000_000 });
+      const after = await financialSnapshot(db);
+      expect(after.ledger.filter(row => row.source_reference === 'matrix-ai-lifetime-starter')).toHaveLength(3);
+      expect(after.grants.filter(row => row.grant_entry_id.startsWith('speech-monthly:'))).toEqual(before.grants);
+      expect(after.speechAllowances).toEqual(before.speechAllowances);
+      expect(after.balances.map(row => Number(row.credit_balance_microusd))).toEqual([6_000_000, 6_000_000, 6_000_000]);
+    });
+    it.each(['true', 'unknown', ''])('rejects present/non-disabled scheduling flag %j', async scheduling => {
+      const { input, actualEnv } = configure(); actualEnv.ACCOUNT_DELETION_ENABLED = scheduling;
+      await unchanged(() => apply(input));
+    });
+    it.each(['missing-review-authority', 'missing-operator-revision', 'missing-operator-image',
+      'wrong-operator-revision', 'wrong-operator-image', 'mutable-image-tag', 'extra-authority-field'] as const)
+      ('defers %s with no financial changes', async invalid => {
+        const { input, actualEnv } = configure();
+        if (invalid === 'missing-review-authority') delete input.disabledDeletionAuthority;
+        if (invalid === 'missing-operator-revision') delete actualEnv.MATRIX_PAID_STARTER_RECOVERY_PLATFORM_REVISION;
+        if (invalid === 'missing-operator-image') delete actualEnv.MATRIX_PAID_STARTER_RECOVERY_PLATFORM_IMAGE_DIGEST;
+        if (invalid === 'wrong-operator-revision') actualEnv.MATRIX_PAID_STARTER_RECOVERY_PLATFORM_REVISION = 'matrix-platform-fixture-other';
+        if (invalid === 'wrong-operator-image') actualEnv.MATRIX_PAID_STARTER_RECOVERY_PLATFORM_IMAGE_DIGEST = `sha256:${'d'.repeat(64)}`;
+        if (invalid === 'mutable-image-tag') input.disabledDeletionAuthority!.imageDigest = 'registry.invalid/platform:latest';
+        if (invalid === 'extra-authority-field') Object.assign(input.disabledDeletionAuthority!, { allowPending: true });
+        await unchanged(() => apply(input));
+      });
+    it.each(['', 'short-invalid', env.ACCOUNT_DELETION_SECRET])
+      ('requires secret absence rather than any present value: %s', async secret => {
+        const { input, actualEnv } = configure(); actualEnv.ACCOUNT_DELETION_SECRET = secret;
+        await unchanged(() => apply(input));
+      });
+    it.each(['scheduled', 'cancelled', 'completed'] as const)
+      ('defers any global %s deletion job even for an unrelated owner', async status => {
+        const { input } = configure();
+        const deletion = new AccountDeletionRepository(db.kysely, { secret: env.ACCOUNT_DELETION_SECRET, now: () => new Date(at) });
+        await deletion.accept({ clerkUserId: 'fixture_outside_reviewed_cohort', appleTokens: [] }, false);
+        await db.executor.updateTable('account_deletion_jobs').set({ status }).execute();
+        await unchanged(() => apply(input));
+      });
+    it('requires new inspection if a deletion job appears between dry-run and apply', async () => {
+      const { input } = configure(); const prepared = await recover(input);
+      const deletion = new AccountDeletionRepository(db.kysely, { secret: env.ACCOUNT_DELETION_SECRET, now: () => new Date(at) });
+      await deletion.accept({ clerkUserId: 'fixture_outside_reviewed_cohort', appleTokens: [] }, false);
+      await unchanged(() => recover(input, { apply: true, reviewedFingerprint: prepared.fingerprint }));
+    });
+    it('rejects disabled authority attached to the enabled branch', async () => {
+      const input = { ...review(targets), disabledDeletionAuthority: { ...authority } };
+      await unchanged(() => apply(input));
+    });
+  });
 });

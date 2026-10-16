@@ -51,6 +51,23 @@ describe.skipIf(!databaseUrl)('paid starter recovery on independent PostgreSQL c
     expect(ledger.map(row => row.entry_id).sort()).toEqual(targets.map(target => lifetimeId(target.ownerId)).sort());
     expect(ledger.every(row => Number(row.amount_microusd) === 5_000_000)).toBe(true);
   }, 30_000);
+  it('atomically admits the explicit disabled namespace only with matched serving authority and zero global jobs', async () => {
+    const authority = { servingRevision: 'matrix-platform-fixture-reviewed', imageDigest: `sha256:${'c'.repeat(64)}` };
+    const actualEnv: NodeJS.ProcessEnv = { ...env, ACCOUNT_DELETION_ENABLED: 'false',
+      MATRIX_PAID_STARTER_RECOVERY_PLATFORM_REVISION: authority.servingRevision,
+      MATRIX_PAID_STARTER_RECOVERY_PLATFORM_IMAGE_DIGEST: authority.imageDigest };
+    delete actualEnv.ACCOUNT_DELETION_SECRET;
+    const disabled = api.createPaidStarterRecovery({ db, env: actualEnv, sourceSha, now: () => new Date(clock) });
+    const input = { ...review(targets), accountDeletionMode: 'disabled' as const, disabledDeletionAuthority: authority };
+    const before = await financialSnapshot(db); const prepared = await disabled(input);
+    expect(await financialSnapshot(db)).toEqual(before);
+    expect(await disabled(input, { apply: true, reviewedFingerprint: prepared.fingerprint }))
+      .toMatchObject({ mode: 'applied', targetCount: 3, grantedMicrousd: 15_000_000 });
+    const after = await financialSnapshot(db);
+    expect(after.ledger.filter(row => row.source_reference === 'matrix-ai-lifetime-starter')).toHaveLength(3);
+    expect(after.grants.filter(row => row.grant_entry_id.startsWith('speech-monthly:'))).toEqual(before.grants);
+    expect(after.speechAllowances).toEqual(before.speechAllowances);
+  });
   it('shares deletion/funding owner admission before taking machine locks', async () => {
     const input = review(targets); const prepared = await recover(input);
     const other = api.createPaidStarterRecovery({ db: second, env, sourceSha, now: () => new Date(clock) });

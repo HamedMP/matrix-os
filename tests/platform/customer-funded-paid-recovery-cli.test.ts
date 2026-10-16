@@ -46,6 +46,13 @@ describe('protected exact-cohort starter recovery CLI', () => {
     expect(await cli.readPaidStarterRecoveryReview(path)).toEqual(fixture());
     expect((await cli.readPaidStarterRecoveryReview(path)).sourceSha).toBe(sourceSha);
   });
+  it('reads an explicit disabled namespace authority tuple without inferring mode from missing configuration', async () => {
+    const input: Review = { ...fixture(), accountDeletionMode: 'disabled', disabledDeletionAuthority: {
+      servingRevision: 'matrix-platform-fixture-reviewed', imageDigest: `sha256:${'c'.repeat(64)}` } };
+    const path = join(directory, 'disabled-review.json');
+    await writeFile(path, JSON.stringify(input), { flag: 'wx', mode: 0o600 });
+    expect(await cli.readPaidStarterRecoveryReview(path)).toEqual(input);
+  });
   it('rejects permissive permissions, final symlink, linked alias, oversized and duplicate-JSON input', async () => {
     const path = join(directory, 'review.json'); await writeFile(path, JSON.stringify(fixture()), { flag: 'wx', mode: 0o644 });
     await expect(cli.readPaidStarterRecoveryReview(path)).rejects.toThrow();

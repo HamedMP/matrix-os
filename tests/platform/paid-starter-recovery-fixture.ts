@@ -20,7 +20,8 @@ export interface Target {
 }
 export interface Review {
   version: 1; authorizationReference: string; issuedAt: string; expiresAt: string;
-  sourceSha: string; accountDeletionMode: 'enabled'; targets: Target[];
+  sourceSha: string; accountDeletionMode: 'enabled' | 'disabled'; targets: Target[];
+  disabledDeletionAuthority?: { servingRevision: string; imageDigest: string };
 }
 export interface Result { mode: 'dry-run' | 'applied'; fingerprint: string; targetCount: number; grantedMicrousd: number }
 export type Recover = (review: Review, mode?: { apply?: boolean; reviewedFingerprint?: string }) => Promise<Result>;

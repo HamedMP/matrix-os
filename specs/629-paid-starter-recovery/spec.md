@@ -57,6 +57,27 @@ must never appear in source, tests, public documentation or PR text.
 
 ## Transaction and consistency boundary
 
+Deletion mode is always explicit. `enabled` requires the actual configured
+deletion secret and rejects disabled-mode authority. `disabled` requires that
+`ACCOUNT_DELETION_SECRET` be strictly absent, not empty or malformed, and actual
+`ACCOUNT_DELETION_ENABLED` be absent or literal `false`; true, unknown and empty
+values fail closed. It also
+requires a reviewed `disabledDeletionAuthority` tuple containing servingRevision
+and immutable sha256 imageDigest. Both must exactly match the operator-only
+`MATRIX_PAID_STARTER_RECOVERY_PLATFORM_REVISION` and
+`MATRIX_PAID_STARTER_RECOVERY_PLATFORM_IMAGE_DIGEST` attestations from a fresh
+authenticated serving-configuration read. These values attest the current
+absence; they do not turn a production feature on or off.
+
+Disabled mode additionally requires ZERO deletion jobs globally: any record,
+including a cancelled/completed or unrelated-owner record, defers unchanged
+because the absent hash namespace cannot safely bind jobs to the reviewed owner.
+The global absence must be read fresh after funded-owner admission and before
+mutation, and a newly present job between dry-run/apply invalidates admission.
+The normal product cannot schedule deletion without its absent secret; independent
+administrative SQL remains the explicitly coordinated point-in-time boundary.
+No new production feature gate, secret, API or automatic fallback is introduced.
+
 Use existing account-deletion and funded-owner admission before machine writes,
 acquire multiple owners in deterministic order, and lock existing authoritative
 subscription/entitlement/override and financial rows consistently. Compare the
