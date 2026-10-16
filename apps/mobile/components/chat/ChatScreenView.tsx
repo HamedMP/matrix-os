@@ -1,4 +1,4 @@
-import { KeyboardAvoidingView, Platform } from "react-native";
+import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
@@ -7,9 +7,11 @@ import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
 import { ChatHome } from "./ChatHome";
+import { ChatKeyboardAvoidingView } from "./ChatKeyboardAvoidingView";
 import { ChatMessagesSkeleton, ChatUnavailable } from "./ChatLoadState";
 import type { ChatLoadState } from "./chat-screen-state";
 import { Composer, type ComposerProps } from "./Composer";
+import { chatHomeExit } from "./message-motion";
 import { MessageList, type MessageListProps } from "./MessageList";
 import { UnsentMessageActionsProvider, type UnsentMessageActions } from "./unsent-message-actions";
 
@@ -60,10 +62,7 @@ export function ChatScreenView({
     // The screen starts at the top of the window and ends at the tab bar, so
     // the keyboard's overlap with it needs no offset: the part of the keyboard
     // that covers the tab bar is already outside this view.
-    <KeyboardAvoidingView
-      style={[styles.screen, { paddingTop: insets.top }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <ChatKeyboardAvoidingView style={[styles.screen, { paddingTop: insets.top }]}>
       <TopBar
         title={title}
         leading={
@@ -78,7 +77,9 @@ export function ChatScreenView({
         ) : null}
       />
       {showHome ? (
-        <ChatHome suggestions={suggestions} onSuggestionPress={onSuggestionPress} />
+        <Animated.View testID="chat-home-frame" style={styles.home} exiting={chatHomeExit}>
+          <ChatHome suggestions={suggestions} onSuggestionPress={onSuggestionPress} />
+        </Animated.View>
       ) : chatState === "loading" ? (
         <ChatMessagesSkeleton />
       ) : chatState === "failed" ? (
@@ -95,7 +96,7 @@ export function ChatScreenView({
         </UnsentMessageActionsProvider>
       )}
       <Composer {...composer} keyboardOpen={keyboardOpen} />
-    </KeyboardAvoidingView>
+    </ChatKeyboardAvoidingView>
   );
 }
 
@@ -103,5 +104,8 @@ const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
     backgroundColor: theme.v2.colors.background,
+  },
+  home: {
+    flex: 1,
   },
 }));

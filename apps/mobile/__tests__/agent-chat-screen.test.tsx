@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
-import { FlatList, KeyboardAvoidingView, Platform, Text } from "react-native";
+import { FlatList, Platform, Text } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { AgentChatScreen, type AgentChatScreenProps } from "../components/agents/AgentChatScreen";
@@ -191,7 +192,7 @@ describe("agent chat screen", () => {
       mockKeyboardVisible = true;
       renderScreen();
 
-      expect(screen.UNSAFE_getByType(KeyboardAvoidingView).props.behavior).toBeUndefined();
+      expect(screen.UNSAFE_queryByType(KeyboardAvoidingView)).toBeNull();
       expect(flat(screen.getByTestId("agent-chat-bottom-inset")).height).toBe(0);
       expect(flat(screen.getByTestId("composer")).paddingBottom).toBe(8);
     });

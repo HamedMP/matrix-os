@@ -66,19 +66,41 @@ screens and actions look, move and feel.
 - One confirm dialog replaces the two hand-made popups; a destructive one
   plays the warning haptic as it opens.
 
+### Keyboard and sending (layer 5)
+
+- On iOS the chat, project and agent screens follow the keyboard frame by
+  frame (`react-native-keyboard-controller`), so the composer travels with
+  the keyboard instead of jumping to where it will end. The composer's
+  smaller gap above the keyboard applies as the keyboard starts to move.
+- A message sent from the phone rises into place above the composer as it
+  fades in, and a reply fades in as it starts. The greeting fades out as the
+  first message takes its place. Only messages still arriving animate, so
+  scrolling never replays one. With Reduce Motion a new message only fades in.
+- The messages already there move as before. Gliding them was tried: in a long
+  chat it ran only some of the time, and it made a streaming reply wobble as
+  each line was added.
+- Android keeps resizing the window for the keyboard, as before: in an
+  edge-to-edge app the package's provider turns that off for every screen,
+  so it is mounted on iOS only.
+
 ## Acceptance checks
 
 - Unit tests cover the tokens' use, the press scale and its reduced-motion
   fallback, each haptic call site, the launch theme, the root presentations,
   the placeholders' shapes and every new or changed dialog, menu and toast.
 - On the iPhone 17 simulator: tab changes, a press held on a row, a Settings
-  page pushed and swiped back, the Files sheet swiped down, and a dark-mode
-  cold launch, each recorded and checked frame by frame.
+  page pushed and swiped back, the Files sheet swiped down, a dark-mode
+  cold launch, and the keyboard opening and a message sent in a chat, each
+  recorded and checked frame by frame.
 
 ## Risks and limits
 
-- Every change is JavaScript and ships as an over-the-air update. A dark
-  native splash image needs a store build and is not part of this.
+- Layers 1 to 4 are JavaScript and can ship as an over-the-air update.
+  Layer 5 adds a native module, so it bumps the app version to 0.2.8, and
+  updates from then on reach only 0.2.8 builds. Merged together, all five
+  layers reach people with the 0.2.8 store build; merging layers 1 to 4
+  first lets them reach 0.2.7 installs over the air. A dark native splash
+  image also needs a store build and is not part of this.
 - Moving the agent chat and new-agent screens out of the tabs (so the tab bar
   leaves with them) changes navigation structure and is left for its own
   change.
