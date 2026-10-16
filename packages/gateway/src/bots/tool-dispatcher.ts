@@ -66,6 +66,7 @@ const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "memory.search": "read",
   "memory.propose": "write",
   "interaction.create": "write",
+  "brain.read": "read",
 };
 
 function isCode(error: unknown, ...codes: string[]): boolean {

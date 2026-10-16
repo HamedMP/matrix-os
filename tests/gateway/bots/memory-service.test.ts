@@ -109,7 +109,7 @@ describe("bot memory", () => {
     await expect(propose({}, { scope: "chat:chat_other1" })).rejects.toEqual(new BotBrokerActionError("invalid_arguments"));
   });
 
-  it.each(["integration.call", "artifact.read", "jev.inbox"])("requires confirmation of an owner-matching statement after %s reads outside content", async (capability) => {
+  it.each(["integration.call", "artifact.read", "jev.inbox", "brain.read"])("requires confirmation of an owner-matching statement after %s reads outside content", async (capability) => {
     await createBotCheckpointsRepository(db).prepare({
       ownerId: OWNER, taskId: binding.taskId, runId: binding.runId, toolCallId: "call_read_mail",
       action: { capability, argsHash: "a".repeat(64) }, effectClass: "read", now: AT,
@@ -118,6 +118,20 @@ describe("bot memory", () => {
       .resolves.toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("owner to confirm") }] });
     expect((await items()).map((item) => item.confirmed)).toEqual([false]);
     await expect(service().admitted({ ownerId: OWNER, botId: BOT, chatId: CHAT })).resolves.toEqual([]);
+  });
+
+  it("stops auto-confirming once this run reads the brain, not another run", async () => {
+    binding = { ...binding, capabilities: ["brain.read", "memory.propose"] };
+    const readBrain = (runId: string) => createBotCheckpointsRepository(db).prepare({
+      ownerId: OWNER, taskId: binding.taskId, runId, toolCallId: `call_brain_${runId}`,
+      action: { capability: "brain.read", argsHash: "b".repeat(64) }, effectClass: "read", now: AT,
+    });
+    await readBrain("run_botled2");
+    await expect(propose({})).resolves.toEqual({ ok: true, content: [{ type: "text", text: "Remembered." }] });
+    await readBrain(binding.runId);
+    await expect(propose({}))
+      .resolves.toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("owner to confirm") }] });
+    expect((await items()).map((item) => item.confirmed)).toEqual([true, false]);
   });
 
   it("searches and admits confirmed memory only", async () => {

@@ -3,7 +3,7 @@ import { normalizeContext, type Api, type ImageContent, type Model, type Provide
 import type { BotRunCommand, BotRunOutcome, BotSessionSnapshot, BotToolErrorCode } from "@matrix-os/contracts";
 import { BotBrokerError, type BotBrokerClient } from "./broker-client.js";
 import { createEventProjector } from "./events.js";
-import { BROKER_PLACEHOLDER_KEY, createBridgeModel } from "./providers.js";
+import { BROKER_PLACEHOLDER_KEY, createBridgeModel, routeEffort } from "./providers.js";
 import {
   BotSessionError,
   compactSession,
@@ -92,7 +92,9 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     || command.route.maxOutputTokens !== 256 || command.limits.maxToolActions !== 1)) {
     return outcome(command, { status: "failed", failureCode: "denied", toolActions: 0 });
   }
-  const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket);
+  // An isolated turn keeps its fixed single call without reasoning, so it never takes the run effort.
+  const effort = isolated ? undefined : routeEffort(command.route, command.limits.effort);
+  const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket, effort);
   // Unknown/invalid/truncated tools bypass beforeToolCall. Bound model work
   // itself: tool rounds, a final response and at most two session summaries.
   const maxInferenceCalls = isolated ? 1 : Math.min(command.limits.maxToolActions + 3, command.limits.maxInferenceCalls ?? 63);
@@ -108,7 +110,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     initialState: {
       systemPrompt: command.systemPrompt,
       model,
-      thinkingLevel: "off",
+      thinkingLevel: effort ?? "off",
       tools: isolated ? [] : createBotTools({ capabilities: command.capabilities, broker, state: tools }),
       messages: history,
     },

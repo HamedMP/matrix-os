@@ -7,7 +7,8 @@
  * - the item is grounded in that message: it appears in it verbatim, or at
  *   least half of its significant words do;
  * - it names no outside source, and the run has not yet read outside
- *   content (an integration call or a file read).
+ *   content (an integration call, a file read, an Inbox classification or a
+ *   brain read).
  *
  * Anything else stays unconfirmed, is never searched or put in context, and
  * waits for the owner to confirm it. Admitted memory is capped at a 2K-token
@@ -36,7 +37,7 @@ export const BOT_MEMORY_TOKEN_BUDGET = 2_000;
 type BotMemoryMutationResponse = z.infer<typeof BotMemoryMutationResponseSchema>;
 const KIND_ORDER = ["preference", "fact", "episode"] as const;
 /** Tools whose results can carry someone else's words into the run. */
-const OUTSIDE_CONTENT: readonly string[] = ["integration.call", "artifact.read", "jev.inbox"];
+const OUTSIDE_CONTENT: readonly string[] = ["integration.call", "artifact.read", "jev.inbox", "brain.read"];
 /** Answer continuations are admitted under this request prefix with gateway-built text. */
 const CONTINUATION_REQUEST_PREFIX = "req_answer_";
 const WORD = /[\p{L}\p{N}]+/gu;
