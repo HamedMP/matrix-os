@@ -110,6 +110,21 @@ it("focuses confirmation controls and restores the triggering action on cancel",
   await waitFor(()=>expect(document.activeElement).toBe(reset));
 });
 
+it("dismisses only the foreground confirmation on Escape", async () => {
+  const closeSettings = vi.fn();
+  const handleShellEscape = (event: KeyboardEvent) => { if (event.key === "Escape") closeSettings(); };
+  window.addEventListener("keydown", handleShellEscape);
+  try {
+    setup(); await screen.findByText("matrix_owner");
+    const trigger = screen.getByRole("button", { name: "Reset password" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("button", { name:"Cancel" }), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(closeSettings).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  } finally { window.removeEventListener("keydown", handleShellEscape); }
+});
+
 it("reports only bounded error categories without exposing custom names or messages", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const failure = new Error("postgres://private-secret"); failure.name = "credential-bearing-name";

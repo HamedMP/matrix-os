@@ -190,7 +190,7 @@ function DatabaseSettingsView({ client, dialogLayer, onOpenTerminal, onDownload 
       <Dialog.Root open={confirmation !== null} onOpenChange={(open) => { if (!open) setConfirmation(null); }}>
         <Dialog.Portal>
           <Dialog.Overlay className="matrix-database-overlay" style={{ ...brandStyle, zIndex: dialogLayer }} />
-          <Dialog.Content role="alertdialog" className="matrix-database-dialog matrix-database-surface" style={{ ...brandStyle, zIndex: dialogLayer + 1 }} onOpenAutoFocus={(event) => { event.preventDefault(); cancelButton.current?.focus(); }} onCloseAutoFocus={(event) => { event.preventDefault(); confirmationTrigger.current?.focus(); }}>
+          <Dialog.Content role="alertdialog" className="matrix-database-dialog matrix-database-surface" style={{ ...brandStyle, zIndex: dialogLayer + 1 }} onEscapeKeyDown={(event) => event.stopPropagation()} onOpenAutoFocus={(event) => { event.preventDefault(); cancelButton.current?.focus(); }} onCloseAutoFocus={(event) => { event.preventDefault(); confirmationTrigger.current?.focus(); }}>
             <Dialog.Title>{confirmationCopy.title}</Dialog.Title>
             <Dialog.Description>{confirmationCopy.description}</Dialog.Description>
             <div className="matrix-database-dialog-actions">
