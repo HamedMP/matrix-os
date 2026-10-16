@@ -73,11 +73,12 @@ screens and actions look, move and feel.
   the keyboard instead of jumping to where it will end. The composer's
   smaller gap above the keyboard applies as the keyboard starts to move.
 - A message sent from the phone rises into place above the composer as it
-  fades in, and a reply fades in as it starts; the messages already there
-  glide up to make room. The greeting fades out as the first message takes
-  its place. Only messages still arriving animate, so scrolling never
-  replays one. With Reduce Motion a new message only fades in and nothing
-  moves.
+  fades in, and a reply fades in as it starts. The greeting fades out as the
+  first message takes its place. Only messages still arriving animate, so
+  scrolling never replays one. With Reduce Motion a new message only fades in.
+- The messages already there move as before. Gliding them was tried: in a long
+  chat it ran only some of the time, and it made a streaming reply wobble as
+  each line was added.
 - Android keeps resizing the window for the keyboard, as before: in an
   edge-to-edge app the package's provider turns that off for every screen,
   so it is mounted on iOS only.
