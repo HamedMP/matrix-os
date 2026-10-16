@@ -42,6 +42,7 @@ describe('explicit paid-primary missing starter recovery', () => {
         amount_microusd: 5_000_000, expires_at: null }))));
     expect(after.ledger.filter(row => row.source_reference.startsWith('platform-speech-monthly:'))).toEqual(before.ledger);
     expect(after.grants.filter(row => row.grant_entry_id.startsWith('speech-monthly:'))).toEqual(before.grants);
+    expect(after.speechAllowances).toEqual(before.speechAllowances);
     expect(after.balances.map(row => Number(row.credit_balance_microusd))).toEqual([6_000_000, 6_000_000, 6_000_000]);
     expect(after.policies).toHaveLength(3);
     expect(after.policies.every(row => row.enabled && row.revision === 1 && Number(row.monthly_budget_microusd) === 5_000_000)).toBe(true);
