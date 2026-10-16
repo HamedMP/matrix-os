@@ -40,6 +40,7 @@ export {
   fetchChats,
   fetchProjectChats,
   isChatUnread,
+  retryChatTurn,
   searchChats,
   type ChatPageOptions,
   type ChatSearchOptions,

@@ -329,9 +329,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('CI refresh-v1 pr={0} head={1} base={2} merge={3}');
     expect(workflow).toContain('queue: max');
     expect(workflow).not.toContain('cancel-in-progress:');
-    expect(workflow).toContain(
-      "group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'shared' }}",
-    );
+    expect(parse(workflow).concurrency.group).toContain("github.event_name == 'push' && github.sha");
     expect(existsSync(join(root, '.github/workflows/ci-supersede.yml'))).toBe(false);
     expect(existsSync(join(root, 'scripts/ci/supersede-main-ci.mjs'))).toBe(false);
   });

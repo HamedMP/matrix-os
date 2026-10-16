@@ -35,11 +35,39 @@ export async function extractWithReadability(
   };
 }
 
+function stripRawElements(html: string, tag: "script" | "style"): string {
+  const openings = new RegExp(`<${tag}`, "gi");
+  const closings = new RegExp(`</${tag}>`, "gi");
+  let copiedUntil = 0;
+  let output = "";
+  let opening: RegExpExecArray | null;
+  while ((opening = openings.exec(html))) {
+    closings.lastIndex = openings.lastIndex;
+    const closing = closings.exec(html);
+    // Preserve unmatched openings for ordinary tag stripping. The suffix is
+    // searched only once, rather than again for every remaining opening.
+    if (!closing) break;
+    output += html.slice(copiedUntil, opening.index);
+    copiedUntil = closings.lastIndex;
+    openings.lastIndex = copiedUntil;
+  }
+  return output + html.slice(copiedUntil);
+}
+
 export function extractRawText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const visible = stripRawElements(stripRawElements(html, "script"), "style");
+  let output = "";
+  let copiedUntil = 0;
+  let opening = visible.indexOf("<");
+  while (opening !== -1) {
+    const closing = visible.indexOf(">", opening + 1);
+    // Unterminated markup remains literal text; never rescan its suffix.
+    if (closing === -1) break;
+    if (closing > opening + 1) {
+      output += visible.slice(copiedUntil, opening) + " ";
+      copiedUntil = closing + 1;
+    }
+    opening = visible.indexOf("<", closing + 1);
+  }
+  return (output + visible.slice(copiedUntil)).replace(/\s+/g, " ").trim();
 }

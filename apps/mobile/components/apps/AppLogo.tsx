@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import AppWindowIcon from "@hugeicons/core-free-icons/AppWindowIcon";
 import { Image } from "expo-image";
 import { View } from "react-native";
@@ -6,28 +6,34 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Icon } from "@/components/ui";
 
-export function AppLogo({
-  name,
-  uri,
-  authorization,
-}: {
+import { APP_ARTWORK_FOOTPRINT, APP_ICON_SQUIRCLE } from "./app-icon-shape";
+
+interface AppLogoProps {
   name: string;
   uri: string | null;
   authorization?: string;
-}) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const { theme } = useUnistyles();
+}
 
-  useEffect(() => {
-    setImageFailed(false);
-  }, [uri]);
-
+export function AppLogo({ name, uri, authorization }: AppLogoProps) {
   return (
     <View testID={`app-logo-${name}`} style={styles.container}>
-      {uri && !imageFailed ? (
+      {/* Keyed by address, so every change of address, back to an earlier one included, gets a fresh try. */}
+      <AppIcon key={uri ?? ""} name={name} uri={uri} authorization={authorization} />
+    </View>
+  );
+}
+
+function AppIcon({ name, uri, authorization }: AppLogoProps) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const { theme } = useUnistyles();
+  const imageUri = uri && !imageFailed ? uri : null;
+
+  return (
+    <View testID={`app-icon-${name}`} style={[styles.artwork, !imageUri && styles.placeholder]}>
+      {imageUri ? (
         <Image
           source={{
-            uri,
+            uri: imageUri,
             headers: authorization ? { Authorization: authorization } : undefined,
           }}
           contentFit="contain"
@@ -41,15 +47,26 @@ export function AppLogo({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
-    width: 68,
-    height: 68,
+    width: APP_ARTWORK_FOOTPRINT,
+    height: APP_ARTWORK_FOOTPRINT,
     alignItems: "center",
     justifyContent: "center",
   },
-  image: {
-    width: 64,
-    height: 64,
+  // Icons made on the computer are often square images with no corners of
+  // their own, so the squircle is cut here rather than left to the image.
+  artwork: {
+    ...APP_ICON_SQUIRCLE,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
   },
-});
+  placeholder: {
+    backgroundColor: theme.v2.appColors.surface,
+  },
+  image: {
+    width: APP_ICON_SQUIRCLE.width,
+    height: APP_ICON_SQUIRCLE.height,
+  },
+}));

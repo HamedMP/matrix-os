@@ -62,6 +62,9 @@ jest.mock("@/lib/queries/use-send-chat-message", () => ({
   useSendChatMessage: () => ({ mutate: mockSendMessage, isPending: mockSendPending }),
 }));
 
+jest.mock("@/lib/queries/use-retry-chat-turn", () => ({
+  useRetryChatTurn: () => ({ mutate: jest.fn(), isPending: false, isError: false, variables: undefined }),
+}));
 jest.mock("@/lib/queries/use-cancel-run", () => ({
   useCancelRun: () => ({ mutate: jest.fn(), isPending: false }),
 }));
@@ -215,32 +218,40 @@ describe("drawer home screen", () => {
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
     });
 
-    it("puts the text back in the composer when the send fails", () => {
+    it("keeps a message that failed to send where it was, marked as not sent, and gives it back on Edit", () => {
       render(<ChatScreen />);
       sendDraft("Ship it");
 
       act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
 
-      expect(screen.queryByText("Ship it")).toBeNull();
+      expect(screen.getByText("Ship it")).toBeTruthy();
+      expect(screen.getByText("Not sent")).toBeTruthy();
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
+      expect(screen.queryByText("What should we work on?")).toBeNull();
+
+      fireEvent.press(screen.getByRole("button", { name: "Edit message" }));
+      expect(screen.queryByText("Not sent")).toBeNull();
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
       expect(screen.getByText("What should we work on?")).toBeTruthy();
     });
 
-    it("keeps text typed while a failed send was in flight", () => {
+    it("keeps text typed while a failed send was in flight, ahead of which Edit puts the message", () => {
       render(<ChatScreen />);
       sendDraft("Ship it");
       fireEvent.changeText(screen.getByLabelText("Message Matrix"), "and tag it");
 
       act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("and tag it");
 
+      fireEvent.press(screen.getByRole("button", { name: "Edit message" }));
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it and tag it");
     });
 
-    it("reuses the idempotency keys when the same text is retried after a failure", () => {
+    it("reuses the idempotency keys when a message that was not sent is retried", () => {
       render(<ChatScreen />);
       sendDraft("Ship it");
       act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
-      fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+      fireEvent.press(screen.getByRole("button", { name: "Retry sending" }));
 
       expect(mockSendMessage).toHaveBeenCalledTimes(2);
       const [first, retry] = mockSendMessage.mock.calls.map((call) => call[0]);
@@ -295,7 +306,7 @@ describe("drawer home screen", () => {
       expect(screen.getAllByText("Ship it")).toHaveLength(3);
     });
 
-    it("returns a failed send's text to the chat it was sent in, not the one on screen", () => {
+    it("shows a failed send as not sent in the chat it was sent in, not the one on screen", () => {
       mockActiveChatId = "chat_a";
       mockDetail = detailFor("chat_a", []);
       const view = render(<ChatScreen />);
@@ -307,13 +318,15 @@ describe("drawer home screen", () => {
       view.rerender(<ChatScreen />);
       act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
+      expect(screen.queryByText("Not sent")).toBeNull();
 
-      // Back in the original chat, the text is waiting in the composer.
+      // Back in the original chat, the message is there, marked as not sent.
       mockActiveChatId = "chat_a";
       mockDetail = detailFor("chat_a", []);
       view.rerender(<ChatScreen />);
-      expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
-      expect(screen.queryByText("Ship it")).toBeNull();
+      expect(screen.getByText("Ship it")).toBeTruthy();
+      expect(screen.getByText("Not sent")).toBeTruthy();
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
     });
 
     it("keeps a failed send's text apart from a draft typed in another chat", () => {
@@ -333,7 +346,8 @@ describe("drawer home screen", () => {
       mockActiveChatId = "chat_a";
       mockDetail = detailFor("chat_a", []);
       view.rerender(<ChatScreen />);
-      expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
+      expect(screen.getByText("Not sent")).toBeTruthy();
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
 
       mockActiveChatId = "chat_b";
       mockDetail = detailFor("chat_b", []);
