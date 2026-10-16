@@ -36,7 +36,7 @@ describe('full owner production deployment path',()=>{
    await writeFile(join(dir,'matrix.json'),JSON.stringify({name:'Event',slug:'event',version:'1.0.0',runtime:'vite',runtimeVersion:'1.0.0',build:{command:'pnpm build',output:'dist'},publishing}));await writeFile(join(dir,'dist/index.html'),'<html>Launch</html>');await writeFile(join(dir,'source-secret.env'),'private');
    const platform={request:vi.fn().mockResolvedValue({id:siteId})},build=siteBuildFixture({build:vi.fn().mockResolvedValue({ok:true})});const app=new Hono();app.use('*',async(c,next)=>{markAuthContextReady(c);setPlatformVerifiedPrincipal(c,'owner');await next();});app.route('/',createSiteRoutes({homePath:home,ownerIds:['owner'],platform,submissions:{} as any,build}));
    const changed=await app.request('/api/apps/event/site',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'Launch',reviewedConfig:{...publicConfig,data:{event:'Other'}}})});expect(changed.status).toBe(409);expect(build.build).not.toHaveBeenCalled();expect(platform.request).not.toHaveBeenCalled();
-   const response=await app.request('/api/apps/event/site',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'Launch',reviewedConfig:publicConfig})});expect(response.status).toBe(200);expect(build.build).toHaveBeenCalledOnce();expect(platform.request).toHaveBeenCalledWith('event','POST',expect.objectContaining({config:publicConfig,files:[{path:'index.html',contentType:'text/html',body:Buffer.from('<html>Launch</html>').toString('base64')}]}),'',expect.any(AbortSignal));
+   const response=await app.request('/api/apps/event/site',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'Launch',reviewedConfig:publicConfig})});expect(response.status).toBe(200);expect(build.build).toHaveBeenCalledOnce();expect(platform.request).toHaveBeenCalledWith('event','POST',expect.objectContaining({config:publicConfig,files:[{path:'index.html',contentType:'text/html',body:Buffer.from('<html>Launch</html>').toString('base64')}]}),'',expect.any(AbortSignal),expect.any(Number));
   }finally{await rm(home,{recursive:true,force:true});}
  });
  it('site proof only exempts the exact internal submit method/path',async()=>{
@@ -44,4 +44,15 @@ describe('full owner production deployment path',()=>{
   const headers={'x-matrix-site-signature':'fake','x-matrix-site-timestamp':String(Date.now())};
   expect((await app.request('/api/internal/sites/'+siteId+'/submit',{method:'POST',headers})).status).toBe(200);expect((await app.request('/api/internal/sites/'+siteId+'/submit',{headers})).status).toBe(401);expect((await app.request('/api/internal/sites/'+siteId+'/delete',{method:'POST',headers})).status).toBe(401);
  });
+});
+
+
+it('bounds forged site proofs by the trusted transport IP despite rotating Cloudflare headers', async () => {
+ const verifier = vi.fn();
+ const app = new Hono(); app.use('*', authMiddleware('bearer-secret'));
+ app.post('/api/internal/sites/:siteId/submit', c => { verifier(); return c.json({error:'Unauthorized'},401); });
+ const statuses = [];
+ for (let i = 0; i < 121; i++) statuses.push((await app.request('/api/internal/sites/'+siteId+'/submit', {method:'POST',headers:{'x-real-ip':'198.18.242.3','cf-connecting-ip':`198.19.1.${i}`,'x-matrix-site-signature':'forged','x-matrix-site-timestamp':String(Date.now())}})).status);
+ expect(statuses.slice(0,120)).toEqual(Array(120).fill(401));
+ expect(statuses[120]).toBe(429); expect(verifier).toHaveBeenCalledTimes(120);
 });

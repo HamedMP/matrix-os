@@ -15,7 +15,7 @@ export function createPublicationDeadline(caller: AbortSignal) {
     if (signal.aborted || Date.now() >= expiresAt) throw new PublicationExpired();
   }
   return {
-    signal, check,
+    signal, check, deadlineAt: expiresAt,
     dispose() { clearTimeout(timer); },
     async wait<T>(work: Promise<T>): Promise<T> {
       const aborted = Promise.withResolvers<never>();
