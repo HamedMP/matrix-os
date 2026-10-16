@@ -75,10 +75,17 @@ export const SiteAssetPathSchema = z.string().min(1).max(240)
   .regex(/^[A-Za-z0-9_/-][A-Za-z0-9_./-]*$/)
   .refine((p) => !p.startsWith("/") && p.split("/").every((s) => s && !s.startsWith(".")))
   .refine((p) => /\.(?:html|js|mjs|css|json|png|jpg|jpeg|gif|webp|avif|svg|ico|woff|woff2|ttf|otf|wasm|txt)$/i.test(p));
+function isBoundedBase64(value: string): boolean {
+  if (value.length > Math.ceil(SITE_MAX_BUNDLE_BYTES / 3) * 4 || value.length % 4 !== 0) return false;
+  // A flat scan avoids V8's stack growth for a repeated four-character group.
+  if (/[^A-Za-z0-9+/=]/.test(value)) return false;
+  const padding = value.indexOf("=");
+  return padding === -1 || (value.length - padding <= 2 && /^={1,2}$/.test(value.slice(padding)));
+}
 export const SiteAssetSchema = z.object({
   path: SiteAssetPathSchema,
   contentType: z.enum(["text/html", "text/javascript", "application/javascript", "application/json", "text/css", "text/plain", "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/svg+xml", "image/x-icon", "font/woff", "font/woff2", "font/ttf", "font/otf", "application/wasm", "application/octet-stream"]),
-  body: z.string().max(Math.ceil(SITE_MAX_BUNDLE_BYTES / 3) * 4).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+  body: z.string().max(Math.ceil(SITE_MAX_BUNDLE_BYTES / 3) * 4).refine(isBoundedBase64, "Invalid asset encoding"),
 }).strict();
 export const SiteDeploymentSchema = z.object({
   title, description: description.default(""), slug: SiteSlugSchema.nullable().optional(),

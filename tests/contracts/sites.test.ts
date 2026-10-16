@@ -42,6 +42,20 @@ describe("public site contracts", () => {
     expect(SiteDeploymentSchema.safeParse({ ...deploy, files: [deploy.files[0], deploy.files[0]] }).success).toBe(false);
     expect(SiteOwnerMutationSchema.safeParse({ title: "Launch", ownerId: "another" }).success).toBe(false);
   });
+  it("accepts a valid large asset without overflowing the validator", () => {
+    const files = [
+      { path: "index.html", contentType: "text/html", body: "" },
+      { path: "assets/model.wasm", contentType: "application/wasm", body: Buffer.alloc(8 * 1024 * 1024).toString("base64") },
+    ];
+    expect(SiteDeploymentSchema.safeParse({ title: "Large app", config: {}, files }).success).toBe(true);
+    files[1]!.body = Buffer.alloc(10 * 1024 * 1024 + 1).toString("base64");
+    expect(SiteDeploymentSchema.safeParse({ title: "Too large", config: {}, files }).success).toBe(false);
+  });
+  it("retains exact base64 length, alphabet and terminal padding validation", () => {
+    const deploy = (body: string) => SiteDeploymentSchema.safeParse({ title: "App", config: {}, files: [{ path: "index.html", contentType: "text/html", body }] }).success;
+    for (const valid of ["", "Zg==", "Zm8=", "Zm9v", "AA+/", "Zm9vYg=="]) expect(deploy(valid), valid).toBe(true);
+    for (const invalid of ["Z", "Zg=", "Zg===", "Z=g=", "=m9v", "Zm=v", "====", "Zg==\n", "Zm9_", "Zm9-"]) expect(deploy(invalid), invalid).toBe(false);
+  });
   it("binds a submit capability to a version and immutable declared configuration", () => {
     const capability = { siteId: "550e8400-e29b-41d4-a716-446655440000", appSlug: "launch", versionId: "550e8400-e29b-41d4-a716-446655440001", config: { forms: [form] }, formId: "rsvp", fields: { email: "v@example.com", consent: true }, idempotencyKey: "550e8400e29b41d4a716446655440000" };
     expect(SiteSubmitCapabilitySchema.safeParse(capability).success).toBe(true);
