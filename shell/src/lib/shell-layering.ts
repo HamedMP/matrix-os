@@ -29,6 +29,7 @@ export const SHELL_Z_INDEX = {
   // below Settings, which must stay reachable over shell chrome.
   taskbar: 650,
   settings: 700,
+  settingsDialog: 720,
   hardGate: 800,
   // Simulated OS session overlays (lock screens, XP welcome/log-off/shutdown
   // dialogs): above Settings and hard gates — they take over the whole screen —

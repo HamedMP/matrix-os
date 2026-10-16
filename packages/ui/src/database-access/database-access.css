@@ -1,0 +1,112 @@
+/* Owner database access follows DESIGN.md's neutral product palette. */
+.matrix-database-surface {
+  --db-background: var(--db-brand-paper);
+  --db-fill: var(--db-brand-fill);
+  --db-text: var(--db-brand-ink);
+  --db-muted: var(--db-brand-muted);
+  --db-line: var(--db-brand-border);
+  --db-action: var(--db-brand-action);
+  --db-action-text: var(--db-brand-paper);
+  font-family: var(--db-font);
+  color: var(--db-text);
+}
+:is([data-theme="dark"], .dark) .matrix-database-surface {
+  --db-background: var(--bg-app, var(--background));
+  --db-fill: var(--bg-sunken, var(--muted));
+  --db-text: var(--text-primary, var(--foreground));
+  --db-muted: var(--text-secondary, var(--muted-foreground));
+  --db-line: var(--border-subtle, var(--border));
+  --db-action: var(--text-primary, var(--foreground));
+  --db-action-text: var(--bg-app, var(--background));
+}
+.matrix-database {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background: var(--db-background);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+  container-type: inline-size;
+}
+.matrix-database *, .matrix-database-dialog * { box-sizing: border-box; }
+.matrix-database h1, .matrix-database h2, .matrix-database p, .matrix-database dl, .matrix-database dd, .matrix-database pre,
+.matrix-database-dialog h2, .matrix-database-dialog p { margin: 0; }
+.matrix-database h1, .matrix-database h2, .matrix-database-dialog h2 { font-family: var(--db-font); letter-spacing: 0; }
+.matrix-database-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
+.matrix-database-header h1 { font-size: 24px; line-height: 34px; font-weight: 600; }
+.matrix-database-header p { margin-top: 4px; color: var(--db-muted); }
+.matrix-database-private { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; margin-top: 9px; color: var(--db-muted); font-size: 12px; line-height: 17px; }
+.matrix-database-connection { padding: 20px; border-radius: 14px; background: var(--db-fill); }
+.matrix-database-connection-heading { display: flex; align-items: center; gap: 12px; }
+.matrix-database-glyph { width: 40px; height: 40px; display: grid; place-items: center; flex-shrink: 0; border: 1px solid var(--db-line); border-radius: 12px; background: var(--db-background); }
+.matrix-database-connection-heading h2 { font-size: 15px; line-height: 22px; font-weight: 600; }
+.matrix-database-connection-heading p { color: var(--db-muted); font-size: 13px; line-height: 18px; }
+.matrix-database-connection-label { margin-left: auto; color: var(--db-muted); font-size: 12px; line-height: 17px; }
+.matrix-database-details { display: grid; grid-template-columns: 1.1fr .5fr .8fr 1.2fr; gap: 16px; padding: 20px 0; }
+.matrix-database-details > div { min-width: 0; }
+.matrix-database-details dt { margin-bottom: 6px; color: var(--db-muted); font-size: 12px; line-height: 17px; }
+.matrix-database-details dd { font-family: var(--db-mono); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; user-select: text; }
+.matrix-database-connect-action { display: flex; align-items: center; gap: 14px; padding-top: 16px; border-top: 1px solid var(--db-line); }
+.matrix-database-connect-action > p { color: var(--db-muted); font-size: 13px; line-height: 18px; }
+.matrix-database-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; flex-shrink: 0; min-height: 44px; padding: 10px 14px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--db-text); font-family: var(--db-font); font-size: 14px; font-weight: 500; line-height: 20px; cursor: pointer; white-space: nowrap; transition: background-color 150ms ease, opacity 150ms ease; }
+.matrix-database-button-primary { background: var(--db-action); color: var(--db-action-text); }
+.matrix-database-button-primary:hover:not(:disabled) { opacity: .88; }
+.matrix-database-button-secondary { background: var(--db-fill); }
+.matrix-database-button-secondary:hover:not(:disabled):not([aria-disabled="true"]), .matrix-database-button-ghost:hover:not(:disabled):not([aria-disabled="true"]) { background: color-mix(in srgb, var(--db-text) 7%, var(--db-fill)); }
+.matrix-database-button:is(:disabled, [aria-disabled="true"]) { opacity: .45; cursor: not-allowed; }
+.matrix-database-button:focus-visible, .matrix-database-ssh summary:focus-visible, .matrix-database-secret-field input:focus-visible { outline: 2px solid var(--db-brand-focus); outline-offset: 3px; }
+.matrix-database-section { padding: 22px 0; border-bottom: 1px solid var(--db-line); }
+.matrix-database-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.matrix-database-row-copy { min-width: 0; }
+.matrix-database-row h2, .matrix-database-ssh h2 { font-size: 15px; line-height: 22px; font-weight: 500; }
+.matrix-database-row p, .matrix-database-ssh summary p { margin-top: 3px; color: var(--db-muted); font-size: 13px; line-height: 18px; }
+.matrix-database-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.matrix-database-secret { margin-top: 16px; }
+.matrix-database-secret-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 12px; line-height: 17px; }
+.matrix-database-secret-label > span { color: var(--db-muted); }
+.matrix-database-secret-field { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 14px; border-radius: 14px; background: var(--db-fill); }
+.matrix-database-secret-field input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--db-text); font-family: var(--db-mono); font-size: 14px; line-height: 22px; }
+.matrix-database-secret-field button { min-height: 36px; font-size: 12px; }
+.matrix-database-ssh { padding-top: 22px; }
+.matrix-database-ssh summary { display: flex; justify-content: space-between; align-items: center; gap: 20px; min-height: 44px; cursor: pointer; list-style: none; }
+.matrix-database-ssh summary::-webkit-details-marker { display: none; }
+.matrix-database-ssh summary > svg { flex-shrink: 0; color: var(--db-muted); transition: transform 150ms ease; }
+.matrix-database-ssh[open] summary > svg { transform: rotate(90deg); }
+.matrix-database-ssh-content { padding-top: 20px; color: var(--db-muted); font-size: 13px; line-height: 20px; }
+.matrix-database-ssh-content ol { display: grid; gap: 16px; margin: 16px 0; padding-left: 20px; }
+.matrix-database-ssh-content li { min-width: 0; padding-left: 4px; }
+.matrix-database-ssh-content pre { margin-top: 10px; padding: 14px; border-radius: 10px; background: var(--db-fill); color: var(--db-text); font-family: var(--db-mono); font-size: 12px; line-height: 20px; overflow-x: auto; user-select: text; }
+.matrix-database-ssh-content code { color: var(--db-text); font-family: var(--db-mono); font-size: 12px; user-select: text; }
+.matrix-database-ssh-note { display: flex; align-items: flex-start; gap: 7px; }
+.matrix-database-ssh-note svg { margin-top: 3px; flex-shrink: 0; }
+.matrix-database-feedback { display: flex; gap: 8px; align-items: center; padding: 12px 0; color: var(--db-muted); }
+.matrix-database-loading { display: flex; align-items: center; gap: 12px; min-height: 120px; color: var(--db-muted); }
+.matrix-database-working { padding-top: 16px; color: var(--db-muted); font-size: 13px; line-height: 18px; }
+.matrix-database-overlay { position: fixed; inset: 0; background: color-mix(in srgb, var(--db-brand-action) 30%, transparent); }
+.matrix-database-dialog { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: calc(100% - 40px); max-width: 440px; padding: 24px; border-radius: 20px; background: var(--db-background); }
+.matrix-database-dialog h2 { font-size: 18px; line-height: 25px; font-weight: 600; }
+.matrix-database-dialog > p { margin-top: 10px; color: var(--db-muted); font-size: 14px; line-height: 22px; }
+.matrix-database-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+@container (max-width: 560px) {
+  .matrix-database-details { grid-template-columns: 1fr 1fr; }
+  .matrix-database-row { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .matrix-database-connect-action { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .matrix-database-connection-label { display: none; }
+}
+@media (max-width: 420px) {
+  .matrix-database { padding: 20px 16px; }
+  .matrix-database-header { gap: 8px; }
+  .matrix-database-header p { max-width: 220px; }
+  .matrix-database-connection { padding: 16px; }
+  .matrix-database-row-actions { flex-wrap: wrap; }
+  .matrix-database-secret-field { align-items: stretch; flex-direction: column; padding: 12px; }
+  .matrix-database-secret-field input { min-height: 32px; }
+  .matrix-database-secret-field button { align-self: flex-end; }
+  .matrix-database-dialog-actions { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .matrix-database-button, .matrix-database-ssh summary > svg { transition: none; }
+}

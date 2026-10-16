@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import AccountSection from "./sections/AccountSection";
 import AppearanceSection from "./sections/AppearanceSection";
 import RuntimeSection from "./sections/RuntimeSection";
+import DatabaseAdapter from "./DatabaseAdapter";
 import AgentsProvidersAdapter from "./AgentsProvidersAdapter";
 import IdentityPersonalitySection from "./sections/IdentityPersonalitySection";
 import BillingSection from "./sections/BillingSection";
@@ -43,6 +44,7 @@ export type SettingsSectionId =
   | "chat-import"
   | "cli"
   | "cron"
+  | "database"
   | "system";
 
 const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; group: string }[] = [
@@ -59,6 +61,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "identity-personality", label: "Identity & personality", icon: <Sparkles size={15} />, group: "Machine" },
   { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
   { id: "cron", label: "Schedules", icon: <Clock size={15} />, group: "Machine" },
+  { id: "database", label: "Database", icon: <Server size={15} />, group: "Machine" },
   { id: "system", label: "System", icon: <Cpu size={15} />, group: "Machine" },
 ];
 
@@ -144,7 +147,7 @@ export default function SettingsView({
         <SettingsSidebar section={section} onSectionChange={selectSection} />
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="w-full px-5 py-4">
+        <div className={section === "database" ? "w-full" : "w-full px-5 py-4"}>
           {section === "account" ? <AccountSection /> : null}
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
@@ -158,6 +161,7 @@ export default function SettingsView({
           {section === "chat-import" ? <ChatImportSection /> : null}
           {section === "cli" ? <CliSection /> : null}
           {section === "cron" ? <CronSection /> : null}
+          {section === "database" ? <DatabaseAdapter /> : null}
           {section === "system" ? <SystemSection /> : null}
         </div>
       </div>

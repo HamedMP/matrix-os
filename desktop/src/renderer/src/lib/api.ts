@@ -6,6 +6,12 @@ import { chatFundingVersionUrl } from "@matrix-os/contracts";
 
 const API_TIMEOUT_MS = 10_000;
 
+function jsonHeaders(overrides?: Record<string, string>): Record<string, string> {
+  const headers = new Headers({ "content-type": "application/json" });
+  for (const [name, value] of Object.entries(overrides ?? {})) headers.set(name, value);
+  return Object.fromEntries(headers);
+}
+
 export function buildGatewayUrl(baseUrl: string, path: string, runtimeSlot: string): string {
   const base = baseUrl.replace(/\/$/, "");
   // The platform serves /api/mcp-servers itself, so a runtime query cannot
@@ -48,6 +54,7 @@ export interface RequestTimeoutOptions {
 }
 
 export interface JsonRequestOptions extends RequestTimeoutOptions {
+  headers?: Record<string, string>;
   /** Hard cap on JSON response bytes before parsing. */
   maxBytes?: number;
 }
@@ -63,6 +70,7 @@ export interface ApiClient {
   getBlob(path: string, options?: BoundedReadOptions): Promise<Blob>;
   openStream(path: string, options: StreamRequestOptions): Promise<Response>;
   post<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
+  postBlob(path: string, body: unknown, options?: BoundedReadOptions): Promise<Blob>;
   postBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
   patch<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
   put<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
@@ -100,6 +108,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     try {
       response = await fetchFn(url, {
         ...init,
+        ...(/^\/api\/database(?:[/?]|$)/.test(path) ? { cache: "no-store" as const } : {}),
         ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
           headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
         } : {}),
@@ -216,9 +225,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     post: (path, body, requestOptions) =>
       request(path, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: jsonHeaders(requestOptions?.headers),
         body: JSON.stringify(body),
       }, requestOptions),
+    postBlob: (path, body, boundedOptions) => requestBlob(path, {
+      method: "POST", headers: jsonHeaders(boundedOptions?.headers), body: JSON.stringify(body),
+    }, boundedOptions),
     postBytes: (path, body, headers, requestOptions) =>
       request(path, { method: "POST", headers, body }, requestOptions),
     patch: (path, body, requestOptions) =>

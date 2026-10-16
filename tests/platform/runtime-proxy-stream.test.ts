@@ -4,6 +4,9 @@ import { fetchRuntimeProxy } from "../../packages/platform/src/session-routing-m
 describe("runtime proxy response streaming", () => {
   it.each([
     ["POST", "/api/sync/commit", 300_000],
+    ["POST", "/api/database/export", 300_000],
+    ["POST", "/api/database/credentials/reveal", 30_000],
+    ["GET", "/api/database/export", 30_000],
     ["GET", "/api/sync/commit", 30_000],
     ["POST", "/api/sync/presign", 30_000],
   ])("bounds %s %s with the appropriate operation budget", async (method, path, expected) => {

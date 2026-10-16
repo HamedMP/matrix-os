@@ -205,6 +205,10 @@ Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full
 | `specs/` | Architecture and feature specs |
 | `tests/` | Vitest test suites |
 
+## Browser testing
+
+- Always use the Codex in-app browser for browser tests and visual validation. Do not use Chrome.
+
 ## Running
 
 ```bash
