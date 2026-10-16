@@ -18,6 +18,7 @@ export interface R2ClientConfig {
   accountId?: string;
   accessKeyId: string;
   secretAccessKey: string;
+  sessionToken?: string;
   bucket: string;
   endpoint?: string;
   publicEndpoint?: string;
@@ -62,6 +63,7 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
   const accountId = normalizeConfigValue(config.accountId);
   const accessKeyId = normalizeConfigValue(config.accessKeyId);
   const secretAccessKey = normalizeConfigValue(config.secretAccessKey);
+  const sessionToken = normalizeConfigValue(config.sessionToken);
   const bucket = normalizeConfigValue(config.bucket);
   const endpoint =
     normalizeConfigValue(config.endpoint) ??
@@ -91,7 +93,7 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     region: "auto",
     endpoint,
     forcePathStyle: config.forcePathStyle ?? false,
-    credentials: { accessKeyId, secretAccessKey },
+    credentials: { accessKeyId, secretAccessKey, ...(sessionToken ? { sessionToken } : {}) },
   };
   const s3 = new S3Client(s3Config);
   const presignS3 = publicEndpoint

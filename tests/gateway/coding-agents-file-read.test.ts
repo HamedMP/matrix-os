@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile }
 import { Hono } from "hono";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RuntimeSummarySchema } from "../../packages/contracts/src/index.js";
+import { FileBrowseResponseSchema, RuntimeSummarySchema } from "../../packages/contracts/src/index.js";
 import {
   createCodingAgentFileAccess,
   createCodingAgentFileStore,
@@ -425,27 +425,33 @@ describe("coding agent file read route", () => {
       const firstResponse = await harness.app.request(
         `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=changing&limit=2`,
       );
-      const first = await firstResponse.json();
+      expect(firstResponse.status).toBe(200);
+      const first = FileBrowseResponseSchema.parse(await firstResponse.json());
+      expect(first.entries.items).toHaveLength(2);
+      expect(first.entries.hasMore).toBe(true);
       const removedPath = first.entries.items[0].path as string;
       await rm(join(harness.worktreeRoot, removedPath));
 
-      const secondResponse = await harness.app.request(
-        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=changing&cursor=${first.entries.nextCursor}&limit=2`,
-      );
-      const second = await secondResponse.json();
-      const thirdResponse = await harness.app.request(
-        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=changing&cursor=${second.entries.nextCursor}&limit=2`,
-      );
-      const third = await thirdResponse.json();
-      const listed = [...first.entries.items, ...second.entries.items, ...third.entries.items]
+      const entries = [...first.entries.items];
+      let page = first;
+      for (let pageNumber = 2; page.entries.hasMore; pageNumber++) {
+        expect(pageNumber).toBeLessThanOrEqual(3);
+        const cursor = page.entries.nextCursor;
+        expect(cursor).toMatch(/^filecur_[0-9a-f]+_[0-9a-f]+$/);
+        if (!cursor) throw new Error("More files require a browse cursor");
+        const response = await harness.app.request(
+          `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=changing&cursor=${encodeURIComponent(cursor)}&limit=2`,
+        );
+        expect(response.status).toBe(200);
+        page = FileBrowseResponseSchema.parse(await response.json());
+        entries.push(...page.entries.items);
+      }
+      const listed = entries
         .map((entry: { path: string }) => entry.path)
         .filter((path: string) => path !== removedPath)
         .filter((path: string, index: number, items: string[]) => items.indexOf(path) === index)
         .sort();
 
-      expect(firstResponse.status).toBe(200);
-      expect(secondResponse.status).toBe(200);
-      expect(thirdResponse.status).toBe(200);
       expect(listed).toEqual(
         ["changing/a.ts", "changing/b.ts", "changing/c.ts", "changing/d.ts"]
           .filter((path) => path !== removedPath),

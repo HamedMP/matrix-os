@@ -22,6 +22,9 @@ from urllib.parse import urlsplit, parse_qsl
 PLATFORM = 'app.matrix-os.com'
 MAX_ARCHIVE = 2 * 1024 ** 3
 MAX_EXPANSION = 20 * 1024 ** 3
+# Current OS bundles exceed 330k members. Bound their metadata independently
+# from expanded bytes without retaining a TarInfo/path string for every entry.
+MAX_MEMBERS = 1000000
 MEMBERS = {'funded-host-config/reconcile.py': 'matrix-funded-host-config.py',
            'funded-host-config/matrix-funded-host-config.service': 'matrix-funded-host-config.service'}
 
@@ -289,13 +292,19 @@ def payload(fd):
     with os.fdopen(os.dup(fd), 'rb') as file, gzip.GzipFile(fileobj=file) as decoder, \
             tarfile.open(fileobj=ExpandedArchive(decoder), mode='r|', tarinfo=BoundedTarInfo) as archive:
         for member in archive:
+            # Stream mode still caches TarInfo objects on supported Python
+            # versions. Extraction below uses only this exact regular member;
+            # unrelated links are never resolved through the archive cache.
+            archive.members.clear()
             name = member.name.removeprefix('./')
             if name in ('funded-host-config', 'funded-host-config/'):
                 name = 'funded-host-config'
             count += 1
-            require(count <= 250000 and len(name) <= 1024 and name not in seen
+            require(count <= MAX_MEMBERS and len(name) <= 1024
                     and not name.startswith('/') and all(part not in ('', '..', '.') for part in name.rstrip('/').split('/')))
-            seen.add(name)
+            name_hash = hashlib.sha256(name.encode('utf-8', errors='surrogatepass')).digest()
+            require(name_hash not in seen)
+            seen.add(name_hash)
             # Full archives legitimately contain app symlinks. Never extract them;
             # only the protected component namespace requires regular bounded files.
             expanded += member.size
