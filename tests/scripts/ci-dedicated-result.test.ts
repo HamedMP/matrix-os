@@ -6,8 +6,8 @@ const headSha="a".repeat(40),baseSha="b".repeat(40),sourceSha="c".repeat(40),con
 const expected={requestingRunId:321,requestingRunAttempt:1,imageDigest:"sha256:"+"e".repeat(64),harnessDigest:"f".repeat(64),mode:"delegated",owner:"HamedMP",repo:"matrix-os",headSha,baseSha,sourceSha,prNumber:2440,baseRef:"main",headRef:"feature/source",serverUrl:"https://github.com"};
 function fixture(change:Record<string,unknown>={}) {
   const summary={schemaVersion:3,requestingRunId:321,requestingRunAttempt:1,imageDigest:expected.imageDigest,harnessDigest:expected.harnessDigest,mode:expected.mode,receiptVerified:true,requestDigest:"9".repeat(64),leaseId:"8".repeat(32),baseRef:"main",controllerAttempt:1,suite:"qualification",headSha,baseSha,sourceSha,prNumber:2440,controllerSha,controllerRef:"refs/heads/main",controllerWorkflow:".github/workflows/ci-dedicated.yml",...change};
-  const check={id:10,name:"Dedicated CI Results",head_sha:headSha,status:"completed",conclusion:"success",app:{slug:"github-actions"},details_url:"https://github.com/HamedMP/matrix-os/actions/runs/123",output:{summary:JSON.stringify(summary)}};
-  const run={id:123,head_branch:"feature/source",display_title:`dedicated-ci-v2 pr=2440 head=${headSha} base=${baseSha} requested=true`,run_attempt:1,workflow_id:99,event:"pull_request_target",path:".github/workflows/ci-dedicated.yml@main",status:"completed",conclusion:"success",head_sha:headSha,repository:{full_name:"HamedMP/matrix-os"},head_repository:{full_name:"HamedMP/matrix-os"}};
+  const check={id:10,name:"Dedicated CI Results",head_sha:headSha,status:"completed",conclusion:"success",app:{slug:"github-actions"},check_suite:{id:456},details_url:"https://github.com/HamedMP/matrix-os/actions/runs/123",output:{summary:JSON.stringify(summary)}};
+  const run={id:123,check_suite_id:456,head_branch:"feature/source",display_title:`dedicated-ci-v2 pr=2440 head=${headSha} base=${baseSha} requested=true`,run_attempt:1,workflow_id:99,event:"pull_request_target",path:".github/workflows/ci-dedicated.yml@main",status:"completed",conclusion:"success",head_sha:headSha,repository:{full_name:"HamedMP/matrix-os"},head_repository:{full_name:"HamedMP/matrix-os"}};
   const github={rest:{repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:baseSha}}})),getCommit:vi.fn(async()=>({data:{sha:sourceSha,parents:[{sha:baseSha},{sha:headSha}]}}))},pulls:{get:vi.fn(async()=>({data:{number:2440,state:"open",draft:false,labels:[{name:"ready-for-ci"},{name:"fast-ci"}],head:{sha:headSha,ref:"feature/source",repo:{full_name:"HamedMP/matrix-os"}},base:{sha:baseSha,ref:"main",repo:{full_name:"HamedMP/matrix-os"}},merge_commit_sha:sourceSha}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:".github/workflows/ci-dedicated.yml"}})),getWorkflowRun:vi.fn(async(_args:{run_id:number})=>({data:run})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[run]}})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{jobs:[{name:"benchmark",status:"completed",conclusion:"success"}]}}))}}};
   const ci={...run,id:321,workflow_id:98,event:'pull_request',path:'.github/workflows/ci.yml',display_title:`CI coverage-v1 · ${sourceSha}`,pull_requests:[{number:2440,head:{sha:headSha},base:{sha:baseSha,ref:'main'}}]};
   github.rest.actions.getWorkflow.mockImplementation(async(args:any)=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+args.workflow_id}}));
@@ -146,6 +146,19 @@ describe('stack lifecycle and retry evidence',()=>{
     github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[run,{...run,id:124,conclusion:'failure'}]}});
     github.rest.actions.getWorkflowRun.mockImplementation(async ({run_id}: {run_id:number})=>({data:{...run,id:run_id,conclusion:run_id===124?'failure':'success'}}));
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow(/failed/);
+  });
+  it('ignores a completed successful stand-down controller with no result check',async()=>{
+    const {github,run}=fixture();const stoodDown={...run,id:124,status:'completed',conclusion:'success'};
+    github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[stoodDown,run]}});
+    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?stoodDown:run}));
+    await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
+  });
+  it('does not assign an older normalized result check to a newer stand-down controller',async()=>{
+    const {github,check,run}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
+    const stoodDown={...run,id:124,check_suite_id:457,status:'completed',conclusion:'success'};
+    github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[stoodDown,run]}});
+    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?stoodDown:run}));
+    await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
   });
   it('accepts only the current rerun attempt and its immutable artifact',async()=>{
     const {github,check,run}=fixture({controllerAttempt:2});run.run_attempt=2;pinArtifactFixture(github,check,run);
@@ -299,4 +312,48 @@ it('rejects a check summary contradicting the actual immutable infrastructure re
  (f.github.rest.actions as any).downloadArtifact=vi.fn(artifactDownloadApi(receiptZip(stored)));
  const evidence=JSON.parse(f.check.output.summary);for(const key of ['outcome','status','reason','stage','workloadStarted','containerGone'])delete evidence[key];evidence.receiptVerified=true;f.check.conclusion='success';f.check.output.summary=JSON.stringify(evidence);
  await expect(waitForDedicatedResult(f.github,expected,{...options,allowInfrastructureFallback:true})).rejects.toThrow();
+});
+
+// Actual main canary38871025446: GitHub normalized the manually created check
+// into suite105340297564, not its controller workflow's suite105385500205.
+function normalizedMainFixture(){
+ const main={...expected,sourceKind:'main',prNumber:0,headSha:sourceSha,headRef:'main',mergeParents:[baseSha]};
+ const f=fixture({sourceKind:'main',prNumber:0,headSha:sourceSha,mergeParents:[baseSha],controllerRunId:123});
+ f.check.head_sha=sourceSha;f.check.check_suite.id=105340297564;f.check.details_url=`https://github.com/HamedMP/matrix-os/runs/${f.check.id}`;
+ Object.assign(f.run,{check_suite_id:105385500205,event:'workflow_run',head_branch:'main',head_sha:sourceSha,display_title:`dedicated-refresh-v2 execution=true request=321 title=CI coverage-v1 · ${sourceSha}`});
+ f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:sourceSha}}}));
+ f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:sourceSha,parents:[{sha:baseSha}],commit:{tree:{sha:headSha}}}} as any);
+ f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${sourceSha}-${sourceSha}-${baseSha}-pr0-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
+ return {...f,main};
+}
+it('recognizes normalized pending main admission without assigning the check suite to its controller',async()=>{
+ const f=normalizedMainFixture(),completed=f.check.output.summary;f.run.status='in_progress';f.check.status='in_progress';
+ const pending=JSON.parse(completed);for(const key of ['receiptVerified','requestDigest','leaseId'])delete pending[key];f.check.output.summary=JSON.stringify(pending);
+ const delay=vi.fn(async()=>{f.run.status='completed';f.check.status='completed';f.check.output.summary=completed;});
+ await expect(waitForDedicatedResult(f.github,f.main,{maxAttempts:2,admissionAttempts:1,delay})).resolves.toEqual({runId:123,sourceSha});
+ expect(delay).toHaveBeenCalledOnce();expect(f.github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalled();
+});
+it('accepts completed cross-suite normalized main evidence only with its exact immutable controller receipt',async()=>{
+ const f=normalizedMainFixture();await expect(waitForDedicatedResult(f.github,f.main,options)).resolves.toEqual({runId:123,sourceSha});
+ f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[]}});
+ await expect(waitForDedicatedResult(f.github,f.main,options)).rejects.toThrow(/No verified/);
+});
+it.each([{controllerRunId:122},{controllerRunId:'123'},{controllerRunId:0},{controllerAttempt:2},{requestingRunAttempt:2}])('rejects replayed or ambiguous normalized main controller evidence %j',async change=>{
+ const f=normalizedMainFixture();f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),...change});
+ await expect(waitForDedicatedResult(f.github,f.main,options)).rejects.toThrow();expect(f.github.rest.actions.listWorkflowRunArtifacts).not.toHaveBeenCalled();
+});
+it('rejects a contradictory explicit controller ID even when the suite and unnormalized URL match',async()=>{
+ const f=normalizedMainFixture();f.check.check_suite.id=f.run.check_suite_id;f.check.details_url='https://github.com/HamedMP/matrix-os/actions/runs/123';
+ f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),controllerRunId:122});
+ await expect(waitForDedicatedResult(f.github,f.main,options)).rejects.toThrow();
+});
+it('does not accept a cross-suite normalized legacy check without explicit controller identity',async()=>{
+ const f=normalizedMainFixture(),body=JSON.parse(f.check.output.summary);delete body.controllerRunId;f.check.output.summary=JSON.stringify(body);
+ await expect(waitForDedicatedResult(f.github,f.main,options)).rejects.toThrow();
+});
+it('keeps app, current-main and immutable controller-pin defenses on cross-suite evidence',async()=>{
+ const app=normalizedMainFixture();app.check.app.slug='other-app';await expect(waitForDedicatedResult(app.github,app.main,options)).rejects.toThrow();
+ const moved=normalizedMainFixture();moved.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:headSha}}}));await expect(waitForDedicatedResult(moved.github,moved.main,options)).rejects.toThrow(/stale/);
+ const pin=normalizedMainFixture();pin.check.output.summary=JSON.stringify({...JSON.parse(pin.check.output.summary),controllerSha:'e'.repeat(40)});
+ await expect(waitForDedicatedResult(pin.github,pin.main,options)).rejects.toThrow(/Immutable/);
 });

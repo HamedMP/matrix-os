@@ -1,4 +1,4 @@
-import { canonicalChatToolActivities, type CanonicalToolActivity } from "@matrix-os/contracts";
+import { canonicalChatToolActivities, canonicalReviewedAgentFailure, type CanonicalToolActivity } from "@matrix-os/contracts";
 import { canonicalChatInputs, type CanonicalChatInputView, canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatApprovalView } from "@matrix-os/contracts";
 import type {
   CanonicalChatDetailResponse,
@@ -23,9 +23,22 @@ export interface TranscriptToolCall {
   label: string;
 }
 
+/** How a turn ended that did not finish. */
+export interface TranscriptNotice {
+  tone: "failed" | "stopped";
+  /**
+   * The turn a Retry runs again. Set only for the chat's latest turn, and
+   * only when its failure says that trying again can help: the rule Electron
+   * Desktop applies, and the only turn the computer runs again.
+   */
+  retryTurnId?: string;
+}
+
 export interface TranscriptMessage {
   input?: CanonicalChatInputView;
   approval?: CanonicalChatApprovalView;
+  /** Set on the line that says how a turn ended when it did not finish. */
+  notice?: TranscriptNotice;
   id: string;
   role: "user" | "assistant" | "tool" | "system";
   text: string;
@@ -38,6 +51,14 @@ export interface TranscriptMessage {
   elapsedSeconds?: number;
   isRunning: boolean;
   createdAt: number;
+  /**
+   * A message sent from this phone that the computer does not have yet: on
+   * its way, or not sent. Left out once it has been admitted, and for every
+   * message read from the computer.
+   */
+  delivery?: "sending" | "failed";
+  /** A message that was not sent cannot be sent again as it is, as when the chosen model does not read what is attached. */
+  retryBlocked?: boolean;
 }
 
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "aborted"]);
@@ -92,6 +113,42 @@ export function transcriptWorkLabel(message: TranscriptMessage): string | null {
   if (message.isRunning) return "Working…";
   if (message.elapsedSeconds != null) return `Worked ${message.elapsedSeconds}s`;
   return message.activities.length || message.toolCalls.length ? "Agent activity" : null;
+}
+
+/** The turn the computer would run again: the one with the latest base message, as the gateway orders them. */
+function latestTurnId(detail: CanonicalChatDetailResponse): string | undefined {
+  return detail.turns.reduce<CanonicalChatDetailResponse["turns"][number] | undefined>((latest, turn) => (
+    latest === undefined
+      || turn.baseMessageSeq > latest.baseMessageSeq
+      || (turn.baseMessageSeq === latest.baseMessageSeq && turn.createdAt > latest.createdAt)
+      ? turn
+      : latest
+  ), undefined)?.id;
+}
+
+/**
+ * The turn of a failed run that a Retry may run again, or undefined. The
+ * computer's reported error has to call itself retryable and list a retry
+ * as its recovery, and a failure whose reviewed copy says otherwise (such as
+ * a timeout, where the agent may have done part of the work) is not retried.
+ */
+function retryableTurnId(
+  detail: CanonicalChatDetailResponse,
+  run: CanonicalChatRun | undefined,
+  latestTurn: string | undefined,
+): string | undefined {
+  if (!run || run.status !== "failed" || run.turnId !== latestTurn) return undefined;
+  const runError = detail.activities
+    .filter((activity) => activity.type === "run.error" && activity.runId === run.id)
+    .reduce<CanonicalChatDetailResponse["activities"][number] | undefined>((latest, activity) => (
+      !latest || (activity.sequence ?? 0) >= (latest.sequence ?? 0) ? activity : latest
+    ), undefined);
+  if (runError?.type !== "run.error") return undefined;
+  const { error } = runError;
+  const reviewed = canonicalReviewedAgentFailure(error.code, error.safeMessage);
+  return error.retryable && (reviewed?.retryable ?? true) && error.recoveryActions?.includes("retry")
+    ? run.turnId
+    : undefined;
 }
 
 export function buildTranscript(detail: CanonicalChatDetailResponse | null): TranscriptMessage[] {
@@ -172,11 +229,16 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
       isRunning: false, createdAt: input.timestamp, input,
     });
   }
+  const latestTurn = latestTurnId(detail);
   for (const notice of canonicalChatTerminalNotices(detail)) {
     const index = notice.beforeMessageId ? transcript.findIndex((message) => message.id === notice.beforeMessageId) : -1;
+    const run = runsById.get(notice.runId);
+    const stopped = run?.status === "aborted";
+    const retryTurnId = stopped ? undefined : retryableTurnId(detail, run, latestTurn);
     transcript.splice(index < 0 ? 0 : index + 1, 0, {
       id: notice.id, role: "system", text: notice.text, toolCalls: [], activities: [],
       isRunning: false, createdAt: notice.timestamp,
+      notice: { tone: stopped ? "stopped" : "failed", ...(retryTurnId ? { retryTurnId } : {}) },
     });
   }
   return transcript;
@@ -197,6 +259,10 @@ export interface OptimisticUserMessage {
   createdAt: number;
   /** The server's id for it, known once the admission response arrives. */
   messageId?: string;
+  /** Its send failed: it stays in the chat, marked as not sent, until it is sent again or taken back to the composer. */
+  failed?: boolean;
+  /** Its send failed and it cannot be sent again as it is. */
+  retryBlocked?: boolean;
 }
 
 export function optimisticTranscriptMessage(optimistic: OptimisticUserMessage): TranscriptMessage {
@@ -219,6 +285,9 @@ export function optimisticTranscriptMessage(optimistic: OptimisticUserMessage): 
     activities: [],
     isRunning: false,
     createdAt: optimistic.createdAt,
+    ...(optimistic.failed
+      ? { delivery: "failed" as const, retryBlocked: optimistic.retryBlocked ?? false }
+      : optimistic.messageId === undefined ? { delivery: "sending" as const } : {}),
   };
 }
 

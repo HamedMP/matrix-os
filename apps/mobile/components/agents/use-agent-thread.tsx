@@ -6,10 +6,11 @@ import {
   type CanonicalProviderCatalog,
   type ChatAgent,
 } from "@matrix-os/contracts";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { Linking } from "react-native";
 import { useAuth } from "@clerk/clerk-expo";
 
+import { activeChatRun, chatLoadState } from "@/components/chat/chat-screen-state";
 import { composerAddProps } from "@/components/chat/composer-add";
 import { useChatThread } from "@/components/chat/use-chat-thread";
 import { defaultTurnModes } from "@/lib/canonical-chat-selection";
@@ -57,7 +58,7 @@ export function agentTurnSetup({ agent, fromTemplate, detail, catalog }: {
 export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; chatId: string | null }) {
   const { isSignedIn, userId } = useAuth();
   const warmSessionToken = useSessionTokenWarmup();
-  const { detail, computer, refresh } = useCanonicalChatDetail(chatId);
+  const { detail, computer, refresh, isError: chatReadFailed, reload: reloadChat } = useCanonicalChatDetail(chatId);
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   // Only an agent made from a template has a status to read.
   const botChat = useBotChat(agent && !agent.recipeRef ? null : chatId, gatewayUrl);
@@ -68,7 +69,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
   const {
     draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments,
-    sentAttachments, send, isSending, optimisticMessages,
+    sentAttachments, canSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = useChatComposer({
     scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
     activeChatId: chatId,
@@ -77,8 +78,10 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     turnModes,
     projectId: null,
     attachmentKinds,
-    // Without a chat id a send would start a new chat, which is not this agent's.
-    disabled: chatId === null,
+    // Without a chat id a send would start a new chat, which is not this
+    // agent's; a chat is sent to at the revision it was read at; and the
+    // computer refuses a turn while another runs.
+    disabled: chatId === null || !detail || activeChatRun(detail) !== undefined,
   });
 
   const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
@@ -91,6 +94,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
   });
   const busy = isSending || running;
   const signedIn = Boolean(isSignedIn);
+  const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
 
   const handleDraftChange = useCallback((text: string) => {
     setDraft(text);
@@ -107,6 +111,12 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     renderRequest,
     renderResults,
     renderComputerPhoto,
+    /** The found chat's messages are loading, could not be read, or are there. */
+    chatState: chatLoadState({ chatId, loaded: Boolean(detail), failed: chatReadFailed, shownMessages: messages.length }),
+    /** Reads the found chat again after it could not be read. */
+    reloadChat,
+    /** What a message that was not sent offers. */
+    unsentActions,
     /** What the agent is waiting on the person for, drawn after the newest message. */
     footer: interactions.length > 0 ? (
       <PendingInteractions
@@ -122,8 +132,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
       onChangeDraft: handleDraftChange,
       editable: signedIn,
       onFocus: warmSessionToken,
-      canSend: (draft.trim().length > 0 || attachments.length > 0) && signedIn
-        && unreadableAttachments.length === 0 && Boolean(selection) && Boolean(turnModes) && !busy,
+      canSend: canSend && signedIn,
       onSend: send,
       running: busy,
       onStop,

@@ -3,7 +3,7 @@ import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isAiCreditCheckoutRouteHealthy } from "../../packages/platform/src/ai-credit-checkout-readiness.js";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
-import { createFundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
+import { createFundedModelProbeService, reserveFundedModelProbe } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 import { createBillingRoutes, type StripeBillingClient } from "../../packages/platform/src/billing-routes.js";
@@ -23,6 +23,8 @@ afterEach(async () => {
 
 async function fixture(responses: Record<string, { delayMs: number; ready: boolean; priceTtlMs?: number }>, limit = 10) {
   const now = () => new Date();
+  // Count assertions describe one SQL admission bucket; fake JS time does not pin statement_timestamp().
+  const admissionBudgetAt = now();
   await insertUserMachine(db, { machineId: identity.machineId, clerkUserId: identity.ownerId,
     handle: "fair-runtime", runtimeSlot: identity.runtimeSlot, status: "running", imageVersion: "fixture",
     activationState: "authorized", provisionedAt: now().toISOString() });
@@ -52,7 +54,8 @@ async function fixture(responses: Record<string, { delayMs: number; ready: boole
     }, { once: true });
   }));
   const probes = createFundedModelProbeService({ db, relayBaseUrl: "https://relay.example.test",
-    relayControlToken: "c".repeat(32), dailyLimit: limit, minuteLimit: limit, fetchFn, now });
+    relayControlToken: "c".repeat(32), dailyLimit: limit, minuteLimit: limit, fetchFn, now,
+    reserveProbe: input => reserveFundedModelProbe({ ...input, now: admissionBudgetAt }) });
   const checkout = () => isAiCreditCheckoutRouteHealthy({ repository, identity, modelProbes: probes });
   return { repository, fetchFn, probes, checkout };
 }

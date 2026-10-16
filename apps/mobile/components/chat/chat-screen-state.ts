@@ -21,6 +21,28 @@ export function composerPlaceholder({ connected, chatOpen }: { connected: boolea
   return chatOpen ? "Reply…" : "Ask anything";
 }
 
+export type ChatLoadState = "loading" | "failed" | "ready";
+
+/**
+ * What the message area shows for the chat on screen. A chat that has not
+ * loaded shows its loading state, except that messages just sent from here
+ * are shown at once (a chat created by a send has no detail yet). One that
+ * could not be read says so, with a way to try again.
+ */
+export function chatLoadState({ chatId, loaded, failed, shownMessages }: {
+  chatId: string | null;
+  /** The chat's detail has been read. */
+  loaded: boolean;
+  /** Reading it failed. */
+  failed: boolean;
+  /** How many messages there are to show without it. */
+  shownMessages: number;
+}): ChatLoadState {
+  if (!chatId || loaded) return "ready";
+  if (failed) return "failed";
+  return shownMessages > 0 ? "ready" : "loading";
+}
+
 /** The run a stop button would stop: the latest one that has not finished. */
 export function activeChatRun(detail: CanonicalChatDetailResponse | null): CanonicalChatRun | undefined {
   return detail?.runs.filter((run) => !FINISHED_RUN_STATUSES.includes(run.status)).at(-1);
