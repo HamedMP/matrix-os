@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const root = resolve(import.meta.dirname, "../..");
 const desktop = join(root, "desktop");
@@ -15,11 +15,17 @@ type BuildConfig = { build?: { rollupOptions?: { external?: unknown } } };
 let config: { main?: BuildConfig; preload?: BuildConfig };
 
 beforeAll(async () => {
+  // This suite checks builtin bundling, not immutable release provenance.
+  // CI supplies GITHUB_SHA globally, while concurrent unit fixtures can leave
+  // temporary checkout files. Keep release-only cleanliness checks in their
+  // dedicated provenance suite and actual release builds.
+  vi.stubEnv("GITHUB_SHA", "");
   const api = await import(pathToFileURL(compiler).href);
   ({ config } = await api.loadConfigFromFile(
     { command: "build", mode: "production" }, configPath, desktop, "silent", true,
   ));
 });
+afterAll(() => vi.unstubAllEnvs());
 
 describe("Rolldown Electron builtin boundary", () => {
   it("pins the temporary Desktop migration bridge without replacing unit-test Vite", () => {
