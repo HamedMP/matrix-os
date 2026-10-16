@@ -15,6 +15,24 @@ jest.mock("react-native-webview", () => {
 });
 
 import { TerminalSurface, type TerminalSurfaceHandle } from "../components/TerminalSurface";
+import { TAP_CURSOR_SCRIPT } from "../components/terminal/tap-cursor-script";
+
+interface TapCursorInput {
+  col: number;
+  row: number;
+  cursorCol: number;
+  cursorRow: number;
+  lineLength: number;
+  cols: number;
+  scrolled: boolean;
+  cursorHidden: boolean;
+  applicationCursor: boolean;
+}
+
+// The page runs this function as plain script; run the same text here.
+const terminalTapCursorMove = new Function(
+  `${TAP_CURSOR_SCRIPT}; return terminalTapCursorMove;`,
+)() as (tap: TapCursorInput) => string;
 
 function renderSurface(onResize = jest.fn()) {
   const ref = React.createRef<TerminalSurfaceHandle>();
@@ -188,6 +206,58 @@ describe("native mobile terminal surface", () => {
     expect(html).toContain("fit.proposeDimensions()");
     expect(html).not.toContain("fit.fit()");
     expect(html).toContain("if (!gridApplied)");
+  });
+
+  it("hides the iOS form toolbar above the keyboard", () => {
+    const { webView } = renderSurface();
+
+    // Its arrows only move between form fields, and the key rows already
+    // offer a way to put the keyboard away.
+    expect(webView.props.hideKeyboardAccessoryView).toBe(true);
+  });
+
+  it("moves the cursor to a tapped cell on the line being typed", () => {
+    const { webView } = renderSurface();
+    const html = String(webView.props.source.html);
+    expect(html).toContain(TAP_CURSOR_SCRIPT);
+    expect(html).toContain("terminalTapCursorMove({");
+  });
+
+  describe("tap to move the cursor", () => {
+    const tap: TapCursorInput = {
+      col: 10,
+      row: 5,
+      cursorCol: 4,
+      cursorRow: 5,
+      lineLength: 20,
+      cols: 49,
+      scrolled: false,
+      cursorHidden: false,
+      applicationCursor: false,
+    };
+
+    it("sends one arrow per cell between the cursor and the tap", () => {
+      expect(terminalTapCursorMove(tap)).toBe("\x1b[C".repeat(6));
+      expect(terminalTapCursorMove({ ...tap, col: 1 })).toBe("\x1b[D".repeat(3));
+    });
+
+    it("uses the arrows the program asked for", () => {
+      expect(terminalTapCursorMove({ ...tap, applicationCursor: true })).toBe("\x1bOC".repeat(6));
+      expect(terminalTapCursorMove({ ...tap, col: 0, applicationCursor: true })).toBe("\x1bOD".repeat(4));
+    });
+
+    it("stops at the end of the text instead of the edge of the screen", () => {
+      expect(terminalTapCursorMove({ ...tap, col: 40 })).toBe("\x1b[C".repeat(16));
+      // A cursor already past the text (after a typed space) is not pulled back.
+      expect(terminalTapCursorMove({ ...tap, col: 40, cursorCol: 21 })).toBe("");
+    });
+
+    it("leaves the cursor alone when the tap cannot be on the line being typed", () => {
+      expect(terminalTapCursorMove({ ...tap, row: 4 })).toBe("");
+      expect(terminalTapCursorMove({ ...tap, scrolled: true })).toBe("");
+      expect(terminalTapCursorMove({ ...tap, cursorHidden: true })).toBe("");
+      expect(terminalTapCursorMove({ ...tap, col: 4 })).toBe("");
+    });
   });
 
   it("forwards xterm onBinary protocol bytes through the React Native bridge", () => {
