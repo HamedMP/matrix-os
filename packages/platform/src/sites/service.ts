@@ -39,7 +39,9 @@ export function createSitesService(options: {
 }) {
     const { db, storage } = options;
     const env = options.env ?? process.env;
-    const publishAdmission = createPublishAdmission();
+    // Share four long-lived transaction slots across publishing and public submissions.
+    // One owner cannot queue lock waiters; lifecycle work retains pool capacity.
+    const writeAdmission = createPublishAdmission();
     async function get(owner: SiteOwner) { await db.ready; const row = await ownership(db, owner).executeTakeFirst(); return row ? project(db, row) : null; }
     async function resolve(reference: string, scoped = db) {
         await scoped.ready;
@@ -49,7 +51,7 @@ export function createSitesService(options: {
         return row && await siteOwnerCanServe(scoped, row.owner_id, env) ? project(scoped, row) : null;
     }
     async function deploy(owner: SiteOwner, input: unknown) {
-        return publishAdmission(owner.ownerId, () => deployAdmitted(owner, input));
+        return writeAdmission(owner.ownerId, () => deployAdmitted(owner, input));
     }
     async function deployAdmitted(owner: SiteOwner, input: unknown) {
         if (!storage)
@@ -166,7 +168,7 @@ export function createSitesService(options: {
         const ownerRow = await db.executor.selectFrom('public_sites').select('owner_id').where('id', '=', initial.id).executeTakeFirst();
         if (!ownerRow)
             throw new SiteError('not_found');
-        return withSiteOwnerAdmission(db, ownerRow.owner_id, async (trx) => {
+        return writeAdmission(ownerRow.owner_id, () => withSiteOwnerAdmission(db, ownerRow.owner_id, async (trx) => {
             const site = await resolve(reference, trx);
             if (!site)
                 throw new SiteError('not_found');
@@ -174,7 +176,7 @@ export function createSitesService(options: {
             if (!locked || locked.status !== 'published')
                 throw new SiteError('not_found');
             return work(await project(trx, locked), trx);
-        }, env);
+        }, env));
     }
     return { get, resolve, deploy, patch, unpublish, rollback, asset, admitted };
 }

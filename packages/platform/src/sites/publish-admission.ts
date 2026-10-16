@@ -2,7 +2,8 @@ import type { PlatformDB } from '../db.js';
 import { SiteError, type SiteOwner } from './types.js';
 
 /** One process owns one registered sites service. No queue or inactive entries:
- * at most four owners are retained, and cleanup releases each accepted lease.
+ * at most four owners are retained across publications and submissions,
+ * and cleanup releases each accepted lease.
  * Never expire a live lease while its transaction/upload can still run. */
 export function createPublishAdmission() {
   const activeOwners = new Set<string>();

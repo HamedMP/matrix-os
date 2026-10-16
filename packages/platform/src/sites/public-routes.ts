@@ -86,7 +86,7 @@ export function createSitePublicRoutes(options: {
         if (!input.success)
             throw new SiteError('invalid_request');
         const source = c.req.header('x-matrix-sites-source') ?? 'unknown';
-        if (!perSource.check(source.slice(0, 128)) || !global.check('all') || flights >= 16)
+        if (!perSource.check(source.slice(0, 128)) || !global.check('all') || flights >= 4)
             return c.json({ error: 'Try again later' }, 429);
         flights++;
         try {

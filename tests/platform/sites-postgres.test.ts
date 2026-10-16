@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
+import { SiteError } from '../../packages/platform/src/sites/types.js';
 const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 const postgres = postgresUrl ? describe : describe.skip;
 postgres('public sites independent PostgreSQL sessions', () => {
@@ -61,6 +62,55 @@ postgres('public sites independent PostgreSQL sessions', () => {
             await revoke;
         }
         await expect(a.admitted(site.id, async () => ({ accepted: true }))).rejects.toThrow('not_found');
+    });
+    it('rejects same-owner submissions before they exhaust the pool and keeps unrelated unpublish responsive', async () => {
+        const publisher = { ownerId: 'user_form_admission', machineId: 'form-admission-runtime', appSlug: 'event' };
+        const unrelated = { ownerId: 'user_form_unrelated', machineId: 'form-unrelated-runtime', appSlug: 'event' };
+        for (const o of [publisher, unrelated]) await insertUserMachine(dbA, { machineId: o.machineId, clerkUserId: o.ownerId, handle: o.machineId, status: 'running', provisionedAt: new Date().toISOString() });
+        const service = createSitesService({ db: dbA, storage: { async putObject() { return {}; }, async getObject() { return { body: null }; } } });
+        const input = { title: 'Admission', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('Admission').toString('base64') }] };
+        const site = await service.deploy(publisher, input);
+        const other = await service.deploy(unrelated, input);
+        const began = Promise.withResolvers<void>(), finish = Promise.withResolvers<void>();
+        const first = service.admitted(site.id, async () => { began.resolve(); await finish.promise; return true; });
+        await began.promise;
+        let denied = 0;
+        const flood = Array.from({ length: 9 }, () => service.admitted(site.id, async () => true).then(() => 'accepted', error => { if (error instanceof SiteError && error.code === 'unavailable') { denied++; return 'denied'; } throw error; }));
+        let unpublish: Promise<string> | undefined;
+        try {
+            const deadline = Date.now() + 2000;
+            while (denied !== 9 && Date.now() < deadline) {
+                const blocked = await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE application_name='sites-admit' AND wait_event_type='Lock'");
+                if (blocked.rows[0].count >= 9) break;
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            unpublish = service.unpublish(unrelated, other.revision).then(() => 'unpublished');
+            const lifecycle = await Promise.race([unpublish, new Promise(resolve => setTimeout(() => resolve('pool blocked'), 300))]);
+            expect({ denied, lifecycle }).toEqual({ denied: 9, lifecycle: 'unpublished' });
+        } finally { finish.resolve(); await Promise.allSettled([first, ...flood, ...(unpublish ? [unpublish] : [])]); }
+        expect(await service.admitted(site.id, async () => 'after')).toBe('after');
+    });
+    it('shares four total transaction admissions between publication and distinct-owner submissions', async () => {
+        const owners = Array.from({ length: 5 }, (_, i) => ({ ownerId: `user_shared_admit_${i}`, machineId: `shared-admit-runtime-${i}`, appSlug: 'event' }));
+        for (const o of owners) await insertUserMachine(dbA, { machineId: o.machineId, clerkUserId: o.ownerId, handle: o.machineId, status: 'running', provisionedAt: new Date().toISOString() });
+        let holdUploads = false;
+        const finish = Promise.withResolvers<void>(), uploadBegan = Promise.withResolvers<void>();
+        const service = createSitesService({ db: dbA, storage: { async putObject() { if (holdUploads) { uploadBegan.resolve(); await finish.promise; } return {}; }, async getObject() { return { body: null }; } } });
+        const input = { title: 'Admission', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('Admission').toString('base64') }] };
+        const sites = [];
+        for (const o of owners) sites.push(await service.deploy(o, input));
+        const began = Array.from({ length: 3 }, () => Promise.withResolvers<void>());
+        const active = sites.slice(0, 3).map((site, i) => service.admitted(site.id, async () => { began[i]!.resolve(); await finish.promise; return true; }));
+        await Promise.all(began.map(b => b.promise));
+        holdUploads = true;
+        const publication = service.deploy({ ...owners[4]!, appSlug: 'other-app' }, input);
+        await uploadBegan.promise;
+        try {
+            const extra = await service.admitted(sites[3]!.id, async () => true).then(() => 'accepted', error => { if (error instanceof SiteError && error.code === 'unavailable') return 'denied'; throw error; });
+            expect(extra).toBe('denied');
+        } finally { finish.resolve(); await Promise.allSettled([...active, publication]); }
+        await expect(service.admitted(sites[3]!.id, async () => { throw new Error('submission failed'); })).rejects.toThrow('submission failed');
+        expect(await service.admitted(sites[3]!.id, async () => 'recovered')).toBe('recovered');
     });
     it('orders deletion acceptance behind publishing owner lock and blocks every later publication', async () => {
         const env = { ACCOUNT_DELETION_SECRET: 'sites-publishing-deletion-race-secret' };
