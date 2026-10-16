@@ -1,4 +1,4 @@
-import { isCodexTerminalOption } from "./managed-connection-capability.js";
+import { isCodexDeviceOption, isCodexTerminalOption } from "./managed-connection-capability.js";
 import { WorkflowConnectionChooser } from "./WorkflowConnectionChooser.js";
 import { ConnectionMethodCard } from "./ConnectionMethodCard.js";
 import { useHarnessWorkflowController, type HarnessWorkflowPanelProps } from "./use-harness-workflow-controller.js";
@@ -9,6 +9,8 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const state = useHarnessWorkflowController(props);
   const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, setDisconnectOpen, uninstall, setUninstall, connectionPanel, pendingStart: pendingStartRef, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
   const codexTerminal = harness.harness === "codex" && capability.connectionOptions?.some(isCodexTerminalOption);
+  const codexDevice = harness.harness === "codex" && capability.connectionOptions?.some(isCodexDeviceOption);
+  const codexDeviceOperation = codexDevice && isCodexDeviceOption(operation?.connectionOption);
   const codexTerminalOperation = codexTerminal && isCodexTerminalOption(operation?.connectionOption);
   const claudeTerminalOperation = harness.harness === "claude" && operation?.connectionOption?.method === "terminal"
     && capability.connectionOptions?.some(option => option.id === operation.connectionOption?.id
@@ -165,7 +167,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
             </>
           ) : null}
       <WorkflowKeyForm state={state} />
-      {harness.harness === "claude" ? <WorkflowLoginProgress state={state} /> : null}
+      {harness.harness === "claude" || codexDevice && (!operation || codexDeviceOperation) ? <WorkflowLoginProgress state={state} /> : null}
         </>
       )}
       {failed && operation ? (
@@ -179,7 +181,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   ? "Uninstall couldn't complete. Try again."
                   : "Couldn't connect. Try again."}
           </span>
-          {(operation.kind !== "login" || harness.harness === "claude" || codexTerminalOperation) ? <button
+          {(operation.kind !== "login" || harness.harness === "claude" || codexTerminalOperation || codexDeviceOperation) ? <button
             type="button"
             className="matrix-ap-button"
             disabled={disabled || pending}

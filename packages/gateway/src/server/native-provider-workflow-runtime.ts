@@ -10,6 +10,7 @@ import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from 
 import { discoverPiSettingsAuth, createPiSettingsConnection } from "../ai-providers/pi-settings-auth.js";
 import { createOpenClawSettingsConnection } from "../ai-providers/openclaw-settings-auth.js";
 import { openOpenCodeAuthSession, createOpenCodeSettingsConnection, enableOpenCodeConnectedRoute, enableNativeSettingsConnectedRoute } from "../ai-providers/opencode-settings-auth.js";
+import { createCodexSettingsConnection } from "../ai-providers/codex-settings-connection.js";
 import { createClaudeSettingsLogin } from "../ai-providers/provider-workflow-browser.js";
 import { createNativeProviderWorkflowAdapters, closeNativeProviderWorkflowConnections } from "../ai-providers/provider-workflow-native.js";
 import { createCodexKeySaver, createProviderKeyVerifier } from "../ai-providers/provider-workflow-key.js";
@@ -54,6 +55,7 @@ export async function createNativeProviderWorkflowRuntime(options: {
     createAdapters: () => createNativeProviderWorkflowAdapters({
       store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
       genericWriter,
+      codexSettingsConnection: createCodexSettingsConnection({ homePath, profileGuard: nativeProviderProfileGuard }),
       hermesConnection: hermesSettingsConnection,
       claudeBrowserLogin: createClaudeSettingsLogin({ command: "claude", cwd: homePath, env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("claude", { kind: "write", durable: true }) }),
       opencodeConnection: opencodeSettingsConnection,

@@ -2,15 +2,15 @@
 
 Tracking: ENG-117 / PR2198. Native CLI dual-entry correction: ENG-268, 2026-10-13.
 
-The native Codex restoration contract is [Independent native Codex and Matrix AI subscriptions](./codex-dual-entry.md). It supersedes the former blanket Terminal-login exclusion while retaining the embedded hosted app-server authentication boundary.
+The native Codex restoration contract is [Independent native Codex and Matrix AI subscriptions](./codex-dual-entry.md). It supersedes the former blanket Terminal-login exclusion. The subsequently authorized [native Settings device-code restoration](./native-codex-settings-device-login.md) also supersedes Terminal-only native capability for the qualified owner-scoped official workflow.
 
 ## Outcome
 
 The Matrix AI Settings area exposes **Connect Codex** and **Connect Claude** for
 the qualified native connection workflows on the selected Computer. Claude Code
 uses its unmodified official login; Codex exposes the owner-operated official CLI
-Terminal login on the selected Computer through its qualified native workflow.
-Embedded hosted app-server authentication remains excluded. API-key connection
+Terminal fallback and qualified in-Settings official device-code login on the
+selected Computer under the native restoration contract. API-key connection
 and existing nonsecret native account display remain supported. Hermes, Pi and
 OpenCode expose qualified permitted connection methods and **Log in in Terminal**
 where the installed native protocol supports it. Selecting a
@@ -31,8 +31,8 @@ agent delegation or a Terminal workaround.
 | --- | --- | --- |
 | Matrix AI credit | Existing private Pi inference broker | Preserve current funded admission and model proof |
 | Owner API key | Qualified native harness or explicit Pi broker route | Fixed provider, current credentials, catalog and exact owner selection |
-| Owner-operated native Codex CLI login | Official CLI Terminal flow | Current writable Computer owner, qualified terminal capability, profile fencing and private exact native completion |
-| Embedded Codex app-server authentication in a hosted service | Excluded | Existing native account display or Terminal presence does not qualify a separate hosted OAuth integration |
+| Owner-operated native Codex login | Official Terminal or qualified Settings device-code flow | Current writable Computer owner, qualified installed protocol, profile fencing and private exact native completion |
+| Separate hosted Codex OAuth integration | Outside this restoration | The qualified owner-scoped native Settings flow does not establish eligibility for unrelated hosted integrations |
 | ChatGPT subscription for Matrix Pi | Deferred from this delivery | Own issued client and confirmed deployment/access eligibility required; native Codex login alone is insufficient |
 | Claude subscription for Bot tasks | Unmodified official Claude Code child executor | Existing end-user native login, explicit Bot grant and scoped child authority |
 | Claude subscription for direct Pi/Hermes/OpenCode inference | Excluded | No native credential import, login advertisement or Terminal workaround |
@@ -51,7 +51,8 @@ Computer or in the provider's website does not establish runtime authorization.
 Matrix AI SIWC and native Codex retain independent authorization operations,
 accounts and credential custody. Valid same-route native login shows its verified
 connection state rather than destructively reopening sign-in. Native Codex uses
-the official owner CLI Terminal flow; it does not restore embedded hosted OAuth.
+the qualified official owner-scoped Settings device-code flow or CLI Terminal fallback.
+Neither path imports the upper subscription entry's credentials.
 Keep Matrix credit and owner subscription usage visibly separate.
 
 Use existing account cards, verified identity and supported Connect/Reconnect/
