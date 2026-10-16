@@ -217,7 +217,7 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('reconcile_agent_npm_prefix()');
     expect(hermesInstaller).toContain('$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs');
     expect(script).toContain('\"$ROOT_DIR/scripts/reconcile-agent-npm-prefix.mjs\"');
-    expect(script).toContain("prefix=/opt/matrix/runtime/node\\n");
+    expect(script).not.toContain('$STAGE_DIR/runtime/node/etc/npmrc');
     expect(installer).toContain('install_code_server()');
     expect(installer).toContain('install_hermes()');
     expect(installer).toContain('"@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"');

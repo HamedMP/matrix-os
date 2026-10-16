@@ -106,7 +106,7 @@ isolation, but they do not replace this real-host record.
 ## Codex shared-Chat proof and rollback
 
 The Codex adapter is accepted only when the production supervisor verifies the
-installed native executable as exactly `codex-cli 0.162.1` beneath the trusted
+installed native executable as exactly `codex-cli 0.154.0` beneath the trusted
 runtime root. The worker runs `codex exec` as an ephemeral, single-turn process
 inside the same fixed systemd profile. It ignores user configuration and rules,
 has no owner credentials, cannot resume a private thread, and receives a fixed
