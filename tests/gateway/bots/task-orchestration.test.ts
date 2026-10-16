@@ -209,7 +209,8 @@ describe("bot turns through the matrix_bot adapter", () => {
   it("keeps the normal sixty-tool spec when no runtime generation ceiling is configured", async () => {
     vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", undefined);
     const context = setup({ worker: async input => {
-      const spec = await context.orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      const binding = context.registry.lookupRun({ ...input, runId: input.command.runId })!;
+      const spec = await context.orchestrator.runSource.loadRunSpec(binding);
       expect(spec.limits).toEqual({ maxToolActions: 60 });
       expect(spec.route.maxOutputTokens).toBe(8192);
       return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };

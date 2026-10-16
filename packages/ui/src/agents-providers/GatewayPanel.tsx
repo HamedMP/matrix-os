@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { checkoutUnavailablePresentation } from "./checkout-unavailable-presentation.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
@@ -138,13 +138,11 @@ export function GatewayPanel({
   const [creditError, setCreditError] = useState(false);
   const [creditRequestId, setCreditRequestId] = useState("");
   // Scope identity prevents an old machine's checkout from settling a new dialog.
-  const checkoutScope = useRef<{ sourceId: string | undefined; submit: typeof onAddCredit } | null>({ sourceId: source?.id, submit: onAddCredit });
-  if (checkoutScope.current?.sourceId !== source?.id || checkoutScope.current?.submit !== onAddCredit) {
+  const checkoutScope = useRef<{ sourceId: string | undefined; submit: typeof onAddCredit } | null>(null);
+  useLayoutEffect(() => {
+    // Suspended replacement renders must not invalidate the committed checkout.
     checkoutScope.current = { sourceId: source?.id, submit: onAddCredit };
     setCreditDialogOpen(false); setCreditBusy(false); setCreditError(false); setCreditRequestId("");
-  }
-  useEffect(() => {
-    if (!checkoutScope.current) checkoutScope.current = { sourceId: source?.id, submit: onAddCredit };
     return () => { checkoutScope.current = null; };
   }, [onAddCredit, source?.id]);
   useEffect(() => {

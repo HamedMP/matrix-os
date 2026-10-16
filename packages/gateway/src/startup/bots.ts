@@ -342,9 +342,9 @@ export async function startBots(options: {
   const inputHistory = createBotInputHistoryReader(options.repository);
   const orchestrator = createBotTaskOrchestrator({
     inputHistory,
+    homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
     personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId },
-    homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     bindings,
     transact,
     interactions,
@@ -374,7 +374,7 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
-  const managed = createManagedPiRuntime({ inputHistory, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
     homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,

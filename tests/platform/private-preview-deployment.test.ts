@@ -28,7 +28,7 @@ function deploy(job: typeof production, value: string) {
   const end = deployment.indexOf(isPreview ? "\nservice_base_url=" : "candidate_url=");
   expect(end).toBeGreaterThan(0);
   // Execute the actual workflow command against shell stubs, without Cloud Run/network access.
-  const script = `gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }\ndate() { printf '%s\\n' '2026-10-13T00:00:00.000Z'; }\n${deployment.slice(0, end)}\n${isPreview ? "deploy_preview https://preview.example.test" : 'printf \'%s\\n\' "$deploy_json"'}`;
+  const script = `gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; if [ "$1 $2 $3" = "secrets versions describe" ]; then printf ENABLED; return; fi; printf '%s\\n' "$@"; }\ndate() { printf '%s\\n' '2026-10-13T00:00:00.000Z'; }\n${deployment.slice(0, end)}\n${isPreview ? "deploy_preview https://preview.example.test" : 'printf \'%s\\n\' "$deploy_json"'}`;
   return spawnSync("bash", ["-euc", script], { encoding: "utf8", timeout: 5_000, env: {
     PATH: process.env.PATH,
     ...Object.fromEntries(Object.keys(job.env).map((key) => [key, "fixture"])),
@@ -37,6 +37,8 @@ function deploy(job: typeof production, value: string) {
     MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false", MATRIX_FUNDED_HOST_CONFIG_ENABLED: "false",
     CUSTOM_MCP_ENABLED: "false", PLATFORM_SPEECH_ENABLED: "false", WHATSAPP_ENABLED: "false",
     WHATSAPP_ENCRYPTION_KEY_VERSION: "1", IMAGE: "synthetic-image", IMAGE_DIGEST: "synthetic-image",
+    GOOGLE_TAG_MANAGER_ID: "GTM-SYNTHETIC", GOOGLE_ANALYTICS_MEASUREMENT_ID: "G-SYNTHETIC123",
+    GOOGLE_ANALYTICS_API_SECRET_VERSION: "2",
   } });
 }
 
@@ -77,6 +79,11 @@ describe("Private Preview organization deployment contract", () => {
       const env = args[args.indexOf("--set-env-vars") + 1];
       expect(env).toBeDefined();
       expect(env.slice(3).split("|")).toContain(`MATRIX_INTERNAL_CLERK_ORG_ID=${value}`);
+      if (job === production) {
+        expect(env.slice(3).split("|")).toContain("GOOGLE_ANALYTICS_MEASUREMENT_ID=G-SYNTHETIC123");
+        expect(args[args.indexOf("--set-secrets") + 1].split(","))
+          .toContain("GOOGLE_ANALYTICS_API_SECRET=google-analytics-billing-api-secret:2");
+      }
     }
   });
 
