@@ -33,6 +33,7 @@ export const mocks = {
   useChatSearch: jest.fn(),
   selectChat: jest.fn(),
   startDraftChat: jest.fn(),
+  useOrganizationList: jest.fn(),
   useSettingsSystemInfo: jest.fn(),
   fetchCollaborationInbox: jest.fn(),
 };
@@ -108,6 +109,15 @@ export function resetDrawerLayout() {
   mocks.useAgents.mockReturnValue({ agents: [] });
   mocks.useAgentStatuses.mockReturnValue({ statuses: {} });
   mocks.useChatSearch.mockReturnValue({ results: [], isSearching: false, isError: false });
+  mocks.useOrganizationList.mockReturnValue({
+    isLoaded: true,
+    userMemberships: {
+      data: [{ organization: { id: "org_matrix" } }],
+      hasNextPage: false,
+      isFetching: false,
+      isError: false,
+    },
+  });
   mocks.useSettingsSystemInfo.mockReturnValue({ systemInfo: undefined });
   mocks.fetchCollaborationInbox.mockResolvedValue({ items: [] });
 }
