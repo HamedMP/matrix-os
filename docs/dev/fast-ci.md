@@ -156,3 +156,15 @@ does not activate them: after reviewed green main, approve that controller on
 the host and advance `MATRIX_CI_CONTROLLER_SHA` using the existing operator
 procedure. No routing flag or approval-rule change is needed. The independent
 host-retention repair in PR #2592 retains its own review and CI gates.
+
+### Normalized Actions check identity
+
+GitHub can normalize a controller-created `Dedicated CI Results` URL to
+`/runs/<check-id>` and attach the check to an existing Actions suite for the
+source commit. Its suite ID can therefore differ from the creating controller's
+workflow suite. New evidence records `controllerRunId`; the waiter binds that
+index to the independently authenticated current controller and attempt. Older
+evidence still requires matching suite identity. A pending index never qualifies
+coverage: completion still requires that exact controller's immutable artifact,
+source/request tuple, reviewed execution inputs, complete phases and cleanup
+proof. A contradictory run ID is rejected even when its URL or suite matches.

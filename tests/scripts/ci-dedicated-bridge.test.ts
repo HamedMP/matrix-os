@@ -39,7 +39,7 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   expect(outputs).toEqual({sha:merge,source_kind:'',merge_parents:JSON.stringify([base,head]),head_sha:head,base_sha:base,base_ref:'main',merge_parent_sha:base,pr_number:'2440',check_id:'123',admitted:'true',mode:'delegated',requesting_run_id:'77',requesting_run_attempt:'1'});
   const args=github.rest.checks.create.mock.calls[0][0];
   expect(args).toMatchObject({head_sha:head,status:'in_progress',name:'Dedicated CI Results'});
-  expect(JSON.parse(args.output.summary)).toMatchObject({schemaVersion:3,baseRef:'main',controllerSha:controller,controllerRef:'refs/heads/main',controllerAttempt:1});
+  expect(JSON.parse(args.output.summary)).toMatchObject({schemaVersion:3,baseRef:'main',controllerSha:controller,controllerRef:'refs/heads/main',controllerRunId:1,controllerAttempt:1});
  });
  it.each([{state:'closed'},{base:{ref:'other',sha:base,repo:{full_name:'HamedMP/matrix-os'}}},{draft:true},{labels:[]},{head:{sha:base,repo:{full_name:'HamedMP/matrix-os'}}},{head:{sha:head,repo:{full_name:'other/matrix-os'}}}])('rejects an obsolete or unadmitted snapshot %j',async patch=>{
   const {outputs,github}=await admit(patch);

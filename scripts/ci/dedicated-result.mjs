@@ -17,15 +17,22 @@ const positiveId = value => Number.isSafeInteger(value) && value > 0;
 function parseEvidence(check, expected, latest) {
   if (!positiveId(check.id) || check.name !== 'Dedicated CI Results' || check.head_sha !== expected.headSha ||
       check.app?.slug !== 'github-actions' || !['queued','in_progress','completed'].includes(check.status)) return null;
+  const summary = check.output?.summary;
+  if (typeof summary !== 'string' || summary.length > 4096) return null;
+  let evidence;
+  try { evidence = JSON.parse(summary); }
+  catch (error) { if (error instanceof SyntaxError) return null; throw error; }
   const repositoryUrl = `${expected.serverUrl}/${expected.owner}/${expected.repo}`;
   let runId;
   if (check.details_url === `${repositoryUrl}/runs/${check.id}`) {
-    // GitHub normalizes manually created Actions checks to their own URL.
-    // Bind the index to its workflow run before using the independently
-    // authenticated controller identity. Otherwise an older normalized check
-    // can be mistaken for a later controller that stood down without a result.
-    if (!positiveId(latest?.id) || !positiveId(check.check_suite?.id) ||
-        check.check_suite.id !== latest.check_suite_id) return null;
+    // Actions can place manually created checks in a different suite from the
+    // creating workflow. Its explicit run ID is only an index: independently
+    // authenticate that exact controller/attempt, then require its immutable
+    // artifact before awarding any coverage. Legacy indexes retain suite proof.
+    if (!positiveId(latest?.id)) return null;
+    if (evidence?.controllerRunId !== undefined) {
+      if (!positiveId(evidence.controllerRunId) || evidence.controllerRunId !== latest.id) return null;
+    } else if (!positiveId(check.check_suite?.id) || check.check_suite.id !== latest.check_suite_id) return null;
     runId = latest.id;
   } else {
     const prefix = `${repositoryUrl}/actions/runs/`;
@@ -34,11 +41,8 @@ function parseEvidence(check, expected, latest) {
     if (!/^[1-9][0-9]{0,15}$/.test(id) || !positiveId(Number(id))) return null;
     runId = Number(id);
   }
-  const summary = check.output?.summary;
-  if (typeof summary !== 'string' || summary.length > 4096) return null;
-  let evidence;
-  try { evidence = JSON.parse(summary); }
-  catch (error) { if (error instanceof SyntaxError) return null; throw error; }
+  if (evidence?.controllerRunId !== undefined &&
+      (!positiveId(evidence.controllerRunId) || evidence.controllerRunId !== runId)) return null;
   if (!evidence || evidence.schemaVersion !== 3 || evidence.suite !== 'qualification' ||
       evidence.sourceSha !== expected.sourceSha || evidence.headSha !== expected.headSha ||
       evidence.baseSha !== expected.baseSha || evidence.baseRef !== expected.baseRef ||
