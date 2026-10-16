@@ -26,6 +26,8 @@ Export uses a fixed argument-vector `pg_dump` invocation against the configured 
 
 ## Verification
 
+Presentation follows current `DESIGN.md` and `@matrix-os/brand`: Geist typography, neutral surfaces, one primary SQL action, compact Access/Backup rows and expandable SSH instructions. First use offers Create password. Web and Electron resolve their registered Geist families through shared variables. Narrow panels wrap actions and keep long SSH commands scrollable within the command block.
+
 Test first: owner vs non-owner/JWT/bearer/bypass authorization, strict payload/body/header rejection, rate caps, no-store/error sanitization, dump cancellation/backpressure/timeout/size/shutdown, credential encryption and transactional reset races, non-superuser grants and real Postgres restoration. Shared UI tests cover all actions, failures, secret clearing, stale identity and three-surface wiring. Compile gateway/shared UI/Web/Electron and run relevant regressions. Validate Web Canvas, Web Desktop, then Electron Desktop. Publishable docs must include no real identifiers, credentials or private operator procedures.
 
 ## Invariants

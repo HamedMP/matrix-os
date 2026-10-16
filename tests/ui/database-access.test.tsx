@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { DatabaseSettings } from "../../packages/ui/src/database-access/DatabaseSettings";
 import { createDatabaseClient, createDatabaseFetchTransport } from "../../packages/ui/src/database-access/client";
@@ -67,9 +67,9 @@ it("sends CSRF action headers, rejects malformed receipts and bounds downloaded 
 
 it("enables owner access after confirmed first reset and handles download failures safely", async () => {
   const { client, props, rerender } = setup({ get:vi.fn().mockResolvedValue({...snapshot,credentialReady:false}) });
-  await screen.findByText("Create your owner password with Reset password to enable database access.");
-  fireEvent.click(screen.getByRole("button",{name:"Reset password"}));
-  fireEvent.click(screen.getByRole("button",{name:"Confirm password reset"}));
+  await screen.findByText("Create your owner password below to connect.");
+  fireEvent.click(screen.getByRole("button",{name:"Create password"}));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button",{name:"Create password"}));
   await screen.findByDisplayValue("new-secret");
   expect((screen.getByRole("button",{name:"Open SQL Terminal"}) as HTMLButtonElement).disabled).toBe(false);
   expect(client.reset).toHaveBeenCalledOnce();
@@ -121,4 +121,13 @@ it("restores focus to a guarded trigger while reset is pending", async () => {
   await act(async()=>resolve({username:"matrix_owner",password:"reset-complete"}));
   await waitFor(()=>expect(screen.queryByRole("alertdialog")).toBeNull());
   await waitFor(()=>expect(document.activeElement).toBe(trigger));
+});
+
+it("keeps the SSH guide collapsed until requested", async () => {
+  setup(); await screen.findByText("matrix_owner");
+  const disclosure = screen.getByText("Connect from another computer").closest("details")!;
+  expect(disclosure.open).toBe(false);
+  fireEvent.click(disclosure.querySelector("summary")!);
+  await waitFor(() => expect(disclosure.open).toBe(true));
+  expect(screen.getByText(/<ssh-user>@<your-server>/)).toBeTruthy();
 });

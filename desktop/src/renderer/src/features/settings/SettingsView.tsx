@@ -147,7 +147,7 @@ export default function SettingsView({
         <SettingsSidebar section={section} onSectionChange={selectSection} />
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="w-full px-5 py-4">
+        <div className={section === "database" ? "w-full" : "w-full px-5 py-4"}>
           {section === "account" ? <AccountSection /> : null}
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}

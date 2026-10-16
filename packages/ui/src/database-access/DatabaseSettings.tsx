@@ -1,5 +1,9 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
+import { appGalleryPalette, desktopFonts, desktopPalette } from "@matrix-os/brand/tokens";
+import { AlertCircle, ChevronRight, Database, Download, EyeOff, LockKeyhole, TerminalSquare } from "lucide-react";
+import type { CSSProperties } from "react";
+import "./database-access.css";
 import * as Dialog from "@radix-ui/react-dialog";
 import { DATABASE_ERROR, type DatabaseClient, type DatabaseCredential, type DatabaseSnapshot } from "./client";
 
@@ -9,8 +13,59 @@ export interface DatabaseSettingsProps {
   onOpenTerminal?: (command: string, signal: AbortSignal) => Promise<void>;
   onDownload: (blob: Blob, signal: AbortSignal) => Promise<void>;
 }
-const button = "rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:cursor-not-allowed";
-const card = "space-y-3 rounded-lg border border-border p-4";
+const brandStyle = {
+  "--db-brand-paper": appGalleryPalette.paper,
+  "--db-brand-fill": appGalleryPalette.surfaceMuted,
+  "--db-brand-ink": appGalleryPalette.ink,
+  "--db-brand-muted": appGalleryPalette.textMuted,
+  "--db-brand-border": appGalleryPalette.border,
+  "--db-brand-action": appGalleryPalette.action,
+  "--db-brand-focus": desktopPalette.gold,
+  "--db-font": `var(--font-geist-sans, ${desktopFonts.sans})`,
+  "--db-mono": `var(--font-geist-mono, ${desktopFonts.mono})`,
+} as CSSProperties;
+function databaseConfirmationCopy(kind: "reset" | "export" | null, creating: boolean) {
+  if (kind === "reset" && creating) return {
+    title: "Create owner password?", action: "Create password",
+    description: "Create a separate login to inspect, edit and export your data. Matrix’s own connection stays unchanged.",
+  };
+  if (kind === "reset") return {
+    title: "Reset owner password?", action: "Confirm password reset",
+    description: "New external connections must use the new password. Existing sessions may remain connected. Matrix’s own connection is unaffected.",
+  };
+  return {
+    title: "Export your database?", action: "Download full export",
+    description: "This export contains private messages and app data. Store it privately and share it only with people you trust. It excludes private owner-access metadata and files in your home directory. Restore it with pg_restore.",
+  };
+}
+function DatabaseConnectionSummary({ snapshot, busy, terminalAvailable, onOpen }: {
+  snapshot: DatabaseSnapshot;
+  busy: boolean;
+  terminalAvailable: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <section className="matrix-database-connection" aria-label="Connection details">
+      <div className="matrix-database-connection-heading">
+        <span className="matrix-database-glyph"><Database size={21} strokeWidth={1.5} aria-hidden="true" /></span>
+        <div><h2>PostgreSQL</h2><p>On this Matrix computer</p></div>
+        <span className="matrix-database-connection-label">Private connection</span>
+      </div>
+      <dl className="matrix-database-details">
+        <div><dt>Host</dt><dd>{snapshot.connection.host}</dd></div>
+        <div><dt>Port</dt><dd>{snapshot.connection.port}</dd></div>
+        <div><dt>Database</dt><dd>{snapshot.connection.database}</dd></div>
+        <div><dt>Username</dt><dd>{snapshot.connection.username}</dd></div>
+      </dl>
+      <div className="matrix-database-connect-action">
+        <button className="matrix-database-button matrix-database-button-primary" disabled={busy || !snapshot.credentialReady || !terminalAvailable} onClick={onOpen}>
+          <TerminalSquare size={16} aria-hidden="true" /> Open SQL Terminal
+        </button>
+        <p>{!snapshot.credentialReady ? "Create your owner password below to connect." : !terminalAvailable ? "Terminal access is unavailable in this session." : "Connect with your owner password."}</p>
+      </div>
+    </section>
+  );
+}
 /** Keying the inner view removes secrets before the new identity's first paint. */
 export function DatabaseSettings(props: DatabaseSettingsProps) { return <DatabaseSettingsView key={props.identityKey} {...props} />; }
 function DatabaseSettingsView({ client, onOpenTerminal, onDownload }: DatabaseSettingsProps) {
@@ -65,27 +120,82 @@ function DatabaseSettingsView({ client, onOpenTerminal, onDownload }: DatabaseSe
       }
     }
   }
-  return <section className="ph-no-capture ph-mask mx-auto max-w-3xl space-y-5 p-5 text-foreground" data-private="true" aria-label="Database settings" data-database-settings="shared">
-    <header><h1 className="text-xl font-semibold">Database</h1><p className="mt-1 text-sm text-muted-foreground">Inspect and export the PostgreSQL database on this Matrix computer. Database access is available only to its owner.</p></header>
-    {error && <p role="alert" className="text-sm">{error}</p>}
-    {!snapshot ? <div role="status" className={card}><p>{error ? "Database access could not be loaded." : "Loading database access…"}</p>{error && <button className={button} onClick={() => { setError(null); setReload(value => value + 1); }}>Retry</button>}</div> : <>
-      <section className={card} aria-label="Connection details"><h2 className="font-semibold">Connection details</h2><p className="text-sm text-muted-foreground">These details connect from this computer. Remote clients use an SSH tunnel.</p><dl className="grid grid-cols-2 gap-2 text-sm">{Object.entries(snapshot.connection).map(([label, value]) => <div key={label}><dt className="capitalize text-muted-foreground">{label}</dt><dd className="break-all font-mono">{value}</dd></div>)}</dl></section>
-      <section className={card} aria-label="Owner credentials"><h2 className="font-semibold">Owner credentials</h2><p className="text-sm text-muted-foreground">This separate owner login accesses your runtime data. After a reset, new connections need the new password. Existing database sessions may remain connected. Matrix keeps running.</p>{!snapshot.credentialReady && <p role="status" className="text-sm">Create your owner password with Reset password to enable database access.</p>}
-        {credential && <div className="space-y-2"><label className="block text-sm" htmlFor="database-owner-password">Owner password (hidden within 60 seconds)</label><input id="database-owner-password" className="w-full rounded border border-border bg-background px-3 py-2 font-mono text-sm" readOnly value={credential.password} autoComplete="off" spellCheck={false} data-private="true" data-ph-no-capture="true" data-rrweb-mask="true" /><button className={button} onClick={hide}>Hide password</button></div>}
-        <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || !snapshot.credentialReady} onClick={() => void run("reveal")}>Reveal password</button><button className={button} aria-disabled={busy} onClick={(event) => { if (busy) return; confirmationTrigger.current = event.currentTarget; hide(); setConfirmation("reset"); }}>Reset password</button></div>
-      </section>
-      <section className={card}><h2 className="font-semibold">SQL Terminal</h2><p className="text-sm text-muted-foreground">Open psql on this computer, then enter your owner password at its password prompt. SQL can change or delete your data.</p><button className={button} disabled={busy || !snapshot.credentialReady || !onOpenTerminal} onClick={() => void run("terminal")}>Open SQL Terminal</button>{!onOpenTerminal && <p className="text-sm text-muted-foreground">Terminal access is unavailable in this session.</p>}</section>
-      <section className={card}><h2 className="font-semibold">Full database export</h2><p className="text-sm text-muted-foreground">Download a PostgreSQL custom-format .dump containing all runtime user data, excluding private owner-access metadata. Restore with pg_restore. Files in your home directory need a separate backup.</p><button className={button} aria-disabled={busy} onClick={(event) => { if (busy) return; confirmationTrigger.current = event.currentTarget; hide(); setConfirmation("export"); }}>Export database</button></section>
-      <section className={card}><h2 className="font-semibold">Connect through SSH</h2><p className="text-sm text-muted-foreground">You need an owner-authorized SSH account on your server. This panel does not create one. Replace the placeholders before running this command on your own computer.</p><pre className="overflow-x-auto rounded bg-muted p-3 text-xs">ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:15432:127.0.0.1:{snapshot.connection.port} &lt;ssh-user&gt;@&lt;your-server&gt;</pre><p className="text-sm text-muted-foreground">In your database client, connect to 127.0.0.1:15432 using the database and owner username above and your owner password. Keep PostgreSQL private; no public database port is needed.</p></section>
-    </>}
-    <Dialog.Root open={confirmation !== null} onOpenChange={(open) => { if (!open) setConfirmation(null); }}><Dialog.Portal>
-      <Dialog.Overlay className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm" />
-      <Dialog.Content role="alertdialog" className="fixed left-1/2 top-1/2 z-[101] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 space-y-4 rounded-lg border border-border bg-background p-5 text-foreground shadow-lg" onOpenAutoFocus={(event) => { event.preventDefault(); cancelButton.current?.focus(); }} onCloseAutoFocus={(event) => { event.preventDefault(); confirmationTrigger.current?.focus(); }}>
-        <Dialog.Title className="font-semibold">{confirmation === "reset" ? "Reset owner password?" : "Download all database data?"}</Dialog.Title>
-        <Dialog.Description className="text-sm">{confirmation === "reset" ? "New external connections must use the new password. Existing sessions may remain connected. Matrix’s own connection is unaffected." : "This export includes sensitive runtime data, including private messages and app data. Store it privately and share it only with people you trust."}</Dialog.Description>
-        <div className="flex gap-2"><button className={button} disabled={busy} onClick={() => { if (confirmation) void run(confirmation); }}>{confirmation === "reset" ? "Confirm password reset" : "Download full export"}</button><button ref={cancelButton} className={button} onClick={() => setConfirmation(null)}>Cancel</button></div>
-      </Dialog.Content>
-    </Dialog.Portal></Dialog.Root>
-    {busy && <p role="status" className="text-sm text-muted-foreground">Working…</p>}
-  </section>;
+  const creatingPassword = snapshot?.credentialReady === false;
+  const passwordAction = creatingPassword ? "Create password" : "Reset password";
+  const confirmationCopy = databaseConfirmationCopy(confirmation, creatingPassword);
+  return (
+    <section className="matrix-database matrix-database-surface ph-no-capture ph-mask" style={brandStyle} data-private="true" aria-label="Database settings" data-database-settings="shared">
+      <header className="matrix-database-header">
+        <div>
+          <h1>Database</h1>
+          <p>Your data. Your PostgreSQL database.</p>
+        </div>
+        <span className="matrix-database-private"><LockKeyhole size={12} aria-hidden="true" /> Owner only</span>
+      </header>
+      {error && <div role="alert" className="matrix-database-feedback"><AlertCircle size={16} aria-hidden="true" /><span>{error}</span></div>}
+      {!snapshot ? (
+        <div role="status" className="matrix-database-loading">
+          <Database size={22} strokeWidth={1.5} aria-hidden="true" />
+          <p>{error ? "Database access could not be loaded." : "Loading database access…"}</p>
+          {error && <button className="matrix-database-button matrix-database-button-secondary" onClick={() => { setError(null); setReload(value => value + 1); }}>Retry</button>}
+        </div>
+      ) : (
+        <>
+          <DatabaseConnectionSummary snapshot={snapshot} busy={busy} terminalAvailable={Boolean(onOpenTerminal)} onOpen={() => void run("terminal")} />
+
+          <section className="matrix-database-section" aria-label="Owner credentials">
+            <div className="matrix-database-row">
+              <div className="matrix-database-row-copy"><h2>Access</h2><p>A separate owner login, managed by you.</p></div>
+              <div className="matrix-database-row-actions">
+                {snapshot.credentialReady && <button className="matrix-database-button matrix-database-button-secondary" disabled={busy} onClick={() => void run("reveal")}>Reveal password</button>}
+                <button className={`matrix-database-button ${creatingPassword ? "matrix-database-button-secondary" : "matrix-database-button-ghost"}`} aria-disabled={busy} onClick={(event) => { if (busy) return; confirmationTrigger.current = event.currentTarget; hide(); setConfirmation("reset"); }}>{passwordAction}</button>
+              </div>
+            </div>
+            {credential && (
+              <div className="matrix-database-secret">
+                <div className="matrix-database-secret-label"><label htmlFor="database-owner-password">Owner password</label><span>Hidden within 60 seconds</span></div>
+                <div className="matrix-database-secret-field">
+                  <input id="database-owner-password" readOnly value={credential.password} autoComplete="off" spellCheck={false} data-private="true" data-ph-no-capture="true" data-rrweb-mask="true" />
+                  <button className="matrix-database-button matrix-database-button-ghost" onClick={hide}><EyeOff size={16} aria-hidden="true" /> Hide password</button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="matrix-database-section" aria-label="Full database export">
+            <div className="matrix-database-row">
+              <div className="matrix-database-row-copy"><h2>Backup</h2><p>All runtime user data in a portable PostgreSQL .dump.</p></div>
+              <button className="matrix-database-button matrix-database-button-secondary" aria-disabled={busy} onClick={(event) => { if (busy) return; confirmationTrigger.current = event.currentTarget; hide(); setConfirmation("export"); }}><Download size={16} aria-hidden="true" /> Export database</button>
+            </div>
+          </section>
+
+          <details className="matrix-database-ssh">
+            <summary><div><h2>Connect from another computer</h2><p>Use your preferred database client over SSH.</p></div><ChevronRight size={17} aria-hidden="true" /></summary>
+            <div className="matrix-database-ssh-content">
+              <p>You need an owner-authorized SSH account on your server. This panel does not create one.</p>
+              <ol>
+                <li><p>Open a tunnel from your computer. Replace the placeholders with your SSH account and server.</p><pre>ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:15432:127.0.0.1:{snapshot.connection.port} &lt;ssh-user&gt;@&lt;your-server&gt;</pre></li>
+                <li><p>Keep the tunnel open. Connect your database client to <code>127.0.0.1:15432</code>, using the database and username above and your owner password.</p></li>
+              </ol>
+              <p className="matrix-database-ssh-note"><LockKeyhole size={13} aria-hidden="true" /> PostgreSQL stays private. No public database port is needed.</p>
+            </div>
+          </details>
+        </>
+      )}
+      <Dialog.Root open={confirmation !== null} onOpenChange={(open) => { if (!open) setConfirmation(null); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="matrix-database-overlay" style={brandStyle} />
+          <Dialog.Content role="alertdialog" className="matrix-database-dialog matrix-database-surface" style={brandStyle} onOpenAutoFocus={(event) => { event.preventDefault(); cancelButton.current?.focus(); }} onCloseAutoFocus={(event) => { event.preventDefault(); confirmationTrigger.current?.focus(); }}>
+            <Dialog.Title>{confirmationCopy.title}</Dialog.Title>
+            <Dialog.Description>{confirmationCopy.description}</Dialog.Description>
+            <div className="matrix-database-dialog-actions">
+              <button ref={cancelButton} className="matrix-database-button matrix-database-button-secondary" onClick={() => setConfirmation(null)}>Cancel</button>
+              <button className="matrix-database-button matrix-database-button-primary" disabled={busy} onClick={() => { if (confirmation) void run(confirmation); }}>{confirmationCopy.action}</button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+      {busy && <p role="status" className="matrix-database-working">Working…</p>}
+    </section>
+  );
 }

@@ -14,6 +14,7 @@
     "./chat-agents.css": "./src/chat-agents/chat-agents.css"
   },
   "dependencies": {
+    "@matrix-os/brand": "workspace:*",
     "@matrix-os/contracts": "workspace:*",
     "@noble/hashes": "2.3.0",
     "@radix-ui/react-context-menu": "^2.2.16",

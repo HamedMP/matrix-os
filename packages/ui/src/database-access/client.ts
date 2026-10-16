@@ -21,6 +21,9 @@ export interface DatabaseClient {
   export(signal: AbortSignal): Promise<Blob>;
 }
 function unavailable(): Error { return new Error(DATABASE_ERROR); }
+function safeClientError(error: unknown): Error {
+  return error instanceof Error && error.message === DATABASE_ERROR ? error : unavailable();
+}
 // Accept only the server's password-prompting SQL command, never a shell expression.
 export function isDatabaseTerminalCommand(value: unknown): value is string {
   return typeof value === "string" && /^psql -h 127\.0\.0\.1 -p [0-9]{1,5} -U [a-zA-Z_][a-zA-Z0-9_]{0,62} -d [a-zA-Z_][a-zA-Z0-9_]{0,62} -W$/.test(value);
@@ -28,7 +31,7 @@ export function isDatabaseTerminalCommand(value: unknown): value is string {
 export function createDatabaseClient(transport: DatabaseTransport): DatabaseClient {
   const json = async <T>(path: string, body: object | undefined, schema: z.ZodType<T>, signal: AbortSignal): Promise<T> => {
     try { const parsed = schema.safeParse(await transport.json(path, body, signal)); if (!parsed.success || signal.aborted) throw unavailable(); return parsed.data; }
-    catch { throw unavailable(); }
+    catch (error: unknown) { throw safeClientError(error); }
   };
   return {
     get: signal => json("/api/database", undefined, snapshot, signal),
@@ -40,7 +43,7 @@ export function createDatabaseClient(transport: DatabaseTransport): DatabaseClie
     },
     async export(signal) {
       try { const blob = await transport.export(signal); if (signal.aborted || blob.size === 0 || blob.size > DATABASE_EXPORT_MAX_BYTES) throw unavailable(); return blob; }
-      catch { throw unavailable(); }
+      catch (error: unknown) { throw safeClientError(error); }
     },
   };
 }
