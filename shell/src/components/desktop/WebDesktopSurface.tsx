@@ -189,7 +189,7 @@ function DesktopDestination({
         className="max-w-full truncate text-[12px] font-medium text-white"
         style={{ textShadow: "0 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.8)" }}
       >
-        {app.name === "Hermes" ? "Chat" : app.name}
+        {app.name}
       </span>
       </button>
       {menu && onRemove ? (
@@ -203,7 +203,7 @@ function DesktopDestination({
               setMenu(null);
             }}
           >
-            Remove {app.name === "Hermes" ? "Chat" : app.name} from Desktop
+            Remove {app.name} from Desktop
           </button>
         </div>
       ) : null}

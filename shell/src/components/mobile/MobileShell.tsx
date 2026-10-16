@@ -99,7 +99,7 @@ const BUILT_IN_APPS: MobileApp[] = [
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "files" },
   ...(HERMES_CHAT_HIDDEN
     ? []
-    : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
+    : [{ id: "chat", name: "Chat", path: "__chat__", iconSlug: "chat" } as MobileApp]),
 ];
 
 
