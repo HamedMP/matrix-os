@@ -25,7 +25,7 @@ jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ isSignedIn: true, user
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 62, right: 0, bottom: 34, left: 0 }),
 }));
-jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }), useLocalSearchParams: () => ({}) }));
 jest.mock("@/lib/use-keyboard-visible", () => ({ useKeyboardVisible: () => false }));
 jest.mock("@/lib/canonical-chat-session-context", () => ({
   useCanonicalChatSession: () => ({
