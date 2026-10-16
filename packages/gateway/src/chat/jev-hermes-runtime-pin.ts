@@ -1,3 +1,4 @@
+import { resolveHermesPython } from "./hermes-python-environment.js";
 import type { JevHermesCredentials } from "./jev-hermes-credentials.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -6,7 +7,7 @@ import { boundedOperation } from "../bounded-operation.js";
 import { hermesDependencyArguments, hermesSdkRequirements } from "./jev-hermes-python.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-const PIN = "d337b736aa1e8ebecfab043842d13e4a2d2f48a3";
+const PIN = "e06df9c2eae6901f4c88f464e0ae6e753c0428b8";
 const run = promisify(execFile);
 const command = async (args: string[], signal: AbortSignal) => {
   const result = await run("/usr/bin/git", args, { timeout: 10_000, maxBuffer: 4096, signal,
@@ -54,7 +55,8 @@ export async function verifyJevHermesDependencies(root: string, apiMode: JevHerm
     const cachePrefix = await mkdtemp(join(tmpdir(), "matrix-jev-dependency-cache-"));
     try {
       deadline.throwIfAborted();
-      const version = await runPython(join(root, "venv", "bin", "python"), hermesDependencyArguments(root, cachePrefix, apiMode), deadline);
+      const python = await resolveHermesPython(root);
+      const version = await runPython(python, hermesDependencyArguments(root, cachePrefix, apiMode, python), deadline);
       deadline.throwIfAborted();
       if (version !== hermesSdkRequirements(apiMode).map(sdk => `${sdk.version}\n`).join("")) throw new Error("Restricted runtime setup required");
     } finally { await rm(cachePrefix, { recursive: true, force: true }); }

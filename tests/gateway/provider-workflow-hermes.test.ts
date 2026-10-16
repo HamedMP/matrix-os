@@ -1,12 +1,49 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, writeFile, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HERMES_CODEX_REUSE_SCRIPT } from "../../packages/gateway/src/ai-providers/provider-workflow-hermes.js";
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+
+it("proves no native writer started when the PM selection breaks after capability probing", async () => {
+  const { createHermesSettingsConnection } = await import("../../packages/gateway/src/ai-providers/hermes-settings-auth.js");
+  const { NativeProviderWriteNotStartedError } = await import("../../packages/gateway/src/ai-providers/native-provider-profile-guard.js");
+  const root = await mkdtemp(join(tmpdir(), "hermes-key-selection-")); directories.push(root);
+  const installation = join(root, ".hermes/hermes-agent");
+  await mkdir(join(installation, "venv/bin"), { recursive: true });
+  await mkdir(join(installation, "hermes_cli"));
+  await symlink(execFileSync("python3", ["-c", "import sys;print(sys.executable)"], { encoding: "utf8" }).trim(), join(installation, "venv/bin/python"));
+  await writeFile(join(installation, "hermes_cli/__init__.py"), "");
+  await writeFile(join(installation, "hermes_cli/config.py"), `
+values = {}
+def require_env_writable(name, operation): pass
+def save_env_value_secure(name, key):
+    values[name] = key
+    open('writer-started', 'w').write('started')
+    return {'success': True}
+def get_env_value(name): return values.get(name)
+`);
+  const enableConnected = vi.fn(async () => {});
+  const connection = createHermesSettingsConnection({ homePath: root, enableConnected, fetchFn: async () => new Response(null, { status: 200 }) });
+  try {
+    expect((await connection.capabilities()).apiKey).toBe(true);
+    const key = createHash("sha256").update(await realpath(installation)).digest("hex").slice(0, 16);
+    const state = join(root, ".hermes/installs", key); await mkdir(state, { recursive: true });
+    const facts = join(state, "facts.json"); await writeFile(facts, "{}");
+    const input = { harnessInstanceId: "hermes", providerId: "anthropic" as const, apiKey: "synthetic-key" };
+    await expect(connection.verifyKey(input)).rejects.toBeInstanceOf(NativeProviderWriteNotStartedError);
+    await expect(readFile(join(installation, "writer-started"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(enableConnected).not.toHaveBeenCalled();
+    await rm(facts);
+    await connection.verifyKey(input);
+    expect(await readFile(join(installation, "writer-started"), "utf8")).toBe("started");
+    expect(enableConnected).toHaveBeenCalledTimes(1);
+  } finally { await connection.close(); }
+});
 async function fixture(imported: boolean, fails = false) {
   const root = await mkdtemp(join(tmpdir(), "matrix-hermes-workflow-test-")); directories.push(root);
   const modulePath = join(root, "hermes_cli"); await mkdir(modulePath);
