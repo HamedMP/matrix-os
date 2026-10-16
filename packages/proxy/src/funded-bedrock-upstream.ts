@@ -18,6 +18,7 @@ import {
   type FundedGenerationUpstream,
   type FundedUpstreamDispatchInput,
   type FundedUpstreamDispatchResult,
+  type FundedUpstreamProvenance,
 } from "./funded-relay-upstream.js";
 
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
@@ -42,6 +43,21 @@ export class BedrockUpstreamError extends Error {
     super("Funded AI upstream request failed");
     this.name = "BedrockUpstreamError";
   }
+}
+
+export function bedrockRouteProvenance(
+  route: BedrockRouteConfig,
+  providerRequestId?: string,
+): FundedUpstreamProvenance {
+  return {
+    upstream: FundedUpstreamKind.awsBedrock,
+    routeId: route.routeId,
+    resolvedModel: route.resolvedModel,
+    inferenceProfile: route.inferenceProfile,
+    region: route.region,
+    pricingVersion: route.pricing.version,
+    ...(providerRequestId ? { providerRequestId } : {}),
+  };
 }
 
 function textParts(content: FundedOpenAiRequest["messages"][number]["content"]): string[] {
@@ -434,15 +450,7 @@ export function createBedrockFundedUpstream(
           now,
           maxResponseBytes,
         }),
-        provenance: {
-          upstream: FundedUpstreamKind.awsBedrock,
-          routeId: route.routeId,
-          resolvedModel: route.resolvedModel,
-          inferenceProfile: route.inferenceProfile,
-          region: route.region,
-          pricingVersion: route.pricing.version,
-          ...(output.$metadata.requestId ? { providerRequestId: output.$metadata.requestId } : {}),
-        },
+        provenance: bedrockRouteProvenance(route, output.$metadata.requestId),
       };
     },
     close() {

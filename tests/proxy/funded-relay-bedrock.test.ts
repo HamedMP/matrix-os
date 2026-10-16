@@ -200,7 +200,7 @@ describe("funded Bedrock relay", () => {
     await relay.close();
   });
 
-  it("returns a generic rate limit and never falls back when Bedrock throttles", async () => {
+  it("settles a confirmed pre-stream Bedrock throttle at exact zero and never falls back", async () => {
     const control = platform();
     const bedrockUpstream: FundedGenerationUpstream = {
       dispatch: vi.fn(async () => { throw new BedrockUpstreamError("throttled"); }), close: vi.fn(),
@@ -213,6 +213,17 @@ describe("funded Bedrock relay", () => {
     const result = await app.fetch(request());
     expect(result.status).toBe(429);
     expect(await result.text()).not.toContain("Bedrock");
+    await vi.waitFor(() => expect(control.finalize).toHaveBeenCalledWith({
+      reservationId: "reservation_1", tokenId: IDENTITY.tokenId,
+      mode: "exact", actualCostMicrousd: 0,
+      upstreamProvenance: {
+        upstream: "aws_bedrock", routeId: ROUTE.routeId, resolvedModel: ROUTE.resolvedModel,
+        inferenceProfile: ROUTE.inferenceProfile, region: ROUTE.region,
+        pricingVersion: ROUTE.pricing.version,
+      },
+    }, expect.any(AbortSignal)));
+    expect(control.finalize).not.toHaveBeenCalledWith(expect.objectContaining({ mode: "conservative" }),
+      expect.anything());
     expect(fetchMock).not.toHaveBeenCalled();
     await relay.close();
   });

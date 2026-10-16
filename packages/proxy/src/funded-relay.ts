@@ -11,6 +11,7 @@ import { z } from "zod/v4";
 import { isFundedProxyApiKey } from "./auth.js";
 import {
   assertBedrockInputWithinRoute,
+  bedrockRouteProvenance,
   BedrockUpstreamError,
   createBedrockFundedUpstream,
 } from "./funded-bedrock-upstream.js";
@@ -669,7 +670,15 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         refundFundedCapacityAttempt(runtimeAttempt, error);
         return controlPlaneError(c, error);
       }
-      enqueueFinalization({ mode: "conservative" });
+      const confirmedBedrockThrottle = isBedrock && error instanceof BedrockUpstreamError
+        && error.kind === "throttled";
+      enqueueFinalization(confirmedBedrockThrottle
+        ? {
+            mode: "exact",
+            actualCostMicrousd: 0,
+            upstreamProvenance: bedrockRouteProvenance(config.bedrockRoute!),
+          }
+        : { mode: "conservative" });
       resourceLease.release();
       state.resourceLease = null;
       const errorName = error instanceof Error ? error.name : "UnknownError";
