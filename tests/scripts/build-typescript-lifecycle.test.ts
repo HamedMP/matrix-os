@@ -49,7 +49,11 @@ async function compilerFixture(ignoreTermination = false) {
     process.exit = code => { if (code) throw new Error('Real compiler failed: ' + code); };
     require(${JSON.stringify(compiler)});
     const timer = setInterval(() => fs.appendFileSync('compiler-writes', 'x'), 10);
-    process.on('SIGTERM', () => { if (!${JSON.stringify(ignoreTermination)}) setTimeout(() => { clearInterval(timer); process.exitCode = 143; }, 200); });
+    process.on('SIGTERM', () => {
+      fs.writeFileSync('compiler-term', 'received');
+      if (!${JSON.stringify(ignoreTermination)}) setTimeout(() => { clearInterval(timer); process.exitCode = 143; }, 200);
+    });
+    fs.writeFileSync('compiler-ready', 'ready');
   `);
   return directory;
 }
@@ -115,18 +119,41 @@ describe('incremental compiler cancellation and delivery', () => {
     } finally { process.kill(compilerPid, 'SIGKILL'); }
   }, 15000);
 
-  it('terminates a compiler that ignores cancellation at the bounded compiler deadline', async () => {
+  // Windows force-terminates SIGTERM targets instead of delivering this POSIX lifecycle.
+  it.skipIf(process.platform === 'win32')('terminates a compiler that ignores cancellation at the bounded compiler deadline', async () => {
     const directory = await compilerFixture(true);
     const preload = join(directory, 'deadline.cjs');
-    // Scale only the two production budgets in these real subprocesses. The
-    // timeout path and compiler TERM/KILL lifecycle otherwise run unchanged.
-    await writeFile(preload, `const timer=global.setTimeout;global.setTimeout=(callback,ms,...args)=>timer(callback,ms===600000?1000:ms===5000?100:ms,...args);`);
+    // Drive only the two production budgets after their prerequisites, rather
+    // than racing a one-second deadline against real TypeScript startup. Keep
+    // the same native handle so supervisor clearTimeout cancels refreshed polls.
+    await writeFile(preload, `
+      const fs = require('node:fs');
+      const timer = global.setTimeout;
+      global.setTimeout = (callback, ms, ...args) => {
+        const marker = ms === 600000 ? 'deadline-release' : ms === 5000 ? 'compiler-term' : null;
+        if (!marker) return timer(callback, ms, ...args);
+        const budget = timer(() => {
+          if (!fs.existsSync(marker)) return budget.refresh();
+          callback(...args);
+        }, 10);
+        return budget;
+      };
+    `);
     const wrapper = spawn(process.execPath, [script], { cwd: directory, stdio: 'ignore',
       env: { ...process.env, NODE_OPTIONS: `--require ${preload}` } });
     children.push(wrapper);
+    await waitFor(() => exists(join(directory, 'compiler-ready')));
     await waitFor(() => exists(join(directory, 'compiler-writes')));
-    compilerPids.push(Number(await readFile(join(directory, 'compiler-pid'), 'utf8')));
+    const compilerPid = Number(await readFile(join(directory, 'compiler-pid'), 'utf8'));
+    compilerPids.push(compilerPid);
+    expect(wrapper.exitCode).toBeNull();
+    expect(await exists(join(directory, 'compiler-term'))).toBe(false);
+    const lock = join(directory, '.matrix-build-cache/.matrix-build.lock');
+    expect(await readFile(join(lock, 'owner'), 'utf8')).toBe(String(wrapper.pid));
+    await writeFile(join(directory, 'deadline-release'), 'release', { flag: 'wx' });
     expect(await exited(wrapper)).toEqual({ code: 124, signal: null });
+    expect(await readFile(join(directory, 'compiler-term'), 'utf8')).toBe('received');
+    expect(() => process.kill(compilerPid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
     const writes = await readFile(join(directory, 'compiler-writes'), 'utf8');
     await new Promise(accept => setTimeout(accept, 100));
     expect(await readFile(join(directory, 'compiler-writes'), 'utf8')).toBe(writes);
