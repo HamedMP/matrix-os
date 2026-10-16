@@ -42,12 +42,19 @@ export function createSitesService(options: {
     // Share four long-lived transaction slots across publishing and public submissions.
     // One owner cannot queue lock waiters; lifecycle work retains pool capacity.
     const writeAdmission = createPublishAdmission();
+    // Separate bounded management capacity keeps revocation available while
+    // publication/submission slots are occupied, without queuing owner waiters.
+    const managementAdmission = createPublishAdmission();
     async function get(owner: SiteOwner) { await db.ready; const row = await ownership(db, owner).executeTakeFirst(); return row ? project(db, row) : null; }
     async function resolve(reference: string, scoped = db) {
         await scoped.ready;
         const row = await scoped.executor.selectFrom('public_sites').selectAll().where(eb => eb.or([
             eb('id', '=', reference), eb('id', 'in', scoped.executor.selectFrom('public_site_aliases').select('site_id').where('slug', '=', reference)),
-        ])).where('status', '=', 'published').executeTakeFirst();
+        ])).where('status', '=', 'published')
+            .where('machine_id', 'in', scoped.executor.selectFrom('user_machines').select('machine_id')
+                .whereRef('user_machines.clerk_user_id', '=', 'public_sites.owner_id')
+                .where('deleted_at', 'is', null).where('status', '!=', 'deleted'))
+            .executeTakeFirst();
         return row && await siteOwnerCanServe(scoped, row.owner_id, env) ? project(scoped, row) : null;
     }
     async function deploy(owner: SiteOwner, input: unknown) {
@@ -113,7 +120,7 @@ export function createSitesService(options: {
         }
     }
     async function mutate(owner: SiteOwner, revision: number | undefined, apply: (trx: PlatformDB, row: SitesTable) => Promise<Partial<SitesTable>>) {
-        return withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
+        return managementAdmission(owner.ownerId, () => withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
             await sql `SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
             await sql `SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
             await assertCurrentPublishingRuntime(trx, owner);
@@ -127,7 +134,7 @@ export function createSitesService(options: {
             if (!next)
                 throw new SiteError('conflict');
             return project(trx, next);
-        }, env);
+        }, env));
     }
     async function patch(owner: SiteOwner, input: unknown) {
         const parsed = SiteMetadataSchema.safeParse(input);

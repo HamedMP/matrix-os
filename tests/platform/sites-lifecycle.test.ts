@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
@@ -72,4 +72,20 @@ it('wires site storage erasure and routing cleanup into the existing account del
     expect(await service.resolve(site.id)).toBeNull();
     await adapters.data(context);
     expect(await db.executor.selectFrom('public_sites').selectAll().execute()).toEqual([]);
+});
+
+it('revokes every public entry point when its runtime is ordinarily deleted without transferring publication authority', async () => {
+    const deletedOwner = { ownerId: 'user_deleted_runtime', machineId: 'deleted-sites-runtime', appSlug: 'launch' };
+    await insertUserMachine(db, { machineId: deletedOwner.machineId, clerkUserId: deletedOwner.ownerId, handle: 'deleted-sites-runtime', status: 'running', provisionedAt: new Date().toISOString() });
+    const service = createSitesService({ db, storage: { async putObject() { return {}; }, async getObject() { return { body: Buffer.from('private') }; } } });
+    const site = await service.deploy(deletedOwner, deployment);
+    await updateUserMachine(db, deletedOwner.machineId, { status: 'deleted', deletedAt: '2026-10-16T00:00:00.000Z' });
+    expect(await service.resolve(site.id)).toBeNull();
+    expect(await service.resolve('delete-launch')).toBeNull();
+    await expect(service.asset(site.id, site.activeVersion!, 'index.html')).rejects.toThrow('not_found');
+    const submit = vi.fn();
+    await expect(service.admitted(site.id, submit)).rejects.toThrow('not_found');
+    expect(submit).not.toHaveBeenCalled();
+    expect(await service.get({ ...deletedOwner, machineId: 'other-machine' })).toBeNull();
+    expect(await db.executor.selectFrom('public_sites').select('machine_id').where('id', '=', site.id).executeTakeFirst()).toEqual({ machine_id: deletedOwner.machineId });
 });
