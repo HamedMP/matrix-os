@@ -11,6 +11,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { AnalyticsMask } from "@/lib/analytics";
 import { colors } from "@/lib/theme";
 import { FIT_ADDON_JS, XTERM_CSS, XTERM_JS } from "@/components/terminal/xterm-bundle";
+import { TAP_CURSOR_SCRIPT } from "@/components/terminal/tap-cursor-script";
 import { PendingTerminalOps } from "@/lib/terminal-pending-ops";
 
 /**
@@ -56,7 +57,10 @@ const MINIMUM_READABLE_FONT_PX = 10;
 const SCROLLBAR_GUTTER_PX = 14;
 // The places in the emulator page that report a failure, and the only values
 // of `where` this side will log.
-const EMULATOR_FAULT_SITES = ["measure", "fit", "apply-grid"];
+const EMULATOR_FAULT_SITES = ["measure", "fit", "apply-grid", "tap-cursor"];
+// A touch that ends within this distance and time of where it began is a tap.
+const TAP_SLOP_PX = 8;
+const TAP_MAX_MS = 350;
 const SAFE_ERROR_NAME = /^[A-Za-z]{1,40}$/;
 
 // xterm.js + fit addon are inlined from the committed bundle (see
@@ -130,6 +134,7 @@ function buildHtml(fontScale: number): string {
 <div id="term"></div>
 <script>${inlineScript(XTERM_JS)}</script>
 <script>${inlineScript(FIT_ADDON_JS)}</script>
+<script>${TAP_CURSOR_SCRIPT}</script>
 <script>
   (function () {
     function post(msg) {
@@ -310,14 +315,43 @@ function buildHtml(fontScale: number): string {
       var touchX = null;
       var touchY = null;
       var touchAxis = null;
+      var tapStart = null;
       var termEl = host;
-      function endTouch() { touchX = null; touchY = null; touchAxis = null; }
+      function endTouch() { touchX = null; touchY = null; touchAxis = null; tapStart = null; }
       termEl.addEventListener("touchstart", function (e) {
         if (e.touches.length !== 1) { endTouch(); return; }
         touchX = e.touches[0].clientX;
         touchY = e.touches[0].clientY;
         touchAxis = null;
+        tapStart = { x: touchX, y: touchY, at: Date.now() };
       }, { passive: true });
+
+      // A tap on the line being typed moves the cursor there with arrow keys,
+      // as a mouse click would in a desktop terminal.
+      function moveCursorToTap(x, y) {
+        try {
+          var screen = term.element && term.element.querySelector(".xterm-screen");
+          if (!screen || !term.cols || !term.rows) return;
+          var rect = screen.getBoundingClientRect();
+          if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) return;
+          var buffer = term.buffer.active;
+          var row = Math.floor((y - rect.top) / (rect.height / term.rows));
+          var line = buffer.getLine(buffer.viewportY + row);
+          var core = term._core && term._core.coreService;
+          var keys = terminalTapCursorMove({
+            col: Math.floor((x - rect.left) / (rect.width / term.cols)),
+            row: row,
+            cursorCol: buffer.cursorX,
+            cursorRow: buffer.cursorY,
+            lineLength: line ? line.translateToString(true).length : 0,
+            cols: term.cols,
+            scrolled: buffer.viewportY !== buffer.baseY,
+            cursorHidden: !!(core && core.isCursorHidden),
+            applicationCursor: !!(term.modes && term.modes.applicationCursorKeysMode),
+          });
+          if (keys) post({ type: "input", data: keys });
+        } catch (e) { reportFault("tap-cursor", e); }
+      }
       termEl.addEventListener("touchmove", function (e) {
         if (touchY === null || touchX === null || e.touches.length !== 1) return;
         var x = e.touches[0].clientX;
@@ -346,7 +380,16 @@ function buildHtml(fontScale: number): string {
         } catch (err) {}
         e.preventDefault();
       }, { passive: false });
-      termEl.addEventListener("touchend", endTouch, { passive: true });
+      termEl.addEventListener("touchend", function (e) {
+        var start = tapStart;
+        var dragged = touchAxis !== null;
+        endTouch();
+        var touch = e.changedTouches && e.changedTouches.length === 1 ? e.changedTouches[0] : null;
+        if (!start || dragged || !touch) return;
+        if (Math.abs(touch.clientX - start.x) > ${TAP_SLOP_PX} || Math.abs(touch.clientY - start.y) > ${TAP_SLOP_PX}) return;
+        if (Date.now() - start.at > ${TAP_MAX_MS}) return;
+        moveCursorToTap(touch.clientX, touch.clientY);
+      }, { passive: true });
       termEl.addEventListener("touchcancel", endTouch, { passive: true });
 
       post({ type: "ready", cols: term.cols, rows: term.rows });
@@ -473,7 +516,8 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       // Terminal output is never recorded in session replay.
       <AnalyticsMask style={styles.container}>
         <WebView
-          key="terminal-webview-accessory-enabled"
+          // The accessory setting only takes effect on a fresh WebView.
+          key="terminal-webview-accessory-hidden"
           ref={webRef}
           originWhitelist={["*"]}
           source={{ html }}
@@ -482,7 +526,9 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           scrollEnabled
           overScrollMode="never"
           bounces={false}
-          hideKeyboardAccessoryView={false}
+          // iOS's form toolbar (up, down, done) only moves between form
+          // fields; the key rows hold the arrows and the hide-keyboard key.
+          hideKeyboardAccessoryView
           keyboardDisplayRequiresUserAction={false}
           // Left on, the WebView puts back the status bar style it found when
           // it was created each time any window shows or hides (the keyboard,
