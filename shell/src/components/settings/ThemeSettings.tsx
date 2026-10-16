@@ -5,7 +5,7 @@ import { appearanceFromWebTheme, updateWebTheme } from '@matrix-os/brand/themes/
 import { saveTheme, useThemeState } from '@/hooks/useTheme';
 
 export function ThemeSettings() {
-  const { theme, loaded, loadError } = useThemeState();
+  const { theme, loaded, loadError, writePending } = useThemeState();
   const value = appearanceFromWebTheme(theme);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,12 +17,12 @@ export function ThemeSettings() {
     return () => media.removeEventListener('change', update);
   }, []);
   async function change(patch: Partial<AppearancePreferences>) {
-    if (pending || !loaded || loadError) return;
+    if (pending || writePending || !loaded || loadError) return;
     setPending(true); setError(null);
     try { await saveTheme(updateWebTheme(theme, patch, systemDark)); }
     catch (error) { console.warn('[appearance] save failed:', error); setError('Could not save appearance. Please try again.'); }
     setPending(false);
   }
   if (!loaded) return <p role={loadError ? 'alert' : 'status'}>{loadError ? 'Could not load appearance. Reload before making changes.' : 'Loading appearance…'}</p>;
-  return <AppearanceControls value={value} resolvedMode={value.mode === 'system' ? systemDark ? 'dark' : 'light' : value.mode} pending={pending || !loaded || loadError} error={error ?? (loadError ? 'Could not load appearance. Reload before making changes.' : null)} onChange={change} />;
+  return <AppearanceControls value={value} resolvedMode={value.mode === 'system' ? systemDark ? 'dark' : 'light' : value.mode} pending={pending || writePending || !loaded || loadError} error={error ?? (loadError ? 'Could not load appearance. Reload before making changes.' : null)} onChange={change} />;
 }
