@@ -189,6 +189,44 @@ describe("AWS Bedrock funded upstream", () => {
     });
   });
 
+  it("groups consecutive tool results into the user turn answering one assistant tool-call turn", () => {
+    const translated = translateOpenAiToBedrock(serializeFundedOpenAiRequest({
+      model: "matrix-bedrock-qualified",
+      messages: [
+        { role: "user", content: "Compare the weather." },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "tool_rome", type: "function",
+              function: { name: "weather", arguments: '{"city":"Rome"}' } },
+            { id: "tool_paris", type: "function",
+              function: { name: "weather", arguments: '{"city":"Paris"}' } },
+          ],
+        },
+        { role: "tool", tool_call_id: "tool_rome", content: '{"temperature":21}' },
+        { role: "tool", tool_call_id: "tool_paris", content: '{"temperature":18}' },
+      ],
+      tools: [{
+        type: "function",
+        function: { name: "weather", parameters: { type: "object" } },
+      }],
+      max_tokens: 512,
+      stream: true,
+    }, new Set(["matrix-bedrock-qualified"])).request, route());
+
+    expect(translated.messages?.slice(-2)).toEqual([
+      { role: "assistant", content: [
+        { toolUse: { toolUseId: "tool_rome", name: "weather", input: { city: "Rome" } } },
+        { toolUse: { toolUseId: "tool_paris", name: "weather", input: { city: "Paris" } } },
+      ] },
+      { role: "user", content: [
+        { toolResult: { toolUseId: "tool_rome", content: [{ text: '{"temperature":21}' }] } },
+        { toolResult: { toolUseId: "tool_paris", content: [{ text: '{"temperature":18}' }] } },
+      ] },
+    ]);
+  });
+
   it("rejects non-streaming requests instead of returning an unexpected SSE shape", () => {
     expect(() => translateOpenAiToBedrock({ ...request(), stream: false }, route()))
       .toThrow(/streaming/i);

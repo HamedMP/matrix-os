@@ -127,6 +127,11 @@ export function translateOpenAiToBedrock(
   }
   const system: SystemContentBlock[] = [];
   const messages: Message[] = [];
+  const pendingToolResults: ContentBlock[] = [];
+  const flushToolResults = () => {
+    if (pendingToolResults.length === 0) return;
+    messages.push({ role: "user", content: pendingToolResults.splice(0) });
+  };
   let conversationStarted = false;
   for (const message of request.messages) {
     if (message.role === "system" || message.role === "developer") {
@@ -135,15 +140,15 @@ export function translateOpenAiToBedrock(
       continue;
     }
     conversationStarted = true;
-    const content: ContentBlock[] = [];
     if (message.role === "tool") {
-      content.push({ toolResult: {
+      pendingToolResults.push({ toolResult: {
         toolUseId: message.tool_call_id,
         content: textParts(message.content).map((text) => ({ text })),
       } });
-      messages.push({ role: "user", content });
       continue;
     }
+    flushToolResults();
+    const content: ContentBlock[] = [];
     content.push(...textParts(message.content).map((text) => ({ text })));
     if (message.role === "assistant") {
       for (const call of message.tool_calls ?? []) {
@@ -157,6 +162,7 @@ export function translateOpenAiToBedrock(
     if (content.length === 0) throw new Error("Bedrock messages require content");
     messages.push({ role: message.role === "assistant" ? "assistant" : "user", content });
   }
+  flushToolResults();
   if (messages.length === 0) throw new Error("Bedrock messages require a conversation");
   const tools = bedrockTools(request);
   const stopSequences = request.stop === undefined
