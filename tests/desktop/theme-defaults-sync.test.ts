@@ -1,11 +1,11 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const targets = ["desktop/src/renderer/src/design/tokens.css", "home/system/theme.json", "shell/src/app/theme-defaults.css"];
-const script = resolve("scripts/dev/sync-theme-defaults.ts");
+const script = "scripts/dev/sync-theme-defaults.ts";
 const fixtures: string[] = [];
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "theme-defaults-test-"));
@@ -14,10 +14,15 @@ function fixture() {
     mkdirSync(dirname(join(root, target)), { recursive: true });
     writeFileSync(join(root, target), readFileSync(resolve(target)));
   }
+  // Copy source only: generated brand dist and node_modules must not hide failures.
+  for (const source of ["packages/brand/src", "desktop/src/renderer/src/design/themes", script]) {
+    mkdirSync(dirname(join(root, source)), { recursive: true });
+    cpSync(resolve(source), join(root, source), { recursive: true });
+  }
   return root;
 }
 function run(root: string) {
-  execFileSync("bun", [script], { cwd: root, stdio: "pipe", timeout: 30_000 });
+  execFileSync("bun", [join(root, script)], { cwd: root, stdio: "pipe", timeout: 30_000 });
 }
 function snapshot(root: string) { return targets.map(target => readFileSync(join(root, target), "utf8")); }
 afterEach(() => { for (const root of fixtures.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -33,7 +38,12 @@ describe("theme defaults synchronization", () => {
     const target = join(root, targets[index as number]!);
     writeFileSync(target, readFileSync(target, "utf8").replace(marker as string, replacement as string));
     const before = snapshot(root);
-    expect(() => run(root)).toThrow();
+    try {
+      run(root);
+      expect.fail("Invalid markers should fail before writes");
+    } catch (error) {
+      expect(String((error as { stderr?: Buffer }).stderr)).toContain("Expected exactly one stylesheet marker");
+    }
     expect(snapshot(root)).toEqual(before);
   });
 

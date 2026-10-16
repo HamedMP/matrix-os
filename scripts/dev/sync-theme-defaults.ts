@@ -2,7 +2,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { getThemeChrome } from '../../packages/brand/src/themes';
 import { buildWebTheme } from '../../packages/brand/src/themes/web-theme';
-import { chromeToSemanticVars } from '../../desktop/src/renderer/src/design/themes/apply';
+import { chromeToSemanticVars } from '../../packages/brand/src/themes/desktop-theme';
 const path = 'desktop/src/renderer/src/design/tokens.css';
 const webPath = 'shell/src/app/theme-defaults.css';
 const desktopCss = readFileSync(path, 'utf8');
