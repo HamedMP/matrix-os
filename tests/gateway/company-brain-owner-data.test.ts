@@ -53,8 +53,9 @@ async function lifecycle(type: "delete" | "archive" = "delete") {
     clientRequestId: "50000000-0000-4000-8000-000000000011", payloadHash: "b".repeat(64), expectedRevision: 1 });
 }
 async function exportAudits() {
-  return db.selectFrom("collaboration_audit").select(["scope_id", "actor_id", "action", "outcome", "revision"])
+  const rows = await db.selectFrom("collaboration_audit").select(["scope_id", "actor_id", "action", "outcome", "revision"])
     .where("action", "=", "brain.exported").execute();
+  return rows.map(row => ({ ...row, revision: Number(row.revision) }));
 }
 
 async function inheritedTombstone(deleteParent = false) {
