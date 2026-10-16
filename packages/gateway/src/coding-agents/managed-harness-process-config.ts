@@ -1,11 +1,30 @@
 import { randomUUID } from "node:crypto";
+import { MANAGED_WORKERS_AI_MODELS } from "@matrix-os/contracts";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { addPortableProviderCredentials, buildPiChildEnvironment } from "./pi-process-environment.js";
 
-const MANAGED_GLM_MODEL = "@cf/zai-org/glm-5.3-flash";
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const REASONING_EFFORTS = ["none", ...THINKING_LEVELS.slice(1)] as const;
 
-function isManagedGlmCredential(
+function piThinkingLevelMap(efforts: readonly string[]): Record<string, string | null> {
+  return Object.fromEntries(THINKING_LEVELS.map(level => {
+    const effort = level === "off" ? "none" : level;
+    // No configurable effort still supports the ordinary/default Pi run. The
+    // compat flag below prevents that run from inventing a reasoning_effort.
+    return [level, efforts.includes(effort) ? effort : null];
+  }));
+}
+
+function openCodeReasoningVariants(efforts: readonly string[]): Record<string, object> {
+  // OpenCode merges generated variants with these overrides; an empty object
+  // would retain unsupported generic low/medium/high variants (v1.16.0).
+  return Object.fromEntries(REASONING_EFFORTS.map(effort => [effort,
+    efforts.includes(effort) ? { reasoningEffort: effort } : { disabled: true },
+  ]));
+}
+
+function isManagedWorkersCredential(
   credentials: Record<string, string> | undefined,
 ): boolean {
   return Boolean(credentials?.OPENAI_API_KEY && credentials.OPENAI_BASE_URL);
@@ -33,7 +52,7 @@ export function buildOpenCodeRunConfiguration(
   credentials: Record<string, string> | undefined,
 ): string {
   const config = readOnlyOpenCodeConfig();
-  if (isManagedGlmCredential(credentials)) {
+  if (isManagedWorkersCredential(credentials)) {
     const baseUrl = credentials!.OPENAI_BASE_URL!;
     return JSON.stringify({
       ...config,
@@ -46,13 +65,12 @@ export function buildOpenCodeRunConfiguration(
             baseURL: baseUrl.replace(/\/+$/, ""),
             apiKey: "{env:OPENAI_API_KEY}",
           },
-          models: {
-            [MANAGED_GLM_MODEL]: {
-              name: "GLM 5.3 Flash",
-              reasoning: true,
-              interleaved: { field: "reasoning_content" },
-            },
-          },
+          models: Object.fromEntries(MANAGED_WORKERS_AI_MODELS.map((model) => [model.id, {
+            name: model.displayName,
+            reasoning: model.reasoning,
+            interleaved: { field: "reasoning_content" },
+            variants: openCodeReasoningVariants(model.reasoningEfforts),
+          }])),
         },
       },
     });
@@ -79,7 +97,7 @@ function processEnvironment(input: {
   });
   ownerEnvironment.HOME = input.homePath;
   const env = addPortableProviderCredentials(ownerEnvironment, input.credentials);
-  if (isManagedGlmCredential(input.credentials)) {
+  if (isManagedWorkersCredential(input.credentials)) {
     env.OPENAI_API_KEY = input.credentials!.OPENAI_API_KEY!;
     env.OPENAI_BASE_URL = input.credentials!.OPENAI_BASE_URL!;
     delete env.ANTHROPIC_API_KEY;
@@ -107,7 +125,7 @@ export async function preparePiRunEnvironment(input: {
   credentials?: Record<string, string>;
 }): Promise<Record<string, string>> {
   const env = processEnvironment(input);
-  if (!isManagedGlmCredential(input.credentials)) return env;
+  if (!isManagedWorkersCredential(input.credentials)) return env;
 
   const configDirectory = join(input.homePath, ".matrix", "runtime", "pi-managed");
   await mkdir(configDirectory, { recursive: true, mode: 0o700 });
@@ -119,12 +137,19 @@ export async function preparePiRunEnvironment(input: {
         api: "openai-completions",
         baseUrl: input.credentials!.OPENAI_BASE_URL!.replace(/\/+$/, ""),
         apiKey: "OPENAI_API_KEY",
-        models: [{
-          id: MANAGED_GLM_MODEL,
-          name: "GLM 5.3 Flash",
+        models: MANAGED_WORKERS_AI_MODELS.map((model) => ({
+          id: model.id,
+          name: model.displayName,
           input: ["text"],
-          reasoning: true,
-        }],
+          reasoning: model.reasoning,
+          thinkingLevelMap: model.reasoningEfforts.length === 0
+            ? { ...piThinkingLevelMap(model.reasoningEfforts), off: undefined }
+            : piThinkingLevelMap(model.reasoningEfforts),
+          compat: {
+            supportsReasoningEffort: model.reasoningEfforts.length > 0,
+            maxTokensField: model.outputTokenField,
+          },
+        })),
       },
     },
   });

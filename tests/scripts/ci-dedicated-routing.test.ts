@@ -30,7 +30,7 @@ describe('dedicated Linux routing preserves protected hosted contracts',()=>{
   });
   it('requires successful verified Linux result in CI Results whenever hosted lanes delegate',()=>{
     expect(ci.jobs['ci-results'].needs).toContain('dedicated-linux');
-    const step=ci.jobs['ci-results'].steps[0];
+    const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs');
     expect(step.env.DEDICATED_ELIGIBLE).toContain('needs.changes.outputs.dedicated_eligible');
     expect(step.run).toContain('"$DEDICATED_LINUX_RESULT" != "success"');
   });
@@ -93,7 +93,7 @@ describe('executable delegation and aggregate admission',()=>{
   it.each(['success','failure','cancelled','skipped','unknown'])('aggregate accepts only verified dedicated success (%s)',outcome=>{
     const dir=mkdtempSync(resolve(tmpdir(),'matrix-linux-aggregate-'));
     try{
-      const step=ci.jobs['ci-results'].steps[0];
+      const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs');
       const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};
       for(const key of Object.keys(step.env))env[key]='success';
       Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'true',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:'skipped',CI_BACKEND_RESULT:outcome,CI_BACKEND_PROVIDER:'linux',INFRASTRUCTURE_FALLBACK:'false'});
@@ -110,13 +110,13 @@ it('observes shadow qualification without letting it block the aggregate',()=>{
  expect(ci.jobs['dedicated-linux'].if).toContain("dedicated_required == 'true'");
  // Shadow never makes CI Results wait on the Linux verifier.
  expect(ci.jobs['dedicated-linux'].if).toContain("needs.changes.outputs.dedicated_mode == 'delegated'");
- const step=ci.jobs['ci-results'].steps[0];expect(step.env.DEDICATED_REQUIRED).toContain('needs.changes.outputs.dedicated_required');
+ const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs');expect(step.env.DEDICATED_REQUIRED).toContain('needs.changes.outputs.dedicated_required');
  expect(step.env.DEDICATED_MODE).toBe("${{ needs.changes.outputs.dedicated_mode == 'delegated' && 'delegated' || 'shadow' }}");
  expect(step.run).toContain('"$DEDICATED_REQUIRED" = "true"');
 });
 it.each([['shadow','failure',0],['shadow','skipped',0],['delegated','failure',1],['delegated','skipped',1],['delegated','success',0]])('aggregate with required Linux in %s mode and Linux %s exits %i',(mode,linux,code)=>{
  const dir=mkdtempSync(resolve(tmpdir(),'matrix-shadow-aggregate-'));
- try{const step=ci.jobs['ci-results'].steps[0],env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};for(const key of Object.keys(step.env))env[key]='success';
+ try{const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs'),env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};for(const key of Object.keys(step.env))env[key]='success';
  Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:linux,DEDICATED_MODE:mode});
  expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(code);
  }finally{rmSync(dir,{recursive:true,force:true});}
@@ -140,12 +140,12 @@ it.each(['true','false'])('runs all hosted lanes and no Linux waiter for hosted-
  const dir=mkdtempSync(resolve(tmpdir(),'matrix-hosted-recovery-route-'));
  try{writeFileSync(resolve(dir,'event.json'),'{}');const body=ci.jobs.changes.steps.find((step:{id?:string})=>step.id==='route').run.match(/^node --input-type=module <<'NODE'\n([\s\S]*)\nNODE\s*$/)![1];
  const result=spawnSync(process.execPath,['--input-type=module','-e',body],{env:{...process.env,REFRESH_SNAPSHOT:JSON.stringify({executionMode:'hosted-only'}),MATRIX_CI_DEDICATED_ENABLED:enabled,MATRIX_CI_DEDICATED_SHADOW:'true',SHOULD_RUN:'true',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')},encoding:'utf8',timeout:10000});expect(result.status,result.stderr).toBe(0);expect(readFileSync(resolve(dir,'output'),'utf8')).toBe('eligible=false\nrequired=false\nmode=shadow\n');
- const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')},step=ci.jobs['ci-results'].steps[0];for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_LINUX_RESULT:'skipped',DOCS_CONTRACT_RESULT:'skipped'});expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(0);
+ const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')},step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs');for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_LINUX_RESULT:'skipped',DOCS_CONTRACT_RESULT:'skipped'});expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(0);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 it.each(['success','skipped','failure','cancelled'])('hosted infrastructure recovery aggregate requires every delegated lane: %s',outcome=>{
  const dir=mkdtempSync(resolve(tmpdir(),'matrix-ci-infra-aggregate-'));
- try{const step=ci.jobs['ci-results'].steps[0],env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'true',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:'skipped',CI_BACKEND_RESULT:'success',CI_BACKEND_PROVIDER:'hosted',INFRASTRUCTURE_FALLBACK:'true',E2E_RESULT:outcome});
+ try{const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs'),env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'true',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:'skipped',CI_BACKEND_RESULT:'success',CI_BACKEND_PROVIDER:'hosted',INFRASTRUCTURE_FALLBACK:'true',E2E_RESULT:outcome});
  expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(outcome==='success'?0:1);
  env.INFRASTRUCTURE_FALLBACK='false';expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(1);
  }finally{rmSync(dir,{recursive:true,force:true});}

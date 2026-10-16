@@ -32,6 +32,14 @@ function fixture() {
   };
 }
 
+function workersReview() {
+  return {
+    MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION: "cloudflare-2026-10-15-workers-eight",
+    MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT: new Date(Date.now() - day).toISOString(),
+    MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH: new Date(Date.now() + day).toISOString(),
+  };
+}
+
 function verify(receipt = fixture(), options: Record<string, unknown> = {}) {
   // Build real ZIP bytes, then exercise the same Python verifier used before cloud authentication.
   const result = spawnSync("python3", ["-c", `
@@ -92,6 +100,9 @@ try:
         if change == "environment": os.environ["PLATFORM_INTERNAL_URL"] = "https://preview.example.test"
         if change == "unboundedRate": entries[2]["value"] = "99999"
         if change == "unreviewedEnv": entries.append({"name":"UNREVIEWED_SETTING", "value":"true"})
+        if change == "extraWorkers": entries.append({"name":"MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION", "value":"cloudflare-2026-10-15-workers-eight"})
+        if change == "missingWorkers": entries[:] = [entry for entry in entries if entry["name"] != "MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH"]
+        if change == "operatorWorkers": os.environ["MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION"] = "cloudflare-2026-10-15-workers-eight"
         if change == "maxInstances": revision["metadata"]["annotations"]["autoscaling.knative.dev/maxScale"] = "999"
         if change == "cloudConcurrency": revision["spec"]["containerConcurrency"] = 1000
         if change == "memory": revision["spec"]["containers"][0]["resources"]["limits"]["memory"] = "8Gi"
@@ -162,8 +173,9 @@ describe("reviewed funded Relay release evidence", () => {
   it("verifies actual candidate configuration before promotion", () => {
     expect(verify(productionFixture(), { promotion: true, exercisePromotion: true }).status).toBe(0);
   });
-  it("promotes the exact environment emitted by the reviewed deployment workflow", () => {
+  it.each([false, true])("promotes the exact emitted environment with Workers review %s", withWorkers => {
     const receipt = productionFixture();
+    if (withWorkers) Object.assign(receipt.configuration.pricing, workersReview());
     const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
     const block = workflow.split("- name: Deploy candidate revision")[1]!
       .split("- name: Smoke candidate relay")[0]!.split("run: |\n")[1]!;
@@ -183,6 +195,9 @@ ${script}
       WORKERS_TOKEN_SECRET: "cloudflare-workers-ai-token-production", WORKERS_TOKEN_VERSION: "2",
       CONTROL_TOKEN_SECRET: "ai-relay-control-token", CONTROL_TOKEN_VERSION: "3",
       METADATA_SECRET_SECRET: "ai-relay-metadata-secret", METADATA_SECRET_VERSION: "4",
+      WORKERS_PRICING_BINDINGS: Object.entries(config.pricing)
+        .filter(([key]) => key.startsWith("MATRIX_FUNDED_WORKERS_PRICING_"))
+        .map(([key, value]) => `|${key}=${value}`).join(""),
       ...config.pricing,
     } });
     expect(result.error).toBeUndefined();
@@ -194,6 +209,10 @@ ${script}
       return [entry.slice(0, index), entry.slice(index + 1)];
     }));
     expect(workflowEnvironment.MATRIX_FUNDED_AI_BETAS).toContain("advisor-tool-2026-03-01");
+    if (withWorkers) {
+      expect(workflowEnvironment.MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION)
+        .toBe("cloudflare-2026-10-15-workers-eight");
+    }
     expect(verify(receipt, { promotion: true, exercisePromotion: true, workflowEnvironment }).status).toBe(0);
     const changed = { ...workflowEnvironment, MATRIX_FUNDED_AI_BETAS: `${workflowEnvironment.MATRIX_FUNDED_AI_BETAS},unreviewed-beta` };
     expect(verify(receipt, { promotion: true, exercisePromotion: true, workflowEnvironment: changed }).status).toBe(1);
@@ -204,6 +223,30 @@ ${script}
     ]) {
       expect(verify(receipt, { promotion: true, exercisePromotion: true, workflowEnvironment: emitted }).status).toBe(1);
     }
+  });
+  it.each(["partial", "version", "expired", "future", "overlong"])("rejects an invalid Workers receipt review: %s", change => {
+    const receipt = productionFixture();
+    const pricing = receipt.configuration.pricing;
+    Object.assign(pricing, workersReview());
+    if (change === "partial") delete pricing.MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT;
+    if (change === "version") pricing.MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION = "unreviewed";
+    if (change === "expired") pricing.MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH = new Date(Date.now() - 1).toISOString();
+    if (change === "future") pricing.MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT = new Date(Date.now() + day).toISOString();
+    if (change === "overlong") pricing.MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH = new Date(Date.now() + 32 * day).toISOString();
+    expect(verify(receipt, { promotion: true, exercisePromotion: true }).status).toBe(1);
+  });
+  it("rejects unreviewed, missing or changed Workers candidate settings", () => {
+    const legacy = productionFixture();
+    const reviewed = productionFixture();
+    Object.assign(reviewed.configuration.pricing, workersReview());
+    expect(verify(legacy, { promotion: true, exercisePromotion: true,
+      candidateChange: "extraWorkers" }).stderr).toContain("Unreviewed candidate environment");
+    expect(verify(legacy, { promotion: true, exercisePromotion: true,
+      candidateChange: "operatorWorkers" }).stderr).toContain("Reviewed deployment configuration mismatch");
+    expect(verify(reviewed, { promotion: true, exercisePromotion: true,
+      candidateChange: "missingWorkers" }).stderr).toContain("Candidate runtime configuration mismatch");
+    expect(verify(reviewed, { promotion: true, exercisePromotion: true,
+      candidateChange: "pricing" }).status).toBe(1);
   });
   it.each(["secret", "source", "account", "pricing", "duplicate", "notReady", "environment",
     "unboundedRate", "unreviewedEnv", "maxInstances", "cloudConcurrency", "memory", "entrypoint", "mount"])(

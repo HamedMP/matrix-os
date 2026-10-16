@@ -1,4 +1,4 @@
-import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
@@ -9,7 +9,7 @@ import {
   type FundedRelayConfig,
 } from "./funded-relay.js";
 import { FUNDED_SONNET, probeFundedModel } from "./funded-relay-readiness.js";
-import { FUNDED_GLM_FLASH, fundedModelPriceValidThrough, isFundedModelPriceCurrent } from "./funded-relay-model.js";
+import { fundedModelPriceValidThrough, isFundedModelPriceCurrent } from "./funded-relay-model.js";
 import {
   createBedrockFundedUpstream,
 } from "./funded-bedrock-upstream.js";
@@ -100,7 +100,7 @@ export function createFundedRelayService(config: FundedRelayConfig, options: {
         return c.json({ ready: false }, 503);
       }
     }
-    if (model !== FUNDED_GLM_FLASH && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
+    if ((!model || !isManagedWorkersAiModel(model)) && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
     const priceValidThrough = fundedModelPriceValidThrough(model, config.pricingReviews);
     if (!priceValidThrough || !isFundedModelPriceCurrent(model, now(), config.pricingReviews)) {
       return c.json({ ready: false }, 503);

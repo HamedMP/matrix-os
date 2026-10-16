@@ -176,6 +176,47 @@ restore skipped coverage. A successful old receipt or
 similarly named check cannot qualify another attempt. Public testing docs ship
 in the companion site documentation PR.
 
+## Metadata edits and bounded run history
+
+Title/body edits keep a real `CI Results` job in the latest Actions suite.
+That job verifies the newest genuine coverage run for the PR head, including
+its recorded tested base/merge, workflow, attempt and Actions issuer. Main-only
+advances retain that frozen coverage; non-main stack parents remain strictly current.
+Metadata verifications cannot qualify each other. Missing, failed, cancelled,
+pending or mismatched coverage fails closed; skipped workload jobs are never
+coverage evidence. Base edits retain normal full CI, and drafts still publish
+no required aggregate. No approval or required-check binding changes are needed.
+
+Controller discovery streams inclusive creation-time windows so unrelated
+traffic cannot bury evidence behind the former 300-run scan or GitHub's
+1,000-result filtered-search ceiling. It retains runs sharing a boundary second
+and compares all event streams before selecting the newest authenticated run.
+Memory stays at one 100-run page per stream, with at most 100 API requests per
+discovery. API errors, budget exhaustion and more than 1,000 runs in one second
+fail closed; they never authorize an older green result. Privileged controllers
+use this helper only after its reviewed commit is activated through the existing
+idle-host pin procedure.
+
+## Main-only advances
+
+PR qualification targeting `main` binds the unchanged PR head to the immutable
+merge actually tested. Every admission/grant/renewal/result check verifies its
+ordered `[recordedMain, head]` parents and proves recorded main remains an ancestor
+of live main. New main commits alone do not restart or revoke this work. Source
+gate reconciliation discovers the newest genuine same-head requesting run and
+keeps its recorded base/source; it cannot skip a newer pending/failed attempt or
+pretend an old receipt covers the new main merge. Retargets, head changes,
+removed admission, rewritten main history and non-main stack parents still fail
+closed. Main-push source checks remain exact-current-main.
+
+This helper behavior and GitHub's up-to-date setting ship together through the
+[coordinated rollout](../../../specs/605-priority-linux-ci/stable-main-qualification.md).
+Do not loosen the setting until the PR is reviewed/green, its reviewed merged
+controller is activated, candidate consumers contain the change, and full live
+canaries pass. Required CI, Greptile, peer approval, image/harness and routing
+flags remain unchanged. Main integration CI catches interactions between
+independently green PRs; stop further merges and repair/revert on failure.
+
 ## Controller configuration credentials
 
 Repository Variables API reads require a GitHub App installation token with

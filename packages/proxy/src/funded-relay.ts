@@ -1,3 +1,4 @@
+import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
 import {
   FundedAiClaimKeySchema,
@@ -30,7 +31,7 @@ import {
   serializeFundedJevEvaluationRequest,
 } from "./funded-relay-evaluation.js";
 import { JEV_READINESS_PATH, jevProbeControlAuthorized, fixedJevProbeRequest, assertJevProbeSettlement } from "./funded-relay-jev-probe.js";
-import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
+import { estimateWorstCaseMicrousd, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
 import {
@@ -357,10 +358,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const requestSearch = new URL(c.req.url).search;
     try {
       const body: unknown = JSON.parse(await c.req.text());
-      const allowedOpenAiModels = new Set([
-        FUNDED_GLM_FLASH,
-        ...(config.bedrockRoute ? [config.bedrockRoute.clientModelId] : []),
-      ]);
+      const allowedOpenAiModels = new Set(config.bedrockRoute ? [config.bedrockRoute.clientModelId] : []);
       const serialized = isOpenAi
         ? serializeFundedOpenAiRequest(body, allowedOpenAiModels)
         : serializeFundedRequest(body);
@@ -375,7 +373,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       model = isBedrock
         ? { nativeModelId: config.bedrockRoute!.clientModelId, canonicalModelId: config.bedrockRoute!.canonicalModelId }
         : mapFundedModel(parsedBody.model);
-      if ((model.nativeModelId === FUNDED_GLM_FLASH || isBedrock) !== isOpenAi) {
+      if ((isManagedWorkersAiModel(model.nativeModelId) || isBedrock) !== isOpenAi) {
         throw new Error("Unsupported funded AI model");
       }
     } catch (error) {
@@ -561,7 +559,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }, config.firstResponseTimeoutMs);
     const generationSignal = AbortSignal.any([state.lifetimeSignal, firstResponseController.signal]);
     const generationUrl = isOpenAi && !isBedrock
-      ? workersAiTarget(config.gatewayBaseUrl).url
+      ? workersAiTarget(config.gatewayBaseUrl, model.nativeModelId).url
       : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`;
     // Retain pseudonymous generation receipts even when gateway collection is
     // disabled. Payload suppression/ZDR remain set; counting and probes keep

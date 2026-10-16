@@ -1,5 +1,6 @@
 import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 import { z } from "zod/v4";
+import { MANAGED_WORKERS_AI_MODEL_IDS } from "#funded-ai";
 import { canonicalEncodedByteLength } from "#canonical-chat-primitives";
 import { BOT_IMAGE_MAX_BASE64_CHARS, BotToolCapabilitySchema, BotToolErrorCodeSchema } from "#bots/broker";
 import { BotIdSchema } from "#bots/ids";
@@ -37,7 +38,7 @@ export const IsolatedChatEnvelopeSchema = z.object({
   runtimeTokenEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   runtimeCredentialSha256: z.string().regex(/^[a-f0-9]{64}$/),
   chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,128}$/),
-  modelId: z.enum(["@cf/zai-org/glm-5.3-flash", "anthropic/claude-sonnet-5"]),
+  modelId: z.enum([...MANAGED_WORKERS_AI_MODEL_IDS, "anthropic/claude-sonnet-5"]),
   sourceSha: z.string().regex(/^[a-f0-9]{40}$/),
   startsAt: z.iso.datetime(), expiresAt: z.iso.datetime(),
 }).strict().refine(value => Date.parse(value.expiresAt) > Date.parse(value.startsAt)

@@ -108,8 +108,8 @@ describe("funded generation first-response budget", () => {
     expect(config().firstResponseTimeoutMs).toBe(30_000);
     expect(config().timeoutMs).toBe(600_000);
     expect(config().countTokensTimeoutMs).toBe(10_000);
-    expect(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs).toBe(8_000);
-    expect(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs).toBe(10_000);
+    expect(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs).toBe(25_000);
+    expect(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs).toBe(27_000);
   });
 
   it.each(["1000", "5000", "60000"])("retains the explicit first-response override %s", (value) => {

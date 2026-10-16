@@ -7,9 +7,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const [agentPath, componentPath] = process.argv.slice(2);
 if (!agentPath || !componentPath) throw new Error("usage: prepare-funded-host-component.mjs <staged-agent> <staged-component-dir>");
 const source = join(root, "distro/customer-vps/funded-host-config");
-const [bootstrap, runtime, recovery, repair, agent] = await Promise.all([
+const [bootstrap, runtime, epoch, recovery, repair, agent] = await Promise.all([
   readFile(join(source, "install.py"), "utf8"), readFile(join(source, "reconcile.py"), "utf8"),
-  readFile(join(source, "recovery.py"), "utf8"),
+  readFile(join(source, "epoch.py"), "utf8"), readFile(join(source, "recovery.py"), "utf8"),
   readFile(join(root, "scripts/ops/repair-funded-chat-config.py"), "utf8"), readFile(agentPath, "utf8"),
 ]);
 const pattern = /# BEGIN funded host bootstrap[\s\S]*?# END funded host bootstrap/g;
@@ -34,7 +34,7 @@ except Exception:
     sys.exit(1)
 `;
 await mkdir(componentPath, { recursive: true });
-await writeFile(join(componentPath, "reconcile.py"), `${bootstrap}\n${runtime}\n${recovery}\nREPAIR_SOURCE = ${JSON.stringify(repair)}\n${entry}`, "utf8");
+await writeFile(join(componentPath, "reconcile.py"), `${bootstrap}\n${runtime}\n${epoch}\n${recovery}\nREPAIR_SOURCE = ${JSON.stringify(repair)}\n${entry}`, "utf8");
 await copyFile(join(source, "matrix-funded-host-config.service"), join(componentPath, "matrix-funded-host-config.service"));
 const invocation = `
 import sys

@@ -25,7 +25,7 @@ describe("agent auth scan", () => {
     await mkdir(join(homeDir, ".pi/agent"), { recursive: true });
     await writeFile(join(homeDir, ".pi/agent/auth.json"), JSON.stringify({ token: "pi-secret" }));
 
-    const result = await scanAgentAuth({ homeDir });
+    const result = await scanAgentAuth({ homeDir, includeMacOsKeychainHint: false });
 
     expect(result.providers).toEqual([
       { provider: "codex", status: "found", localPath: "~/.codex/auth.json", remotePath: ".codex/auth.json", transferable: true },

@@ -6,6 +6,7 @@ import {verifyCurrentDedicatedSource} from './dedicated-admission.mjs';
 import {authenticatedControllerRun} from './dedicated-refresh.mjs';
 import {createConditionalGithub} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
+import {mainPrRequest} from './dedicated-main-pr.mjs';
 const workflowPath = '.github/workflows/ci-dedicated.yml';
 const trustedRunPath = value => [workflowPath, `${workflowPath}@main`, `${workflowPath}@refs/heads/main`].includes(value);
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -20,9 +21,11 @@ function parseEvidence(check, expected, latest) {
   let runId;
   if (check.details_url === `${repositoryUrl}/runs/${check.id}`) {
     // GitHub normalizes manually created Actions checks to their own URL.
-    // This check is only an index: discovery already authenticated latest,
-    // and the immutable receipt must bind that exact controller/run attempt.
-    if (!positiveId(latest?.id)) return null;
+    // Bind the index to its workflow run before using the independently
+    // authenticated controller identity. Otherwise an older normalized check
+    // can be mistaken for a later controller that stood down without a result.
+    if (!positiveId(latest?.id) || !positiveId(check.check_suite?.id) ||
+        check.check_suite.id !== latest.check_suite_id) return null;
     runId = latest.id;
   } else {
     const prefix = `${repositoryUrl}/actions/runs/`;
@@ -57,8 +60,8 @@ function trustedController(run, expected, workflow) {
   return positiveId(run.run_attempt)&&authenticatedControllerRun(run,{owner:expected.owner,repo:expected.repo},expected,workflow,expected.headRef);
 }
 
-async function newestRequest(github,repo,expected,workflow){
- return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow),{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef});
+async function newestRequest(github,repo,expected,workflow,beforeId){
+ return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow)&&(!beforeId||run.id<beforeId),{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef});
 }
 
 async function newestController(github, repo, expected, workflow, latest) {
@@ -86,6 +89,18 @@ async function newestController(github, repo, expected, workflow, latest) {
   return {...selected,run};
 }
 
+async function newestResultController(github,repo,expected,workflow){
+ let latest=await newestRequest(github,repo,expected,workflow);
+ for(let skipped=0;latest;skipped++){
+  if(latest.status==='completed'&&latest.conclusion!=='success')return{latest};
+  const selected=await newestController(github,repo,expected,workflow,latest);
+  if(selected||latest.status!=='completed')return{latest,selected};
+  if(skipped>=9)throw new Error('Completed controller history without result exceeds bounded coverage');
+  latest=await newestRequest(github,repo,expected,workflow,latest.id);
+ }
+ return{};
+}
+
 export async function waitForDedicatedResult(github,expected,options={}) {
   const maximum=options.maxMilliseconds??3_900_000;
   if(!Number.isSafeInteger(maximum)||maximum<1||maximum>3_900_000)throw new Error('Invalid waiter deadline');
@@ -108,13 +123,23 @@ async function waitWithinDeadline(github, expected, options={}) {
   const repo={owner:expected.owner,repo:expected.repo};
   const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
   if(workflow.path!==workflowPath)throw new Error('Unexpected dedicated controller workflow');
+  let ciWorkflow;
+  const verifyMainRequester=async source=>{
+    if(expected.baseRef!=='main'||expected.sourceKind!==undefined)return;
+    if(!ciWorkflow){
+      ({data:ciWorkflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request}));
+      if(!positiveId(ciWorkflow.id)||ciWorkflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected requesting CI definition');
+    }
+    const newest=await newestWorkflowRun(github,repo,ciWorkflow,run=>Boolean(mainPrRequest(run,repo,expected,ciWorkflow)),{kind:'requester',headSha:expected.headSha,headRef:expected.headRef});
+    if(!newest||newest.id!==expected.requestingRunId||newest.run_attempt!==expected.requestingRunAttempt||(newest.status==='completed'&&newest.conclusion!=='success'))throw new Error('A newer or failed requesting CI attempt superseded coverage');
+  };
   for(let attempt=0;attempt<maxAttempts;attempt++) {
     const currentSource=await verifyCurrentDedicatedSource(github,repo,expected);
-    const latest=await newestRequest(github,repo,expected,workflow);
+    await verifyMainRequester(currentSource);
+    const {latest,selected}=await newestResultController(github,repo,expected,workflow);
     if(latest?.status==='completed' && latest.conclusion!=='success') {
       throw new Error('Verified dedicated Linux qualification failed');
     }
-    const selected=await newestController(github,repo,expected,workflow,latest);
     if(!selected&&options.admissionAttempts&&attempt+1>=options.admissionAttempts)throw new Error('No Linux controller admitted within the admission window');
     if(selected?.run.status==='completed') {
       const {check,evidence,run}=selected;
@@ -133,14 +158,14 @@ async function waitWithinDeadline(github, expected, options={}) {
             if(dispatch.conclusion!=='success')throw new Error('Verified dedicated Linux qualification failed');
             const receipt=await downloadControllerReceipt(github,repo,provenance);
             const infrastructure=verifyControllerArtifact(receipt,evidence,expected,run,currentSource.mergeParents,check);
-            const current=await newestRequest(github,repo,expected,workflow);
+            const {latest:current,selected:currentSelected}=await newestResultController(github,repo,expected,workflow);
             if(current?.status==='completed' && current.conclusion!=='success') {
               throw new Error('Verified dedicated Linux qualification failed');
             }
             // A retry may have been queued while artifacts/jobs were fetched.
-            if(current?.id===run.id && current.run_attempt===run.run_attempt &&
+            if(currentSelected?.run.id===run.id && current?.id===run.id && current.run_attempt===run.run_attempt &&
                 current.head_sha===run.head_sha && current.status==='completed' && current.conclusion==='success') {
-              await verifyCurrentDedicatedSource(github,repo,expected);
+              await verifyMainRequester(await verifyCurrentDedicatedSource(github,repo,expected));
               options.metrics?.(api.metrics());
               if(infrastructure){if(options.allowInfrastructureFallback!==true)throw new Error('Linux infrastructure unavailable; hosted coverage required');return {runId:evidence.runId,sourceSha:expected.sourceSha,infrastructure};}
               return {runId:evidence.runId,sourceSha:expected.sourceSha};
