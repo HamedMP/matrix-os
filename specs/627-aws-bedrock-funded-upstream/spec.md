@@ -34,7 +34,11 @@ allowlists.
 - Preference writes use optimistic revision checks and a bounded idempotency
   key, and persist the preference plus its content-free replay/audit event in
   one transaction. Renderers receive only the platform projection; they never
-  derive cohort membership or readiness.
+  derive cohort membership or readiness. Funding-summary reads use only
+  bounded cached Bedrock health and fall back to Cloudflare on cache failure;
+  they never start paid readiness probes. Account deletion erases the owner's
+  preference and its audit history inside the existing platform-data
+  transaction.
 - The relay route JSON is operator configuration. It binds one client model ID
   to one canonical Matrix model, resolved Bedrock model/inference profile,
   region, context/output ceilings, and a time-bounded reviewed integer price
