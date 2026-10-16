@@ -43,7 +43,8 @@ function modelSelectionKey(selection: CanonicalChatModelSelection): string {
     : JSON.stringify([selection.instanceId, selection.model]);
 }
 
-export function MatrixBotModelField({ botClient, id, label = "Model", selection, models, catalog, catalogLoading = false, pending, allowAutomatic = true, allowSubscription = true, requireSelection = false, preservedSelection, onSetup, onRefreshCatalog, onChange }: {
+export function MatrixBotModelField({ botClient, id, label = "Model", selection, models, catalog, catalogLoading = false, pending, allowAutomatic = true, allowSubscription = true, requireSelection = false, preservedSelection, onSetup, onRefreshCatalog, onChange, sourceIntent, onSourceChange }: {
+  sourceIntent?: string | null; onSourceChange?: (source: string, selection: CanonicalChatModelSelection | null) => void;
   botClient?: BotClient; preservedSelection?: CanonicalChatModelSelection; allowAutomatic?: boolean; allowSubscription?: boolean; requireSelection?: boolean; onSetup?: () => void; onRefreshCatalog?: () => void;
   id?: string; label?: string; selection: CanonicalChatModelSelection | null;
   models: readonly CanonicalProviderChoice[]; pending: boolean;
@@ -51,7 +52,8 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
   onChange(selection: CanonicalChatModelSelection | null): void;
 }) {
   const discovery = useBotConnections(allowSubscription && botClient?.connections ? botClient as Required<Pick<BotClient,"connections">> : undefined);
-  const [connectionIntent, setConnectionIntent] = useState<string | null>(null);
+  const [localConnectionIntent, setConnectionIntent] = useState<string | null>(null);
+  const connectionIntent = sourceIntent === undefined ? localConnectionIntent : sourceIntent;
   const automatic = allowAutomatic && ((!selection && !requireSelection && !connectionIntent) || isAutomaticBotSelection(selection));
   const sourceId = selection ? isAutomaticBotSelection(selection) ? "computer" : selection.instanceId
     : connectionIntent ?? MATRIX_PI_CHAT_INSTANCE_ID;
@@ -90,7 +92,9 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
       subscriptionAvailable={allChoices.some(choice => choice.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID)} pending={pending || catalogLoading} onSetup={onSetup} onChange={value => {
         if (value !== MATRIX_PI_CHAT_INSTANCE_ID && value !== MATRIX_CHATGPT_PLAN_INSTANCE_ID && value !== MATRIX_ANTHROPIC_API_INSTANCE_ID && value !== "computer") return;
         if (!allowSubscription && (value === MATRIX_CHATGPT_PLAN_INSTANCE_ID || value === MATRIX_ANTHROPIC_API_INSTANCE_ID)) return;
-        setConnectionIntent(value); onChange(value === "computer" ? MATRIX_BOT_SELECTION : null);
+        setConnectionIntent(value);
+        const selection = value === "computer" ? MATRIX_BOT_SELECTION : null;
+        if (onSourceChange) onSourceChange(value, selection); else onChange(selection);
       }}/> : null}
     <label className="grid gap-1.5 text-sm" htmlFor={id}>{label}
       <select id={id} className={chatAgentInputClass} value={key} disabled={pending || catalogLoading || (!allowAutomatic && noModels && !legacyAvailable)} onChange={(event) => {

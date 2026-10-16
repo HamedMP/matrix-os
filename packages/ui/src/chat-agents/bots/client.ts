@@ -1,4 +1,4 @@
-import { CreateManagedCustomBotRequestSchema, type CreateManagedCustomBotRequest } from "@matrix-os/contracts";
+import { BotCreationSeedResponseSchema, BotRecipeRefSchema, CreateManagedCustomBotRequestSchema, type BotCreationSeedResponse, type BotRecipeRef, type CreateManagedCustomBotRequest } from "@matrix-os/contracts";
 import {createBotConnectionClient, type BotConnectionClient} from "./provider-connections-client.js";
 import {
   BotChatBindingResponseSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
@@ -45,6 +45,7 @@ export interface BotClient extends Partial<BotConnectionClient> {
   directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
   recipes(): Promise<BotRecipeSummary[]>;
+  creationSeed?(recipe: BotRecipeRef): Promise<BotCreationSeedResponse>;
   createCustom?(input: CreateManagedCustomBotRequest): Promise<InstantiateBotResponse>;
   instantiate(input: InstantiateBotRequest): Promise<InstantiateBotResponse>;
   interactions(chatId: string): Promise<BotInteraction[]>;
@@ -72,6 +73,7 @@ export function createBotClient(request: BotRequest): BotClient {
     directChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "GET", BotChatBindingResponseSchema)).chatId,
     directBot: async (chatId) => (await call(`${chatPath(chatId)}/bot`, "GET", BotDirectChatResponseSchema)).agentId,
     recipes: async () => (await call("/api/chat-agents/bot-recipes", "GET", BotRecipeListResponseSchema)).recipes,
+    creationSeed: (input) => { const recipe = BotRecipeRefSchema.parse(input); return call(`/api/chat-agents/bot-recipes/${encodeURIComponent(recipe.recipeId)}/${encodeURIComponent(recipe.version)}/creation-seed`, "GET", BotCreationSeedResponseSchema); },
     createCustom: (input) => call("/api/chat-agents/managed-custom", "POST", InstantiateBotResponseSchema, CreateManagedCustomBotRequestSchema.parse(input)),
     instantiate: (input) => call("/api/chat-agents/instantiate", "POST", InstantiateBotResponseSchema, InstantiateBotRequestSchema.parse(input)),
     interactions: async (chatId) => (await call(`${chatPath(chatId)}/interactions`, "GET", z.object({ interactions: z.array(BotInteractionSchema).max(32) }).strict())).interactions,

@@ -1,3 +1,4 @@
+import type { BotCreationSeed } from "./BotCreationChat.js";
 import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
 import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import type {BotClient} from "./bots/client.js";
@@ -29,8 +30,9 @@ export const AGENT_RECIPE_COUNT = agentInspirations.length + 1;
 export const BOT_RECIPE_COUNT = agentInspirations.filter((recipe) => !isLaunchBotRecipeId(recipe.id)).length + LAUNCH_BOT_RECIPE_IDS.length;
 const EMPTY_BOT_RECIPES: BotRecipeSummary[] = [];
 
-export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false, onRefreshCatalog, onSetup, botClient, onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
+export function AgentRecipesPanel({ onStartFromScratch, onStartCreation, scratchDisabled = false, onRefreshCatalog, onSetup, botClient, onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
   botRecipes = EMPTY_BOT_RECIPES, botRecipeStatus, onRetryBotRecipes, matrixModels = [], catalog, catalogLoading = false, onInstantiateBot, onOpenBotChat }: {
+  onStartCreation?: (seed: BotCreationSeed, trigger: HTMLButtonElement) => void;
   onStartFromScratch?: (trigger: HTMLButtonElement) => void; scratchDisabled?: boolean;
   onRefreshCatalog?:()=>void; onSetup?:()=>void; botClient?: BotClient; onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
   connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
@@ -150,8 +152,8 @@ export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false,
           <div className="min-w-0 flex-1"><h4 className="text-sm font-semibold">{recipe.name}</h4>
             <p className="matrix-template-description mt-1 text-xs leading-5" style={chatAgentMutedStyle}>{recipe.description}</p></div></div>
         <div className="matrix-template-footer"><p className="matrix-template-output text-xs" style={chatAgentMutedStyle} title={recipe.output}>{recipe.output}</p>
-        <button type="button" aria-label={`Use ${recipe.name}`} disabled={!onInstantiateBot || !onOpenBotChat || !!botPending}
-          className={`${chatAgentButtonClass} matrix-template-action self-start`} onClick={() => { botAttempt.current=null; setBotSelection(undefined); onRefreshCatalog?.(); setSetupRecipe(recipe); setBotError(""); }}>
+        <button type="button" aria-label={`Use ${recipe.name}`} disabled={(!onStartCreation && (!onInstantiateBot || !onOpenBotChat)) || !!botPending}
+          className={`${chatAgentButtonClass} matrix-template-action self-start`} onClick={event => { if (onStartCreation && !["matrix-bot", "personal-daily-brief", "jev-inbox-triage"].includes(recipe.recipeId)) { onStartCreation({ kind: "recipe", recipe }, event.currentTarget); return; } botAttempt.current=null; setBotSelection(undefined); onRefreshCatalog?.(); setSetupRecipe(recipe); setBotError(""); }}>
           {botPending?.startsWith(`${recipe.recipeId}@${recipe.version}:`) ? "Creating…" : "Set up bot"}</button></div>
       </article>)}
       {showJev ? <article data-matrix-recipe={jevRecipe.id} className="matrix-chat-agent-card matrix-chat-agent-recipe-card flex min-w-0 flex-col gap-3 rounded-xl border p-3">
@@ -198,7 +200,7 @@ export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false,
             </div>
           </div>
           <div className="matrix-template-footer"><p className="matrix-template-output text-xs" style={chatAgentMutedStyle} title={recipe.integrations.join(", ")}>{recipe.integrations.slice(0,2).join(" · ") || "Customize in Chat"}</p>
-          <button type="button" aria-label={`Use ${recipe.name}`} disabled={!onStartChat} className={`${chatAgentButtonClass} matrix-template-action self-start`} onClick={() => onStartChat?.(buildAgentRecipePrompt(recipe))}>Build in Chat</button></div>
+          <button type="button" aria-label={`Use ${recipe.name}`} disabled={!onStartChat && !onStartCreation} className={`${chatAgentButtonClass} matrix-template-action self-start`} onClick={event => onStartCreation ? onStartCreation({ kind: "inspiration", inspiration: recipe }, event.currentTarget) : onStartChat?.(buildAgentRecipePrompt(recipe))}>Build in Chat</button></div>
         </article>;
       })}
     </div> : null}

@@ -91,3 +91,16 @@ it("does not perform a retained creation update after its owner scope expires du
   await pending;
   expect(client.update).not.toHaveBeenCalled();
 });
+
+it("preserves incomplete executor/coordinator intents without sharing the draft or losing them on field edits", () => {
+  const original = { ...seed(), selection: null, coordinatorInstanceId: "matrix_chatgpt_plan",
+    taskExecutor: { connectionId: "claude_code_tasks" as const, model: null } };
+  const copied = copyAgentDraft(original);
+  expect(copied).toEqual(original);
+  const changed = patchAgentDraft(copied, { name: "Renamed" }, () => "req_name");
+  expect(changed.coordinatorInstanceId).toBe(original.coordinatorInstanceId);
+  expect(changed.taskExecutor).toEqual(original.taskExecutor);
+  const selected = patchAgentDraft(changed, { taskExecutor: { connectionId: "claude_code_tasks", model: "task_model" } }, () => "req_task");
+  expect(selected.requestId).toBe("req_task"); expect(changed.taskExecutor!.model).toBeNull();
+  expect(patchAgentDraft(selected, { taskExecutor: null }, () => "req_tools").taskExecutor).toBeNull();
+});

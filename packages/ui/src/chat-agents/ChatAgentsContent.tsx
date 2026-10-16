@@ -1,10 +1,11 @@
+import type { RenderBotCreationChat } from "./BotCreationChat.js";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ChatAgentsPanel } from "./ChatAgentsEntry.js";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import type { ChatAgentClient } from "./client.js";
 
-export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrome = false, children }: {
-  hostedChrome?: boolean; client?: ChatAgentClient; scopeKey: string; onOpenBotChat?: (chatId: string) => void; children: ReactNode;
+export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrome = false, renderCreationChat, children }: {
+  renderCreationChat?: RenderBotCreationChat; hostedChrome?: boolean; client?: ChatAgentClient; scopeKey: string; onOpenBotChat?: (chatId: string) => void; children: ReactNode;
 }) {
   const navigation = useChatAgentsNavigation();
   const [previousScope, setPreviousScope] = useState({ scopeKey, client });
@@ -24,6 +25,6 @@ export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrom
       {children}
     </div>
     {opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup}
-      hostedChrome={hostedChrome} onTitleChange={onTitleChange} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)} /> : null}
+      renderCreationChat={renderCreationChat} hostedChrome={hostedChrome} onTitleChange={onTitleChange} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)} /> : null}
   </>;
 }
