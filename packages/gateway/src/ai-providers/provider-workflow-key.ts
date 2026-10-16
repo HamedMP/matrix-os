@@ -41,7 +41,7 @@ export function createProviderKeyVerifier(options: {
       // Never buffer an upstream body, account information or error text.
       await response.body?.cancel();
       if (response.status !== 200)
-        throw new ProviderKeyPreflightError('rejected');
+        throw new ProviderKeyPreflightError(response.status === 429 || response.status >= 500 ? 'unavailable' : 'rejected');
     }
     catch (error) {
       if (error instanceof ProviderWorkflowError)
