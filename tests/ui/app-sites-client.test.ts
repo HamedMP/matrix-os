@@ -24,7 +24,7 @@ describe("app site client", () => {
   it("encodes app paths and bounds deployment wait; sanitizes unknown errors", async () => {
     const api = transport(); const client = createSiteClient(api); const signal = new AbortController().signal;
     await expect(client.deploy("launch", { title: "Launch", description: "", slug: null, reviewedConfig: { data: { event: "Launch" }, forms: [] } }, signal)).rejects.toThrow();
-    expect(api.post).toHaveBeenCalledWith("/api/apps/launch/site", expect.objectContaining({ reviewedConfig: { data: { event: "Launch" }, forms: [] } }), { signal, timeoutMs: 150_000 });
+    expect(api.post).toHaveBeenCalledWith("/api/apps/launch/site", expect.objectContaining({ reviewedConfig: { data: { event: "Launch" }, forms: [] } }), { signal, timeoutMs: 300_000 });
     expect(siteActionError(new Error("/private/database/password"))).toBe("Could not complete this action. Please try again.");
     expect(siteActionError(new SiteClientError(409))).toContain("publication changed");
   });

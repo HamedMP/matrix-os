@@ -1,4 +1,4 @@
-import { SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse } from "@matrix-os/contracts";
+import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse } from "@matrix-os/contracts";
 
 export interface SiteMetadata { title: string; description: string; slug: string | null; baseRevision?: number }
 export type { SiteSubmission };
@@ -52,7 +52,7 @@ export function createSiteClient(transport: SiteTransport): SiteClient {
         throw error;
       }
     },
-    deploy: async (app, metadata, signal) => parseSite(await transport.post(sitePath(app), SitePublishRequestSchema.parse(metadata), { signal, timeoutMs: 150_000 }), app),
+    deploy: async (app, metadata, signal) => parseSite(await transport.post(sitePath(app), SitePublishRequestSchema.parse(metadata), { signal, timeoutMs: SITE_PUBLISH_CLIENT_TIMEOUT_MS }), app),
     update: async (app, metadata, signal) => parseSite(await transport.patch(sitePath(app), SiteMetadataSchema.parse(metadata), { signal }), app),
     unpublish: async (app, baseRevision, signal) => parseSite(await transport.delete(sitePath(app), { baseRevision }, { signal }), app),
     rollback: async (app, value, signal) => parseSite(await transport.post(`${sitePath(app)}/rollback`, value, { signal }), app),
