@@ -80,5 +80,13 @@ export function useCanonicalChatDetail(chatId: string | null) {
     ),
     isError: activeComputer.isError || detail.isError,
     refresh: () => queryClient.invalidateQueries({ queryKey: detailQueryKey }),
+    /**
+     * Reads the chat again after a failure: the computer first when that is
+     * what failed -- the chat is read by itself once the computer is known.
+     * A read that had no answer yet is pending again meanwhile, not failed.
+     */
+    reload: () => {
+      void (activeComputer.isError ? activeComputer.refetch() : detail.refetch());
+    },
   };
 }

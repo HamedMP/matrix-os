@@ -1,6 +1,7 @@
 import {
   cancelChatRun,
   chatActivityAt,
+  retryChatTurn,
   fetchChats,
   fetchProjectChats,
   isChatUnread,
@@ -325,5 +326,78 @@ describe("cancelChatRun", () => {
 
     await expect(cancelChatRun(token, gatewayUrl, "chat_one", "run_one", "req_stop1"))
       .rejects.toThrow("Could not stop the run. Try again.");
+  });
+});
+
+describe("retryChatTurn", () => {
+  const turn = {
+    id: "cturn_one",
+    chatId: "chat_one",
+    clientRequestId: "req_first",
+    baseMessageSeq: 3,
+    inputMessageId: "msg_prompt",
+    status: "accepted",
+    createdAt: at,
+    updatedAt: at,
+  };
+  const retried = { ...run, id: "run_two", attempt: 2, status: "accepted", outcome: undefined, completedAt: undefined };
+  const answer = { record: chatRecord("chat_one"), turn, run: retried, admission: "accepted" };
+
+  beforeEach(() => {
+    jest.restoreAllMocks();
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("asks the turn's runs route for another attempt at the chat's revision", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(respond(answer));
+
+    await expect(retryChatTurn(token, gatewayUrl, "chat_one", "cturn_one", {
+      clientRequestId: "req_retry1",
+      baseRevision: 3,
+    })).resolves.toMatchObject({ admission: "accepted", run: { id: "run_two", attempt: 2 } });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/alice/api/chats/chat_one/turns/cturn_one/runs",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer clerk-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ clientRequestId: "req_retry1", baseRevision: 3 }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("accepts the answer for a retry the computer had already taken", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue(respond({ ...answer, admission: "already_accepted" }));
+
+    await expect(retryChatTurn(token, gatewayUrl, "chat_one", "cturn_one", {
+      clientRequestId: "req_retry1",
+      baseRevision: 3,
+    })).resolves.toMatchObject({ admission: "already_accepted" });
+  });
+
+  it.each([
+    ["chat", "chat one", "cturn_one", "req_retry1", 3],
+    ["turn", "chat_one", "../turn", "req_retry1", 3],
+    ["request", "chat_one", "cturn_one", "retry", 3],
+    ["revision", "chat_one", "cturn_one", "req_retry1", -1],
+  ])("does not call the server with an invalid %s", async (_label, chatId, turnId, clientRequestId, baseRevision) => {
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    await expect(retryChatTurn(token, gatewayUrl, chatId, turnId, { clientRequestId, baseRevision }))
+      .rejects.toThrow("Could not retry. Try again.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a busy chat", respond({ error: { code: "chat_busy", safeMessage: "The previous Run is still active." } }, 409)],
+    ["an unavailable service", respond({ error: { code: "service_unavailable" } }, 503)],
+    ["a run for another chat", respond({ ...answer, run: { ...retried, chatId: "chat_two" } })],
+  ])("reports %s with the generic message only", async (_label, response) => {
+    jest.spyOn(global, "fetch").mockResolvedValue(response);
+
+    await expect(retryChatTurn(token, gatewayUrl, "chat_one", "cturn_one", {
+      clientRequestId: "req_retry1",
+      baseRevision: 3,
+    })).rejects.toThrow("Could not retry. Try again.");
   });
 });
