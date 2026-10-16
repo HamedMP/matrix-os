@@ -216,6 +216,48 @@ describe("funded AI policy routes", () => {
     expect(FundedAiAuthorizationResponseSchema.parse(await authorized.json()).reservation.upstream).toBe("aws_bedrock");
   });
 
+  it("uses cached Bedrock health for funding summaries without starting a live paid probe", async () => {
+    const probeBedrock = vi.fn(async () => {
+      throw new Error("live Bedrock probe must not run during a funding summary");
+    });
+    const readCached = vi.fn(async () => ({
+      ready: false,
+      checkedAt: now,
+      staleAfter: "2026-08-30T20:00:05.000Z",
+    }));
+    const created = await createTestApp({
+      upstreamPreferences: true,
+      probeBedrock,
+      routeProbes: { probe: vi.fn(), readCached },
+    });
+    await created.upstreamPreferences!.setPreference({
+      ownerId: "user_alice",
+      actorOwnerId: "user_alice",
+      idempotencyKey: "cached_summary_health",
+      expectedRevision: 0,
+      selectedUpstream: "aws_bedrock",
+    });
+
+    const response = await created.app.request(
+      "/internal/containers/alice/ai/funding-summary?runtimeSlot=primary",
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+        body: JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(FundedAiRuntimeChatFundingSummaryResponseSchema.parse(await response.json()).upstreamPreference)
+      .toMatchObject({ selectedUpstream: "aws_bedrock", effectiveUpstream: "cloudflare", revision: 1 });
+    expect(readCached).toHaveBeenCalledExactlyOnceWith(modelId, expect.objectContaining({
+      upstream: "aws_bedrock",
+      signal: expect.any(AbortSignal),
+      deadlineAtMs: expect.any(Number),
+    }));
+    expect(probeBedrock).not.toHaveBeenCalled();
+  });
+
   it("returns a model receipt only for healthy eligible models without claiming promotion credit", async () => {
     const probe = vi.fn(async (model: string) => ({
       ready: model === modelId, checkedAt: now,

@@ -322,7 +322,24 @@ export function createAiFundedRuntimeRoutes(options: {
         summary = await options.repository.getRuntimeFundingSummary(identity, body.data);
       }
       const upstreamPreference = body.data.includeUpstreamPreference
-        ? await options.upstreamPreferences?.getPreferenceView(identity.ownerId) ?? undefined
+        ? await options.upstreamPreferences?.getPreferenceView(identity.ownerId, async (modelId) => {
+            const observedAt = now();
+            const unavailable = { ready: false, checkedAt: observedAt.toISOString(),
+              staleAfter: new Date(observedAt.getTime() + 5_000).toISOString() };
+            if (!options.routeProbes?.readCached) return unavailable;
+            const deadlineAtMs = Date.now() + 1_500;
+            try {
+              return await beforeDeadline(options.routeProbes.readCached(modelId, {
+                upstream: "aws_bedrock",
+                signal: AbortSignal.timeout(1_500),
+                deadlineAtMs,
+              }), deadlineAtMs);
+            } catch (error) {
+              console.warn("[ai-funded-policy] Cached upstream health unavailable:",
+                error instanceof Error ? error.name : typeof error);
+              return unavailable;
+            }
+          }) ?? undefined
         : undefined;
       const schema = body.data.includeChatAvailability
         ? FundedAiRuntimeChatFundingSummaryResponseSchema : FundedAiRuntimeFundingSummaryResponseSchema;
