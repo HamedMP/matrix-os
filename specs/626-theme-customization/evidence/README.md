@@ -16,7 +16,7 @@ Without `view=gallery`, the preview opens the actual Appearance controls. Galler
 
 For the custom fixture, choose Inter, create a custom theme based on Matrix, set the light Buttons colour to `#475926` and the dark Buttons colour to `#bed77b`, save, and reload to check persistence. These changes affect only the isolated local fixture, not a customer runtime. Browser full-page screenshot capture should retain the entire specimen/controls, including hover and status examples.
 
-Run `bun scripts/dev/sync-theme-defaults.ts` from the repository root to refresh first-paint defaults from the shared Matrix theme. The script validates all stylesheet sections before writing targets. Validate with `pnpm exec vitest run tests/desktop/theme-defaults-sync.test.ts`.
+Run `bun scripts/dev/sync-theme-defaults.ts` from the repository root to refresh first-paint defaults from the shared Matrix theme. The script imports shared theme source directly, so no brand build or generated `dist/` is required. It validates all stylesheet sections before writing targets. Validate with `pnpm exec vitest run tests/desktop/theme-defaults-sync.test.ts`.
 
 ## Full sheets
 
