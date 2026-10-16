@@ -4,7 +4,7 @@ import { legacyThemeMode } from "@matrix-os/brand/themes/customization";
 import { RETIRED_THEME_IDS } from "@matrix-os/brand/themes";
 import { buildWebTheme } from "@matrix-os/brand/themes/web-theme";
 import { normalizeAppearance, type AppearancePreferences } from "@matrix-os/brand/themes/preferences";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
@@ -72,9 +72,13 @@ export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_TH
   };
 }
 
+function resolveTheme(saved: Theme, systemDark: boolean): Theme {
+  const derived = saved.appearance ? buildWebTheme(saved.appearance, systemDark) : null;
+  return derived ? { ...saved, ...derived, name: saved.name, colors: { ...saved.colors, ...derived.colors }, fonts: { ...saved.fonts, ...derived.fonts } } : saved;
+}
+
 function applyTheme(saved: Theme) {
-  const derived = saved.appearance ? buildWebTheme(saved.appearance, window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false) : null;
-  const theme = derived ? { ...saved, ...derived, colors: { ...saved.colors, ...derived.colors }, fonts: { ...saved.fonts, ...derived.fonts } } : saved;
+  const theme = resolveTheme(saved, window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false);
   const root = document.documentElement;
 
   // Set mode attribute so CSS and apps can detect light/dark
@@ -149,6 +153,7 @@ export function useThemeState(options: ShellCacheHookOptions = {}) {
   const cacheKey = cacheScope?.storageKey;
   const gatewayUrl = getGatewayUrl();
   const requestVersion = useRef(0);
+  const [systemDark, setSystemDark] = useState(() => typeof window !== "undefined" && (window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false));
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => initialTheme(cacheScope, fallbackTheme, gatewayUrl));
@@ -163,12 +168,14 @@ export function useThemeState(options: ShellCacheHookOptions = {}) {
   useEffect(() => {
     const controller = new AbortController();
     const version = ++requestVersion.current;
+    let readSucceeded = false;
     setLoaded(false);
     setLoadError(false);
     fetchTheme(fallbackTheme, controller.signal, (ok) => {
+      readSucceeded = ok;
       if (!controller.signal.aborted && version === requestVersion.current) { setLoaded(ok); setLoadError(!ok); }
     }).then((nextTheme) => {
-      if (controller.signal.aborted || version !== requestVersion.current) return;
+      if (!readSucceeded || controller.signal.aborted || version !== requestVersion.current) return;
       setTheme(nextTheme);
       saveShellSnapshot(cacheScope, { theme: nextTheme });
     });
@@ -180,7 +187,10 @@ export function useThemeState(options: ShellCacheHookOptions = {}) {
     rememberTheme(gatewayUrl, theme);
     applyTheme(theme);
     const media = window.matchMedia?.("(prefers-color-scheme: dark)");
-    const updateMode = () => { if (theme.appearance?.mode === "system") applyTheme(theme); };
+    const updateMode = () => {
+      setSystemDark(media?.matches ?? false);
+      if (theme.appearance?.mode === "system") applyTheme(theme);
+    };
     media?.addEventListener?.("change", updateMode);
     return () => media?.removeEventListener?.("change", updateMode);
   }, [gatewayUrl, theme]);
@@ -201,17 +211,20 @@ export function useThemeState(options: ShellCacheHookOptions = {}) {
   useFileWatcher((path, event) => {
     if (path === "system/theme.json" && event !== "unlink") {
       const version = ++requestVersion.current;
+      let readSucceeded = false;
       fetchTheme(fallbackTheme, undefined, (ok) => {
-        if (version === requestVersion.current) { setLoaded(ok); setLoadError(!ok); }
+        readSucceeded = ok;
+        if (version === requestVersion.current) { setLoaded(wasLoaded => ok || wasLoaded); setLoadError(!ok); }
       }).then((nextTheme) => {
-        if (version !== requestVersion.current) return;
+        if (!readSucceeded || version !== requestVersion.current) return;
         setTheme(nextTheme);
         saveShellSnapshot(cacheScope, { theme: nextTheme });
       });
     }
   });
 
-  return { theme, loaded, loadError };
+  const resolvedTheme = useMemo(() => resolveTheme(theme, systemDark), [theme, systemDark]);
+  return { theme: resolvedTheme, loaded, loadError };
 }
 
 export function useTheme(options: ShellCacheHookOptions = {}) {
