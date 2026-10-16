@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
+import { chromeToSemanticVars } from '../../desktop/src/renderer/src/design/themes/apply';
 import { DEFAULT_THEME_ID, getThemeVariant, unifiedThemes } from '../../desktop/src/renderer/src/design/themes';
 import { normalizeCustomTheme, customizeVariant, contrastRatio, FONT_OPTIONS } from '../../packages/brand/src/themes/customization';
 
@@ -113,5 +114,18 @@ describe('custom editor and legacy mode review', () => {
     const legacy = { name: 'mint', colors: { background: '#70ffb0', card: '#ffffff', foreground: '#111111' }, fonts: { sans: 'Inter' } };
     expect(appearanceFromWebTheme(legacy).mode).toBe('light');
     expect(updateWebTheme(legacy, { mode: 'light' }).colors.background).toBe('#70ffb0');
+  });
+});
+
+
+describe('custom accent badge contrast', () => {
+  it.each(['light', 'dark'] as const)('keeps badge text readable without changing custom button fills in %s', mode => {
+    for (const accent of ['#413e3e', '#fafafa', '#000000', '#777777']) {
+      const chrome = getThemeVariant('custom', mode, { baseThemeId: 'matrix', light: { accent }, dark: { accent } }).chrome;
+      const vars = chromeToSemanticVars(chrome);
+      expect(vars['--accent']).toBe(accent);
+      expect(vars['--accent-text']).toBeDefined();
+      expect(contrastRatio(vars['--accent-text']!, vars['--accent-muted']!)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

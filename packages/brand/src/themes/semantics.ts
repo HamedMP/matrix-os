@@ -20,6 +20,7 @@ export function themeSemantics(c: ChromeColors) {
   const info = status(s.blue, 700);
   if (dark) { info.fill = s.blue[200]; info.foreground = foreground(info.fill); }
   return {
+    accentText: readable(c.primary, [c.accent]),
     primaryHover, primaryHoverForeground: foreground(primaryHover),
     success: success.fill, successMuted: success.muted, successText: success.text, successForeground: success.foreground,
     warning: warning.fill, warningMuted: warning.muted, warningText: warning.text, warningForeground: warning.foreground,
