@@ -313,3 +313,47 @@ it('rejects a check summary contradicting the actual immutable infrastructure re
  const evidence=JSON.parse(f.check.output.summary);for(const key of ['outcome','status','reason','stage','workloadStarted','containerGone'])delete evidence[key];evidence.receiptVerified=true;f.check.conclusion='success';f.check.output.summary=JSON.stringify(evidence);
  await expect(waitForDedicatedResult(f.github,expected,{...options,allowInfrastructureFallback:true})).rejects.toThrow();
 });
+
+// Actual main canary38871025446: GitHub normalized the manually created check
+// into suite105340297564, not its controller workflow's suite105385500205.
+function normalizedMainFixture(){
+ const main={...expected,sourceKind:'main',prNumber:0,headSha:sourceSha,headRef:'main',mergeParents:[baseSha]};
+ const f=fixture({sourceKind:'main',prNumber:0,headSha:sourceSha,mergeParents:[baseSha],controllerRunId:123});
+ f.check.head_sha=sourceSha;f.check.check_suite.id=105340297564;f.check.details_url=`https://github.com/HamedMP/matrix-os/runs/${f.check.id}`;
+ Object.assign(f.run,{check_suite_id:105385500205,event:'workflow_run',head_branch:'main',head_sha:sourceSha,display_title:`dedicated-refresh-v2 execution=true request=321 title=CI coverage-v1 · ${sourceSha}`});
+ f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:sourceSha}}}));
+ f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:sourceSha,parents:[{sha:baseSha}],commit:{tree:{sha:headSha}}}} as any);
+ f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${sourceSha}-${sourceSha}-${baseSha}-pr0-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
+ return {...f,main};
+}
+it('recognizes normalized pending main admission without assigning the check suite to its controller',async()=>{
+ const f=normalizedMainFixture(),completed=f.check.output.summary;f.run.status='in_progress';f.check.status='in_progress';
+ const pending=JSON.parse(completed);for(const key of ['receiptVerified','requestDigest','leaseId'])delete pending[key];f.check.output.summary=JSON.stringify(pending);
+ const delay=vi.fn(async()=>{f.run.status='completed';f.check.status='completed';f.check.output.summary=completed;});
+ await expect(waitForDedicatedResult(f.github,f.main,{maxAttempts:2,admissionAttempts:1,delay})).resolves.toEqual({runId:123,sourceSha});
+ expect(delay).toHaveBeenCalledOnce();expect(f.github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalled();
+});
+it('accepts completed cross-suite normalized main evidence only with its exact immutable controller receipt',async()=>{
+ const f=normalizedMainFixture();await expect(waitForDedicatedResult(f.github,f.main,options)).resolves.toEqual({runId:123,sourceSha});
+ f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[]}});
+ await expect(waitForDedicatedResult(f.github,f.main,options)).rejects.toThrow(/No verified/);
+});
+it.each([{controllerRunId:122},{controllerRunId:'123'},{controllerRunId:0},{controllerAttempt:2},{requestingRunAttempt:2}])('rejects replayed or ambiguous normalized main controller evidence %j',async change=>{
+ const f=normalizedMainFixture();f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),...change});
+ await expect(waitForDedicatedResult(f.github,f.main,options)).rejects.toThrow();expect(f.github.rest.actions.listWorkflowRunArtifacts).not.toHaveBeenCalled();
+});
+it('rejects a contradictory explicit controller ID even when the suite and unnormalized URL match',async()=>{
+ const f=normalizedMainFixture();f.check.check_suite.id=f.run.check_suite_id;f.check.details_url='https://github.com/HamedMP/matrix-os/actions/runs/123';
+ f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),controllerRunId:122});
+ await expect(waitForDedicatedResult(f.github,f.main,options)).rejects.toThrow();
+});
+it('does not accept a cross-suite normalized legacy check without explicit controller identity',async()=>{
+ const f=normalizedMainFixture(),body=JSON.parse(f.check.output.summary);delete body.controllerRunId;f.check.output.summary=JSON.stringify(body);
+ await expect(waitForDedicatedResult(f.github,f.main,options)).rejects.toThrow();
+});
+it('keeps app, current-main and immutable controller-pin defenses on cross-suite evidence',async()=>{
+ const app=normalizedMainFixture();app.check.app.slug='other-app';await expect(waitForDedicatedResult(app.github,app.main,options)).rejects.toThrow();
+ const moved=normalizedMainFixture();moved.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:headSha}}}));await expect(waitForDedicatedResult(moved.github,moved.main,options)).rejects.toThrow(/stale/);
+ const pin=normalizedMainFixture();pin.check.output.summary=JSON.stringify({...JSON.parse(pin.check.output.summary),controllerSha:'e'.repeat(40)});
+ await expect(waitForDedicatedResult(pin.github,pin.main,options)).rejects.toThrow(/Immutable/);
+});
