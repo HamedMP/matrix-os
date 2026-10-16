@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
-import { KeyboardAvoidingView, Text } from "react-native";
+import { Text } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { Composer } from "../components/chat/Composer";

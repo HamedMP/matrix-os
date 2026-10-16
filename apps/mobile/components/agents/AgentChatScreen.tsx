@@ -1,7 +1,8 @@
-import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
+import { Platform, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
+import { ChatKeyboardAvoidingView } from "@/components/chat/ChatKeyboardAvoidingView";
 import { Composer, type ComposerProps } from "@/components/chat/Composer";
 import { MessageList, type MessageListProps } from "@/components/chat/MessageList";
 import { UnsentMessageActionsProvider, type UnsentMessageActions } from "@/components/chat/unsent-message-actions";
@@ -64,11 +65,7 @@ export function AgentChatScreen({
     // the home indicator's space is its own: a view at the end, because this
     // one replaces its own bottom padding. The keyboard covers that space, and
     // only the rest of its height is made room for.
-    <KeyboardAvoidingView
-      style={[styles.screen, { paddingTop: insets.top }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={-insets.bottom}
-    >
+    <ChatKeyboardAvoidingView style={[styles.screen, { paddingTop: insets.top }]} keyboardVerticalOffset={-insets.bottom}>
       <TopBar
         testID="agent-chat-top-bar"
         align="start"
@@ -115,7 +112,7 @@ export function AgentChatScreen({
         </>
       )}
       <View testID="agent-chat-bottom-inset" style={{ height: homeIndicatorSpace }} />
-    </KeyboardAvoidingView>
+    </ChatKeyboardAvoidingView>
   );
 }
 

@@ -77,7 +77,7 @@ jest.mock("@/lib/analytics", () => ({
 }));
 
 import React, { type ReactNode } from "react";
-import { act, render, waitFor } from "@testing-library/react-native";
+import { act, render, screen, waitFor } from "@testing-library/react-native";
 import * as SecureStore from "expo-secure-store";
 
 import { GatewayClient } from "../lib/gateway-client";
@@ -216,6 +216,15 @@ describe("GatewayShell", () => {
 
     expect(jest.requireMock<typeof import("expo-splash-screen")>("expo-splash-screen").setOptions)
       .toHaveBeenCalledWith({ fade: true, duration: 300 });
+  });
+
+  it("lets the screens follow the keyboard as it moves", async () => {
+    signedInAuth();
+
+    await renderShell();
+
+    const { KeyboardMotionProvider } = require("../components/KeyboardMotionProvider") as typeof import("../components/KeyboardMotionProvider");
+    expect(screen.UNSAFE_getByType(KeyboardMotionProvider)).toBeTruthy();
   });
 
   it("gives a signed-in hosted computer a gateway client without opening the legacy chat socket", async () => {

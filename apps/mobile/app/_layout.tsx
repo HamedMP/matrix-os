@@ -42,6 +42,7 @@ import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnectio
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
 import { AppStatusBar } from "@/components/AppStatusBar";
+import { KeyboardMotionProvider } from "@/components/KeyboardMotionProvider";
 import { StartupLoading, StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
 import { motion } from "@/lib/theme-v2";
@@ -368,42 +369,44 @@ function GatewayShell() {
 
   return (
     <GestureHandlerRootView style={styles.flex}>
-      <GatewayContext.Provider value={contextValue}>
-        <CanonicalChatSessionProvider>
-          <Stack
-            screenOptions={{
-              headerStyle: { backgroundColor: theme.colors.background },
-              headerTintColor: theme.colors.foreground,
-              headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
-              contentStyle: { backgroundColor: theme.colors.background },
-            }}
-          >
-            {/* How each one comes and goes is in lib/root-screens. */}
-            <Stack.Screen name="index" options={ROOT_SCREEN_OPTIONS.index} />
-            <Stack.Screen name="(drawer)" options={ROOT_SCREEN_OPTIONS["(drawer)"]} />
-            <Stack.Screen name="file-browser" options={ROOT_SCREEN_OPTIONS["file-browser"]} />
-            <Stack.Screen name="terminal-session" options={ROOT_SCREEN_OPTIONS["terminal-session"]} />
-            <Stack.Screen name="app-preview" options={ROOT_SCREEN_OPTIONS["app-preview"]} />
-            <Stack.Screen name="integrations-installed" options={ROOT_SCREEN_OPTIONS["integrations-installed"]} />
-            <Stack.Screen name="integration-detail" options={ROOT_SCREEN_OPTIONS["integration-detail"]} />
-            <Stack.Screen name="settings-detail" options={ROOT_SCREEN_OPTIONS["settings-detail"]} />
-            <Stack.Screen name="sign-in" options={ROOT_SCREEN_OPTIONS["sign-in"]} />
-            <Stack.Screen
-              name="sign-in-computer"
-              options={{
-                title: "Sign in with computer URL",
-                presentation: "modal",
-                headerStyle: { backgroundColor: theme.v2.appColors.canvas },
-                headerTintColor: theme.v2.appColors.ink,
+      <KeyboardMotionProvider>
+        <GatewayContext.Provider value={contextValue}>
+          <CanonicalChatSessionProvider>
+            <Stack
+              screenOptions={{
+                headerStyle: { backgroundColor: theme.colors.background },
+                headerTintColor: theme.colors.foreground,
+                headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
+                contentStyle: { backgroundColor: theme.colors.background },
               }}
-            />
-          </Stack>
-          <ToastHost />
-          <NotificationRouter />
-          <OtaUpdatePrompt />
-          <AnalyticsScreenTracker />
-        </CanonicalChatSessionProvider>
-      </GatewayContext.Provider>
+            >
+              {/* How each one comes and goes is in lib/root-screens. */}
+              <Stack.Screen name="index" options={ROOT_SCREEN_OPTIONS.index} />
+              <Stack.Screen name="(drawer)" options={ROOT_SCREEN_OPTIONS["(drawer)"]} />
+              <Stack.Screen name="file-browser" options={ROOT_SCREEN_OPTIONS["file-browser"]} />
+              <Stack.Screen name="terminal-session" options={ROOT_SCREEN_OPTIONS["terminal-session"]} />
+              <Stack.Screen name="app-preview" options={ROOT_SCREEN_OPTIONS["app-preview"]} />
+              <Stack.Screen name="integrations-installed" options={ROOT_SCREEN_OPTIONS["integrations-installed"]} />
+              <Stack.Screen name="integration-detail" options={ROOT_SCREEN_OPTIONS["integration-detail"]} />
+              <Stack.Screen name="settings-detail" options={ROOT_SCREEN_OPTIONS["settings-detail"]} />
+              <Stack.Screen name="sign-in" options={ROOT_SCREEN_OPTIONS["sign-in"]} />
+              <Stack.Screen
+                name="sign-in-computer"
+                options={{
+                  title: "Sign in with computer URL",
+                  presentation: "modal",
+                  headerStyle: { backgroundColor: theme.v2.appColors.canvas },
+                  headerTintColor: theme.v2.appColors.ink,
+                }}
+              />
+            </Stack>
+            <ToastHost />
+            <NotificationRouter />
+            <OtaUpdatePrompt />
+            <AnalyticsScreenTracker />
+          </CanonicalChatSessionProvider>
+        </GatewayContext.Provider>
+      </KeyboardMotionProvider>
     </GestureHandlerRootView>
   );
 }

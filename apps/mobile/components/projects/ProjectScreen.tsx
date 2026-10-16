@@ -1,7 +1,8 @@
-import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
+import { ChatKeyboardAvoidingView } from "@/components/chat/ChatKeyboardAvoidingView";
 import { Composer, type ComposerProps } from "@/components/chat/Composer";
 import {
   BackIcon,
@@ -49,11 +50,7 @@ export function ProjectScreen({ state, project, chats, composer, onBack, onOpenO
   return (
     // As on the chat screen: the screen ends at the tab bar, so the keyboard's
     // overlap with it needs no offset.
-    <KeyboardAvoidingView
-      testID="project-screen"
-      style={[styles.screen, { paddingTop: insets.top }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <ChatKeyboardAvoidingView testID="project-screen" style={[styles.screen, { paddingTop: insets.top }]}>
       {shown ? (
         <>
           <TopBar
@@ -97,7 +94,7 @@ export function ProjectScreen({ state, project, chats, composer, onBack, onOpenO
           )}
         </>
       )}
-    </KeyboardAvoidingView>
+    </ChatKeyboardAvoidingView>
   );
 }
 
