@@ -5,7 +5,7 @@ import { contentShape, shapes } from "@expo/ui/swift-ui/modifiers";
 
 import * as mockContextMenu from "./context-menu-test-utils";
 import { MessageList } from "../components/chat/MessageList";
-import { messageEntering, messageEnteringReduced, messageListLayout } from "../components/chat/message-motion";
+import { messageEntering, messageEnteringReduced } from "../components/chat/message-motion";
 import { AnalyticsMask } from "../lib/analytics";
 import type { TranscriptMessage } from "../lib/canonical-chat-transcript";
 
@@ -309,19 +309,20 @@ describe("MessageList motion", () => {
     expect(motion("msg_user").props.entering).toBeUndefined();
   });
 
-  it("lets the earlier messages glide up to make room for a new one", () => {
+  // The messages already there step aside as they always have, so a reply
+  // being written still grows a line at a time and scrolling is untouched.
+  it("leaves the messages already there to the list as before", () => {
     render(<MessageList messages={[sending, reply, question]} chatId="chat_1" />);
 
-    expect(screen.UNSAFE_getByType(FlatList).props.itemLayoutAnimation).toBe(messageListLayout);
+    expect(screen.UNSAFE_getByType(FlatList).props.itemLayoutAnimation).toBeUndefined();
   });
 
-  it("only fades a new message in, and moves nothing, with reduced motion on", async () => {
+  it("only fades a new message in with reduced motion on", async () => {
     jest.mocked(AccessibilityInfo.isReduceMotionEnabled).mockResolvedValue(true);
     render(<MessageList messages={[sending, reply, question]} chatId="chat_1" />);
     await act(async () => {});
 
     expect(motion("msg_sending").props.entering).toBe(messageEnteringReduced);
-    expect(screen.UNSAFE_getByType(FlatList).props.itemLayoutAnimation).toBeUndefined();
   });
 
   it("animates a message the screen draws as a request like any other", () => {
