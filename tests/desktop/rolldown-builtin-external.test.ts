@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const root = resolve(import.meta.dirname, "../..");
 const desktop = join(root, "desktop");
@@ -14,18 +14,24 @@ const configPath = join(desktop, "electron.vite.config.ts");
 type BuildConfig = { build?: { rollupOptions?: { external?: unknown } } };
 let config: { main?: BuildConfig; preload?: BuildConfig };
 
-beforeAll(async () => {
-  // This suite checks builtin bundling, not immutable release provenance.
-  // CI supplies GITHUB_SHA globally, while concurrent unit fixtures can leave
-  // temporary checkout files. Keep release-only cleanliness checks in their
-  // dedicated provenance suite and actual release builds.
-  vi.stubEnv("GITHUB_SHA", "");
-  const api = await import(pathToFileURL(compiler).href);
-  ({ config } = await api.loadConfigFromFile(
-    { command: "build", mode: "production" }, configPath, desktop, "silent", true,
-  ));
+// These builds inspect externalization, not release artifact provenance. Keep
+// the release SHA assertion out of their child processes without changing the
+// parent test worker or the production dirty-checkout guard.
+const fixtureEnv = { ...process.env };
+delete fixtureEnv.GITHUB_SHA;
+
+beforeAll(() => {
+  config = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+    const api = await import(${JSON.stringify(pathToFileURL(compiler).href)});
+    const { config } = await api.loadConfigFromFile(
+      { command: "build", mode: "production" }, ${JSON.stringify(configPath)},
+      ${JSON.stringify(desktop)}, "silent", true,
+    );
+    console.log(JSON.stringify(Object.fromEntries(["main", "preload"].map(entry => [
+      entry, { build: { rollupOptions: { external: config[entry].build.rollupOptions.external } } },
+    ]))));
+  `], { cwd: desktop, env: fixtureEnv, encoding: "utf8", timeout: 20_000, maxBuffer: 1024 * 1024, stdio: "pipe" }));
 });
-afterAll(() => vi.unstubAllEnvs());
 
 describe("Rolldown Electron builtin boundary", () => {
   it("pins the temporary Desktop migration bridge without replacing unit-test Vite", () => {
@@ -66,7 +72,7 @@ describe("Rolldown Electron builtin boundary", () => {
       execFileSync(process.execPath, ["--input-type=module", "-e", `
         const { build } = await import(${JSON.stringify(pathToFileURL(compiler).href)});
         await build({ configFile: ${JSON.stringify(join(fixture, "config.mjs"))}, ignoreConfigWarning: true });
-      `], { cwd: desktop, timeout: 20_000, maxBuffer: 1024 * 1024, stdio: "pipe" });
+      `], { cwd: desktop, env: fixtureEnv, timeout: 20_000, maxBuffer: 1024 * 1024, stdio: "pipe" });
       const main = readFileSync(join(fixture, "main/index.js"), "utf8");
       const preload = readFileSync(join(fixture, "preload/index.cjs"), "utf8");
       expect(main).toMatch(/from ["']electron["']/);
