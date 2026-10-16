@@ -144,6 +144,12 @@ describe('explicit paid-primary missing starter recovery', () => {
       machine_id: target.machineId, runtime_slot: 'primary', frozen: true, debt_microusd: 1, updated_at: at }).execute();
     await unchanged(() => apply());
   });
+  it.each([{ addon_balance_microusd: 1 }, { credit_balance_microusd: 1_000_001 },
+    { promotional_balance_microusd: 999_999 }])('rejects money without exact speech allocation backing: %j', async unexplained => {
+    await db.executor.updateTable('ai_funded_runtime_balances').set(unexplained)
+      .where('machine_id', '=', targets[2].machineId).execute();
+    await unchanged(() => apply());
+  });
   it('requires a new review when source state changes between dry-run and apply', async () => {
     const input = review(targets); const prepared = await recover(input);
     await db.executor.updateTable('billing_subscriptions').set({ updated_at: '2026-10-16T14:00:01.000Z' })

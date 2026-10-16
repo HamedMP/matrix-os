@@ -5,6 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
 import { lockCustomerFundedStarterActivation } from '../../packages/platform/src/customer-funded-starter-policy.js';
+import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { at, env, financialSnapshot, lifetimeId, model, recoveryApi, review, seed, sourceSha,
   type Api, type Recover, type Target } from './paid-starter-recovery-fixture.js';
 
@@ -96,6 +97,55 @@ describe.skipIf(!databaseUrl)('paid starter recovery on independent PostgreSQL c
       });
       await expect(applying).rejects.toThrow();
       expect(await financialSnapshot(db)).toEqual(before);
+    } finally { await applying?.catch(() => undefined); }
+  }, 30_000);
+  it('sees deletion committed while waiting for the actual deletion owner admission lock', async () => {
+    const input = review(targets); const prepared = await recover(input); const before = await financialSnapshot(db);
+    const other = api.createPaidStarterRecovery({ db: second, env, sourceSha, now: () => new Date(clock) });
+    let release!: () => void; let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const holding = new Promise<void>(resolve => { entered = resolve; });
+    const deletion = new AccountDeletionRepository(db.kysely, { secret: env.ACCOUNT_DELETION_SECRET, now: () => new Date(clock) });
+    // acceptPrepared acquires the real owner lock before invoking preparation
+    // and inserts the job only after it resolves. Recovery has already started
+    // its transaction while waiting, exposing stale repeatable/SSI admission.
+    const accepting = deletion.acceptPrepared(targets[0].ownerId, false, async () => {
+      entered(); await gate; return { clerkUserId: targets[0].ownerId, appleTokens: [] };
+    });
+    await holding;
+    const applying = other(input, { apply: true, reviewedFingerprint: prepared.fingerprint });
+    void applying.catch(() => undefined);
+    try {
+      await waitForBlockedQuery(); release();
+      await expect(accepting).resolves.toMatchObject({ status: 'scheduled' });
+      await expect(applying).rejects.toThrow();
+      expect(await financialSnapshot(db)).toEqual(before);
+    } finally { release(); await Promise.allSettled([accepting, applying]); }
+  }, 30_000);
+  it.each(['paid period', 'speech allocation'] as const)
+    ('does not grant or retire speech when %s expires during the final global-policy lock wait', async expiry => {
+    const expiresAt = '2026-10-16T14:00:01.000Z';
+    if (expiry === 'paid period') {
+      await db.executor.updateTable('billing_subscriptions').set({ current_period_end: expiresAt })
+        .where('stripe_subscription_id', '=', targets[0].expectedSubscriptionId).execute();
+    } else {
+      await db.executor.updateTable('ai_funded_promotional_grant_balances').set({ expires_at: expiresAt })
+        .where('owner_id', '=', targets[0].ownerId).execute();
+      await db.executor.updateTable('ai_funded_credit_ledger').set({ expires_at: expiresAt })
+        .where('owner_id', '=', targets[0].ownerId).execute();
+    }
+    const input = review(targets); const prepared = await recover(input); const before = await financialSnapshot(db);
+    const other = api.createPaidStarterRecovery({ db: second, env, sourceSha, now: () => new Date(clock) });
+    let applying: ReturnType<Recover> | undefined;
+    try {
+      await db.transaction(async trx => {
+        await trx.executor.selectFrom('ai_funded_global_policy').select('policy_id')
+          .where('policy_id', '=', 'default').forUpdate().executeTakeFirstOrThrow();
+        applying = other(input, { apply: true, reviewedFingerprint: prepared.fingerprint });
+        void applying.catch(() => undefined); await waitForBlockedQuery();
+        clock = new Date('2026-10-16T14:00:02.000Z');
+      });
+      await expect(applying).rejects.toThrow(); expect(await financialSnapshot(db)).toEqual(before);
     } finally { await applying?.catch(() => undefined); }
   }, 30_000);
   it('rolls back all policy, balance and grants if the shared initializer fails after policy insertion', async () => {

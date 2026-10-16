@@ -4,7 +4,9 @@ import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { beforeAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import type pg from 'pg';
+import type { PlatformDB } from '../../packages/platform/src/db.js';
 import { at, review, sourceSha, type Review } from './paid-starter-recovery-fixture.js';
 
 interface Cli {
@@ -13,6 +15,8 @@ interface Cli {
   claimPaidStarterRecoveryJournal(path: string, fingerprint: string): Promise<{
     complete(result: { mode: 'applied'; fingerprint: string; targetCount: number; grantedMicrousd: number }): Promise<void>;
   }>;
+  openPaidStarterRecoveryDatabase(connectionString: string, apply: boolean,
+    createPool: (config: pg.PoolConfig) => pg.Pool): PlatformDB;
 }
 const fixture = () => review([{ ownerId: 'fixture_owner', machineId: '00000000-0000-4000-8000-000000000001',
   runtimeSlot: 'primary', expectedRuntimeTokenEpoch: 1, expectedImageVersion: 'fixture-db-version',
@@ -85,5 +89,25 @@ describe('protected exact-cohort starter recovery CLI', () => {
       expect((error as { stderr: string }).stderr).not.toContain(directory);
       expect((error as { stderr: string }).stderr).not.toContain('postgresql:');
     }
+  });
+  it.each([false, true])('creating and awaiting the operator DB handle performs no startup migrations (apply=%s)', async apply => {
+    const query = vi.fn(); const connect = vi.fn();
+    const pool = { on: vi.fn(), query, connect, ended: false,
+      end: vi.fn(async () => { pool.ended = true; }) };
+    const createPool = vi.fn(() => pool as unknown as pg.Pool);
+    const db = cli.openPaidStarterRecoveryDatabase('postgresql://fixture@127.0.0.1/disposable', apply, createPool);
+    try {
+      await db.ready;
+      expect(query).not.toHaveBeenCalled(); expect(connect).not.toHaveBeenCalled();
+      expect(createPool).toHaveBeenCalledWith(expect.objectContaining({ max: 1, connectionTimeoutMillis: 10_000,
+        statement_timeout: 15_000, lock_timeout: 3000,
+        options: apply ? undefined : '-c default_transaction_read_only=on' }));
+    } finally { await db.destroy(); }
+    expect(pool.end).toHaveBeenCalledTimes(1);
+  });
+  it('rejects unverified remote database URLs before constructing a pool', () => {
+    const createPool = vi.fn();
+    expect(() => cli.openPaidStarterRecoveryDatabase('postgresql://fixture@remote.invalid/db?sslmode=no-verify', false, createPool)).toThrow();
+    expect(createPool).not.toHaveBeenCalled();
   });
 });

@@ -42,7 +42,12 @@ must never appear in source, tests, public documentation or PR text.
   policies, reservations, shortfalls, restrictions and token epochs. Any existing
   policy, unknown/pending usage, financial freeze/debt/hold/shortfall or changed
   global model policy defers the frozen reviewed operation. Do not convert speech
-  credit to general credit or create a waiver/credit reset.
+  credit to general credit or create a waiver/credit reset. Existing aggregate
+  money must reconcile exactly to nonnegative, ledger-backed speech allocations
+  with zero add-on balance; unexplained aggregate money defers the operation.
+  The earliest paid-period or positive speech-allocation expiry bounds every
+  initializer call and the final commit decision, so expiry while waiting cannot
+  cause the shared initializer to retire speech credit during recovery.
 - Reuse the existing lifetime initializer unchanged for the actual missing
   policy/balance/grant writes. All targets' guarded writes share one outer
   transaction, so an invalid target or later initializer failure commits nothing.
@@ -59,7 +64,19 @@ dry-run state fingerprint again under apply locks and check expiry after waits
 and before writes. Do not claim a funding advisory lock serializes billing
 writers that do not use it. Document row-lock coverage, possible insert phantoms
 and transaction isolation/retry behavior in the implementation; fail closed on
-serialization/lock conflicts rather than retry a credit mutation invisibly.
+lock conflicts rather than retry a credit mutation invisibly.
+
+The operator transaction uses READ COMMITTED. A repeatable/serializable snapshot
+could be established before waiting on deletion's advisory lock and miss a job
+accepted while waiting. Fresh admission queries run after that lock returns;
+deletion and funded-owner locks remain held through every initializer write.
+Existing subscription, entitlement, override, machine, restriction and balance
+rows are locked on apply. Current product billing writers sharing the configured
+deletion namespace serialize there; independent support override inserts or
+out-of-band SQL do not acquire that lock and remain a point-in-time consistency
+limit. No universal exclusion of arbitrary administrative writes is claimed, and
+no global billing table lock is introduced. Coordinate support overrides during
+the short reviewed operation; an unexpected conflict requires new inspection.
 
 ## Wiring and auth matrix
 
