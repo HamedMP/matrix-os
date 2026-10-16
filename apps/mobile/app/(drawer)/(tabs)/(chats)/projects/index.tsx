@@ -31,6 +31,10 @@ export default function ProjectsRoute() {
   // an attempt that reached the server answers with the project it made
   // instead of calling the name taken.
   const attempt = useRef<{ name: string; requestId: string } | null>(null);
+  // Counts the sheet's openings. A request only closes the sheet, or opens what
+  // it made, if the sheet still shows the opening it was sent from: one dragged
+  // away mid-request must not close the form opened after it.
+  const opening = useRef(0);
 
   const rows = useMemo(() => projectRows(list.projects, query), [list.projects, query]);
 
@@ -53,15 +57,17 @@ export default function ProjectsRoute() {
     const project = projectById(projectId);
     if (!project) return;
     rename.reset();
+    opening.current += 1;
     setRenaming(project);
     setNaming(true);
   };
 
   const renameProject = (name: string) => {
     if (!renaming) return;
+    const sentFrom = opening.current;
     rename.mutate({ slug: renaming.slug, name }, {
       onSuccess: () => {
-        setNaming(false);
+        if (opening.current === sentFrom) setNaming(false);
         showToast("Project renamed");
       },
     });
@@ -80,15 +86,21 @@ export default function ProjectsRoute() {
 
   const startNaming = () => {
     create.reset();
+    opening.current += 1;
     setRenaming(null);
     setNaming(true);
   };
 
   const createProject = (name: string) => {
     if (attempt.current?.name !== name) attempt.current = { name, requestId: canonicalChatRequestId() };
+    const sentFrom = opening.current;
     create.mutate({ name, clientRequestId: attempt.current.requestId }, {
       onSuccess: (project) => {
         attempt.current = null;
+        if (opening.current !== sentFrom) {
+          showToast("Project created");
+          return;
+        }
         setNaming(false);
         openProject(project.id);
       },
