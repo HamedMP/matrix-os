@@ -15,7 +15,12 @@ describe.skipIf(!databaseUrl)("owner auth, credential and full export integratio
     const url=new URL(databaseUrl!);
     const pool=new pg.Pool({connectionString:databaseUrl,max:2});
     const service=createDatabaseAccessService({databaseUrl:databaseUrl!,ownerId:"test-owner",key:randomBytes(32)});
-    const exporter=createDatabaseExporter({databaseUrl:databaseUrl!});
+    // Non-Linux development fixtures explicitly inject their installed client;
+    // deployed runtimes always use the system-owned /usr/bin/pg_dump.
+    const fixtureDump=process.env.MATRIX_OWNER_DATABASE_TEST_PG_DUMP;
+    const fixtureSpawn: Parameters<typeof createDatabaseExporter>[0]["spawn"] = fixtureDump
+      ? (_command,args,options)=>spawn(fixtureDump,args,options) : undefined;
+    const exporter=createDatabaseExporter({databaseUrl:databaseUrl!,spawn:fixtureSpawn});
     const app=new Hono();app.use("*",authMiddleware("owner-runtime-token"));
     app.route("/api/database",createDatabaseAccessRoutes({ownerId:"test-owner",service,exporter}));
     const request=(path:string,body:unknown={},bearer="owner-runtime-token")=>app.request(`/api/database${path}`,{method:"POST",headers:{authorization:`Bearer ${bearer}`,"content-type":"application/json","X-Matrix-Database-Action":"1"},body:JSON.stringify(body)});

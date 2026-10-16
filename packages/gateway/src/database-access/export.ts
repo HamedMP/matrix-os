@@ -32,9 +32,11 @@ export function createDatabaseExporter(options:{
   return {
     async export(signal) {
       if (closed || current || signal.aborted) throw new Error(ERROR);
-      const child=spawn("pg_dump",["--format=custom","--no-owner","--no-acl","--no-password",
+      // VPS installers provide this system-owned client. The gateway PATH also
+      // includes owner-writable tool directories; never give a shim its password.
+      const child=spawn("/usr/bin/pg_dump",["--format=custom","--no-owner","--no-acl","--no-password",
         "--exclude-schema=_matrix_owner_access", "--host=127.0.0.1",`--port=${port}`,`--username=${username}`,"--dbname=matrix"],{
-        env:{PATH:process.env.PATH ?? "/usr/bin:/bin",PGPASSWORD:decodeURIComponent(url.password),
+        env:{PATH:"/usr/bin:/bin",PGPASSWORD:decodeURIComponent(url.password),
           PGCONNECT_TIMEOUT:"10",PGOPTIONS:"-c statement_timeout=240000 -c lock_timeout=10000"},
         stdio:["ignore","pipe","pipe"],
       });

@@ -42,4 +42,6 @@ New schemas require an explicit credential/SQL action to reconcile grants; exist
 
 Custom-format archives retain PostgreSQL object ownership metadata even with dump-time flags; portable restore instructions must use `pg_restore --no-owner --no-acl` into a separate database. The database-only export intentionally excludes owner-login control metadata, home files, cluster role definitions and platform records.
 
+Export requires the Linux host installer's system-owned `/usr/bin/pg_dump` and gives helper processes only `/usr/bin:/bin`, never the gateway's owner-writable tool search path. Non-Linux development integration fixtures inject their installed test client explicitly; deployed runtimes have no request-controlled executable override.
+
 Tracking: [ENG-313](https://linear.app/matrix-os/issue/ENG-313/add-secure-owner-database-access-in-settings). Public guide and audience cleanup: [website PR #252](https://github.com/FinnaAI/matrix-os-site/pull/252). Recommend owner/product/security review of the access scope before release. Live deployed screenshots and recordings for each requested surface remain a release-readiness requirement; local mock UI captures and adapter tests are supporting evidence only.

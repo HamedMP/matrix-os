@@ -6,6 +6,12 @@ import { chatFundingVersionUrl } from "@matrix-os/contracts";
 
 const API_TIMEOUT_MS = 10_000;
 
+function jsonHeaders(overrides?: Record<string, string>): Record<string, string> {
+  const headers = new Headers({ "content-type": "application/json" });
+  for (const [name, value] of Object.entries(overrides ?? {})) headers.set(name, value);
+  return Object.fromEntries(headers);
+}
+
 export function buildGatewayUrl(baseUrl: string, path: string, runtimeSlot: string): string {
   const base = baseUrl.replace(/\/$/, "");
   // The platform serves /api/mcp-servers itself, so a runtime query cannot
@@ -219,11 +225,11 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     post: (path, body, requestOptions) =>
       request(path, {
         method: "POST",
-        headers: { "content-type": "application/json", ...requestOptions?.headers },
+        headers: jsonHeaders(requestOptions?.headers),
         body: JSON.stringify(body),
       }, requestOptions),
     postBlob: (path, body, boundedOptions) => requestBlob(path, {
-      method: "POST", headers: { "content-type": "application/json", ...boundedOptions?.headers }, body: JSON.stringify(body),
+      method: "POST", headers: jsonHeaders(boundedOptions?.headers), body: JSON.stringify(body),
     }, boundedOptions),
     postBytes: (path, body, headers, requestOptions) =>
       request(path, { method: "POST", headers, body }, requestOptions),
