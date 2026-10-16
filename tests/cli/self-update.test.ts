@@ -19,7 +19,7 @@ function install(executable:string,fetch=serve()){return updateStandaloneCli({ex
 
 describe('trusted CLI release selection',()=>{
  it('selects the newest stable CLI, ignoring OS releases and drafts',async()=>{
-  const fetch=vi.fn(async()=>new Response(JSON.stringify([
+  const fetch=vi.fn(async(_input:unknown,_init?:RequestInit)=>new Response(JSON.stringify([
    {tag_name:'v999.0.0',draft:false,prerelease:false,assets:[]},
    {tag_name:'cli-v0.3.23-beta.1',draft:false,prerelease:true,assets:[]},
    {tag_name:'cli-v0.3.23',draft:true,prerelease:false,assets:[]},
@@ -30,8 +30,8 @@ describe('trusted CLI release selection',()=>{
   expect(fetch.mock.calls[0]?.[1]).toMatchObject({redirect:'error',signal:expect.any(AbortSignal)});
  });
  it('rejects failed or oversized release metadata',async()=>{
-  await expect(latestCliRelease((async()=>new Response('',{status:503})) as typeof fetch)).rejects.toThrow();
-  await expect(latestCliRelease((async()=>new Response('[]',{headers:{'content-length':'99999999'}})) as typeof fetch)).rejects.toThrow();
+  await expect(latestCliRelease((async()=>new Response('',{status:503})) as typeof globalThis.fetch)).rejects.toThrow();
+  await expect(latestCliRelease((async()=>new Response('[]',{headers:{'content-length':'99999999'}})) as typeof globalThis.fetch)).rejects.toThrow();
  });
 });
 
