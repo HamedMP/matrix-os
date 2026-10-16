@@ -15,6 +15,7 @@ import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
 import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
 import { resolvePlatformObjectStorage } from './object-storage-config.js';
+import { resolveSitesObjectStorage } from './sites/storage-config.js';
 import { runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -762,15 +763,10 @@ async function startPlatformServerWithCleanup(
   }
 
   // Dedicated public asset credentials never fall back to the owner sync store.
-  const sitesBucket = process.env.R2_SITES_BUCKET;
-  const sitesAccessKey = process.env.R2_SITES_ACCESS_KEY_ID;
-  const sitesSecretKey = process.env.R2_SITES_SECRET_ACCESS_KEY;
-  if (sitesBucket && sitesAccessKey && sitesSecretKey) {
-    if (sitesBucket === s3Bucket || sitesBucket === bundleS3Bucket) throw new Error('Dedicated sites storage is required');
+  const sitesStorageConfig = resolveSitesObjectStorage(process.env);
+  if (sitesStorageConfig) {
     createR2Client ??= (await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js')).createR2Client;
-    sitesObjectStore = await createR2Client({ bucket: sitesBucket, accessKeyId: sitesAccessKey,
-      secretAccessKey: sitesSecretKey, endpoint: process.env.R2_SITES_ENDPOINT,
-      accountId: process.env.R2_SITES_ACCOUNT_ID ?? process.env.R2_ACCOUNT_ID });
+    sitesObjectStore = await createR2Client(sitesStorageConfig);
     registerCustomMcpStartupCleanup(async () => { sitesObjectStore?.destroy(); });
   }
 
