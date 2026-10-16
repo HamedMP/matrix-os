@@ -40,6 +40,31 @@ describe("Supervised tool approval card", () => {
     expect(onDecision).not.toHaveBeenCalled();
   });
 
+  it("closes the permission menu on Escape and returns focus to its trigger", () => {
+    render(<SupervisedToolApprovalCard approval={waiting} permissionMode="supervised" onDecision={vi.fn()} onPermissionMode={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: "Always allow → Full access" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("menu", { name: "Permission mode" })).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Permission mode" })).toBeNull();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("closes the permission menu when the owner clicks outside it", () => {
+    const onPermissionMode = vi.fn();
+    render(<div>
+      <button type="button">Elsewhere</button>
+      <SupervisedToolApprovalCard approval={waiting} permissionMode="supervised" onDecision={vi.fn()} onPermissionMode={onPermissionMode} />
+    </div>);
+    fireEvent.click(screen.getByRole("button", { name: "Always allow → Full access" }));
+    fireEvent.pointerDown(screen.getByRole("menuitemradio", { name: /Full access/ }));
+    expect(screen.getByRole("menu", { name: "Permission mode" })).toBeTruthy();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Elsewhere" }));
+    expect(screen.queryByRole("menu", { name: "Permission mode" })).toBeNull();
+    expect(onPermissionMode).not.toHaveBeenCalled();
+  });
+
   it("replaces an expired request with Try again and no allow buttons", () => {
     const onTryAgain = vi.fn();
     render(<SupervisedToolApprovalCard approval={{

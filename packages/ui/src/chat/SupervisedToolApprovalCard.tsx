@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CanonicalChatApprovalDecision } from "@matrix-os/contracts";
 import type { SupervisedToolApproval } from "@matrix-os/contracts";
 
@@ -81,6 +81,69 @@ function AccessMenu({
   );
 }
 
+function PermissionModeControl({
+  mode,
+  onSelect,
+}: {
+  mode: string | undefined;
+  onSelect: (mode: "supervised" | "full_access") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // Light dismiss: Escape closes and returns focus; a press outside the trigger and menu closes.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !containerRef.current?.contains(event.target)) setOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open]);
+  return (
+    <div ref={containerRef} className="relative">
+      <button ref={triggerRef} type="button" className="h-6 px-2 text-[12px] font-medium" style={{ color: muted }} aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((current) => !current)}>
+        Always allow → Full access
+      </button>
+      {open ? <AccessMenu mode={mode} onSelect={(next) => { setOpen(false); onSelect(next); }} /> : null}
+    </div>
+  );
+}
+
+function SettledApproval({
+  approval,
+  anchorId,
+  submitting,
+  onDecision,
+}: {
+  approval: Extract<SupervisedToolApproval, { kind: "allowed" | "declined" | "cancelled" }>;
+  anchorId?: string;
+  submitting: boolean;
+  onDecision?: (decision: CanonicalChatApprovalDecision) => void;
+}) {
+  const canUndo = approval.kind === "allowed" && approval.undo && onDecision;
+  return (
+    <div id={anchorId} className="flex items-center gap-2 text-[13px] font-medium" style={{ color: muted }}>
+      <span aria-hidden>{approval.kind === "allowed" ? "✓" : "×"}</span>
+      <span>{approval.line}</span>
+      {canUndo ? (
+        <button type="button" className="font-medium underline" style={{ color: ink }} disabled={submitting} onClick={() => onDecision("decline")}>
+          Undo
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function SupervisedToolApprovalCard({
   approval,
   anchorId,
@@ -99,19 +162,8 @@ export function SupervisedToolApprovalCard({
   onTryAgain?: () => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   if (approval.kind === "allowed" || approval.kind === "declined" || approval.kind === "cancelled") {
-    return (
-      <div id={anchorId} className="flex items-center gap-2 text-[13px] font-medium" style={{ color: muted }}>
-        <span aria-hidden>{approval.kind === "allowed" ? "✓" : "×"}</span>
-        <span>{approval.line}</span>
-        {approval.kind === "allowed" && approval.undo && onDecision ? (
-          <button type="button" className="font-medium underline" style={{ color: ink }} disabled={submitting} onClick={() => onDecision("decline")}>
-            Undo
-          </button>
-        ) : null}
-      </div>
-    );
+    return <SettledApproval approval={approval} anchorId={anchorId} submitting={submitting} onDecision={onDecision} />;
   }
   const expired = approval.kind === "expired";
   return (
@@ -132,24 +184,36 @@ export function SupervisedToolApprovalCard({
         {approval.summary}
         {detailsOpen && approval.kind === "waiting" && approval.details ? <pre className="mt-2 whitespace-pre-wrap font-sans">{approval.details}</pre> : null}
       </div>
-      {expired ? (
-        onTryAgain ? <button type="button" className="self-start text-[13px] font-medium underline" style={{ color: ink }} onClick={onTryAgain}>Try again</button> : null
-      ) : (
-        <div className="relative flex items-center gap-2">
-          {approval.allowOnce ? <button type="button" disabled={submitting || !onDecision} style={{ ...buttonBase, background: ink, color: paper }} onClick={() => onDecision?.("approve")}>Allow once</button> : null}
-          {approval.allowInChat ? <button type="button" disabled={submitting || !onDecision} style={{ ...buttonBase, background: paper, color: ink, border: `1px solid ${line}` }} onClick={() => onDecision?.("approve_for_session")}>Allow in this chat</button> : null}
-          {approval.decline ? <button type="button" disabled={submitting || !onDecision} style={{ ...buttonBase, background: "transparent", color: ink }} onClick={() => onDecision?.("decline")}>Not now</button> : null}
-          <span className="flex-1" />
-          {onPermissionMode ? (
-            <button type="button" className="h-6 px-2 text-[12px] font-medium" style={{ color: muted }} aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => setMenuOpen((open) => !open)}>
-              Always allow → Full access
-            </button>
-          ) : null}
-          {menuOpen && onPermissionMode ? (
-            <AccessMenu mode={permissionMode} onSelect={(mode) => { setMenuOpen(false); onPermissionMode(mode); }} />
-          ) : null}
-        </div>
-      )}
+      {approval.kind === "waiting" ? (
+        <ApprovalActions approval={approval} submitting={submitting} permissionMode={permissionMode} onDecision={onDecision} onPermissionMode={onPermissionMode} />
+      ) : onTryAgain ? (
+        <button type="button" className="self-start text-[13px] font-medium underline" style={{ color: ink }} onClick={onTryAgain}>Try again</button>
+      ) : null}
+    </div>
+  );
+}
+
+function ApprovalActions({
+  approval,
+  submitting,
+  permissionMode,
+  onDecision,
+  onPermissionMode,
+}: {
+  approval: Extract<SupervisedToolApproval, { kind: "waiting" }>;
+  submitting: boolean;
+  permissionMode?: string;
+  onDecision?: (decision: CanonicalChatApprovalDecision) => void;
+  onPermissionMode?: (mode: "supervised" | "full_access") => void;
+}) {
+  const disabled = submitting || !onDecision;
+  return (
+    <div className="relative flex items-center gap-2">
+      {approval.allowOnce ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: ink, color: paper }} onClick={() => onDecision?.("approve")}>Allow once</button> : null}
+      {approval.allowInChat ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: paper, color: ink, border: `1px solid ${line}` }} onClick={() => onDecision?.("approve_for_session")}>Allow in this chat</button> : null}
+      {approval.decline ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: "transparent", color: ink }} onClick={() => onDecision?.("decline")}>Not now</button> : null}
+      <span className="flex-1" />
+      {onPermissionMode ? <PermissionModeControl mode={permissionMode} onSelect={onPermissionMode} /> : null}
     </div>
   );
 }

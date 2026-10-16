@@ -22,6 +22,10 @@ At most 16 pending built-in approvals per run. Tool input over 4,000 characters 
 
 Full access applies to the next request because `permissionMode` is already frozen for the in-flight turn. Other harnesses and `agent_full_access_required` stay follow-ups.
 
-Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile render this card from the same approval view. They do not grow a second attention lane.
+Web Canvas, Web Desktop, and Electron Desktop render this card from the same approval view. They do not grow a second attention lane. Web Mobile and Native Mobile are out of scope for this change; Native Mobile keeps its existing approval message until a follow-up brings it the same card.
 
 Suggest the Chat owner review the prompt copy before rollout.
+
+## Documentation
+
+A separate PR in `FinnaAI/matrix-os-site` under `content/docs/` explains Supervised tool approval for owners: what Allow once, Allow in this chat (this run only), Not now, and Undo each do, the 10-minute expiry, and how Always allow switches the next request to Full access.

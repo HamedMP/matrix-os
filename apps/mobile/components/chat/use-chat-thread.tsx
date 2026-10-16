@@ -1,4 +1,3 @@
-import { supervisedToolApproval } from "@matrix-os/contracts";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useMemo, useRef } from "react";
 import { useRouter } from "expo-router";
@@ -43,9 +42,6 @@ interface ChatThreadInput {
   optimisticMessages: readonly OptimisticMessage[];
   /** Where attachments sent from this screen still are on the phone. */
   sentAttachments?: SentAttachmentUris;
-  permissionMode?: string;
-  onPermissionMode?: (mode: "supervised" | "full_access") => void;
-  onTryAgain?: () => void;
 }
 
 /**
@@ -61,9 +57,6 @@ export function useChatThread({
   refresh,
   optimisticMessages,
   sentAttachments = NOTHING_SENT,
-  permissionMode,
-  onPermissionMode,
-  onTryAgain,
 }: ChatThreadInput) {
   const router = useRouter();
   const { mutate: requestCancel, isPending: cancelPending } = useCancelRun();
@@ -145,15 +138,12 @@ export function useChatThread({
           approval={item.approval}
           chatId={chatId}
           gatewayUrl={gatewayUrl}
-          permissionMode={permissionMode}
-          onPermissionMode={onPermissionMode}
-          onTryAgain={onTryAgain}
           onSettled={refresh}
         />
       );
     }
     return null;
-  }, [chatId, gatewayUrl, refresh, retryTurn, retryPending, retryFailed, retried, activeRunId, sendOnItsWay, permissionMode, onPermissionMode, onTryAgain]);
+  }, [chatId, gatewayUrl, refresh, retryTurn, retryPending, retryFailed, retried, activeRunId, sendOnItsWay]);
 
   const openApp = useCallback((app: ChatResultApp) => {
     router.push({
@@ -173,12 +163,6 @@ export function useChatThread({
   return {
     /** Newest first. */
     messages,
-    waitingLabel: messages.flatMap((message) => {
-      const approval = message.approval;
-      if (!approval?.pending) return [];
-      const view = supervisedToolApproval(approval);
-      return view?.kind === "waiting" ? [`Waiting for you · ${view.bar}`] : [];
-    })[0],
     /** A turn is being worked on. */
     running: activeRunId !== undefined,
     /** Stops the run. Absent when there is none, or while a stop is already on its way. */
