@@ -108,8 +108,9 @@ async function newestResultController(github,repo,expected,workflow){
 export async function waitForDedicatedResult(github,expected,options={}) {
   const maximum=options.maxMilliseconds??3_900_000;
   if(!Number.isSafeInteger(maximum)||maximum<1||maximum>3_900_000)throw new Error('Invalid waiter deadline');
+  const started=performance.now(),remainingMilliseconds=()=>Math.max(0,maximum-(performance.now()-started));
   const aborter=new AbortController();let timer;
-  try{return await Promise.race([waitWithinDeadline(github,expected,{...options,signal:aborter.signal}),new Promise((_,reject)=>{timer=setTimeout(()=>{aborter.abort();reject(new Error('No verified dedicated Linux qualification completed within the bounded wait'));},maximum);timer.unref?.();})]);}
+  try{return await Promise.race([waitWithinDeadline(github,expected,{...options,signal:aborter.signal,remainingMilliseconds}),new Promise((_,reject)=>{timer=setTimeout(()=>{aborter.abort();reject(new Error('No verified dedicated Linux qualification completed within the bounded wait'));},maximum);timer.unref?.();})]);}
   finally{clearTimeout(timer);aborter.abort();}
 }
 async function waitWithinDeadline(github, expected, options={}) {
@@ -120,7 +121,7 @@ async function waitWithinDeadline(github, expected, options={}) {
       typeof expected.headRef!=='string' || !expected.headRef) {
     throw new Error('Invalid dedicated qualification revision');
   }
-  const api=createConditionalGithub(github,{authenticationContext:`requester-${expected.requestingRunId}-${expected.requestingRunAttempt}`,signal:options.signal});github=api.github;
+  const api=createConditionalGithub(github,{authenticationContext:`requester-${expected.requestingRunId}-${expected.requestingRunAttempt}`,signal:options.signal,waiterBackoff:{remainingMilliseconds:options.remainingMilliseconds}});github=api.github;
   const maxAttempts=options.maxAttempts ?? 130;
   if(!Number.isSafeInteger(maxAttempts) || maxAttempts<1 || maxAttempts>130)throw new Error('Invalid wait bound');
   const delay=options.delay ?? (()=>new Promise(resolve=>setTimeout(resolve,30_000)));
