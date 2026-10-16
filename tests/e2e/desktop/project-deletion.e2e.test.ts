@@ -21,9 +21,10 @@ suite("Electron Desktop project deletion", () => {
   let page: Page;
   let gateway: StubGateway;
   let userData: string;
-  const evidence = createEvidenceDirectory(process.env.MATRIX_EVIDENCE_DIR);
+  let evidence: ReturnType<typeof createEvidenceDirectory>;
 
   beforeAll(async () => {
+    evidence = createEvidenceDirectory(process.env.MATRIX_EVIDENCE_DIR);
     userData = await mkdtemp(join(tmpdir(), "matrix-project-delete-electron-"));
     gateway = await startStubGateway();
     app = await _electron.launch({ executablePath, args: [main], env: {
@@ -44,7 +45,7 @@ suite("Electron Desktop project deletion", () => {
     finally {
       await gateway?.close();
       if (userData) await rm(userData, { recursive: true, force: true });
-      evidence.cleanup();
+      evidence?.cleanup();
     }
   });
 

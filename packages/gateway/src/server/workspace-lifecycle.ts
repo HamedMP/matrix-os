@@ -17,7 +17,9 @@ export async function registerWorkspaceLifecycle(options: {
   recovery: Omit<Parameters<typeof createWorkspaceStartupRecovery>[0], "deleteProjectChats">;
 }) {
   const deleteProjectChats = options.chatRepository && options.orchestrator
-    ? createProjectChatCleanup({ repository: options.chatRepository, orchestrator: options.orchestrator })
+    ? createProjectChatCleanup({ repository: options.chatRepository, orchestrator: options.orchestrator,
+      resolveSharedScope: options.collaboration?.resolveChatDeletionScope,
+    })
     : async () => { throw new Error("Project chat cleanup unavailable"); };
   options.app.route("/", createWorkspaceRoutes({ ...options.workspace, deleteProjectChats,
     configureSharedProjectDeletion: options.collaboration?.enableProjectDeletion,

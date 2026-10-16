@@ -11,6 +11,7 @@ import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-rout
 import { registerWorkspaceLifecycle } from "../../packages/gateway/src/server/workspace-lifecycle.js";
 import { CollaborationAuthorizationError } from "../../packages/gateway/src/collaboration/authority-error.js";
 import { allowAllOrganizationPrecondition, createCollaborationTestDatabase } from "./collaboration-test-support.js";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
 
 const OWNER = "user_shared_delete";
 const SCOPE = "10000000-0000-4000-8000-000000000901";
@@ -111,6 +112,32 @@ describe("owner shared-project deletion through workspace HTTP", () => {
     expect(await fixture.db.selectFrom("collaboration_operations").select("status").execute()).toEqual([{ status: "completed" }]);
   });
 
+  it("does not mistake a project moving into deletion for completed cleanup", async () => {
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { resume = resolve; });
+    const live = projects.listManagedProjects.bind(projects);
+    const deleting = projects.listDeletingProjects.bind(projects);
+    let marked = false;
+    vi.spyOn(projects, "listManagedProjects").mockImplementationOnce(async input => {
+      entered();
+      await gate;
+      return live(input);
+    });
+    vi.spyOn(projects, "listDeletingProjects").mockImplementation(async () => marked
+      ? deleting() : { projects: [], nextCursor: null });
+    cleanup.mockRejectedValueOnce(new Error("cleanup has not completed"));
+    const request = remove(app());
+    await started;
+    await projects.setProjectLifecycleState({ slug: project.slug, ownerScope: project.ownerScope, deletingAt: new Date().toISOString() });
+    marked = true;
+    resume();
+    expect((await request).status).toBe(503);
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect((await fixture.db.selectFrom("collaboration_operations").select("status").executeTakeFirst())?.status).toBe("accepted");
+  });
+
   it("recovers accepted deletion after startup dependencies have been bound", async () => {
     cleanup.mockRejectedValueOnce(new Error("simulated outage"));
     await remove(app());
@@ -172,11 +199,23 @@ describe("owner shared-project deletion through workspace HTTP", () => {
     const chats = new ChatRepository(fixture.db);
     await chats.create({ type: "personal", ownerId: OWNER }, { id: "chat_delete_child", projectId: project.id,
       title: "Shared history", clientRequestId: "req_delete_fixture_chat" });
+    const active = createCanonicalChatFixture("accepted").snapshot;
+    await chats.admitTurn({ type: "personal", ownerId: OWNER }, { chatId: "chat_delete_child", baseRevision: 0,
+      message: { ...active.messages[0]!, chatId: "chat_delete_child" },
+      turn: { ...active.turns[0]!, chatId: "chat_delete_child" },
+      run: { ...active.runs[0]!, chatId: "chat_delete_child", executionRoot: { kind: "project", projectId: project.id } },
+    });
+    await fixture.db.updateTable("chats").set({ collaboration: { scopeId: CHILD, mode: "discussion_only",
+      executionFenced: true, authorityGeneration: 3 } }).where("id", "=", "chat_delete_child").execute();
     cleanup.mockRejectedValueOnce(new Error("simulated interruption"));
     expect((await remove(app())).status).toBe(503);
     const deleteWorkspace = vi.fn(async () => undefined);
     const deleteProjectThreads = vi.fn(async () => ({ ok: true as const, deleted: 0 }));
-    const cancelRun = vi.fn();
+    const cancelRun = vi.fn().mockRejectedValue(new Error("Personal cancellation must remain fenced"));
+    const cancelSharedRun = vi.fn(async (owner: Parameters<ChatRepository["finishRun"]>[0], scopeId: string, chatId: string, runId: string) => {
+      expect(scopeId).toBe(CHILD);
+      await chats.finishRun(owner, { chatId, runId, outcome: "aborted", completedAt: new Date().toISOString() });
+    });
     startup.run.mockImplementationOnce(async () => {
       expect(await chats.list({ type: "personal", ownerId: OWNER }, { projectId: project.id, limit: 100 }))
         .toMatchObject({ items: [] });
@@ -184,7 +223,7 @@ describe("owner shared-project deletion through workspace HTTP", () => {
       return { status: "ok", steps: [] };
     });
     await registerWorkspaceLifecycle({ app: new Hono(), shellRoutes: new Hono(), chatRepository: chats,
-      orchestrator: { cancelRun } as never, collaboration: runtime,
+      orchestrator: { cancelRun, cancelSharedRun } as never, collaboration: runtime,
       workspace: { homePath, projectManager: projects, projectOperationAdmission: runtime.projectOperationAdmission,
         terminalRuntime: { listWorkspaces: async () => [{ id: "workspace", scope: "project", projectId: project.id, tabs: [] }], deleteWorkspace } as never,
         codingAgentThreadStore: { deleteProjectThreads } as never,
@@ -194,6 +233,8 @@ describe("owner shared-project deletion through workspace HTTP", () => {
     });
     expect(startup.run).toHaveBeenCalledOnce();
     expect(deleteProjectThreads).toHaveBeenCalledOnce();
+    expect(cancelSharedRun).toHaveBeenCalledOnce();
+    expect(cancelRun).not.toHaveBeenCalled();
     expect((await fixture.db.selectFrom("collaboration_scopes").select("lifecycle").where("id", "=", SCOPE).executeTakeFirst())?.lifecycle).toBe("deleted");
   });
 

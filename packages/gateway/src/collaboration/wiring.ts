@@ -344,6 +344,15 @@ export async function createGatewayCollaboration(options: {
   }
 
   return {
+    async resolveChatDeletionScope(owner: { type: "personal" | "organization"; ownerId: string }, chatId: string) {
+      const scopes = await options.db.selectFrom("collaboration_scopes").select("id")
+        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+        .where("kind", "=", "chat").where("resource_id", "=", chatId)
+        .where("lifecycle", "in", ["shared", "archived", "deleting"])
+        .where("deleted_at", "is", null).limit(2).execute();
+      if (scopes.length > 1) throw new Error("Chat deletion scope conflict");
+      return scopes[0]?.id;
+    },
     enableProjectDeletion(input: OwnerProjectDeletionDependencies) {
       if (registered || closing || !options.config.ownerId) throw new Error("Project deletion configuration unavailable");
       const deletion = createOwnerProjectDeletion({ ...input, db: options.db,

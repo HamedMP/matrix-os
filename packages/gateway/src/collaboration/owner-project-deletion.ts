@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 import type { createProjectManager, ProjectConfig } from "../project-manager.js";
 import type { createProjectLifecycleService, ProjectLifecycleAction, ProjectLifecycleResult } from "../project-lifecycle.js";
 import type { RequestPrincipal } from "../request-principal.js";
+import { withProjectLock } from "../state-ops.js";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { OrganizationPrecondition } from "./organization-precondition.js";
@@ -29,24 +30,26 @@ export function createOwnerProjectDeletion(options: OwnerProjectDeletionDependen
 }) {
   const lifecycle = createCollaborationProjectLifecycle({
     db: options.db,
-    deleteProject: async (input) => {
+    deleteProject: (input) => withProjectLock(`shared-deletion:${input.scopeId}`, async () => {
       input.signal.throwIfAborted();
       const scope = await options.db.selectFrom("collaboration_scopes").selectAll()
         .where("id", "=", input.scopeId).executeTakeFirst();
       if (!scope || scope.owner_id !== options.ownerId || scope.owner_type !== "personal"
         || scope.kind !== "project" || scope.resource_id !== input.projectId
-        || scope.lifecycle !== "deleting" || scope.authority_runtime_id !== options.runtimeId
+        || !["deleting", "deleted"].includes(scope.lifecycle) || scope.authority_runtime_id !== options.runtimeId
         || input.authorityRuntimeId !== options.runtimeId
         || Number(scope.authority_generation) !== input.authorityGeneration) {
         throw new CollaborationRepositoryError("conflict", "Project deletion authority changed");
       }
+      if (scope.lifecycle === "deleted") return;
       await options.assertWritable(scope.id);
       // ID lookup for ordinary reads hides archived/deleting records. Recovery needs both
       // live configurations and tombstones; never guess a directory from the project ID.
-      const [live, deleting] = await Promise.all([
-        options.projectManager.listManagedProjects({ visibility: "all", ownerScope: { type: "user", id: scope.owner_id } }),
-        options.projectManager.listDeletingProjects(),
-      ]);
+      // Read live records before tombstones: the transition is one-way, so a project
+      // excluded after its marker is written must be observed by the later tombstone
+      // scan, unless cleanup already removed the registry. Parallel scans can miss both.
+      const live = await options.projectManager.listManagedProjects({ visibility: "all", ownerScope: { type: "user", id: scope.owner_id } });
+      const deleting = await options.projectManager.listDeletingProjects();
       if (live.projects.length + deleting.projects.length > 10_000) {
         throw new CollaborationRepositoryError("capacity", "Project deletion inventory unavailable");
       }
@@ -64,7 +67,7 @@ export function createOwnerProjectDeletion(options: OwnerProjectDeletionDependen
         input.projectId,
       );
       if (!result.ok) throw new Error("Project cleanup incomplete");
-    },
+    }),
   });
 
   async function apply(principal: RequestPrincipal, project: ProjectConfig,

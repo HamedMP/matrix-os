@@ -10,7 +10,8 @@ refresh only after success.
 - `electron-project-deleted.png`: the project disappears after successful deletion.
 
 These screenshots verify the renderer flow against a fixture API. Shared-project
-authorization, the real gateway composition, Chat/terminal cleanup, failure/retry,
+authorization, the real gateway composition, shared Chat/terminal cleanup (including
+an active run with an internal collaboration binding), failure/retry,
 recovery, runtime authority, and external-folder preservation are exercised by
 `tests/gateway/shared-project-deletion.test.ts` with PostgreSQL-compatible fixtures
 and temporary project homes. No customer computer or customer data was used.
