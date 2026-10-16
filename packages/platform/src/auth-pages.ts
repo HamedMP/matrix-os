@@ -44,6 +44,7 @@ export function getAuthPage(
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   ${getAuthPageIndexingTags(mode, appShellOrigin)}
@@ -1250,6 +1251,7 @@ export function getNoContainerPage() {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Matrix OS</title>
@@ -1387,6 +1389,7 @@ export function getRuntimePickerPage(input: {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Select Matrix OS Machine</title>

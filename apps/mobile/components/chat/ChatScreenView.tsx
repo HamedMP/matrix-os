@@ -7,8 +7,11 @@ import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
 import { ChatHome } from "./ChatHome";
+import { ChatMessagesSkeleton, ChatUnavailable } from "./ChatLoadState";
+import type { ChatLoadState } from "./chat-screen-state";
 import { Composer, type ComposerProps } from "./Composer";
 import { MessageList, type MessageListProps } from "./MessageList";
+import { UnsentMessageActionsProvider, type UnsentMessageActions } from "./unsent-message-actions";
 
 export interface ChatScreenViewProps
   extends Pick<MessageListProps, "chatId" | "renderRequest" | "renderResults" | "renderComputerPhoto"> {
@@ -23,6 +26,12 @@ export interface ChatScreenViewProps
   onSuggestionPress: (suggestion: string) => void;
   /** Newest first. */
   messages: TranscriptMessage[];
+  /** For an open chat: its messages are loading, could not be read, or are there. Ready when left out. */
+  chatState?: ChatLoadState;
+  /** Reads the chat again after it could not be read; the loading state shows meanwhile. */
+  onReloadChat?: () => void;
+  /** What a message that was not sent offers. Nothing is offered when left out. */
+  unsentActions?: UnsentMessageActions | null;
   composer: Omit<ComposerProps, "keyboardOpen">;
 }
 
@@ -39,6 +48,9 @@ export function ChatScreenView({
   renderRequest,
   renderResults,
   renderComputerPhoto,
+  chatState = "ready",
+  onReloadChat,
+  unsentActions = null,
   composer,
 }: ChatScreenViewProps) {
   const insets = useSafeAreaInsets();
@@ -67,14 +79,20 @@ export function ChatScreenView({
       />
       {showHome ? (
         <ChatHome suggestions={suggestions} onSuggestionPress={onSuggestionPress} />
+      ) : chatState === "loading" ? (
+        <ChatMessagesSkeleton />
+      ) : chatState === "failed" ? (
+        <ChatUnavailable onRetry={onReloadChat} />
       ) : (
-        <MessageList
-          messages={messages}
-          chatId={chatId}
-          renderRequest={renderRequest}
-          renderResults={renderResults}
-          renderComputerPhoto={renderComputerPhoto}
-        />
+        <UnsentMessageActionsProvider value={unsentActions}>
+          <MessageList
+            messages={messages}
+            chatId={chatId}
+            renderRequest={renderRequest}
+            renderResults={renderResults}
+            renderComputerPhoto={renderComputerPhoto}
+          />
+        </UnsentMessageActionsProvider>
       )}
       <Composer {...composer} keyboardOpen={keyboardOpen} />
     </KeyboardAvoidingView>

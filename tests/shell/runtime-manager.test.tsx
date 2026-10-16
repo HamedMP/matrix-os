@@ -253,7 +253,7 @@ describe("RuntimeManager", () => {
     expect(screen.queryByText("Each one is a private Matrix OS workspace with its own files and data.")).toBeNull();
     expect(screen.getByText("Matrix OS member").className).toContain("font-medium");
     expect(screen.getByText("neo@example.com")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Switch to Studio/i }).getAttribute("href")).toBe(
+    expect((await screen.findByRole("link", { name: /Switch to Studio/i })).getAttribute("href")).toBe(
       "/vm/neo-studio?runtime=studio",
     );
     expect(screen.getByText("Current")).toBeTruthy();

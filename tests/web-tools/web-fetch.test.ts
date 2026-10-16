@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { createWebFetchTool, type WebFetchResult } from "../../packages/kernel/src/tools/web-fetch.js";
+import { createWebFetchTool } from "../../packages/kernel/src/tools/web-fetch.js";
 import { WebCache } from "../../packages/kernel/src/tools/web-cache.js";
+
+vi.mock("node:dns/promises", () => ({
+  resolve4: vi.fn().mockResolvedValue(["93.184.216.34"]),
+  resolve6: vi.fn().mockResolvedValue([]),
+}));
 
 const SAMPLE_HTML = `<!DOCTYPE html>
 <html><head><title>Test Page</title></head>
@@ -16,12 +21,7 @@ const SAMPLE_HTML = `<!DOCTYPE html>
 const SAMPLE_MARKDOWN = "# Hello World\n\nThis is markdown content.";
 
 function mockFetchResponse(body: string, headers: Record<string, string> = {}, status = 200) {
-  return vi.fn().mockResolvedValue({
-    ok: status >= 200 && status < 300,
-    status,
-    headers: new Map(Object.entries(headers)),
-    text: () => Promise.resolve(body),
-  });
+  return vi.fn().mockImplementation(async () => new Response(body, { status, headers }));
 }
 
 describe("createWebFetchTool", () => {
@@ -160,18 +160,8 @@ describe("createWebFetchTool", () => {
   it("follows redirects after validating each target URL", async () => {
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 302,
-        headers: new Map([["location", "https://example.com/final"]]),
-        text: () => Promise.resolve("redirect"),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Map([["content-type", "text/markdown"]]),
-        text: () => Promise.resolve(SAMPLE_MARKDOWN),
-      });
+      .mockResolvedValueOnce(new Response("redirect", { status: 302, headers: { location: "https://example.com/final" } }))
+      .mockResolvedValueOnce(new Response(SAMPLE_MARKDOWN, { headers: { "content-type": "text/markdown" } }));
     const tool = createWebFetchTool({ cache, fetcher });
 
     await expect(tool.execute({ url: "https://example.com/redirect" })).resolves.toMatchObject({
@@ -183,12 +173,7 @@ describe("createWebFetchTool", () => {
   });
 
   it("rejects redirects to SSRF-blocked targets", async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce({
-      ok: false,
-      status: 302,
-      headers: new Map([["location", "http://127.0.0.1/admin"]]),
-      text: () => Promise.resolve("redirect"),
-    });
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response("redirect", { status: 302, headers: { location: "http://127.0.0.1/admin" } }));
     const tool = createWebFetchTool({ cache, fetcher });
 
     await expect(tool.execute({ url: "https://example.com/redirect" })).rejects.toThrow("SSRF blocked");
