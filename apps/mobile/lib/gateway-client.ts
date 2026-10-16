@@ -1,4 +1,5 @@
 import { encodeAppSlugPath } from "@/lib/app-slugs";
+import { MOBILE_PLATFORM_ORIGIN } from "./platform-origin";
 import {
   isSafeSessionId,
   parseTerminalSessions,
@@ -79,7 +80,7 @@ function randomShellSuffix(): string {
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
 /** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
-const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
+const HOSTED_PLATFORM_ORIGIN = MOBILE_PLATFORM_ORIGIN;
 
 const ConversationMetaSchema = z.object({
   id: z.string().min(1).max(128),
