@@ -426,7 +426,10 @@ export function createAiFundedRuntimeRoutes(options: {
           const baseCall = { ...call, receiptId,
             ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision,
               runtimeRevision: first.policy.runtimeRevision } } : {}) };
-          if (model !== JEV_MODEL_ID && options.upstreamPreferences) {
+          // Static probe models execute through their fixed Cloudflare paths;
+          // only dedicated custom models can derive readiness from Bedrock.
+          const hasCloudflareExecutionPath = FUNDED_PROBE_MODELS.some(cloudflareModel => cloudflareModel === model);
+          if (model !== JEV_MODEL_ID && !hasCloudflareExecutionPath && options.upstreamPreferences) {
             const resolved = await options.upstreamPreferences.resolveUpstreamForReadiness(
               { ownerId: identity.ownerId, modelId: model },
               bedrockModelId => observe(bedrockModelId, { ...baseCall, upstream: "aws_bedrock" }),

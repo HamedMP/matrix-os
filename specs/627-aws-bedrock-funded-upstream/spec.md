@@ -201,6 +201,33 @@ destination region returned by the profile must satisfy the approved policy.
 - Full repository typecheck, pattern checks, unit/integration tests, current-head
   Greptile 5/5, and CI are required before merge.
 
+## Large-file extraction plan
+
+ENG-297 establishes the following behavior-preserving extraction sequence
+before any further funded-AI behavior is added to the three oversized files
+touched by this feature:
+
+1. Move funded control-plane startup assembly from `platform-startup.ts` into a
+   focused `ai-funded-startup.ts` factory. The factory will accept the shared
+   database and parsed environment, return the three route groups plus probe
+   and preference services, and will not take ownership of the shared database.
+   Startup remains responsible only for lifecycle composition and shutdown.
+2. Move the post-reservation provider dispatch/finalization state machine from
+   `funded-relay.ts` into a provider-neutral `funded-generation-dispatch.ts`.
+   The extracted boundary will own start-before-dispatch ordering, exact versus
+   unresolved settlement classification, route provenance, cancellation, and
+   the prohibition on cross-provider retry; the Hono module will retain request
+   validation, authentication, and admission composition.
+3. Split `ai-funded-policy-routes.test.ts` into shared fixtures plus focused
+   policy, readiness, and upstream-preference route suites. Every suite will
+   create and destroy its own native Postgres fixture and retain the mixed-
+   version, owner-policy re-read, and route-selection integration coverage.
+
+The extraction is complete when each new module has one documented
+responsibility, the affected composition files are below 1,000 lines (with
+focused helpers aiming below 500), the full existing focused suites remain
+green, and no route/auth/database ownership semantics change.
+
 ## Deferred deliverables
 
 - ENG-275 owns authoritative starter-campaign aggregate caps and pause controls.
