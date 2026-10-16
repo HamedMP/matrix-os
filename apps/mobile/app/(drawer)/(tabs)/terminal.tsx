@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
@@ -26,9 +17,20 @@ import {
 } from "@/components/shell/Controls";
 import { Page } from "@/components/shell/Page";
 import { TabScreen } from "@/components/shell/TabScreen";
+import { ItemContextMenu } from "@/components/ItemContextMenu";
 import { TerminalAgentLogo, type MobileTerminalAgent } from "@/components/terminal/TerminalAgentLogo";
-import { Divider, FloatingActionButton, Icon, ListItemMotion, SettleIn, Sheet, Spacer } from "@/components/ui";
+import {
+  ConfirmDialog,
+  Divider,
+  FloatingActionButton,
+  Icon,
+  ListItemMotion,
+  SettleIn,
+  Sheet,
+  Spacer,
+} from "@/components/ui";
 import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
+import { showToast } from "@/lib/toast";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import {
   isValidTerminalSessionName,
@@ -42,6 +44,8 @@ type TerminalAction = {
 } | null;
 
 const SHEET_DISMISS_NAVIGATION_DELAY_MS = 500;
+// ListRow's corners, which the row keeps as iOS lifts it for its menu.
+const LIST_ROW_RADIUS = 16;
 const TERMINAL_NAME_RULE = `Use a name between 1 and ${TERMINAL_SESSION_NAME_MAX_LENGTH} characters.`;
 
 export default function TerminalTab() {
@@ -121,6 +125,7 @@ function TerminalScreen() {
     try {
       await renameSession(session, trimmedName);
       setTerminalAction(null);
+      showToast("Terminal renamed");
     } catch {
       setActionError("Could not rename terminal. Try again.");
     }
@@ -132,6 +137,7 @@ function TerminalScreen() {
     try {
       await deleteSession(terminalAction.session);
       setTerminalAction(null);
+      showToast("Terminal deleted");
     } catch {
       setActionError("Could not delete terminal. Try again.");
     }
@@ -217,13 +223,13 @@ function TerminalScreen() {
           </>
         ) : null}
 
-        <TerminalActionPopup
+        <TerminalActionDialog
           action={terminalAction}
           nextName={nextName}
           error={actionError}
-          isSubmitting={isMutating}
+          busy={isMutating}
           onChangeName={setNextName}
-          onClose={closeAction}
+          onCancel={closeAction}
           onRename={() => void submitRename()}
           onDelete={() => void submitDelete()}
         />
@@ -346,135 +352,77 @@ function SwipeableTerminalRow({
         </View>
       )}
     >
-      <ListRow
+      {/* The same Rename and Delete as the swipe, from a long press. */}
+      <ItemContextMenu
         title={session.name}
-        detail={sessionDetail(session)}
-        detailLeading={isMobileTerminalAgent(session.agent) ? <TerminalAgentLogo agent={session.agent} /> : undefined}
-        icon={ComputerTerminal01Icon}
-        accent={sessionAccent(session, theme)}
-        accessibilityLabel={`Open ${session.name} terminal`}
-        onPress={onPress}
-      />
+        cornerRadius={LIST_ROW_RADIUS}
+        actions={[
+          { id: "item", key: "rename", label: "Rename", systemImage: "pencil", onSelect: onRename },
+          { id: "item", key: "delete", label: "Delete", systemImage: "trash", destructive: true, onSelect: onDelete },
+        ]}
+      >
+        <ListRow
+          title={session.name}
+          detail={sessionDetail(session)}
+          detailLeading={isMobileTerminalAgent(session.agent) ? <TerminalAgentLogo agent={session.agent} /> : undefined}
+          icon={ComputerTerminal01Icon}
+          accent={sessionAccent(session, theme)}
+          accessibilityLabel={`Open ${session.name} terminal`}
+          onPress={onPress}
+        />
+      </ItemContextMenu>
     </Swipeable>
   );
 }
 
-function TerminalActionPopup({
+/** Asks for a terminal's new name, or before deleting it. */
+function TerminalActionDialog({
   action,
   nextName,
   error,
-  isSubmitting,
+  busy,
   onChangeName,
-  onClose,
+  onCancel,
   onRename,
   onDelete,
 }: {
   action: TerminalAction;
   nextName: string;
   error: string | null;
-  isSubmitting: boolean;
-  onChangeName: (value: string) => void;
-  onClose: () => void;
+  busy: boolean;
+  onChangeName: (name: string) => void;
+  onCancel: () => void;
   onRename: () => void;
   onDelete: () => void;
 }) {
-  const renaming = action?.type === "rename";
+  // What it last asked about, kept while it fades away after the action is done.
+  const [shown, setShown] = useState<TerminalAction>(action);
+  if (action && action !== shown) setShown(action);
+  const drawn = action ?? shown;
+  const renaming = drawn?.type === "rename";
 
   return (
-    <Modal
-      transparent
-      animationType="fade"
+    <ConfirmDialog
       visible={action !== null}
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.popupOverlay}
-      >
-        <Pressable accessibilityLabel="Close terminal popup" onPress={onClose} style={styles.popupBackdrop} />
-        <View style={styles.popupCard}>
-          <Spacer size="xl" />
-          <Text style={styles.popupTitle}>
-            {renaming ? "Rename terminal session" : "Delete terminal session?"}
-          </Text>
-          <Spacer size="sm" />
-          <Text style={styles.popupBody}>
-            {renaming
-              ? TERMINAL_NAME_RULE
-              : `This permanently deletes “${action?.session.name ?? ""}”, its processes, and its transcript. This can’t be undone.`}
-          </Text>
-          {renaming ? (
-            <>
-              <Spacer size="lg" />
-              <TextInput
-                accessibilityLabel="Terminal session name"
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoFocus
-                editable={!isSubmitting}
-                maxLength={TERMINAL_SESSION_NAME_MAX_LENGTH}
-                onChangeText={onChangeName}
-                onSubmitEditing={onRename}
-                returnKeyType="done"
-                selectTextOnFocus
-                value={nextName}
-                style={styles.popupInput}
-              />
-            </>
-          ) : null}
-          {error ? (
-            <>
-              <Spacer size="sm" />
-              <Text style={styles.popupError}>{error}</Text>
-            </>
-          ) : null}
-          <Spacer size="xl" />
-          <View style={styles.popupButtons}>
-            <PopupButton label="Cancel" onPress={onClose} disabled={isSubmitting} />
-            <PopupButton
-              accessibilityLabel={renaming ? "Save terminal name" : "Confirm delete terminal"}
-              label={renaming ? "Save" : "Delete"}
-              destructive={!renaming}
-              onPress={renaming ? onRename : onDelete}
-              disabled={isSubmitting}
-            />
-          </View>
-          <Spacer size="xl" />
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-function PopupButton({
-  label,
-  accessibilityLabel,
-  destructive = false,
-  disabled = false,
-  onPress,
-}: {
-  label: string;
-  accessibilityLabel?: string;
-  destructive?: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.popupButton,
-        destructive ? styles.popupButtonDestructive : styles.popupButtonNeutral,
-        pressed && styles.pressed,
-        disabled && styles.disabled,
-      ]}
-    >
-      <Text style={[styles.popupButtonText, destructive && styles.popupButtonTextDestructive]}>{label}</Text>
-    </Pressable>
+      title={renaming ? "Rename terminal session" : "Delete terminal session?"}
+      message={renaming
+        ? TERMINAL_NAME_RULE
+        : `This permanently deletes “${drawn?.session.name ?? ""}”, its processes, and its transcript. This can’t be undone.`}
+      confirmLabel={renaming ? "Save" : "Delete"}
+      confirmAccessibilityLabel={renaming ? "Save terminal name" : "Confirm delete terminal"}
+      dismissAccessibilityLabel="Close terminal popup"
+      destructive={!renaming}
+      busy={busy}
+      error={error}
+      field={renaming ? {
+        accessibilityLabel: "Terminal session name",
+        value: nextName,
+        onChangeText: onChangeName,
+        maxLength: TERMINAL_SESSION_NAME_MAX_LENGTH,
+      } : undefined}
+      onCancel={onCancel}
+      onConfirm={renaming ? onRename : onDelete}
+    />
   );
 }
 
@@ -571,89 +519,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   pressed: {
     opacity: 0.7,
-  },
-  popupOverlay: {
-    flex: 1,
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-  popupBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(13, 12, 12, 0.36)",
-  },
-  popupCard: {
-    width: "100%",
-    maxWidth: 420,
-    alignSelf: "center",
-    paddingHorizontal: 20,
-    backgroundColor: theme.v2.palette.neutral[50],
-    borderWidth: 1,
-    borderColor: theme.v2.palette.neutral[300],
-    borderRadius: 20,
-    shadowColor: theme.v2.palette.neutral[900],
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 12,
-  },
-  popupTitle: {
-    fontFamily: theme.v2.fonts.semibold,
-    fontSize: 19,
-    color: theme.v2.appColors.ink,
-  },
-  popupBody: {
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 14,
-    lineHeight: 20,
-    color: theme.v2.appColors.muted,
-  },
-  popupInput: {
-    height: 48,
-    paddingHorizontal: 14,
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 15,
-    color: theme.v2.appColors.ink,
-    backgroundColor: theme.v2.colors.background,
-    borderWidth: 1,
-    borderColor: theme.v2.palette.neutral[300],
-    borderRadius: 12,
-  },
-  popupError: {
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 13,
-    color: theme.v2.palette.coral[600],
-  },
-  popupButtons: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    columnGap: 8,
-  },
-  popupButton: {
-    minWidth: 88,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderRadius: 12,
-  },
-  popupButtonNeutral: {
-    backgroundColor: theme.v2.palette.neutral[50],
-    borderColor: theme.v2.palette.neutral[300],
-  },
-  popupButtonDestructive: {
-    backgroundColor: theme.v2.palette.coral[700],
-    borderColor: theme.v2.palette.coral[700],
-  },
-  popupButtonText: {
-    fontFamily: theme.v2.fonts.semibold,
-    fontSize: 14,
-    color: theme.v2.appColors.ink,
-  },
-  popupButtonTextDestructive: {
-    color: theme.v2.palette.neutral[50],
-  },
-  disabled: {
-    opacity: 0.5,
   },
 }));
