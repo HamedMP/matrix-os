@@ -86,6 +86,10 @@ never authority.
    Bedrock inference profile. The platform checks owner/runtime policy, resolves
    the authoritative upstream before reservation, and signs a selection bound
    to owner, exact model, preference revision, and a maximum 30-second lifetime.
+   Selection is capability-negotiated on the read-only policy check: legacy
+   relays receive the original strict response and legacy platforms are retried
+   with the original strict request. Either mixed-version path remains
+   Cloudflare-only and omits new authorization fields.
 3. The relay calculates a conservative liability ceiling using the maximum
    configured input and requested output bounds plus a 20% margin. Pricing must
    be inside its reviewed time window.

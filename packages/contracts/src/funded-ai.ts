@@ -7,6 +7,8 @@ export * from "#funded-workers-models";
 
 export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;
+export const FUNDED_AI_UPSTREAM_SELECTION_VERSION = 1 as const;
+export const FUNDED_AI_MAX_READY_MODELS = 10;
 export const FundedAiUpstreamPreferenceValueSchema = z.enum(["cloudflare", "aws_bedrock"]);
 export const FundedAiResolvedUpstreamSchema = z.enum([
   "cloudflare_anthropic",
@@ -258,6 +260,8 @@ export const FundedAiAuthorizationRequestSchema = z.object({
 export const FundedAiPolicyCheckRequestSchema = z.object({
   credential: OpaqueCredentialSchema,
   modelId: ProviderModelReferenceSchema,
+  /** Opt-in keeps older strict platforms compatible with newer relays. */
+  upstreamSelectionVersion: z.literal(FUNDED_AI_UPSTREAM_SELECTION_VERSION).optional(),
 }).strict();
 
 export const FundedAiPolicyCheckResponseSchema = z.object({
@@ -270,8 +274,15 @@ export const FundedAiPolicyCheckResponseSchema = z.object({
     expiresAt: IsoTimestampSchema,
   }).strict(),
   policy: FundedAiEffectivePolicySchema,
+  /** Present only when the request advertised support for this projection. */
+  upstreamSelectionVersion: z.literal(FUNDED_AI_UPSTREAM_SELECTION_VERSION).optional(),
   upstreamSelection: FundedAiUpstreamSelectionSchema.optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.upstreamSelection && value.upstreamSelectionVersion !== FUNDED_AI_UPSTREAM_SELECTION_VERSION) {
+    ctx.addIssue({ code: "custom", path: ["upstreamSelectionVersion"],
+      message: "Upstream selection requires negotiated support" });
+  }
+});
 
 export const FundedAiFundingSummarySchema = z.object({
   /** Platform-authoritative capability; local runtime JSON cannot enable purchases. */
@@ -374,7 +385,7 @@ export const FundedAiRouteReadinessReceiptSchema = z.object({
   runtimeRevision: RevisionSchema,
   checkedAt: IsoTimestampSchema,
   staleAfter: IsoTimestampSchema,
-  readyModelIds: z.array(ProviderModelReferenceSchema).max(10)
+  readyModelIds: z.array(ProviderModelReferenceSchema).max(FUNDED_AI_MAX_READY_MODELS)
     .refine((models) => new Set(models).size === models.length, "Model IDs must be unique"),
 }).strict().superRefine((value, ctx) => {
   const checked = Date.parse(value.checkedAt);
