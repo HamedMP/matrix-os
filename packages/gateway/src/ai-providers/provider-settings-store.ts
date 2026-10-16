@@ -4,7 +4,7 @@ import { assertClaudeNativeLoginSelection } from "./claude-native-login-completi
 import { readVerifiedClaudeNativeSignedOut, type ClaudeNativeSignedOut } from "./claude-native-signed-out.js";
 import type { ClaudeNativeAccountMetadata, ClaudeNativeAccountMetadataReader } from "./claude-native-account-metadata.js";
 import { renewProviderSettingsNativeObservation } from "./provider-settings-native-renewal.js";
-import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata } from "./native-account-metadata-binding.js";
+import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
@@ -81,7 +81,7 @@ export interface ProviderSettingsStoreWriter {
   getSnapshot(options?: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot>;
   mutate(mutation: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse>;
   /** Server-only completion; never accepts a client-supplied source or proof. */
-  completeCodexNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse>;
+  completeCodexNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; verifyNativeAccount?: NativeAccountCompletionProof }): Promise<ProviderSettingsMutationResponse>;
   completeClaudeNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse>;
 }
 interface ProviderSettingsStoreOptions {
@@ -531,8 +531,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     return validated;
   }
 
-  async completeCodexNativeLogin(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse> {
-    return this.#mutate({ ...input, type: "select_access_source", accessSourceId: "owner_openai_profile", enableHarness: true }, false, true);
+  async completeCodexNativeLogin(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; verifyNativeAccount?: NativeAccountCompletionProof }): Promise<ProviderSettingsMutationResponse> {
+    const { verifyNativeAccount, ...request } = input;
+    return this.#mutate({ ...request, type: "select_access_source", accessSourceId: "owner_openai_profile", enableHarness: true }, false, true, verifyNativeAccount);
   }
 
   async completeClaudeNativeLogin(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse> {
@@ -543,7 +544,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     return this.#mutate(input, false);
   }
 
-  async #mutate(input: ProviderSettingsMutation, claudeNativeCompletion: boolean, codexNativeCompletion = false): Promise<ProviderSettingsMutationResponse> {
+  async #mutate(input: ProviderSettingsMutation, claudeNativeCompletion: boolean, codexNativeCompletion = false, verifyExpectedCodexAccount?: NativeAccountCompletionProof): Promise<ProviderSettingsMutationResponse> {
     const parsed = ProviderSettingsMutationSchema.safeParse(input);
     if (!parsed.success) throw new ProviderSettingsStoreError("invalid_request", 400);
     return await this.#serialize(async () => {
@@ -591,7 +592,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         ? await readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut) : null;
       if (claudeNativeCompletion && !claudeMetadata) throw new ProviderSettingsStoreError("invalid_route", 400);
       let codexMetadata = (codexNativeCompletion || (mutation.type === "logout_account" || mutation.type === "remove_account") && mutation.accountId === "owner_codex") ? await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.()) : null;
-      if (codexNativeCompletion && (!codexMetadata || codexMetadata.authMethod !== "terminal")) throw new ProviderSettingsStoreError("invalid_route", 400);
+      if (codexNativeCompletion && (!codexMetadata || codexMetadata.authMethod !== "terminal" || verifyExpectedCodexAccount && !await verifyExpectedCodexAccount(codexMetadata))) throw new ProviderSettingsStoreError("invalid_route", 400);
       const snapshot = await this.#project(canonical, config, false, enrichment, codexMetadata, null, claudeMetadata);
       if (codexNativeCompletion) assertCodexNativeLoginSelection({ mutation, snapshot });
       if (claudeNativeCompletion) assertClaudeNativeLoginSelection({ mutation, snapshot });
@@ -762,7 +763,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       }
 
       try {
-        if (codexNativeCompletion && !await verifyNativeAccountMetadata(codexMetadata)) throw new ProviderSettingsStoreError("invalid_route", 400);
+        if (codexNativeCompletion && (!await verifyNativeAccountMetadata(codexMetadata) || verifyExpectedCodexAccount && (!codexMetadata || !await verifyExpectedCodexAccount(codexMetadata)))) throw new ProviderSettingsStoreError("invalid_route", 400);
         if (codexNativeCompletion) assertCodexNativeLoginSelection({ mutation, snapshot: await this.#project(canonical, config, false, undefined, codexMetadata) });
         if (claudeNativeCompletion && !await verifyNativeAccountMetadata(claudeMetadata)) {
           throw new ProviderSettingsStoreError("invalid_route", 400);

@@ -7,7 +7,7 @@ import type {
 } from "@matrix-os/contracts";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { hasConfiguredConnection, hasStaleHermesConnection } from "./harness-connection.js";
-import { isCodexTerminalOption, managedConnectionCapability } from "./managed-connection-capability.js";
+import { isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
 import { useWorkflowPolling } from "./use-workflow-polling.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability, ProviderWorkflowUIOperation } from "./types.js";
@@ -277,7 +277,7 @@ export function useHarnessWorkflowController({
         setCodeSubmitted(false);
       }
       const exactOption = option ?? (kind === "login" ? selectedOption ?? operation?.connectionOption ?? undefined : undefined);
-      if (kind === "login" && harness.harness !== "claude" && !(harness.harness === "codex" && isCodexTerminalOption(exactOption))) throw new Error("connection unavailable");
+      if (kind === "login" && harness.harness !== "claude" && !(harness.harness === "codex" && isCodexNativeLoginOption(exactOption))) throw new Error("connection unavailable");
       if (kind === "login" && capability.connectionOptions && (!exactOption || !client.startConnection
         || !capability.connectionOptions.some(item => item.id === exactOption.id && item.availability === "available" && item.authKind === "subscription")))
         throw new Error("connection unavailable");
@@ -307,7 +307,7 @@ export function useHarnessWorkflowController({
         optionId: exactOption.id, idempotencyKey: pendingStart.current.idempotencyKey}, signal)
         : await client.start({harnessInstanceId: harness.id, kind, method: loginMethod,
           idempotencyKey: pendingStart.current.idempotencyKey}, signal);
-      if (kind === "login" && harness.harness === "codex" && !isCodexTerminalOption(result.connectionOption)) throw new Error("workflow scope mismatch");
+      if (kind === "login" && harness.harness === "codex" && !isCodexNativeLoginOption(result.connectionOption)) throw new Error("workflow scope mismatch");
       if (exactOption && result.connectionOption?.id !== exactOption.id) throw new Error("workflow scope mismatch");
       if (result.harnessInstanceId !== harness.id || result.kind !== kind)
         throw new Error("workflow scope mismatch");

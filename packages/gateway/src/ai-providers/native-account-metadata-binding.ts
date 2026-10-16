@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 
+/** Server-only foreground proof; never part of a public mutation or DTO. */
+export type NativeAccountCompletionProof = (current: CodexNativeAccountMetadata) => Promise<boolean>;
+
 // Observation lifetime only. Neither principal evidence nor verification functions
 // are part of the public metadata object, persistence, contracts, or logs.
 const bindings = new WeakMap<CodexNativeAccountMetadata, { verify: () => Promise<boolean>; principal?: string }>();
