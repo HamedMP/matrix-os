@@ -14,6 +14,7 @@ import {
   FundedAiAuthorizationResponseSchema,
   type FundedAiAuthorizationResponse,
   type FundedAiPriorityReason,
+  type FundedAiUpstreamSelection,
 } from "@matrix-os/contracts";
 import { sql } from "kysely";
 import type { z } from "zod/v4";
@@ -43,6 +44,11 @@ export interface FundedAuthorizeDependencies {
   reservationIdFactory(): string;
   reservationTtlMs: number;
   policyFreshnessMs: number;
+  verifyUpstream?: (input: {
+    ownerId: string;
+    modelId: string;
+    selection: FundedAiUpstreamSelection;
+  }) => Promise<boolean>;
 }
 
 export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
@@ -58,6 +64,8 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       modelId: request.modelId, maxCostMicrousd: request.maxCostMicrousd,
       ...(request.billingMode ? { billingMode: request.billingMode } : {}),
       ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
+      ...(request.upstream ? { upstream: request.upstream } : {}),
+      ...(request.upstreamSelection ? { upstreamSelection: request.upstreamSelection } : {}),
     })).digest("hex");
     await deps.db.ready;
     const outcome = await deps.db.transaction(async (trx): Promise<AuthorizeOutcome> => {
@@ -97,6 +105,12 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       }
       const allowedModelIds = intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids));
       if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
+      const selectedUpstream = request.upstream ?? null;
+      if (selectedUpstream === "aws_bedrock" && (!request.upstreamSelection || !deps.verifyUpstream
+        || !await deps.verifyUpstream({ ownerId: credential.owner_id, modelId: request.modelId,
+          selection: request.upstreamSelection }))) {
+        throw new AiFundedPolicyError("access_disabled");
+      }
 
       const identity = {
         ownerId: credential.owner_id,
@@ -233,6 +247,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
           periodStart,
           expiresAt,
           status: "reserved",
+          ...(selectedUpstream ? { upstream: selectedUpstream } : {}),
         },
       });
       await trx.executor.insertInto("ai_funded_usage_reservations").values({
@@ -259,6 +274,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         promotional_reserved_microusd: fundingSources.promotionalReservedMicrousd,
         addon_reserved_microusd: fundingSources.addonReservedMicrousd,
         actual_microusd: null,
+        selected_upstream: selectedUpstream,
         resolved_model: null,
         pricing_version: null,
         period_start: periodStart,

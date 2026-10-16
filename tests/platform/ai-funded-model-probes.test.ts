@@ -23,6 +23,24 @@ describe("fleet funded model probe budget", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it("admits only configured Bedrock models on the explicit Bedrock probe path", async () => {
+    const bedrockModel = "bedrock/qualified-model";
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(pricedReady));
+    const probes = createFundedModelProbeService({ db, relayBaseUrl: "https://relay.example.test",
+      relayControlToken: "c".repeat(32), dailyLimit: 1, minuteLimit: 1,
+      bedrockModelIds: [bedrockModel], fetchFn, now: () => now });
+
+    expect((await probes.probe(bedrockModel)).ready).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect((await probes.probe(sonnet, { upstream: "aws_bedrock" })).ready).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect((await probes.probe(bedrockModel, { upstream: "aws_bedrock" })).ready).toBe(true);
+    expect(fetchFn).toHaveBeenCalledWith(
+      `https://relay.example.test/ready?model=${encodeURIComponent(bedrockModel)}&upstream=aws_bedrock`,
+      expect.objectContaining({ redirect: "error", signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it("atomically limits concurrent reservations across service instances and does not spend day count on minute exhaustion", async () => {
     const reserved = await Promise.all(Array.from({ length: 8 }, () =>
       reserveFundedModelProbe({ db, now, dailyLimit: 3, minuteLimit: 2 })));

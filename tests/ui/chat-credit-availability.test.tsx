@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import type { ProviderAccessSource } from "@matrix-os/contracts";
 import { GatewayPanel, isMatrixGatewaySourceReady } from "../../packages/ui/src/agents-providers/GatewayPanel";
@@ -29,6 +29,28 @@ it("shows zero ordinary Chat credit with a positive speech-inclusive total", () 
   expect(screen.getByText("$0.00")).toBeVisible();
   expect(screen.queryByText("$1.00")).toBeNull();
   expect(screen.queryByText(/voice credit/i)).toBeNull();
+});
+it("shows and mutates the platform-projected upstream preference only when supplied", () => {
+  freeze();
+  const onMutate = vi.fn();
+  const preference = { selectedUpstream: "cloudflare" as const, effectiveUpstream: "cloudflare" as const,
+    revision: 2, updatedAt: now, validThrough: "2026-11-01T00:00:00.000Z" };
+  const matrixSource = source();
+  const policy = { accessSourceId: matrixSource.id, allowedModelIds: [], monthlyBudgetMicrousd: 1_000_000, topUpEnabled: true };
+  const provider = { id: "anthropic", displayName: "Anthropic", models: [] };
+  const view = render(<GatewayPanel source={matrixSource} policy={policy} provider={provider} disabled={false}
+    canSetBudget={false} canSetAllowlist={false} canAddCredit={false} canSetUpstream
+    upstreamPreference={preference} onMutate={onMutate} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
+  const choice = screen.getByRole("combobox", { name: "Matrix AI upstream" });
+  expect(choice).toHaveValue("cloudflare");
+  fireEvent.change(choice, { target: { value: "aws_bedrock" } });
+  expect(onMutate).toHaveBeenCalledWith({ type: "set_gateway_upstream", expectedUpstreamRevision: 2,
+    selectedUpstream: "aws_bedrock" });
+  view.unmount();
+  render(<GatewayPanel source={matrixSource} policy={policy} provider={provider} disabled={false}
+    canSetBudget={false} canSetAllowlist={false} canAddCredit={false}
+    upstreamPreference={undefined} onMutate={onMutate} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
+  expect(screen.queryByRole("combobox", { name: "Matrix AI upstream" })).toBeNull();
 });
 it.each([1, 4_999, 9_999, 10_000])("caps source credit by monthly budget and preserves precision: %s", amount => {
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");

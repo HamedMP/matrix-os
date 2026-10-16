@@ -222,6 +222,47 @@ describe("funded AI policy repository", () => {
       .rejects.toMatchObject({ code: "access_disabled" });
   });
 
+  it("binds a verified Bedrock selection into the reservation and rejects unverified selection", async () => {
+    const seeded = await enableRuntime();
+    const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" } as const;
+    const issued = await seeded.issueRuntimeCredential(identity);
+    const selection = {
+      upstream: "aws_bedrock" as const,
+      preferenceRevision: 1,
+      checkedAt: now,
+      staleAfter: "2026-08-30T20:00:30.000Z",
+      proof: "a".repeat(64),
+    };
+    const verifyUpstream = vi.fn(async () => true);
+    const repo = createAiFundedPolicyRepository({
+      db,
+      credentialHashSecret: "h".repeat(32),
+      now: () => new Date(now),
+      reservationIdFactory: () => "reservation_bedrock",
+      verifyUpstream,
+    });
+    const authorized = await repo.authorize({ credential: issued.credential.token, requestId: "request_bedrock",
+      modelId: models[0], maxCostMicrousd: 100, billingMode: "usage",
+      upstream: "aws_bedrock", upstreamSelection: selection });
+    expect(authorized.reservation.upstream).toBe("aws_bedrock");
+    expect(verifyUpstream).toHaveBeenCalledWith({ ownerId: identity.ownerId, modelId: models[0], selection });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select("selected_upstream")
+      .where("reservation_id", "=", "reservation_bedrock").executeTakeFirstOrThrow())
+      .toEqual({ selected_upstream: "aws_bedrock" });
+    await repo.releaseReservation({ reservationId: "reservation_bedrock", tokenId: issued.credential.tokenId,
+      reason: "pre_upstream_failure" });
+
+    const rejecting = createAiFundedPolicyRepository({
+      db,
+      credentialHashSecret: "h".repeat(32),
+      now: () => new Date(now),
+      verifyUpstream: async () => false,
+    });
+    await expect(rejecting.authorize({ credential: issued.credential.token, requestId: "request_unverified",
+      modelId: models[0], maxCostMicrousd: 100, billingMode: "usage",
+      upstream: "aws_bedrock", upstreamSelection: selection })).rejects.toMatchObject({ code: "access_disabled" });
+  });
+
   it("rejects expired credentials and models outside the effective intersection", async () => {
     const repo = await enableRuntime();
     const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" } as const;

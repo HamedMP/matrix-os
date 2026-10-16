@@ -60,6 +60,20 @@ describe("AI provider routes", () => {
     expect(AiProviderSnapshotV3Schema.parse(current).nativeHarnessCatalog).toEqual(native);
     expect((await app.request("/api/ai/providers?includeNativeProfiles=yes")).status).toBe(400);
   });
+  it("negotiates platform upstream truth for raw V3 readers", async () => {
+    const upstreamPreference = { selectedUpstream: "aws_bedrock" as const,
+      effectiveUpstream: "aws_bedrock" as const,
+      effectiveBedrockModelIds: ["anthropic/claude-sonnet-5"], revision: 2,
+      updatedAt: "2026-08-29T20:59:00.000Z", validThrough: "2026-09-30T00:00:00.000Z" };
+    const app = new Hono();
+    app.route("/api/ai", createAiProviderRoutes({ service: { getSnapshot: async () => ({
+      ...emptySnapshot, upstreamPreference,
+    }) }, getPrincipal: () => ({ userId: "owner_123" }) }));
+    expect(await (await app.request("/api/ai/providers")).json()).not.toHaveProperty("upstreamPreference");
+    expect(await (await app.request("/api/ai/providers?includeUpstreamPreference=true")).json())
+      .toHaveProperty("upstreamPreference", upstreamPreference);
+    expect((await app.request("/api/ai/providers?includeUpstreamPreference=yes")).status).toBe(400);
+  });
   it("negotiates exact native driver observation fields without changing legacy V3 responses", async () => {
     const driver = { id: "hermes", displayName: "Hermes", kind: "cli" as const, installState: "installed" as const, health: "degraded" as const, capabilities: [], setupActions: [] };
     const nativeRouteObservation = { providerId: "anthropic", modelId: "claude-sonnet-5", credentialKind: "provider_profile" as const,

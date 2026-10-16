@@ -2,7 +2,12 @@ import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
-import { FundedAiChatAvailabilitySchema, isManagedWorkersAiModel } from "#funded-ai";
+import {
+  FundedAiChatAvailabilitySchema,
+  FundedAiUpstreamPreferenceValueSchema,
+  FundedAiUpstreamPreferenceViewSchema,
+  isManagedWorkersAiModel,
+} from "#funded-ai";
 import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 import { MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "#bots/model-choice";
 
@@ -388,6 +393,7 @@ export const ProviderSettingsSupportedActionSchema = z.enum([
   "reassign_account",
   "set_gateway_budget",
   "set_gateway_allowlist",
+  "set_gateway_upstream",
   "add_credit",
   "submit_api_key",
 ]);
@@ -406,7 +412,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   revision: RevisionSchema,
   refreshedAt: IsoTimestampSchema,
   access: ProviderSettingsAccessSchema,
-  supportedActions: z.array(ProviderSettingsSupportedActionSchema).max(15),
+  supportedActions: z.array(ProviderSettingsSupportedActionSchema).max(16),
   configurationHarnessKinds: z.array(ProviderHarnessKindSchema).max(6).optional(),
   harnessCatalog: z.array(ProviderHarnessCatalogEntrySchema).length(4),
   modelProviders: z.array(ProviderModelProviderSchema).max(32),
@@ -418,6 +424,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
     providerId: ProviderIdSchema, accessSourceId: ReferenceIdSchema,
   })).max(256).optional(),
   gatewayPolicy: ProviderGatewayPolicySchema.nullable(),
+  upstreamPreference: FundedAiUpstreamPreferenceViewSchema.optional(),
 }).strict().superRefine((snapshot, ctx) => {
   const collections = [
     ["modelProviders", snapshot.modelProviders.map((value) => value.id)],
@@ -458,6 +465,9 @@ export const ProviderSettingsSnapshotSchema = z.object({
     || snapshot.supportedActions.includes("set_gateway_allowlist"))
     && snapshot.gatewayPolicy === null) {
     ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Gateway policy mutations require a gateway policy" });
+  }
+  if (snapshot.supportedActions.includes("set_gateway_upstream") && !snapshot.upstreamPreference) {
+    ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Upstream mutation requires platform preference truth" });
   }
   for (const [key, ids] of collections) {
     if (!unique(ids)) ctx.addIssue({ code: "custom", path: [key], message: `Duplicate ${key} id` });
@@ -589,6 +599,10 @@ export const ProviderSettingsMutationSchema = z.discriminatedUnion("type", [
     allowedModelIds: z.array(ProviderModelReferenceSchema).max(256) }).strict().superRefine((value, ctx) => {
       if (!unique(value.allowedModelIds)) ctx.addIssue({ code: "custom", path: ["allowedModelIds"], message: "Duplicate allowed model" });
     }),
+  z.object({ type: z.literal("set_gateway_upstream"), ...MutationBase,
+    expectedUpstreamRevision: RevisionSchema,
+    selectedUpstream: FundedAiUpstreamPreferenceValueSchema,
+  }).strict(),
 ]);
 
 export const ProviderConnectionAttemptActionSchema = z.discriminatedUnion("kind", [

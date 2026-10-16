@@ -258,10 +258,20 @@ it.each(["owner", "machine", "slot", "token"])("canonical funding-summary %s tra
   const summary = createFundedAiFundingSummaryClient(config, { fetchFn: f.transport, ...f.routeOptions });
   await expect(summary.getFundingSummary()).rejects.toThrow(); expect(f.transport).not.toHaveBeenCalled();
 });
-it("canonical summary refuses legacy compatibility retry after a strict Platform rejection", async () => {
+it("canonical summary retries only the Chat-compatible shape and preserves phase binding", async () => {
   const f = await fixture();
   const fetchFn = vi.fn(async () => Response.json({ error: { code: "invalid_request", message: "Invalid request" } }, { status: 400 }));
   const summary = createFundedAiFundingSummaryClient(f.config, { fetchFn, ...f.routeOptions });
   await expect(summary.getFundingSummary()).rejects.toThrow("Matrix AI usage is temporarily unavailable");
-  expect(fetchFn).toHaveBeenCalledTimes(1);
+  expect(fetchFn).toHaveBeenCalledTimes(2);
+  expect(fetchFn.mock.calls.map((call) => call[1]?.body)).toEqual([
+    JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
+    JSON.stringify({ includeChatAvailability: true }),
+  ]);
+  for (const call of fetchFn.mock.calls) {
+    expect(call[1]?.headers).toMatchObject({
+      "x-matrix-isolated-chat-phase": f.phase.phaseId,
+      "x-matrix-isolated-chat-config": f.scope.digest,
+    });
+  }
 });

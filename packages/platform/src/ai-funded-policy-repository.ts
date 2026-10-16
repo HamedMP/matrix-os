@@ -11,6 +11,7 @@ import {
   type FundedAiIdentity,
   type FundedAiRuntimeCredentialIssueResponse,
   type FundedAiRequestClass,
+  type FundedAiUpstreamSelection,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { sql } from "kysely";
@@ -56,6 +57,7 @@ export interface AiFundedPolicyRepositoryOptions {
   reservationTtlMs?: number;
   inFlightTtlMs?: number;
   reservationIdFactory?: () => string;
+  verifyUpstream?: (input: { ownerId: string; modelId: string; selection: FundedAiUpstreamSelection }) => Promise<boolean>;
 }
 
 export type SetRuntimePolicyInput = z.infer<typeof RuntimePolicyUpdateSchema>;
@@ -373,6 +375,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     reservationTtlMs,
     inFlightTtlMs,
     reservationIdFactory: options.reservationIdFactory,
+    verifyUpstream: options.verifyUpstream,
   });
   return {
     getGlobalPolicy,

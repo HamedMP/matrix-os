@@ -15,6 +15,7 @@ import type { AiProviderSnapshotV3, BotModelRoute, CanonicalChatModelSelection }
 import { BotModelRouteSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import type { BotCredentialAccessSourceId } from "./credentials.js";
 import { MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
+import { isEffectiveBedrockModel } from "../ai-providers/effective-bedrock-route.js";
 
 /** Provider V3 access sources bots can use, in fallback order, and the credential each launches with. */
 const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: BotCredentialAccessSourceId; anthropicOnly: boolean }> = [
@@ -56,9 +57,10 @@ function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDE
   if (!model || model.status === "retired" || model.status === "unavailable" || !model.eligibleAccessSourceIds.includes(entry.id)) return undefined;
   if (!model.capabilities.includes("tools")) return undefined;
   const anthropic = model.vendor === "anthropic";
-  if (!anthropic && entry.anthropicOnly) return undefined;
+  const bedrock = isEffectiveBedrockModel(snapshot, entry.id, modelId);
+  if ((!anthropic && entry.anthropicOnly) || (bedrock && entry.id !== "matrix_included")) return undefined;
   const route = BotModelRouteSchema.safeParse({
-    api: anthropic ? "anthropic-messages" : "openai-completions",
+    api: anthropic && !bedrock ? "anthropic-messages" : "openai-completions",
     modelId,
     input: model.capabilities.includes("vision") ? ["text", "image"] : ["text"],
     contextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : OTHER_CONTEXT_WINDOW,

@@ -22,7 +22,13 @@ const CURRENT_STATUS = new Map<string, "current">(
   KERNEL_MODELS.map((model) => [model.id, "current"]),
 );
 
-export function buildBundledModelCatalog(): AiModelDescriptorView[] {
+export function buildBundledModelCatalog(
+  observedMatrixIncludedModelIds: readonly string[] = [],
+): AiModelDescriptorView[] {
+  const matrixIncludedModelIds = new Set<string>([
+    ...MATRIX_INCLUDED_MODEL_IDS,
+    ...observedMatrixIncludedModelIds,
+  ]);
   const modelIds = [
     ...new Set([
       ...KERNEL_MODELS.map((model) => model.id),
@@ -33,7 +39,7 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
   const anthropicModels: AiModelDescriptorView[] = modelIds.map((id) => {
     const option = resolveKernelModelOption(id);
     const eligibleAccessSourceIds = [
-      ...(MATRIX_INCLUDED_MODEL_IDS.includes(id as (typeof MATRIX_INCLUDED_MODEL_IDS)[number])
+      ...(matrixIncludedModelIds.has(id)
         ? ["matrix_included"]
         : []),
       ...(OWNER_ANTHROPIC_MODEL_IDS.includes(id as (typeof OWNER_ANTHROPIC_MODEL_IDS)[number])

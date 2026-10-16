@@ -452,7 +452,14 @@ export class AiProviderService implements AiProviderSnapshotReader {
       "matrix",
       now,
     );
-    const catalog = buildBundledModelCatalog();
+    // Platform policy/readiness is the authority for configured Matrix relay
+    // models. Extend only existing reviewed descriptors; this adds the relay
+    // path without inventing vendor, capabilities, or display metadata.
+    const observedMatrixIncludedModelIds = [...new Set([
+      ...(funded?.discoverableModelIds ?? []),
+      ...(funded?.allowedModelIds ?? []),
+    ])];
+    const catalog = buildBundledModelCatalog(observedMatrixIncludedModelIds);
     const observeFundedSource = (sourceId: string) => fundedSourceObservation(
       eligibleModelsForSource(sourceId, catalog).map(model => model.id), matrixReadiness, funded,
     );
@@ -460,6 +467,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
       matrix_cloudflare: observeFundedSource("matrix_cloudflare"),
       matrix_included: observeFundedSource("matrix_included"),
     };
+    const effectiveBedrockModelIds = new Set((funded?.upstreamPreference?.effectiveBedrockModelIds ?? [])
+      .map((modelId) => modelId.replace(/^anthropic\//, "")));
 
     const accessSources: AiAccessSourceView[] = [
       sourceFromReadiness({
@@ -559,7 +568,10 @@ export class AiProviderService implements AiProviderSnapshotReader {
       .filter((source) => source.vendor === "anthropic")
       .map((source) => {
         const sourceModels = eligibleModelsForSource(source.id, catalog)
-          .filter((model) => source.eligibleModelIds.includes(model.id));
+          .filter((model) => source.eligibleModelIds.includes(model.id))
+          // The Claude SDK speaks Anthropic Messages. Bedrock is exposed only
+          // by the relay's OpenAI-compatible endpoint and remains available to Matrix Pi.
+          .filter((model) => source.id !== "matrix_included" || !effectiveBedrockModelIds.has(model.id));
         // A persisted selection is an explicit route request. If the selected
         // access source cannot serve it, fail closed instead of silently
         // replacing it with a cheaper or differently governed model.
@@ -638,6 +650,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       contractVersion: 3,
       ...(matrixAnthropicConnection ? { matrixAnthropicConnection } : {}),
       ...(nativeHarnessCatalog ? { nativeHarnessCatalog } : {}),
+      ...(funded?.upstreamPreference ? { upstreamPreference: funded.upstreamPreference } : {}),
       revision: 0,
       refreshedAt: now,
       accessSources,

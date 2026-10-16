@@ -42,6 +42,7 @@ import {
   type FundedAiSettlementResponse,
   type FundedAiStartResponse,
   JevProvenanceSchema,
+  type FundedAiUpstreamSelection,
 } from "@matrix-os/contracts";
 import { sql } from "kysely";
 import { z } from "zod/v4";
@@ -126,6 +127,7 @@ export interface AiFundedMeteringRepositoryOptions {
   reservationTtlMs: number;
   inFlightTtlMs: number;
   reservationIdFactory?: () => string;
+  verifyUpstream?: (input: { ownerId: string; modelId: string; selection: FundedAiUpstreamSelection }) => Promise<boolean>;
 }
 
 // Monetary and cleanup responsibilities live in focused modules.
@@ -492,6 +494,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     reservationIdFactory,
     reservationTtlMs: options.reservationTtlMs,
     policyFreshnessMs: options.policyFreshnessMs,
+    verifyUpstream: options.verifyUpstream,
   });
 
   async function startReservation(
@@ -610,6 +613,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         throw new AiFundedPolicyError("idempotency_conflict");
       }
       if (reservation.model_id === JEV_MODEL_ID && request.upstreamProvenance !== undefined) {
+        throw new AiFundedPolicyError("idempotency_conflict");
+      }
+      if (reservation.selected_upstream !== null && finalizationMode === "exact"
+        && request.upstreamProvenance?.upstream !== reservation.selected_upstream) {
         throw new AiFundedPolicyError("idempotency_conflict");
       }
       if (reservation.model_id === JEV_MODEL_ID) {

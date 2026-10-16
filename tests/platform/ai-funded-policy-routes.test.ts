@@ -14,6 +14,7 @@ import {
   FundedAiRouteReadinessReceiptSchema,
   FundedAiSettlementResponseSchema,
   FundedAiStartResponseSchema,
+  FundedAiUpstreamPreferenceResponseSchema,
 } from "@matrix-os/contracts";
 import { AiFundedPolicyError, createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import {
@@ -35,6 +36,7 @@ import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "../../packages/gateway/src/funded-ai-readiness.js";
+import { createAiFundedUpstreamPreferenceRepository } from "../../packages/platform/src/ai-funded-upstream-preference.js";
 
 const platformSecret = "platform-secret-for-tests-123456789";
 const relayControlToken = "relay-control-token-for-tests-123456";
@@ -80,16 +82,38 @@ describe("funded AI policy routes", () => {
     topUpEnabled?: boolean;
     routeProbes?: FundedModelProbeService;
     tokenIdFactory?: () => string;
+    upstreamPreferences?: boolean;
+    allowedModelIds?: string[];
+    bedrockModelIds?: string[];
+    readCachedBedrock?: (modelId: string) => Promise<{
+      ready: boolean;
+      checkedAt: string;
+      staleAfter: string;
+      priceValidThrough?: string;
+    }>;
   } = {}) {
+    const upstreamPreferences = options.upstreamPreferences
+      ? createAiFundedUpstreamPreferenceRepository({
+          db,
+          config: { enabled: true, ownerIds: ["user_alice", "user_hamed", "user_stefan", "user_yuhan"],
+            bedrockModelIds: options.bedrockModelIds ?? [modelId], validThrough: "2026-09-30T20:00:00.000Z" },
+          selectionSecret: "upstream-selection-secret-for-tests-123",
+          readCachedBedrock: options.readCachedBedrock ?? vi.fn(async () => ({ ready: true, checkedAt: now,
+            staleAfter: "2026-08-30T20:00:30.000Z", priceValidThrough: "2026-09-30T20:00:00.000Z" })),
+          now: () => new Date(now), eventIdFactory: () => "event_upstream_1",
+        })
+      : undefined;
     const repository = createAiFundedPolicyRepository({
       db, credentialHashSecret: hashSecret, now: () => new Date(now),
       tokenIdFactory: options.tokenIdFactory ?? (() => "credential_123"), tokenSecretFactory: () => "s".repeat(43),
       issueCooldownMs: 60_000,
+      verifyUpstream: upstreamPreferences?.verifyUpstream,
     });
-    await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
+    const allowedModelIds = options.allowedModelIds ?? [modelId];
+    await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds });
     await repository.setRuntimePolicy({
       identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
-      expectedRevision: 0, enabled: true, allowedModelIds: [modelId], expiresAt: null,
+      expectedRevision: 0, enabled: true, allowedModelIds, expiresAt: null,
       monthlyBudgetMicrousd: 1_000,
     });
     await repository.grantCredit({
@@ -121,9 +145,10 @@ describe("funded AI policy routes", () => {
           topUpEnabled: options.topUpEnabled,
           promotionalGrant,
           routeProbes: options.routeProbes,
+          upstreamPreferences,
           now: () => new Date(now),
         }),
-        internalFundedAiRelayRoutes: createAiFundedRelayRoutes({ relayControlToken, repository }),
+        internalFundedAiRelayRoutes: createAiFundedRelayRoutes({ relayControlToken, repository, upstreamPreferences }),
         internalFundedAiOperatorRoutes: createAiFundedOperatorRoutes({
           db,
           operatorSecret: platformSecret,
@@ -132,8 +157,140 @@ describe("funded AI policy routes", () => {
           promotionalGrant,
         }),
       }),
+      upstreamPreferences,
     };
   }
+
+  it("hides the cohort preference unless entitled and binds the resolved upstream through authorization", async () => {
+    const { app } = await createTestApp({ upstreamPreferences: true });
+    await insertUserMachine(db, { machineId: "machine_bob", clerkUserId: "user_bobby", handle: "bob", runtimeSlot: "primary",
+      status: "running", imageVersion: "v1", provisionedAt: "2026-08-30T19:00:00.000Z", activationState: "authorized" });
+    const hidden = await app.request("/internal/containers/bob/ai/upstream-preference?runtimeSlot=primary", {
+      method: "POST", headers: { authorization: `Bearer ${bearerFor("bob", "machine_bob")}`, "content-type": "application/json" },
+      body: JSON.stringify({ idempotencyKey: "hidden_preference", expectedRevision: 0,
+        selectedUpstream: "aws_bedrock" }),
+    });
+    expect(hidden.status).toBe(404);
+    expect(JSON.stringify(await hidden.json())).not.toMatch(/bedrock|cloudflare|cohort|entitl/i);
+    const runtimeHeaders = { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" };
+    const summary = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST", headers: runtimeHeaders,
+      body: JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
+    });
+    expect(summary.status).toBe(200);
+    expect(await summary.json()).toMatchObject({ upstreamPreference: {
+      selectedUpstream: "cloudflare", effectiveUpstream: "cloudflare", revision: 0,
+    } });
+    const updated = await app.request("/internal/containers/alice/ai/upstream-preference?runtimeSlot=primary", {
+      method: "POST", headers: runtimeHeaders,
+      body: JSON.stringify({ idempotencyKey: "upstream_preference_1", expectedRevision: 0,
+        selectedUpstream: "aws_bedrock" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(FundedAiUpstreamPreferenceResponseSchema.parse(await updated.json()).preference).toMatchObject({
+      selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock", revision: 1,
+    });
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await (await app.request(fundedCredentialPath(), {
+      method: "POST", headers: runtimeHeaders, body: "{}",
+    })).json());
+    const legacyCheck = await app.request("/internal/ai/funded/check", {
+      method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, modelId }),
+    });
+    expect(legacyCheck.status).toBe(200);
+    expect(await legacyCheck.json()).not.toHaveProperty("upstreamSelection");
+    const check = await app.request("/internal/ai/funded/check", {
+      method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, modelId, upstreamSelectionVersion: 1 }),
+    });
+    const negotiatedCheck = FundedAiPolicyCheckResponseSchema.parse(await check.json());
+    expect(negotiatedCheck.upstreamSelectionVersion).toBe(1);
+    const selection = negotiatedCheck.upstreamSelection;
+    expect(selection).toMatchObject({ upstream: "aws_bedrock", preferenceRevision: 1 });
+    const authorized = await app.request("/internal/ai/funded/authorize", {
+      method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, requestId: "request_upstream_1", modelId,
+        maxCostMicrousd: 100, upstream: "aws_bedrock", upstreamSelection: selection }),
+    });
+    expect(authorized.status).toBe(200);
+    expect(FundedAiAuthorizationResponseSchema.parse(await authorized.json()).reservation.upstream).toBe("aws_bedrock");
+  });
+
+  it("uses cached Bedrock health for funding summaries without starting a live paid probe", async () => {
+    const probeBedrock = vi.fn(async () => {
+      throw new Error("live Bedrock probe must not run during a funding summary");
+    });
+    const readCached = vi.fn(async () => ({
+      ready: false,
+      checkedAt: now,
+      staleAfter: "2026-08-30T20:00:05.000Z",
+    }));
+    const created = await createTestApp({
+      upstreamPreferences: true,
+      routeProbes: { probe: probeBedrock, readCached },
+    });
+    await created.upstreamPreferences!.setPreference({
+      ownerId: "user_alice",
+      actorOwnerId: "user_alice",
+      idempotencyKey: "cached_summary_health",
+      expectedRevision: 0,
+      selectedUpstream: "aws_bedrock",
+    });
+
+    const response = await created.app.request(
+      "/internal/containers/alice/ai/funding-summary?runtimeSlot=primary",
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+        body: JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(FundedAiRuntimeChatFundingSummaryResponseSchema.parse(await response.json()).upstreamPreference)
+      .toMatchObject({ selectedUpstream: "aws_bedrock", effectiveUpstream: "cloudflare", revision: 1 });
+    expect(readCached).toHaveBeenCalledExactlyOnceWith(modelId, expect.objectContaining({
+      upstream: "aws_bedrock",
+      signal: expect.any(AbortSignal),
+      deadlineAtMs: expect.any(Number),
+    }));
+    expect(probeBedrock).not.toHaveBeenCalled();
+  });
+
+  it("uses bounded cached Bedrock health for preference writes and relay policy checks", async () => {
+    const probeBedrock = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z",
+        priceValidThrough: "2026-09-30T20:00:00.000Z" };
+    });
+    const readCachedBedrock = vi.fn(async () => ({ ready: true, checkedAt: now,
+      staleAfter: "2026-08-30T20:00:30.000Z", priceValidThrough: "2026-09-30T20:00:00.000Z" }));
+    const created = await createTestApp({ upstreamPreferences: true, readCachedBedrock,
+      routeProbes: { probe: probeBedrock, readCached: readCachedBedrock } });
+    const runtimeHeaders = { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" };
+
+    const updated = await created.app.request("/internal/containers/alice/ai/upstream-preference?runtimeSlot=primary", {
+      method: "POST", headers: runtimeHeaders,
+      body: JSON.stringify({ idempotencyKey: "cached_short_paths", expectedRevision: 0,
+        selectedUpstream: "aws_bedrock" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(FundedAiUpstreamPreferenceResponseSchema.parse(await updated.json()).preference)
+      .toMatchObject({ selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock" });
+
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await (await created.app.request(fundedCredentialPath(), {
+      method: "POST", headers: runtimeHeaders, body: "{}",
+    })).json());
+    const check = await created.app.request("/internal/ai/funded/check", {
+      method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, modelId, upstreamSelectionVersion: 1 }),
+    });
+    expect(check.status).toBe(200);
+    expect(FundedAiPolicyCheckResponseSchema.parse(await check.json()).upstreamSelection)
+      .toMatchObject({ upstream: "aws_bedrock" });
+    expect(readCachedBedrock).toHaveBeenCalledTimes(2);
+    expect(probeBedrock).not.toHaveBeenCalled();
+  });
 
   it("returns a model receipt only for healthy eligible models without claiming promotion credit", async () => {
     const probe = vi.fn(async (model: string) => ({
@@ -153,6 +310,114 @@ describe("funded AI policy routes", () => {
     }));
     const after = await repository.getCheckoutFundingSummary(identity, Date.now() + 6_000);
     expect(after.funding.creditBalanceMicrousd).toBe(before.funding.creditBalanceMicrousd);
+  });
+
+  it("probes a configured custom model through the owner's resolved Bedrock upstream", async () => {
+    const customModel = "anthropic/claude-opus-5";
+    const probe = vi.fn(async () => ({ ready: true, checkedAt: now,
+      staleAfter: "2026-08-30T20:00:30.000Z", priceValidThrough: "2026-09-30T20:00:00.000Z" }));
+    const created = await createTestApp({
+      upstreamPreferences: true,
+      allowedModelIds: [customModel],
+      bedrockModelIds: [customModel],
+      routeProbes: { probe },
+    });
+    await created.upstreamPreferences!.setPreference({
+      ownerId: "user_alice",
+      actorOwnerId: "user_alice",
+      idempotencyKey: "custom_bedrock_readiness",
+      expectedRevision: 0,
+      selectedUpstream: "aws_bedrock",
+    });
+    const response = await created.app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(response.status).toBe(200);
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual([customModel]);
+    expect(probe).toHaveBeenCalledExactlyOnceWith(customModel, expect.objectContaining({
+      upstream: "aws_bedrock",
+      signal: expect.any(AbortSignal),
+      deadlineAtMs: expect.any(Number),
+    }));
+  });
+
+  it("returns both static models and a healthy entitled custom Bedrock model", async () => {
+    const customModel = "anthropic/claude-opus-5";
+    const staticModels = ["@cf/zai-org/glm-5.3-flash", modelId];
+    const probe = vi.fn(async () => ({ ready: true, checkedAt: now,
+      staleAfter: "2026-08-30T20:00:30.000Z", priceValidThrough: "2026-09-30T20:00:00.000Z" }));
+    const created = await createTestApp({
+      upstreamPreferences: true,
+      allowedModelIds: [...staticModels, customModel],
+      bedrockModelIds: [customModel],
+      routeProbes: { probe },
+    });
+    await created.upstreamPreferences!.setPreference({
+      ownerId: "user_alice", actorOwnerId: "user_alice", idempotencyKey: "all_healthy_routes",
+      expectedRevision: 0, selectedUpstream: "aws_bedrock",
+    });
+
+    const response = await created.app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds)
+      .toEqual([...staticModels, customModel]);
+  });
+
+  it("preserves Cloudflare readiness for Sonnet when the owner prefers Bedrock", async () => {
+    const probe = vi.fn(async (_model: string, call?: { upstream?: "aws_bedrock" }) => ({
+      ready: call?.upstream !== "aws_bedrock",
+      checkedAt: now,
+      staleAfter: "2026-08-30T20:00:30.000Z",
+      ...(call?.upstream === "aws_bedrock" ? {} : { priceValidThrough: "2026-09-30T20:00:00.000Z" }),
+    }));
+    const created = await createTestApp({ upstreamPreferences: true, routeProbes: { probe } });
+    await created.upstreamPreferences!.setPreference({
+      ownerId: "user_alice",
+      actorOwnerId: "user_alice",
+      idempotencyKey: "unhealthy_bedrock_fallback",
+      expectedRevision: 0,
+      selectedUpstream: "aws_bedrock",
+    });
+    const response = await created.app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(response.status).toBe(200);
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual([modelId]);
+    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId,
+      expect.not.objectContaining({ upstream: "aws_bedrock" }));
+  });
+
+  it("does not report Sonnet ready from Bedrock when its Cloudflare request path is unavailable", async () => {
+    const probe = vi.fn(async (_model: string, call?: { upstream?: "aws_bedrock" }) => ({
+      ready: call?.upstream === "aws_bedrock",
+      checkedAt: now,
+      staleAfter: "2026-08-30T20:00:30.000Z",
+      priceValidThrough: "2026-09-30T20:00:00.000Z",
+    }));
+    const created = await createTestApp({ upstreamPreferences: true, routeProbes: { probe } });
+    await created.upstreamPreferences!.setPreference({
+      ownerId: "user_alice", actorOwnerId: "user_alice", idempotencyKey: "sonnet_path_truth",
+      expectedRevision: 0, selectedUpstream: "aws_bedrock",
+    });
+
+    const response = await created.app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual([]);
+    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId, expect.not.objectContaining({ upstream: "aws_bedrock" }));
   });
 
   it.each(["disabled", "exhausted"])("rechecks %s owner policy while sharing older priced provider health", async (state) => {

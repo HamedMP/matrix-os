@@ -6,6 +6,30 @@ import type { PlatformMigrationExecutor } from '../migration-types.js';
 /** Core funded schema, ordered by migrate.ts. */
 export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<void> {
   await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_upstream_preferences (
+      owner_id TEXT PRIMARY KEY,
+      selected_upstream TEXT NOT NULL CHECK (selected_upstream IN ('cloudflare', 'aws_bedrock')),
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_upstream_preference_audit (
+      event_id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      actor_owner_id TEXT NOT NULL,
+      previous_upstream TEXT NOT NULL CHECK (previous_upstream IN ('cloudflare', 'aws_bedrock')),
+      selected_upstream TEXT NOT NULL CHECK (selected_upstream IN ('cloudflare', 'aws_bedrock')),
+      previous_revision INTEGER NOT NULL CHECK (previous_revision >= 0),
+      revision INTEGER NOT NULL CHECK (revision > previous_revision),
+      created_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_ai_funded_upstream_preference_audit_owner
+    ON ai_funded_upstream_preference_audit(owner_id, created_at DESC, event_id)
+  `.execute(db);
+  await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_model_probe_budget (
       budget_key TEXT PRIMARY KEY CHECK (budget_key = 'global'),
       day_start TEXT NOT NULL,
@@ -125,6 +149,7 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
       promotional_reserved_microusd BIGINT CHECK (promotional_reserved_microusd >= 0),
       addon_reserved_microusd BIGINT CHECK (addon_reserved_microusd >= 0),
       actual_microusd BIGINT CHECK (actual_microusd >= 0),
+      selected_upstream TEXT,
       upstream TEXT,
       route_id TEXT,
       resolved_model TEXT,
@@ -147,6 +172,11 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
           AND promotional_reserved_microusd + addon_reserved_microusd = reserved_microusd
         )
       ),
+      CONSTRAINT ai_funded_reservation_selected_upstream_check CHECK (
+        selected_upstream IS NULL OR selected_upstream IN (
+          'cloudflare_anthropic', 'cloudflare_workers_ai', 'aws_bedrock'
+        )
+      ),
       UNIQUE (token_id, request_id)
     )
   `.execute(db);
@@ -162,6 +192,7 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS inference_profile TEXT`.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS region TEXT`.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS provider_request_id TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS selected_upstream TEXT`.execute(db);
   // Existing reservations intentionally remain NULL/NULL: historical rows do
   // not contain evidence of which funding source paid for them. Runtime expiry
   // reconciliation protects promotion only through explicit allocation rows.
@@ -176,6 +207,15 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
               promotional_reserved_microusd IS NOT NULL
               AND addon_reserved_microusd IS NOT NULL
               AND promotional_reserved_microusd + addon_reserved_microusd = reserved_microusd
+            )
+          );
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE ai_funded_usage_reservations
+          ADD CONSTRAINT ai_funded_reservation_selected_upstream_check CHECK (
+            selected_upstream IS NULL OR selected_upstream IN (
+              'cloudflare_anthropic', 'cloudflare_workers_ai', 'aws_bedrock'
             )
           );
       EXCEPTION WHEN duplicate_object THEN NULL;

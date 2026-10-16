@@ -8,11 +8,14 @@ import {
   FundedAiPromotionalGrantResponseSchema,
   FundedAiFinalizationRequestSchema,
   FundedAiPolicyCheckRequestSchema,
+  FundedAiPolicyCheckResponseSchema,
   FundedAiSafeErrorSchema,
   FundedAiReleaseRequestSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiRuntimeChatFundingSummaryResponseSchema,
   FundedAiRuntimeFundingSummaryRequestSchema,
+  FundedAiUpstreamPreferenceResponseSchema,
+  FundedAiUpstreamPreferenceUpdateRequestSchema,
   FundedAiRouteReadinessReceiptSchema,
   FundedAiRouteReadinessRequestSchema,
   FUNDED_AI_READINESS_TIMEOUTS,
@@ -33,8 +36,8 @@ import { getRunningUserMachineByHandle, type PlatformDB } from "./db.js";
 import { AiFundedPolicyError, type AiFundedPolicyRepository } from "./ai-funded-policy-repository.js";
 import { buildPlatformRuntimeVerificationToken, timingSafeTokenEquals } from "./platform-token.js";
 import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-model-probes.js";
+import type { AiFundedUpstreamPreferenceRepository } from "./ai-funded-upstream-preference.js";
 import { observeFundedModelRoutes } from "./ai-funded-route-observations.js";
-
 import { fundedReadinessPhase } from "./ai-funded-readiness-phase.js";
 
 const RUNTIME_BODY_LIMIT = 1024;
@@ -176,6 +179,7 @@ function policyErrorResponse(c: Context, error: unknown) {
   if (error instanceof AiFundedPolicyError) {
     if (error.code === "unauthorized") return c.json(safeError("unauthorized"), 401);
     if (error.code === "identity_mismatch") return c.json(safeError("not_found"), 404);
+    if (error.code === "not_found") return c.json(safeError("not_found"), 404);
     if (error.code === "rate_limited") {
       return c.json(error.reason ? { error: { ...safeError("rate_limited").error, reason: error.reason } } : safeError("rate_limited"), 429);
     }
@@ -218,6 +222,7 @@ export function createAiFundedRuntimeRoutes(options: {
   routeProbes?: FundedModelProbeService;
   isolatedChat?: IsolatedChatEnvelope;
   now?: () => Date;
+  upstreamPreferences?: AiFundedUpstreamPreferenceRepository;
 }) {
   if (!options.repository || !options.db) throw new Error("Funded AI runtime dependencies are missing");
   if (options.platformSecret.length < 32) throw new Error("Funded AI runtime authentication is misconfigured");
@@ -291,6 +296,26 @@ export function createAiFundedRuntimeRoutes(options: {
         await grantConfiguredPromotion(options.repository, identity, options.promotionalGrant);
         summary = await options.repository.getRuntimeFundingSummary(identity, body.data);
       }
+      const upstreamPreference = body.data.includeUpstreamPreference
+        ? await options.upstreamPreferences?.getPreferenceView(identity.ownerId, async (modelId) => {
+            const observedAt = now();
+            const unavailable = { ready: false, checkedAt: observedAt.toISOString(),
+              staleAfter: new Date(observedAt.getTime() + 5_000).toISOString() };
+            if (!options.routeProbes?.readCached) return unavailable;
+            const deadlineAtMs = Date.now() + 1_500;
+            try {
+              return await beforeDeadline(options.routeProbes.readCached(modelId, {
+                upstream: "aws_bedrock",
+                signal: AbortSignal.timeout(1_500),
+                deadlineAtMs,
+              }), deadlineAtMs);
+            } catch (error) {
+              console.warn("[ai-funded-policy] Cached upstream health unavailable:",
+                error instanceof Error ? error.name : typeof error);
+              return unavailable;
+            }
+          }) ?? undefined
+        : undefined;
       const schema = body.data.includeChatAvailability
         ? FundedAiRuntimeChatFundingSummaryResponseSchema : FundedAiRuntimeFundingSummaryResponseSchema;
       return c.json(schema.parse({
@@ -298,7 +323,31 @@ export function createAiFundedRuntimeRoutes(options: {
         funding: { ...summary.funding, topUpEnabled: options.topUpEnabled === true },
         policy: summary.policy,
         ...(body.data.includeChatAvailability ? { chatAvailability: summary.chatAvailability } : {}),
+        ...(upstreamPreference ? { upstreamPreference } : {}),
       }), 200);
+    } catch (error) {
+      return policyErrorResponse(c, error);
+    }
+  });
+  app.post("/upstream-preference", bodyLimit({ maxSize: RUNTIME_BODY_LIMIT }), async (c) => {
+    const query = RuntimeQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+    if (!query.success) return c.json(safeError("invalid_request"), 400);
+    let machine: Awaited<ReturnType<typeof getRunningUserMachineByHandle>>;
+    try { machine = await authenticatedRuntimeMachine(c, options, query.data.runtimeSlot); }
+    catch (error) { return policyErrorResponse(c, error); }
+    if (!machine) return c.json(safeError("unauthorized"), 401);
+    const request = FundedAiUpstreamPreferenceUpdateRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    if (!options.upstreamPreferences) return c.json(safeError("not_found"), 404);
+    try {
+      await options.upstreamPreferences.setPreference({
+        ownerId: machine.clerkUserId,
+        actorOwnerId: machine.clerkUserId,
+        ...request.data,
+      });
+      const preference = await options.upstreamPreferences.getPreferenceView(machine.clerkUserId);
+      if (!preference) return c.json(safeError("not_found"), 404);
+      return c.json(FundedAiUpstreamPreferenceResponseSchema.parse({ contractVersion: 1, preference }), 200);
     } catch (error) {
       return policyErrorResponse(c, error);
     }
@@ -349,20 +398,40 @@ export function createAiFundedRuntimeRoutes(options: {
       stage = "funding_read";
       const first = await read();
       const firstNow = now().getTime();
+      const ordinaryProbeModels = [...new Set([
+        ...FUNDED_PROBE_MODELS,
+        ...(options.upstreamPreferences?.getEntitledBedrockModelIds(identity.ownerId) ?? []),
+      ])];
       const eligible = first.policy.enabled && Date.parse(first.policy.checkedAt) <= firstNow
         && Date.parse(first.policy.staleAfter) > firstNow && first.funding.remainingBudgetMicrousd > 0
-        ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : FUNDED_PROBE_MODELS)
+        ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : ordinaryProbeModels)
           .filter((model) => first.policy.allowedModelIds.includes(model) && (!cacheOnly || model === phase!.modelId)) : [];
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
       stage = "model_health";
       const observations = options.routeProbes
-        ? await observeFundedModelRoutes(eligible, (model, call) => (cacheOnly
-          ? options.routeProbes!.readCached?.bind(options.routeProbes)
-            ?? (() => Promise.resolve({ ready: false, checkedAt: now().toISOString(), staleAfter: new Date(now().getTime() + 5000).toISOString() }))
-          : options.routeProbes!.probe.bind(options.routeProbes))(model, {
-          ...call, receiptId,
-          ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision, runtimeRevision: first.policy.runtimeRevision } } : {}),
-        }), { signal: controller.signal, deadlineAtMs })
+        ? await observeFundedModelRoutes(eligible, async (model, call) => {
+          const observe = cacheOnly
+            ? options.routeProbes!.readCached?.bind(options.routeProbes)
+              ?? (() => Promise.resolve({ ready: false, checkedAt: now().toISOString(),
+                staleAfter: new Date(now().getTime() + 5000).toISOString() }))
+            : options.routeProbes!.probe.bind(options.routeProbes);
+          const baseCall = { ...call, receiptId,
+            ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision,
+              runtimeRevision: first.policy.runtimeRevision } } : {}) };
+          // Static probe models execute through their fixed Cloudflare paths;
+          // only dedicated custom models can derive readiness from Bedrock.
+          const hasCloudflareExecutionPath = FUNDED_PROBE_MODELS.some(cloudflareModel => cloudflareModel === model);
+          if (model !== JEV_MODEL_ID && !hasCloudflareExecutionPath && options.upstreamPreferences) {
+            const resolved = await options.upstreamPreferences.resolveUpstreamForReadiness(
+              { ownerId: identity.ownerId, modelId: model },
+              bedrockModelId => observe(bedrockModelId, { ...baseCall, upstream: "aws_bedrock" }),
+            );
+            if (resolved.selection.upstream === "aws_bedrock" && resolved.bedrockProbe) {
+              return resolved.bedrockProbe;
+            }
+          }
+          return observe(model, baseCall);
+        }, { signal: controller.signal, deadlineAtMs })
         : [];
       // An upstream probe is asynchronous. Re-read exact owner policy and ledger
       // before returning any model as ready; do not reuse an old authorization.
@@ -577,6 +646,7 @@ export function createAiFundedOperatorRoutes(options: {
 export function createAiFundedRelayRoutes(options: {
   relayControlToken: string;
   repository: AiFundedPolicyRepository;
+  upstreamPreferences?: AiFundedUpstreamPreferenceRepository;
 }) {
   if (!options.repository) throw new Error("Funded AI relay dependencies are missing");
   if (options.relayControlToken.length < 32) throw new Error("Funded AI relay authentication is misconfigured");
@@ -603,7 +673,19 @@ export function createAiFundedRelayRoutes(options: {
     const request = FundedAiPolicyCheckRequestSchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {
-      return c.json(await options.repository.checkPolicy(request.data), 200);
+      const checked = await options.repository.checkPolicy(request.data);
+      const supportsUpstreamSelection = request.data.upstreamSelectionVersion === 1;
+      const upstreamSelection = supportsUpstreamSelection && options.upstreamPreferences
+        ? await options.upstreamPreferences.resolveUpstream({
+            ownerId: checked.identity.ownerId,
+            modelId: request.data.modelId,
+          })
+        : undefined;
+      return c.json(FundedAiPolicyCheckResponseSchema.parse({
+        ...checked,
+        ...(supportsUpstreamSelection ? { upstreamSelectionVersion: 1 as const } : {}),
+        ...(upstreamSelection ? { upstreamSelection } : {}),
+      }), 200);
     } catch (error) {
       return policyErrorResponse(c, error);
     }
