@@ -16,7 +16,7 @@ export class SharedBrowserError extends Error {
   }
 }
 class SharedBrowserInterruptedError extends SharedBrowserError {
-  constructor(readonly action:"pause"|"takeover"|"stop",readonly content?:string) { super("browser_changed"); }
+  constructor(readonly action:"pause"|"takeover"|"stop",readonly content?:string,readonly receipt?:Pick<SharedBrowserActionResult,"artifact"|"collectionManifest">) { super("browser_changed"); }
 }
 interface Registered { binding: SharedBrowserBinding; signal: AbortSignal; controller: AbortController; expiresAt: number; hash: Buffer; onAbort(): void; closing?:Promise<void>; collectionId:string; artifacts:NonNullable<SharedBrowserActionResult["artifact"]>[] }
 const digest = (value: string) => createHash("sha256").update(value).digest();
@@ -142,15 +142,9 @@ export function createSharedBrowserBroker(options: {
         let value:SharedBrowserActionResult;
         try {
           value=await options.driver.execute(parsed.data,AbortSignal.any([signal,row.signal,row.controller.signal,actionControl.controller.signal,AbortSignal.timeout(30_000)]));
-          if(actionControl.controller.signal.aborted){
-            const content=!value.success&&value.handoffRequested?value.content:undefined;
-            if(content)handoff={content};
-            throw new SharedBrowserInterruptedError(actionControl.action??"stop",content);
-          }
         } catch(error) {
           // Owner control invalidates this action, but waits for the driver's
           // promise so its physical cleanup finishes before detach is allowed.
-          if(error instanceof SharedBrowserInterruptedError)throw error;
           if(actionControl.controller.signal.aborted)throw new SharedBrowserInterruptedError(actionControl.action??"stop");
           throw error;
         }
@@ -158,6 +152,14 @@ export function createSharedBrowserBroker(options: {
           row.artifacts.push(value.artifact);
           if(options.exportArtifacts)try{value.collectionManifest=await options.exportArtifacts(row.collectionId,[...row.artifacts]);}
           catch(error){report(error);value.success=false;value.content="The original document was saved, but its collection manifest needs owner review before continuing.";}
+        }
+        // Physical cleanup may finish a download after Pause was requested.
+        // Persist its receipt before interruption so Resume cannot lose or replay it.
+        if(actionControl.controller.signal.aborted){
+          const content=!value.success&&(value.handoffRequested||value.artifact)?value.content:undefined;
+          if(content)handoff={content};
+          const receipt=value.artifact?{artifact:value.artifact,collectionManifest:value.collectionManifest}:undefined;
+          throw new SharedBrowserInterruptedError(actionControl.action??"stop",content,receipt);
         }
         // A completed recovery handoff must reach owner control even when the
         // individual action was cancelled. The run registration still has to
@@ -206,8 +208,8 @@ export function createSharedBrowserBroker(options: {
       else if(phase!=="agent")throw new SharedBrowserError("run_unavailable");
       if(registered(binding,resumedSignal)!==row || active!==row || status().phase!=="agent")throw new SharedBrowserError("browser_changed");
       const resumed=await execute(binding,{action:"snapshot"},resumedSignal);
-      if(!error.content)return resumed;
-      return{...resumed,content:[error.content,resumed.content].filter((content):content is string=>Boolean(content)).join("\n\n").slice(0,32_000)};
+      if(!error.content)return{...resumed,...error.receipt};
+      return{...resumed,...error.receipt,content:[error.content,resumed.content].filter((content):content is string=>Boolean(content)).join("\n\n").slice(0,32_000)};
     }
     if(value.success || !value.handoffRequested)return value;
     // Keep the native tool call alive while the owner signs in. Wait outside

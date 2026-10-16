@@ -180,6 +180,26 @@ describe("shared Chrome broker ownership and takeover",()=>{
     expect(s.driver.execute.mock.calls.map(call=>(call[0] as {action:string}).action)).toEqual(["snapshot","download","snapshot"]);
     expect(s.broker.status()).toMatchObject({phase:"agent",needsObservation:false});await s.broker.close();
   });
+  it.each(["pause", "takeover"] as const)("retains a completed download and its collection receipt when %s interrupts final driver cleanup",async action=>{
+    const artifact={documentId:"INV-PAUSE",path:"data/browser-artifacts/INV-PAUSE.pdf",size:800,sha256:"a".repeat(64),sourceUrl:"https://example.com/invoice.pdf",retrievedAt:new Date().toISOString(),original:true as const};
+    const entered=deferred<void>();
+    const driver={execute:vi.fn(async(_action:unknown,_signal:AbortSignal):Promise<SharedBrowserActionResult>=>({success:true,observationId:"fresh",content:"Invoices"})),invalidateObservation:vi.fn(),detach:vi.fn(async()=>{})};
+    const exported=vi.fn(async()=>"data/browser-artifacts/paused-collection.json");
+    const broker=createSharedBrowserBroker({ownerId:"owner",driver,setHumanControl:async()=>{},exportArtifacts:exported});
+    const signal=new AbortController().signal;broker.openRun(binding,signal);await broker.execute(binding,{action:"snapshot"},signal);
+    driver.execute.mockImplementationOnce(async(_action,actionSignal)=>{
+      entered.resolve();await new Promise<void>(resolve=>actionSignal.addEventListener("abort",()=>resolve(),{once:true}));
+      return{success:true,artifact};
+    });
+    const pending=broker.execute(binding,{action:"download",documentId:"INV-PAUSE",ref:"r1",observationId:"fresh"},signal).catch(error=>error);
+    try {
+      await entered.promise;await broker.control("owner",{action});
+      expect(exported.mock.calls[0]?.[1]).toEqual([artifact]);
+      await broker.control("owner",{action:"resume"});
+      expect(await pending).toMatchObject({success:true,observationId:"fresh",artifact,collectionManifest:"data/browser-artifacts/paused-collection.json"});
+      expect(driver.execute.mock.calls.map(call=>(call[0] as {action:string}).action)).toEqual(["snapshot","download","snapshot"]);
+    } finally { await broker.close();await pending; }
+  });
   it("fails closed and keeps owner input disabled when an aborted action does not finish cleanup before the drain deadline",async()=>{
     const s=setup(),entered=deferred<void>(),never=deferred<void>();let actionSignal:AbortSignal|undefined;
     s.driver.execute.mockImplementationOnce(async(_input,signal)=>{actionSignal=signal;entered.resolve();await never.promise;return{success:true,observationId:"late"};});
