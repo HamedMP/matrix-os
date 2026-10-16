@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
+import { withSiteOwnerAdmission } from '../../packages/platform/src/sites/account-lifecycle.js';
 import { SiteError } from '../../packages/platform/src/sites/types.js';
 const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 const postgres = postgresUrl ? describe : describe.skip;
@@ -141,6 +142,33 @@ postgres('public sites independent PostgreSQL sessions', () => {
         } finally { finish.resolve(); await Promise.allSettled([active, ...flood, ...(revoke ? [revoke] : [])]); }
         const current = await service.get(publisher);
         expect((await service.unpublish(publisher, current!.revision)).status).toBe('unpublished');
+    });
+    it('rechecks the publication deadline after waiting for the real owner lock', async () => {
+        const delayedOwner = { ownerId: 'user_delayed_publication', machineId: 'delayed-publish-runtime', appSlug: 'event' };
+        await insertUserMachine(dbA, { machineId: delayedOwner.machineId, clerkUserId: delayedOwner.ownerId, handle: delayedOwner.machineId, status: 'running', provisionedAt: new Date().toISOString() });
+        const began = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+        const env = { ACCOUNT_DELETION_SECRET: 'sites-delayed-publication-lock-secret' };
+        const holder = withSiteOwnerAdmission(dbB, delayedOwner.ownerId, async () => { began.resolve(); await release.promise; }, env);
+        await began.promise;
+        const putObject = vi.fn(async () => ({}));
+        const service = createSitesService({ db: dbA, env, storage: { putObject, async getObject() { return { body: null }; } } });
+        const expiresAt = Date.now() + 5000;
+        const outcome = service.deploy(delayedOwner, { title: 'Delayed', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('Delayed').toString('base64') }] }, { deadlineAt: expiresAt }).then(() => 'published', error => { if (error instanceof SiteError && error.code === 'unavailable') return 'expired'; throw error; });
+        try {
+            const pollUntil = Date.now() + 2000;
+            let blocked = false;
+            while (Date.now() < pollUntil) {
+                const locks = await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE application_name='sites-admit' AND wait_event_type='Lock'");
+                if (locks.rows[0].count > 0) { blocked = true; break; }
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            expect(blocked).toBe(true);
+            vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(expiresAt + 1);
+            release.resolve(); await holder;
+            expect(await outcome).toBe('expired');
+            expect(putObject).not.toHaveBeenCalled();
+            expect(await service.get(delayedOwner)).toBeNull();
+        } finally { release.resolve(); await Promise.allSettled([holder, outcome]); vi.useRealTimers(); }
     });
     it('orders deletion acceptance behind publishing owner lock and blocks every later publication', async () => {
         const env = { ACCOUNT_DELETION_SECRET: 'sites-publishing-deletion-race-secret' };

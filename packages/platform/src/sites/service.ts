@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { SiteDeploymentSchema, SiteMetadataSchema, SiteRecordSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
+import { SITE_PUBLISH_TIMEOUT_MS, SiteDeploymentSchema, SiteMetadataSchema, SiteRecordSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
 import type { PlatformDB } from '../db.js';
 import type { CustomerVpsObjectStore } from '../customer-vps-r2.js';
 import { SiteError, type SiteOwner, type SitesTable } from './types.js';
@@ -58,10 +58,19 @@ export function createSitesService(options: {
             .executeTakeFirst();
         return row && await siteOwnerCanServe(scoped, row.owner_id, env) ? project(scoped, row) : null;
     }
-    async function deploy(owner: SiteOwner, input: unknown) {
-        return writeAdmission(owner.ownerId, () => deployAdmitted(owner, input));
+    async function deploy(owner: SiteOwner, input: unknown, publication: { deadlineAt?: number; signal?: AbortSignal } = {}) {
+        const now = Date.now();
+        const deadlineAt = publication.deadlineAt ?? now + SITE_PUBLISH_TIMEOUT_MS;
+        if (!Number.isSafeInteger(deadlineAt) || deadlineAt > now + SITE_PUBLISH_TIMEOUT_MS)
+            throw new SiteError('invalid_request');
+        const check = () => {
+            if (publication.signal?.aborted || Date.now() >= deadlineAt)
+                throw new SiteError('unavailable');
+        };
+        check();
+        return writeAdmission(owner.ownerId, () => deployAdmitted(owner, input, deadlineAt, check, publication.signal));
     }
-    async function deployAdmitted(owner: SiteOwner, input: unknown) {
+    async function deployAdmitted(owner: SiteOwner, input: unknown, deadlineAt: number, check: () => void, callerSignal?: AbortSignal) {
         if (!storage)
             throw new SiteError('unavailable');
         const parsed = SiteDeploymentSchema.safeParse(input);
@@ -71,35 +80,46 @@ export function createSitesService(options: {
         const version = randomUUID();
         const uploaded: string[] = [];
         let activationCompleted = false;
-        const uploadSignal = AbortSignal.timeout(25000);
+        check();
+        const timeout = AbortSignal.timeout(Math.max(1, Math.min(25000, deadlineAt - Date.now())));
+        const uploadSignal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
         try {
             return await withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
+                check(); // The owner lock may have consumed the remaining publication budget.
                 await sql `SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
                 await sql `SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
                 await assertCurrentPublishingRuntime(trx, owner);
+                check();
                 const freshId = randomUUID();
                 await trx.executor.insertInto('public_sites').values({ id: freshId, owner_id: owner.ownerId, machine_id: owner.machineId, app_slug: owner.appSlug,
                     title: request.title, description: request.description, slug: null, revision: 0, status: 'unpublished', active_version: null, created_at: new Date().toISOString(),
                 }).onConflict(oc => oc.columns(['owner_id', 'machine_id', 'app_slug']).doNothing()).execute();
                 const row = await ownership(trx, owner).forUpdate().executeTakeFirstOrThrow();
+                check();
                 if (request.baseRevision !== undefined && row.revision !== request.baseRevision)
                     throw new SiteError('conflict');
                 await claimAlias(trx, row.id, request.slug);
                 if (await trx.executor.selectFrom('public_site_versions').select('id').where('site_id', '=', row.id).limit(50).execute().then(v => v.length >= 50))
                     throw new SiteError('conflict');
+                check();
                 const files = [];
                 for (const file of request.files) {
+                    check();
                     const bytes = Buffer.from(file.body, 'base64');
                     const objectKey = key(owner.ownerId, row.id, version, file.path);
                     uploaded.push(objectKey);
                     await storage.putObject(objectKey, bytes, { signal: uploadSignal });
+                    check();
                     files.push({ path: file.path, contentType: file.contentType, bytes: bytes.length });
                 }
                 await trx.executor.insertInto('public_site_versions').values({ id: version, site_id: row.id, created_at: new Date().toISOString(), config: sql `${JSON.stringify(request.config)}::jsonb`, files: sql `${JSON.stringify(files)}::jsonb` }).execute();
+                check();
                 const changed = await trx.executor.updateTable('public_sites').set({ title: request.title, description: request.description, ...(request.slug !== undefined ? { slug: request.slug } : {}), active_version: version, status: 'published', revision: row.revision + 1 }).where('id', '=', row.id).where('revision', '=', row.revision).returningAll().executeTakeFirst();
+                check();
                 if (!changed)
                     throw new SiteError('conflict');
                 const result = await project(trx, changed);
+                check(); // Roll back activation if any awaited DB work crossed the deadline.
                 activationCompleted = true;
                 return result;
             }, env);

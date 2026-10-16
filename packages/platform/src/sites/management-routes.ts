@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { SiteAppSlugSchema, SiteRollbackSchema } from '@matrix-os/contracts';
+import { SITE_PUBLISH_TIMEOUT_MS, SiteAppSlugSchema, SiteRollbackSchema } from '@matrix-os/contracts';
 import { RuntimeSlotSchema, SafeHandleSchema } from '../customer-vps-schema.js';
 import { getRunningUserMachineByHandle, type PlatformDB } from '../db.js';
 import { buildPlatformSyncVerificationToken, timingSafeTokenEquals } from '../platform-token.js';
@@ -42,9 +42,21 @@ export function createSiteManagementRoutes(options: {
     app.get('/:appSlug', async (c) => { const identity = await owner(c); if (!identity)
         return denied(c); const site = await options.service.get(identity); if (!site)
         throw new SiteError('not_found'); return c.json(site); });
-    app.post('/:appSlug', async (c) => { const identity = await owner(c); if (!identity)
-        return denied(c); return c.json(await options.service.deploy(identity, await c.req.json().catch((error: unknown) => { if (error instanceof SyntaxError)
-        return null; throw error; }))); });
+    app.post('/:appSlug', async (c) => {
+        const identity = await owner(c);
+        if (!identity) return denied(c);
+        const header = c.req.header('x-matrix-site-deadline');
+        const now = Date.now();
+        const deadlineAt = header === undefined ? now + SITE_PUBLISH_TIMEOUT_MS : Number(header);
+        if ((header !== undefined && !/^\d{1,16}$/.test(header)) || !Number.isSafeInteger(deadlineAt) || deadlineAt > now + SITE_PUBLISH_TIMEOUT_MS)
+            throw new SiteError('invalid_request');
+        if (deadlineAt <= now) throw new SiteError('unavailable');
+        const input = await c.req.json().catch((error: unknown) => {
+            if (error instanceof SyntaxError) return null;
+            throw error;
+        });
+        return c.json(await options.service.deploy(identity, input, { deadlineAt, signal: c.req.raw.signal }));
+    });
     app.patch('/:appSlug', async (c) => { const identity = await owner(c); if (!identity)
         return denied(c); return c.json(await options.service.patch(identity, await c.req.json().catch((error: unknown) => { if (error instanceof SyntaxError)
         return null; throw error; }))); });
