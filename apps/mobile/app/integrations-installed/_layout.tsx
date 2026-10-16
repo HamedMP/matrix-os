@@ -15,7 +15,6 @@ export default function InstalledIntegrationsLayout() {
       iconColor={theme.v2.appColors.ink}
       iconTestID="integrations-close-icon"
       buttonSize={32}
-      pressedOpacity={1}
       onPress={() => router.dismiss()}
     />
   );

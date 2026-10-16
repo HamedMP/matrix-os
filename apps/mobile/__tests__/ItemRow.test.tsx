@@ -3,7 +3,8 @@ import { View } from "react-native";
 
 import { ItemRow } from "../components/ui/ItemRow";
 
-import { flat, pressedStyle } from "./ui-test-utils";
+import { motion } from "../lib/theme-v2";
+import { flat, heldScale } from "./ui-test-utils";
 
 describe("ItemRow", () => {
   afterEach(cleanup);
@@ -111,10 +112,10 @@ describe("ItemRow", () => {
     expect(onLongPress).toHaveBeenCalledTimes(1);
   });
 
-  it("dims to 0.65 while pressed", () => {
+  it("gives a little under the finger, as much as a row as wide as the screen should", () => {
     render(<ItemRow testID="row" title="Case study" onPress={jest.fn()} />);
 
-    expect(pressedStyle({ testID: "row" }).opacity).toBe(0.65);
+    expect(heldScale({ testID: "row" })).toBe(motion.rowPressScale);
   });
 
   it("is not a button when it has nothing to do", () => {

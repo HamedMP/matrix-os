@@ -15,7 +15,6 @@ export default function SettingsDetailLayout() {
       iconSize={22}
       iconColor={theme.v2.appColors.ink}
       buttonSize={32}
-      pressedOpacity={1}
       onPress={() => router.dismiss()}
     />
   );
@@ -26,7 +25,6 @@ export default function SettingsDetailLayout() {
       iconSize={22}
       iconColor={theme.v2.appColors.ink}
       buttonSize={32}
-      pressedOpacity={1}
       onPress={() => router.back()}
     />
   );

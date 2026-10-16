@@ -1,5 +1,6 @@
 export { Icon, type IconData, type IconProps } from "./Icon";
 export { IconButton, type IconButtonProps } from "./IconButton";
+export { PressableScale, type PressableScaleProps } from "./PressableScale";
 export { Divider, type DividerProps } from "./Divider";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";
 export {
