@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, CanonicalChatExecutionRootRefSchema, CanonicalChatModelSelectionSchema, type BotToolCapability } from "@matrix-os/contracts";
+import { ChatRunContextSchema, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, CanonicalChatExecutionRootRefSchema, CanonicalChatModelSelectionSchema, type BotToolCapability } from "@matrix-os/contracts";
 import { SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION, SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID } from "@matrix-os/scope-runtime/bot-profile";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { BotAdmissionError } from "../bots/admission.js";
@@ -20,7 +20,7 @@ export function createManagedPiAdmission(deps: {
 }) {
   async function authority(input: { ownerId: string; chatId: string; runId: string }, allowPending = false) {
     const row = await deps.db.selectFrom("chat_runs as run").innerJoin("chats as chat", "chat.id", "run.chat_id")
-      .select(["run.instance_id", "run.selection", "run.execution_root", "run.execution_root_fingerprint", "run.permission_mode", "chat.project_id"])
+      .select(["run.context_snapshot", "run.instance_id", "run.selection", "run.execution_root", "run.execution_root_fingerprint", "run.permission_mode", "chat.project_id"])
       .where("run.id", "=", input.runId).where("chat.id", "=", input.chatId)
       .where("chat.owner_id", "=", input.ownerId).where("chat.owner_type", "=", "personal")
       .where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active")
@@ -30,7 +30,10 @@ export function createManagedPiAdmission(deps: {
         .whereRef("binding.chat_id", "=", "chat.id").where("binding.removed_at", "is", null))))
       .executeTakeFirst();
     if (!row) throw new BotAdmissionError("not_found");
-    return row;
+    const context = row.context_snapshot === null ? undefined : ChatRunContextSchema.parse(typeof row.context_snapshot === "string" ? JSON.parse(row.context_snapshot) : row.context_snapshot);
+    if (context?.botCreation && (row.instance_id !== "matrix_pi_default" || row.project_id || row.execution_root
+      || context.agent || context.chats.length || context.drives?.length)) throw new BotAdmissionError("not_found");
+    return { ...row, botCreation: context?.botCreation };
   }
   async function assertSource(row: Awaited<ReturnType<typeof authority>>, ownerId: string, resolved: ResolvedBotRoute) {
     const selection = CanonicalChatModelSelectionSchema.parse(typeof row.selection === "string" ? JSON.parse(row.selection) : row.selection);
@@ -51,6 +54,7 @@ export function createManagedPiAdmission(deps: {
     if (!owned || !isManagedPiBinding(owned) || owned.ownerId !== binding.ownerId || owned.chatId !== binding.chatId) throw new BotAdmissionError("not_found");
     const row = await authority(binding, true);
     if (!sameManagedPiRoute(owned, binding)) throw new BotAdmissionError("not_found");
+    if (!isDeepStrictEqual(row.botCreation, owned.botCreation)) throw new BotAdmissionError("not_found");
     if (owned.rootFingerprint !== binding.rootFingerprint || !isDeepStrictEqual(owned.workspace, binding.workspace)) throw new BotAdmissionError("root_changed");
     if ("kind" in owned.workspace) {
       if (row.execution_root || row.execution_root_fingerprint || row.project_id) throw new BotAdmissionError("root_changed");
@@ -81,7 +85,7 @@ export function createManagedPiAdmission(deps: {
       if (!owned || owned.ownerId !== binding.ownerId || owned.chatId !== binding.chatId) throw new BotAdmissionError("not_found");
       const row = await authority(binding, true);
       await workspace(binding);
-      return { permissionMode: row.permission_mode };
+      return { permissionMode: row.permission_mode, ...(row.botCreation ? { botCreation: row.botCreation } : {}) };
     },
     async admit(input: { ownerId: string; chatId: string; runId: string; resolved: ResolvedBotRoute }): Promise<ManagedPiRuntimeBinding> {
       if (!deps.host.available) throw new BotAdmissionError("unavailable");
@@ -100,15 +104,15 @@ export function createManagedPiAdmission(deps: {
         root = await managedPiWorkspace(deps.homePath, input.ownerId, input.chatId, true);
         workspaceRef = { kind: "chat_workspace" };
       }
-      const capabilities: BotToolCapability[] = row.permission_mode === "full_access" ? ["artifact.read", "artifact.write"] : row.permission_mode === "supervised" ? ["artifact.read"] : [];
-      if (capabilities.length) capabilities.push(...(deps.toolCapabilities ?? []).filter(capability => row.permission_mode === "full_access" || capability !== "mcp.call"));
+      const capabilities: BotToolCapability[] = row.botCreation ? ["bot.creation.propose"] : row.permission_mode === "full_access" ? ["artifact.read", "artifact.write"] : row.permission_mode === "supervised" ? ["artifact.read"] : [];
+      if (!row.botCreation && capabilities.length) capabilities.push(...(deps.toolCapabilities ?? []).filter(capability => row.permission_mode === "full_access" || capability !== "mcp.call"));
       if (!capabilities.length) throw new BotAdmissionError("not_found");
       const scopeHandle = `scope_${createHash("sha256").update(`managed-chat:${input.ownerId}:${input.chatId}`).digest("hex").slice(0, 32)}`;
       const runtime = await deps.host.client.createRuntime({ scopeHandle, profileId: SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID, workload: "bot_agent",
         adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID, harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION,
-        sandbox: { version: 1, scopeHandle, actorId: input.ownerId, worktree: { hostPath: root.path, mode: row.permission_mode === "full_access" ? "rw" : "ro", fingerprint: root.fingerprint }, network: "broker_only" } });
+        sandbox: { version: 1, scopeHandle, actorId: input.ownerId, worktree: { hostPath: root.path, mode: !row.botCreation && row.permission_mode === "full_access" ? "rw" : "ro", fingerprint: root.fingerprint }, network: "broker_only" } });
       const binding: ManagedPiRuntimeBinding = { runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration,
-        kind: "managed_chat", ownerId: input.ownerId, chatId: input.chatId,
+        kind: "managed_chat", ...(row.botCreation ? { botCreation: row.botCreation } : {}), ownerId: input.ownerId, chatId: input.chatId,
         runId: input.runId, workspace: workspaceRef, rootFingerprint: root.fingerprint, route: input.resolved.route,
         accessSourceId: input.resolved.accessSourceId, ...(input.resolved.subscription ? { subscription: input.resolved.subscription } : {}), ...(input.resolved.anthropicApi ? { anthropicApi: input.resolved.anthropicApi } : {}), capabilities, requestClass: "interactive" };
       try { deps.registry.bind(binding); }

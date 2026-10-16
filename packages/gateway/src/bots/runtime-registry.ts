@@ -1,3 +1,4 @@
+import { BotCreationSnapshotSchema } from "@matrix-os/contracts";
 /**
  * Live bindings for private bot runtimes (spec 536, research R4). A binding
  * ties a scope-runtime handle and generation to the one run it serves: owner,
@@ -53,6 +54,7 @@ export interface BotRuntimeBinding {
 
 export interface ManagedPiRuntimeBinding extends Omit<BotRuntimeBinding, "botId" | "taskId"> {
   kind: "managed_chat";
+  botCreation?: import("@matrix-os/contracts").BotCreationSnapshot;
   workspace: { kind: "chat_workspace" } | import("../chat/execution-root.js").ChatExecutionRootProvenance;
 }
 export type PiRuntimeBinding = BotRuntimeBinding | ManagedPiRuntimeBinding;
@@ -90,6 +92,7 @@ const BindingSchema = z.object({
 
 const ManagedBindingSchema = BindingSchema.omit({ botId: true, taskId: true }).extend({
   kind: z.literal("managed_chat"),
+  botCreation: BotCreationSnapshotSchema.optional(),
   workspace: z.union([
     z.object({ kind: z.literal("chat_workspace") }).strict(),
     z.object({ ref: z.union([
@@ -129,6 +132,11 @@ export class BotRuntimeRegistry {
     if (!parsed.success || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
       || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
       || parsed.data.anthropicApi && (parsed.data.accessSourceId !== "owner_anthropic_key" || parsed.data.route.api !== "anthropic-messages" || parsed.data.subscription)) throw new BotRuntimeRegistryError("invalid_binding");
+    const draft = isManagedPiBinding(parsed.data) ? parsed.data.botCreation : undefined;
+    if (parsed.data.capabilities.includes("bot.creation.propose") !== Boolean(draft)
+      || draft && (parsed.data.capabilities.length !== 1 || parsed.data.accessSourceId !== "matrix_included"
+        || parsed.data.recipeRef || parsed.data.managedDefinitionRevision || parsed.data.subscription || parsed.data.anthropicApi
+        || !isManagedPiBinding(parsed.data) || !("kind" in parsed.data.workspace))) throw new BotRuntimeRegistryError("invalid_binding");
     this.sweep();
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
       throw new BotRuntimeRegistryError("capacity_exceeded");

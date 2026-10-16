@@ -18,6 +18,9 @@ import { BotMemoryError, type BotMemoryService } from "./memory-service.js";
 import { BotGrantError, type BotGrantService } from "./grants-service.js";
 import { BotAuthorityError, type BotAuthority } from "./authority.js";
 import type { BotRecipeCatalog } from "./recipe-catalog.js";
+import { BotRecipeRefSchema } from "@matrix-os/contracts";
+import { BotRecipeCatalogError } from "./recipe-catalog.js";
+import { editableBotRecipeSeed } from "./recipe-creation-seed.js";
 import type { BotChatLookup } from "../chat/agent-context.js";
 import { createBotProviderConnectionRoutes } from './provider-connection-routes.js';
 import { createChatGptPlanPeerRoutes } from './chatgpt-plan-peer-routes.js';
@@ -43,7 +46,7 @@ function errorResponse(context: Context, code: ErrorCode) {
 }
 
 export function createBotRoutes(options: {
-  recipes?: Pick<BotRecipeCatalog, "list">;
+  recipes?: Pick<BotRecipeCatalog, "list"> & Partial<Pick<BotRecipeCatalog,"resolve">>;
   botChats?: BotChatLookup;
   tasks?: (ownerId: string, chatId: string) => Promise<BotTaskSummary[]>;
   instantiation?: Pick<BotInstantiation, "instantiate"> & Partial<Pick<BotInstantiation, "createCustom">>;
@@ -106,6 +109,21 @@ export function createBotRoutes(options: {
       ({ recipeId, version, name, description, output }));
     context.header("Cache-Control", "private, no-store");
     return context.json(BotRecipeListResponseSchema.parse({ recipes }));
+  });
+
+  routes.get("/api/chat-agents/bot-recipes/:recipeId/:version/creation-seed", (context) => {
+    options.getPrincipal(context);
+    if (!options.recipes?.resolve) return errorResponse(context, "unavailable");
+    const ref = BotRecipeRefSchema.safeParse({recipeId:context.req.param("recipeId"),version:context.req.param("version")});
+    if (!ref.success) return errorResponse(context,"invalid_request");
+    try {
+      const seed = editableBotRecipeSeed({resolve:options.recipes.resolve},ref.data);
+      context.header("Cache-Control","private, no-store");
+      return context.json(seed);
+    } catch (error: unknown) {
+      if (error instanceof BotRecipeCatalogError) return errorResponse(context,"not_found");
+      throw error;
+    }
   });
 
   routes.get("/api/chat-agents/:agentId/direct-chat", async (context) => {

@@ -41,6 +41,8 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
     if (!context) {
       throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
     }
+    if (context.latestRun.context?.botCreation) throw new CanonicalChatOrchestrationError(
+      safeError("capability_mismatch", "Send a new message with the current Bot draft instead of retrying this run."), 400);
     try { await deps.agentContext?.revalidate(owner, chatId, context.latestRun.context); }
     catch (error: unknown) { return mapRepositoryError(error); }
     const catalog = await deps.catalog.getCatalog(principal, context.latestRun.selection);
