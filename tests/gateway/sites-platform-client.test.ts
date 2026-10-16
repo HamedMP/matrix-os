@@ -8,3 +8,15 @@ describe('bounded site management transport',()=>{
  it('returns coarse unavailable on network, oversize and malformed responses',async()=>{for(const response of [new Error('postgres://secret/path'),new Response('x'.repeat(600000)),new Response('{}')]){vi.stubGlobal('fetch',response instanceof Error?vi.fn().mockRejectedValue(response):vi.fn().mockResolvedValue(response));await expect(client().request('event','GET')).rejects.toMatchObject({status:503,message:'Publishing request failed'});}});
  it('validates response and preserves conflict status',async()=>{const record={id:randomUUID(),appSlug:'event',title:'Launch',description:'',slug:null,url:'https://matrix.page/test',revision:1,status:'published',activeVersion:randomUUID(),versions:[],config:{data:{},forms:[]}};vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify(record))));expect(await client().request('event','GET')).toEqual(record);vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('{}',{status:409})));await expect(client().request('event','PATCH',{})).rejects.toEqual(new SitePlatformError(409));});
 });
+
+it('does not send already cancelled publication and propagates cancellation during transport', async () => {
+ const cancelled = new AbortController(); cancelled.abort();
+ const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+ await expect(client().request('event', 'POST', {}, '', cancelled.signal)).rejects.toMatchObject({ status: 503 });
+ expect(fetch).not.toHaveBeenCalled();
+ const active = new AbortController();
+ fetch.mockImplementation((_url, options) => new Promise((_resolve, reject) => { options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }); }));
+ const request = client().request('event', 'POST', {}, '', active.signal).then(() => 'unexpected success', error => error);
+ active.abort();
+ expect(await request).toMatchObject({ status: 503, message: 'Publishing request failed' });
+});

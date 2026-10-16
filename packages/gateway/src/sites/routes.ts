@@ -12,6 +12,7 @@ import { BuildOrchestrator } from '../app-runtime/build-orchestrator.js';
 import { parseManifest, type AppManifest } from '../app-runtime/manifest-schema.js';
 import { collectSiteFiles, type SiteFile } from './bundle.js';
 import { SitePlatformError, type SitePlatformClient } from './platform-client.js';
+import { createPublicationDeadline } from './publish-deadline.js';
 import type { SiteSubmissionRepository } from './submission-repository.js';
 const Slug=z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const Paging=SiteSubmissionsQuerySchema;
@@ -58,8 +59,8 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
  app.use(base,async(c,next)=>{const error=await owner(c);if(error)return error;await next();});
  app.use(base+'/*',async(c,next)=>{const error=await owner(c);if(error)return error;await next();});
  app.onError((error,c)=>{console.warn('[sites] Owner request failed',error.name);return c.json({error:'Site unavailable'},503);});
- async function call(c:Context,method:string,body?:unknown,child=''):Promise<Response>{
-  try{const site=await options.platform!.request(c.req.param('slug')!,method,body,child);return site?c.json(site):c.json({error:'Site not found'},404);}
+ async function call(c:Context,method:string,body?:unknown,child='',signal?:AbortSignal):Promise<Response>{
+  try{const site=await (signal?options.platform!.request(c.req.param('slug')!,method,body,child,signal):options.platform!.request(c.req.param('slug')!,method,body,child));return site?c.json(site):c.json({error:'Site not found'},404);}
   catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===409?'Site changed; reload and try again':error.status===400?'Invalid request':'Site unavailable'},error.status);throw error;}
  }
  async function body(c:Context,schema:z.ZodType){try{return schema.safeParse(await c.req.json());}catch(error){if(error instanceof SyntaxError)return {success:false as const};throw error;}}
@@ -68,7 +69,10 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
   const parsed=await body(c,SitePublishRequestSchema);if(!parsed.success)return c.json({error:'Invalid request'},400);
   if(activeBuilds>=4)return c.json({error:'Too many requests'},429);
   activeBuilds++;
+  const deadline=createPublicationDeadline(c.req.raw.signal);
+  let pendingBuild:Promise<unknown>|undefined;
   try{
+   deadline.check();
    const resolved=await resolveAppBySlug(join(options.homePath,'apps'),c.req.param('slug'));if(!resolved.ok)return c.json({error:'App not found'},404);
    const {manifest,appDir}=resolved.entry;
    const [appsReal,appReal]=await Promise.all([realpath(join(options.homePath,'apps')),realpath(appDir)]);
@@ -80,19 +84,30 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
    const {reviewedConfig,...metadata}=parsed.data as z.infer<typeof SitePublishRequestSchema>;
    if(!isDeepStrictEqual(config,reviewedConfig))return c.json({error:'Site changed; reload and try again'},409);
    type Snapshot={ok:true;files:SiteFile[]}|{ok:false;reason:'changed'|'artifacts'};
-   const result=await build.buildWithSnapshot<Snapshot>(manifest.slug,appDir,{timeoutMs:120000},async()=>{
+   deadline.check();
+   const building=build.buildWithSnapshot<Snapshot>(manifest.slug,appDir,{timeoutMs:120000},async()=>{
+    deadline.check();
     if(!await livePublicationMatches(appDir,binding,manifest))return {ok:false,reason:'changed'};
     let files:SiteFile[];
     try{files=await collectSiteFiles(binding.path,manifest.build!.output);}
     catch(error){console.warn('[sites] Production artifact rejected',error instanceof Error?error.name:'UnknownError');return {ok:false,reason:'artifacts'};}
+    deadline.check();
     if(!await livePublicationMatches(appDir,binding,manifest))return {ok:false,reason:'changed'};
+    deadline.check();
     return {ok:true,files};
    });
+   pendingBuild=building;
+   const result=await deadline.wait(building);
    if(!result.ok)return c.json({error:'App needs a public build'},400);
    if(!result.snapshot.ok)return result.snapshot.reason==='changed'?c.json({error:'Site changed; reload and try again'},409):c.json({error:'App needs a public build'},400);
    // Captured bytes no longer depend on dist, so transport runs after ownership releases.
-   return await call(c,'POST',{title:manifest.name,description:manifest.description??'',...metadata,config,files:result.snapshot.files});
-  }finally{activeBuilds--;}
+   deadline.check();
+   return await call(c,'POST',{title:manifest.name,description:manifest.description??'',...metadata,config,files:result.snapshot.files},'',deadline.signal);
+  }finally{
+   deadline.dispose();
+   if(pendingBuild)void pendingBuild.then(()=>{activeBuilds--;},error=>{console.warn('[sites] Publication build failed',error instanceof Error?error.name:'UnknownError');activeBuilds--;});
+   else activeBuilds--;
+  }
  });
  app.patch(base,limit,async c=>{const parsed=await body(c,SiteMetadataSchema);return parsed.success?call(c,'PATCH',parsed.data):c.json({error:'Invalid request'},400);});
  app.delete(base,limit,async c=>{const parsed=await body(c,z.object({baseRevision:z.number().int().min(0)}));return parsed.success?call(c,'DELETE',parsed.data):c.json({error:'Invalid request'},400);});
