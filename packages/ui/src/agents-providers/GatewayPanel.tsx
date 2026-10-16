@@ -10,7 +10,7 @@ import type {
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
-import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, money, shortDate, titleCase } from "./utils.js";
+import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, gatewayPolicyAllowsModel, money, shortDate, titleCase } from "./utils.js";
 
 const capabilityLabels = {
   tools: "Tools",
@@ -35,7 +35,7 @@ export function matrixGatewayEligibleModels(
   if (source?.kind !== "matrix_gateway" || !policy || !provider) return [];
   return provider.models.filter((model) => model.enabled
     && source.eligibleModelIds.includes(model.id)
-    && policy.allowedModelIds.includes(model.id));
+    && gatewayPolicyAllowsModel(policy, model.id));
 }
 
 export function isMatrixGatewaySourceReady(
@@ -124,7 +124,7 @@ export function GatewayPanel({
   const offeredModels = modelInventory?.filter((model, index, inventory) => model.enabled
     && inventory.findIndex(candidate => candidate.providerId === model.providerId && candidate.id === model.id) === index)
     ?? provider?.models.filter(model => model.enabled
-    && source?.eligibleModelIds.includes(model.id) && policy?.allowedModelIds.includes(model.id)) ?? [];
+    && source?.eligibleModelIds.includes(model.id) && gatewayPolicyAllowsModel(policy, model.id)) ?? [];
   const budget = policy?.monthlyBudgetMicrousd ?? null;
   const previousBudget = useRef(budget);
   const [budgetUsd, setBudgetUsd] = useState(

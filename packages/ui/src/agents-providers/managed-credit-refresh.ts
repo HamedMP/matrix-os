@@ -19,9 +19,13 @@ function mergeCredit(snapshot: ProviderSettingsSnapshot, observation: ProviderMa
   if (!managed.length || managed.some(source => source.usage.kind === "managed_credit" && Date.parse(source.usage.asOf) > asOf)) return null;
   const allowed = (providerId: string, modelId: string) => observation.policy.allowedModelIds
     .some(candidate => candidate === modelId || candidate === `${providerId}/${modelId}`);
+  const effectiveAllowedModelIds = (snapshot.gatewayPolicy?.effectiveAllowedModelIds
+    ?? snapshot.gatewayPolicy?.allowedModelIds ?? []).filter(model => observation.policy.enabled
+      && managed.some(source => source.eligibleModelIds.includes(model) && allowed(source.providerId, model)));
   const accessSources = snapshot.accessSources.map(source => {
     if (!managed.includes(source)) return source;
-    const revoked = !observation.policy.enabled || source.eligibleModelIds.some(model => !allowed(source.providerId, model));
+    const revoked = !observation.policy.enabled || !source.eligibleModelIds.some(model => allowed(source.providerId, model)
+      && (snapshot.gatewayPolicy === null || effectiveAllowedModelIds.includes(model)));
     return { ...source, usage: observation.usage,
       // Funding eligibility is derived from current usage. Preserve independently
       // verified route evidence so funding recovery does not need a route probe.
@@ -37,6 +41,7 @@ function mergeCredit(snapshot: ProviderSettingsSnapshot, observation: ProviderMa
       : snapshot.supportedActions.filter(action => action !== "add_credit"),
     gatewayPolicy: snapshot.gatewayPolicy ? {
     ...snapshot.gatewayPolicy,
+    effectiveAllowedModelIds,
     monthlyBudgetMicrousd: observation.policy.monthlyBudgetMicrousd,
     topUpEnabled: observation.topUpEnabled,
   } : null };

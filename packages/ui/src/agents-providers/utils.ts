@@ -2,10 +2,16 @@ import type {
   ProviderAccessSource,
   ProviderAuthenticationState,
   ProviderDependencyCounts,
+  ProviderGatewayPolicy,
   ProviderHarnessInstance,
   ProviderSettingsSnapshot,
   ProviderUsage,
 } from "@matrix-os/contracts";
+
+export function gatewayPolicyAllowsModel(policy: ProviderGatewayPolicy | null, modelId: string): boolean {
+  return policy !== null && policy.allowedModelIds.includes(modelId)
+    && (policy.effectiveAllowedModelIds === undefined || policy.effectiveAllowedModelIds.includes(modelId));
+}
 
 export function money(microusd: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", {
