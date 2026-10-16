@@ -192,11 +192,19 @@ describe("funded AI policy routes", () => {
     const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await (await app.request(fundedCredentialPath(), {
       method: "POST", headers: runtimeHeaders, body: "{}",
     })).json());
-    const check = await app.request("/internal/ai/funded/check", {
+    const legacyCheck = await app.request("/internal/ai/funded/check", {
       method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
       body: JSON.stringify({ credential: issued.credential.token, modelId }),
     });
-    const selection = FundedAiPolicyCheckResponseSchema.parse(await check.json()).upstreamSelection;
+    expect(legacyCheck.status).toBe(200);
+    expect(await legacyCheck.json()).not.toHaveProperty("upstreamSelection");
+    const check = await app.request("/internal/ai/funded/check", {
+      method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, modelId, upstreamSelectionVersion: 1 }),
+    });
+    const negotiatedCheck = FundedAiPolicyCheckResponseSchema.parse(await check.json());
+    expect(negotiatedCheck.upstreamSelectionVersion).toBe(1);
+    const selection = negotiatedCheck.upstreamSelection;
     expect(selection).toMatchObject({ upstream: "aws_bedrock", preferenceRevision: 1 });
     const authorized = await app.request("/internal/ai/funded/authorize", {
       method: "POST", headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
@@ -256,6 +264,33 @@ describe("funded AI policy routes", () => {
       signal: expect.any(AbortSignal),
       deadlineAtMs: expect.any(Number),
     }));
+  });
+
+  it("returns both static models and a healthy entitled custom Bedrock model", async () => {
+    const customModel = "anthropic/claude-opus-5";
+    const staticModels = ["@cf/zai-org/glm-5.3-flash", modelId];
+    const probe = vi.fn(async () => ({ ready: true, checkedAt: now,
+      staleAfter: "2026-08-30T20:00:30.000Z", priceValidThrough: "2026-09-30T20:00:00.000Z" }));
+    const created = await createTestApp({
+      upstreamPreferences: true,
+      allowedModelIds: [...staticModels, customModel],
+      bedrockModelIds: [customModel],
+      routeProbes: { probe },
+    });
+    await created.upstreamPreferences!.setPreference({
+      ownerId: "user_alice", actorOwnerId: "user_alice", idempotencyKey: "all_healthy_routes",
+      expectedRevision: 0, selectedUpstream: "aws_bedrock",
+    });
+
+    const response = await created.app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds)
+      .toEqual([...staticModels, customModel]);
   });
 
   it("preserves Cloudflare readiness when the preferred Bedrock route is unhealthy", async () => {

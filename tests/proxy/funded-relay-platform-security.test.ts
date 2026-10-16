@@ -76,6 +76,7 @@ describe("funded relay platform transport security", () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         credential: "runtime-credential",
         modelId: "anthropic/claude-sonnet-5",
+        upstreamSelectionVersion: 1,
       });
       throw new Error("test stop");
     });
@@ -90,5 +91,40 @@ describe("funded relay platform transport security", () => {
       modelId: "anthropic/claude-sonnet-5",
     }, new AbortController().signal)).rejects.toThrow("test stop");
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to the strict legacy check shape when an older platform rejects negotiation", async () => {
+    const legacyResponse = {
+      contractVersion: 1,
+      authorized: true,
+      identity: {
+        tokenId: "credential_123", ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary",
+        audience: "matrix-funded-relay", scope: "ai:invoke", expiresAt: "2026-10-16T12:15:00.000Z",
+      },
+      policy: {
+        enabled: true, globalRevision: 1, runtimeRevision: 1,
+        allowedModelIds: ["anthropic/claude-sonnet-5"], monthlyBudgetMicrousd: 1_000,
+        checkedAt: "2026-10-16T12:00:00.000Z", staleAfter: "2026-10-16T12:00:30.000Z",
+      },
+    };
+    const bodies: unknown[] = [];
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return bodies.length === 1
+        ? Response.json({ error: { code: "invalid_request", message: "Invalid request" } }, { status: 400 })
+        : Response.json(legacyResponse);
+    });
+    const client = createFundedPlatformClient(clientOptions(
+      "https://platform.matrix-os.com", fetchMock as typeof fetch,
+    ));
+
+    await expect(client.check({
+      credential: "runtime-credential",
+      modelId: "anthropic/claude-sonnet-5",
+    }, new AbortController().signal)).resolves.toEqual(legacyResponse);
+    expect(bodies).toEqual([
+      { credential: "runtime-credential", modelId: "anthropic/claude-sonnet-5", upstreamSelectionVersion: 1 },
+      { credential: "runtime-credential", modelId: "anthropic/claude-sonnet-5" },
+    ]);
   });
 });

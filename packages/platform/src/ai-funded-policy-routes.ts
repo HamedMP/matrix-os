@@ -654,7 +654,8 @@ export function createAiFundedRelayRoutes(options: {
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {
       const checked = await options.repository.checkPolicy(request.data);
-      const upstreamSelection = options.upstreamPreferences
+      const supportsUpstreamSelection = request.data.upstreamSelectionVersion === 1;
+      const upstreamSelection = supportsUpstreamSelection && options.upstreamPreferences
         ? await options.upstreamPreferences.resolveUpstream({
             ownerId: checked.identity.ownerId,
             modelId: request.data.modelId,
@@ -662,6 +663,7 @@ export function createAiFundedRelayRoutes(options: {
         : undefined;
       return c.json(FundedAiPolicyCheckResponseSchema.parse({
         ...checked,
+        ...(supportsUpstreamSelection ? { upstreamSelectionVersion: 1 as const } : {}),
         ...(upstreamSelection ? { upstreamSelection } : {}),
       }), 200);
     } catch (error) {

@@ -409,7 +409,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     } catch (error) {
       return controlPlaneError(c, error);
     }
-    isBedrock = isBedrockCandidate && checked.upstreamSelection?.upstream === "aws_bedrock";
+    const supportsUpstreamSelection = checked.upstreamSelectionVersion === 1;
+    isBedrock = isBedrockCandidate && supportsUpstreamSelection
+      && checked.upstreamSelection?.upstream === "aws_bedrock";
     if (isBedrockCandidate && !isBedrock) {
       if (!cloudflareModel || cloudflareModel.canonicalModelId !== model.canonicalModelId) {
         return errorResponse(c, 403, "permission_error", "This model is not enabled");
@@ -513,7 +515,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         modelId: model.canonicalModelId,
         maxCostMicrousd,
         ...(config.reservationMode === "usage" ? { billingMode: "usage" as const } : {}),
-        upstream: isBedrock ? "aws_bedrock" : isOpenAi ? "cloudflare_workers_ai" : "cloudflare_anthropic",
+        ...(supportsUpstreamSelection ? { upstream: isBedrock
+          ? "aws_bedrock" as const
+          : isOpenAi ? "cloudflare_workers_ai" as const : "cloudflare_anthropic" as const } : {}),
         ...(isBedrock && checked.upstreamSelection ? { upstreamSelection: checked.upstreamSelection } : {}),
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
