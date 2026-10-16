@@ -1,4 +1,5 @@
 import { deleteProjectThreadState } from "./project-thread-deletion.js";
+import { isFailedCodexBootstrap } from "./codex-failed-bootstrap.js";
 import { applyBackgroundThreadStop, withBackgroundResumeState, BackgroundThreadStopSchema, type BackgroundThreadStop } from "./background-thread-stop.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -1346,7 +1347,8 @@ export function createCodingAgentThreadStore(
           if (options.providerAdmission && !await options.providerAdmission.isProviderEnabled(thread.providerId)) {
             throw new CodingAgentTurnError("turn_unavailable");
           }
-          if (!provider.resumeTurn || !thread.providerResumeState) {
+          if (!provider.resumeTurn || !thread.providerResumeState
+            || isFailedCodexBootstrap({ ownerId: principal.userId, thread, events: state.events, turns: state.turns })) {
             throw new CodingAgentTurnError("thread_not_resumable");
           }
           const acceptedAt = now().toISOString();

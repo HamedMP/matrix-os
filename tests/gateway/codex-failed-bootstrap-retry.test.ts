@@ -60,7 +60,12 @@ async function seedPreviouslyFailedRetry(homePath: string, threadId: string): Pr
   await writeFile(path, JSON.stringify(state), { mode: 0o600 });
 }
 
-it.each([false, true])("retries only the new Full access prompt after a failed native bootstrap (earlier failed retry=%s)", async (earlierRetry) => {
+it.each([
+  { earlierRetry: false, attempts: 1, concurrent: false },
+  { earlierRetry: true, attempts: 1, concurrent: false },
+  { earlierRetry: true, attempts: 2, concurrent: false },
+  { earlierRetry: true, attempts: 2, concurrent: true },
+])("retries only the new Full access prompt after a failed native bootstrap ($earlierRetry/$attempts/$concurrent)", async ({ earlierRetry, attempts, concurrent }) => {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bootstrap-retry-"));
   const requests: Parameters<CodingAgentProviderAdapter["startThread"]>[0]["request"][] = [];
   const resumeTurn = vi.fn(async () => { throw new Error("Fixture native conversation was never initialized"); });
@@ -100,16 +105,31 @@ it.each([false, true])("retries only the new Full access prompt after a failed n
     expect((await threads.getThread(principal, threadId)).thread.status).toBe("failed");
 
     const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads });
-    const events: CanonicalProviderRunEvent[] = [];
-    for await (const event of adapter.resume!({
+    const retryInput: Parameters<NonNullable<typeof adapter.resume>>[0] = {
       owner, chatId: "chat_bootstrap_retry", turnId: "cturn_new_bootstrap_retry", runId: "run_new_bootstrap_retry",
       prompt: "NEW retry only: open the public website.",
-      parts: [{ type: "text", text: "NEW retry only: open the public website." }],
+      parts: [{ type: "text" as const, text: "NEW retry only: open the public website." }],
       selection: { instanceId: "codex_default", model: "gpt-6.1-sol",
         options: [{ id: "effort", value: "low" }, { id: "service_tier", value: "priority" }] },
       interactionMode: "default", permissionMode: "full_access", signal: new AbortController().signal,
       resumeState: { conversationId: threadId },
-    })) events.push(event);
+    };
+    const collect = async () => {
+      const events: CanonicalProviderRunEvent[] = [];
+      for await (const event of adapter.resume!(retryInput)) events.push(event);
+      return events;
+    };
+    const collected: CanonicalProviderRunEvent[][] = [];
+    if (concurrent) {
+      // The canonical browser scope permits one active projection per run.
+      // A duplicate must not bypass that gate or launch a second replacement.
+      const results = await Promise.allSettled(Array.from({ length: attempts }, collect));
+      expect(results.map(result => result.status)).toEqual(["fulfilled", "rejected"]);
+      for (const result of results) {
+        if (result.status === "fulfilled") collected.push(result.value);
+        else expect(result.reason).toMatchObject({ message: "Browser run unavailable" });
+      }
+    } else for (let index = 0; index < attempts; index++) collected.push(await collect());
 
     expect(resumeTurn, "A bootstrap without native identity must not accept another native turn").not.toHaveBeenCalled();
     expect(requests).toHaveLength(2);
@@ -118,12 +138,17 @@ it.each([false, true])("retries only the new Full access prompt after a failed n
       approvalPolicy: "never", sandboxMode: "full_access",
       modelOptions: [{ id: "effort", value: "low" }, { id: "service_tier", value: "priority" }],
     });
-    const replacement = events.find((event) => event.type === "state.updated");
-    expect(replacement).toBeDefined();
-    expect(replacement?.type === "state.updated" ? replacement.state.conversationId : undefined)
-      .not.toBe(threadId);
-    expect(events).toContainEqual({ type: "assistant.delta", messageId: "msg_recovered_bootstrap", delta: "New retry completed." });
-    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    const replacementIds = collected.map(events => {
+      const replacement = events.find(event => event.type === "state.updated");
+      expect(replacement).toBeDefined();
+      const answer = events.filter(event => event.type === "assistant.delta");
+      expect(answer.map(event => event.delta).join("")).toBe("New retry completed.");
+      expect(answer.every(event => event.messageId === "msg_recovered_bootstrap")).toBe(true);
+      expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+      return replacement?.type === "state.updated" ? replacement.state.conversationId : undefined;
+    });
+    expect(replacementIds[0]).not.toBe(threadId);
+    expect(replacementIds.every(id => id === replacementIds[0])).toBe(true);
     expect((await threads.getThread(principal, threadId)).events.items).toContainEqual(expect.objectContaining({
       type: "user.message", text: "Original supervised prompt must not be replayed.",
     }));
@@ -133,3 +158,53 @@ it.each([false, true])("retries only the new Full access prompt after a failed n
     await rm(homePath, { recursive: true, force: true });
   }
 });
+
+it.each(["foreign-owner", "disabled-harness", "relation-denied", "capacity"] as const)(
+  "keeps retry recovery behind %s admission", async (mode) => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bootstrap-admission-"));
+    let enabled = true, relationAllowed = true;
+    const relationError = new Error("Fixture relation denied");
+    const startThread = vi.fn(async ({ thread, now, nextEventId }: Parameters<CodingAgentProviderAdapter["startThread"]>[0]): Promise<CodingAgentProviderRunResult> => ({
+      events: [{ type: "thread.status", eventId: nextEventId(), threadId: thread.id,
+        occurredAt: now().toISOString(), status: "running" }],
+      resumeState: { conversationId: `sess_${thread.id.slice("thread_".length)}`, backgroundRef },
+    }));
+    const provider: CodingAgentProviderAdapter = { providerId: "codex", startThread,
+      resumeTurn: ({ signal }) => new Promise((_resolve, reject) => {
+        const fail = () => reject(new Error("Fixture turn cancelled"));
+        if (signal.aborted) fail(); else signal.addEventListener("abort", fail, { once: true });
+      }),
+    };
+    const threads = createCodingAgentThreadStore({ homePath, providers: [provider], maxTurnDispatches: 1,
+      providerAdmission: { isProviderEnabled: async () => enabled },
+      relationValidator: { validateCreate: async () => undefined, validateThread: async () => {
+        if (!relationAllowed) throw relationError;
+      } },
+      now: () => new Date(retryAt),
+    });
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const original = await threads.createThread(principal, { providerId: "codex", prompt: "Initial prompt.",
+        mode: "default", projectId: "project_fixture", clientRequestId: "req_initial_admission" });
+      const threadId = original.snapshot.thread.id, sessionId = `sess_${threadId.slice("thread_".length)}`;
+      await threads.ingestProviderEvents(principal, threadId, { events: nativeFailureEvents(threadId, sessionId) },
+        { sessionId, offset: Buffer.byteLength(nativeFailureRecord) });
+      if (mode === "disabled-harness") enabled = false;
+      if (mode === "relation-denied") relationAllowed = false;
+      if (mode === "capacity") {
+        const busy = await threads.createThread(principal, { providerId: "codex", prompt: "Occupied.", mode: "default",
+          clientRequestId: "req_capacity_fixture" });
+        await threads.acceptTurn(principal, busy.snapshot.thread.id, { message: "Remain active.", clientRequestId: "req_busy_turn" });
+      }
+      const retry = threads.acceptTurn(mode === "foreign-owner" ? { ...principal, userId: "owner_other" } : principal,
+        threadId, { message: "New retry.", approvalPolicy: "never", sandboxMode: "full_access", clientRequestId: "req_blocked_retry" });
+      if (mode === "relation-denied") await expect(retry).rejects.toBe(relationError);
+      else await expect(retry).rejects.toMatchObject({ code: mode === "foreign-owner" ? "thread_not_found" : "turn_unavailable" });
+      expect(startThread).toHaveBeenCalledTimes(mode === "capacity" ? 2 : 1);
+    } finally {
+      await threads.shutdownTurns();
+      warnings.mockRestore();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  },
+);
