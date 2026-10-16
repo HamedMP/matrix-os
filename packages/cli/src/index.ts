@@ -16,6 +16,7 @@ export const PUBLISHED_CLI_COMMANDS = new Set([
   "port",
   "forward",
   "doctor",
+  "update",
   "instance",
   "collaboration",
   "completion",

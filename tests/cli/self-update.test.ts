@@ -16,16 +16,24 @@ function serve(bytes = script, checksum = sha(bytes)) {
 }
 function install(executable: string, fetch = serve()) { return updateStandaloneCli({ executable, release, platform: 'linux', arch: 'x64', fetch: fetch as typeof globalThis.fetch }); }
 describe('trusted CLI release selection', () => {
-  it('selects the newest stable CLI, ignoring OS releases and drafts', async () => {
-    const fetch = vi.fn(async (_input: unknown, _init?: RequestInit) => new Response(JSON.stringify([
-      { tag_name: 'v999.0.0', draft: false, prerelease: false, assets: [] },
-      { tag_name: 'cli-v0.3.23-beta.1', draft: false, prerelease: true, assets: [] },
-      { tag_name: 'cli-v0.3.23', draft: true, prerelease: false, assets: [] },
-      { tag_name: 'cli-v0.3.21', draft: false, prerelease: false, assets: [] },
-      { tag_name: 'cli-v0.3.22', draft: false, prerelease: false, assets: release.assets },
-    ])));
+  it('selects the newest stable CLI tag, ignoring OS tags and prereleases', async () => {
+    const fetch = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify(
+      String(input).includes('/git/matching-refs/')
+        ? [{ ref: 'refs/tags/v999.0.0' }, { ref: 'refs/tags/cli-v0.3.23-beta.1' }, { ref: 'refs/tags/cli-v0.3.9' }, { ref: 'refs/tags/cli-v0.3.22' }]
+        : { tag_name: 'cli-v0.3.22', draft: false, prerelease: false, assets: release.assets }
+    )));
     await expect(latestCliRelease(fetch as typeof globalThis.fetch)).resolves.toMatchObject({ version: '0.3.22' });
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ redirect: 'error', signal: expect.any(AbortSignal) });
+  });
+  it('finds a CLI even when recent OS releases fill the release feed', async () => {
+    const fetch = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
+      String(input).includes('/git/matching-refs/')
+        ? [{ ref: 'refs/tags/cli-v0.3.21' }, { ref: 'refs/tags/cli-v0.3.22' }, { ref: 'refs/tags/cli-v0.3.23-beta.1' }]
+        : String(input).endsWith('/releases/tags/cli-v0.3.22')
+          ? { tag_name: 'cli-v0.3.22', draft: false, prerelease: false, assets: release.assets }
+          : Array.from({ length: 50 }, (_, i) => ({ tag_name: 'v999.0.' + i, draft: false, prerelease: false, assets: [] }))
+    )));
+    await expect(latestCliRelease(fetch as typeof globalThis.fetch)).resolves.toMatchObject({ version: '0.3.22' });
   });
   it('rejects failed or oversized release metadata', async () => {
     await expect(latestCliRelease((async () => new Response('', { status: 503 })) as typeof globalThis.fetch)).rejects.toThrow();
@@ -98,7 +106,7 @@ describe('standalone update integrity and atomicity', () => {
   });
   it('rejects oversized downloads without replacing the binary', async () => {
     const f = await fixture();
-    const fetch = vi.fn(async (input: string) => input.endsWith('.sha256') ? new Response(`${sha(script)}  ${asset}\n`) : new Response(script, { headers: { 'content-length': '9999999999' } }));
+    const fetch = vi.fn(async (input: string | URL | Request) => String(input).endsWith('.sha256') ? new Response(`${sha(script)}  ${asset}\n`) : new Response(script, { headers: { 'content-length': '9999999999' } }));
     await expect(install(f.executable, fetch)).rejects.toThrow();
     expect(await readFile(f.executable, 'utf8')).toBe('original binary');
     expect(await readdir(f.dir)).toEqual(['matrix']);

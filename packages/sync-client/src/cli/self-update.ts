@@ -4,7 +4,7 @@ import { access, chmod, link, lstat, open, readFile, rename, rm, readdir } from 
 import { dirname, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-const RELEASES = 'https://api.github.com/repos/HamedMP/matrix-os/releases?per_page=50';
+const REPOSITORY = 'https://api.github.com/repos/HamedMP/matrix-os';
 const DOWNLOADS = 'https://github.com/HamedMP/matrix-os/releases/download/';
 const STABLE = /^(0|[1-9]\d{0,7})\.(0|[1-9]\d{0,7})\.(0|[1-9]\d{0,7})$/;
 const execute = promisify(execFile);
@@ -52,25 +52,30 @@ async function bytes(response: Response, limit: number): Promise<Buffer> {
   return Buffer.concat(chunks, count);
 }
 export async function latestCliRelease(fetcher: typeof fetch = fetch): Promise<CliRelease> {
-  const response = await fetcher(RELEASES, { redirect: 'error', signal: AbortSignal.timeout(10000), headers: { accept: 'application/vnd.github+json' } });
-  const data: unknown = JSON.parse((await bytes(response, 1024 * 1024)).toString('utf8'));
-  if (!Array.isArray(data) || data.length > 50)
+  // CLI tags have their own feed: frequent OS releases must not hide an older CLI.
+  const options = { redirect: 'error' as const, signal: AbortSignal.timeout(10000), headers: { accept: 'application/vnd.github+json' } };
+  const refs = await fetcher(REPOSITORY + '/git/matching-refs/tags/cli-v', options);
+  const data: unknown = JSON.parse((await bytes(refs, 1024 * 1024)).toString('utf8'));
+  if (!Array.isArray(data) || data.length > 4096)
     throw new Error('CLI release unavailable');
-  const releases: CliRelease[] = [];
+  const versions: string[] = [];
   for (const value of data) {
-    if (!value || typeof value !== 'object' || value.draft !== false || value.prerelease !== false || typeof value.tag_name !== 'string' || !value.tag_name.startsWith('cli-v'))
-      continue;
-    const version = value.tag_name.slice(5);
-    if (!STABLE.test(version) || !Array.isArray(value.assets) || value.assets.length > 32)
-      continue;
-    const assets = value.assets.filter((asset: unknown): asset is CliRelease['assets'][number] => Boolean(asset && typeof asset === 'object' && 'name' in asset && typeof asset.name === 'string' && asset.name.length < 160 && 'browser_download_url' in asset && typeof asset.browser_download_url === 'string' && asset.browser_download_url.length < 512));
-    releases.push({ version, assets });
+    if (value && typeof value === 'object' && typeof value.ref === 'string' && value.ref.startsWith('refs/tags/cli-v')) {
+      const version = value.ref.slice('refs/tags/cli-v'.length);
+      if (STABLE.test(version)) versions.push(version);
+    }
   }
-  releases.sort((a, b) => compareCliVersions(b.version, a.version));
-  if (!releases[0])
+  versions.sort((a, b) => compareCliVersions(b, a));
+  const version = versions[0];
+  if (!version) throw new Error('CLI release unavailable');
+  const response = await fetcher(REPOSITORY + '/releases/tags/cli-v' + version, options);
+  const release: unknown = JSON.parse((await bytes(response, 1024 * 1024)).toString('utf8'));
+  if (!release || typeof release !== 'object' || !('tag_name' in release) || release.tag_name !== 'cli-v' + version || !('draft' in release) || release.draft !== false || !('prerelease' in release) || release.prerelease !== false || !('assets' in release) || !Array.isArray(release.assets) || release.assets.length > 32)
     throw new Error('CLI release unavailable');
-  return releases[0];
+  const assets = release.assets.filter((asset: unknown): asset is CliRelease['assets'][number] => Boolean(asset && typeof asset === 'object' && 'name' in asset && typeof asset.name === 'string' && asset.name.length < 160 && 'browser_download_url' in asset && typeof asset.browser_download_url === 'string' && asset.browser_download_url.length < 512));
+  return { version, assets };
 }
+
 async function download(fetcher: typeof fetch, url: string, limit: number): Promise<Buffer> {
   // GitHub release redirects are restricted to the official asset infrastructure.
   let current = url;
