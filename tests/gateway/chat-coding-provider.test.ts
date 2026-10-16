@@ -559,6 +559,7 @@ describe("canonical coding Chat Provider adapter", () => {
       type: "approval.requested",
       approvalId: "appr_command",
       title: "Run command",
+      safeDescription: "Run a medium-risk command.",
       risk: "medium",
       allowedDecisions: ["approve", "approve_for_session", "decline"],
     });

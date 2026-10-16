@@ -7,6 +7,7 @@ import { RecoveredControlActivitySchema, type RecoveredControlActivity } from ".
 function recoveryControl(event: AgentThreadEvent): RecoveredControlActivity | undefined {
   if (event.type === "approval.requested") return RecoveredControlActivitySchema.parse({
     type: event.type, approvalId: event.approval.approvalId, title: event.approval.title,
+    safeDescription: event.approval.safeDescription,
     risk: event.approval.risk, allowedDecisions: event.approval.allowedDecisions,
   });
   if (event.type === "approval.resolved") return RecoveredControlActivitySchema.parse({

@@ -3,6 +3,7 @@ import { CODEX_FAILURE_REASONS, codexTerminalFailureReason, type CodexFailureRea
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
+  AgentApprovalRequestSchema,
   AgentAttachmentSchema,
   ChatSubagentSchema,
   AgentToolPreviewSchema,
@@ -125,7 +126,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     approvalId: ApprovalIdSchema,
     correlationId: CorrelationIdSchema,
     title: SafeDisplayStringSchema,
-    safeDescription: SafeDisplayStringSchema,
+    safeDescription: AgentApprovalRequestSchema.shape.safeDescription,
     actionKind: z.enum(["command", "file_change", "provider"]),
     risk: z.enum(["medium", "high"]),
     allowedDecisions: z.array(z.enum(["approve", "approve_for_session", "decline", "cancel"]))
