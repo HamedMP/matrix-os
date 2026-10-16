@@ -65,6 +65,24 @@ it('preserves a completed original for owner recovery when cancellation wins aft
     reason: 'completed_cancelled', ownerReviewRequired: true,
   });
 });
+it('keeps completed originals outside temporary cleanup when the recovery manifest cannot be created', async () => {
+  const { options, homePath, original, emit, downloadPath } = await rig();
+  const controller = new AbortController(); options.signal = controller.signal;
+  options.trigger = async () => {
+    await writeFile(join(downloadPath(), 'invoice-guid-123'), original);
+    // A filesystem failure must not make the only complete original temporary.
+    await mkdir(join(downloadPath(), 'recovery.json'));
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-123', url: options.sourceUrl });
+    emit('Browser.downloadProgress', { guid: 'invoice-guid-123', receivedBytes: original.length, totalBytes: original.length, state: 'completed' });
+    controller.abort();
+  };
+  const result = await collectChromeDownload(options);
+  expect(result).toHaveProperty('recoveryPath');
+  if (!('recoveryPath' in result)) throw new Error('Recovery location was not reported');
+  await cleanupDownloadTemps(homePath, Date.now() + 48 * 60 * 60_000);
+  expect(await readFile(join(homePath, result.recoveryPath, 'invoice-guid-123'))).toEqual(original);
+  expect((await readdir(join(homePath, 'data/browser-artifacts'))).every(name => !name.startsWith('.download-'))).toBe(true);
+});
 it('cancels oversized and incomplete downloads, removes temporary files and restores defaults', async () => {
   for (const oversized of [true, false]) {
     const { options, homePath, emit, messages } = await rig();
