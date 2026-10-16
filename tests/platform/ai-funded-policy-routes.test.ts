@@ -294,7 +294,7 @@ describe("funded AI policy routes", () => {
       .toEqual([...staticModels, customModel]);
   });
 
-  it("preserves Cloudflare readiness when the preferred Bedrock route is unhealthy", async () => {
+  it("preserves Cloudflare readiness for Sonnet when the owner prefers Bedrock", async () => {
     const probe = vi.fn(async (_model: string, call?: { upstream?: "aws_bedrock" }) => ({
       ready: call?.upstream !== "aws_bedrock",
       checkedAt: now,
@@ -316,8 +316,32 @@ describe("funded AI policy routes", () => {
     });
     expect(response.status).toBe(200);
     expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual([modelId]);
-    expect(probe).toHaveBeenNthCalledWith(1, modelId, expect.objectContaining({ upstream: "aws_bedrock" }));
-    expect(probe).toHaveBeenNthCalledWith(2, modelId, expect.not.objectContaining({ upstream: "aws_bedrock" }));
+    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId,
+      expect.not.objectContaining({ upstream: "aws_bedrock" }));
+  });
+
+  it("does not report Sonnet ready from Bedrock when its Cloudflare request path is unavailable", async () => {
+    const probe = vi.fn(async (_model: string, call?: { upstream?: "aws_bedrock" }) => ({
+      ready: call?.upstream === "aws_bedrock",
+      checkedAt: now,
+      staleAfter: "2026-08-30T20:00:30.000Z",
+      priceValidThrough: "2026-09-30T20:00:00.000Z",
+    }));
+    const created = await createTestApp({ upstreamPreferences: true, routeProbes: { probe } });
+    await created.upstreamPreferences!.setPreference({
+      ownerId: "user_alice", actorOwnerId: "user_alice", idempotencyKey: "sonnet_path_truth",
+      expectedRevision: 0, selectedUpstream: "aws_bedrock",
+    });
+
+    const response = await created.app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual([]);
+    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId, expect.not.objectContaining({ upstream: "aws_bedrock" }));
   });
 
   it.each(["disabled", "exhausted"])("rechecks %s owner policy while sharing older priced provider health", async (state) => {
