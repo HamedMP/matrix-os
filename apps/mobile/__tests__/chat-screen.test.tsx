@@ -40,7 +40,7 @@ const mockInsets = { top: 62, right: 0, bottom: 34, left: 0 };
 
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ isSignedIn: mockSignedIn, userId: "user_a" }) }));
 jest.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => mockInsets }));
-jest.mock("expo-router", () => ({ useRouter: () => ({ push: mockPush }) }));
+jest.mock("expo-router", () => ({ useRouter: () => ({ push: mockPush }), useLocalSearchParams: () => ({}) }));
 jest.mock("@/lib/use-keyboard-visible", () => ({ useKeyboardVisible: () => mockKeyboardVisible }));
 jest.mock("@/lib/canonical-chat-session-context", () => ({
   useCanonicalChatSession: () => ({
