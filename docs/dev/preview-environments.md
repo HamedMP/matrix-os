@@ -235,6 +235,19 @@ Open it at `https://app.matrix-os.com/vm/<handle>`; the handle looks like
 `pv-1907-3fa91c2e`. Pass `--yes` to confirm without a prompt and `--json` for
 machine-readable output.
 
+Eligible owner Private Previews also appear in the normal **Computers** list
+with the existing Preview label. Select one through the regular Computer
+switcher; selection rechecks owner, current membership and lifetime before
+issuing its runtime credential. Missing or expired eligibility cannot be fixed
+by editing a profile or selecting an unlisted slot. Shared Preview access stays
+separate.
+
+An anonymous explicit-VM page enters the normal sign-in flow and returns to its
+validated target. The sign-in page does not grant access to that machine.
+These entry paths depend on the serving Platform control plane; updating only
+the Private Preview's host bundle does not publish an inventory or login-entry
+fix. Verify Platform, client and installed host versions separately.
+
 What keeps it safe:
 
 - Only you: no collaborators, no Preview Terminal grants, and the platform

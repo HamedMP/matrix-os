@@ -267,6 +267,10 @@ Migrations are added to `PLATFORM_MIGRATION_STEPS` with a
   their PR number, bundle commit, and expiry. Every surface that renders that
   list shows them.
 
+The compatible Computers discovery and sign-in repair contract is recorded in
+[Normal computer entry](normal-computer-entry.md). Full PR/commit/expiry UI metadata
+remains a separate surface deliverable.
+
 ## Failure modes
 
 - **Concurrent starts for the same owner and PR**: the per-owner lock and

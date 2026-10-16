@@ -229,7 +229,8 @@ it("keeps refresh read-only and preserves a deliberately disabled Bot grant", as
   view.rerender(<LocalChatgptSubscription {...props} refreshRevision={1}/>);
   await waitFor(() => expect(native.status).toHaveBeenCalledTimes(2));
   expect(screen.queryByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeNull();
-  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.getAllByRole("button")).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Connection details" })).toBeEnabled();
   expect(native.connect).not.toHaveBeenCalled(); expect(native.setGrant).not.toHaveBeenCalled();
 });
 

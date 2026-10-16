@@ -1465,3 +1465,5 @@ export * from '#chatgpt-plan-wire';
 export * from '#matrix-anthropic-connection';
 
 export * from "#chat-navigation";
+
+export { ChatgptPlanDiagnosticSchema, type ChatgptPlanDiagnostic } from "#local-chatgpt-diagnostic";

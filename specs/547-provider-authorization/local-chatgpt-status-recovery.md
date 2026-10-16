@@ -1,6 +1,6 @@
 # Local ChatGPT subscription status recovery and safe diagnostics
 
-Status: local engineering follow-up to ENG-268; implementation/check in progress. This contract does not identify the user's historical live failure or claim runtime acceptance. Local ChatGPT subscription custody remains independent from the selected Computer's native Codex account and Matrix-funded routes.
+Status: engineering follow-up to ENG-268; local verification and publication are separate gates. This contract does not identify the user's historical live failure or claim runtime acceptance. Local ChatGPT subscription custody remains independent from the selected Computer's native Codex account and Matrix-funded routes.
 
 ## User behavior
 
@@ -29,6 +29,14 @@ Diagnostics contain only finite allowlisted phase/category, bounded timestamp, f
 
 Pre/post current-client and abort guards precede all response/diagnostic consumption. A late response or failure from an old identity cannot return a status, replace the current error, retain diagnostic metadata or perform callbacks. Bound retained client metadata to one receipt; discard on success or client invalidation/unmount. No new timer, unbounded collection, persistent log or credential store is required.
 
+## Cached connection details
+
+The card exposes an ordinary **Connection details** action, including for a read-only client. It reads only the optional synchronous `getLastDiagnostic()` accessor. Older clients without that accessor, throwing accessors, absent receipts and strict-schema failures render a generic unavailable message. Opening details never invokes a connection check, OAuth, a mutation, IPC, auth, vault, catalog, peer or network operation.
+
+Keep one canonical strict diagnostic schema in `@matrix-os/contracts`; the existing Desktop IPC module re-exports it. Reject unknown fields rather than rendering arbitrary objects. Show only the finite metadata fields defined above. Do not add raw error text, credentials, user identity or clipboard/export side effects.
+
+The details view keeps no separate receipt history. Revalidate the current cached receipt when rendering, and close/invalidate details on a new operation, successful status, client change or refresh revision change. A late operation cannot restore a stale receipt. Disabled/busy controls preserve their existing gates; read-only inspection does not authorize any mutation. Actual client-to-component tests must assert that opening details adds zero IPC calls.
+
 ## Connection refresh ordering
 
 A store-owned request revision and identity-transition invalidation fence stale success and rejection before cache cleanup, API construction, saved-organization reads and state publication. Newer successful identity/data must survive an older result. Pending refresh cannot restore or clear state after successful sign-out, runtime selection or subscription rewiring. Preserve newest genuine failure cleanup and failed runtime-switch behavior. Reproducing this race with synthetic IPC is evidence of a code defect, not proof it caused the user's live incident.
@@ -41,4 +49,4 @@ TDD covers missing-receipt retry and duplicate/pending/client replacement states
 
 The local subscription capability is Electron-only; keep shared card semantics identical wherever that capability is supplied, and preserve unsupported behavior elsewhere. No new capability is enabled on unsupported Web/Mobile surfaces. Public documentation remains a separate deliverable in FinnaAI/matrix-os-site; no site publication or paid review is authorized by local implementation.
 
-Existing full0f immutable host/Electron artifacts and current Preview installation remain0f. Local source changes do not relabel those artifacts or establish GUI/auth/model acceptance. A new source publication and any additional paid review require their corresponding authorization; this follow-up performs no runtime switch or live login/model request.
+Existing immutable QA Electron and Preview host artifacts retain their separately recorded exact source identities. Local source changes do not relabel those artifacts or establish GUI/auth/model acceptance. A new source publication and any additional paid review require their corresponding authorization; this follow-up performs no runtime switch or live login/model request.

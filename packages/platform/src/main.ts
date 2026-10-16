@@ -476,8 +476,16 @@ export function createApp(deps: {
 
   if (deps.whatsappRoutes) app.route('/', deps.whatsappRoutes);
   app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
+  const privatePreviewAccess = createPrivatePreviewAccess({
+    env: appEnv,
+    collaboration: deps.collaboration,
+    membershipOverride: deps.privatePreviewMembership,
+    logError: logPlatformRouteError,
+  });
+  const privatePreviewEligibility = privatePreviewAccess.eligibility;
   app.route('/', createComputerRoutes({
     db,
+    privatePreviewEligibility,
     clerkAuth,
     appEnv,
     platformJwtSecret,
@@ -598,13 +606,6 @@ export function createApp(deps: {
     }
   }
 
-  const privatePreviewAccess = createPrivatePreviewAccess({
-    env: appEnv,
-    collaboration: deps.collaboration,
-    membershipOverride: deps.privatePreviewMembership,
-    logError: logPlatformRouteError,
-  });
-  const privatePreviewEligibility = privatePreviewAccess.eligibility;
   const journeyAppOrigin = appOrigin(appEnv);
   const resolveJourneyUser = createJourneyUserResolver({
     clerkAuth: clerkAuth ?? undefined,
