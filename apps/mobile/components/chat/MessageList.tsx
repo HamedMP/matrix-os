@@ -1,5 +1,5 @@
 import { useCallback, type ReactNode } from "react";
-import { Text, type ListRenderItemInfo } from "react-native";
+import { FlatList, Text, type ListRenderItemInfo } from "react-native";
 import Animated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 
@@ -8,7 +8,7 @@ import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useReduceMotion } from "@/lib/use-reduce-motion";
 
 import { AssistantMessage } from "./AssistantMessage";
-import { messageEntering, messageEnteringReduced, messageListLayout } from "./message-motion";
+import { messageEntering, messageEnteringReduced } from "./message-motion";
 import type { MessageAttachmentsProps } from "./MessageAttachments";
 import { useUnsentMessageActions } from "./unsent-message-actions";
 import { UserMessage } from "./UserMessage";
@@ -64,13 +64,11 @@ export function MessageList({
   ), [chatId, renderRequest, renderResults, renderComputerPhoto, entering]);
 
   return (
-    <Animated.FlatList
+    <FlatList
       style={styles.list}
       data={messages}
       renderItem={renderItem}
       keyExtractor={keyExtractor}
-      // With reduced motion the messages already there step up at once.
-      itemLayoutAnimation={reduceMotion ? undefined : messageListLayout}
       inverted
       // The list is drawn from the bottom up, so its header is what comes last.
       ListHeaderComponent={footer ? <AnalyticsMask>{footer}</AnalyticsMask> : null}
