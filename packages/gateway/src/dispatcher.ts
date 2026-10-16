@@ -12,6 +12,8 @@ import {
   type MatrixDB,
   type OsViewAgentTools,
   type OwnerAudioTranscriber,
+  type BrainAgentTools,
+  type BrainAgentReadTools,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
 import { appendFile } from "node:fs/promises";
@@ -50,6 +52,8 @@ export interface DispatchOptions {
   onAiGeneration?: (input: AiGenerationInput) => void;
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
+  brainTools?: BrainAgentTools;
+  brainReadTools?: BrainAgentReadTools;
 }
 
 export interface DispatchContext {
@@ -241,6 +245,8 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         requestApproval: entry.kernelOverrides?.requestApproval,
         osViewTools: opts.osViewTools,
         ownerAudioTranscriber: opts.ownerAudioTranscriber,
+        brainTools: opts.brainTools,
+        brainReadTools: opts.brainReadTools,
       };
       try {
         for await (const event of spawnFn(message, config, deadline.controller)) {
@@ -393,6 +399,8 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             env: credentialLaunch.env,
             osViewTools: opts.osViewTools,
             ownerAudioTranscriber: opts.ownerAudioTranscriber,
+            brainTools: opts.brainTools,
+            brainReadTools: opts.brainReadTools,
           };
 
           try {
