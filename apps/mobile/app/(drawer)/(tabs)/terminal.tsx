@@ -27,7 +27,7 @@ import {
 import { Page } from "@/components/shell/Page";
 import { TabScreen } from "@/components/shell/TabScreen";
 import { TerminalAgentLogo, type MobileTerminalAgent } from "@/components/terminal/TerminalAgentLogo";
-import { Divider, FloatingActionButton, Icon, Sheet, Spacer } from "@/components/ui";
+import { Divider, FloatingActionButton, Icon, ListItemMotion, SettleIn, Sheet, Spacer } from "@/components/ui";
 import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import {
@@ -195,7 +195,13 @@ function TerminalScreen() {
           ? <Text style={styles.statusText}>No active terminal sessions.</Text>
           : null}
         {!isPending && !isError && activeSessions.length > 0 ? (
-          <ListRowStack>{activeSessions.map(renderSession)}</ListRowStack>
+          <SettleIn>
+            <ListRowStack>
+              {activeSessions.map((session) => (
+                <ListItemMotion key={session.id}>{renderSession(session)}</ListItemMotion>
+              ))}
+            </ListRowStack>
+          </SettleIn>
         ) : null}
 
         {closedSessions.length > 0 ? (
@@ -203,7 +209,11 @@ function TerminalScreen() {
             <Spacer size="2xl" />
             <Text style={styles.sectionLabel}>CLOSED SESSIONS</Text>
             <Spacer size="md" />
-            <ListRowStack>{closedSessions.map(renderSession)}</ListRowStack>
+            <ListRowStack>
+              {closedSessions.map((session) => (
+                <ListItemMotion key={session.id}>{renderSession(session)}</ListItemMotion>
+              ))}
+            </ListRowStack>
           </>
         ) : null}
 

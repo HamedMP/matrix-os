@@ -6,6 +6,8 @@ import type { ProjectRow } from "../components/projects/project-rows";
 import { EmptyState } from "../components/ui/EmptyState";
 import { Icon } from "../components/ui/Icon";
 import { IconTile } from "../components/ui/IconTile";
+import { listItemExit } from "../components/ui/list-motion-animations";
+import { ItemRowSkeletons } from "../components/ui/Skeleton";
 import { AddIcon, BackIcon, ChevronRightIcon, FolderIcon } from "../components/ui/icons";
 
 import { flat } from "./ui-test-utils";
@@ -189,10 +191,22 @@ describe("projects list screen", () => {
     });
   });
 
-  it("shows the existing skeleton rows while the projects load", () => {
+  it("fades the list in, and lets rows that leave fade out while the rest move up", () => {
+    renderList();
+
+    const list = screen.getByTestId("projects-list");
+    expect(list.props.itemLayoutAnimation).toMatchObject({ animationName: "LinearTransition" });
+    expect(screen.UNSAFE_getAllByProps({ exiting: listItemExit }).length)
+      .toBeGreaterThan(0);
+  });
+
+  it("waits on placeholders shaped like the project rows: a folder tile and two lines", () => {
     renderList({ state: "loading", rows: [] });
 
     expect(screen.getAllByTestId("project-skeleton-row").length).toBeGreaterThan(0);
+    expect(screen.UNSAFE_getByType(ItemRowSkeletons).props).toMatchObject({
+      leadingSize: 44, leadingShape: "tile", density: "comfortable", gap: 14,
+    });
     expect(screen.queryByTestId("projects-list")).toBeNull();
     expect(screen.getByRole("button", { name: "New project" })).toBeTruthy();
   });

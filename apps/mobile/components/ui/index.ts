@@ -8,7 +8,9 @@ export {
   type FloatingActionButtonProps,
 } from "./FloatingActionButton";
 export { Spacer, type SpacerProps } from "./Spacer";
-export { Skeleton, type SkeletonProps } from "./Skeleton";
+export { ItemRowSkeletons, Skeleton, type ItemRowSkeletonsProps, type SkeletonProps } from "./Skeleton";
+export { ListItemMotion, SettleIn } from "./ListMotion";
+export { listItemExit, listItemLayout } from "./list-motion-animations";
 export { Sheet, type SheetProps } from "./Sheet";
 export {
   Subtitle,
