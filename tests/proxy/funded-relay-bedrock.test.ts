@@ -185,6 +185,26 @@ describe("funded Bedrock relay", () => {
     await relay.close();
   });
 
+  it.each([
+    { reasoning_effort: "high" },
+    { parallel_tool_calls: false },
+  ])("rejects untranslated Bedrock controls before reservation or start: %j", async (override) => {
+    const control = platform();
+    const bedrockUpstream: FundedGenerationUpstream = { dispatch: vi.fn(), close: vi.fn() };
+    const relay = createFundedRelay({ ...config(), now: () => NOW,
+      platformClient: control as unknown as FundedPlatformClient, bedrockUpstream });
+    const app = new Hono(); relay.register(app);
+    const result = await app.fetch(new Request("https://relay.example/v1/chat/completions", { method: "POST",
+      headers: { authorization: `Bearer ${CREDENTIAL}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "hi" }],
+        max_tokens: 20, stream: true, ...override }) }));
+    expect(result.status).toBe(400);
+    expect(control.authorize).not.toHaveBeenCalled();
+    expect(control.start).not.toHaveBeenCalled();
+    expect(bedrockUpstream.dispatch).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
   it("never settles exact usage or falls back when the Bedrock stream fails", async () => {
     const control = platform();
     let pulls = 0;

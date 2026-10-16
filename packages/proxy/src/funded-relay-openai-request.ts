@@ -57,12 +57,12 @@ export function serializeFundedOpenAiRequest(
     && !model.reasoningEfforts.includes(parsed.reasoning_effort)) {
     throw new Error("Unsupported reasoning effort");
   }
-  if (!model && parsed.reasoning_effort !== undefined
-    && !["low", "high", "max"].includes(parsed.reasoning_effort)) {
-    throw new Error("Unsupported reasoning effort");
+  if (!model && (parsed.reasoning_effort !== undefined || parsed.parallel_tool_calls !== undefined)) {
+    throw new Error("Unsupported Bedrock request option");
   }
-  const reasoningEffort = parsed.reasoning_effort
-    ?? (model ? (model.reasoningEfforts.includes("low") ? "low" : undefined) : "low");
+  const reasoningEffort = model
+    ? parsed.reasoning_effort ?? (model.reasoningEfforts.includes("low") ? "low" : undefined)
+    : undefined;
   // A client without an output limit still receives a bounded generation.
   const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? 8192;
   const request = { ...parsed, reasoning_effort: reasoningEffort, max_tokens: maxTokens };
