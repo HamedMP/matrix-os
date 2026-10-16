@@ -84,8 +84,12 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 
   refresh: async () => {
+    const request = ++refreshRevision;
+    const identity = desktopProviderIdentityKey(get());
+    const current = () => request === refreshRevision && identity === desktopProviderIdentityKey(get());
     try {
       const status = await invoke("auth:status", {});
+      if (!current()) return;
       const previous = get();
       // selectRuntime is not the only way the runtime identity changes: signing
       // out and back in as another account also replaces the ApiClient, and
@@ -138,7 +142,8 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         api,
       });
     } catch (err: unknown) {
-      console.warn("[connection] failed to refresh auth status:", err instanceof Error ? err.message : String(err));
+      if (!current()) return;
+      console.warn("[connection] failed to refresh auth status:", err instanceof Error ? "request_failed" : "unknown");
       // Dropping to signed-out is an identity change too.
       if (get().status !== "signed-out") {
         clearDesktopQueryCache();
@@ -196,6 +201,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 
   selectRuntime: async (slot) => {
+    refreshRevision += 1;
     // The trusted core emits runtime:changed before the runtime:select invoke
     // resolves. If the wired listener refreshed immediately, the new slot and
     // API would become observable before reconciliation, letting surfaces load
@@ -209,6 +215,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       await flushActiveNotesBeforeIdentityChange();
       selectionStarted = true;
       await invoke("runtime:select", { slot });
+      refreshRevision += 1;
       // Clear previous-computer state only after the trusted core confirms the
       // switch, and before the new slot becomes observable to the UI.
       clearDesktopQueryCache();
@@ -232,8 +239,10 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 
   signOut: async () => {
+    refreshRevision += 1;
     await flushActiveNotesBeforeIdentityChange();
     await invoke("auth:sign-out", {});
+    refreshRevision += 1;
     // Signing out is a runtime identity boundary just like switching
     // computers. Advance the shared generation and synchronously remove every
     // previous-owner cache before publishing signed-out state, so an in-flight
@@ -244,6 +253,9 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 }));
 
+// Ownership changes before any refresh side effect, including failed replies.
+let refreshRevision = 0;
+let wiringRevision = 0;
 let wired = false;
 let connectionEventCleanups: Array<() => void> = [];
 let runtimeSwitchesInFlight = 0;
@@ -267,15 +279,19 @@ function refreshFromRuntimeChangedEvent(): void {
 export function wireConnectionEvents(): void {
   if (wired) return;
   wired = true;
+  const epoch = ++wiringRevision;
+  const active = (callback: () => void) => () => { if (epoch === wiringRevision) callback(); };
   connectionEventCleanups = [
     // S06 / T034: direct collaboration sessions end with the actor; nothing shared survives a sign-in change.
-    onEvent("auth:changed", closeDesktopCollaborationSessions),
-    onEvent("auth:changed", refreshFromConnectionEvent),
-    onEvent("runtime:changed", refreshFromRuntimeChangedEvent),
+    onEvent("auth:changed", active(closeDesktopCollaborationSessions)),
+    onEvent("auth:changed", active(refreshFromConnectionEvent)),
+    onEvent("runtime:changed", active(refreshFromRuntimeChangedEvent)),
   ];
 }
 
 export function unwireConnectionEvents(): void {
+  refreshRevision += 1;
+  wiringRevision += 1;
   for (const cleanup of connectionEventCleanups) {
     cleanup();
   }

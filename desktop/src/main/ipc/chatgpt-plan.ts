@@ -1,4 +1,5 @@
-import { CHATGPT_PLAN_INVOKE } from '../../shared/chatgpt-plan-ipc';
+import { createPlanStatusObservation } from '../chatgpt-plan/status-diagnostics';
+import { CHATGPT_PLAN_INVOKE, ChatgptPlanStatusSchema } from '../../shared/chatgpt-plan-ipc';
 import type { createNativeChatgptPlanService } from '../chatgpt-plan/service';
 type Service = ReturnType<typeof createNativeChatgptPlanService>;
 interface Main {
@@ -18,6 +19,22 @@ export function registerChatgptPlanIpc(ipc: Main, service: Service, isTrusted: (
             const parsed = contract.request.safeParse(input);
             if (!parsed.success)
                 throw new Error('invalid request');
+            if (channel === 'chatgpt-plan:status') {
+                const observation = createPlanStatusObservation();
+                try {
+                    const value = await service.status(parsed.data, observation);
+                    const result = ChatgptPlanStatusSchema.safeParse(value);
+                    if (!result.success) return CHATGPT_PLAN_INVOKE[channel].response.parse({
+                        kind: 'status_failure', diagnostic: observation.fail(result.error, 'response_schema'),
+                    });
+                    return CHATGPT_PLAN_INVOKE[channel].response.parse(observation.diagnostic
+                        ? { kind: 'status_result', status: result.data, diagnostic: observation.diagnostic } : result.data);
+                } catch (error: unknown) {
+                    return CHATGPT_PLAN_INVOKE[channel].response.parse({
+                        kind: 'status_failure', diagnostic: observation.diagnostic ?? observation.fail(error, 'status'),
+                    });
+                }
+            }
             try {
                 const value = channel === 'chatgpt-plan:connect' ? await service.connect(CHATGPT_PLAN_INVOKE['chatgpt-plan:connect'].request.parse(parsed.data))
                     : channel === 'chatgpt-plan:rebind' ? await service.rebind(CHATGPT_PLAN_INVOKE['chatgpt-plan:rebind'].request.parse(parsed.data))
@@ -29,7 +46,7 @@ export function registerChatgptPlanIpc(ipc: Main, service: Service, isTrusted: (
                 return contract.response.parse(value);
             }
             catch (error: unknown) {
-                console.warn('[chatgpt-plan] IPC operation failed', error instanceof Error ? error.name : 'UnknownError');
+                console.warn('[chatgpt-plan] IPC operation failed', error instanceof Error ? 'request_failed' : 'unknown');
                 throw new Error('internal error');
             }
         });
