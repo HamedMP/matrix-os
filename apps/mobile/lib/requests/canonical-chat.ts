@@ -5,20 +5,25 @@ import {
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunIdSchema,
+  CanonicalChatTurnIdSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalProviderCatalogSchema,
+  CanonicalRetryChatTurnRequestSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
+  type CanonicalChatRunAdmissionResponse,
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
   type CanonicalProviderCatalog,
+  type CanonicalRetryChatTurnRequest,
 } from "@matrix-os/contracts";
 
 import { gatewayRequestUrl } from "@/lib/requests/answers";
@@ -30,6 +35,7 @@ const CHAT_DETAIL_ERROR = "Chat unavailable. Try again.";
 const CHAT_TURN_ERROR = "Could not send message. Try again.";
 const CHAT_SEARCH_ERROR = "Search unavailable. Try again.";
 const RUN_CANCEL_ERROR = "Could not stop the run. Try again.";
+const TURN_RETRY_ERROR = "Could not retry. Try again.";
 const PROVIDER_CATALOG_ERROR = "Models unavailable. Try again.";
 const CHAT_DETAIL_LIMIT = 200;
 // The most the list and search routes return for one request.
@@ -176,6 +182,40 @@ export async function cancelChatRun(
     token: clerkToken,
     schema: CanonicalChatRunCancellationResponseSchema,
     errorMessage: RUN_CANCEL_ERROR,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body.data),
+  });
+}
+
+/**
+ * Runs a turn whose run failed again, as a new attempt on the same message
+ * and model. The computer takes it only for the chat's latest turn while
+ * nothing else runs; a retry it has already taken under `clientRequestId` is
+ * answered as `"already_accepted"`.
+ */
+export async function retryChatTurn(
+  clerkToken: string,
+  computerGatewayUrl: string,
+  chatId: string,
+  turnId: string,
+  input: CanonicalRetryChatTurnRequest,
+): Promise<CanonicalChatRunAdmissionResponse> {
+  const chat = CanonicalChatIdSchema.safeParse(chatId);
+  const turn = CanonicalChatTurnIdSchema.safeParse(turnId);
+  const body = CanonicalRetryChatTurnRequestSchema.safeParse(input);
+  const url = chat.success && turn.success && body.success
+    ? gatewayRequestUrl(
+      computerGatewayUrl,
+      `/api/chats/${encodeURIComponent(chat.data)}/turns/${encodeURIComponent(turn.data)}/runs`,
+    )
+    : null;
+  if (!url || !body.success) throw new Error(TURN_RETRY_ERROR);
+  return fetchAuthenticatedJson({
+    url,
+    token: clerkToken,
+    schema: CanonicalChatRunAdmissionResponseSchema,
+    errorMessage: TURN_RETRY_ERROR,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body.data),

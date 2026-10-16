@@ -4,6 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 
 import { Composer, type ComposerProps } from "@/components/chat/Composer";
 import { MessageList, type MessageListProps } from "@/components/chat/MessageList";
+import { UnsentMessageActionsProvider, type UnsentMessageActions } from "@/components/chat/unsent-message-actions";
 import { ListRowSkeletonStack } from "@/components/shell/Controls";
 import { AgentMascot, BackIcon, Button, InfoIcon, TopBar, TopBarButton } from "@/components/ui";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
@@ -31,6 +32,8 @@ export interface AgentChatScreenProps
   notice?: string | null;
   /** Newest first. */
   messages: TranscriptMessage[];
+  /** What a message that was not sent offers. Nothing is offered when left out. */
+  unsentActions?: UnsentMessageActions | null;
   composer: Omit<ComposerProps, "keyboardOpen" | "placeholder" | "modelControl">;
 }
 
@@ -48,6 +51,7 @@ export function AgentChatScreen({
   renderResults,
   renderComputerPhoto,
   footer,
+  unsentActions = null,
   composer,
 }: AgentChatScreenProps) {
   const insets = useSafeAreaInsets();
@@ -95,14 +99,16 @@ export function AgentChatScreen({
         </View>
       ) : (
         <>
-          <MessageList
-            messages={messages}
-            chatId={chatId}
-            renderRequest={renderRequest}
-            renderResults={renderResults}
-            renderComputerPhoto={renderComputerPhoto}
-            footer={footer}
-          />
+          <UnsentMessageActionsProvider value={unsentActions}>
+            <MessageList
+              messages={messages}
+              chatId={chatId}
+              renderRequest={renderRequest}
+              renderResults={renderResults}
+              renderComputerPhoto={renderComputerPhoto}
+              footer={footer}
+            />
+          </UnsentMessageActionsProvider>
           <Composer {...composer} placeholder={`Ask ${agent.name}…`} keyboardOpen={keyboardOpen} />
         </>
       )}

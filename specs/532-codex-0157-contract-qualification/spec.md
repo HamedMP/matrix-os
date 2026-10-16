@@ -29,3 +29,7 @@ The next scheduled check downloaded exact 0.157.1 and stopped at the same intent
 ## Exact patch qualification: 0.159.2
 
 [ENG-54](https://linear.app/matrix-os/issue/ENG-54/fixcodex-qualify-provider-contracts-for-01592) qualifies the published 0.159.2 patch after the shared workflow rejects it at the intentional unknown-version guard. Its tagged exec source is byte-identical to the previously qualified source, and both published target schemas are byte-identical to the previously qualified 0.159.0 schema. Preserve all prior records, the 0.156.1 installer pin and fail-closed rejection of unreviewed versions. Exact-head Greptile, full CI and both native target verifiers remain landing gates. [Evidence](evidence/qualification-01592.md).
+
+## Exact qualification: 0.163.0
+
+Qualify the exact published 0.163.0 after the shared workflow refuses its unreviewed version. Tagged exec bytes and all eleven consumed transitive protocol digests are unchanged; the complete experimental schema adds only the explicitly reviewed requests, notification, definitions, optional properties and voice enum values. Preserve all historical records, unknown-version rejection and the 0.156.1 installer/runtime selection pin. The genuine isolated no-paid MCP/Responses fixture passes fresh and resumed turns; current-head Greptile, full CI and both-target provider verification remain required. No public user-facing capability or installer behavior changes, so no public documentation update is needed. [Evidence](evidence/qualification-01630.md).

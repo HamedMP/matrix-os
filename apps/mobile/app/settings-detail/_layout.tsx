@@ -51,6 +51,7 @@ export default function SettingsDetailLayout() {
         ["system", "System"],
         ["account", "Account"],
         ["app-settings", "App settings"],
+        ["connect-apps", "Connect Apps"],
         ["billing", "Billing"],
         ["help", "Help"],
       ].map(([name, title]) => (

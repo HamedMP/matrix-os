@@ -461,6 +461,7 @@ export function approvalPage(
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Authorize device -- Matrix OS</title>
@@ -777,7 +778,8 @@ export function approvalSuccessPage(nativeRedirectUri: string | null = null): st
     ? 'Opening Matrix OS now. Keep this tab open until the desktop app is in focus.'
     : 'You can close this tab and return to Matrix OS.';
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${redirectMeta}<title>Connected — Matrix OS</title>${BRICOLAGE_FONT_LINKS}
+<html lang="en"><head>
+<script src="/billing/tracking.js"></script><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${redirectMeta}<title>Connected — Matrix OS</title>${BRICOLAGE_FONT_LINKS}
 <style>
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,rgba(241,195,121,.58),transparent 28rem),radial-gradient(circle at 85% 90%,rgba(197,214,226,.8),transparent 34rem),${desktopPalette.canvas};color:${desktopPalette.forest};font-family:${desktopFonts.display};font-optical-sizing:auto;font-style:normal;font-variation-settings:"wdth" 100}.card{width:min(520px,100%);padding:clamp(32px,7vw,64px);border:1px solid rgba(14,52,34,.16);border-radius:28px;background:${desktopPalette.paper};box-shadow:0 30px 90px rgba(14,52,34,.16);text-align:center}.rabbit-mark{display:block;width:auto;fill:currentColor}.success-rabbit{color:${desktopPalette.forest};height:78px;margin:0 auto 26px;animation:arrive .5s cubic-bezier(.2,.8,.2,1) both}.eyebrow{margin:0 0 12px;color:${desktopPalette.coral};font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}h1{margin:0;font-family:${desktopFonts.display};font-size:clamp(38px,8vw,58px);font-weight:700;letter-spacing:-.045em;line-height:1}p{margin:18px auto 0;max-width:390px;color:${desktopPalette.textMuted};line-height:1.6}a{display:inline-flex;min-height:48px;align-items:center;justify-content:center;margin-top:8px;padding:0 22px;border-radius:14px;background:${desktopPalette.forest};color:${desktopPalette.paper};font-weight:700;text-decoration:none}a:focus-visible{outline:3px solid ${desktopPalette.gold};outline-offset:3px}@keyframes arrive{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head>
