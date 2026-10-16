@@ -12,30 +12,12 @@ import { GITHUB_DEPTH_ACTIONS } from "./github-depth.js";
 import { CATALOG_SERVICE_REGISTRY } from "./registry-catalog.js";
 import { MANAGED_SERVICE_REGISTRY } from "./registry-managed.js";
 import { BOKIO_SERVICE } from "./registry-bokio.js";
+import {
+  BRAIN_GITHUB_ACTIONS, BRAIN_GOOGLE_CALENDAR_ACTIONS, BRAIN_GOOGLE_DRIVE_ACTIONS, BRAIN_LINEAR_ACTIONS,
+} from "./registry-brain.js";
+import { cappedPositiveInt, encodeOwnerRepo, linearGraphqlBody } from "./registry-params.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
-
-// GitHub repo names follow `owner/repo` where each segment matches GitHub's
-// allowed character set: alphanumerics plus `-`, `_`, `.`. We validate strictly
-// before URL-encoding to refuse `..`, slashes, or any character that could
-// inject extra path segments. Throws synchronously if the input is malformed
-// -- the calling /call route will surface this as a 502 with the literal error
-// message preserved in logs.
-const GITHUB_NAME_RE = /^[A-Za-z0-9._-]+$/;
-function encodeOwnerRepo(value: unknown): string {
-  if (typeof value !== "string") {
-    throw new Error("repo must be a string in owner/name format");
-  }
-  const parts = value.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new Error(`repo must be in owner/name format, got: ${value}`);
-  }
-  const [owner, repo] = parts;
-  if (!GITHUB_NAME_RE.test(owner) || !GITHUB_NAME_RE.test(repo)) {
-    throw new Error(`repo contains invalid characters: ${value}`);
-  }
-  return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-}
 
 // Discord snowflakes are 17-20 digit numeric strings. Strict numeric check
 // refuses path traversal and any non-digit input before we interpolate it
@@ -48,12 +30,6 @@ function encodeDiscordSnowflake(value: unknown): string {
   return value;
 }
 
-function cappedPositiveInt(value: unknown, fallback: number, max: number): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
-  return Math.min(Math.floor(parsed), max);
-}
-
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -62,10 +38,6 @@ function stringArrayOrUndefined(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const values = value.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean);
   return values.length > 0 ? values : undefined;
-}
-
-function linearGraphqlBody(query: string, variables?: Record<string, unknown>): Record<string, unknown> {
-  return variables ? { query, variables } : { query };
 }
 
 type RegistryServiceInput = Omit<ServiceDefinition, "actions" | "connectorKind"> & {
@@ -87,10 +59,16 @@ function defineServiceRegistry(
   ])) as Record<string, ServiceDefinition>;
 }
 
+function withActions(service: ServiceDefinition, actions: Record<string, ServiceAction>): ServiceDefinition {
+  return { ...service, actions: { ...service.actions, ...actions } };
+}
+
 export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineServiceRegistry({
   gmail: GMAIL_SERVICE,
 
   ...GOOGLE_SERVICES,
+  google_calendar: withActions(GOOGLE_SERVICES.google_calendar, BRAIN_GOOGLE_CALENDAR_ACTIONS),
+  google_drive: withActions(GOOGLE_SERVICES.google_drive, BRAIN_GOOGLE_DRIVE_ACTIONS),
   ...OAUTH_SERVICE_REGISTRY,
   ...CATALOG_SERVICE_REGISTRY,
 
@@ -220,6 +198,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
           }),
         },
       },
+      ...BRAIN_GITHUB_ACTIONS,
     },
   },
 
@@ -522,6 +501,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
           }),
         },
       },
+      ...BRAIN_LINEAR_ACTIONS,
     },
   },
 
