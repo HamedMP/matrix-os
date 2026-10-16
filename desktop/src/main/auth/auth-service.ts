@@ -1,5 +1,6 @@
 import {
   MatrixComputerListSchema,
+  isPrivatePreviewHandle,
   RuntimeSelectionRequestSchema,
   RuntimeSelectionResponseSchema,
   type MatrixComputerList,
@@ -13,6 +14,7 @@ import {
   requestDeviceCode,
   type DeviceCodeResponse,
 } from "./device-auth";
+import { fetchCanonicalCustomerHandle, fetchOwnerPrivateComputers, supplementPrivateComputers } from "./private-preview-computers";
 
 export interface ConnectionProfile {
   handle: string;
@@ -103,6 +105,7 @@ export class AuthService {
   private profile: ConnectionProfile | null = null;
   private flowState: "idle" | "pending" | "authorized" | "expired" = "idle";
   private flowNonce = 0;
+  private inventoryRevision = 0;
   private persistenceTail: Promise<void> = Promise.resolve();
   private pendingDeviceCode: Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn"> | null = null;
   private readonly deps: AuthServiceDeps;
@@ -239,10 +242,15 @@ export class AuthService {
         };
         let runtimeSlot = token.runtimeSlot ?? this.profile?.runtimeSlot ?? "primary";
         if (!token.runtimeSlot && runtimeSlot !== "primary") {
+          let verifiedCustomer = false;
           try {
-            credential = await this.exchangeRuntimeCredential(credential, runtimeSlot);
+            credential = await this.exchangeRuntimeCredential(credential, runtimeSlot, () => nonce === this.flowNonce,
+              (admission) => { verifiedCustomer = admission.kind === "customer"; });
           } catch (err: unknown) {
             if (nonce !== this.flowNonce) return;
+            // A private restore needs fresh owner/member/lease evidence. Never
+            // silently reconnect its user to Main when that admission fails.
+            if (isPrivatePreviewHandle(runtimeSlot) && !verifiedCustomer) throw err;
             runtimeSlot = "primary";
             console.warn(
               "[auth] runtime restore failed; using primary:",
@@ -332,10 +340,37 @@ export class AuthService {
   private async exchangeRuntimeCredential(
     currentCredential: StoredCredential,
     slot: string,
+    isCurrent: () => boolean = () => true,
+    onAdmission?: (admission: { kind: "customer" } | { kind: "private"; expiresAt: number }) => void,
   ): Promise<StoredCredential> {
     const request = RuntimeSelectionRequestSchema.parse({ slot });
     const endpoint = new URL("/api/auth/runtime-selection", this.deps.runtimeSelectionOrigin);
     const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    let privateLeaseExpiresAt: number | undefined;
+    let expectedHandle: string | undefined;
+    if (isPrivatePreviewHandle(slot)) {
+      const privateInventory = await fetchOwnerPrivateComputers({
+        fetchFn, platformHost: this.deps.platformHost,
+        accessToken: currentCredential.accessToken, now: () => this.now(),
+      });
+      if (!isCurrent()) throw new Error("stale runtime selection");
+      if (privateInventory.state === "available" && privateInventory.computers.some((computer) => computer.runtimeSlot === slot)) {
+        privateLeaseExpiresAt = privateInventory.expiresAtBySlot[slot];
+        if (privateLeaseExpiresAt === undefined || !Number.isFinite(privateLeaseExpiresAt)) {
+          throw new Error("private computer admission unavailable");
+        }
+        expectedHandle = slot;
+        onAdmission?.({ kind: "private", expiresAt: privateLeaseExpiresAt });
+      } else {
+        const customerHandle = privateInventory.state === "unauthorized" ? null : await fetchCanonicalCustomerHandle({
+          fetchFn, platformHost: this.deps.platformHost, accessToken: currentCredential.accessToken, slot,
+        });
+        if (!isCurrent() || !customerHandle) throw new Error("private computer admission unavailable");
+        expectedHandle = customerHandle;
+        onAdmission?.({ kind: "customer" });
+      }
+    }
+    if (!isCurrent()) throw new Error("stale runtime selection");
     const requestInit = (): RequestInit => ({
       method: "POST",
       headers: {
@@ -352,7 +387,7 @@ export class AuthService {
       // The dedicated API hostname can be unreachable on networks where the
       // app hostname still works. Retry only transport failures: an HTTP
       // rejection must never cause credential exchange on another origin.
-      if (this.deps.platformHost === this.deps.runtimeSelectionOrigin) throw err;
+      if (!isCurrent() || this.deps.platformHost === this.deps.runtimeSelectionOrigin) throw err;
       const appEndpoint = new URL("/api/auth/runtime-selection", this.deps.platformHost);
       response = await fetchFn(appEndpoint.toString(), requestInit());
     }
@@ -363,7 +398,12 @@ export class AuthService {
     }
     const text = await readBoundedResponseText(response);
     const replacement = RuntimeSelectionResponseSchema.parse(JSON.parse(text));
-    if (replacement.slot !== request.slot) throw new Error("runtime selection mismatch");
+    if (privateLeaseExpiresAt !== undefined && privateLeaseExpiresAt <= this.now()) {
+      throw new Error("private computer lease expired");
+    }
+    if (replacement.slot !== request.slot || (expectedHandle !== undefined && replacement.handle !== expectedHandle)) {
+      throw new Error("runtime selection mismatch");
+    }
     return {
       accessToken: replacement.accessToken,
       expiresAt: replacement.expiresAt,
@@ -376,18 +416,22 @@ export class AuthService {
     this.expireCredentialIfNeeded();
     const currentCredential = this.credential;
     const currentProfile = this.profile;
-    if (!currentCredential || !currentProfile) {
+    if (!currentCredential || !currentProfile || currentCredential.userId !== currentProfile.userId) {
       throw new Error(RUNTIME_SELECTION_ERROR);
     }
     const nonce = ++this.flowNonce;
+    let privateLeaseExpiresAt: number | undefined;
     const isCurrentSelection = () => (
       nonce === this.flowNonce
       && this.credential === currentCredential
       && this.profile === currentProfile
+      && currentCredential.expiresAt > this.now() + EXPIRY_SKEW_MS
+      && (privateLeaseExpiresAt === undefined || privateLeaseExpiresAt > this.now())
     );
 
     try {
-      const nextCredential = await this.exchangeRuntimeCredential(currentCredential, slot);
+      const nextCredential = await this.exchangeRuntimeCredential(currentCredential, slot, isCurrentSelection,
+        (admission) => { privateLeaseExpiresAt = admission.kind === "private" ? admission.expiresAt : undefined; });
       if (!isCurrentSelection()) throw new Error("stale runtime selection");
       const nextProfile: ConnectionProfile = {
         ...currentProfile,
@@ -433,6 +477,12 @@ export class AuthService {
     this.expireCredentialIfNeeded();
     const currentCredential = this.credential;
     if (!currentCredential) throw new Error("Runtime computers unavailable");
+    const currentProfile = this.profile;
+    const nonce = this.flowNonce;
+    const revision = ++this.inventoryRevision;
+    const isCurrent = () => this.credential === currentCredential && this.profile === currentProfile
+      && this.flowNonce === nonce && revision === this.inventoryRevision
+      && currentCredential.expiresAt > this.now() + EXPIRY_SKEW_MS;
 
     const endpoint = new URL("/api/auth/computers", this.deps.platformHost);
     const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
@@ -445,7 +495,7 @@ export class AuthService {
       // A 401 means the token was revoked or rotated server-side before the
       // local expiry: drop the session so the renderer returns to sign-in
       // instead of retrying against a dead credential forever.
-      if (response.status === 401 && this.credential === currentCredential) {
+      if (response.status === 401 && isCurrent()) {
         await this.expireSession();
         throw new Error("computer inventory unauthorized");
       }
@@ -455,7 +505,19 @@ export class AuthService {
         throw new Error("computer inventory response too large");
       }
       const text = await readBoundedResponseText(response);
-      return MatrixComputerListSchema.parse(JSON.parse(text));
+      const canonical = MatrixComputerListSchema.parse(JSON.parse(text));
+      if (!isCurrent()) throw new Error("stale computer inventory");
+      const privateInventory = await fetchOwnerPrivateComputers({
+        fetchFn, platformHost: this.deps.platformHost,
+        accessToken: currentCredential.accessToken, now: () => this.now(),
+      });
+      if (!isCurrent()) throw new Error("stale computer inventory");
+      if (privateInventory.state === "unauthorized") {
+        await this.expireSession();
+        throw new Error("computer inventory unauthorized");
+      }
+      return supplementPrivateComputers(canonical, privateInventory.computers,
+        currentProfile?.userId === currentCredential.userId ? currentProfile.runtimeSlot : undefined);
     } catch (err: unknown) {
       console.warn(
         "[auth] computer inventory unavailable:",
