@@ -35,6 +35,15 @@ describe('trusted CLI release selection', () => {
     )));
     await expect(latestCliRelease(fetch as typeof globalThis.fetch)).resolves.toMatchObject({ version: '0.3.22' });
   });
+  it('skips unpublished, draft and prerelease tags to the newest published stable release', async () => {
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('/git/matching-refs/')) return new Response(JSON.stringify(['0.3.26','0.3.25','0.3.24','0.3.23','0.3.22'].map(v => ({ref:'refs/tags/cli-v'+v}))));
+      if (url.endsWith('0.3.26')) return new Response('', {status:404});
+      return new Response(JSON.stringify({tag_name:'cli-v'+url.split('cli-v')[1],draft:url.endsWith('0.3.25'),prerelease:url.endsWith('0.3.24'),assets:url.endsWith('0.3.23')?[]:release.assets}));
+    });
+    await expect(latestCliRelease(fetch as typeof globalThis.fetch)).resolves.toMatchObject({version:'0.3.22'});
+  });
   it('rejects failed or oversized release metadata', async () => {
     await expect(latestCliRelease((async () => new Response('', { status: 503 })) as typeof globalThis.fetch)).rejects.toThrow();
     await expect(latestCliRelease((async () => new Response('[]', { headers: { 'content-length': '99999999' } })) as typeof globalThis.fetch)).rejects.toThrow();

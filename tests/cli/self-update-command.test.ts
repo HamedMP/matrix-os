@@ -6,7 +6,7 @@ vi.mock('../../packages/sync-client/src/cli/self-update.js', async (importOrigin
 });
 vi.mock('../../packages/sync-client/src/cli/version.js', () => ({ resolveCliVersion: mocks.version }));
 vi.mock('../../packages/sync-client/src/cli/standalone-runtime.js', () => ({ isStandaloneRuntime: mocks.standalone }));
-import { runCliUpdate, updateCommand } from '../../packages/sync-client/src/cli/commands/update.js';
+import { runCliUpdate, updateCommand, detectCliInstallMethod } from '../../packages/sync-client/src/cli/commands/update.js';
 beforeEach(() => { mocks.latest.mockResolvedValue({ version: '0.3.22', assets: [] }); mocks.version.mockReturnValue('0.3.21'); mocks.standalone.mockReturnValue(true); mocks.install.mockResolvedValue(undefined); vi.spyOn(console, 'log').mockImplementation(() => { }); vi.spyOn(console, 'error').mockImplementation(() => { }); process.exitCode = undefined; });
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); process.exitCode = undefined; });
 describe('matrix update command', () => {
@@ -17,4 +17,14 @@ describe('matrix update command', () => {
   it('fails safely without leaking installer errors or file paths', async () => { mocks.install.mockRejectedValue(new Error('private token /home/owner/secret')); await runCliUpdate({ json: true }); const text = String(vi.mocked(console.error).mock.calls[0]![0]); expect(JSON.parse(text)).toMatchObject({ error: { code: 'update_failed' } }); expect(text).not.toMatch(/private token|\/home\/owner/); expect(process.exitCode).toBe(1); });
   it('does not alter a source or unsupported package-managed installation', async () => { mocks.standalone.mockReturnValue(false); await runCliUpdate({ json: true }); expect(mocks.install).not.toHaveBeenCalled(); expect(JSON.parse(vi.mocked(console.error).mock.calls[0]![0])).toMatchObject({ error: { code: 'package_managed' } }); expect(process.exitCode).toBe(1); });
   it('reports metadata failures without claiming an update', async () => { mocks.latest.mockRejectedValue(new Error('registry unavailable')); await runCliUpdate({}); expect(mocks.install).not.toHaveBeenCalled(); expect(console.log).not.toHaveBeenCalled(); expect(process.exitCode).toBe(1); });
+});
+
+describe('installation owner detection', () => {
+  it('recognizes the shipped Homebrew Node package independently of Node itself', () => {
+    expect(detectCliInstallMethod({ standalone: false, executable: '/opt/homebrew/Cellar/node@20/20.19.0/bin/node', moduleUrl: 'file:///opt/homebrew/Cellar/matrix/0.3.21/libexec/lib/node_modules/@finnaai/matrix/src/cli/commands/update.ts' })).toBe('homebrew');
+    expect(detectCliInstallMethod({ standalone: false, executable: '/home/linuxbrew/.linuxbrew/Cellar/node/24/bin/node', moduleUrl: 'file:///home/linuxbrew/.linuxbrew/Cellar/matrix/0.3.21/libexec/lib/node_modules/@finnaai/matrix/src/cli/commands/update.ts' })).toBe('homebrew');
+  });
+  it('does not confuse Homebrew Node with a Homebrew Matrix installation', () => {
+    expect(detectCliInstallMethod({ standalone: false, executable: '/opt/homebrew/Cellar/node/24/bin/node', moduleUrl: 'file:///projects/matrix-os/packages/sync-client/src/cli/commands/update.ts' })).toBe('other');
+  });
 });
