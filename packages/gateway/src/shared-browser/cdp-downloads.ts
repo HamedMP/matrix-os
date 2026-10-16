@@ -244,11 +244,14 @@ export async function collectChromeDownload(options: {
       if (directory && temporary && recoveryReason) {
         await assertDirectory(directory); await assertDirectory(temporary);
         const name = `recovery-${randomUUID()}`;
+        // Protect the only completed copy from the temporary sweep before any
+        // metadata write that may fail on a full or unavailable filesystem.
+        await rename(join(directory.access, temporaryName), join(directory.access, name));
+        temporary = directories(temporary.fd, join(directory.canonical, name));
+        recoveryPath = `data/browser-artifacts/${name}`;
         const manifest = await open(join(temporary.access, 'recovery.json'), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
         try { await manifest.writeFile(JSON.stringify({ reason: recoveryReason, createdAt: new Date().toISOString(), ownerReviewRequired: true })); await manifest.sync(); }
         finally { await manifest.close(); }
-        await rename(join(directory.access, temporaryName), join(directory.access, name));
-        recoveryPath = `data/browser-artifacts/${name}`;
       } else if (directory && temporary) await removeTemporary(directory, temporary, temporaryName);
     }
     catch (error) { report(error); }

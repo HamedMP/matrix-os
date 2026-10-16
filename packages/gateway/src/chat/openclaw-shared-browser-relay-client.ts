@@ -26,7 +26,8 @@ export function createOpenClawSharedBrowserRelayClient(
       ? resolveNativeAuth({ authConfig: parsed.data.gateway.auth, tailscaleMode: "off" })
       : parsed.data.gateway.auth;
   } catch (error) {
-    // Native resolver exceptions may contain secrets; retain only our fixed safe error.
+    // Native resolver exceptions may contain secrets; log only a fixed category.
+    console.warn("[shared-browser] Native resolver unavailable", error instanceof Error ? "error" : "non_error");
     if (error instanceof Error && error.message === unavailableMessage) throw error;
     throw new Error(unavailableMessage);
   }
