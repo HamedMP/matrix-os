@@ -44,19 +44,30 @@ const RequestSchema = z.object({
   }
 });
 
-export function serializeFundedOpenAiRequest(value: unknown) {
+export type FundedOpenAiRequest = z.infer<typeof RequestSchema> & { max_tokens: number };
+
+export function serializeFundedOpenAiRequest(
+  value: unknown,
+  allowedModelIds: ReadonlySet<string> = new Set(),
+): { request: FundedOpenAiRequest; body: string } {
   const parsed = RequestSchema.parse(value);
   const model = managedWorkersAiModel(parsed.model);
-  if (!model) throw new Error("Unsupported funded AI model");
-  if (parsed.reasoning_effort !== undefined && !model.reasoningEfforts.includes(parsed.reasoning_effort)) {
+  if (!model && !allowedModelIds.has(parsed.model)) throw new Error("Unsupported funded AI model");
+  if (model && parsed.reasoning_effort !== undefined
+    && !model.reasoningEfforts.includes(parsed.reasoning_effort)) {
     throw new Error("Unsupported reasoning effort");
   }
-  const reasoningEffort = parsed.reasoning_effort ?? (model.reasoningEfforts.includes("low") ? "low" : undefined);
+  if (!model && (parsed.reasoning_effort !== undefined || parsed.parallel_tool_calls !== undefined)) {
+    throw new Error("Unsupported Bedrock request option");
+  }
+  const reasoningEffort = model
+    ? parsed.reasoning_effort ?? (model.reasoningEfforts.includes("low") ? "low" : undefined)
+    : undefined;
   // A client without an output limit still receives a bounded generation.
   const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? 8192;
   const request = { ...parsed, reasoning_effort: reasoningEffort, max_tokens: maxTokens };
   const { max_tokens: _max, max_completion_tokens: _maxCompletion, ...rest } = request;
-  return { request, body: JSON.stringify({ ...rest, [model.outputTokenField]: maxTokens,
+  return { request, body: JSON.stringify({ ...rest, [model?.outputTokenField ?? "max_tokens"]: maxTokens,
     ...(parsed.stream ? { stream_options: { include_usage: true } } : {}), store: false }) };
 }
 
