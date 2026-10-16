@@ -17,7 +17,7 @@ Native Mobile is the Expo application and the behavioral reference for Web Mobil
 Native Mobile uses `EXPO_PUBLIC_MATRIX_APP_URL` for its hosted platform authority;
 Web Canvas, Web Desktop and Web Mobile use `NEXT_PUBLIC_MATRIX_APP_URL` for
 Messaging entry links. Unset values retain `https://app.matrix-os.com`. Explicit
-values must be canonical HTTPS origins without credentials, paths, query or
+values must be canonical HTTPS origins (including valid operator ports) without credentials, paths, query or
 fragment; invalid values fail closed. Only explicit development mode permits
 HTTP and development ports on exact `localhost`, `127.0.0.1` or `[::1]`.
 
@@ -26,7 +26,7 @@ restart the JS runtime after changing it. It is operator configuration, never a
 value returned by an API, selected computer, deep link or persisted connection.
 Settings/inventory requests and hosted WebSockets use that same authority.
 Nonproduction Native builds namespace their saved computer, query cache,
-journey hint and collaboration drafts. Production keys and Clerk credential
+journey hint, collaboration drafts and push registration state. Production keys and Clerk credential
 storage stay unchanged; there is no migration, reset or deletion of production
 state. Existing offline-message helpers have no production consumers and are
 not part of the hosted Chat path.
