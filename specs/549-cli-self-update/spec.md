@@ -32,6 +32,27 @@ promotes a channel, restarts Electron, or changes saved profiles and logins.
   no Matrix credentials. Every external request and child process is bounded;
   GitHub asset redirects accept only the official download infrastructure.
 
+## Integration wiring and installation ownership
+
+1. The published `sync-client` CLI index registers `updateCommand`; the repository
+   `packages/cli` entrypoint redirects the same command to that implementation.
+   Completion advertises the shared command. Command startup reads the compiled
+   CLI version and calls `latestCliRelease` without resolving an owner profile.
+2. Release discovery reads bounded official CLI tags, sorts stable versions,
+   and examines at most 20 releases within one 30-second deadline. Missing,
+   draft, prerelease and not-yet-uploaded releases fall back to the next stable
+   candidate. Network failures remain errors; OS releases are not candidates.
+3. `--check`, an already-current version and a newer installed version exit
+   before installation. The command derives installation ownership from its
+   resolved module location independently of the Node executable: a Matrix
+   Homebrew Cellar package delegates to Homebrew; a compiled standalone uses
+   `process.execPath`; recognized pnpm global package paths delegate to pnpm.
+   Node installed through Homebrew does not make a source checkout Homebrew-managed.
+4. The command calls the bounded installer, which owns the sibling lock, staging,
+   checksum verification, child-process version checks, replacement and rollback.
+   Package-manager branches verify the resulting `matrix --version`. Errors map
+   to fixed CLI messages; no gateway, renderer or model-provider IPC is involved.
+
 ## Verification and delivery
 
 1. Run integrity, rollback, concurrency, release-selection and CLI behavior

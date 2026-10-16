@@ -6,6 +6,13 @@ import { isStandaloneRuntime } from '../standalone-runtime.js';
 import { resolveCliVersion } from '../version.js';
 import { compareCliVersions, latestCliRelease, updateStandaloneCli } from '../self-update.js';
 import { formatCliError, formatCliSuccess } from '../output.js';
+export function detectCliInstallMethod(input: { standalone: boolean; executable: string; moduleUrl: string }): 'homebrew' | 'standalone' | 'pnpm' | 'other' {
+  const modulePath = fileURLToPath(input.moduleUrl);
+  if (/\/Cellar\/matrix\//.test(modulePath) || (input.standalone && /\/Cellar\/matrix\//.test(input.executable))) return 'homebrew';
+  if (input.standalone) return 'standalone';
+  if (/\/pnpm\/global\//.test(modulePath)) return 'pnpm';
+  return 'other';
+}
 export async function runCliUpdate(args: Record<string, unknown>): Promise<void> {
   try {
     const release = await latestCliRelease(), currentVersion = resolveCliVersion();
@@ -15,14 +22,14 @@ export async function runCliUpdate(args: Record<string, unknown>): Promise<void>
       console.log(args.json === true ? formatCliSuccess(data) : available ? `Matrix CLI ${release.version} is available. Run matrix update.` : `Matrix CLI ${currentVersion} is up to date.`);
       return;
     }
-    const standalone = isStandaloneRuntime();
-    if (standalone && /\/Cellar\/matrix\//.test(process.execPath)) {
+    const method = detectCliInstallMethod({ standalone: isStandaloneRuntime(), executable: process.execPath, moduleUrl: import.meta.url });
+    if (method === 'homebrew') {
       await promisify(execFile)('brew', ['upgrade', 'finnaai/tap/matrix'], { timeout: 300000, maxBuffer: 65536 });
     }
-    else if (standalone) {
+    else if (method === 'standalone') {
       await updateStandaloneCli({ executable: process.execPath, release, platform: process.platform, arch: process.arch });
     }
-    else if (/\/pnpm\/global\//.test(fileURLToPath(import.meta.url))) {
+    else if (method === 'pnpm') {
       await promisify(execFile)('pnpm', ['add', '--global', `@finnaai/matrix@${release.version}`], { timeout: 300000, maxBuffer: 65536 });
     }
     else {
@@ -30,7 +37,7 @@ export async function runCliUpdate(args: Record<string, unknown>): Promise<void>
       process.exitCode = 1;
       return;
     }
-    if (!standalone || /\/Cellar\/matrix\//.test(process.execPath)) {
+    if (method !== 'standalone') {
       const verified = await promisify(execFile)('matrix', ['--version'], { timeout: 15000, maxBuffer: 8192, env: { ...process.env, MATRIX_NO_TELEMETRY: '1' } });
       if (verified.stdout.trim() !== release.version)
         throw new Error('Installed CLI differs');

@@ -53,7 +53,7 @@ async function bytes(response: Response, limit: number): Promise<Buffer> {
 }
 export async function latestCliRelease(fetcher: typeof fetch = fetch): Promise<CliRelease> {
   // CLI tags have their own feed: frequent OS releases must not hide an older CLI.
-  const options = { redirect: 'error' as const, signal: AbortSignal.timeout(10000), headers: { accept: 'application/vnd.github+json' } };
+  const options = { redirect: 'error' as const, signal: AbortSignal.timeout(30000), headers: { accept: 'application/vnd.github+json' } };
   const refs = await fetcher(REPOSITORY + '/git/matching-refs/tags/cli-v', options);
   const data: unknown = JSON.parse((await bytes(refs, 1024 * 1024)).toString('utf8'));
   if (!Array.isArray(data) || data.length > 4096)
@@ -66,14 +66,19 @@ export async function latestCliRelease(fetcher: typeof fetch = fetch): Promise<C
     }
   }
   versions.sort((a, b) => compareCliVersions(b, a));
-  const version = versions[0];
-  if (!version) throw new Error('CLI release unavailable');
-  const response = await fetcher(REPOSITORY + '/releases/tags/cli-v' + version, options);
-  const release: unknown = JSON.parse((await bytes(response, 1024 * 1024)).toString('utf8'));
-  if (!release || typeof release !== 'object' || !('tag_name' in release) || release.tag_name !== 'cli-v' + version || !('draft' in release) || release.draft !== false || !('prerelease' in release) || release.prerelease !== false || !('assets' in release) || !Array.isArray(release.assets) || release.assets.length > 32)
-    throw new Error('CLI release unavailable');
-  const assets = release.assets.filter((asset: unknown): asset is CliRelease['assets'][number] => Boolean(asset && typeof asset === 'object' && 'name' in asset && typeof asset.name === 'string' && asset.name.length < 160 && 'browser_download_url' in asset && typeof asset.browser_download_url === 'string' && asset.browser_download_url.length < 512));
-  return { version, assets };
+  for (const version of versions.slice(0, 20)) {
+    const response = await fetcher(REPOSITORY + '/releases/tags/cli-v' + version, options);
+    if (response.status === 404) { await response.body?.cancel(); continue; }
+    const release: unknown = JSON.parse((await bytes(response, 1024 * 1024)).toString('utf8'));
+    if (!release || typeof release !== 'object' || !('tag_name' in release) || release.tag_name !== 'cli-v' + version || !('draft' in release) || !('prerelease' in release) || !('assets' in release) || !Array.isArray(release.assets) || release.assets.length > 32)
+      throw new Error('CLI release unavailable');
+    if (release.draft !== false || release.prerelease !== false) continue;
+    const assets = release.assets.filter((asset: unknown): asset is CliRelease['assets'][number] => Boolean(asset && typeof asset === 'object' && 'name' in asset && typeof asset.name === 'string' && asset.name.length < 160 && 'browser_download_url' in asset && typeof asset.browser_download_url === 'string' && asset.browser_download_url.length < 512));
+    const base = DOWNLOADS + 'cli-v' + version + '/';
+    const published = assets.some(a => ['linux-x64','linux-arm64','darwin-x64','darwin-arm64'].some(target => a.name === 'matrix-' + version + '-' + target && a.browser_download_url === base + a.name && assets.some(check => check.name === a.name + '.sha256' && check.browser_download_url === base + check.name)));
+    if (published) return { version, assets };
+  }
+  throw new Error('CLI release unavailable');
 }
 
 async function download(fetcher: typeof fetch, url: string, limit: number): Promise<Buffer> {
