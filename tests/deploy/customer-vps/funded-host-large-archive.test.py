@@ -36,7 +36,7 @@ class LargeArchiveTests(unittest.TestCase):
         return output
 
     def test_valid_os_bundle_can_exceed_old_250000_member_limit(self):
-        # The actual signed production bundle reaches this boundary before its
+        # The actual canonical production bundle reaches this boundary before its
         # protected component, so tiny synthetic archives missed the regression.
         with self.archive(250001) as archive:
             self.assertEqual(set(installer.payload(archive.fileno())), set(installer.MEMBERS))
