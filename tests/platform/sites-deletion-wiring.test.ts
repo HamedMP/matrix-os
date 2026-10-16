@@ -16,7 +16,7 @@ vi.mock('../../packages/platform/src/account-deletion/storage.js', async (origin
 vi.mock('../../packages/platform/src/customer-vps-hetzner.js', () => ({ createHetznerClient: () => ({ async listServersByLabel() { return []; }, async getServer() { return null; } }) }));
 let db: PlatformDB;
 const env = { ACCOUNT_DELETION_ENABLED: 'true', ACCOUNT_DELETION_SECRET: 'sites-deletion-wiring-secret-123456', CLERK_SECRET_KEY: 'test', R2_ACCESS_KEY_ID: 'sync-key', R2_SECRET_ACCESS_KEY: 'sync-secret',
-    R2_SITES_BUCKET: 'private-sites', R2_SITES_ACCESS_KEY_ID: 'sites-key', R2_SITES_SECRET_ACCESS_KEY: 'sites-secret', R2_SITES_ENDPOINT: 'https://private-sites.example.test' };
+    R2_SITES_BUCKET: 'private-sites', R2_SITES_ACCESS_KEY_ID: 'sites-key', R2_SITES_SECRET_ACCESS_KEY: 'sites-secret', R2_SITES_SESSION_TOKEN: 'sites-session', R2_SITES_ENDPOINT: 'https://private-sites.example.test' };
 beforeAll(async () => { db = (await createTestPlatformDb()).db;
     await insertUserMachine(db, { machineId: 'test-machine', clerkUserId: 'user_sites_delete_wiring', handle: 'deletion-wiring', status: 'running', provisionedAt: new Date().toISOString() });
 });
@@ -41,7 +41,7 @@ it('configured deletion revokes site immediately and durably erases dedicated as
     } } as Parameters<typeof createConfiguredAccountDeletionRuntime>[0]['customerVpsService'];
     const runtime = await createConfiguredAccountDeletionRuntime({ db, env, customerVpsService, backgroundWorkersEnabled: false });
     try {
-        expect(configured).toHaveBeenCalledWith(expect.objectContaining({ bucket: 'private-sites', accessKeyId: 'sites-key', secretAccessKey: 'sites-secret' }));
+        expect(configured).toHaveBeenCalledWith(expect.objectContaining({ bucket: 'private-sites', accessKeyId: 'sites-key', secretAccessKey: 'sites-secret', sessionToken: 'sites-session' }));
         await runtime!.service.schedule(owner.ownerId);
         expect(await service.resolve(site.id)).toBeNull();
         await db.executor.updateTable('account_deletion_jobs').set({ due_at: '2020-01-01', next_attempt_at: '2020-01-01' }).execute();
@@ -62,4 +62,11 @@ it('configured deletion revokes site immediately and durably erases dedicated as
 it('refuses partial or shared dedicated sites credentials before starting cleanup', async () => {
     await expect(createConfiguredAccountDeletionRuntime({ db, env: { ...env, R2_SITES_SECRET_ACCESS_KEY: '' }, backgroundWorkersEnabled: false })).rejects.toThrow('Dedicated sites');
     await expect(createConfiguredAccountDeletionRuntime({ db, env: { ...env, R2_SITES_BUCKET: 'matrixos-sync' }, backgroundWorkersEnabled: false })).rejects.toThrow('Dedicated sites');
+});
+
+it('signs deletion exports with only the explicit store session token', async () => {
+ const actual = await vi.importActual<typeof import('../../packages/platform/src/account-deletion/storage.js')>('../../packages/platform/src/account-deletion/storage.js');
+ const store = actual.createAccountDeletionObjectStore({bucket:'private-sites',accessKeyId:'sites-key',secretAccessKey:'sites-secret',sessionToken:'sites-session',endpoint:'https://r2.example.test'});
+ try { expect(new URL(await store.getPresignedGetUrl!('synthetic-fixture.txt')).searchParams.get('X-Amz-Security-Token')).toBe('sites-session'); }
+ finally { store.destroy?.(); }
 });
