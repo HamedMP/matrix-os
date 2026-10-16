@@ -117,7 +117,7 @@ export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
     const observer = new MutationObserver(update);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => observer.disconnect();
-  }, [theme, filename]);
+  }, [theme, filename, themeCompartment]);
 
   // Update content when prop changes (external reload)
   useEffect(() => {
