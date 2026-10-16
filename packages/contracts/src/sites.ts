@@ -1,5 +1,10 @@
 import { z } from "zod/v4";
 
+// Queueing, install, build, snapshot and activation share one server budget.
+// Proxy/client margins leave time to return the known result before their aborts.
+export const SITE_PUBLISH_TIMEOUT_MS = 270_000;
+export const SITE_PUBLISH_PROXY_TIMEOUT_MS = SITE_PUBLISH_TIMEOUT_MS + 15_000;
+export const SITE_PUBLISH_CLIENT_TIMEOUT_MS = SITE_PUBLISH_PROXY_TIMEOUT_MS + 15_000;
 export const SITE_MAX_FILES = 200;
 export const SITE_MAX_BUNDLE_BYTES = 10 * 1024 * 1024;
 export const SITE_MAX_FORM_BYTES = 16 * 1024;
