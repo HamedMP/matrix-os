@@ -30,6 +30,7 @@ export function useCanonicalChatAuthority(navigation: ReturnType<typeof useShell
     return { ...agents, list: guard(agents.list), bots: agents.bots ? { ...agents.bots,
       ensureDirectChat: guard(agents.bots.ensureDirectChat), directChat: guard(agents.bots.directChat), directBot: guard(agents.bots.directBot),
       tasks: guard(agents.bots.tasks), interactions: guard(agents.bots.interactions),
+      threads: agents.bots.threads && { ...agents.bots.threads, list: guard(agents.bots.threads.list) },
     } : undefined };
   }, [agents, blocked, isCurrent]);
   return { identity, isCurrent, agentClient: blocked ? undefined : agents, summaryClient };

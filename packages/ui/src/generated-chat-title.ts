@@ -2,14 +2,37 @@
 const MAX_GENERATED_TITLE_LENGTH = 56;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
+/**
+ * A repository path: parts of path characters with a letter, ending in a file name with an extension or with three or
+ * more parts. Prose such as "and/or", "A/B", "REST/GraphQL" or a date such as 10/08/2026 is not one.
+ */
+function isRepoPath(word: string): boolean {
+  const parts = word.split("/");
+  const last = parts.at(-1) ?? "";
+  return parts.length > 1 && last !== "" && /[A-Za-z]/.test(word) && parts.every((part) => /^[\w.@~+-]*$/.test(part))
+    && (/\.[A-Za-z][A-Za-z0-9]*$/.test(last) || parts.length >= 3);
+}
+
+/** Repository paths read by their last part ("src/chat/retire.ts" is "retire.ts"); other words stay whole. */
+function lastPathParts(title: string): string {
+  return title.replace(/\S+/g, (word) => {
+    const [, path = word, tail = ""] = /^(.*?)([,;:)]*)$/.exec(word) ?? [];
+    return isRepoPath(path) ? `${path.slice(path.lastIndexOf("/") + 1)}${tail}` : word;
+  });
+}
+
 function boundGeneratedTitle(title: string): string {
   if (title.length <= MAX_GENERATED_TITLE_LENGTH) return title;
+  const shorter = lastPathParts(title);
+  if (shorter.length <= MAX_GENERATED_TITLE_LENGTH) return shorter;
   let prefix = "";
-  for (const { segment } of graphemes.segment(title)) {
+  for (const { segment } of graphemes.segment(shorter)) {
     if (prefix.length + segment.length >= MAX_GENERATED_TITLE_LENGTH) break;
     prefix += segment;
   }
-  return `${prefix.replace(/\s+\S*$/, "").trimEnd()}…`;
+  const words = prefix.replace(/\s+\S*$/, "").trimEnd();
+  // Dropping a long cut word (a path, a long name) would leave almost nothing, so its cut start stays.
+  return `${words.length >= MAX_GENERATED_TITLE_LENGTH / 2 ? words : prefix.trimEnd()}\u2026`;
 }
 
 function structuredPromptTitle(prompt: string): string | null {

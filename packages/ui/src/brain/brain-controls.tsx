@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, InputHTMLAttributes, Ref, SelectHTMLAttributes } from "react";
 import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 
 export type BrainButtonVariant = "primary" | "outline" | "ghost" | "secondary" | "link" | "destructive";
@@ -32,6 +32,7 @@ export interface BrainButtonProps extends ButtonHTMLAttributes<HTMLButtonElement
   readonly variant?: BrainButtonVariant;
   readonly size?: BrainButtonSize;
   readonly wrap?: boolean;
+  readonly ref?: Ref<HTMLButtonElement>;
 }
 
 export function BrainButton({
@@ -67,8 +68,10 @@ const FIELD = `h-11 rounded-[14px] border-[1.5px] border-transparent bg-[var(--b
   + `text-[var(--brain-text)] outline-none placeholder:text-[var(--brain-text-tertiary)] focus:border-[var(--brain-text)] `
   + `aria-invalid:border-[var(--brain-danger)] disabled:opacity-50 ${BRAIN_TONE.motion}`;
 
-/** A text field; every native prop passes through (`type`, `maxLength`, `aria-invalid`...). */
-export function BrainInput({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+/** A text field; every native prop passes through (`type`, `maxLength`, `aria-invalid`, `ref`...). */
+export function BrainInput({ className, ...props }: InputHTMLAttributes<HTMLInputElement> & {
+  readonly ref?: Ref<HTMLInputElement>;
+}) {
   return <input className={[FIELD, "w-full min-w-0", className].filter(Boolean).join(" ")} {...props} />;
 }
 

@@ -85,7 +85,7 @@ describe("DesktopBrainView", () => {
     expect(screen.getByText("Connect to your Matrix computer to open the Company Brain.")).toBeInTheDocument();
   });
 
-  it("lists projects through its pinned runtime and shows the seven screens without an in-app heading", async () => {
+  it("lists projects through its pinned runtime and shows the six tabs without an in-app heading", async () => {
     const api = fakeApi();
     useConnection.setState({ status: "signed-in", api: api.root, runtimeSlot: "pr-12", authGeneration: 1 });
     render(<DesktopBrainView />);
@@ -95,9 +95,7 @@ describe("DesktopBrainView", () => {
     expect(api.slot("pr-12").get).toHaveBeenCalledWith("/api/workspace/projects", { timeoutMs: 15_000 });
     expect(api.root.get).not.toHaveBeenCalled();
     const tabs = within(screen.getByRole("tablist", { name: "Screens" })).getAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual([
-      "Ask", "Today", "Decisions", "Commitments", "Risks", "Timeline", "Sources",
-    ]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Today", "Decisions", "Timeline", "Search", "Sources"]);
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   });
 

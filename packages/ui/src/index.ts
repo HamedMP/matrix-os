@@ -249,6 +249,7 @@ export * from "./chat-navigation/metrics.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
 export { BrainApp, type BrainAppProps } from "./brain/BrainApp.js";
+export { type BrainChatHost, type BrainChatSlot } from "./brain/BrainChat.js";
 export {
   brainShellError,
   createBrainShellApi,
@@ -258,6 +259,7 @@ export {
 } from "./brain/brain-client.js";
 export {
   BRAIN_APP_KEYWORDS,
+  BRAIN_SHELL_SCREEN_ALIASES,
   BRAIN_SHELL_SCREENS,
   BRAIN_SHELL_VIEW,
   type BrainProjectOption,
@@ -265,4 +267,5 @@ export {
   type BrainShellClient,
   type BrainShellErrorState,
   type BrainShellScreen,
+  type BrainShellScreenId,
 } from "./brain/brain-types.js";
