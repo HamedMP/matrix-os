@@ -243,7 +243,11 @@ describe("agent chat screen", () => {
       renderScreen({ state: "loading", messages: [], chatId: null });
 
       expect(screen.getAllByTestId("chat-loading-row").length).toBeGreaterThan(0);
-      expect(flat(screen.getByTestId("agent-chat-loading"))).toMatchObject({ flex: 1, paddingHorizontal: 20 });
+      // The placeholder brings the messages' own 20pt inset, so nothing moves
+      // sideways when the messages take its place.
+      expect(flat(screen.getByTestId("agent-chat-loading"))).toMatchObject({ flex: 1 });
+      expect(flat(screen.getByTestId("agent-chat-loading")).paddingHorizontal).toBeUndefined();
+      expect(flat(screen.getByTestId("chat-loading")).paddingHorizontal).toBe(20);
       expect(screen.getByRole("header", { name: "Account research" })).toBeTruthy();
       expect(screen.queryByTestId("composer")).toBeNull();
     });
