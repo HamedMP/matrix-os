@@ -2,7 +2,7 @@ import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelp
 import * as Popover from "@radix-ui/react-popover";
 import { onboardingChecklist } from "@matrix-os/brand";
 import { Github } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import gettingStartedCheckUrl from "../../assets/getting-started-check.svg";
 import { ClipboardCheck } from "../../lib/hugeicons";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -78,6 +78,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
   const { visible: open, requestedOpen, blocked, isBlocked, setRequestedOpen: setOpen } = useGettingStartedVisibility();
   const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
+  const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
 
@@ -157,7 +158,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   const progress = `${(snapshot.completedCount / TOTAL_STEPS) * 100}%`;
 
   const helpRow = Boolean(helpMenu);
-  const trigger = <Popover.Trigger asChild>
+  const trigger = (closeHelp?: () => void) => <Popover.Trigger asChild>
         <button
           type="button"
           aria-label={label}
@@ -165,6 +166,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
           disabled={blocked}
           onClick={() => {
             if (requestedOpen) setOpen(false);
+            closeHelp?.();
           }}
           className={helpRow ? "relative flex w-full flex-wrap items-center gap-2.5 rounded-lg p-2 text-left text-[13px] outline-none hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]" : "relative flex size-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"}
           style={{ color: "var(--text-secondary)" }}
@@ -182,7 +184,8 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
       </Popover.Trigger>;
   return (
     <Popover.Root open={open} onOpenChange={handleRadixOpenChange}>
-      {helpMenu ? <DesktopHelpMenu overlay={menuOverlay} {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger} /> : trigger}
+      {helpMenu ? <DesktopHelpMenu overlay={menuOverlay} {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger}
+        gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef} /> : trigger()}
       <Popover.Portal>
         <Popover.Content
           role="dialog"
@@ -192,7 +195,13 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
           sideOffset={7}
           collisionPadding={12}
           onOpenAutoFocus={onOpenAutoFocus}
-          onCloseAutoFocus={onCloseAutoFocus}
+          onCloseAutoFocus={(event) => {
+            onCloseAutoFocus(event);
+            if (helpMenu && !requestedOpen) {
+              event.preventDefault();
+              helpTriggerRef.current?.focus();
+            }
+          }}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           className="w-[252px] overflow-hidden rounded-[12px] border outline-none"

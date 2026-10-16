@@ -124,7 +124,7 @@ jobs:
             const summary={schemaVersion:3,suite:context.payload.inputs?.suite || 'qualification',
               ...(requesting?{requestingRunId:requesting.runId,requestingRunAttempt:requesting.runAttempt}:{}),
               mode,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
-              ...admission,controllerSha:process.env.CONTROLLER_SHA,controllerRef:context.ref,
+              ...admission,controllerRunId:context.runId,controllerSha:process.env.CONTROLLER_SHA,controllerRef:context.ref,
               controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT),controllerWorkflow:'.github/workflows/ci-dedicated.yml'};
             const {data:check}=await github.rest.checks.create({
               ...context.repo, name:prNumber>0||admission.sourceKind==='main' ? 'Dedicated CI Results' : 'Dedicated CI Benchmark',
@@ -261,7 +261,7 @@ jobs:
                 status:'completed',conclusion:'neutral',output:{title:'Superseded by a newer controller or source',
                   summary:JSON.stringify({schemaVersion:3,...(main?{sourceKind:'main'}:{}),superseded:true,receiptVerified:false,
                     sourceSha:process.env.SOURCE_SHA,headSha:process.env.HEAD_SHA,prNumber:Number(process.env.PR_NUMBER),
-                    controllerSha:process.env.CONTROLLER_SHA,controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT)})}});
+                    controllerRunId:context.runId,controllerSha:process.env.CONTROLLER_SHA,controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT)})}});
             if(process.env.SUPERSEDED==='true'){await settleSuperseded();return;}
             let superseded=false;
             let infrastructure=false;let proof={};
@@ -305,7 +305,7 @@ jobs:
                   leaseId:process.env.LEASE_ID, suite: process.env.SUITE,
                   sourceSha: process.env.SOURCE_SHA, headSha: process.env.HEAD_SHA, mergeParents:JSON.parse(process.env.MERGE_PARENTS||'[]'),
                   baseSha: process.env.BASE_SHA, baseRef:process.env.BASE_REF, prNumber: Number(process.env.PR_NUMBER),
-                  controllerSha: process.env.CONTROLLER_SHA, controllerRef: context.ref,
+                  controllerRunId:context.runId,controllerSha: process.env.CONTROLLER_SHA, controllerRef: context.ref,
                   controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT),
                   controllerWorkflow: '.github/workflows/ci-dedicated.yml'})
               }
