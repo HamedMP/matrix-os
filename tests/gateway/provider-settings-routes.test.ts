@@ -111,6 +111,34 @@ function createApp(options: {
 }
 
 describe("provider settings routes", () => {
+  it("negotiates the upstream field and mutation together for mixed-version clients", async () => {
+    const preferenceSnapshot: ProviderSettingsSnapshot = {
+      ...snapshot,
+      supportedActions: [...snapshot.supportedActions, "set_gateway_upstream"],
+      upstreamPreference: {
+        selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+        effectiveBedrockModelIds: ["anthropic/claude-opus-5"], revision: 2,
+        updatedAt: "2026-08-30T09:59:00.000Z", validThrough: "2026-09-30T00:00:00.000Z",
+      },
+    };
+    const { app, mutate } = createApp({ getSnapshot: async () => preferenceSnapshot,
+      mutate: async () => ({ kind: "snapshot", snapshot: preferenceSnapshot }) });
+    const legacy = await (await app.request("/api/ai/provider-settings")).json();
+    expect(legacy).not.toHaveProperty("upstreamPreference");
+    expect(legacy.supportedActions).not.toContain("set_gateway_upstream");
+    const modern = await (await app.request("/api/ai/provider-settings?includeUpstreamPreference=true")).json();
+    expect(modern.upstreamPreference).toEqual(preferenceSnapshot.upstreamPreference);
+    expect(modern.supportedActions).toContain("set_gateway_upstream");
+    const request = { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "set_gateway_upstream", selectedUpstream: "cloudflare",
+        expectedRevision: 0, expectedUpstreamRevision: 2, idempotencyKey: "preference" }) };
+    const mutated = await (await app.request("/api/ai/provider-settings/actions?includeUpstreamPreference=true", request)).json();
+    expect(mutated.snapshot.upstreamPreference).toEqual(preferenceSnapshot.upstreamPreference);
+    mutate.mockClear();
+    expect((await app.request("/api/ai/provider-settings/actions?includeUpstreamPreference=maybe", request)).status).toBe(400);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
   it("negotiates atomic connection support without changing legacy snapshot responses", async () => {
     const enabledIntent: ProviderSettingsSnapshot = {
       ...snapshot,

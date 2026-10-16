@@ -4,6 +4,7 @@ import type {
   CanonicalChatSkillDescriptor,
   CanonicalProviderInstanceDescriptor,
 } from "@matrix-os/contracts";
+import { isEffectiveBedrockModel } from "../ai-providers/effective-bedrock-route.js";
 
 /** Project funded readiness from V3; model discovery must never acquire a credential. */
 export function managedChatInstances(
@@ -22,7 +23,8 @@ export function managedChatInstances(
     const eligible = snapshot.models.filter((model) => instance.modelIds.includes(model.id)
       && source.eligibleModelIds.includes(model.id)
       && model.eligibleAccessSourceIds.includes(source.id)
-      && model.status !== "unavailable" && model.status !== "retired");
+      && model.status !== "unavailable" && model.status !== "retired"
+      && !isEffectiveBedrockModel(snapshot, source.id, model.id));
     const policyObserved = fresh && source.checkedAt !== null && Date.parse(source.checkedAt) <= now
       && source.staleAfter !== null;
     const selectable = ready ? eligible : [];

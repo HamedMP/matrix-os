@@ -20,7 +20,13 @@ describe("owner-funded discovery projection", () => {
         getCredential: vi.fn(), invalidate: () => {}, close: () => {} },
       driverInventory: async () => [],
       fundedReadinessReader: { read: async () => ({ readiness,
-        allowedModelIds: ["claude-opus-5"], discoverableModelIds: ["claude-opus-5"] }) } });
+        allowedModelIds: ["claude-opus-5"], discoverableModelIds: ["claude-opus-5"],
+        upstreamPreference: {
+          selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+          effectiveBedrockModelIds: ["anthropic/claude-opus-5"], revision: 2,
+          updatedAt: now.toISOString(), validThrough: "2026-10-31T00:00:00.000Z",
+        },
+      }) } });
     try {
       const canonical = await service.getSnapshot();
       expect(canonical.models.find(model => model.id === "claude-opus-5")).toMatchObject({
@@ -33,8 +39,11 @@ describe("owner-funded discovery projection", () => {
       });
       expect(canonical.accessSources.find(source => source.id === "matrix_included"))
         .toMatchObject({ state: "ready", eligibleModelIds: ["claude-opus-5"] });
+      expect(canonical.upstreamPreference).toMatchObject({
+        effectiveUpstream: "aws_bedrock", effectiveBedrockModelIds: ["anthropic/claude-opus-5"],
+      });
       expect(canonical.instances.find(instance => instance.id === "kernel_matrix_included"))
-        .toMatchObject({ modelIds: ["claude-opus-5"] });
+        .toMatchObject({ modelIds: [], defaultModelId: null });
       expect(managedPiChatInstances(canonical, now.getTime())[0]?.models)
         .toContainEqual(expect.objectContaining({ id: "claude-opus-5", availability: "available" }));
     } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
@@ -48,6 +57,7 @@ describe("owner-funded discovery projection", () => {
       const preference = {
         selectedUpstream: "aws_bedrock" as const,
         effectiveUpstream: "cloudflare" as const,
+        effectiveBedrockModelIds: [],
         revision: 3,
         updatedAt: "2026-10-02T07:59:00.000Z",
         validThrough: "2026-10-31T00:00:00.000Z",

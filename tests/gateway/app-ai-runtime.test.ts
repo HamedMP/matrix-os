@@ -88,6 +88,26 @@ it("discovers owner-authorized connected AI routes", async () => {
   expect(await response.json()).toMatchObject({routes:[{harnessId:"matrix_ai",accessSourceId:"matrix_cloudflare",availability:"available"}]});
   expect((await api.request("/routes?app=other")).status).toBe(403);
 });
+it("fails closed instead of advertising a Bedrock model through non-streaming App AI", async () => {
+  await writeFile(join(homePath, "system/app-ai.json"), JSON.stringify({ apps: ["brain"] }));
+  const modelId = "claude-sonnet-5";
+  const canonical = {
+    upstreamPreference: { selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+      effectiveBedrockModelIds: [`anthropic/${modelId}`], revision: 2,
+      updatedAt: new Date().toISOString(), validThrough: new Date(Date.now() + 60_000).toISOString() },
+    accessSources: [{ id: "matrix_included", state: "ready", checkedAt: new Date().toISOString(),
+      staleAfter: new Date(Date.now() + 60_000).toISOString(), eligibleModelIds: [modelId] }],
+    models: [{ id: modelId, status: "current", eligibleAccessSourceIds: ["matrix_included"] }],
+  };
+  const api = createRuntimeAppAiRoutes({ homePath, ownerIds: ["owner"],
+    providerSnapshotReader: { getSnapshot: async () => canonical as never },
+    fundedCredentialProvider: { enabled: true } as never });
+  const discovery = await (await api.request("/routes?app=brain")).json();
+  expect(discovery.routes).toContainEqual(expect.objectContaining({
+    accessSourceId: "matrix_included", modelId, availability: "unavailable", reason: "completion_unavailable",
+  }));
+  expect(discovery.defaultRoute).toBeNull();
+});
 it("selects only the exact connected route and fails closed after policy revocation",async()=>{
   await writeFile(join(homePath,"system/app-ai.json"),JSON.stringify({apps:["brain"]}));
   const canonical={accessSources:[{id:"matrix_cloudflare",state:"ready",checkedAt:new Date().toISOString(),staleAfter:new Date(Date.now()+60000).toISOString(),eligibleModelIds:["@cf/zai-org/glm-5.3-flash"]}],models:[{id:"@cf/zai-org/glm-5.3-flash",status:"current",eligibleAccessSourceIds:["matrix_cloudflare"]}]};

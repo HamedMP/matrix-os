@@ -141,6 +141,14 @@ describe("funded AI upstream preference", () => {
       .resolves.toMatchObject({ upstream: "cloudflare" });
     await expect(repo.resolveUpstream({ ownerId: "user_outsidecohort", modelId: MODEL_ID }))
       .resolves.toMatchObject({ upstream: "cloudflare" });
+    await expect(repo.getPreferenceView("user_nima")).resolves.toMatchObject({
+      effectiveUpstream: "aws_bedrock",
+      effectiveBedrockModelIds: [MODEL_ID],
+    });
+    await expect(repository(false).getPreferenceView("user_nima")).resolves.toMatchObject({
+      effectiveUpstream: "cloudflare",
+      effectiveBedrockModelIds: [],
+    });
   });
 
   it("accepts a fresh Bedrock observation timestamped after the probe begins", async () => {

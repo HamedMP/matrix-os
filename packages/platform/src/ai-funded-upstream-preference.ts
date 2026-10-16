@@ -271,12 +271,16 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
     const preference = await getPreference(ownerId);
     if (!preference) return null;
     let effectiveUpstream: "cloudflare" | "aws_bedrock" = "cloudflare";
+    const effectiveBedrockModelIds: string[] = [];
     if (preference.selectedUpstream === "aws_bedrock") {
       const selections = await Promise.all(config.bedrockModelIds.map(modelId =>
         resolveUpstreamWithProbe({ ownerId, modelId }, probeBedrock).then(({ selection }) => selection)));
-      if (selections.some(selection => selection.upstream === "aws_bedrock")) effectiveUpstream = "aws_bedrock";
+      selections.forEach((selection, index) => {
+        if (selection.upstream === "aws_bedrock") effectiveBedrockModelIds.push(config.bedrockModelIds[index]!);
+      });
+      if (effectiveBedrockModelIds.length > 0) effectiveUpstream = "aws_bedrock";
     }
-    return { ...preference, effectiveUpstream } as const;
+    return { ...preference, effectiveUpstream, effectiveBedrockModelIds } as const;
   }
 
   return { getPreference, getPreferenceView, setPreference, resolveUpstream,

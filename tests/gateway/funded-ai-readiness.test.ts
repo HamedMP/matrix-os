@@ -30,6 +30,24 @@ function setup() {
 }
 
 describe("funded AI readiness", () => {
+  it("carries the platform preference and exact effective Bedrock models into canonical readiness", async () => {
+    const f = setup();
+    f.getFundingSummary.mockImplementationOnce(async () => ({ ...f.state, chatAvailability: {
+      contractVersion: 1 as const, asOf: f.state.funding.asOf,
+      eligibleBalanceMicrousd: f.state.funding.creditBalanceMicrousd,
+      availableBalanceMicrousd: f.state.funding.remainingBalanceMicrousd,
+    }, upstreamPreference: {
+      selectedUpstream: "aws_bedrock" as const,
+      effectiveUpstream: "aws_bedrock" as const,
+      effectiveBedrockModelIds: ["anthropic/claude-sonnet-5"],
+      revision: 2, updatedAt: now.toISOString(), validThrough: "2026-10-01T00:00:00.000Z",
+    } }));
+    await expect(f.reader.read()).resolves.toMatchObject({ upstreamPreference: {
+      effectiveUpstream: "aws_bedrock",
+      effectiveBedrockModelIds: ["anthropic/claude-sonnet-5"],
+    } });
+  });
+
   it("does not infer Chat credit from speech-only or legacy aggregate funds", async () => {
     const f = setup();
     for (const chatAvailability of [undefined, { contractVersion: 1, asOf: now.toISOString(), eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 }]) {
