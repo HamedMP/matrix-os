@@ -18,7 +18,11 @@ import { fireEvent, render, screen } from "@testing-library/react-native";
 import { StyleSheet as NativeStyleSheet } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
+import AppWindowIcon from "@hugeicons/core-free-icons/AppWindowIcon";
+import { Image } from "expo-image";
+
 import AppsScreen from "../app/(drawer)/(tabs)/(apps)/apps";
+import { appColors } from "../lib/theme-v2";
 import { Icon } from "../components/ui/Icon";
 import { ItemRow } from "../components/ui/ItemRow";
 import {
@@ -129,6 +133,52 @@ describe("drawer apps screen", () => {
 
     expect(footprint("Chat")).toEqual({ width: 68, height: 68 });
     expect(footprint("Connect Apps")).toEqual(footprint("Chess"));
+  });
+
+  it("clips every app icon to the same squircle, whatever shape the image has", () => {
+    render(<AppsScreen />);
+
+    const squircle = { width: 64, height: 64, borderRadius: 14, borderCurve: "continuous" };
+    expect(NativeStyleSheet.flatten(screen.getByTestId("app-icon-Chess").props.style)).toMatchObject({
+      ...squircle,
+      overflow: "hidden",
+    });
+    expect(NativeStyleSheet.flatten(screen.getByTestId("default-app-icon-Chat").props.style)).toMatchObject(squircle);
+  });
+
+  it("draws an app whose icon cannot be fetched on a plain squircle", () => {
+    mockUseComputerApps.mockReturnValue({ ...mockUseComputerApps(), gatewayUrl: null });
+    render(<AppsScreen />);
+
+    const artwork = screen.getByTestId("app-icon-Chess");
+    expect(NativeStyleSheet.flatten(artwork.props.style)).toMatchObject({
+      width: 64,
+      height: 64,
+      borderRadius: 14,
+      borderCurve: "continuous",
+      backgroundColor: appColors.light.surface,
+    });
+    expect(artwork.findByType(Icon).props.icon).toBe(AppWindowIcon);
+  });
+
+  it("falls back to the plain squircle when an icon fails, and tries again whenever its address changes", () => {
+    const apps = mockUseComputerApps();
+    const showIconFrom = (gatewayUrl: string) => {
+      mockUseComputerApps.mockReturnValue({ ...apps, gatewayUrl });
+      screen.rerender(<AppsScreen />);
+    };
+    render(<AppsScreen />);
+    const chessIcon = () => screen.getByTestId("app-icon-Chess");
+
+    fireEvent(chessIcon().findByType(Image), "error");
+    expect(chessIcon().findByType(Icon).props.icon).toBe(AppWindowIcon);
+
+    showIconFrom("https://app.matrix-os.com/vm/new-vale");
+    expect(chessIcon().findByType(Image).props.source.uri).toContain("/vm/new-vale/");
+
+    // Back to the address that failed: it gets another try too.
+    showIconFrom(apps.gatewayUrl);
+    expect(chessIcon().findByType(Image).props.source.uri).toContain("/vm/solar-vale/");
   });
 
   it("opens Chat, Terminal and Settings on their own tabs", () => {
