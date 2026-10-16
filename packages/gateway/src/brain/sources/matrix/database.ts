@@ -52,13 +52,18 @@ function tables(kysely: Kysely<BrainDatabase>): MatrixKysely {
   return kysely.withTables<BrainMatrixTables>();
 }
 
-/** Inserts or replaces the config of one source of `kind`; a row of another kind under that id is left alone. */
+/**
+ * Inserts or replaces the config of one source of `kind`; a row of another kind under that id is left alone. Runs in
+ * `kysely` when it is already a transaction (a source update's), else in a transaction of its own.
+ */
 export async function saveMatrixConfig(
   kysely: Kysely<BrainDatabase>, kind: BrainMatrixKind, scope: BrainScopeKey, sourceId: string, config: object,
   now: Date,
 ): Promise<void> {
   const json = JSON.stringify(config);
-  await tables(kysely).transaction().execute(async (trx) => {
+  const db = tables(kysely);
+  const run = (work: (trx: MatrixKysely) => Promise<void>) => db.isTransaction ? work(db) : db.transaction().execute(work);
+  await run(async (trx) => {
     await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
     await sql`SET LOCAL statement_timeout = '15s'`.execute(trx);
     const lockKey = `${BRAIN_FEATURE_SCOPE_LOCK_PREFIXES.matrix_sources}${scope.scopeId}`;
