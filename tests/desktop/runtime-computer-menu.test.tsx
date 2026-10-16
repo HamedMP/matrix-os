@@ -7,6 +7,7 @@ import RuntimeComputerMenu from "../../desktop/src/renderer/src/features/runtime
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useRuntimeComputers } from "../../desktop/src/renderer/src/stores/runtime-computers";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { AuthService } from "../../desktop/src/main/auth/auth-service";
 
 const computers = {
   items: [
@@ -127,6 +128,44 @@ describe("sidebar computer menu", () => {
 
     await waitFor(() => expect(selectRuntime).toHaveBeenCalledWith("review"));
     expect(screen.queryByRole("menu", { name: "Choose computer" })).toBeNull();
+  });
+
+  it("discovers an owner private row through trusted main and selects it through normal runtime IPC", async () => {
+    const now = Date.parse("2026-10-16T07:00:00.000Z");
+    const slot = "pv-2545-1234abcd";
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/auth/computers")) return Response.json({ ...computers, items: [computers.items[0]] });
+      if (url.endsWith("/private-previews")) return Response.json({ privatePreviews: [{
+        machineId: "9c82cb12-b5e9-4d8a-9ab3-7e8ffe62ac01", handle: slot, pr: 2545,
+        confirmedBundleVersion: null, status: "running", provisionedAt: "2026-10-15T07:00:00.000Z", expiresAt: "2026-10-18T07:00:00.000Z",
+      }] });
+      return Response.json({ accessToken: "r".repeat(64), expiresAt: now + 3_600_000, handle: slot, slot });
+    });
+    const auth = new AuthService({
+      credentialStore: { load: async () => ({ accessToken: "owner-token", expiresAt: now + 3_600_000, userId: "owner", handle: "operator" }), save: vi.fn(), clear: vi.fn() },
+      loadProfile: async () => ({ handle: "operator", userId: "owner", platformHost: "https://app.matrix-os.com", runtimeSlot: "primary" }),
+      saveProfile: vi.fn(), clearProfile: vi.fn(), onAuthChanged: vi.fn(), now: () => now,
+      platformHost: "https://app.matrix-os.com", runtimeSelectionOrigin: "https://api.matrix-os.com", fetchFn,
+    });
+    await auth.init();
+    const invoke = vi.fn(async (channel: string, payload?: unknown) => {
+      if (channel === "runtime:list-computers") return auth.listRuntimeComputers();
+      if (channel === "runtime:select") { await auth.selectRuntime((payload as { slot: string }).slot); return { ok: true }; }
+      return { ok: true };
+    });
+    window.operator.invoke = invoke;
+    useConnection.setState({ refresh: vi.fn(async () => undefined) });
+    render(<RuntimeComputerMenu collapsed={false} />);
+    const trigger = await screen.findByRole("button", { name: /Change computer, currently Main Computer/i });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    const option = await screen.findByRole("menuitemradio", { name: /Preview Computer.*Available/i });
+    expect(option.textContent).toContain(slot);
+    fireEvent.click(option);
+    await waitFor(() => expect(auth.getStatus().runtimeSlot).toBe(slot));
+    expect(invoke).toHaveBeenCalledWith("runtime:select", { slot });
+    await waitFor(() => expect(fetchFn.mock.calls.filter(([url]) => url.endsWith("/private-previews"))).toHaveLength(3));
+    expect(fetchFn.mock.calls.some(([url]) => url === "https://api.matrix-os.com/api/auth/runtime-selection")).toBe(true);
+    expect(invoke.mock.calls.every(([channel]) => ["runtime:list-computers", "runtime:select"].includes(channel))).toBe(true);
   });
 
   it("keeps the menu open with generic feedback when runtime selection fails", async () => {
