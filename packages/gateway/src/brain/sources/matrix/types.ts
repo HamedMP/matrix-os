@@ -75,8 +75,16 @@ export interface BrainMatrixFilesHandlerDeps extends BrainMatrixOwnedHandlerDeps
   /** The Matrix home; every root is relative to it. */
   readonly homePath: string;
 }
+/**
+ * The Chats among `chatIds` that are a Bot's own (a live direct or thread binding, the Company Brain's included). A Bot
+ * answers from tool results other people wrote, so the brain never reads those answers back as chat evidence.
+ */
+export type BrainMatrixBotChats = (ownerId: string, chatIds: readonly string[]) => Promise<ReadonlySet<string>>;
+
 export interface BrainMatrixChatHandlerDeps extends BrainMatrixHandlerBaseDeps {
   readonly chats: BrainMatrixChatReader | null;
+  /** Bot Chats are never offered or read; absent: no Chat is a Bot's (a gateway without Bots). */
+  readonly botChats?: BrainMatrixBotChats;
 }
 
 export const BRAIN_MATRIX_LIMITS = {

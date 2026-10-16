@@ -40,7 +40,7 @@ import {
   bootstrapBrainSourceTables, createBrainGitSourceSync, createBrainSourceHandlers, createBrainSourcesService,
   runBrainSourceSync,
 } from "../sources/core/index.js";
-import type { BrainMatrixChatReader, BrainMatrixNotesReader } from "../sources/matrix/index.js";
+import type { BrainMatrixBotChats, BrainMatrixChatReader, BrainMatrixNotesReader } from "../sources/matrix/index.js";
 import { resolveBrainAgentOwnerId } from "./agent-tools.js";
 import { eraseBrainProject } from "./erase.js";
 import { createBrainIndexCatchUp, purgeBrainRemovedSource } from "./index-repair.js";
@@ -68,6 +68,8 @@ export interface BrainSourcesStartOptions {
   readonly notes?: BrainMatrixNotesReader | null;
   /** The owner's chat repository; absent: matrix_chat is off. */
   readonly chats?: BrainMatrixChatReader | null;
+  /** The owner's Bot Chats (the Company Brain's included), which matrix_chat never offers or reads. */
+  readonly botChats?: BrainMatrixBotChats;
   readonly limits?: Partial<BrainSourceSyncLimits>;
 }
 

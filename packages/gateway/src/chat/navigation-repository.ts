@@ -49,7 +49,7 @@ export function createChatNavigationRepository(db: Kysely<ChatDatabase>): ChatNa
         WHERE m.role='assistant' AND m.state='committed' GROUP BY m.chat_id
       ), bindings AS (
         SELECT DISTINCT ON (b.chat_id) b.chat_id,b.bot_id FROM bot_chat_bindings b JOIN page p ON p.id=b.chat_id
-        WHERE b.owner_id=${owner.ownerId} AND b.kind='direct' AND b.removed_at IS NULL
+        WHERE b.owner_id=${owner.ownerId} AND b.kind IN ('direct','thread') AND b.removed_at IS NULL
         ORDER BY b.chat_id,b.created_at ASC,b.bot_id ASC
       )
       SELECT p.*,s.read_through_seq,s.pinned,s.muted,s.marked_unread,s.read_state_version,s.attention_acknowledged_at,

@@ -152,7 +152,7 @@ import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createCompanyBrainReadinessService } from "./onboarding/company-brain-readiness.js";
 import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
 import { createBrainApiRoutes, stopBrainServices } from "./brain/api/index.js";
-import { createBrainGatewayAgentTools, createBrainGatewayProjectErase, createBrainGatewayStart } from "./server/brain-wiring.js";
+import { createBrainGatewayAgentTools, createBrainGatewayBotBrain, createBrainGatewayProjectErase, createBrainGatewayStart } from "./server/brain-wiring.js";
 import { createHealingLog, logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure } from "./server/gateway-logging.js";
 import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
@@ -1546,6 +1546,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
       ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       ...(fundedAdmission ? { fundedAdmission } : {}),
+      brain: createBrainGatewayBotBrain({ services: ownerDatabaseServices, projects: codingAgentProjectManager, homePath }),
     });
     canonicalChatProviderCatalog = composePhaseCatalog(baseCanonicalChatProviderCatalog, canonicalPhaseDiscovery.canonical, base => {
       const sourceCatalog = matrixAnthropicRuntime?.service

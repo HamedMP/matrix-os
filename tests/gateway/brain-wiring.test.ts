@@ -24,7 +24,7 @@ import {
 import { BRAIN_JOB_ERRORS, BRAIN_JOB_WORKER_NAME } from "../../packages/gateway/src/brain/jobs/index.js";
 import { BRAIN_READ_IPC_TOOL_NAMES, brainReadIpcToolNames } from "../../packages/kernel/src/tools/brain-read-tools.js";
 import {
-  createBrainGatewayAgentTools, createBrainGatewayProjectErase, createBrainGatewayStart,
+  createBrainGatewayAgentTools, createBrainGatewayBotBrain, createBrainGatewayProjectErase, createBrainGatewayStart,
 } from "../../packages/gateway/src/server/brain-wiring.js";
 import { createDispatcher } from "../../packages/gateway/src/dispatcher.js";
 import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
@@ -105,9 +105,16 @@ it("starts the brain with the owner database and hands it to the routes, the age
   // The shell's and canonical Chat's runs name their caller: only an owner's run gets the brain tools.
   expect(read("server/main-ws-routes.ts")).toContain("callerId: connectionOwnerId,");
   // The seams live in server/brain-wiring.ts: server.ts only calls them.
-  for (const name of ["createBrainLateBoundIntegrations", "createBrainAgentReadTools", "createBrainProjectCleanup"]) {
+  for (const name of [
+    "createBrainLateBoundIntegrations", "createBrainAgentReadTools", "createBrainProjectCleanup",
+    "createBotBrainProjects", "createBrainProjectResolver",
+  ]) {
     expect(server, name).not.toContain(name);
   }
+  // Brain Bots get the brain's services and the project lookups of the same project manager.
+  expect(server).toContain(
+    "brain: createBrainGatewayBotBrain({ services: ownerDatabaseServices, projects: codingAgentProjectManager, homePath }),",
+  );
   // Split before adding behavior (CLAUDE.md): server.ts stays under 2,000 lines and names its extraction plan.
   expect([server.split("\n").length < 2_000, server.startsWith("// Composition only")]).toEqual([true, true]);
 });
@@ -188,6 +195,28 @@ describe("gateway seams (server/brain-wiring.ts)", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  it("gives brain Bots the brain services, or null while it is off, and the owner's project lookups", async () => {
+    const config = { id: `proj_${"a".repeat(32)}`, slug: "widgets", name: "Widgets" } as ProjectConfig;
+    const getProject = vi.fn(async (slug: string) => (slug === "widgets"
+      ? { ok: true as const, project: config }
+      : { ok: false as const, status: 404, error: { code: "not_found", message: "Project was not found" } }));
+    const listManagedProjects = vi.fn(async () => ({ projects: [{ slug: "widgets" }, { slug: "gears" }] }));
+    const projects = {
+      getProject, getProjectById: vi.fn(), resolveProjectWorkingDirectory: vi.fn(), listManagedProjects,
+    } as unknown as Parameters<typeof createBrainGatewayBotBrain>[0]["projects"];
+    const brainServices = { project: {} } as unknown as BrainServicesHandle;
+    const on = createBrainGatewayBotBrain({
+      services: { brainServices, brainService: null, kyselyInstance: null }, projects, homePath: "/home",
+    });
+    expect(on.services).toBe(brainServices);
+    expect(createBrainGatewayBotBrain({ services: null, projects, homePath: "/home" }).services).toBeNull();
+    expect(await on.projects.resolve("owner_a", "widgets")).toEqual({ projectId: config.id, slug: "widgets", name: "Widgets" });
+    expect(getProject).toHaveBeenLastCalledWith("widgets", { type: "user", id: "owner_a" });
+    expect(await on.projects.resolve("owner_a", "missing")).toBeNull();
+    expect(await on.projects.slugs("owner_a", 1)).toEqual(["widgets"]);
+    expect(listManagedProjects).toHaveBeenCalledWith({ ownerScope: { type: "user", id: "owner_a" } });
   });
 
   it("erases a deleted project through the brain, and fails the deletion when the database is down", async () => {

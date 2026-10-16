@@ -345,6 +345,28 @@ async function migrateIsolatedChatPhasesV8(trx: Transaction<OwnerBotDatabase>): 
   )`.execute(trx);
 }
 
+/**
+ * v9: thread bindings (spec 567). A recipe Bot may have many thread Chats, each fixed to one project when it is
+ * created and never moved. Direct and group bindings carry no project.
+ */
+async function migrateBotChatThreadsV9(trx: Transaction<OwnerBotDatabase>): Promise<void> {
+  await sql`ALTER TABLE bot_chat_bindings DROP CONSTRAINT bot_chat_bindings_kind_check`.execute(trx);
+  await sql`
+    ALTER TABLE bot_chat_bindings ADD CONSTRAINT bot_chat_bindings_kind_check CHECK (kind IN ('direct', 'group', 'thread'))
+  `.execute(trx);
+  await sql`ALTER TABLE bot_chat_bindings ADD COLUMN project_id TEXT`.execute(trx);
+  await sql`
+    ALTER TABLE bot_chat_bindings ADD CONSTRAINT bot_chat_bindings_thread_project CHECK (
+      (kind = 'thread') = (project_id IS NOT NULL)
+      AND (project_id IS NULL OR project_id ~ '^proj_[A-Za-z0-9_-]{1,128}$')
+    )
+  `.execute(trx);
+  await sql`
+    CREATE INDEX idx_bot_chat_bindings_threads ON bot_chat_bindings(owner_id, bot_id, project_id)
+    WHERE kind = 'thread' AND removed_at IS NULL
+  `.execute(trx);
+}
+
 export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 1, name: "bot_state_m1", up: migrateBotStateV1 },
   { version: 2, name: "bot_approvals_by_task", up: migrateApprovalsByTaskV2 },
@@ -355,4 +377,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 6, name: "bot_chatgpt_plan_devices", up: migrateChatGptPlanDevices },
   { version: 7, name: "jev_label_grant", up: migrateJevLabelGrantV7 },
   { version: 8, name: "isolated_chat_phases", up: migrateIsolatedChatPhasesV8 },
+  { version: 9, name: "bot_chat_threads", up: migrateBotChatThreadsV9 },
 ];

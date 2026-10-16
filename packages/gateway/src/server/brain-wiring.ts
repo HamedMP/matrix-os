@@ -3,8 +3,13 @@
  * /api/brain, starts the jobs and stops the brain in close().
  */
 import type { KernelConfig } from "@matrix-os/kernel";
+import { createBotBrainProjects, type BotBrainProjects } from "../bots/brain-projects.js";
+import type { BotBrainServices } from "../bots/brain-read.js";
 import { createBrainAgentReadTools } from "../brain/agent/index.js";
-import { createBrainAgentTools, createBrainProjectCleanup, resolveBrainAgentOwnerId } from "../brain/api/index.js";
+import {
+  createBrainAgentTools, createBrainProjectCleanup, createBrainProjectResolver, resolveBrainAgentOwnerId,
+} from "../brain/api/index.js";
+import type { BrainProjectLookup } from "../brain/api/types.js";
 import {
   createBrainLateBoundIntegrations, type BrainIntegrationCallerDeps,
 } from "../brain/sources/integration/index.js";
@@ -57,4 +62,20 @@ export function createBrainGatewayProjectErase(
     databaseConfigured, db: services?.kyselyInstance ?? null, services: services?.brainServices ?? null,
   });
   return (project, principal) => erase(principal.userId, project.id);
+}
+
+/**
+ * Brain reads and project lookups for Company Brain Bots (spec 567): services are null while the brain is off, and a
+ * thread's project resolves through the brain's own owner-scoped lookup on the gateway's project manager.
+ */
+export function createBrainGatewayBotBrain(deps: {
+  services: BrainOwnerDatabase;
+  projects: BrainProjectLookup & Parameters<typeof createBotBrainProjects>[0]["projects"];
+  homePath: string;
+}): { services: BotBrainServices | null; projects: BotBrainProjects } {
+  const resolver = createBrainProjectResolver({ projects: deps.projects, homePath: deps.homePath });
+  return {
+    services: deps.services?.brainServices ?? null,
+    projects: createBotBrainProjects({ resolver, projects: deps.projects }),
+  };
 }

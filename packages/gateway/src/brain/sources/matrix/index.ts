@@ -7,6 +7,6 @@ export { createBrainMatrixNotesHandler, createBrainMatrixNotesReader } from "./n
 export { createBrainMatrixFilesHandler } from "./files.js";
 export { createBrainMatrixChatHandler } from "./chat.js";
 export {
-  BRAIN_MATRIX_LIMITS, type BrainMatrixChatHandlerDeps, type BrainMatrixChatReader, type BrainMatrixFilesHandlerDeps,
-  type BrainMatrixNotesHandlerDeps, type BrainMatrixNotesReader,
+  BRAIN_MATRIX_LIMITS, type BrainMatrixBotChats, type BrainMatrixChatHandlerDeps, type BrainMatrixChatReader,
+  type BrainMatrixFilesHandlerDeps, type BrainMatrixNotesHandlerDeps, type BrainMatrixNotesReader,
 } from "./types.js";
