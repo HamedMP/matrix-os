@@ -26,6 +26,25 @@ describe('account deletion personal database cleanup', () => {
       await expect(eraseOwnerPlatformData(db, 'user_empty')).resolves.toBeUndefined();
     } finally { await db.destroy(); }
   });
+  it('erases the owner upstream preference and its audit history', async () => {
+    const db = await fixture();
+    try {
+      await db.executor.insertInto('ai_funded_upstream_preferences').values({
+        owner_id: 'user_owner', selected_upstream: 'aws_bedrock', revision: 1,
+        updated_at: '2026-10-01T00:00:00.000Z',
+      }).execute();
+      await db.executor.insertInto('ai_funded_upstream_preference_audit').values({
+        event_id: 'preference-event', owner_id: 'user_owner', actor_owner_id: 'user_owner',
+        previous_upstream: 'cloudflare', selected_upstream: 'aws_bedrock',
+        previous_revision: 0, revision: 1, created_at: '2026-10-01T00:00:00.000Z',
+      }).execute();
+
+      await eraseOwnerPlatformData(db, 'user_owner');
+
+      expect(await db.executor.selectFrom('ai_funded_upstream_preferences').selectAll().execute()).toEqual([]);
+      expect(await db.executor.selectFrom('ai_funded_upstream_preference_audit').selectAll().execute()).toEqual([]);
+    } finally { await db.destroy(); }
+  });
   it('blocks destruction of owner-hosted shared resources while retaining their data', async () => {
     const db = await fixture();
     try {

@@ -120,6 +120,10 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
         (SELECT denial_id FROM collaboration_denials WHERE actor_id = ${owner})`.execute(trx.executor);
       await sql`DELETE FROM collaboration_denials WHERE actor_id = ${owner}`.execute(trx.executor);
     }
+    await trx.executor.deleteFrom('ai_funded_upstream_preference_audit')
+      .where('owner_id', '=', owner).execute();
+    await trx.executor.deleteFrom('ai_funded_upstream_preferences')
+      .where('owner_id', '=', owner).execute();
     await sql`DELETE FROM ai_funded_reservation_promotional_allocations WHERE reservation_id IN
       (SELECT reservation_id FROM ai_funded_usage_reservations WHERE owner_id = ${owner}) OR grant_entry_id IN
       (SELECT entry_id FROM ai_funded_credit_ledger WHERE owner_id = ${owner})`.execute(trx.executor);
