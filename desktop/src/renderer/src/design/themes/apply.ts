@@ -52,6 +52,7 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--accent-hover": semantic.primaryHover,
     "--text-on-accent-hover": semantic.primaryHoverForeground,
     "--accent-muted": chrome.accent,
+    "--accent-text": semantic.accentText,
     "--highlight": chrome.chart4,
     "--highlight-muted": chrome.accent,
     "--success": semantic.success,
