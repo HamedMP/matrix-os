@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { SLACK_INSTALL_URL } from '@matrix-os/contracts/slack-bridge';
+import { messagingPlatformUrl } from '@matrix-os/contracts';
 
 const style: CSSProperties = {display:'inline-flex',alignItems:'center',justifyContent:'center',gap:10,minHeight:44,padding:'10px 18px',border:'1px solid var(--matrix-border, var(--border-subtle, var(--border)))',borderRadius:'var(--matrix-radius-md, 10px)',background:'var(--matrix-card, var(--bg-surface, var(--card)))',color:'var(--matrix-fg, var(--text-primary, var(--foreground)))',fontWeight:600,textDecoration:'none',fontSize:14,maxWidth:'100%',cursor:'pointer'};
 export function SlackMark() {
@@ -11,8 +11,10 @@ export function SlackMark() {
   </svg>;
 }
 /** Every install entry goes through Matrix; never a stateless Slack share URL. */
-export function AddToSlack({onClick,onOpen,busy=false,disabled=false}:{onClick?:()=>void;onOpen?:()=>void;busy?:boolean;disabled?:boolean}) {
+export function AddToSlack({onClick,onOpen,busy=false,disabled=false,platformOrigin,allowDevelopmentOrigin=false}:{onClick?:()=>void;onOpen?:(url:string)=>void;busy?:boolean;disabled?:boolean;platformOrigin?:string|null;allowDevelopmentOrigin?:boolean}) {
+  const url=messagingPlatformUrl('/slack/install',platformOrigin,allowDevelopmentOrigin);
   const contents=<><SlackMark />{busy ? 'Opening Slack…' : 'Add to Slack'}</>;
+  if(!url) return <button type="button" disabled style={style}>Add to Slack</button>;
   if(onClick) return <button type="button" onClick={onClick} disabled={disabled || busy} aria-busy={busy} style={{...style,...(disabled || busy ? {opacity:0.6,cursor:'not-allowed'} : {})}}>{contents}</button>;
-  return <a href={SLACK_INSTALL_URL} onClick={onOpen ? event=>{event.preventDefault();onOpen();} : undefined} target="_blank" rel="noopener noreferrer" style={style}>{contents}</a>;
+  return <a href={url} onClick={onOpen ? event=>{event.preventDefault();onOpen(url);} : undefined} target="_blank" rel="noopener noreferrer" style={style}>{contents}</a>;
 }
