@@ -141,7 +141,13 @@ describe("funded generation first-response budget", () => {
     ] });
     expect(f.control.finalize).toHaveBeenCalledTimes(1);
     expect(f.control.finalize).toHaveBeenCalledWith({ reservationId: "reservation_1", tokenId: IDENTITY.tokenId,
-      mode: "exact", actualCostMicrousd: 24 }, expect.any(AbortSignal));
+      mode: "exact", actualCostMicrousd: 24,
+      upstreamProvenance: {
+        upstream: "cloudflare_workers_ai",
+        routeId: "cloudflare-workers-ai",
+        resolvedModel: "@cf/zai-org/glm-5.3-flash",
+        pricingVersion: "cloudflare-2026-09-10-glm-flash",
+      } }, expect.any(AbortSignal));
   });
 
   it("aborts a stalled generation at exactly thirty seconds without redispatch or releasing unknown usage", async () => {

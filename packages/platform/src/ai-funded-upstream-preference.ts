@@ -191,13 +191,16 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
     return FundedAiUpstreamSelectionSchema.parse({ ...selection, proof });
   }
 
-  async function resolveUpstream(input: { ownerId: string; modelId: string }): Promise<FundedAiUpstreamSelection> {
+  async function resolveUpstreamWithProbe(
+    input: { ownerId: string; modelId: string },
+    probeBedrock: (modelId: string) => Promise<FundedBedrockProbeResult>,
+  ): Promise<{ selection: FundedAiUpstreamSelection; bedrockProbe?: FundedBedrockProbeResult }> {
     const ownerId = OwnerIdSchema.parse(input.ownerId);
     const modelId = ProviderModelReferenceSchema.parse(input.modelId);
     const preference = await getPreference(ownerId);
     let probe: FundedBedrockProbeResult | undefined;
     if (preference?.selectedUpstream === "aws_bedrock" && config.bedrockModelIds.includes(modelId)) {
-      probe = await options.probeBedrock(modelId);
+      probe = await probeBedrock(modelId);
     }
     const checked = now();
     let upstream: "cloudflare" | "aws_bedrock" = "cloudflare";
@@ -219,7 +222,23 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
       checkedAt: checked.toISOString(),
       staleAfter: new Date(staleAt).toISOString(),
     } as const;
-    return sign(ownerId, modelId, selection);
+    return { selection: sign(ownerId, modelId, selection), ...(probe ? { bedrockProbe: probe } : {}) };
+  }
+
+  async function resolveUpstream(input: { ownerId: string; modelId: string }): Promise<FundedAiUpstreamSelection> {
+    return (await resolveUpstreamWithProbe(input, options.probeBedrock)).selection;
+  }
+
+  async function resolveUpstreamForReadiness(
+    input: { ownerId: string; modelId: string },
+    probeBedrock: (modelId: string) => Promise<FundedBedrockProbeResult>,
+  ) {
+    return resolveUpstreamWithProbe(input, probeBedrock);
+  }
+
+  function getEntitledBedrockModelIds(ownerIdInput: string): readonly string[] {
+    const ownerId = OwnerIdSchema.parse(ownerIdInput);
+    return entitled(ownerId) ? config.bedrockModelIds : [];
   }
 
   async function verifyUpstream(input: {
@@ -255,7 +274,8 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
     return { ...preference, effectiveUpstream } as const;
   }
 
-  return { getPreference, getPreferenceView, setPreference, resolveUpstream, verifyUpstream };
+  return { getPreference, getPreferenceView, setPreference, resolveUpstream,
+    resolveUpstreamForReadiness, getEntitledBedrockModelIds, verifyUpstream };
 }
 
 export type AiFundedUpstreamPreferenceRepository = ReturnType<typeof createAiFundedUpstreamPreferenceRepository>;

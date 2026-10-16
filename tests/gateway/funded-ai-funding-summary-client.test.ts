@@ -112,13 +112,34 @@ describe("funded AI funding summary client", () => {
     }
   });
 
-  it("retries a legacy body rejection once under the same deadline without inventing availability", async () => {
+  it("preserves Chat availability when an older platform rejects only the upstream preference field", async () => {
+    const chatAvailability = { contractVersion: 1, asOf: NOW, eligibleBalanceMicrousd: 400, availableBalanceMicrousd: 200 };
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: { code: "invalid_request", message: "Invalid request" } }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ contractVersion: 1, funding, policy, chatAvailability }));
+    const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
+    await expect(client.getFundingSummary()).resolves.toEqual({ funding, policy, chatAvailability });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn.mock.calls.map((call) => call[1]?.body)).toEqual([
+      JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
+      JSON.stringify({ includeChatAvailability: true }),
+    ]);
+    expect(fetchFn.mock.calls[1][1]?.signal).toBe(fetchFn.mock.calls[0][1]?.signal);
+  });
+
+  it("retries both negotiated summary shapes before using the legacy body", async () => {
     const fetchFn = vi.fn().mockResolvedValueOnce(Response.json({ error: { code: "invalid_request", message: "Invalid request" } }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ error: { code: "invalid_request", message: "Invalid request" } }, { status: 400 }))
       .mockResolvedValueOnce(Response.json({ contractVersion: 1, funding, policy }));
     const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
     await expect(client.getFundingSummary()).resolves.toEqual({ funding, policy });
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(fetchFn.mock.calls[1][1]).toMatchObject({ body: "{}", signal: fetchFn.mock.calls[0][1].signal });
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(fetchFn.mock.calls.map((call) => call[1]?.body)).toEqual([
+      JSON.stringify({ includeChatAvailability: true, includeUpstreamPreference: true }),
+      JSON.stringify({ includeChatAvailability: true }),
+      "{}",
+    ]);
+    expect(fetchFn.mock.calls[2][1]).toMatchObject({ signal: fetchFn.mock.calls[0][1].signal });
   });
 
   it("does not retry unrelated or malformed body denials", async () => {
