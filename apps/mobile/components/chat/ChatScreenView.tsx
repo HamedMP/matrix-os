@@ -1,4 +1,5 @@
-import { KeyboardAvoidingView } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
@@ -10,6 +11,7 @@ import { ChatHome } from "./ChatHome";
 import { ChatMessagesSkeleton, ChatUnavailable } from "./ChatLoadState";
 import type { ChatLoadState } from "./chat-screen-state";
 import { Composer, type ComposerProps } from "./Composer";
+import { chatHomeExit } from "./message-motion";
 import { MessageList, type MessageListProps } from "./MessageList";
 import { UnsentMessageActionsProvider, type UnsentMessageActions } from "./unsent-message-actions";
 
@@ -59,9 +61,10 @@ export function ChatScreenView({
   return (
     // The keyboard is drawn over the screen on both platforms (Android does not
     // shrink the window for it, as the app is edge to edge), so the screen
-    // makes room for it. The screen starts at the top of the window and ends
-    // at the tab bar, so the keyboard's overlap with it needs no offset: the
-    // part of the keyboard that covers the tab bar is already outside this view.
+    // makes room for it, and its bottom edge rises with the keyboard frame by
+    // frame. The screen starts at the top of the window and ends at the tab
+    // bar, so the keyboard's overlap with it needs no offset: the part of the
+    // keyboard that covers the tab bar is already outside this view.
     <KeyboardAvoidingView style={[styles.screen, { paddingTop: insets.top }]} behavior="padding">
       <TopBar
         title={title}
@@ -77,7 +80,9 @@ export function ChatScreenView({
         ) : null}
       />
       {showHome ? (
-        <ChatHome suggestions={suggestions} onSuggestionPress={onSuggestionPress} />
+        <Animated.View testID="chat-home-frame" style={styles.home} exiting={chatHomeExit}>
+          <ChatHome suggestions={suggestions} onSuggestionPress={onSuggestionPress} />
+        </Animated.View>
       ) : chatState === "loading" ? (
         <ChatMessagesSkeleton />
       ) : chatState === "failed" ? (
@@ -102,5 +107,8 @@ const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
     backgroundColor: theme.v2.colors.background,
+  },
+  home: {
+    flex: 1,
   },
 }));

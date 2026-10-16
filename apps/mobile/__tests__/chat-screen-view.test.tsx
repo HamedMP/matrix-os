@@ -1,9 +1,11 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { KeyboardAvoidingView, Platform, Text } from "react-native";
+import { Platform, Text } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { ChatScreenView, type ChatScreenViewProps } from "../components/chat/ChatScreenView";
 import { CHAT_SUGGESTIONS } from "../components/chat/chat-suggestions";
+import { chatHomeExit } from "../components/chat/message-motion";
 import { Icon } from "../components/ui/Icon";
 import { NewChatIcon, SidePanelIcon } from "../components/ui/icons";
 import type { TranscriptMessage } from "../lib/canonical-chat-transcript";
@@ -59,6 +61,12 @@ describe("ChatScreenView", () => {
     expect(screen.getByRole("header", { name: "Habit tracker app" })).toBeTruthy();
     expect(screen.getByText("Build an app that tracks my habits")).toBeTruthy();
     expect(screen.queryByText("What should we work on?")).toBeNull();
+  });
+
+  it("fades the greeting out as the first message takes its place", () => {
+    render(<ChatScreenView {...props()} />);
+
+    expect(screen.getByTestId("chat-home-frame").props.exiting).toBe(chatHomeExit);
   });
 
   it("opens the side panel from the button on the left of the top bar", () => {

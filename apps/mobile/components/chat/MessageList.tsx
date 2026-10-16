@@ -1,11 +1,14 @@
 import { useCallback, type ReactNode } from "react";
-import { FlatList, Text, type ListRenderItemInfo } from "react-native";
+import { Text, type ListRenderItemInfo } from "react-native";
+import Animated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 
 import { AnalyticsMask } from "@/lib/analytics";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
+import { useReduceMotion } from "@/lib/use-reduce-motion";
 
 import { AssistantMessage } from "./AssistantMessage";
+import { messageEntering, messageEnteringReduced, messageListLayout } from "./message-motion";
 import type { MessageAttachmentsProps } from "./MessageAttachments";
 import { useUnsentMessageActions } from "./unsent-message-actions";
 import { UserMessage } from "./UserMessage";
@@ -25,6 +28,14 @@ export interface MessageListProps extends Pick<MessageAttachmentsProps, "renderC
 
 const keyExtractor = (message: TranscriptMessage) => message.id;
 
+/**
+ * Still arriving: sent from this phone and on its way, or a reply being
+ * written. Only these animate in. The list draws rows again as they scroll
+ * back into view, and one that has arrived must not replay its entrance.
+ */
+const isArriving = (message: TranscriptMessage) =>
+  message.delivery === "sending" || (message.role === "assistant" && message.isRunning);
+
 /** A chat's messages, newest at the bottom. */
 export function MessageList({
   messages,
@@ -34,25 +45,32 @@ export function MessageList({
   renderComputerPhoto,
   footer,
 }: MessageListProps) {
+  const reduceMotion = useReduceMotion();
+  const entering = reduceMotion ? messageEnteringReduced : messageEntering;
+
   const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
-    <AnalyticsMask>
-      {renderRequest?.(item) ?? (
-        <Message
-          message={item}
-          chatId={chatId}
-          renderResults={renderResults}
-          renderComputerPhoto={renderComputerPhoto}
-        />
-      )}
-    </AnalyticsMask>
-  ), [chatId, renderRequest, renderResults, renderComputerPhoto]);
+    <Animated.View testID={`message-motion-${item.id}`} entering={isArriving(item) ? entering : undefined}>
+      <AnalyticsMask>
+        {renderRequest?.(item) ?? (
+          <Message
+            message={item}
+            chatId={chatId}
+            renderResults={renderResults}
+            renderComputerPhoto={renderComputerPhoto}
+          />
+        )}
+      </AnalyticsMask>
+    </Animated.View>
+  ), [chatId, renderRequest, renderResults, renderComputerPhoto, entering]);
 
   return (
-    <FlatList
+    <Animated.FlatList
       style={styles.list}
       data={messages}
       renderItem={renderItem}
       keyExtractor={keyExtractor}
+      // With reduced motion the messages already there step up at once.
+      itemLayoutAnimation={reduceMotion ? undefined : messageListLayout}
       inverted
       // The list is drawn from the bottom up, so its header is what comes last.
       ListHeaderComponent={footer ? <AnalyticsMask>{footer}</AnalyticsMask> : null}
