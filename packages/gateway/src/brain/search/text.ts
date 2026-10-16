@@ -134,13 +134,18 @@ export async function brainSearchNeedsAnyTerm(
   return all.length < BRAIN_SEARCH_ANY_TERM_BELOW;
 }
 
-/** The ids among `documentIds` that are live in the scope and pass the filters (vector candidates). */
-export async function filterBrainDocumentIds(
-  db: Kysely<BrainDatabase>, scope: BrainScopeKey, query: BrainParsedSearchQuery, documentIds: readonly string[],
+/**
+ * The ids of the vector candidates whose document is still live at the candidate's (incarnation, revision) and passes
+ * the filters: a document changed after its vectors were read is dropped, so a meaning match never shows new text.
+ */
+export async function filterBrainVectorCandidates(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, query: BrainParsedSearchQuery,
+  candidates: readonly { readonly documentId: string; readonly incarnation: string; readonly revision: number }[],
 ): Promise<Set<string>> {
-  if (documentIds.length === 0) return new Set();
+  if (candidates.length === 0) return new Set();
+  const at = candidates.map((entry) => sql`(${entry.documentId}, ${entry.incarnation}::uuid, ${entry.revision}::int)`);
   const rows = await sql<{ document_id: string }>`SELECT d.document_id FROM brain_documents d
     WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL
-      AND d.document_id IN (${sql.join([...documentIds])})${brainDocumentFilters(query)}`.execute(db);
+      AND (d.document_id, d.incarnation, d.revision) IN (${sql.join(at)})${brainDocumentFilters(query)}`.execute(db);
   return new Set(rows.rows.map((row) => row.document_id));
 }
