@@ -155,7 +155,7 @@ describe("desktop provider settings transport", () => {
     const abort = new AbortController();
 
     await expect(transport.getSnapshot(abort.signal)).resolves.toEqual(snapshot());
-    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true", {
+    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true&includeUpstreamPreference=true", {
       maxBytes: 1024 * 1024,
       signal: abort.signal,
       timeoutMs: 32_000,
@@ -174,7 +174,7 @@ describe("desktop provider settings transport", () => {
     const transport = createDesktopProviderSettingsTransport(api({ post }));
     await expect(transport.mutate(mutation, new AbortController().signal))
       .resolves.toMatchObject({ kind: "snapshot", snapshot: { revision: 2 } });
-    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeMatrixAnthropicConnection=true", mutation, expect.objectContaining({
+    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeMatrixAnthropicConnection=true&includeUpstreamPreference=true", mutation, expect.objectContaining({
       maxBytes: 1024 * 1024,
       signal: expect.any(AbortSignal),
     }));
