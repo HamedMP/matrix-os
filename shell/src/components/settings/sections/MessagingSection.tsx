@@ -6,6 +6,8 @@ import { WHATSAPP_SETTINGS_PATH } from "@matrix-os/contracts";
 import { useSyncExternalStore } from "react";
 const subscribeRuntime = () => () => {};
 const serverRuntime = () => null;
+const platformOrigin = process.env.NEXT_PUBLIC_MATRIX_APP_URL;
+const allowDevelopmentOrigin = process.env.NODE_ENV === "development";
 export function MessagingSection() {
   const selfHosted = useSyncExternalStore(subscribeRuntime, isSelfHostedRuntime, serverRuntime);
   if (selfHosted === null) return <MessagingContent><p>Checking connection…</p></MessagingContent>;
@@ -28,7 +30,7 @@ function MessagingContent({ children }: { children: React.ReactNode }) {
         Your own Matrix, in the apps you already use.
       </p>
       {children}
-      <SlackInstallPanel showHeading={false} />
+      <SlackInstallPanel showHeading={false} platformOrigin={platformOrigin} allowDevelopmentOrigin={allowDevelopmentOrigin} />
     </div>
   );
 }
@@ -37,6 +39,8 @@ function ManagedMessaging() {
   return (
     <MessagingContent>
       <WhatsAppSettingsPanel
+        platformOrigin={platformOrigin}
+        allowDevelopmentOrigin={allowDevelopmentOrigin}
         scope={JSON.stringify([userId, sessionId])}
         load={async () => {
           if (!userId) throw new Error("Sign in required");

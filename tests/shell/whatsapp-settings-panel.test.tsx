@@ -12,6 +12,29 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WhatsAppSettingsPanel } from "../../packages/ui/src/messaging/WhatsAppSettingsPanel.js";
 afterEach(cleanup);
 describe("WhatsApp settings", () => {
+  it("keeps connection truth but exposes no platform actions for invalid explicit origin", async () => {
+    render(<WhatsAppSettingsPanel platformOrigin="https://stage.example/path" scope="invalid-config"
+      load={async () => ({ connected: true, maskedSender: "your WhatsApp account", admission: "public", chatId: "chat_stage" })} />);
+    await screen.findByText("Connected");
+    expect(screen.queryByRole("link", { name: "Manage connection" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open Matrix Chat" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Connection guide" })).toBeTruthy();
+  });
+  it("keeps configured authority for Connect and Open Matrix Chat without changing WhatsApp links", async () => {
+    const configured = { platformOrigin: "https://messaging-stage.example.com" };
+    const onOpen = vi.fn().mockResolvedValue(undefined);
+    render(<WhatsAppSettingsPanel {...configured} scope="stage-owner" onOpen={onOpen}
+      load={async () => ({ connected: true, maskedSender: "your WhatsApp account", admission: "public", chatId: "chat_stage", startUrl: "https://wa.me/13073174314" })} />);
+    await screen.findByText("Connected");
+    expect(screen.getByRole("link", { name: "Manage connection" }).getAttribute("href"))
+      .toBe("https://messaging-stage.example.com/whatsapp/connect");
+    const chat = screen.getByRole("link", { name: "Open Matrix Chat" });
+    expect(chat.getAttribute("href")).toBe("https://messaging-stage.example.com/open?chat=chat_stage");
+    fireEvent.click(chat);
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith("https://messaging-stage.example.com/open?chat=chat_stage"));
+    expect(screen.getByRole("link", { name: "Open WhatsApp" }).getAttribute("href"))
+      .toBe("https://wa.me/13073174314");
+  });
   it("shows owner connection separately from agent readiness and opens safe actions", async () => {
     const load = vi.fn(async () => ({
       connected: true,

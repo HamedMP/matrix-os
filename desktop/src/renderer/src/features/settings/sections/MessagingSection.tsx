@@ -1,13 +1,14 @@
 import { SlackInstallPanel, WhatsAppSettingsPanel } from "@matrix-os/ui";
 import { WHATSAPP_SETTINGS_PATH } from "@matrix-os/contracts";
-import { SLACK_INSTALL_URL } from "@matrix-os/contracts/slack-bridge";
 import { useConnection } from "../../../stores/connection";
 import { invoke } from "../../../lib/operator";
 export default function MessagingSection() {
   const api = useConnection((s) => s.api);
   const userId = useConnection((s) => s.userId);
   const generation = useConnection((s) => s.authGeneration);
-  const scope = JSON.stringify([userId, generation]);
+  const platformOrigin = useConnection((s) => s.platformHost) || null;
+  const scope = JSON.stringify([userId, generation, platformOrigin]);
+  const allowDevelopmentOrigin = import.meta.env.DEV;
   const open = async (url: string) => {
     await invoke("shell:open-external", { url });
   };
@@ -18,6 +19,8 @@ export default function MessagingSection() {
         Your own Matrix, in the apps you already use.
       </p>
       <WhatsAppSettingsPanel
+        platformOrigin={platformOrigin}
+        allowDevelopmentOrigin={allowDevelopmentOrigin}
         key={String(Boolean(api))}
         scope={scope}
         load={async () => {
@@ -27,8 +30,10 @@ export default function MessagingSection() {
         onOpen={open}
       />
       <SlackInstallPanel
+        platformOrigin={platformOrigin}
+        allowDevelopmentOrigin={allowDevelopmentOrigin}
         showHeading={false}
-        onInstall={() => open(SLACK_INSTALL_URL)}
+        onInstall={open}
       />
     </>
   );
