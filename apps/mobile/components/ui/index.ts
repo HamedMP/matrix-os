@@ -27,6 +27,7 @@ export { AgentMascot, type AgentMascotProps } from "./AgentMascot";
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from "./Button";
 export { Chip, type ChipProps } from "./Chip";
 export { CountBadge, type CountBadgeProps } from "./CountBadge";
+export { ConfirmDialog, type ConfirmDialogField, type ConfirmDialogProps } from "./ConfirmDialog";
 export { IconTile, type IconTileProps, type IconTileSize } from "./IconTile";
 export { ItemRow, type ItemRowProps } from "./ItemRow";
 export { ProviderLogo, type Provider, type ProviderLogoProps } from "./ProviderLogo";

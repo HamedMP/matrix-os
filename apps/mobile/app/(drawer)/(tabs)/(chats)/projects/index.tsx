@@ -1,19 +1,28 @@
 import { useMemo, useRef, useState } from "react";
+import { Alert } from "react-native";
 import { useRouter } from "expo-router";
 
 import { ProjectNameSheet } from "@/components/projects/ProjectNameSheet";
 import { ProjectsListScreen } from "@/components/projects/ProjectsListScreen";
-import { projectNameFailure } from "@/components/projects/project-failures";
+import { confirmArchiveProject } from "@/components/projects/project-archive";
+import { ARCHIVE_FAILED_TITLE, archiveFailureMessage, projectNameFailure } from "@/components/projects/project-failures";
 import { projectRows } from "@/components/projects/project-rows";
 import { useBackOr } from "@/components/projects/use-back-or";
 import { useProjectList } from "@/components/projects/use-project-list";
-import { useCreateProject } from "@/lib/queries/use-project-mutations";
+import { useArchiveProject, useCreateProject, useRenameProject } from "@/lib/queries/use-project-mutations";
 import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
+import type { ProjectSummary } from "@/lib/requests/projects";
+import { showToast } from "@/lib/toast";
 
 export default function ProjectsRoute() {
   const router = useRouter();
   const list = useProjectList();
   const create = useCreateProject();
+  const rename = useRenameProject();
+  const archive = useArchiveProject();
+  // The project the name sheet renames, or null when it creates one. Kept as
+  // the sheet closes, so it slides away showing what it showed.
+  const [renaming, setRenaming] = useState<ProjectSummary | null>(null);
   const goBack = useBackOr("/(drawer)");
   const [query, setQuery] = useState("");
   const [naming, setNaming] = useState(false);
@@ -38,8 +47,40 @@ export default function ProjectsRoute() {
     }
   };
 
+  const projectById = (projectId: string) => list.projects.find((project) => project.id === projectId) ?? null;
+
+  const startRenaming = (projectId: string) => {
+    const project = projectById(projectId);
+    if (!project) return;
+    rename.reset();
+    setRenaming(project);
+    setNaming(true);
+  };
+
+  const renameProject = (name: string) => {
+    if (!renaming) return;
+    rename.mutate({ slug: renaming.slug, name }, {
+      onSuccess: () => {
+        setNaming(false);
+        showToast("Project renamed");
+      },
+    });
+  };
+
+  const archiveProject = (projectId: string) => {
+    const project = projectById(projectId);
+    if (!project) return;
+    confirmArchiveProject(project.name, () => {
+      archive.mutate(project.slug, {
+        onSuccess: () => showToast("Project archived"),
+        onError: (error: unknown) => Alert.alert(ARCHIVE_FAILED_TITLE, archiveFailureMessage(error)),
+      });
+    });
+  };
+
   const startNaming = () => {
     create.reset();
+    setRenaming(null);
     setNaming(true);
   };
 
@@ -67,14 +108,21 @@ export default function ProjectsRoute() {
         onBack={goBack}
         onNewProject={startNaming}
         onOpenProject={openProject}
+        onRenameProject={startRenaming}
+        onArchiveProject={archiveProject}
       />
+
+      {/* One sheet names a new project or renames one: a second sheet cannot open while the first is on its way out. */}
       <ProjectNameSheet
         visible={naming}
-        title="New project"
-        confirmLabel="Create"
-        saving={create.isPending}
-        failure={create.isError ? projectNameFailure(create.error, "Project could not be created. Try again.") : null}
-        onSubmit={createProject}
+        title={renaming ? "Rename project" : "New project"}
+        confirmLabel={renaming ? "Save" : "Create"}
+        initialName={renaming?.name}
+        saving={renaming ? rename.isPending : create.isPending}
+        failure={renaming
+          ? rename.isError ? projectNameFailure(rename.error, "Project could not be renamed. Try again.") : null
+          : create.isError ? projectNameFailure(create.error, "Project could not be created. Try again.") : null}
+        onSubmit={renaming ? renameProject : createProject}
         onCancel={() => setNaming(false)}
       />
     </>

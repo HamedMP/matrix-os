@@ -1,8 +1,12 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { Alert, type AlertButton } from "react-native";
 
 import * as mockRoutes from "./project-route-test-utils";
 import ProjectsRoute from "../app/(drawer)/(tabs)/(chats)/projects/index";
+import { ToastHost } from "../components/ui/Toast";
 import { ProjectRequestError } from "../lib/requests/projects";
+
+import { menuAround, menuItem, menuItemLabels } from "./context-menu-test-utils";
 
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({ isLoaded: true, isSignedIn: true, userId: "user_a", getToken: async () => "session-token" }),
@@ -11,6 +15,7 @@ jest.mock("@/lib/storage", () => ({ HOSTED_GATEWAY_URL: "https://app.matrix-os.c
 jest.mock("@/lib/requests", () => mockRoutes.requestsModule());
 jest.mock("expo-router", () => ({ useRouter: () => mockRoutes.router }));
 jest.mock("@expo/ui", () => mockRoutes.sheetModule());
+jest.mock("@expo/ui/swift-ui", () => jest.requireActual("./context-menu-test-utils").swiftUiContextMenuModule());
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 62, right: 0, bottom: 34, left: 0 }),
 }));
@@ -49,6 +54,51 @@ describe("projects route", () => {
   afterEach(async () => {
     await mockRoutes.cleanupProjectRoute();
     jest.restoreAllMocks();
+  });
+
+  describe("a project's long-press menu", () => {
+    async function renderWithToasts() {
+      mockRoutes.renderWithQueries(<><ProjectsRoute /><ToastHost /></>);
+      await waitFor(() => expect(screen.getByTestId("projects-list")).toBeTruthy());
+    }
+    const portfolioRow = () => screen.getByTestId("project-row-proj_portfolio");
+
+    it("offers the project's own Rename and Archive", async () => {
+      await renderList();
+
+      expect(menuItemLabels(menuAround(portfolioRow()))).toEqual(["Rename", "Archive"]);
+    });
+
+    it("renames it in the name sheet, starting from its name, and says so", async () => {
+      requests.renameProject.mockResolvedValue({ ...portfolio, name: "Case studies" });
+      await renderWithToasts();
+
+      fireEvent.press(menuItem(portfolioRow(), "Rename"));
+      expect(sheet.isPresented).toBe(true);
+      expect(screen.getByRole("header", { name: "Rename project" })).toBeTruthy();
+      expect(nameField().props.value).toBe("Portfolio");
+      fireEvent.changeText(nameField(), "Case studies");
+      fireEvent.press(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(screen.getByText("Project renamed")).toBeTruthy());
+      expect(requests.renameProject).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "portfolio", "Case studies");
+      expect(sheet.isPresented).toBe(false);
+    });
+
+    it("archives it after asking, as its screen does, and says so", async () => {
+      const alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+      requests.archiveProject.mockResolvedValue({ ...portfolio, archived: true });
+      await renderWithToasts();
+
+      fireEvent.press(menuItem(portfolioRow(), "Archive"));
+      const [title, message, buttons] = alert.mock.calls.at(-1) as [string, string, AlertButton[]];
+      expect([title, message]).toEqual(["Archive Portfolio?", "It leaves your project list. Its chats are kept."]);
+      expect(requests.archiveProject).not.toHaveBeenCalled();
+      await act(async () => buttons.find((button) => button.text === "Archive")!.onPress?.());
+
+      await waitFor(() => expect(screen.getByText("Project archived")).toBeTruthy());
+      expect(requests.archiveProject).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "portfolio");
+    });
   });
 
   describe("list", () => {

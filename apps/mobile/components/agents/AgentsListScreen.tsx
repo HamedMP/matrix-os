@@ -1,7 +1,8 @@
 import { Text, View } from "react-native";
 import Animated from "react-native-reanimated";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
+import { ItemContextMenu, type ItemMenuAction } from "@/components/ItemContextMenu";
 import { TabScreen } from "@/components/shell/TabScreen";
 import {
   AddIcon,
@@ -29,6 +30,8 @@ export interface AgentsListScreenProps {
   onRetry: () => void;
   onNewAgent: () => void;
   onOpenAgent: (agentId: string) => void;
+  /** Archive from a long press on the agent's row. */
+  onArchiveAgent?: (agentId: string) => void;
 }
 
 /** The Agents tab's first screen: every agent with what it is doing. */
@@ -40,7 +43,13 @@ export function AgentsListScreen({
   onRetry,
   onNewAgent,
   onOpenAgent,
+  onArchiveAgent,
 }: AgentsListScreenProps) {
+  const { theme } = useUnistyles();
+  // What the agent's details offer, from a long press on its row.
+  const rowActions = (agentId: string): ItemMenuAction[] => (onArchiveAgent
+    ? [{ id: "item", key: "archive", label: "Archive", systemImage: "archivebox", destructive: true, onSelect: () => onArchiveAgent(agentId) }]
+    : []);
   return (
     <TabScreen testID="agents-screen">
       <View testID="agents-header" style={styles.header}>
@@ -68,16 +77,23 @@ export function AgentsListScreen({
             itemLayoutAnimation={listItemLayout}
             renderItem={({ item: row }) => (
               <Animated.View exiting={listItemExit}>
-                <ItemRow
-                  testID={`agent-row-${row.id}`}
-                  accessibilityLabel={[row.name, row.subtitle, row.time].filter(Boolean).join(", ")}
-                  leading={<AgentMascot id={row.id} name={row.name} category={row.category} />}
+                <ItemContextMenu
                   title={row.name}
-                  titleAccessory={row.tone ? <StatusDot testID={`agent-dot-${row.id}`} tone={row.tone} /> : undefined}
-                  subtitle={row.subtitle}
-                  meta={row.time || undefined}
-                  onPress={() => onOpenAgent(row.id)}
-                />
+                  actions={rowActions(row.id)}
+                  backgroundColor={theme.v2.colors.background}
+                  cornerRadius={theme.v2.radius.card}
+                >
+                  <ItemRow
+                    testID={`agent-row-${row.id}`}
+                    accessibilityLabel={[row.name, row.subtitle, row.time].filter(Boolean).join(", ")}
+                    leading={<AgentMascot id={row.id} name={row.name} category={row.category} />}
+                    title={row.name}
+                    titleAccessory={row.tone ? <StatusDot testID={`agent-dot-${row.id}`} tone={row.tone} /> : undefined}
+                    subtitle={row.subtitle}
+                    meta={row.time || undefined}
+                    onPress={() => onOpenAgent(row.id)}
+                  />
+                </ItemContextMenu>
               </Animated.View>
             )}
             ListEmptyComponent={(

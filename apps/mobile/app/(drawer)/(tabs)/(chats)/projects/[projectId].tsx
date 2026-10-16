@@ -7,6 +7,7 @@ import { composerAddProps } from "@/components/chat/composer-add";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectOptionsSheet, type ProjectOptionsPage } from "@/components/projects/ProjectOptionsSheet";
 import { ProjectScreen } from "@/components/projects/ProjectScreen";
+import { confirmArchiveProject } from "@/components/projects/project-archive";
 import { ARCHIVE_FAILED_TITLE, archiveFailureMessage, projectNameFailure } from "@/components/projects/project-failures";
 import { projectChatRows, projectRow } from "@/components/projects/project-rows";
 import { useBackOr } from "@/components/projects/use-back-or";
@@ -20,6 +21,7 @@ import { useProjectChats } from "@/lib/queries/use-project-chats";
 import { useArchiveProject, useRenameProject } from "@/lib/queries/use-project-mutations";
 import type { ProjectSummary } from "@/lib/requests/projects";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
+import { showToast } from "@/lib/toast";
 import { useShowChatScreen } from "@/lib/use-shell-navigation";
 
 export default function ProjectRoute() {
@@ -93,6 +95,7 @@ export default function ProjectRoute() {
       onSuccess: () => {
         setPage(null);
         goBack();
+        showToast("Project archived");
       },
       onError: (error: unknown) => {
         setLeaving(null);
@@ -103,10 +106,7 @@ export default function ProjectRoute() {
 
   const confirmArchive = () => {
     if (!project) return;
-    Alert.alert(`Archive ${project.name}?`, "It leaves your project list. Its chats are kept.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Archive", onPress: () => archiveProject(project) },
-    ]);
+    confirmArchiveProject(project.name, () => archiveProject(project));
   };
 
   return (
@@ -177,7 +177,12 @@ export default function ProjectRoute() {
             setPage("rename");
           }}
           onArchive={confirmArchive}
-          onSubmitName={(name) => rename.mutate({ slug: project.slug, name }, { onSuccess: () => setPage(null) })}
+          onSubmitName={(name) => rename.mutate({ slug: project.slug, name }, {
+            onSuccess: () => {
+              setPage(null);
+              showToast("Project renamed");
+            },
+          })}
           onClose={() => setPage(null)}
         />
       ) : null}
