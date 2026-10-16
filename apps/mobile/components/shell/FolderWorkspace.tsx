@@ -8,6 +8,7 @@ import { EmptyFolderState } from "@/components/files/EmptyFolderState";
 import { Spacer } from "@/components/ui";
 import { FileTileSkeletonGrid, GridTile, GridTileGrid } from "./Controls";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
+import { withRefreshTap } from "@/lib/haptics";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export function FolderWorkspace({ segments }: { segments: string[] }) {
@@ -28,7 +29,7 @@ export function FolderWorkspace({ segments }: { segments: string[] }) {
         <RefreshControl
           testID="file-browser-refresh-control"
           refreshing={pullToRefresh.refreshing}
-          onRefresh={pullToRefresh.onRefresh}
+          onRefresh={withRefreshTap(pullToRefresh.onRefresh)}
           tintColor={theme.v2.appColors.ink}
           colors={[theme.v2.appColors.ink]}
           progressBackgroundColor={theme.v2.appColors.canvas}
