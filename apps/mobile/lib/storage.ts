@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { MOBILE_PLATFORM_ORIGIN, MOBILE_GATEWAY_CONNECTION_KEY } from "./platform-origin";
 import {
   MatrixComputerHandleSchema,
   MatrixComputerRuntimeSlotSchema,
@@ -7,8 +8,8 @@ import {
 } from "@matrix-os/contracts";
 
 const SETTINGS_KEY = "matrix_os_settings";
-const GATEWAY_CONNECTION_KEY = "matrix_os_gateway_connection";
-export const HOSTED_GATEWAY_URL = "https://app.matrix-os.com";
+const GATEWAY_CONNECTION_KEY = MOBILE_GATEWAY_CONNECTION_KEY;
+export const HOSTED_GATEWAY_URL = MOBILE_PLATFORM_ORIGIN;
 const HOSTED_GATEWAY_ID = "matrix-os-hosted";
 const CUSTOM_GATEWAY_ID = "matrix-os-custom";
 

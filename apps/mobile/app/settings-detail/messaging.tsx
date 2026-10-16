@@ -6,10 +6,10 @@ import {
   whatsAppSettingsView,
   WHATSAPP_AI_GUIDANCE,
   WHATSAPP_AGENT_GUIDANCE,
-  WHATSAPP_CONNECT_URL,
   WHATSAPP_GUIDE_URL,
 } from "@matrix-os/contracts";
-import { SLACK_INSTALL_URL } from "@matrix-os/contracts/slack-bridge";
+import { messagingPlatformUrl } from "@matrix-os/contracts";
+import { MOBILE_PLATFORM_ORIGIN } from "@/lib/platform-origin";
 import {
   SettingsCardStack,
   SettingsPage,
@@ -29,6 +29,8 @@ async function open(url: string) {
 }
 export default function MessagingSettingsScreen() {
   const router = useRouter();
+  const connectUrl = messagingPlatformUrl("/whatsapp/connect", MOBILE_PLATFORM_ORIGIN, __DEV__);
+  const installUrl = messagingPlatformUrl("/slack/install", MOBILE_PLATFORM_ORIGIN, __DEV__);
   const {
     data: loaded,
     isPending,
@@ -82,12 +84,12 @@ export default function MessagingSettingsScreen() {
             onPress={() => void open(data.startUrl!)}
           />
         )}
-        {data && data.admission !== "unavailable" && (
+        {data && data.admission !== "unavailable" && connectUrl && (
           <SettingsRow
             card
             title={data.connected ? "Manage connection" : "Connect WhatsApp"}
             detail="Confirm your account securely in the browser"
-            onPress={() => void open(WHATSAPP_CONNECT_URL)}
+            onPress={() => void open(connectUrl)}
           />
         )}
         <SettingsRow
@@ -104,13 +106,13 @@ export default function MessagingSettingsScreen() {
         </Text>
       </View>
       <SettingsCardStack>
-        <SettingsRow
+        {installUrl && <SettingsRow
           card
           title="Add to Slack"
           detail="Install for your organization, then send connect to Matrix"
           icon={Message01Icon}
-          onPress={() => void open(SLACK_INSTALL_URL)}
-        />
+          onPress={() => void open(installUrl)}
+        />}
         <SettingsRow
           card
           title="Slack connection guide"

@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { mobilePlatformStorageKey } from "./platform-origin";
 import {
   CanonicalChatListResponseSchema,
   CanonicalProviderCatalogSchema,
@@ -63,6 +64,10 @@ const kinds: PersistedQueryKind[] = [
 
 export const mobileQueryPersistence = createQueryPersistence({
   queryClient: mobileQueryClient,
-  storage: AsyncStorage,
+  storage: {
+    getItem: (key) => AsyncStorage.getItem(mobilePlatformStorageKey(key)),
+    setItem: (key, value) => AsyncStorage.setItem(mobilePlatformStorageKey(key), value),
+    removeItem: (key) => AsyncStorage.removeItem(mobilePlatformStorageKey(key)),
+  },
   kinds,
 });
