@@ -17,8 +17,5 @@ export function DesktopAppSiteButton({ appSlug }: { appSlug: string }) {
     if (!api) return null;
     return createDesktopSiteClient(api, runtimeSlot);
   }, [api, runtimeSlot, authGeneration]);
-  return <>
-    <Button variant="subtle" disabled={!client} onClick={() => setOpen(true)}>Publish app</Button>
-    <Dialog open={open} onClose={() => setOpen(false)} title="Publish app" width={640} placement="center"><div className="max-h-[80vh] space-y-4 overflow-y-auto p-6"><div className="flex items-center justify-between"><h2 className="font-semibold">Publish app</h2><Button variant="ghost" onClick={() => setOpen(false)}>Close</Button></div>{open && client ? <AppSitePanel key={`${runtimeSlot}:${authGeneration}:${appSlug}`} appSlug={appSlug} client={client} /> : null}</div></Dialog>
-  </>;
+  return <Dialog modal={false} onOpenChange={setOpen} trigger={<Button variant="subtle" disabled={!client}>Publish app</Button>} open={open} onClose={() => setOpen(false)} title="Publish app" width={640} placement="center"><div className="max-h-[80vh] space-y-4 overflow-y-auto p-6"><div className="flex items-center justify-between"><h2 className="font-semibold">Publish app</h2><Button variant="ghost" onClick={() => setOpen(false)}>Close</Button></div>{open && client ? <AppSitePanel key={`${runtimeSlot}:${authGeneration}:${appSlug}`} appSlug={appSlug} client={client} /> : null}</div></Dialog>;
 }
