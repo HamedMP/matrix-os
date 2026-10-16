@@ -406,20 +406,37 @@ export function createAiFundedRuntimeRoutes(options: {
       stage = "funding_read";
       const first = await read();
       const firstNow = now().getTime();
+      const ordinaryProbeModels = [...new Set([
+        ...FUNDED_PROBE_MODELS,
+        ...(options.upstreamPreferences?.getEntitledBedrockModelIds(identity.ownerId) ?? []),
+      ])];
       const eligible = first.policy.enabled && Date.parse(first.policy.checkedAt) <= firstNow
         && Date.parse(first.policy.staleAfter) > firstNow && first.funding.remainingBudgetMicrousd > 0
-        ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : FUNDED_PROBE_MODELS)
+        ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : ordinaryProbeModels)
           .filter((model) => first.policy.allowedModelIds.includes(model) && (!cacheOnly || model === phase!.modelId)) : [];
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
       stage = "model_health";
       const observations = options.routeProbes
-        ? await observeFundedModelRoutes(eligible, (model, call) => (cacheOnly
-          ? options.routeProbes!.readCached?.bind(options.routeProbes)
-            ?? (() => Promise.resolve({ ready: false, checkedAt: now().toISOString(), staleAfter: new Date(now().getTime() + 5000).toISOString() }))
-          : options.routeProbes!.probe.bind(options.routeProbes))(model, {
-          ...call, receiptId,
-          ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision, runtimeRevision: first.policy.runtimeRevision } } : {}),
-        }), { signal: controller.signal, deadlineAtMs })
+        ? await observeFundedModelRoutes(eligible, async (model, call) => {
+          const observe = cacheOnly
+            ? options.routeProbes!.readCached?.bind(options.routeProbes)
+              ?? (() => Promise.resolve({ ready: false, checkedAt: now().toISOString(),
+                staleAfter: new Date(now().getTime() + 5000).toISOString() }))
+            : options.routeProbes!.probe.bind(options.routeProbes);
+          const baseCall = { ...call, receiptId,
+            ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision,
+              runtimeRevision: first.policy.runtimeRevision } } : {}) };
+          if (model !== JEV_MODEL_ID && options.upstreamPreferences) {
+            const resolved = await options.upstreamPreferences.resolveUpstreamForReadiness(
+              { ownerId: identity.ownerId, modelId: model },
+              bedrockModelId => observe(bedrockModelId, { ...baseCall, upstream: "aws_bedrock" }),
+            );
+            if (resolved.selection.upstream === "aws_bedrock" && resolved.bedrockProbe) {
+              return resolved.bedrockProbe;
+            }
+          }
+          return observe(model, baseCall);
+        }, { signal: controller.signal, deadlineAtMs })
         : [];
       // An upstream probe is asynchronous. Re-read exact owner policy and ledger
       // before returning any model as ready; do not reuse an old authorization.
