@@ -4,6 +4,24 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { SlackInstallPanel } from '../../packages/ui/src/messaging/SlackInstallPanel';
 afterEach(cleanup);
+it('fails closed for invalid operator config instead of opening production',()=>{
+ render(<SlackInstallPanel platformOrigin="https://stage.example.com/path" />);
+ expect(screen.queryByRole('link',{name:'Add to Slack'})).toBeNull();
+ expect(screen.getByRole('button',{name:'Add to Slack'}).hasAttribute('disabled')).toBe(true);
+});
+it('preserves explicit loopback development links',()=>{
+ render(<SlackInstallPanel platformOrigin="http://localhost:3000" allowDevelopmentOrigin />);
+ expect(screen.getByRole('link',{name:'Add to Slack'}).getAttribute('href')).toBe('http://localhost:3000/slack/install');
+});
+it('keeps the configured platform authority in the installation href and external action', () => {
+ const open=vi.fn();
+ const configured={platformOrigin:'https://messaging-stage.example.com'};
+ render(<SlackInstallPanel {...configured} onInstall={open} />);
+ const link=screen.getByRole('link',{name:'Add to Slack'});
+ expect(link.getAttribute('href')).toBe('https://messaging-stage.example.com/slack/install');
+ fireEvent.click(link);
+ expect(open).toHaveBeenCalledWith('https://messaging-stage.example.com/slack/install');
+});
 it('sends installation through the shared Matrix entry and explains personal linking',()=>{
  const open=vi.fn();render(<SlackInstallPanel onInstall={open} />);
  expect(screen.getByRole('link',{name:'Add to Slack'}).getAttribute('href')).toBe('https://app.matrix-os.com/slack/install');
