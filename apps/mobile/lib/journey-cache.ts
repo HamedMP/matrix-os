@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { mobilePlatformStorageKey } from "./platform-origin";
 
 /**
  * Remembers that a user's computer was last seen ready, so the next launch can
@@ -15,7 +16,7 @@ interface JourneyCacheStorage {
   removeItem(key: string): Promise<void>;
 }
 
-const STORAGE_KEY = "matrix_os_journey_ready_v1";
+const STORAGE_KEY = mobilePlatformStorageKey("matrix_os_journey_ready_v1");
 // Someone away for longer than this can wait for a fresh answer.
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 

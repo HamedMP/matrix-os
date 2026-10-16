@@ -1,5 +1,6 @@
-const DRAFT_PREFIX = "matrix:collaboration:draft:v1:";
-const DRAFT_INDEX_KEY = "matrix:collaboration:draft-index:v1";
+import { mobilePlatformStorageKey } from "./platform-origin";
+const DRAFT_PREFIX = `${mobilePlatformStorageKey("matrix:collaboration:draft:v1")}:`;
+const DRAFT_INDEX_KEY = mobilePlatformStorageKey("matrix:collaboration:draft-index:v1");
 const MAX_DRAFTS = 20;
 const MAX_DRAFT_BYTES = 64 * 1024;
 
