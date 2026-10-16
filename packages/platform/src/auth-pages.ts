@@ -31,10 +31,11 @@ export function getAuthPage(
   scriptNonce: string,
   redirectTarget: string,
   appShellOrigin: string,
+  options: { explicitVmReturn?: { runtimeSlot: string } } = {},
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
-  const deviceReturnTargetJson = escapeInlineScriptJson(deviceReturnTargetFromRedirectPath(redirectTarget));
+  const deviceReturnTargetJson = escapeInlineScriptJson(options.explicitVmReturn ? '' : deviceReturnTargetFromRedirectPath(redirectTarget));
   const signOutTargetJson = escapeInlineScriptJson(mode === 'sign-up' ? '/sign-up' : '/sign-in');
   const billingSetupTargetJson = escapeInlineScriptJson(buildBillingSetupTarget(appShellOrigin, redirectTarget));
   const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
@@ -557,6 +558,7 @@ export function getAuthPage(
   ></script>
   <script nonce="${scriptNonce}">
     var redirectTarget = ${redirectTargetJson};
+    var preserveExplicitVmReturn = ${Boolean(options.explicitVmReturn)};
     var deviceReturnTarget = ${deviceReturnTargetJson};
     var provisionHandoffTarget = deviceReturnTarget ? redirectTarget : '/';
     var signOutTarget = ${signOutTargetJson};
@@ -577,7 +579,7 @@ export function getAuthPage(
         || status === 429
         || status >= 500;
     }
-    var requestedRuntime = normalizeRuntimeSlot(new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime'));
+    var requestedRuntime = normalizeRuntimeSlot(${escapeInlineScriptJson(options.explicitVmReturn?.runtimeSlot ?? '')}) || normalizeRuntimeSlot(new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime'));
     var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
     var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
     var defaultDeveloperTools = ['codex', 'claude-code', 'opencode', 'pi'];
@@ -608,7 +610,7 @@ export function getAuthPage(
         console.warn('[matrix] Unable to clear checkout return state', err instanceof Error ? err.message : String(err));
       }
     }
-    var checkoutReturnRequested = new URLSearchParams(window.location.search || '').get('checkout') === 'success';
+    var checkoutReturnRequested = !preserveExplicitVmReturn && new URLSearchParams(window.location.search || '').get('checkout') === 'success';
     var checkoutJustCompleted = checkoutReturnRequested && hasTrustedCheckoutReturn();
     if (checkoutReturnRequested) stripCheckoutReturnParams();
     var provisionStarted = false;
@@ -1200,7 +1202,7 @@ export function getAuthPage(
             window.clearTimeout(appSessionRetryTimeoutId);
             appSessionRetryTimeoutId = null;
           }
-          window.location.replace(provisioningAccepted ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));
+          window.location.replace(provisioningAccepted ? provisionHandoffTarget : (preserveExplicitVmReturn ? redirectTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget)));
         })
         .catch(function(err) {
           console.error('[matrix] Clerk session exchange failed', err instanceof Error ? err.name : String(typeof err));
