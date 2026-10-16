@@ -311,6 +311,20 @@ describe("MessageList motion", () => {
 
   // The messages already there step aside as they always have, so a reply
   // being written still grows a line at a time and scrolling is untouched.
+  // The list unmounts rows far from view and draws them again on the way
+  // back; a reply still being written must not replay its entrance then.
+  it("lets a message rise in once, not again when the list draws it again after a scroll", () => {
+    const view = render(<MessageList messages={[writing, sending, reply, question]} chatId="chat_1" />);
+    expect(motion("msg_writing").props.entering).toBe(messageEntering);
+
+    // Scrolled far enough that the list lets the row go, then back to it.
+    view.rerender(<MessageList messages={[sending, reply, question]} chatId="chat_1" />);
+    expect(screen.queryByTestId("message-motion-msg_writing")).toBeNull();
+    view.rerender(<MessageList messages={[writing, sending, reply, question]} chatId="chat_1" />);
+
+    expect(motion("msg_writing").props.entering).toBeUndefined();
+  });
+
   it("leaves the messages already there to the list as before", () => {
     render(<MessageList messages={[sending, reply, question]} chatId="chat_1" />);
 
