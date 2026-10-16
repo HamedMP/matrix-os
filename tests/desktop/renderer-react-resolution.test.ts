@@ -1,11 +1,8 @@
 import { expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const root = resolve(import.meta.dirname, "../..");
-const compiler = createRequire(resolve(root, "package.json")).resolve("vite");
 
 it("bundles one React runtime for Electron and shared Chat components", () => {
   // This in-memory fixture does not publish an artifact. Isolate release-only
@@ -14,7 +11,7 @@ it("bundles one React runtime for Electron and shared Chat components", () => {
   delete env.GITHUB_SHA;
   const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
   import { resolve } from "node:path";
-  const { build, loadConfigFromFile } = await import(${JSON.stringify(pathToFileURL(compiler).href)});
+  const { build, loadConfigFromFile } = await import("vite");
   const config = await loadConfigFromFile({ command: "build", mode: "production" }, resolve("desktop/electron.vite.config.ts"));
   const entry = resolve("desktop/src/renderer/src/react-runtime-fixture.tsx");
   const runtimes = [];
