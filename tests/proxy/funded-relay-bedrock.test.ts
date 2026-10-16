@@ -49,7 +49,8 @@ function config() {
 
 function platform() {
   return {
-    check: vi.fn(async () => ({ identity: IDENTITY, upstreamSelection: SELECTION })),
+    check: vi.fn(async () => ({ identity: IDENTITY, upstreamSelectionVersion: 1 as const,
+      upstreamSelection: SELECTION })),
     authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => ({
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: Math.min(1_000, input.maxCostMicrousd),
@@ -130,7 +131,9 @@ describe("funded Bedrock relay", () => {
   it("checks policy, reserves, starts, dispatches, and settles exact route-bound usage", async () => {
     const control = platform();
     const order: string[] = [];
-    control.check.mockImplementation(async () => { order.push("check"); return { identity: IDENTITY, upstreamSelection: SELECTION }; });
+    control.check.mockImplementation(async () => { order.push("check"); return {
+      identity: IDENTITY, upstreamSelectionVersion: 1 as const, upstreamSelection: SELECTION,
+    }; });
     control.authorize.mockImplementation(async (input) => { order.push("authorize"); return {
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: 1_000, maxCostMicrousd: input.maxCostMicrousd,
@@ -312,13 +315,26 @@ describe("funded Bedrock relay", () => {
     await relay.close();
   });
 
+  it("does not enable Bedrock from an unnegotiated selection returned to a legacy check", async () => {
+    const control = platform();
+    control.check.mockResolvedValue({ identity: IDENTITY, upstreamSelection: SELECTION });
+    const bedrockUpstream: FundedGenerationUpstream = { dispatch: vi.fn(), close: vi.fn() };
+    const relay = createFundedRelay({ ...config(), fetch: vi.fn(), now: () => NOW,
+      platformClient: control as unknown as FundedPlatformClient, bedrockUpstream });
+    const app = new Hono(); relay.register(app);
+
+    expect((await app.fetch(request())).status).toBe(403);
+    expect(control.authorize).not.toHaveBeenCalled();
+    expect(bedrockUpstream.dispatch).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
   it("keeps the existing Cloudflare route when an unhealthy preference resolves to Cloudflare", async () => {
     const control = platform();
     control.check.mockResolvedValue({ identity: IDENTITY });
     control.authorize.mockImplementation(async input => ({ identity: IDENTITY, reservation: {
       reservationId: "reservation_1", requestId: input.requestId, modelId: FUNDED_GLM_FLASH,
       reservedMicrousd: 1_000, maxCostMicrousd: input.maxCostMicrousd, billingMode: "usage" as const,
-      upstream: "cloudflare_workers_ai" as const,
     } }));
     const bedrockUpstream: FundedGenerationUpstream = { dispatch: vi.fn(), close: vi.fn() };
     const fetchMock = vi.fn(async () => workersResponse());
@@ -332,8 +348,8 @@ describe("funded Bedrock relay", () => {
         max_tokens: 20, stream: true }) }));
     expect(result.status).toBe(200);
     await result.text();
-    expect(control.authorize).toHaveBeenCalledWith(expect.objectContaining({ modelId: FUNDED_GLM_FLASH,
-      upstream: "cloudflare_workers_ai" }), expect.any(AbortSignal));
+    expect(control.authorize).toHaveBeenCalledWith(expect.not.objectContaining({ upstream: expect.anything() }),
+      expect.any(AbortSignal));
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(bedrockUpstream.dispatch).not.toHaveBeenCalled();
     await relay.close();

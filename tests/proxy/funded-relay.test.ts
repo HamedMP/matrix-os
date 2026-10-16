@@ -68,7 +68,8 @@ function identity() {
 }
 
 function checkResponse() {
-  return { contractVersion: 1, authorized: true, identity: identity(), policy: policy() };
+  return { contractVersion: 1, authorized: true, identity: identity(), policy: policy(),
+    upstreamSelectionVersion: 1 };
 }
 
 function authorizationResponse(requestId: string, reservationId = "reservation_123") {
@@ -200,7 +201,8 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         events.push(action);
         const body = JSON.parse(String(init?.body));
         if (action === "check") {
-          expect(body).toEqual({ credential: CREDENTIAL, modelId: CANONICAL_MODEL });
+          expect(body).toEqual({ credential: CREDENTIAL, modelId: CANONICAL_MODEL,
+            upstreamSelectionVersion: 1 });
           return json(checkResponse());
         }
         if (action === "authorize") {
