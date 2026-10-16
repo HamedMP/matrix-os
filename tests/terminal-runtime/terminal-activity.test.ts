@@ -15,12 +15,12 @@ afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
-async function fixture() {
+async function fixture(projectId?: string) {
   const homePath = await mkdtemp(join(tmpdir(), "terminal-activity-"));
   homes.push(homePath);
   let now = new Date("2026-10-14T10:00:00Z");
   const store = new TerminalWorkspaceStore({ homePath, now: () => now });
-  const workspace = await store.ensureWorkspace();
+  const workspace = await store.ensureWorkspace({ projectId });
   const tab = await store.createTab(workspace.id, { name: "idle", cwd: "" });
   const ref = { workspaceId: workspace.id, tabId: tab.id };
   return { homePath, store, ref, tab, advance: () => { now = new Date(now.getTime() + 60_000); } };
@@ -172,8 +172,8 @@ describe("terminal activity timestamps", () => {
     expect((await store.getTab(ref))?.activityAt).toBe("2026-10-14T10:02:00.000Z");
   });
 
-  it("preserves idle tabs through restore and heartbeat, and records only successful input", async () => {
-    const { store, ref, tab, advance } = await fixture();
+  it.each([undefined, "matrix-os"])("preserves idle tabs through restore and heartbeat, and records only successful input (project %s)", async (projectId) => {
+    const { store, ref, tab, advance } = await fixture(projectId);
     await store.activateTab(ref, { tabId: 1, paneId: "terminal_1" });
     let emit!: (event: ZellijObserverEvent) => void;
     let failInput = false;

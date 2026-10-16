@@ -8,11 +8,12 @@ import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/work
 import { TerminalRuntimeSocketClient } from "../../packages/terminal-runtime/src/socket-client.js";
 import { TerminalRuntimeSocketServer } from "../../packages/terminal-runtime/src/socket-server.js";
 import { createTerminalWorkspaceRoutes } from "../../packages/gateway/src/shell/workspace-routes.js";
+import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true }))); });
 
-async function fixture() {
+async function fixture(projectId?: string) {
   const homePath = await mkdtemp(join(tmpdir(), "terminal-rename-"));
   homes.push(homePath);
   const store = new TerminalWorkspaceStore({ homePath });
@@ -29,7 +30,7 @@ async function fixture() {
     subscribeWorkspace: async () => ({ close: async () => undefined }),
   };
   const runtime = new TerminalRuntime({ store, zellij: adapter });
-  const workspace = await runtime.ensureWorkspace();
+  const workspace = await runtime.ensureWorkspace({ projectId });
   const tab = await runtime.createTab(workspace.id, { name: "spry-pine", cwd: "projects" });
   const ref = { workspaceId: workspace.id, tabId: tab.id };
   const originalPhysicalName = physicalName;
@@ -95,17 +96,26 @@ describe("terminal display-name rename", () => {
     } finally { await f.runtime.shutdown(); }
   });
 
-  it("round-trips the name precondition through HTTP and the owner-local socket", async () => {
-    const f = await fixture();
+  it.each([undefined, "matrix-os"])("round-trips the name precondition through HTTP and the owner-local socket (project %s)", async (projectId) => {
+    const f = await fixture(projectId);
     const socketPath = join(f.homePath, "r.sock");
     const server = new TerminalRuntimeSocketServer({ socketPath, runtime: f.runtime });
     try {
       await server.start();
       const client = new TerminalRuntimeSocketClient({ socketPath });
       let actor = "owner";
+      let shared = false;
+      const admissions: unknown[] = [];
       const app = new Hono().route("/api/terminal", createTerminalWorkspaceRoutes({
         runtime: client, homePath: f.homePath,
         getPrincipal: () => ({ userId: actor, source: "jwt" }), terminalOwnerIds: ["owner"],
+        projectOperationAdmission: {
+          withLegacyAdmission: async (input, operation) => {
+            admissions.push(input);
+            if (shared) throw new ProjectFenceError("scope_required");
+            return operation();
+          },
+        },
       }));
       await f.store.checkpointTab(f.ref, { ansi: "new output", viewport: ["new output"], scrollback: [] });
       const path = `/api/terminal/workspaces/${f.ref.workspaceId}/tabs/${f.ref.tabId}`;
@@ -114,6 +124,15 @@ describe("terminal display-name rename", () => {
       expect(response.status).toBe(200);
       expect((await response.json()).tab.name).toBe("handoff-skill");
       expect((await patch({ name: "stale", baseRevision: f.tab.revision, expectedName: f.tab.name })).status).toBe(409);
+      if (projectId) {
+        expect(admissions).toEqual(Array(2).fill({ ownerType: "personal", ownerId: "owner", projectId, kind: "write" }));
+        const beforeFence = await f.store.getTab(f.ref);
+        shared = true;
+        expect((await patch({ name: "blocked", baseRevision: beforeFence!.revision, expectedName: "handoff-skill" })).status).toBe(409);
+        expect(await f.store.getTab(f.ref)).toEqual(beforeFence);
+      } else {
+        expect(admissions).toEqual([]);
+      }
       actor = "other";
       expect((await patch({ name: "unauthorized", baseRevision: 999, expectedName: "handoff-skill" })).status).toBe(404);
       expect((await f.store.getTab(f.ref))?.name).toBe("handoff-skill");
