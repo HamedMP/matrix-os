@@ -194,6 +194,14 @@ describe("AWS Bedrock funded upstream", () => {
       .toThrow(/streaming/i);
   });
 
+  it.each([
+    { reasoning_effort: "high" as const },
+    { parallel_tool_calls: false },
+  ])("rejects an accepted but untranslated caller control before paid dispatch: %j", (override) => {
+    expect(() => translateOpenAiToBedrock({ ...request(), ...override }, route()))
+      .toThrow(/unsupported bedrock request option/i);
+  });
+
   it("translates text, tool calls, stop reason, and exact token metadata to bounded OpenAI SSE", async () => {
     const client = {
       send: vi.fn(async () => output([

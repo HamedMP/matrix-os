@@ -120,7 +120,8 @@ export function translateOpenAiToBedrock(
     throw new Error("Unsupported funded AI model");
   }
   if (request.stream !== true) throw new Error("Bedrock funded requests require streaming");
-  if (request.frequency_penalty !== undefined || request.presence_penalty !== undefined
+  if (request.reasoning_effort !== undefined || request.parallel_tool_calls !== undefined
+    || request.frequency_penalty !== undefined || request.presence_penalty !== undefined
     || request.seed !== undefined || request.n !== undefined && request.n !== 1) {
     throw new Error("Unsupported Bedrock request option");
   }

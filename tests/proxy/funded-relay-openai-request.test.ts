@@ -464,5 +464,28 @@ describe("Qwen 3.7 Plus Cloudflare Preview", () => {
       usage.push(new Uint8Array(await normalized.arrayBuffer()));
       expect(usage.complete()).toEqual({ mode: "exact", actualCostMicrousd: 79 });
     });
+describe("custom funded model controls", () => {
+  const custom = {
+    model: "matrix-bedrock-qualified",
+    messages: [{ role: "user", content: "Use the qualified route" }],
+    stream: true,
+  };
+  const allowed = new Set([custom.model]);
+
+  it("does not invent a reasoning setting for a custom route", () => {
+    const serialized = serializeFundedOpenAiRequest(custom, allowed);
+    expect(serialized.request.reasoning_effort).toBeUndefined();
+    expect(JSON.parse(serialized.body)).not.toHaveProperty("reasoning_effort");
+  });
+
+  it.each([
+    { reasoning_effort: "low" },
+    { reasoning_effort: "high" },
+    { reasoning_effort: "max" },
+    { parallel_tool_calls: true },
+    { parallel_tool_calls: false },
+  ])("rejects unsupported custom-route controls before dispatch: %j", (override) => {
+    expect(() => serializeFundedOpenAiRequest({ ...custom, ...override }, allowed))
+      .toThrow(/unsupported bedrock request option/i);
   });
 });
