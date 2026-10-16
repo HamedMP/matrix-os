@@ -10,6 +10,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { isFundedProxyApiKey } from "./auth.js";
 import {
+  assertBedrockInputWithinRoute,
   BedrockUpstreamError,
   createBedrockFundedUpstream,
 } from "./funded-bedrock-upstream.js";
@@ -386,6 +387,19 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     if (c.req.path === MESSAGES_PATH && parsedBody.max_tokens === undefined) {
       return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
+    }
+    if (isBedrock) {
+      try {
+        // Validate provider translation and its conservative input ceiling
+        // before an owner hold is reserved or a request is started.
+        assertBedrockInputWithinRoute(
+          parsedBody as ReturnType<typeof serializeFundedOpenAiRequest>["request"],
+          config.bedrockRoute!,
+        );
+      } catch (error) {
+        console.warn("[proxy] Funded AI request rejected", requestRejectionDiagnostic(error));
+        return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
+      }
     }
     if (isOpenAi && (config.reservationMode !== "usage"
       || (isBedrock ? !bedrockUpstream : !config.workersAiToken))) {
