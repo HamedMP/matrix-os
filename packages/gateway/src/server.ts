@@ -184,6 +184,7 @@ import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { createRuntimeDataImportRoutes } from "./startup/data-imports.js";
+import { createDatabaseAccessRuntime } from "./database-access/runtime.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -1294,6 +1295,11 @@ export async function createGateway(config: GatewayConfig) {
     service: integrationCapabilityService,
     audit: agentActionAuditService,
   }));
+  const databaseAccessRuntime = createDatabaseAccessRuntime({
+    databaseUrl: kyselyInstance ? databaseUrl : undefined,
+    ownerId: terminalRuntimeOwnerId, key: toolOutputKey ?? null,
+  });
+  app.route("/api/database", databaseAccessRuntime.routes);
   app.route("/api/data-imports", await createRuntimeDataImportRoutes({
     ownerDatabase: kyselyInstance, homePath, runtimeOwnerIds: terminalRuntimeOwnerIds,
     transport: internalIntegrationBaseUrl && internalPlatformToken
@@ -1886,6 +1892,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await databaseAccessRuntime.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();

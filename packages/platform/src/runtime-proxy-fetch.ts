@@ -5,9 +5,10 @@ export async function fetchRuntimeProxy(
   timeoutMs: number,
   releaseTimeoutAfterHeaders: boolean,
 ): Promise<Response> {
-  // Sync commits include bounded staged-object validation/publication. Keep the
-  // proxy alive beyond the gateway's four-minute budget, but below the CLI's six.
-  const operationTimeoutMs = init.method === "POST" && new URL(targetUrl).pathname === "/api/sync/commit"
+  // Sync commits and owner database dumps are bounded long-running operations.
+  // Keep a five-minute body deadline; unrelated mutations retain the normal cap.
+  const path = new URL(targetUrl).pathname;
+  const operationTimeoutMs = init.method === "POST" && (path === "/api/sync/commit" || path === "/api/database/export")
     ? 300_000 : timeoutMs;
   if (!releaseTimeoutAfterHeaders) {
     const deadline = AbortSignal.timeout(operationTimeoutMs);

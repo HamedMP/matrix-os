@@ -168,6 +168,14 @@ describe("installHeaderInjection", () => {
 });
 
 describe("installGatewayCors", () => {
+  it("permits explicit database action preflights only for the gateway", () => {
+    const { session, fire } = corsSession();
+    installGatewayCors(session, () => GATEWAY, "null");
+    const response = fire({ url: `${GATEWAY}/api/database/credentials/reveal`, method: "OPTIONS" });
+    expect(response.responseHeaders?.["Access-Control-Allow-Headers"]?.[0].toLowerCase().split(/,\s*/)).toContain("x-matrix-database-action");
+    const external = fire({ url: "https://untrusted.example/api/database", method: "OPTIONS" });
+    expect(external.responseHeaders?.["Access-Control-Allow-Headers"]).toBeUndefined();
+  });
   it("permits canonical chat metadata and resumable stream preflights", () => {
     const { session, fire } = corsSession();
     installGatewayCors(session, () => GATEWAY, "null");

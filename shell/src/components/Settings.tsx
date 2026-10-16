@@ -20,6 +20,7 @@ import {
   UsersIcon,
 } from "@/lib/hugeicons";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
+import { DatabaseSection } from "./settings/sections/DatabaseSection";
 import { AgentSection } from "./settings/sections/AgentSection";
 import { IdentityPersonalitySection } from "./settings/sections/IdentityPersonalitySection";
 import { ChannelsSection } from "./settings/sections/ChannelsSection";
@@ -63,6 +64,7 @@ const sections = [
   { id: "billing", label: "Billing", icon: CreditCardIcon },
   { id: "cron", label: "Cron", icon: ClockIcon },
   { id: "plugins", label: "Plugins", icon: PuzzleIcon },
+  { id: "database", label: "Database", icon: MonitorIcon },
   { id: "system", label: "System", icon: MonitorIcon },
 ] as const;
 
@@ -436,6 +438,7 @@ function SettingsFrame({
                 <DefaultInstallsStep {...onboardingDefaultInstalls} />
               ) : null}
               {activeSection === "plugins" && <PluginsSection />}
+              {activeSection === "database" && <DatabaseSection onOpenTerminal={onOpenProviderTerminalSession} />}
               {activeSection === "system" && <SystemSection billingActive={billingActive !== false} />}
             </main>
           </div>

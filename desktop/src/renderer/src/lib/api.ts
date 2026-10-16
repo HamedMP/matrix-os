@@ -48,6 +48,7 @@ export interface RequestTimeoutOptions {
 }
 
 export interface JsonRequestOptions extends RequestTimeoutOptions {
+  headers?: Record<string, string>;
   /** Hard cap on JSON response bytes before parsing. */
   maxBytes?: number;
 }
@@ -63,6 +64,7 @@ export interface ApiClient {
   getBlob(path: string, options?: BoundedReadOptions): Promise<Blob>;
   openStream(path: string, options: StreamRequestOptions): Promise<Response>;
   post<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
+  postBlob(path: string, body: unknown, options?: BoundedReadOptions): Promise<Blob>;
   postBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
   patch<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
   put<T>(path: string, body: unknown, options?: JsonRequestOptions): Promise<T>;
@@ -100,6 +102,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     try {
       response = await fetchFn(url, {
         ...init,
+        ...(/^\/api\/database(?:[/?]|$)/.test(path) ? { cache: "no-store" as const } : {}),
         ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
           headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
         } : {}),
@@ -216,9 +219,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     post: (path, body, requestOptions) =>
       request(path, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...requestOptions?.headers },
         body: JSON.stringify(body),
       }, requestOptions),
+    postBlob: (path, body, boundedOptions) => requestBlob(path, {
+      method: "POST", headers: { "content-type": "application/json", ...boundedOptions?.headers }, body: JSON.stringify(body),
+    }, boundedOptions),
     postBytes: (path, body, headers, requestOptions) =>
       request(path, { method: "POST", headers, body }, requestOptions),
     patch: (path, body, requestOptions) =>
