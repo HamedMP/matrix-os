@@ -34,11 +34,12 @@ allowlists.
 - Preference writes use optimistic revision checks and a bounded idempotency
   key, and persist the preference plus its content-free replay/audit event in
   one transaction. Renderers receive only the platform projection; they never
-  derive cohort membership or readiness. Funding-summary reads use only
-  bounded cached Bedrock health and fall back to Cloudflare on cache failure;
-  they never start paid readiness probes. Account deletion erases the owner's
-  preference and its audit history inside the existing platform-data
-  transaction.
+  derive cohort membership or readiness. Funding-summary reads, preference
+  response projection, and relay policy checks use only bounded cached Bedrock
+  health and fall back to Cloudflare on cache failure; they never start paid
+  readiness probes. Only the authenticated readiness route may refresh that
+  cache. Account deletion erases the owner's preference and its audit history
+  inside the existing platform-data transaction.
 - The relay route JSON is operator configuration. It binds one client model ID
   to one canonical Matrix model, resolved Bedrock model/inference profile,
   region, context/output ceilings, and a time-bounded reviewed integer price
@@ -199,9 +200,11 @@ destination region returned by the profile must satisfy the approved policy.
   start ordering, current pricing, exact settlement/provenance, readiness,
   policy rejection, throttling, and no fallback.
 - Contract/platform tests cover cohort hiding, optimistic transactional
-  preference/audit persistence, signed resolution, reservation binding, bounded
-  provenance, idempotent replay, conflicting evidence, and legacy
-  Jev/Cloudflare behavior.
+  preference/audit persistence, cached short-path resolution, signed
+  resolution, reservation binding, bounded provenance, idempotent replay,
+  conflicting evidence, and legacy Jev/Cloudflare behavior. Gateway tests prove
+  that healthy configured Bedrock models enter Provider V3 through the shared
+  Matrix relay data policy instead of renderer-local inference.
 - Full repository typecheck, pattern checks, unit/integration tests, current-head
   Greptile 5/5, and CI are required before merge.
 

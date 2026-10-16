@@ -85,10 +85,11 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
   db: PlatformDB;
   config: AiFundedUpstreamPreferenceConfig;
   selectionSecret: string;
-  probeBedrock: (modelId: string) => Promise<FundedBedrockProbeResult>;
+  readCachedBedrock: (modelId: string) => Promise<FundedBedrockProbeResult>;
   now?: () => Date;
 }) {
-  if (!options.db?.kysely || options.selectionSecret.length < 32 || !options.config?.enabled || !options.probeBedrock) {
+  if (!options.db?.kysely || options.selectionSecret.length < 32 || !options.config?.enabled
+    || !options.readCachedBedrock) {
     throw new Error("Funded AI upstream preference dependencies are missing");
   }
   const config = options.config;
@@ -226,7 +227,7 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
   }
 
   async function resolveUpstream(input: { ownerId: string; modelId: string }): Promise<FundedAiUpstreamSelection> {
-    return (await resolveUpstreamWithProbe(input, options.probeBedrock)).selection;
+    return (await resolveUpstreamWithProbe(input, options.readCachedBedrock)).selection;
   }
 
   async function resolveUpstreamForReadiness(
@@ -265,7 +266,7 @@ export function createAiFundedUpstreamPreferenceRepository(options: {
 
   async function getPreferenceView(
     ownerId: string,
-    probeBedrock: (modelId: string) => Promise<FundedBedrockProbeResult> = options.probeBedrock,
+    probeBedrock: (modelId: string) => Promise<FundedBedrockProbeResult> = options.readCachedBedrock,
   ) {
     const preference = await getPreference(ownerId);
     if (!preference) return null;
