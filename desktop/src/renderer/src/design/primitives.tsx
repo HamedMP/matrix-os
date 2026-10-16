@@ -44,7 +44,7 @@ export function IconButton({
       aria-label={label}
       className={`no-drag inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-100 ${className}`}
       style={{
-        color: active ? "var(--accent)" : "var(--text-tertiary)",
+        color: active ? "var(--accent-text)" : "var(--text-tertiary)",
         background: active ? "var(--accent-muted)" : "transparent",
       }}
       onMouseEnter={(e) => {

@@ -204,7 +204,7 @@ export default function BillingSection() {
         <div className="flex items-center gap-3">
           <div
             className="flex size-10 items-center justify-center rounded-lg"
-            style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+            style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}
           >
             <CreditCard size={18} />
           </div>
