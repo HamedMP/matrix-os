@@ -452,7 +452,14 @@ export class AiProviderService implements AiProviderSnapshotReader {
       "matrix",
       now,
     );
-    const catalog = buildBundledModelCatalog();
+    // Platform policy/readiness is the authority for configured Matrix relay
+    // models. Extend only existing reviewed descriptors; this adds the relay
+    // path without inventing vendor, capabilities, or display metadata.
+    const observedMatrixIncludedModelIds = [...new Set([
+      ...(funded?.discoverableModelIds ?? []),
+      ...(funded?.allowedModelIds ?? []),
+    ])];
+    const catalog = buildBundledModelCatalog(observedMatrixIncludedModelIds);
     const observeFundedSource = (sourceId: string) => fundedSourceObservation(
       eligibleModelsForSource(sourceId, catalog).map(model => model.id), matrixReadiness, funded,
     );

@@ -11,6 +11,35 @@ import { readProviderSettingsEnrichment } from "../../packages/gateway/src/ai-pr
 
 const now = new Date("2026-10-02T08:00:00.000Z");
 describe("owner-funded discovery projection", () => {
+  it("adds a configured healthy Bedrock model to Provider V3 through the Matrix relay path", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "provider-bedrock-model-"));
+    const readiness: AiProviderReadiness = { state: "ready", checkedAt: now.toISOString(),
+      staleAfter: "2026-10-02T08:00:30.000Z", action: "none", safeReason: null };
+    const service = new AiProviderService({ homePath, now: () => now,
+      fundedCredentialProvider: { enabled: true, maxRunMs: 600_000,
+        getCredential: vi.fn(), invalidate: () => {}, close: () => {} },
+      driverInventory: async () => [],
+      fundedReadinessReader: { read: async () => ({ readiness,
+        allowedModelIds: ["claude-opus-5"], discoverableModelIds: ["claude-opus-5"] }) } });
+    try {
+      const canonical = await service.getSnapshot();
+      expect(canonical.models.find(model => model.id === "claude-opus-5")).toMatchObject({
+        vendor: "anthropic",
+        eligibleAccessSourceIds: expect.arrayContaining(["matrix_included"]),
+        dataPolicies: expect.arrayContaining([{
+          accessSourceId: "matrix_included", route: "matrix_relay",
+          disclosureKey: "matrix-cloudflare-anthropic",
+        }]),
+      });
+      expect(canonical.accessSources.find(source => source.id === "matrix_included"))
+        .toMatchObject({ state: "ready", eligibleModelIds: ["claude-opus-5"] });
+      expect(canonical.instances.find(instance => instance.id === "kernel_matrix_included"))
+        .toMatchObject({ modelIds: ["claude-opus-5"] });
+      expect(managedPiChatInstances(canonical, now.getTime())[0]?.models)
+        .toContainEqual(expect.objectContaining({ id: "claude-opus-5", availability: "available" }));
+    } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
+
   it("projects the platform-authoritative upstream preference only for an entitled owner", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "provider-upstream-preference-"));
     const service = new AiProviderService({ homePath, now: () => now, driverInventory: async () => [] });
