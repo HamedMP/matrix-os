@@ -59,7 +59,7 @@ describe("bot system prompt", () => {
     }
   });
 
-  it("only the immutable canonical recipe opts into SOUL and budgets it before trimming memory", () => {
+  it("only the immutable canonical recipe opts into full identity and budgets SOUL before trimming memory", () => {
     const catalog = createBotRecipeCatalog();
     const recipe = catalog.resolve({ recipeId: "matrix-bot", version: "2026-10-10.1" });
     expect(catalog.list().filter(entry => entry.identitySource === "owner_soul").map(entry => entry.recipeId)).toEqual(["matrix-bot"]);
@@ -73,7 +73,14 @@ describe("bot system prompt", () => {
     expect(estimatePromptTokens(prompt)).toBeLessThanOrEqual(BOT_SYSTEM_PROMPT_TOKEN_BUDGET);
     expect(() => buildBotSystemPrompt({ botName: recipe.name, instructions: recipe.instructions, recipe, ownerSoul: "界".repeat(7000), now: NOW })).toThrow(BotSystemPromptError);
     const writing = catalog.resolve({ recipeId: "writing-bot", version: "2026-09-27.1" });
-    expect(buildBotSystemPrompt({ botName: "Rick", instructions: writing.instructions, recipe: writing, ownerSoul, now: NOW })).not.toContain(ownerSoul);
+    const preferences = buildBotSystemPrompt({ botName: "Writing Bot", instructions: writing.instructions, recipe: writing, ownerSoul,
+      memory: ["low priority ".repeat(4000)], now: NOW });
+    expect(preferences).toContain(ownerSoul);
+    expect(preferences).toContain('Retain your own name "Writing Bot"');
+    expect(preferences).not.toContain("takes precedence over your default conversational name");
+    expect(preferences).not.toContain("low priority");
+    expect(estimatePromptTokens(preferences)).toBeLessThanOrEqual(BOT_SYSTEM_PROMPT_TOKEN_BUDGET);
+    expect(() => buildBotSystemPrompt({ botName: writing.name, instructions: writing.instructions, recipe: writing, ownerSoul: "界".repeat(7000), now: NOW })).toThrow(BotSystemPromptError);
   });
 
   it("counts non-Latin prose conservatively and refuses a prompt over budget", () => {
