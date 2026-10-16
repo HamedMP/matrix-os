@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, statfs } from "node:fs/promises";
 import { promisify } from "node:util";
-import { cpus, freemem, hostname, loadavg, totalmem, uptime } from "node:os";
+import { freemem, hostname, loadavg, totalmem, uptime } from "node:os";
 import type { ActivityCollectOptions, ActivitySnapshot, MachineIdentity, ProcessSummary, ServiceStatus } from "./types.js";
 import { getSystemInfo } from "../system-info.js";
 import type { CleanupCandidateRegistry } from "./cleanup.js";
@@ -30,7 +30,7 @@ export async function collectSystemActivity(options: {
   const processRssBytes = processes.reduce((sum, process) => sum + process.rssBytes, 0);
   const totalMemory = totalmem();
   const availableMemory = freemem();
-  const cpuCores = cpus().length;
+  const cpuCores = systemInfo.resources.cpuCapacity.visibleLogicalCpuCount;
 
   return {
     generatedAt: new Date().toISOString(),
@@ -38,7 +38,7 @@ export async function collectSystemActivity(options: {
       handle: systemInfo.runtime.handle,
       runtimeSlot: systemInfo.runtime.runtimeSlot,
       hostname: sanitizeDisplay(hostname()),
-      status: deriveMachineStatus({ load1, pressureSome10, services, cpuCores }),
+      status: deriveMachineStatus({ load1, pressureSome10, services, cpuCores: systemInfo.resources.cpuCapacity.effectiveCpuCapacity }),
       releaseVersion: systemInfo.release?.version ?? systemInfo.installedVersion,
       releaseChannel: systemInfo.release?.channel,
       gitCommit: systemInfo.release?.gitCommit?.slice(0, 12) ?? systemInfo.build.sha,
@@ -47,6 +47,7 @@ export async function collectSystemActivity(options: {
     resources: {
       cpu: {
         cores: cpuCores,
+        capacity: systemInfo.resources.cpuCapacity,
         load1,
         load5,
         load15,
@@ -273,11 +274,11 @@ export function deriveMachineStatus(input: {
   load1: number;
   pressureSome10?: number;
   services: ServiceStatus[];
-  cpuCores: number;
+  cpuCores: number | null;
 }): MachineIdentity["status"] {
   if (input.services.length > 0 && input.services.every((service) => service.state === "unknown")) return "unknown";
   if (input.services.some((service) => service.state === "failed")) return "degraded";
-  if (input.load1 > input.cpuCores * 2) return "degraded";
+  if (input.cpuCores !== null && input.load1 > input.cpuCores * 2) return "degraded";
   if ((input.pressureSome10 ?? 0) >= 20) return "degraded";
   return "healthy";
 }

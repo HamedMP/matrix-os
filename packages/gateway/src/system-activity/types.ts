@@ -1,3 +1,4 @@
+import type { CpuCapacity } from "@matrix-os/contracts";
 export type CleanupActionType =
   | "stop_stale_app_server"
   | "close_stale_terminal_session"
@@ -22,6 +23,7 @@ export interface MachineIdentity {
 export interface ResourceSummary {
   cpu: {
     cores: number;
+    capacity?: CpuCapacity;
     load1: number;
     load5: number;
     load15: number;

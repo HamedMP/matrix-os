@@ -1,3 +1,4 @@
+import { CpuCapacitySchema, type CpuCapacity } from "@matrix-os/contracts";
 import type { Agent } from 'undici';
 
 import type { RuntimePickerMachine } from './auth-pages.js';
@@ -72,6 +73,7 @@ export async function probeCustomerVpsRuntime(
   probeLatencyMs?: number;
   load1?: number | null;
   cpuCount?: number | null;
+  cpuCapacity?: CpuCapacity | null;
   memoryTotalBytes?: number | null;
   memoryFreeBytes?: number | null;
   diskTotalBytes?: number | null;
@@ -101,6 +103,7 @@ export async function probeCustomerVpsRuntime(
       };
       resources?: {
         cpuCount?: number;
+        cpuCapacity?: unknown;
         loadAverage?: unknown;
         memoryTotalBytes?: number;
         memoryFreeBytes?: number;
@@ -108,6 +111,7 @@ export async function probeCustomerVpsRuntime(
         diskFreeBytes?: number | null;
       };
     };
+    const capacity = CpuCapacitySchema.safeParse(info.resources?.cpuCapacity);
     const loadAverage = Array.isArray(info.resources?.loadAverage) ? info.resources.loadAverage : [];
     const load1 = typeof loadAverage[0] === 'number' ? loadAverage[0] : null;
     return {
@@ -116,6 +120,7 @@ export async function probeCustomerVpsRuntime(
       probeLatencyMs,
       load1,
       cpuCount: typeof info.resources?.cpuCount === 'number' ? info.resources.cpuCount : null,
+      cpuCapacity: capacity.success ? capacity.data : null,
       memoryTotalBytes: typeof info.resources?.memoryTotalBytes === 'number' ? info.resources.memoryTotalBytes : null,
       memoryFreeBytes: typeof info.resources?.memoryFreeBytes === 'number' ? info.resources.memoryFreeBytes : null,
       diskTotalBytes: typeof info.resources?.diskTotalBytes === 'number' ? info.resources.diskTotalBytes : null,
