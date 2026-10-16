@@ -4,7 +4,7 @@ import { legacyThemeMode } from "@matrix-os/brand/themes/customization";
 import { RETIRED_THEME_IDS } from "@matrix-os/brand/themes";
 import { buildWebTheme } from "@matrix-os/brand/themes/web-theme";
 import { normalizeAppearance, type AppearancePreferences } from "@matrix-os/brand/themes/preferences";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
@@ -147,7 +147,20 @@ function initialTheme(
     : fallbackTheme;
 }
 
+// One bounded admission slot covers every whole-theme writer in this renderer.
+let themeWriteInFlight: { gatewayUrl: string } | null = null;
+const THEME_WRITE_EVENT = "matrix-theme-write-pending";
+function subscribeThemeWrites(onChange: () => void) {
+  window.addEventListener(THEME_WRITE_EVENT, onChange);
+  return () => window.removeEventListener(THEME_WRITE_EVENT, onChange);
+}
+function themeWritePending() { return themeWriteInFlight !== null; }
+function notifyThemeWrites() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(THEME_WRITE_EVENT));
+}
+
 export function useThemeState(options: ShellCacheHookOptions = {}) {
+  const writePending = useSyncExternalStore(subscribeThemeWrites, themeWritePending, () => false);
   const fallbackTheme = getThemeFallback();
   const cacheScope = options.cacheScope ?? null;
   const cacheKey = cacheScope?.storageKey;
@@ -224,7 +237,7 @@ export function useThemeState(options: ShellCacheHookOptions = {}) {
   });
 
   const resolvedTheme = useMemo(() => resolveTheme(theme, systemDark), [theme, systemDark]);
-  return { theme: resolvedTheme, loaded, loadError };
+  return { theme: resolvedTheme, loaded, loadError, writePending };
 }
 
 export function useTheme(options: ShellCacheHookOptions = {}) {
@@ -238,26 +251,39 @@ export async function saveTheme(
   options: ShellCacheHookOptions = {},
 ): Promise<void> {
   const gatewayUrl = getGatewayUrl();
-  const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
-    signal: AbortSignal.timeout(10_000),
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(theme),
-  });
-  if (!res.ok) {
-    throw new Error("Failed to save theme");
-  }
-  saveShellSnapshot(options.cacheScope, { theme });
-  rememberTheme(gatewayUrl, theme);
-  if (typeof document !== "undefined") {
-    applyTheme(theme);
-    window.dispatchEvent(new CustomEvent("matrix-theme-saved", { detail: { gatewayUrl, theme } }));
+  if (themeWriteInFlight) throw new Error("Appearance update already in progress");
+  const admittedWrite = { gatewayUrl };
+  themeWriteInFlight = admittedWrite;
+  notifyThemeWrites();
+  try {
+    const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
+      signal: AbortSignal.timeout(10_000),
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(theme),
+    });
+    if (!res.ok) {
+      throw new Error("Failed to save theme");
+    }
+    saveShellSnapshot(options.cacheScope, { theme });
+    rememberTheme(gatewayUrl, theme);
+    if (typeof document !== "undefined") {
+      applyTheme(theme);
+      window.dispatchEvent(new CustomEvent("matrix-theme-saved", { detail: { gatewayUrl, theme } }));
+    }
+  } finally {
+    if (themeWriteInFlight === admittedWrite) {
+      themeWriteInFlight = null;
+      notifyThemeWrites();
+    }
   }
 }
 
 /** Test hook: clear the module-local current-runtime theme snapshot. */
 export function resetThemeRuntimeCacheForTests(): void {
   themeRuntimeCache = null;
+  themeWriteInFlight = null;
+  notifyThemeWrites();
 }
 
 function settingsFetchSignal(signal?: AbortSignal): AbortSignal {

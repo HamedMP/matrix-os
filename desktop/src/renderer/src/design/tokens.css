@@ -110,7 +110,7 @@
 
   /* ── Typography ─────────────────────────────────────────────── */
   --font-ui: Geist, system-ui, sans-serif;
-  --font-editorial: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-editorial: "Bricolage Grotesque", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   --font-mono: "JetBrains Mono", "MesloLGS NF", "SF Mono", ui-monospace, monospace;
   --text-xs: 11px;
   --text-sm: 12px;

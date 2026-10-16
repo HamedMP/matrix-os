@@ -266,6 +266,7 @@ describe("theme system", () => {
       theme: {
         ...DEFAULT_THEME,
         name: "cached-dark",
+        appearance: undefined, // Legacy cached files have literal colours, not derived preferences.
         mode: "dark",
         colors: { ...DEFAULT_THEME.colors, background: "#101010" },
       },
