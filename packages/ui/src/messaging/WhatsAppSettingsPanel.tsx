@@ -26,10 +26,13 @@ function OwnerWhatsAppSettings({
 }) {
   const [loaded, setSnapshot] = useState<WhatsAppSettings | null>(null);
   const [error, setError] = useState(false);
+  const [failedLink, setFailedLink] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const openGeneration = useRef(0);
   const loadRef = useRef(load);
   const busy = useRef(false);
   const refreshQueued = useRef(false);
+  useEffect(() => () => { openGeneration.current += 1; }, []);
   useEffect(() => {
     loadRef.current = load;
   }, [load]);
@@ -90,6 +93,8 @@ function OwnerWhatsAppSettings({
     error,
   );
   const open = async (url: string) => {
+    const generation = ++openGeneration.current;
+    setFailedLink(null);
     try {
       await onOpen?.(url);
     } catch (error) {
@@ -97,7 +102,7 @@ function OwnerWhatsAppSettings({
         "[messaging] Browser unavailable",
         error instanceof Error ? error.name : "UnknownError",
       );
-      setError(true);
+      if (generation === openGeneration.current) setFailedLink(url);
     }
   };
   const link = (label: string, url: string, primary = false) => (
@@ -183,6 +188,14 @@ function OwnerWhatsAppSettings({
           </button>
         </div>
       ) : null}
+      {failedLink && (
+        <div role="alert">
+          <p>Could not open this link. Try again.</p>
+          <button type="button" onClick={() => { void open(failedLink); }}>
+            Retry link
+          </button>
+        </div>
+      )}
       <div
         style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 20 }}
       >

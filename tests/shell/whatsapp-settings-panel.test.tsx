@@ -30,6 +30,29 @@ describe("WhatsApp settings", () => {
       screen.getByRole("link", { name: "Open WhatsApp" }).getAttribute("href"),
     ).toBe("https://wa.me/13073174314");
   });
+  it("keeps the current connection and actions when opening a link fails, and retries that link", async () => {
+    let rejectOpen!: (error: unknown) => void;
+    const onOpen = vi.fn().mockImplementationOnce(() => new Promise((_, reject) => { rejectOpen = reject; }))
+      .mockResolvedValue(undefined);
+    const load = vi.fn(async () => ({ connected: true, maskedSender: "••••1234", admission: "public",
+      startUrl: "https://wa.me/13073174314", chatId: "chat_whatsapp" }));
+    render(<WhatsAppSettingsPanel scope="owner" load={load} onOpen={onOpen} />);
+    await screen.findByText("Connected");
+    fireEvent.click(screen.getByRole("link", { name: "Open WhatsApp" }));
+    await act(async () => { rejectOpen(new Error("Private Electron browser error")); });
+    expect(screen.getByText("Connected")).toBeTruthy();
+    expect(screen.getByText(/Linked account · ••••1234/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open Matrix Chat" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Manage connection" })).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("Could not open this link. Try again.");
+    expect(screen.queryByText(/Could not check your connection/)).toBeNull();
+    expect(screen.queryByText(/Private Electron/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry link" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(onOpen.mock.calls).toEqual([["https://wa.me/13073174314"], ["https://wa.me/13073174314"]]);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Connected")).toBeTruthy();
+  });
   it("ignores a stale account response and refreshes on return", async () => {
     let resolve!: (value: unknown) => void;
     const load = vi
@@ -43,6 +66,18 @@ describe("WhatsApp settings", () => {
     expect(screen.queryByText("••••9999")).toBeNull();
     fireEvent(window, new Event("focus"));
     await waitFor(() => expect(load).toHaveBeenCalledTimes(3));
+  });
+  it("ignores an older external-open failure after a newer link opened", async () => {
+    let rejectOld!: (error: unknown) => void;
+    const onOpen = vi.fn().mockImplementationOnce(() => new Promise((_, reject) => { rejectOld = reject; }))
+      .mockResolvedValue(undefined);
+    render(<WhatsAppSettingsPanel scope="owner" load={async () => ({ connected: false, admission: "public" })} onOpen={onOpen} />);
+    await screen.findByText("Not connected");
+    fireEvent.click(screen.getByRole("link", { name: "Connect WhatsApp" }));
+    await act(async () => { fireEvent.click(screen.getByRole("link", { name: "Connection guide" })); });
+    await act(async () => { rejectOld(new Error("Old open failed")); });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Not connected")).toBeTruthy();
   });
   it("coalesces return events during a pending read and refreshes after it settles", async () => {
     let resolveOld!: (value: unknown) => void;
