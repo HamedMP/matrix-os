@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { tapHaptic } from "@/lib/haptics";
-
 export function usePullToRefresh(refreshPage: () => Promise<unknown>) {
   const [refreshing, setRefreshing] = useState(false);
   const refreshPageRef = useRef(refreshPage);
@@ -16,7 +14,6 @@ export function usePullToRefresh(refreshPage: () => Promise<unknown>) {
   const onRefresh = useCallback(() => {
     if (refreshInFlight.current) return;
     refreshInFlight.current = true;
-    tapHaptic();
     setRefreshing(true);
 
     void refreshPageRef.current()

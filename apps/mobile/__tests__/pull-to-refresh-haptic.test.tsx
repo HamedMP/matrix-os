@@ -23,14 +23,30 @@ describe("pulling to refresh", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("taps once per refresh in the shared hook, not again while one is still running", async () => {
+  it("leaves the tap to the control that draws the pull, so the shared hook adds none", async () => {
     let finish: () => void = () => {};
     const refresh = jest.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
     const { result } = renderHook(() => usePullToRefresh(refresh));
 
     act(() => result.current.onRefresh());
-    act(() => result.current.onRefresh());
 
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(Haptics.impactAsync).not.toHaveBeenCalled();
+    await act(async () => finish());
+  });
+
+  it("taps once when a page's pull runs the shared hook", async () => {
+    let finish: () => void = () => {};
+    const refresh = jest.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    function Harness() {
+      const pull = usePullToRefresh(refresh);
+      return <Page title="Files" refreshing={pull.refreshing} onRefresh={pull.onRefresh}><Text>Body</Text></Page>;
+    }
+    render(<Harness />);
+
+    act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
+
+    expect(refresh).toHaveBeenCalledTimes(1);
     expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
     await act(async () => finish());
   });
