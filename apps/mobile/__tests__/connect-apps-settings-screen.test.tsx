@@ -1,5 +1,6 @@
 const mockPush = jest.fn();
 const mockDismiss = jest.fn();
+const mockBack = jest.fn();
 const mockUseComputerIntegrations = jest.fn();
 const mockScreens: Record<string, { options?: Record<string, unknown> }> = {};
 
@@ -11,7 +12,7 @@ jest.mock("expo-router", () => {
   };
   return {
     Stack,
-    useRouter: () => ({ push: mockPush, dismiss: mockDismiss, back: jest.fn(), canGoBack: () => true }),
+    useRouter: () => ({ push: mockPush, dismiss: mockDismiss, back: mockBack, canGoBack: () => true }),
     useFocusEffect: (callback: () => void | (() => void)) => callback(),
   };
 });
@@ -49,15 +50,15 @@ describe("Connect Apps in Settings", () => {
     });
   });
 
-  it("opens as a settings screen named Connect Apps that closes back to Settings", () => {
+  it("opens as a settings page named Connect Apps that goes back to Settings", () => {
     render(<SettingsDetailLayout />);
 
     const options = mockScreens["connect-apps"]?.options;
     expect(options?.title).toBe("Connect Apps");
     const HeaderLeft = options?.headerLeft as () => React.ReactElement;
     render(<HeaderLeft />);
-    fireEvent.press(screen.getByLabelText("Close settings"));
-    expect(mockDismiss).toHaveBeenCalledTimes(1);
+    fireEvent.press(screen.getByLabelText("Back to settings"));
+    expect(mockBack).toHaveBeenCalledTimes(1);
   });
 
   it("shows the same apps to connect as the Apps tab, under the settings header instead of its own", () => {

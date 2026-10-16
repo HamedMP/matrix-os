@@ -12,6 +12,7 @@ import {
   ItemRow,
   StatusDot,
 } from "@/components/ui";
+import { withRefreshTap } from "@/lib/haptics";
 
 import type { AgentListRow } from "./agent-rows";
 
@@ -57,7 +58,7 @@ export function AgentsListScreen({
           data={rows}
           keyExtractor={(row) => row.id}
           refreshing={refreshing}
-          onRefresh={onRefresh}
+          onRefresh={withRefreshTap(onRefresh)}
           contentContainerStyle={styles.list}
           renderItem={({ item: row }) => (
             <ItemRow

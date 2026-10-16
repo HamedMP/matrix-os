@@ -35,3 +35,14 @@ export function successHaptic(): void {
 export function warningHaptic(): void {
   play("warning", () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning));
 }
+
+/**
+ * Wraps the handler a pull-to-refresh control calls, so the pull is felt the
+ * moment it starts a refresh. It goes on the control only, so one pull taps once.
+ */
+export function withRefreshTap<T>(onRefresh: () => T): () => T {
+  return () => {
+    tapHaptic();
+    return onRefresh();
+  };
+}
