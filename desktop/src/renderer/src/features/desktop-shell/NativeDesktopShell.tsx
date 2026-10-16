@@ -1,3 +1,4 @@
+import { BRAIN_SHELL_VIEW } from "@matrix-os/ui";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   topmostVisibleDesktopSurfaceId,
@@ -286,6 +287,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       browser: () => openRoot(() => openTab({ kind: "browser", title: "Browser" })),
       notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes", icon: fixedApps.find((app) => app.id === "notes")?.iconUrl })),
       whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard", icon: fixedApps.find((app) => app.id === "whiteboard")?.iconUrl })),
+      brain: () => openRoot(() => openTab({ kind: "brain", title: BRAIN_SHELL_VIEW.title })),
     };
     const fixed = fixedApps.map((app) => ({
       ...app,

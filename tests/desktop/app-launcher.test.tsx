@@ -115,6 +115,8 @@ describe("AppLauncher", () => {
     const names = Array.from(launcher.querySelectorAll("button"))
       .map((button) => button.getAttribute("aria-label"));
     expect(names.slice(0, 12)).toEqual(["Create app", "Canvas", ...OS_VIEW_FIXED_APP_NAMES]);
+    // Company Brain follows Whiteboard, as on Web Desktop.
+    expect(names[12]).toBe("Company Brain");
 
     fireEvent.click(screen.getByRole("button", { name: "Create app" }));
     expect(onCreateApp).toHaveBeenCalledOnce();

@@ -279,6 +279,18 @@ describe("CommandPalette", () => {
     expect(useTabs.getState().openTab).not.toHaveBeenCalledWith({ kind: "apps", title: "Apps" });
   });
 
+  it("opens Company Brain as one tab and finds it by the keywords every surface shares", () => {
+    const openTab = vi.fn();
+    useTabs.setState({ openTab });
+    render(<CommandPalette />);
+
+    fireEvent.change(screen.getByPlaceholderText(/^Type a command or search/), { target: { value: "decisions" } });
+    expect(screen.queryByText("Open Terminal")).toBeNull();
+    fireEvent.click(screen.getByText("Open Company Brain"));
+
+    expect(openTab).toHaveBeenCalledWith({ kind: "brain", title: "Company Brain" });
+  });
+
   it("opens project results on the sessions overview instead of restoring a stale subview", () => {
     const openTab = vi.fn();
     useTabs.setState({ openTab });

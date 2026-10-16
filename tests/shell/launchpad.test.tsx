@@ -261,6 +261,7 @@ describe("Launchpad (macos-glass launcher)", () => {
       { name: "Plugins", path: "__plugins__" },
       { name: "Browser", path: "apps/browser/dist/index.html", iconUrl: "/icons/browser.png" },
       { name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/notes.png" },
+      { name: "Company Brain", path: "__brain__" },
     ];
 
     await renderLauncher({ apps });
@@ -273,6 +274,13 @@ describe("Launchpad (macos-glass launcher)", () => {
       expect(tile.querySelector("img")).toBeNull();
       expect(tile.querySelector("svg")).toBeTruthy();
     }
+    // Company Brain ships no bundled artwork, so it keeps its fixed brand tile and glyph.
+    const brainTile = screen.getByRole("button", { name: "Company Brain" });
+    expect(brainTile.querySelector("img")).toBeNull();
+    const brainIcon = brainTile.querySelector<HTMLElement>("[data-launchpad-built-in-icon]");
+    expect(brainIcon?.style.background).toBe("rgb(190, 215, 123)");
+    expect(brainIcon?.style.color).toBe("rgb(14, 52, 34)");
+    expect(brainIcon?.querySelector("svg")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create app" }).querySelector("img")?.getAttribute("src"))
       .toBe(`${getGatewayUrl()}/system-app-icons/v2/create-app.png`);
     expect(screen.getByRole("button", { name: "Browser" }).querySelector("img")?.getAttribute("src"))

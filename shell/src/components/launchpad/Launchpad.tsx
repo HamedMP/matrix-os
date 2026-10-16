@@ -1,23 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  Blocks,
-  BrushIcon,
-  Code2,
-  FilePenLine,
-  FolderTree,
-  Globe2,
-  LayoutGrid,
-  MessageSquare,
-  Monitor,
-  Notebook,
-  PlusIcon,
-  SearchIcon,
-  Settings,
-  SquareTerminal,
-  type LucideIcon,
-} from "@/lib/hugeicons";
+import { PlusIcon, SearchIcon } from "@/lib/hugeicons";
 import {
   OS_VIEW_CREATE_APP_APPEARANCE,
   clampOsViewContextMenuPoint,
@@ -25,12 +9,12 @@ import {
   osViewIconUrlForApp,
   type OsViewDesktopAddResult,
   type OsViewDesktopBounds,
-  type OsViewFixedAppIcon,
 } from "@matrix-os/contracts";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { getGatewayUrl } from "@/lib/gateway";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { groupLauncherApps } from "@/lib/dock-sections";
+import { OS_VIEW_FIXED_APP_ICON_COMPONENTS } from "@/lib/os-view-app-icons";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { isOsViewDestinationPath } from "@/lib/web-desktop-app-launch";
 import {
@@ -40,21 +24,6 @@ import {
   paginateLaunchpadApps,
 } from "./launchpad-utils";
 import "./launchpad.css";
-
-const BUILT_IN_ICON_COMPONENTS: Readonly<Record<OsViewFixedAppIcon, LucideIcon>> = {
-  "message-square": MessageSquare,
-  "square-terminal": SquareTerminal,
-  "folder-tree": FolderTree,
-  "file-pen": FilePenLine,
-  code: Code2,
-  settings: Settings,
-  blocks: Blocks,
-  globe: Globe2,
-  notebook: Notebook,
-  brush: BrushIcon,
-  "layout-grid": LayoutGrid,
-  monitor: Monitor,
-};
 
 /**
  * macOS Launchpad: full-screen frosted-glass app launcher used in place of
@@ -306,7 +275,7 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
   const { showImage, onError } = useIconWithFallback(iconUrl);
   const builtInAppearance = osViewFixedAppAppearanceForPath(app.path);
   const BuiltInIcon = builtInAppearance
-    ? BUILT_IN_ICON_COMPONENTS[builtInAppearance.icon]
+    ? OS_VIEW_FIXED_APP_ICON_COMPONENTS[builtInAppearance.icon]
     : undefined;
   const useFixedIcon = BuiltInIcon && builtInAppearance?.iconSource === "fixed";
   return (

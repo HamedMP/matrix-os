@@ -31,6 +31,7 @@ export const DesktopAppKindSchema = z.enum([
   "browser",
   "notes",
   "whiteboard",
+  "brain",
   "installed_app",
   "coding_agent",
 ]);

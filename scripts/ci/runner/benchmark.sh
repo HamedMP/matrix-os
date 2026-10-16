@@ -91,6 +91,7 @@ general_native_suites=(
   chat-subagent-activity
   chat-title-layout
   chat-tool-details
+  company-brain
   file-download
   files-handoff
   getting-started
