@@ -61,6 +61,26 @@ it("keeps an accepted submission neutral until the recorded decision arrives", a
   expect(screen.queryByText("Approved")).toBeNull();
 });
 
+it("offers Allow once for a supervised web search and keeps Full access off the approval", async () => {
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ approvalId: "approval_test", decision: "approve", submission: "accepted" }) } as Response);
+  const onPermissionMode = jest.fn();
+  render(<CanonicalApprovalMessage {...props} permissionMode="supervised" onPermissionMode={onPermissionMode} approval={{
+    ...approval,
+    title: "Search the web · “AI agent pricing”",
+    description: "Matrix wants to search the web and read a few pages to write your brief. Nothing is sent or changed.",
+    allowedDecisions: ["approve", "approve_for_session", "decline", "cancel"],
+  }} />);
+  expect(screen.getByText("Needs your approval")).toBeTruthy();
+  expect(screen.queryByText("Approve")).toBeNull();
+  fireEvent.press(screen.getByText("Always allow → Full access"));
+  fireEvent.press(screen.getByText("Full access"));
+  expect(onPermissionMode).toHaveBeenCalledWith("full_access");
+  expect(fetchMock).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByText("Allow once"));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ decision: "approve" });
+});
+
 it("keeps failed submissions recoverable and never displays a raw server error", async () => {
   jest.spyOn(global, "fetch").mockRejectedValue(new Error("private upstream token"));
   render(<CanonicalApprovalMessage {...props} approval={{ ...approval, allowedDecisions: [...approval.allowedDecisions] }} />);

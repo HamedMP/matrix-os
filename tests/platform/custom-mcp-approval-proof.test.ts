@@ -36,6 +36,13 @@ describe("Platform-authenticated Custom MCP approval proof", () => {
     expect(mintCustomMcpApprovalProof({ ...base, body: JSON.stringify({ clientRequestId: "req_1", decision: "approve", actorId: "forged" }) })).toBeNull();
   });
 
+  it("signs Allow in this chat as approve_for_session and rejects it as a one-time approve", () => {
+    const body = JSON.stringify({ clientRequestId: "req_1", decision: "approve_for_session" });
+    const proof = mintCustomMcpApprovalProof({ ...base, body })!;
+    expect(verifyCustomMcpApprovalProof(proof, { ...verify, decision: "approve_for_session" })).toBe(true);
+    expect(verifyCustomMcpApprovalProof(proof, verify)).toBe(false);
+  });
+
   it("rejects a forged machine-token MAC, replay tuple changes, expiry and malformed proof", () => {
     const proof = mintCustomMcpApprovalProof(base)!;
     expect(verifyCustomMcpApprovalProof(proof, verify)).toBe(true);

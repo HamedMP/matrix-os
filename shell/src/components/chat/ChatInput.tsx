@@ -168,7 +168,7 @@ export function ChatInput({
   };
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2" data-slot="chat-composer">
       <ChatMentionPicker listRef={mentionListRef} onDismiss={() => { setDismissedQuery(input); textareaRef.current?.focus(); }} client={agentClient} scope={scope} query={query} resources={resources} onSelect={(resource) => {
         const text = input.replace(/@[^\s@]*$/, "");
         const insert = () => { composer.setResources([...resources, resource]); setInput(text); textareaRef.current?.focus(); };

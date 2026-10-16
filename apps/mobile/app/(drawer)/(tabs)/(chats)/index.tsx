@@ -1,6 +1,6 @@
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextInput } from "react-native";
 import { useAuth } from "@clerk/clerk-expo";
 
@@ -63,7 +63,15 @@ export default function ChatScreen() {
   const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
-  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
+  const [nextPermissionMode, setNextPermissionMode] = useState<string | null>(null);
+  const baseTurnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
+  const turnModes = baseTurnModes && nextPermissionMode
+    ? { ...baseTurnModes, permissionMode: nextPermissionMode }
+    : baseTurnModes;
+  const supportsFullAccess = Boolean(!directBot && catalog?.instances.some((instance) => (
+    instance.id === selection?.instanceId && instance.supports.permissionModes.includes("full_access")
+  )));
+  useEffect(() => { setNextPermissionMode(null); }, [selection?.instanceId, selection?.model]);
 
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
 
@@ -82,14 +90,18 @@ export default function ChatScreen() {
     disabled: providerCatalogLoading || chatUnread || runActive,
   });
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
+  const inputRef = useRef<TextInput>(null);
 
-  const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
+  const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto, waitingLabel } = useChatThread({
     chatId: activeChatId,
     detail,
     gatewayUrl,
     refresh,
     optimisticMessages,
     sentAttachments,
+    permissionMode: turnModes?.permissionMode,
+    onPermissionMode: supportsFullAccess ? setNextPermissionMode : undefined,
+    onTryAgain: () => inputRef.current?.focus(),
   });
   const busy = isSending || running;
   const isConnected = Boolean(isSignedIn);
@@ -101,7 +113,6 @@ export default function ChatScreen() {
     shownMessages: messages.length,
   });
 
-  const inputRef = useRef<TextInput>(null);
   // The composer takes the cursor, and with it the keyboard, only when the
   // person asks for a new chat. Opening the screen or a chat leaves the
   // keyboard closed, so the tabs stay in view.
@@ -152,6 +163,7 @@ export default function ChatScreen() {
       renderRequest={renderRequest}
       renderResults={renderResults}
       renderComputerPhoto={renderComputerPhoto}
+      waitingLabel={waitingLabel}
       chatState={chatState}
       onReloadChat={reloadChat}
       unsentActions={unsentActions}

@@ -1,4 +1,5 @@
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
+import { selectPendingApproval } from "./pending-approval.js";
 import {
   CanonicalChatIdSchema,
   AgentAttachmentSchema,
@@ -268,16 +269,12 @@ export class ChatRunLifecycleRepository {
       .orderBy("chat_run_events.run_seq")
       .limit(500)
       .execute();
-    let pending: Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null = null;
+    const activities: CanonicalChatRunActivity[] = [];
     for (const row of rows) {
       const activity = CanonicalChatRunActivitySchema.safeParse(row.event);
-      if (!activity.success) continue;
-      if (activity.data.type !== "approval.requested" && activity.data.type !== "approval.resolved") continue;
-      if (activity.data.approvalId !== input.approvalId) continue;
-      if (activity.data.type === "approval.requested") pending = activity.data;
-      if (activity.data.type === "approval.resolved") pending = null;
+      if (activity.success) activities.push(activity.data);
     }
-    return pending;
+    return selectPendingApproval(activities, input.approvalId);
   }
 
   async markRunRunning(ownerInput: ChatOwner, input: {
@@ -468,7 +465,19 @@ export class ChatRunLifecycleRepository {
               || persisted.decision !== activity.decision) {
               throw new ChatConflictError(chatId, Number(current.revision));
             }
-            await persistApprovalOutcome(trx, persisted, Number(current.revision));
+            const revokeSession = activity.reason === "session_revoked"
+              && persisted.decision === "approve_for_session"
+              && persisted.reason !== "session_revoked";
+            const stored = revokeSession ? { ...persisted, reason: "session_revoked" as const } : persisted;
+            if (revokeSession) {
+              await trx.updateTable("chat_run_events").set({ event: jsonb(stored) })
+                .where("id", "=", activity.id)
+                .where("chat_id", "=", chatId)
+                .where("run_id", "=", runId)
+                .execute();
+              changed += 1;
+            }
+            await persistApprovalOutcome(trx, stored, Number(current.revision));
           }
           if (persisted.type !== "agent.activity" || activity.type !== "agent.activity") continue;
           if (!canTransitionAgentActivity(persisted, activity)) {

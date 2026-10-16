@@ -1,9 +1,10 @@
-import { KeyboardAvoidingView, Platform } from "react-native";
+import { KeyboardAvoidingView, Platform, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
 import { NewChatIcon, SidePanelIcon, TopBar, TopBarButton } from "@/components/ui";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
+import { palette } from "@/lib/theme";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
 import { ChatHome } from "./ChatHome";
@@ -33,6 +34,8 @@ export interface ChatScreenViewProps
   /** What a message that was not sent offers. Nothing is offered when left out. */
   unsentActions?: UnsentMessageActions | null;
   composer: Omit<ComposerProps, "keyboardOpen">;
+  /** The pending tool request, repeated above the composer. */
+  waitingLabel?: string;
 }
 
 /** The whole chat screen, drawn from what it is given. It sits above the tab bar. */
@@ -52,6 +55,7 @@ export function ChatScreenView({
   onReloadChat,
   unsentActions = null,
   composer,
+  waitingLabel,
 }: ChatScreenViewProps) {
   const insets = useSafeAreaInsets();
   const keyboardOpen = useKeyboardVisible();
@@ -94,6 +98,7 @@ export function ChatScreenView({
           />
         </UnsentMessageActionsProvider>
       )}
+      {waitingLabel ? <Text style={styles.waiting}>{waitingLabel}</Text> : null}
       <Composer {...composer} keyboardOpen={keyboardOpen} />
     </KeyboardAvoidingView>
   );
@@ -103,5 +108,18 @@ const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
     backgroundColor: theme.v2.colors.background,
+  },
+  waiting: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: palette.gold[400],
+    backgroundColor: palette.gold[50],
+    color: theme.v2.colors.textDefault,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    fontWeight: "500",
   },
 }));
