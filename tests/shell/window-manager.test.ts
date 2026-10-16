@@ -631,3 +631,20 @@ describe("Window Manager Store", () => {
     });
   });
 });
+
+it("loads without the Company Brain app, so the built-in apps can load before the desktop config", async () => {
+  // The brain app reaches the window store and the desktop config again (its chat opens windows): loading it from the
+  // window store would leave the built-in apps half loaded when the desktop config reads them.
+  vi.resetModules();
+  vi.doMock("../../shell/src/components/brain/BrainApp", () => {
+    throw new Error("The window store loaded the Company Brain app");
+  });
+  try {
+    const apps = await import("../../shell/src/lib/builtin-apps.js");
+    const { useDesktopConfigStore } = await import("../../shell/src/stores/desktop-config.js");
+    expect(useDesktopConfigStore.getState().pinnedApps).toEqual([...apps.DEFAULT_PINNED_APPS]);
+  } finally {
+    vi.doUnmock("../../shell/src/components/brain/BrainApp");
+    vi.resetModules();
+  }
+});

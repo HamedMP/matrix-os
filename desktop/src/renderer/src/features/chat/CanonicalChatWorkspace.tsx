@@ -34,6 +34,7 @@ import type {
   AgentProviderSummary,
   CanonicalChatMessagePart,
   CanonicalChatDetailResponse,
+  CanonicalChatRecord,
   CanonicalProviderCatalog,
   CanonicalChatQueuedTurn,
 } from "@matrix-os/contracts";
@@ -109,6 +110,10 @@ export function CanonicalChatWorkspace({
   onProjectChanged,
   onActiveChatChanged,
   eventSource,
+  createChat,
+  botId,
+  draftWelcome,
+  newDraftScope,
 }: {
   api?: ApiClient;
   client: CanonicalChatClient;
@@ -131,6 +136,14 @@ export function CanonicalChatWorkspace({
   onProjectChanged?: (chatId: string, projectId: string | null, title: string) => void;
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
+  /** Makes a draft's Chat on its first send in place of POST /api/chats (a Company Brain thread). */
+  createChat?: (input: { clientRequestId: string; title: string }) => Promise<CanonicalChatRecord>;
+  /** The Bot of this Chat when the host knows it already, a draft included. */
+  botId?: string;
+  /** The empty draft's heading and line, in place of the starter cards. */
+  draftWelcome?: { title: string; detail: string };
+  /** The new-chat draft's own key when another app hosts the chat, so it never shares the Chat tab's draft. */
+  newDraftScope?: string;
 }) {
   const actorId = useConnection((state) => state.userId);
   const authStatus = useConnection((state) => state.status);
@@ -148,6 +161,9 @@ export function CanonicalChatWorkspace({
   const chatConnection = useSyncExternalStore(subscribeConnection, getConnection, getConnection);
   const [credentialSuspendedChatId, setCredentialSuspendedChatId] = useState<string | null>(null);
   const explicitSharedRoute = Boolean(sharedScopeId);
+  // A Chat another app hosts (a Company Brain thread) keeps no project of its own and is not shared from here: no
+  // project picker and no Share, the same as the Web embedded chat.
+  const hostedChat = createChat !== undefined || botId !== undefined;
   const collaborationApi = useMemo(
     () => createDesktopCollaborationApi(platformHost),
     [platformHost],
@@ -193,6 +209,7 @@ export function CanonicalChatWorkspace({
     externalNavigation,
     eventSource,
     onInvalidation: onCredentialInvalidation,
+    createChat,
   });
   const [botEventRevision, setBotEventRevision] = useState(0);
   useEffect(() => {
@@ -211,6 +228,7 @@ export function CanonicalChatWorkspace({
   const routedComposerChatId = externalNavigation
     ? initialChatId ?? controller.activeChatId
     : controller.activeChatId ?? initialChatId;
+  const newChatScope = newDraftScope ?? `new:${projectId ?? "global"}`;
   const draftRetentionIdentity = useConnection(state => state.status === "signed-in" && state.userId
     ? desktopComposerDraftIdentity(state) : undefined);
   const {
@@ -232,9 +250,10 @@ export function CanonicalChatWorkspace({
     chatId: routedComposerChatId,
     projectId,
     conversation: globalView === "conversation",
+    newDraftScope: newChatScope,
   });
   const draftScope = globalView === "conversation" && routedComposerChatId
-    ? `chat:${routedComposerChatId}` : `new:${projectId ?? "global"}`;
+    ? `chat:${routedComposerChatId}` : newChatScope;
   const composerOwner = useRef({ client, draftScope, draftRevision, identity: desktopProviderIdentityKey(useConnection.getState()) });
   useLayoutEffect(() => {
     composerOwner.current = { client, draftScope, draftRevision, identity: desktopProviderIdentityKey(useConnection.getState()) };
@@ -276,8 +295,8 @@ export function CanonicalChatWorkspace({
     currentSelection: controller.detail?.record.chat.currentSelection,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
-  const botBinding = useDirectBotBinding(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
-  const directBotId = botBinding.agentId;
+  const botBinding = useDirectBotBinding(explicitSharedRoute || botId ? undefined : routedComposerChatId ?? undefined, client.agents);
+  const directBotId = botId ?? botBinding.agentId;
   useEffect(() => {
     if (explicitSharedRoute || !routedComposerChatId || !reportBotHeaderBinding) return;
     return reportBotHeaderBinding({ chatId: routedComposerChatId, client, status: botBinding.status, agentId: directBotId });
@@ -288,7 +307,7 @@ export function CanonicalChatWorkspace({
   const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
   const botRouteAvailable = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const permissionResources = directBotId ? botExecution.consentResources : mentionResources;
-  const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, permissionResources,
+  const mentionPermission = useChatMentionPermission(routedComposerChatId ?? newChatScope, permissionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
   const selectionAvailable = botRouteAvailable && (!botPresentation?.requiresFullAccess || mentionPermission.confirmed);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -532,7 +551,7 @@ export function CanonicalChatWorkspace({
         interactionMode: selection.interactionMode,
         permissionMode: mentionPermission.permissionMode,
       };
-      const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
+      const requestScope = routedComposerChatId ?? newChatScope;
       const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "send") : undefined;
       const clientRequestId = attempt?.clientRequestId;
       const acknowledgeAccepted = () => {
@@ -607,7 +626,7 @@ export function CanonicalChatWorkspace({
         selection: { instanceId: selection.instanceId, model: selection.model, ...(selection.options.length ? { options: selection.options } : {}) },
         interactionMode: selection.interactionMode, permissionMode: mentionPermission.permissionMode,
       };
-      const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
+      const requestScope = routedComposerChatId ?? newChatScope;
       const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
       const clientRequestId = attempt?.clientRequestId;
       const acknowledgeAccepted = () => {
@@ -746,7 +765,7 @@ export function CanonicalChatWorkspace({
       <SharedChatComposer
         value={draft}
         onChange={setDraft}
-        draftScopeKey={routedComposerChatId ?? `new:${projectId ?? "global"}`}
+        draftScopeKey={routedComposerChatId ?? newChatScope}
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
         onAgentMention={botMention.select}
@@ -785,7 +804,7 @@ export function CanonicalChatWorkspace({
           ? "Edit queued message…"
           : globalView === "conversation" ? "Reply to chat…" : "How can I help you today?"}
         ariaLabel={globalView === "conversation" ? "Reply to chat" : "Start a chat"}
-        leadingControls={(
+        leadingControls={hostedChat ? undefined : (
           <ConversationContextPicker
             context={context}
             compact={!context}
@@ -809,7 +828,7 @@ export function CanonicalChatWorkspace({
           />
         )}
         speech={{
-          scopeKey: routedComposerChatId ?? `new:${projectId ?? "global"}`,
+          scopeKey: routedComposerChatId ?? newChatScope,
           onDraft: (text) => setDraft((current) => {
             const trimmed = current.trimEnd();
             return trimmed.length > 0 ? `${trimmed} ${text}` : text;
@@ -827,7 +846,7 @@ export function CanonicalChatWorkspace({
   );
 
   const sharingChatId = controller.detail?.record.chat.id;
-  const chatSharingAction = api && !chromeHost && sharingChatId ? <ChatSharingButton key={sharingChatId} api={api}
+  const chatSharingAction = api && !chromeHost && !hostedChat && sharingChatId ? <ChatSharingButton key={sharingChatId} api={api}
     chatId={sharingChatId} copyText={copyText} /> : null;
 
   return (
@@ -1016,7 +1035,7 @@ export function CanonicalChatWorkspace({
             Loading chat…
           </div>
         ) : (
-          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
+          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} welcome={draftWelcome} />
         )}
         </>}
       </SharedChatSurface>

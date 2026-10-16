@@ -66,6 +66,7 @@ export function useCanonicalChatRouteController({
   externalNavigation = false,
   eventSource,
   onInvalidation,
+  createChat,
 }: {
   client: CanonicalChatClient;
   projectId: string | null;
@@ -75,6 +76,8 @@ export function useCanonicalChatRouteController({
   externalNavigation?: boolean;
   eventSource?: CanonicalChatEventConsumer;
   onInvalidation?: (event: CanonicalChatInvalidation) => void;
+  /** Makes a draft's Chat on its first send in place of POST /api/chats (a Company Brain thread). */
+  createChat?: (input: { clientRequestId: string; title: string }) => Promise<CanonicalChatRecord>;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -89,7 +92,12 @@ export function useCanonicalChatRouteController({
     chatId: initialChatId,
     ids: [],
   });
-  const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
+  const routeScopeRef = useRef<{
+    active: boolean; client: CanonicalChatClient; projectId: string | null; chatId: string | null;
+  } | null>(null);
+  // What a send belongs to: hiding the view keeps a send under way, so the Chat it makes is still shown and reported;
+  // opening another Chat or a new draft, by selection or by route, ends it.
+  const sendScopeRef = useRef({});
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
   // Keep the stream checkpoint synchronous. React may defer/replay a state
@@ -192,7 +200,12 @@ export function useCanonicalChatRouteController({
     const scopeChanged = previousScope?.active !== active
       || previousScope.client !== client
       || previousScope.projectId !== projectId;
-    routeScopeRef.current = { active, client, projectId };
+    routeScopeRef.current = { active, client, projectId, chatId: initialChatId };
+    // A route echoing this controller's own selection is no navigation; a route to another Chat is.
+    const routedAway = previousScope?.chatId !== initialChatId && initialChatId !== activeChatIdRef.current;
+    if (previousScope?.client !== client || previousScope.projectId !== projectId || routedAway) {
+      sendScopeRef.current = {};
+    }
     if (!scopeChanged && initialChatId === activeChatIdRef.current) return;
     listRequestSequence.current += 1;
     detailRequestSequence.current += 1;
@@ -383,6 +396,8 @@ export function useCanonicalChatRouteController({
 
   const selectChat = useCallback((chatId: string | null) => {
     detailRequestSequence.current += 1;
+    // Clicking the open Chat's row again is no navigation: a send under way still reports its result.
+    if (activeChatIdRef.current !== chatId) sendScopeRef.current = {};
     setActiveChatId(chatId);
     activeChatIdRef.current = chatId;
     detailRef.current = null;
@@ -430,16 +445,16 @@ export function useCanonicalChatRouteController({
     initialProjectId: string | null = projectId,
     onAccepted?: () => void,
   ) => {
-    const routeScope = routeScopeRef.current;
+    const sendScope = sendScopeRef.current;
     const selectedChatId = activeChatIdRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
-      && activeChatIdRef.current === selectedChatId);
-    if (!isCurrentScope()) return null;
+    const isCurrentScope = () => sendScopeRef.current === sendScope && activeChatIdRef.current === selectedChatId;
+    if (!routeScopeRef.current?.active || !isCurrentScope()) return null;
     try {
       let current = detail;
       if (!current) {
-        const record = await client.create({
-          clientRequestId: input.clientRequestId ? `${input.clientRequestId}_chat` : canonicalChatRequestId(),
+        const clientRequestId = input.clientRequestId ? `${input.clientRequestId}_chat` : canonicalChatRequestId();
+        const record = createChat ? await createChat({ clientRequestId, title }) : await client.create({
+          clientRequestId,
           title,
           ...(initialProjectId === null ? {} : { projectId: initialProjectId }),
           currentSelection: input.selection,
@@ -489,7 +504,7 @@ export function useCanonicalChatRouteController({
       setError(canonicalChatSubmitFailureMessage(error));
       return null;
     }
-  }, [client, detail, projectId]);
+  }, [client, createChat, detail, projectId]);
 
   const cancelActiveRun = useCallback(async () => {
     const activeRun = detail?.record.activeRun;

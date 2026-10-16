@@ -1,4 +1,5 @@
-import { constrainFloatingWindow } from "@matrix-os/ui";
+// Not from `@/components/brain`: the brain app it loads imports this store again (an import cycle).
+import { BRAIN_SHELL_VIEW, constrainFloatingWindow } from "@matrix-os/ui";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import {
@@ -7,7 +8,6 @@ import {
   TERMINAL_MIN_WINDOW_HEIGHT,
   TERMINAL_MIN_WINDOW_WIDTH,
 } from "@/lib/builtin-apps";
-import { BRAIN_SHELL_VIEW } from "@/components/brain";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { SHELL_WINDOW_Z_INDEX_MAX, SHELL_WINDOW_Z_INDEX_START } from "@/lib/shell-layering";

@@ -512,7 +512,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
       ) : win.path === "__activity-monitor__" ? (
         <ActivityMonitorApp />
       ) : win.path === "__brain__" ? (
-        <BrainApp showHeading={false} />
+        <BrainApp showHeading={false} active={isFocused && !win.minimized} visible={!win.minimized} />
       ) : deferAppContent ? (
         <div
           className="h-full w-full flex items-center justify-center bg-card"

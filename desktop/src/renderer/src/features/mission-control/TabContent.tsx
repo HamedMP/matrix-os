@@ -95,7 +95,7 @@ export function TabPane({
     case "notes":
       return <NotesWorkspace active={active} />;
     case "brain":
-      return <DesktopBrainView />;
+      return <DesktopBrainView visible={visible} />;
     case "apps":
       return <AppLauncher />;
     case "projects":
