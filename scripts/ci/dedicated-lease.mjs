@@ -5,12 +5,13 @@ import {authenticatedRequestingRun,authenticatedControllerRun} from './dedicated
 import {verifyControllerPin} from './dedicated-pin.mjs';
 import {readReviewedConfiguration} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
+import {mainPrRequest} from './dedicated-main-pr.mjs';
 const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const workflowPath=name=>`.github/workflows/${name}`;
 const active=run=>['queued','requested','waiting','pending','in_progress'].includes(run.status);
 async function requestingRuns(github,repo,value,workflow){
- const run=await newestWorkflowRun(github,repo,workflow,run=>authenticatedRequestingRun(run,repo,value,workflow),{kind:'requester',sourceKind:value.sourceKind,headSha:value.headSha,headRef:value.headRef});
+ const run=await newestWorkflowRun(github,repo,workflow,run=>value.sourceKind===undefined&&value.baseRef==='main'?Boolean(mainPrRequest(run,repo,value,workflow)):authenticatedRequestingRun(run,repo,value,workflow),{kind:'requester',sourceKind:value.sourceKind,headSha:value.headSha,headRef:value.headRef});
  return run?[run]:[];
 }
 async function newestControllerRun(github,repo,value,workflow,headRef){
@@ -42,6 +43,6 @@ export async function verifyDedicatedLeaseGrant(github,repo,controller,value){
  if(!id(ciWorkflow.id)||ciWorkflow.path!==workflowPath('ci.yml'))throw new Error('Unexpected requesting CI definition');
  const {data:ciRun}=await github.rest.actions.getWorkflowRun({...repo,run_id:value.requestingRunId,request});
  if(!authenticatedRequestingRun(ciRun,repo,value,ciWorkflow)||ciRun.id!==value.requestingRunId||ciRun.run_attempt!==value.requestingRunAttempt||(ciRun.event==='pull_request'&&ciRun.head_branch!==(value.sourceKind==='main'?'main':pull.head.ref))||(!active(ciRun)&&!(value.mode==='shadow'&&ciRun.status==='completed'&&ciRun.conclusion==='success')))throw new Error('Current requesting CI attempt is no longer admitted');
- const latest=(await requestingRuns(github,repo,value,ciWorkflow))[0];
+ const latest=(await requestingRuns(github,repo,{...value,headRef:value.sourceKind==='main'?'main':pull.head.ref},ciWorkflow))[0];
  if(!latest||latest.id!==value.requestingRunId||latest.run_attempt!==value.requestingRunAttempt)throw new Error('A newer requesting CI attempt superseded this lease');
 }

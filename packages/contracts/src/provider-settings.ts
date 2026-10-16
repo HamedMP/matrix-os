@@ -6,6 +6,7 @@ import {
   FundedAiChatAvailabilitySchema,
   FundedAiUpstreamPreferenceValueSchema,
   FundedAiUpstreamPreferenceViewSchema,
+  isManagedWorkersAiModel,
 } from "#funded-ai";
 import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 import { MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "#bots/model-choice";
@@ -695,7 +696,7 @@ export function isPortableGenericHarnessCredentialRoute(
   if (source.kind === "matrix_gateway") {
     return ((source.id === "matrix_included" && source.providerId === "anthropic")
       || (source.id === "matrix_cloudflare" && source.providerId === "cloudflare"
-        && harness.route.modelId === "@cf/zai-org/glm-5.3-flash"))
+        && isManagedWorkersAiModel(harness.route.modelId)))
       && source.accountId === null
       && (source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
   }

@@ -27,6 +27,7 @@ import {
 } from './db.js';
 import { createAtsDb, resolveAtsDatabaseUrl, type AtsDB } from './ats-db.js';
 import { startAtsBackgroundWorker } from './ats-background-worker.js';
+import { startGooglePurchaseWorker } from './billing/google-purchases.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import { createClerkAuth, createClerkSessionRevoker } from './clerk-auth.js';
@@ -1036,6 +1037,8 @@ async function startPlatformServerWithCleanup(
   });
 
   const appEnv = process.env;
+  const stopGooglePurchaseWorker = startGooglePurchaseWorker(db, appEnv, backgroundWorkersEnabled);
+  registerCustomMcpStartupCleanup(stopGooglePurchaseWorker);
   const whatsappRuntime = createConfiguredWhatsAppRuntime({ db, env: appEnv, clerkAuth });
   registerCustomMcpStartupCleanup(async () => { await whatsappRuntime?.shutdown(); });
   const legacyContainerRoutingEnabled =
@@ -1126,6 +1129,7 @@ async function startPlatformServerWithCleanup(
         await customerVpsReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
+          stopGooglePurchaseWorker(),
           collaboration?.shutdown(),
           whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),

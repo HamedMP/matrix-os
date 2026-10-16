@@ -37,3 +37,32 @@ it('cannot accept a matching API run without a valid attempt identity',async()=>
  const github=fixture(()=>[{...row(123,true),run_attempt:undefined}]);
  await expect(newestWorkflowRun(github,repo,workflow,(r:any)=>r.relevant,scope)).rejects.toThrow(/Invalid/);
 });
+
+it('finds the newest authenticated controller behind 2500 unrelated runs, beyond the API 1000-result window',async()=>{
+ const runs=Array.from({length:2600},(_,i)=>({...row(3000-i,i===2500),created_at:new Date(Date.UTC(2026,9,15,0,0,3000-i)).toISOString()}));
+ const github=fixture(args=>{
+  if(args.branch!=='main')return [];
+  const filtered=runs.filter(run=>!args.created||Date.parse(run.created_at)<=Date.parse(args.created.slice(2)));
+  return filtered.slice((args.page-1)*100,Math.min(args.page*100,1000));
+ });
+ expect((await newestWorkflowRun(github,repo,workflow,(r:any)=>r.relevant,{kind:'controller',headSha:scope.headSha,headRef:'child'})).id).toBe(500);
+ expect(github.rest.actions.listWorkflowRuns.mock.calls.some(([args])=>args.created)).toBe(true);
+ expect(github.rest.actions.listWorkflowRuns.mock.calls.length).toBeLessThan(40);
+});
+
+it('never skips another run sharing the inclusive creation-time boundary',async()=>{
+ const runs=Array.from({length:450},(_,i)=>({...row(1000-i,i===320),created_at:new Date(Date.UTC(2026,9,15,0,0,Math.floor((1000-i)/50))).toISOString()}));
+ const github=fixture(args=>args.branch!=='main'?[]:runs.filter(run=>!args.created||Date.parse(run.created_at)<=Date.parse(args.created.slice(2))).slice((args.page-1)*100,args.page*100));
+ expect((await newestWorkflowRun(github,repo,workflow,(r:any)=>r.relevant,{kind:'controller',headSha:scope.headSha,headRef:'child'})).id).toBe(680);
+});
+it('fails closed when GitHub cannot expose all runs in a saturated single second',async()=>{
+ const github=fixture(args=>args.branch!=='main'?[]:Array.from({length:100},(_,i)=>({...row(2000-(args.page-1)*100-i),created_at:'2026-10-15T00:00:00Z'})));
+ await expect(newestWorkflowRun(github,repo,workflow,()=>false,{kind:'controller',headSha:scope.headSha,headRef:'child'})).rejects.toThrow(/bounded API/);
+ expect(Math.max(...github.rest.actions.listWorkflowRuns.mock.calls.map(([args])=>args.page))).toBe(10);
+});
+it('retains a bounded API budget even for arbitrarily deep timestamped traffic',async()=>{
+ let sequence=20000;
+ const github=fixture(args=>args.branch!=='main'?[]:Array.from({length:100},()=>{const id=sequence--;return{...row(id),created_at:new Date(Date.UTC(2026,9,15,0,0,id)).toISOString()};}));
+ await expect(newestWorkflowRun(github,repo,workflow,()=>false,{kind:'controller',headSha:scope.headSha,headRef:'child'})).rejects.toThrow(/bounded request/);
+ expect(github.rest.actions.listWorkflowRuns.mock.calls.length).toBe(100);
+});

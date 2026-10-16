@@ -79,10 +79,11 @@ export default function AgentChatRoute() {
     <>
       <AgentChatScreen
         agent={{ id: agentId, name }}
-        state={chat.chatId ? "ready" : chat.failed ? "failed" : "loading"}
+        // Once the agent's chat is found, what shows is whether it has been read.
+        state={chat.chatId ? thread.chatState : chat.failed ? "failed" : "loading"}
         onBack={goBack}
         onOpenDetails={() => setDetailsOpen(true)}
-        onRetry={chat.retry}
+        onRetry={chat.chatId ? thread.reloadChat : chat.retry}
         notice={fromTemplate && botChat.isError ? "Agent status could not be loaded. Try again." : null}
         messages={thread.messages}
         chatId={chat.chatId}
@@ -90,6 +91,7 @@ export default function AgentChatRoute() {
         renderResults={thread.renderResults}
         renderComputerPhoto={thread.renderComputerPhoto}
         footer={thread.footer}
+        unsentActions={thread.unsentActions}
         composer={thread.composer}
       />
       <AgentDetailsSheet

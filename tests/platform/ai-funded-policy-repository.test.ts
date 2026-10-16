@@ -1,3 +1,4 @@
+import { MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AiFundedPolicyError,
@@ -72,6 +73,24 @@ describe("funded AI policy repository", () => {
     const allowedModelIds = ["@cf/zai-org/glm-5.3-flash"];
     expect(await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds }))
       .toMatchObject({ allowedModelIds });
+  });
+
+  it("round-trips every reviewed Workers model through global and runtime policy", async () => {
+    const repo = repository();
+    const allowedModelIds = [...MANAGED_WORKERS_AI_MODEL_IDS];
+    expect(await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds }))
+      .toMatchObject({ allowedModelIds });
+    const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" };
+    await repo.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true, allowedModelIds,
+      monthlyBudgetMicrousd: 1_000, expiresAt: null });
+    expect(await repo.getRuntimePolicy(identity)).toMatchObject({ allowedModelIds });
+    for (const unreviewed of ["@cf/unreviewed/model", "@cf/zai-org/glm-5.3-flash-extra"]) {
+      await expect(repo.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [unreviewed] }))
+        .rejects.toMatchObject({ name: "ZodError" });
+      await expect(repo.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
+        allowedModelIds: [unreviewed], monthlyBudgetMicrousd: 1_000, expiresAt: null }))
+        .rejects.toMatchObject({ name: "ZodError" });
+    }
   });
 
   it("seeds a fail-closed global policy and enforces optimistic concurrency", async () => {

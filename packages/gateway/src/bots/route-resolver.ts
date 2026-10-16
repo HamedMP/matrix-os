@@ -12,7 +12,7 @@
  * are never selected.
  */
 import type { AiProviderSnapshotV3, BotModelRoute, CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { BotModelRouteSchema } from "@matrix-os/contracts";
+import { BotModelRouteSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import type { BotCredentialAccessSourceId } from "./credentials.js";
 import { MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
 
@@ -72,12 +72,14 @@ export function resolveBotRoute(snapshot: AiProviderSnapshotV3, now = Date.now()
   const active = activeSource ? routeFor(snapshot, activeSource, snapshot.active.modelId, now) : undefined;
   if (active) return active;
   for (const entry of SOURCES_IN_ORDER) {
-    // Provider V3 exposes managed GLM as an access source, without an
-    // Anthropic kernel instance. Pi can use that source directly, subject
-    // to the same readiness, freshness, eligibility and tool checks.
+    // Managed Workers models have no kernel instance. Keep Flash first, then
+    // consider only reviewed peers passing the same exact route checks.
     if (entry.id === "matrix_cloudflare") {
-      const managed = routeFor(snapshot, entry, MATRIX_DEFAULT_MODEL_ID, now);
-      if (managed) return managed;
+      for (const modelId of [MATRIX_DEFAULT_MODEL_ID,
+        ...MANAGED_WORKERS_AI_MODEL_IDS.filter(id => id !== MATRIX_DEFAULT_MODEL_ID)]) {
+        const managed = routeFor(snapshot, entry, modelId, now);
+        if (managed) return managed;
+      }
     }
     const instances = snapshot.instances.filter((instance) => instance.accessSourceId === entry.id
       && instance.readiness.state === "ready" && fresh(instance.readiness.staleAfter, now));

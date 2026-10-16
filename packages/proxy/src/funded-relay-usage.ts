@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import { priceActualUsageMicrousd, type FundedTokenUsage } from "./funded-relay-model.js";
-import { FUNDED_GLM_FLASH } from "./funded-relay-model.js";
+import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createFundedOpenAiUsageTracker } from "./funded-relay-openai-usage.js";
 
 const DEFAULT_CAPTURE_LIMIT = 1024 * 1024;
@@ -63,7 +63,7 @@ export function createFundedUsageTracker(options: {
   maxCaptureBytes?: number;
   priceUsage?: (usage: FundedTokenUsage) => number;
 }): FundedUsageTracker {
-  if (options.nativeModelId === FUNDED_GLM_FLASH || options.priceUsage) {
+  if (isManagedWorkersAiModel(options.nativeModelId) || options.priceUsage) {
     return createFundedOpenAiUsageTracker(options);
   }
   const maxCaptureBytes = options.maxCaptureBytes ?? DEFAULT_CAPTURE_LIMIT;
