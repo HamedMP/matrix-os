@@ -16,13 +16,20 @@ const Timestamp = z.iso.datetime({ offset: true });
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
 export const PaidStarterRecoveryReviewSchema = z.object({
   version: z.literal(1), authorizationReference: Reference, issuedAt: Timestamp, expiresAt: Timestamp,
-  sourceSha: z.string().regex(/^[a-f0-9]{40}$/), accountDeletionMode: z.literal('enabled'),
+  sourceSha: z.string().regex(/^[a-f0-9]{40}$/), accountDeletionMode: z.enum(['enabled', 'disabled']),
+  disabledDeletionAuthority: z.object({
+    servingRevision: z.string().regex(/^[a-z][a-z0-9-]{0,62}$/),
+    imageDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  }).strict().optional(),
   targets: z.array(z.object({ ownerId: Reference, machineId: z.uuid(), runtimeSlot: z.literal('primary'),
     expectedRuntimeTokenEpoch: z.number().int().min(1).max(2_147_483_647),
     expectedImageVersion: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
     expectedSubscriptionId: Reference, expectedSubscriptionUpdatedAt: Timestamp,
   }).strict()).min(1).max(3),
 }).strict().superRefine((review, context) => {
+  if ((review.accountDeletionMode === 'disabled') !== (review.disabledDeletionAuthority !== undefined)) {
+    context.addIssue({ code: 'custom', message: 'Explicit deletion authority mismatch' });
+  }
   if (new Set(review.targets.map(target => target.ownerId)).size !== review.targets.length
     || new Set(review.targets.map(target => target.machineId)).size !== review.targets.length
     || new Set(review.targets.map(target => target.expectedSubscriptionId)).size !== review.targets.length) {
@@ -48,6 +55,20 @@ function assertFresh(review: PaidStarterRecoveryReview, now: Date) {
   requireValid(Number.isFinite(current) && issued <= current && current < expires
     && expires - issued > 0 && expires - issued <= 5 * 60_000);
 }
+function assertDeletionAuthority(review: PaidStarterRecoveryReview, env: NodeJS.ProcessEnv) {
+  if (review.accountDeletionMode === 'enabled') {
+    requireValid(Buffer.byteLength(env.ACCOUNT_DELETION_SECRET ?? '') >= 32);
+    return;
+  }
+  // These are operator attestations of a fresh authenticated serving-config
+  // read, not production feature gates. Missing secret alone never authorizes
+  // this branch, and a present/empty secret still defines an unsafe namespace.
+  requireValid(env.ACCOUNT_DELETION_SECRET === undefined
+    && (env.ACCOUNT_DELETION_ENABLED === undefined || env.ACCOUNT_DELETION_ENABLED === 'false')
+    && review.disabledDeletionAuthority
+    && review.disabledDeletionAuthority.servingRevision === env.MATRIX_PAID_STARTER_RECOVERY_PLATFORM_REVISION
+    && review.disabledDeletionAuthority.imageDigest === env.MATRIX_PAID_STARTER_RECOVERY_PLATFORM_IMAGE_DIGEST);
+}
 
 export function createPaidStarterRecovery(options: {
   db: PlatformDB; env: NodeJS.ProcessEnv; sourceSha: string; now: () => Date;
@@ -56,9 +77,9 @@ export function createPaidStarterRecovery(options: {
     const review = PaidStarterRecoveryReviewSchema.parse(input); const mode = Mode.parse(modeInput);
     const env = { ...options.env }; const apply = mode.apply === true;
     requireValid(env.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED === 'true' && env.MATRIX_FUNDED_AI_RUNTIME_ENABLED === 'true'
-      && Buffer.byteLength(env.ACCOUNT_DELETION_SECRET ?? '') >= 32
       && Buffer.byteLength(env.AI_FUNDED_CREDENTIAL_HASH_SECRET ?? '') >= 32
       && review.sourceSha === options.sourceSha && (!apply || mode.reviewedFingerprint));
+    assertDeletionAuthority(review, env);
     const began = options.now().getTime(); const monotonic = performance.now();
     // An injected/frozen wall clock must not extend the reviewed mutation window.
     const now = () => new Date(Math.max(options.now().getTime(), began + performance.now() - monotonic));
@@ -80,6 +101,15 @@ export function createPaidStarterRecovery(options: {
         await lockCustomerFundedStarterActivation(trx, target.ownerId, env);
         assertFresh(review, now());
       }
+      const assertNoDeletionJobs = async () => {
+        if (review.accountDeletionMode !== 'disabled') return;
+        // Without the deployed hash namespace, even an unrelated/cancelled job
+        // cannot safely be attributed. Read fresh under READ COMMITTED. Product
+        // scheduling is absent; independent admin SQL remains a coordinated limit.
+        const job = await trx.executor.selectFrom('account_deletion_jobs').select('owner_hash').limit(1).executeTakeFirst();
+        requireValid(!job);
+      };
+      await assertNoDeletionJobs();
       const lock = <T extends { forUpdate(): T }>(query: T): T => apply ? query.forUpdate() : query;
       const snapshots: unknown[] = [];
       let eligibleThrough = Infinity;
@@ -189,10 +219,12 @@ export function createPaidStarterRecovery(options: {
       if (!apply) return response;
       requireValid(mode.reviewedFingerprint === fingerprint);
       for (const target of targets) {
+        await assertNoDeletionJobs();
         const checked = now(); assertFresh(review, checked);
         requireValid(checked.getTime() < eligibleThrough);
         requireValid(await initializeCustomerFundedStarterPolicy(trx, target.machineId, { now: checked.toISOString(), env }));
       }
+      await assertNoDeletionJobs();
       assertFresh(review, now());
       requireValid(now().getTime() < eligibleThrough);
       return response;
