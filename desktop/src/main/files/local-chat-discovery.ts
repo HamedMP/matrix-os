@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod/v4";
-import { LOCAL_CHAT_DISCOVERY_LIMIT, type ImportHarness } from "@matrix-os/contracts/local-chat-import";
+import { isInjectedContext, LOCAL_CHAT_DISCOVERY_LIMIT, type ImportHarness } from "@matrix-os/contracts/local-chat-import";
 export interface DiscoveredLocalChat {
     path: string; harness: ImportHarness; title: string; rawBytes: number; updatedAt: string; recordedDirectory?: string;
 }
@@ -14,8 +14,12 @@ function userText(record: Record<string, unknown>, harness: ImportHarness): stri
     const payload = object(record.payload); const message = harness === "claude" ? object(record.message) : record.type === "response_item" ? payload : record;
     if (harness === "claude" ? record.type !== "user" || record.isMeta || record.isCompactSummary : (message.role !== "user" && message.type !== "UserMessage")) return;
     const content = message.content ?? message.text;
-    if (typeof content === "string") return label(content,160);
-    if (Array.isArray(content)) for (const part of content) { const value = object(part); if (["text","input_text"].includes(String(value.type)) && typeof value.text === "string") return label(value.text,160); }
+    const text = typeof content === "string" ? content : Array.isArray(content) ? content.flatMap(part => {
+        const value = object(part);
+        return ["text","input_text"].includes(String(value.type)) && typeof value.text === "string" ? [value.text] : [];
+    }).join("\n") : undefined;
+    if (harness === "codex" && isInjectedContext(text)) return;
+    return label(text,160);
 }
 async function metadata(source: DiscoveredLocalChat, signal: AbortSignal): Promise<DiscoveredLocalChat & {sessionId?: string; subagent?: boolean}> {
     signal.throwIfAborted();

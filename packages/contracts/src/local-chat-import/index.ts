@@ -4,6 +4,7 @@ export const LOCAL_CHAT_DISCOVERY_LIMIT = 20_000;
 export { readLocalChatJsonl } from "#local-chat-import/jsonl";
 export type { LocalChatSourceEntry, LocalChatSourceRecord, LocalChatSourceIssue } from "#local-chat-import/jsonl";
 export { reconstructLocalChat } from "#local-chat-import/reconstruct";
+export { isInjectedContext } from "#local-chat-import/blocks";
 export type { ImportHarness, ImportProjection, ImportSource, ImportBlock, ImportConversation } from "#local-chat-import/types";
 
 export { uploadLocalChatArchive, LocalChatTransferError } from "#local-chat-import/client";
