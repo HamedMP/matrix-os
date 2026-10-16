@@ -1,14 +1,15 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { ActivityIndicator } from "react-native";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import { AccessibilityInfo, ActivityIndicator } from "react-native";
 
 import { Button, type ButtonVariant } from "../components/ui/Button";
 import { Icon } from "../components/ui/Icon";
 import { AddIcon } from "../components/ui/icons";
 
 import { motion } from "../lib/theme-v2";
-import { flat, heldScale } from "./ui-test-utils";
+import { flat, heldScale, resetReduceMotion } from "./ui-test-utils";
 
 describe("Button", () => {
+  beforeEach(resetReduceMotion);
   afterEach(cleanup);
 
   it("is a filled 44pt control with the medium label by default", () => {
@@ -114,6 +115,14 @@ describe("Button", () => {
     expect(onPress).not.toHaveBeenCalled();
     expect(flat(button).opacity).toBe(0.5);
     expect(button.props.accessibilityState).toMatchObject({ disabled: true, busy: false });
+  });
+
+  it("stays dimmed when disabled with reduced motion on", async () => {
+    jest.mocked(AccessibilityInfo.isReduceMotionEnabled).mockResolvedValue(true);
+    render(<Button label="Create" disabled onPress={jest.fn()} />);
+    await act(async () => {});
+
+    expect(flat(screen.getByRole("button", { name: "Create" })).opacity).toBe(0.5);
   });
 
   it("shows a spinner in the label colour and ignores presses while loading", () => {
