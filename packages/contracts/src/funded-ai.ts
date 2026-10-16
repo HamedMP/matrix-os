@@ -39,7 +39,19 @@ export const FundedAiUpstreamPreferenceSchema = z.object({
 
 export const FundedAiUpstreamPreferenceViewSchema = FundedAiUpstreamPreferenceSchema.extend({
   effectiveUpstream: FundedAiUpstreamPreferenceValueSchema,
-}).strict();
+  /** Exact platform-qualified models currently dispatching through Bedrock. Absent from legacy responses. */
+  effectiveBedrockModelIds: z.array(ProviderModelReferenceSchema).max(8)
+    .refine((models) => new Set(models).size === models.length, "Model IDs must be unique")
+    .optional(),
+}).strict().superRefine((value, ctx) => {
+  const modelIds = value.effectiveBedrockModelIds ?? [];
+  if (value.effectiveUpstream === "cloudflare" && modelIds.length > 0) {
+    ctx.addIssue({ code: "custom", path: ["effectiveBedrockModelIds"], message: "Cloudflare cannot expose effective Bedrock models" });
+  }
+  if (value.effectiveUpstream === "aws_bedrock" && value.effectiveBedrockModelIds !== undefined && modelIds.length === 0) {
+    ctx.addIssue({ code: "custom", path: ["effectiveBedrockModelIds"], message: "Effective Bedrock routing requires a model" });
+  }
+});
 
 export const FundedAiUpstreamPreferenceUpdateRequestSchema = z.object({
   idempotencyKey: canonicalReferenceId(128),

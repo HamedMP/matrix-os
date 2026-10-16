@@ -202,7 +202,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false,
     enrichment?: ProviderSettingsEnrichment, codexNativeAccountMetadata?: CodexNativeAccountMetadata | null, hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null, claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null, claudeNativeSignedOut?: ClaudeNativeSignedOut | null) {
     try {
-      const { fundingSummary, fundedPolicy, chatAvailability, upstreamPreference, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
+      const resolvedEnrichment = enrichment ?? await readProviderSettingsEnrichment({
         canonical, fundingSummary: this.#fundingSummary,
         genericModelCatalog: this.#genericModelCatalog, refresh,
         catalogFailureHarnesses: [...new Set(config.harnesses.flatMap((harness) =>
@@ -210,20 +210,20 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             ? [harness.harness]
             : []))],
       });
+      const { canonical: enrichedCanonical = canonical, fundingSummary, fundedPolicy, chatAvailability, genericModelCatalog } = resolvedEnrichment;
       return await projectProviderSettings({
-        canonical,
+        canonical: enrichedCanonical,
         config,
         claudeNativeAccountMetadata,
         codexNativeAccountMetadata,
         hermesNativeAccountMetadata,
         now: this.#now(),
         dependencies: this.#dependencies,
-        supportedActions: this.#supportedActions(config, canonical, claudeNativeAccountMetadata, claudeNativeSignedOut,
-          upstreamPreference !== undefined),
+        supportedActions: this.#supportedActions(config, enrichedCanonical, claudeNativeAccountMetadata, claudeNativeSignedOut,
+          enrichedCanonical.upstreamPreference !== undefined),
         fundingSummary,
         chatAvailability,
         fundedPolicy,
-        upstreamPreference,
         fundedPolicyAuthoritative: Boolean(this.#fundingSummary),
         genericModelCatalog,
         configurationHarnessKinds: [...(this.#runtime?.supportedHarnessKinds ?? [])],
@@ -570,7 +570,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         });
       }
       this.#assertSupported(claudeNativeCompletion ? "set_harness_enabled" : mutation.type, config, canonical,
-        enrichment.upstreamPreference !== undefined);
+        (enrichment.canonical?.upstreamPreference ?? canonical.upstreamPreference) !== undefined);
       if (mutation.type === "set_gateway_upstream") {
         const setPreference = this.#fundingSummary?.setUpstreamPreference;
         if (!setPreference) throw new ProviderSettingsStoreError("runtime_unavailable", 503);
@@ -582,7 +582,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           });
           return ProviderSettingsMutationResponseSchema.parse({
             kind: "snapshot",
-            snapshot: await this.#project(canonical, config, false, { ...enrichment, upstreamPreference }),
+            snapshot: await this.#project(canonical, config, false, {
+              ...enrichment,
+              canonical: AiProviderSnapshotV3Schema.parse({ ...canonical, upstreamPreference }),
+            }),
           });
         } catch (error) {
           if (error instanceof ProviderSettingsStoreError) throw error;

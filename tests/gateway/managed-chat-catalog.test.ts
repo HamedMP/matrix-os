@@ -52,6 +52,21 @@ describe("managed Chat catalog", () => {
     expect(instance?.models.map((model) => model.id)).toEqual(["claude-sonnet-5"]);
   });
 
+  it("keeps an effective Bedrock model off the Anthropic kernel path and on Matrix Pi", () => {
+    const snapshot = makeAiProviderSnapshot();
+    snapshot.upstreamPreference = {
+      selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+      effectiveBedrockModelIds: ["claude-sonnet-5"], revision: 1,
+      updatedAt: new Date().toISOString(), validThrough: "2099-01-01T00:00:00.000Z",
+    };
+    expect(managedChatInstances(snapshot, [])[0]).toMatchObject({
+      id: "kernel_matrix_included", availability: "unavailable", models: [],
+    });
+    expect(managedPiChatInstances(snapshot)[0]).toMatchObject({
+      availability: "available", models: [{ id: "claude-sonnet-5", availability: "available" }],
+    });
+  });
+
   it.each(["setup_required", "unavailable", "unknown", "expired"] as const)("retains a non-runnable Matrix AI route for a %s access source", (state) => {
     const snapshot = makeAiProviderSnapshot();
     snapshot.accessSources[0]!.state = state;

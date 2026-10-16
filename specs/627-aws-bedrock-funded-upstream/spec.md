@@ -95,6 +95,13 @@ never authority.
    relays receive the original strict response and legacy platforms are retried
    with the original strict request. Either mixed-version path remains
    Cloudflare-only and omits new authorization fields.
+   For entitled current clients, the platform projection carries the exact
+   healthy Bedrock model IDs into Provider V3. Shared Chat and Settings
+   projections consume that field rather than inferring eligibility. Bedrock
+   models are exposed through Matrix Pi's OpenAI-compatible route and excluded
+   from the Claude SDK's Anthropic Messages instance. Settings clients must
+   opt in to the preference field and matching mutation together; legacy
+   clients receive neither.
 3. The relay calculates a conservative liability ceiling using the maximum
    configured input and requested output bounds plus a 20% margin. Pricing must
    be inside its reviewed time window.
@@ -190,6 +197,9 @@ destination region returned by the profile must satisfy the approved policy.
    Existing exact settlement retries remain valid because each queued task
    carries its pricing version and provenance. Unresolved holds require evidence
    reconciliation, not deletion.
+7. After current-head Greptile reaches 5/5 and CI is green, create an explicitly
+   approved preview VPS and verify the full preference, routing, streaming,
+   settlement, and fallback flow on real devices before merge.
 
 ## Verification
 
@@ -204,7 +214,10 @@ destination region returned by the profile must satisfy the approved policy.
   resolution, reservation binding, bounded provenance, idempotent replay,
   conflicting evidence, and legacy Jev/Cloudflare behavior. Gateway tests prove
   that healthy configured Bedrock models enter Provider V3 through the shared
-  Matrix relay data policy instead of renderer-local inference.
+  Matrix relay data policy instead of renderer-local inference. Route tests
+  prove exact effective Bedrock models use OpenAI-compatible Matrix Pi while
+  the Claude kernel path excludes them, and mixed-version Settings tests prove
+  the preference field and mutation are negotiated atomically.
 - Full repository typecheck, pattern checks, unit/integration tests, current-head
   Greptile 5/5, and CI are required before merge.
 
