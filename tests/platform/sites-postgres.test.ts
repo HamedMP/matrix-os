@@ -112,6 +112,36 @@ postgres('public sites independent PostgreSQL sessions', () => {
         await expect(service.admitted(sites[3]!.id, async () => { throw new Error('submission failed'); })).rejects.toThrow('submission failed');
         expect(await service.admitted(sites[3]!.id, async () => 'recovered')).toBe('recovered');
     });
+    it.each(['patch', 'rollback', 'unpublish'] as const)('bounds %s waiters before transactions and reserves unrelated unpublish access', async action => {
+        const publisher = { ownerId: `user_mgmt_${action}`, machineId: `mgmt-${action}`, appSlug: 'event' };
+        const unrelated = { ownerId: `user_mgmt_other_${action}`, machineId: `mgmt-other-${action}`, appSlug: 'event' };
+        for (const o of [publisher, unrelated]) await insertUserMachine(dbA, { machineId: o.machineId, clerkUserId: o.ownerId, handle: o.machineId, status: 'running', provisionedAt: new Date().toISOString() });
+        const service = createSitesService({ db: dbA, storage: { async putObject() { return {}; }, async getObject() { return { body: null }; } } });
+        const input = { title: 'Management', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('Management').toString('base64') }] };
+        const site = await service.deploy(publisher, input), other = await service.deploy(unrelated, input);
+        const began = Promise.withResolvers<void>(), finish = Promise.withResolvers<void>();
+        const active = service.admitted(site.id, async () => { began.resolve(); await finish.promise; });
+        await began.promise;
+        let denied = 0;
+        const flood = Array.from({ length: 9 }, () => {
+            const work = action === 'patch' ? service.patch(publisher, { title: 'Changed', baseRevision: site.revision }) : action === 'rollback' ? service.rollback(publisher, site.activeVersion!, site.revision) : service.unpublish(publisher, site.revision);
+            return work.then(() => 'accepted', error => { if (error instanceof SiteError && error.code === 'unavailable') { denied++; return 'denied'; } throw error; });
+        });
+        let revoke: Promise<string> | undefined;
+        try {
+            const deadline = Date.now() + 2000;
+            while (denied !== 8 && Date.now() < deadline) {
+                const blocked = await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE application_name='sites-admit' AND wait_event_type='Lock'");
+                if (blocked.rows[0].count >= 9) break;
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            revoke = service.unpublish(unrelated, other.revision).then(() => 'unpublished');
+            const result = await Promise.race([revoke, new Promise(resolve => setTimeout(() => resolve('pool blocked'), 300))]);
+            expect({ denied, result }).toEqual({ denied: 8, result: 'unpublished' });
+        } finally { finish.resolve(); await Promise.allSettled([active, ...flood, ...(revoke ? [revoke] : [])]); }
+        const current = await service.get(publisher);
+        expect((await service.unpublish(publisher, current!.revision)).status).toBe('unpublished');
+    });
     it('orders deletion acceptance behind publishing owner lock and blocks every later publication', async () => {
         const env = { ACCOUNT_DELETION_SECRET: 'sites-publishing-deletion-race-secret' };
         const raceOwner = { ...owner, appSlug: 'deletion-race' };
