@@ -4,6 +4,10 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { SlackInstallPanel } from '../../packages/ui/src/messaging/SlackInstallPanel';
 afterEach(cleanup);
+it('preserves a configured HTTPS operator port in the actual installation entry',()=>{
+ render(<SlackInstallPanel platformOrigin="https://platform.example.com:8443" />);
+ expect(screen.getByRole('link',{name:'Add to Slack'}).getAttribute('href')).toBe('https://platform.example.com:8443/slack/install');
+});
 it('fails closed for invalid operator config instead of opening production',()=>{
  render(<SlackInstallPanel platformOrigin="https://stage.example.com/path" />);
  expect(screen.queryByRole('link',{name:'Add to Slack'})).toBeNull();
