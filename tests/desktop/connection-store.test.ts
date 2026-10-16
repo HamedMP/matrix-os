@@ -6,7 +6,7 @@ import {
   useConnection,
   wireConnectionEvents,
 } from "@desktop/renderer/src/stores/connection";
-import { closeDesktopCollaborationSessions } from "@desktop/renderer/src/lib/collaboration";
+import * as collaboration from "@desktop/renderer/src/lib/collaboration";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { clearDraftChats, useDraftChat } from "@desktop/renderer/src/stores/draft-chat";
 import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
@@ -335,7 +335,7 @@ describe("connection event wiring", () => {
 
     expect(useConnection.getState().status).toBe("signed-out");
     expect(useConnection.getState().api).toBeNull();
-    expect(warn).toHaveBeenCalledWith("[connection] failed to refresh auth status:", "ipc unavailable");
+    expect(warn).toHaveBeenCalledWith("[connection] failed to refresh auth status:", "request_failed");
   });
 
   it("clears app catalog state when auth status lookup fails", async () => {
@@ -352,6 +352,7 @@ describe("connection event wiring", () => {
   });
 
   it("unwires auth and runtime listeners so tests can reinitialize the bridge", async () => {
+    const closeSessions = vi.spyOn(collaboration, "closeDesktopCollaborationSessions");
     // One channel carries several listeners, so collect them all rather than keeping the last.
     const listeners = new Map<string, Listener[]>();
     const fire = async (channel: string) => {
@@ -377,11 +378,8 @@ describe("connection event wiring", () => {
 
     wireConnectionEvents();
 
-    // Ending direct collaboration sessions on an authentication change is the point of this
-    // listener, so require the handler itself rather than a count a removal would simply lower.
-    expect(listeners.get("auth:changed")).toContain(closeDesktopCollaborationSessions);
-
     await fire("auth:changed");
+    expect(closeSessions).toHaveBeenCalledOnce();
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(listeners.has("auth:changed")).toBe(true);
     expect(listeners.has("runtime:changed")).toBe(true);
@@ -393,10 +391,11 @@ describe("connection event wiring", () => {
 
     wireConnectionEvents();
 
-    // Rewiring must restore every listener, including the collaboration cleanup.
-    expect(listeners.get("auth:changed")).toContain(closeDesktopCollaborationSessions);
-
     await fire("runtime:changed");
     expect(invoke).toHaveBeenCalledTimes(2);
+    // Rewiring must restore actual collaboration cleanup, even with its epoch wrapper.
+    await fire("auth:changed");
+    expect(closeSessions).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenCalledTimes(3);
   });
 });

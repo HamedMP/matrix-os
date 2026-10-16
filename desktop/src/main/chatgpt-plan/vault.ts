@@ -1,3 +1,5 @@
+import { PlanStatusPhaseFailure } from './status-diagnostics';
+import type { ChatgptPlanDiagnostic } from '../../shared/chatgpt-plan-ipc';
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, opendir, rename, rm } from 'node:fs/promises';
@@ -67,24 +69,32 @@ export function createPlanVault(options: {
     return {
         cleanup,
         async load(ownerId: string): Promise<PlanVaultRecord> {
-            available();
-            await cleanup();
+            try { available(); }
+            catch (error: unknown) { throw new PlanStatusPhaseFailure('vault_protection', 'protection_unavailable', error); }
+            try { await cleanup(); }
+            catch (error: unknown) { throw new PlanStatusPhaseFailure('vault_cleanup', 'unavailable', error); }
             const path = file(ownerId);
             let handle;
+            let phase: ChatgptPlanDiagnostic['phase'] = 'vault_open';
             try {
                 handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+                phase = 'vault_read';
                 const stat = await handle.stat();
                 if (!stat.isFile() || stat.size > 256 * 1024)
                     throw new Error('invalid credential file');
                 const blob = await handle.readFile();
-                const parsed = VaultSchema.parse(JSON.parse(options.safeStorage.decryptString(blob)));
+                phase = 'vault_decrypt';
+                const plaintext = options.safeStorage.decryptString(blob);
+                phase = 'vault_schema';
+                const parsed = VaultSchema.parse(JSON.parse(plaintext));
+                phase = 'vault_owner';
                 if (parsed.ownerId !== ownerId)
-                    throw new Error('credential owner mismatch');
+                    throw new PlanStatusPhaseFailure('vault_owner', 'owner_mismatch', new Error('credential owner mismatch'), { ownerMatches: false });
                 return parsed;
             }
             catch (error: unknown) {
                 if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-                    throw error;
+                    throw error instanceof PlanStatusPhaseFailure ? error : new PlanStatusPhaseFailure(phase, phase === 'vault_schema' ? 'invalid_data' : 'unavailable', error);
                 const pair = generateKeyPairSync('ed25519');
                 const publicKey = pair.publicKey.export({
                     type: 'spki', format: 'der'
@@ -96,7 +106,8 @@ export function createPlanVault(options: {
                 };
             }
             finally {
-                await handle?.close();
+                try { await handle?.close(); }
+                catch (error: unknown) { throw new PlanStatusPhaseFailure('vault_read', 'unavailable', error); }
             }
         },
         async save(ownerId: string, record: PlanVaultRecord) {

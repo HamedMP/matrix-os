@@ -26,3 +26,55 @@ it("does not dispatch from a canceled or obsolete Computer", async () => {
   await expect(client.connect({ purpose: "personal_local" }, controller.signal)).rejects.toThrow();
   expect(invoke).not.toHaveBeenCalled();
 });
+
+const diagnostic = { phase: "vault_protection", category: "protection_unavailable", at: "2026-10-16T00:00:00.000Z", correlationId: "00000000-0000-4000-8000-000000000001" };
+it("retains strict safe diagnostics and discards them on invalid response, success, abort or identity replacement", async () => {
+  let current = true;
+  const invoke = vi.fn().mockResolvedValue({ kind: "status_failure", diagnostic });
+  const client = createDesktopChatgptPlanClient({ runtimeSlot: "primary", authGeneration: 3 }, () => current, invoke);
+  const controller = new AbortController();
+  await expect(client.status(controller.signal)).rejects.toThrow("ChatGPT connection is unavailable");
+  expect(client.getLastDiagnostic()).toEqual(diagnostic);
+  expect(Object.isFrozen(client.getLastDiagnostic())).toBe(true);
+  invoke.mockResolvedValueOnce({ kind: "status_failure", diagnostic: { ...diagnostic, privateToken: "private" } });
+  await expect(client.status(controller.signal)).rejects.toThrow("ChatGPT connection is unavailable");
+  expect(client.getLastDiagnostic()).toBeNull();
+  await expect(client.status(controller.signal)).rejects.toThrow();
+  controller.abort(); expect(client.getLastDiagnostic()).toBeNull();
+  await expect(client.status(new AbortController().signal)).rejects.toThrow();
+  current = false; expect(client.getLastDiagnostic()).toBeNull();
+  expect(invoke).toHaveBeenCalledTimes(4);
+});
+it("does not consume late failure metadata or let an obsolete request clear the current diagnostic", async () => {
+  let resolve!: (value: unknown) => void;
+  const invoke = vi.fn().mockImplementationOnce(() => new Promise(done => { resolve = done; }))
+    .mockResolvedValue({ kind: "status_failure", diagnostic });
+  const client = createDesktopChatgptPlanClient({ runtimeSlot: "primary", authGeneration: 3 }, () => true, invoke);
+  const old = new AbortController();
+  const first = client.status(old.signal).catch(() => undefined);
+  await expect(client.status(new AbortController().signal)).rejects.toThrow();
+  const receipt = client.getLastDiagnostic();
+  old.abort(); resolve({ kind: "status_failure", diagnostic: { ...diagnostic, phase: "catalog" } });
+  await first;
+  expect(client.getLastDiagnostic()).toBe(receipt);
+});
+it("drops an older same-client failure envelope after a newer successful status", async () => {
+  let resolve!: (value: unknown) => void;
+  const invoke = vi.fn().mockImplementationOnce(() => new Promise(done => { resolve = done; })).mockResolvedValue(status);
+  const client = createDesktopChatgptPlanClient({ runtimeSlot: "primary", authGeneration: 3 }, () => true, invoke);
+  const first = client.status(new AbortController().signal).catch(() => undefined);
+  expect(await client.status(new AbortController().signal)).toEqual(status);
+  resolve({ kind: "status_failure", diagnostic }); await first;
+  expect(client.getLastDiagnostic()).toBeNull();
+});
+it("classifies an ordinary IPC rejection locally without upstream details or extra IPC", async () => {
+  const invoke = vi.fn().mockRejectedValue(Object.assign(new Error("private URL/path/token"), { name: "PrivateAccount" }));
+  const client = createDesktopChatgptPlanClient({ runtimeSlot: "primary", authGeneration: 3 }, () => true, invoke);
+  await expect(client.status(new AbortController().signal)).rejects.toThrow("ChatGPT connection is unavailable");
+  const receipt = client.getLastDiagnostic();
+  expect(receipt).toMatchObject({ phase: "transport", category: "unavailable", at: expect.any(String), correlationId: expect.stringMatching(/^[a-f0-9-]{36}$/) });
+  expect(receipt).not.toHaveProperty("authGenerationMatches");
+  expect(JSON.stringify(receipt)).not.toMatch(/private|URL|path|token|PrivateAccount/);
+  expect(invoke).toHaveBeenCalledOnce();
+  expect(client.getLastDiagnostic()).toBe(receipt); expect(invoke).toHaveBeenCalledOnce();
+});
