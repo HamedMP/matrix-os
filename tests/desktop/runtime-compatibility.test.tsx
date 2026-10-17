@@ -10,7 +10,7 @@ import type { ApiClient } from "@renderer/lib/api";
 
 const source = { commit: "b".repeat(40), ancestors: ["a".repeat(40)] };
 const info = { version: "v2026.09.09-1", build: { sha: source.commit }, runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1 } };
-const future = { ...info, build: { sha: "c".repeat(40) } };
+const future = { ...info, runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 } };
 function client(get: ReturnType<typeof vi.fn>): ApiClient { return { get, forRuntime() { return this; } } as unknown as ApiClient; }
 beforeEach(() => {
   vi.stubGlobal("operator", { invoke: vi.fn(async (channel) => channel === "app:get-version"
@@ -25,9 +25,9 @@ describe("runtime compatibility lifecycle", () => {
     const get = vi.fn().mockResolvedValueOnce(info).mockResolvedValue(future);
     const api = client(get);
     const { result } = renderHook(() => useRuntimeCompatibility(api));
-    await waitFor(() => expect(result.current.status).toBe("aligned"));
+    await waitFor(() => expect(result.current.status).toBe("compatible"));
     act(() => window.dispatchEvent(new Event(RUNTIME_RECONNECTED_EVENT)));
-    await waitFor(() => expect(result.current.status).toBe("different-releases"));
+    await waitFor(() => expect(result.current.status).toBe("desktop-update-required"));
     expect(get).toHaveBeenCalledWith("/api/system/info", expect.objectContaining({ maxBytes: 65536, timeoutMs: 10000, signal: expect.any(AbortSignal) }));
   });
   it("aborts and fences an old computer's response after switching", async () => {
@@ -37,9 +37,24 @@ describe("runtime compatibility lifecycle", () => {
     const oldSignal = getOld.mock.calls[0]![1].signal as AbortSignal;
     rerender({ api: client(vi.fn().mockResolvedValue(info)) });
     expect(oldSignal.aborted).toBe(true);
-    await waitFor(() => expect(result.current.status).toBe("aligned"));
+    await waitFor(() => expect(result.current.status).toBe("compatible"));
     await act(async () => resolveOld(future));
-    expect(result.current.status).toBe("aligned");
+    expect(result.current.status).toBe("compatible");
+  });
+  it("aborts an old slot even when the API client is reused", async () => {
+    let resolveOld!: (value: unknown) => void;
+    const oldGet = vi.fn(() => new Promise((resolve) => { resolveOld = resolve; }));
+    const newGet = vi.fn().mockResolvedValue(info);
+    const api = { get: oldGet, forRuntime: (slot: string) => ({ get: slot === "primary" ? oldGet : newGet }) } as unknown as ApiClient;
+    const { result, rerender } = renderHook(({ slot }) => useRuntimeCompatibility(api, slot), {
+      initialProps: { slot: "primary" },
+    });
+    const oldSignal = oldGet.mock.calls[0]![1].signal as AbortSignal;
+    rerender({ slot: "second" });
+    expect(oldSignal.aborted).toBe(true);
+    await waitFor(() => expect(result.current.status).toBe("compatible"));
+    await act(async () => resolveOld(future));
+    expect(result.current.status).toBe("compatible");
   });
   it("preserves a mounted draft through incompatibility and recovery", async () => {
     const get = vi.fn().mockResolvedValue(info);
@@ -62,8 +77,8 @@ describe("runtime compatibility lifecycle", () => {
     expect((draft as HTMLInputElement).value).toBe("keep my draft");
     expect(useUi.getState().rendererOverlayCount).toBe(0);
   });
-  it("uses a legacy release's build SHA without displacing the workspace or repeating after reconnect", async () => {
-    const get = vi.fn().mockResolvedValue({ version: "old", build: { sha: "a".repeat(40) } });
+  it("keeps a protocol warning dismissible without displacing the workspace or repeating after reconnect", async () => {
+    const get = vi.fn().mockResolvedValue(future);
     useConnection.setState({ api: client(get) });
     const { container } = render(<RuntimeCompatibilityGate><div data-testid="workspace">Workspace</div></RuntimeCompatibilityGate>);
     const workspace = screen.getByTestId("workspace");
@@ -93,18 +108,18 @@ describe("runtime compatibility lifecycle", () => {
     render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
     await screen.findByRole("dialog", { name: "Update Matrix OS" });
     fireEvent.click(screen.getByRole("button", { name: "Later" }));
-    get.mockResolvedValue({ ...future, build: { sha: "d".repeat(40) } });
+    get.mockResolvedValue({ ...future, runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 3, maxDesktopProtocol: 3 } });
     act(() => window.dispatchEvent(new Event(RUNTIME_RECONNECTED_EVENT)));
     await screen.findByRole("dialog", { name: "Update Matrix OS" });
     fireEvent.click(screen.getByRole("button", { name: "Later" }));
     act(() => useConnection.setState({ api: client(get), runtimeSlot: "another-computer" }));
     await screen.findByRole("dialog", { name: "Update Matrix OS" });
   });
-  it("does not turn missing build provenance into a release-alignment success or a network modal", async () => {
+  it("keeps missing handshake metadata unverified and quiet", async () => {
     const get = vi.fn().mockResolvedValue({ version: "old" });
     const api = client(get);
     const { result } = renderHook(() => useRuntimeCompatibility(api));
-    await waitFor(() => expect(result.current.status).toBe("unavailable"));
+    await waitFor(() => expect(result.current.status).toBe("legacy"));
     expect(result.current.noticeKey).toBeNull();
   });
   it("does not poll and throttles focus checks to once every 15 minutes", async () => {
