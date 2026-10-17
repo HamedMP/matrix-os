@@ -42,6 +42,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
   hermesConnection?: ReturnType<typeof createHermesSettingsConnection>;
   claudeBrowserLogin?: ReturnType<typeof createClaudeSettingsLogin>;
   codexSettingsConnection?: ReturnType<typeof createCodexSettingsConnection>;
+  /** Evict the native source after canonical consent, before success publication. */
+  onLoginSucceeded?: () => void;
   piConnection?: ReturnType<typeof createPiSettingsConnection>;
   openclawConnection?: ReturnType<typeof createOpenClawSettingsConnection>;
   opencodeConnection?: ReturnType<typeof createOpenCodeSettingsConnection>;
@@ -145,6 +147,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
       if (!exact.enabled) await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: exact.id,
         enabled: true, expectedRevision: fresh.revision,
         idempotencyKey: `connect-${createHash('sha256').update(idempotencyKey).digest('hex')}` });
+      options.onLoginSucceeded?.();
     };
     return {
       harnessInstanceId: harness.id, harness: harness.harness, displayName: harness.displayName, installState: harness.installState,
@@ -172,6 +175,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           // workflow admission or fall back to another authentication process.
           if (await nativeClaudeCompletion.tryAdopt(request.idempotencyKey,
             () => registerCleanup(async () => {}))) {
+            options.onLoginSucceeded?.();
             publish({ state: 'succeeded', safeFailure: null });
             return { async cancel() {} };
           }
@@ -191,7 +195,10 @@ export async function createNativeProviderWorkflowAdapters(options: {
         if (request.kind === 'login' && request.method === 'browser') {
           if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
           return options.claudeBrowserLogin({ publish, registerCleanup,
-            onSuccess: () => nativeClaudeCompletion.complete(request.idempotencyKey) });
+            onSuccess: async () => {
+              await nativeClaudeCompletion.complete(request.idempotencyKey);
+              options.onLoginSucceeded?.();
+            } });
         }
         let releaseProfile: (() => void | Promise<void>) | undefined;
         if (request.kind !== "login" && options.profileGuard && (harness.harness === "codex" || harness.harness === "claude")) releaseProfile = await options.profileGuard.acquire(harness.harness, { kind: "write", durable: true });
@@ -375,7 +382,10 @@ export async function createNativeProviderWorkflowAdapters(options: {
           }
           try {
             if (request.kind === 'login') {
-              if (harness.harness === 'claude') await nativeClaudeCompletion.complete(request.idempotencyKey);
+              if (harness.harness === 'claude') {
+                await nativeClaudeCompletion.complete(request.idempotencyKey);
+                options.onLoginSucceeded?.();
+              }
               else await confirmNativeLogin(request.idempotencyKey, nativeLoginStartRevision, () => !codexTerminalLogin || !completionAbort.signal.aborted);
               publish({ state: 'succeeded', safeFailure: null });
               return;

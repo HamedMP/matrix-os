@@ -163,7 +163,8 @@ it("cancels while the sign-in page is preparing and removes the progress feedbac
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await act(async () => {});
   expect(client.cancel).toHaveBeenCalledWith(operation.id, expect.any(AbortSignal));
-  expect(props.onRefresh).toHaveBeenCalledOnce();
+  // Cancellation updates its local receipt without renewing unrelated providers.
+  expect(props.onRefresh).not.toHaveBeenCalled();
   expect(screen.queryByRole("status", { name: "Preparing sign-in page" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Sign in in browser/ })).toBeEnabled();
   await act(() => vi.advanceTimersByTimeAsync(2000));
