@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
+  SCOPE_RUNTIME_CODEX_VERSION,
   SCOPE_RUNTIME_HARNESS_VERSION,
   SCOPE_RUNTIME_PROFILE_DIGEST,
   SCOPE_RUNTIME_PROFILE_ID,
@@ -232,6 +233,7 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain(SCOPE_RUNTIME_PROFILE_DIGEST);
     expect(source).toContain(SCOPE_RUNTIME_PROFILE_ID);
     expect(source).toContain(SCOPE_RUNTIME_HARNESS_VERSION);
+    expect(source).toContain(`const EXPECTED_CODEX_VERSION = "${SCOPE_RUNTIME_CODEX_VERSION}"`);
     expect(source).not.toContain('EXPECTED_PROFILE_ID = "scope-runtime-proof-v1"');
     expect(source).toContain("scope_runtime_production_acceptance=passed");
     expect(source).toContain("supervisor_version=1.0.0");
