@@ -530,40 +530,15 @@ export function createChatProviderCatalogService(options: {
     refreshAiProvider = false, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
     const observationScope = options.observationScope?.(principal);
     const scope = chatCatalogDiscoveryScope(selection, observationScope);
-    const systemRuntimeReads = Promise.all(scope.readSystems.map(async (kind) => {
-      const source = options.systemRuntimeSources?.[kind];
-      if (!source) return [kind, null] as const;
-      try {
-        return [kind, await readRuntimeSnapshot(source, options.runtimeTimeoutMs)] as const;
-      } catch (_error) {
-        console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
-        return [kind, null] as const;
-      }
-    }));
-    const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
+    // Coding CLI discovery can outlast the five-second native receipt. Finish
+    // it before observing runtime/Settings authority; never retimestamp a
+    // receipt or project it against an earlier clock to extend admission.
+    const [codingResult] = await Promise.allSettled([
       scope.readCoding ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
-      scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
-      scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot(selection || observationScope ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
-      systemRuntimeReads,
     ]);
     if (codingResult.status === "rejected") {
       console.warn("[chat-providers] Coding Provider inventory unavailable");
     }
-    if (runtimeResult.status === "rejected") {
-      console.warn("[chat-providers] System Provider inventory unavailable");
-    }
-    if (aiProviderResult.status === "rejected") {
-      console.warn("[chat-providers] AI Provider inventory unavailable");
-    }
-    if (settingsResult.status === "rejected") {
-      console.warn("[chat-providers] Harness settings unavailable");
-      if (selection || (settingsResult.reason instanceof ProviderSettingsStoreError
-        && settingsResult.reason.status === 503)) {
-        throw new ProviderCatalogUnavailableError(true);
-      }
-    }
-
     const coding = codingResult.status === "fulfilled" ? codingResult.value.filter(provider => {
       const kind = codingDriverKind(provider);
       return kind !== null && scope.coding.some(driver => driver === kind);
@@ -591,6 +566,36 @@ export function createChatProviderCatalogService(options: {
       }
       seenCodingDrivers.push(instance.driverKind);
       codingInstances.push(instance);
+    }
+
+    const systemRuntimeReads = Promise.all(scope.readSystems.map(async (kind) => {
+      const source = options.systemRuntimeSources?.[kind];
+      if (!source) return [kind, null] as const;
+      try {
+        return [kind, await readRuntimeSnapshot(source, options.runtimeTimeoutMs)] as const;
+      } catch (_error) {
+        console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
+        return [kind, null] as const;
+      }
+    }));
+    const [runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
+      scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
+      scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
+      options.harnessSettingsSource?.getSnapshot(selection || observationScope ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
+      systemRuntimeReads,
+    ]);
+    if (runtimeResult.status === "rejected") {
+      console.warn("[chat-providers] System Provider inventory unavailable");
+    }
+    if (aiProviderResult.status === "rejected") {
+      console.warn("[chat-providers] AI Provider inventory unavailable");
+    }
+    if (settingsResult.status === "rejected") {
+      console.warn("[chat-providers] Harness settings unavailable");
+      if (selection || (settingsResult.reason instanceof ProviderSettingsStoreError
+        && settingsResult.reason.status === 503)) {
+        throw new ProviderCatalogUnavailableError(true);
+      }
     }
 
     const snapshot = runtimeResult.status === "fulfilled" ? runtimeResult.value : undefined;

@@ -59,6 +59,7 @@ export const OS_VIEW_FIXED_APP_APPEARANCES = {
     background: "var(--surface-info-emphasis, #3B85BA)",
     foreground: "white",
   },
+  "cloud-desktop": { icon: "monitor", iconSource: "fixed", background: "#0E3422", foreground: "#BED77B" },
   notes: {
     icon: "notebook",
     iconSource: "app",
@@ -87,6 +88,7 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   __settings__: "settings",
   __plugins__: "plugins",
   __browser__: "browser",
+  "__cloud-desktop__": "cloud-desktop",
   __notes__: "notes",
   "apps/browser/index.html": "browser",
   "apps/browser/dist/index.html": "browser",
@@ -103,6 +105,7 @@ export function osViewFixedAppAppearanceForPath(path: string) {
 
 /** Bundled artwork is independent of runtime reachability and owner icon files. */
 export function osViewBundledIconUrlForPath(path: string): string | undefined {
+  if (path === "__cloud-desktop__") return "/system-app-icons/v3/desktop.png";
   if (path === "__create-app__") return "/system-app-icons/v2/create-app.png";
   const id = OS_VIEW_FIXED_APP_ID_BY_PATH[path];
   if (!id || id === "vscode") return undefined;

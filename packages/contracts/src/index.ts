@@ -1466,3 +1466,6 @@ export * from '#chatgpt-plan-wire';
 export * from '#matrix-anthropic-connection';
 
 export * from "#chat-navigation";
+
+export * from "#remote-browser";
+export * from "#shared-browser";

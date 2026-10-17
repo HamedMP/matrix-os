@@ -104,6 +104,8 @@
     "#provider-workflows": "./src/provider-workflows.ts",
     "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
     "#app-capabilities": "./src/app-capabilities.ts",
+    "#remote-browser": "./src/remote-browser.ts",
+    "#shared-browser": "./src/shared-browser.ts",
     "#command-preview": "./src/command-preview.ts"
   },
   "main": "src/index.ts",
