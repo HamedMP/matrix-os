@@ -87,11 +87,11 @@ import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
 
-// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing workspace coordinates the canonical Chat controller, composer, credential disclosure and shared routes; this change only removes live-share callbacks. Splitting it belongs in a focused refactor.
 export function CanonicalChatWorkspace(props: ComponentProps<typeof CanonicalChatWorkspaceContent>) {
   return <BrowserPermissionReviewProvider><CanonicalChatWorkspaceContent {...props}/></BrowserPermissionReviewProvider>;
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing workspace coordinates the canonical Chat controller, composer, credential disclosure and shared routes; this change only removes live-share callbacks. Splitting it belongs in a focused refactor.
 function CanonicalChatWorkspaceContent({
   api,
   client,
