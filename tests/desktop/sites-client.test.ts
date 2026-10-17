@@ -19,7 +19,7 @@ const actions: { name: string; call: (client: SiteClient, signal: AbortSignal) =
 describe("Electron site transport error parity", () => {
   it("logs only fixed categories when normalizing known and unknown transport failures", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const bound = { patch: vi.fn().mockRejectedValueOnce(new AppError("server", { status: 409 })).mockRejectedValueOnce({ private: "visitor fields" }) };
+    const bound = { patch: vi.fn().mockRejectedValueOnce(new AppError("server", { httpStatus: 409 })).mockRejectedValueOnce({ private: "visitor fields" }) };
     const api = { forRuntime: () => bound } as unknown as ReturnType<typeof createApiClient>;
     const client = createDesktopSiteClient(api, "primary");
     await expect(client.update("launch", metadata, new AbortController().signal)).rejects.toBeInstanceOf(SiteClientError);
@@ -44,9 +44,21 @@ describe("Electron site transport error parity", () => {
     const api = createApiClient({ baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "primary", fetchFn: async () => new Response(null, { status: 404 }) });
     await expect(createDesktopSiteClient(api, "primary").get("launch", new AbortController().signal)).resolves.toBeNull();
   });
-  it("only attaches safe HTTP error status values", () => {
-    expect(new AppError("server", { status: 409 })).toHaveProperty("status", 409);
-    for (const status of [0, 200, 599.5, 600, NaN]) expect(new AppError("server", { status }).status).toBeUndefined();
-    expect(new AppError("timeout").status).toBeUndefined();
+  it.each([400, 409, 429, 599])("maps canonical HTTP status %i without changing the shared AppError contract", async (httpStatus) => {
+    const failure = new AppError("server", { httpStatus });
+    const bound = { patch: vi.fn().mockRejectedValue(failure) };
+    const api = { forRuntime: () => bound } as unknown as ReturnType<typeof createApiClient>;
+    const client = createDesktopSiteClient(api, "primary");
+    const error: unknown = await client.update("launch", metadata, new AbortController().signal).catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(SiteClientError);
+    expect(error).toHaveProperty("status", httpStatus);
+    expect(failure).not.toHaveProperty("status");
+  });
+  it.each([undefined, 0, 200, 599.5, 600, NaN])("preserves errors without safe canonical HTTP status %s", async (httpStatus) => {
+    const failure = new AppError("server", httpStatus === undefined ? undefined : { httpStatus });
+    const bound = { patch: vi.fn().mockRejectedValue(failure) };
+    const api = { forRuntime: () => bound } as unknown as ReturnType<typeof createApiClient>;
+    const client = createDesktopSiteClient(api, "primary");
+    await expect(client.update("launch", metadata, new AbortController().signal)).rejects.toBe(failure);
   });
 });
