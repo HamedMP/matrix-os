@@ -1,3 +1,5 @@
+import { BrowserPermissionCard, type BrowserPermissionClient } from "@matrix-os/ui";
+import { browserCanonicalDecision, type BrowserPermissionChoice, type CanonicalChatApprovalView } from "@matrix-os/contracts";
 import {
   CanonicalChatRunIdSchema,
   canonicalChatApprovalOutcome,
@@ -5,6 +7,7 @@ import {
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
 import { Button } from "@/components/ui/button";
+import { useState } from "react";
 
 const APPROVAL_DECISIONS = new Set<CanonicalChatApprovalDecision>([
   "approve", "approve_for_session", "decline", "cancel",
@@ -19,6 +22,8 @@ interface CanonicalApprovalView {
   allowedDecisions: CanonicalChatApprovalDecision[];
   pending: boolean;
   decision?: CanonicalChatApprovalDecision;
+  browserApproval?: CanonicalChatApprovalView["browserApproval"];
+  browserGrant?: CanonicalChatApprovalView["browserGrant"];
 }
 
 export function canonicalApproval(message: ChatMessage): CanonicalApprovalView | null {
@@ -43,16 +48,34 @@ function approvalLabel(decision: CanonicalChatApprovalDecision): string {
 
 export function CanonicalApprovalMessage({
   message,
+  chatId,
   submitting,
   onSubmit,
+  browserPermissions,
+  onOpenPermissionMode,
 }: {
   message: ChatMessage;
+  chatId?: string;
+  browserPermissions?: BrowserPermissionClient;
+  onOpenPermissionMode?: () => void;
   submitting: boolean;
-  onSubmit?: (runId: string, approvalId: string, decision: CanonicalChatApprovalDecision) => Promise<void>;
+  onSubmit?: (runId: string, approvalId: string, decision: CanonicalChatApprovalDecision, browserChoice?: BrowserPermissionChoice) => Promise<void>;
 }) {
+  const [failed, setFailed] = useState<{ runId: string; approvalId: string } | null>(null);
   const approval = canonicalApproval(message);
   if (!approval) {
     return <div className="rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">{message.content}</div>;
+  }
+  if (approval.browserApproval) return <BrowserPermissionCard chatId={chatId} approval={approval as CanonicalChatApprovalView} submitting={submitting} client={browserPermissions} onOpenPermissionMode={onOpenPermissionMode}
+    onDecision={onSubmit ? choice => onSubmit(approval.runId, approval.approvalId, browserCanonicalDecision(choice), choice) : undefined}/>;
+  async function submitGeneric(decision: CanonicalChatApprovalDecision) {
+    if (!approval || !onSubmit) return;
+    setFailed(null);
+    try { await onSubmit(approval.runId, approval.approvalId, decision); }
+    catch (error: unknown) {
+      console.warn("[chat] Approval submission failed", error instanceof Error ? error.name : "UnknownError");
+      setFailed({ runId: approval.runId, approvalId: approval.approvalId });
+    }
   }
   return (
     <div className="space-y-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
@@ -69,13 +92,14 @@ export function CanonicalApprovalMessage({
               size="sm"
               variant={decision === "approve" || decision === "approve_for_session" ? "default" : "outline"}
               disabled={submitting}
-              onClick={() => void onSubmit(approval.runId, approval.approvalId, decision)}
+              onClick={() => void submitGeneric(decision)}
             >
               {approvalLabel(decision)}
             </Button>
           ))}
         </div>
       ) : <p className="text-muted-foreground">{approval.pending ? "Approval unavailable" : canonicalChatApprovalOutcome(approval.decision)}</p>}
+      {approval.pending && failed?.runId === approval.runId && failed.approvalId === approval.approvalId ? <p role="alert">Could not submit approval. Try again.</p> : null}
     </div>
   );
 }

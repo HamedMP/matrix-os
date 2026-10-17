@@ -1,3 +1,5 @@
+import { createBrowserPermissionClient, type BrowserPermissionClient } from "@matrix-os/ui";
+import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
 import { markChatNavigation } from "@matrix-os/ui";
 import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
@@ -45,6 +47,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface CanonicalShellChatClient {
   agents?: ChatAgentClient;
+  browserPermissions?: BrowserPermissionClient;
   navigation?():Promise<CanonicalChatNavigationResponse>;
   list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
@@ -66,6 +69,7 @@ export interface CanonicalShellChatClient {
     decision: CanonicalChatApprovalDecision,
     clientRequestId: string,
     actionDigest?: string,
+    browserApproval?: CanonicalSubmitChatApprovalRequest["browserApproval"],
   ): Promise<CanonicalChatApprovalSubmissionResponse>;
 }
 
@@ -180,6 +184,7 @@ export function createCanonicalShellChatClient(options: {
   }).then(jsonResponse);
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
   return {
+    browserPermissions: createBrowserPermissionClient((path, method, body) => request(path, { method, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) })),
     agents: createChatAgentClient((path, method, body) => request(path, { method,
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     })),
@@ -333,13 +338,14 @@ export function createCanonicalShellChatClient(options: {
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
       ));
     },
-    async submitApproval(chatId, runId, approvalId, decision, clientRequestId, actionDigest) {
+    async submitApproval(chatId, runId, approvalId, decision, clientRequestId, actionDigest, browserApproval) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
       const parsedApprovalId = safeReference(approvalId);
       const body = CanonicalSubmitChatApprovalRequestSchema.parse({
         clientRequestId: CanonicalChatRequestIdSchema.parse(clientRequestId),
         decision: CanonicalChatApprovalDecisionSchema.parse(decision),
+        ...(browserApproval ? { browserApproval } : {}),
         ...(actionDigest !== undefined ? { actionDigest } : {}),
       });
       return CanonicalChatApprovalSubmissionResponseSchema.parse(await request(

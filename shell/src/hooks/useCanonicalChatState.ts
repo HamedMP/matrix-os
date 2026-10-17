@@ -1,4 +1,5 @@
 "use client";
+import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 
 import {
   generatedChatTitle,
@@ -619,6 +620,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     runId: string,
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
+    browserChoice?: BrowserPermissionChoice,
   ) => {
     if (!isCurrent()) return false;
     const current = detailRef.current;
@@ -630,13 +632,16 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     try {
       const approval = canonicalChatApprovals(current).find(item =>
         item.pending && item.runId === runId && item.approvalId === approvalId);
+      const browserInput = browserChoice ? browserPermissionRequest(approval, browserChoice, requestId()) : undefined;
+      if (approval?.browserApproval && !browserInput) throw new Error("Browser scope required");
       await client.submitApproval(
         current.record.chat.id,
         runId,
         approvalId,
-        decision,
-        requestId(),
+        browserInput?.decision ?? decision,
+        browserInput?.clientRequestId ?? requestId(),
         approval?.actionDigest,
+        browserInput?.browserApproval,
       );
       if (!isCurrent()) return false;
       await loadDetail(current.record.chat.id);
@@ -743,6 +748,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     connected,
     queue: [],
     agentClient: authority.agentClient,
+    browserPermissions: client.browserPermissions,
     agentSummaryClient: authority.summaryClient,
     authorityKey: navigationIdentity,
     composerIdentity,

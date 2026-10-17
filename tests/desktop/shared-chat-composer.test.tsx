@@ -178,6 +178,7 @@ function Harness({
   initialValue = "",
   controlledValue,
   draftScopeKey,
+  permissionModeRequest,
   initialReferenceTokens = [],
   onNewChat,
   disabled = false,
@@ -191,6 +192,7 @@ function Harness({
   initialValue?: string;
   controlledValue?: string;
   draftScopeKey?: string;
+  permissionModeRequest?: number;
   initialReferenceTokens?: ComposerReferenceToken[];
   onNewChat?: () => void;
   disabled?: boolean;
@@ -206,6 +208,7 @@ function Harness({
       value={controlledValue ?? value}
       onChange={setValue}
       draftScopeKey={draftScopeKey}
+      permissionModeRequest={permissionModeRequest}
       referenceTokens={referenceTokens}
       onReferenceTokensChange={setReferenceTokens}
       onSubmit={onSubmit}
@@ -1003,6 +1006,20 @@ it('waits for the committed editable DOM before consuming focus when the browser
   await waitFor(() => expect(editor.getAttribute('contenteditable')).toBe('true'));
   await waitFor(() => expect(document.activeElement).toBe(editor));
  } finally {focus.mockRestore();}
+});
+
+it("reopens narrow permission settings after closing the previous request", async () => {
+  const measure = vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function(this: HTMLElement) {
+    return (this.closest('[data-slot="composer-secondary-controls"]') ? [] : [{ width: 32, height: 32 }]) as unknown as DOMRectList;
+  });
+  try {
+    const view = render(<Harness permissionModeRequest={1}/>);
+    await screen.findByRole("dialog", { name: "Chat settings" });
+    fireEvent.click(screen.getByRole("button", { name: "Chat settings" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Chat settings" })).toBeNull());
+    view.rerender(<Harness permissionModeRequest={2}/>);
+    await screen.findByRole("dialog", { name: "Chat settings" });
+  } finally { measure.mockRestore(); cleanup(); }
 });
 it("exposes Attach files for a recipe Bot using shared capabilities while its private adapter stays out of the picker", () => {
   const onAttach = vi.fn();

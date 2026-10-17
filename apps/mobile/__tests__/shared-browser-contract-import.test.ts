@@ -1,4 +1,4 @@
-import { SharedBrowserActionSchema, BrowserApprovalIntentSchema } from "@matrix-os/contracts";
+import { SharedBrowserActionSchema, BrowserApprovalIntentSchema, browserPermissionRequest } from "@matrix-os/contracts";
 import { BotToolRequestSchema } from "@matrix-os/contracts/bots";
 
 describe("mobile shared Chrome contract imports", () => {
@@ -10,6 +10,10 @@ describe("mobile shared Chrome contract imports", () => {
 
   it("loads supervised browser permission contracts through the public entrypoint", () => {
     expect(BrowserApprovalIntentSchema.parse({ kind: "shared_chrome", decision: "allow_once", leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1 }).decision).toBe("allow_once");
+  });
+
+  it("refuses a stale browser card through the public presentation entrypoint", () => {
+    expect(() => browserPermissionRequest(undefined, "allow_once", "req_stale")).toThrow("Approval unavailable");
   });
 
   it("keeps arbitrary evaluation out of mobile bot browser requests", () => {

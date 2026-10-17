@@ -1,4 +1,6 @@
 "use client";
+import type { BrowserPermissionClient } from "@matrix-os/ui";
+import type { BrowserPermissionChoice } from "@matrix-os/contracts";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import type { ChatAgentClient, ChatCollaborationView } from "@matrix-os/ui";
@@ -37,6 +39,7 @@ export interface ChatState {
   displayedThroughSeq?: number;
   updateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
   agentClient?: ChatAgentClient;
+  browserPermissions?: BrowserPermissionClient;
   agentSummaryClient?: ChatAgentClient;
   authorityKey?: string;
   composerIdentity?: object;
@@ -77,6 +80,7 @@ export interface ChatState {
     runId: string,
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
+    browserChoice?: BrowserPermissionChoice,
   ) => Promise<boolean>;
 }
 
