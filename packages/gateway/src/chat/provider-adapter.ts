@@ -1,4 +1,5 @@
 import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "@matrix-os/contracts";
+import { PlaintextToolPreviewSchema } from "./plaintext-tool-preview.js";
 import {
   UserInputQuestionListSchema,
   AgentAttachmentSchema,
@@ -35,8 +36,10 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("assistant.attachment"),
     attachment: AgentAttachmentSchema,
   }).strict(),
-  CanonicalChatAgentActivityPayloadSchema.extend({
+  CanonicalChatAgentActivityPayloadSchema.safeExtend({
     type: z.literal("agent.activity"),
+    // Ingestion remains coarse; complete owner commands arrive encrypted.
+    preview: PlaintextToolPreviewSchema,
   }).strict(),
   z.object({
     type: z.literal("tool.progress"),

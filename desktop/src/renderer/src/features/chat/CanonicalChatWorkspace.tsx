@@ -1,5 +1,6 @@
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
+import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { projectContext } from "./canonical-project-context";
@@ -68,7 +69,6 @@ import { searchGlobalChatResources } from "./chat-resource-search";
 import ConversationContextPicker from "./ConversationContextPicker";
 import {
   SharedChatComposer,
-  supportsNativeFileAttachments,
   type SharedChatComposerSubmission,
 } from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
@@ -296,6 +296,7 @@ function CanonicalChatWorkspaceContent({
   const botExecution = useBotExecution(directBotId, client.agents, providerCatalog, botEventRevision);
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const botPresentation = botExecution.presentation;
+  const attachmentPolicy = chatAttachmentComposerPolicy(providerCatalog, directBotId ? botExecution.agent?.selection : providerSelection, botPresentation?.kind === "recipe");
   const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
   const botRouteAvailable = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const permissionResources = directBotId ? botExecution.consentResources : mentionResources;
@@ -499,7 +500,6 @@ function CanonicalChatWorkspaceContent({
   };
 
   const submit = async (submission: SharedChatComposerSubmission) => {
-    const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       !selection
       || (!directBotId && providerCatalogLoading)
@@ -507,12 +507,8 @@ function CanonicalChatWorkspaceContent({
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
     ) return;
-    if (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance)) {
-      setSubmissionError(chatSendFailureMessage(
-        "The selected provider does not support file attachments.",
-      ));
-      return;
-    }
+    const attachmentError = attachmentPolicy.error(attachments.items.map(item => item.file));
+    if (attachmentError) { setSubmissionError(chatSendFailureMessage(attachmentError)); return; }
     setSubmissionError(null);
     const runtimeGeneration = captureRuntimeGeneration();
     const providerCatalogGeneration = useConnection.getState().providerCatalogGeneration;
@@ -576,7 +572,6 @@ function CanonicalChatWorkspaceContent({
   };
 
   const submitQueueAction = async (submission: SharedChatComposerSubmission) => {
-    const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       (!activeRun && !editingQueuedTurn && !mentionResources.length)
       || !controller.detail
@@ -585,8 +580,9 @@ function CanonicalChatWorkspaceContent({
       || !selectionAvailable
       || composerAction
       || uploadingAttachments
-      || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
     ) return;
+    const attachmentError = attachmentPolicy.error(attachments.items.map(item => item.file));
+    if (attachmentError) { setSubmissionError(chatSendFailureMessage(attachmentError)); return; }
     const runtimeGeneration = captureRuntimeGeneration();
     const providerCatalogGeneration = useConnection.getState().providerCatalogGeneration;
     const sequence = ++submissionSequence.current;
@@ -774,6 +770,7 @@ function CanonicalChatWorkspaceContent({
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
+        attachmentsEnabled={attachmentPolicy.enabled}
         automaticRouting={botPresentation?.kind === "recipe"}
         botControls={directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={client.agents} catalog={providerCatalog} catalogLoading={providerCatalogLoading} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} zIndex={DESKTOP_Z_INDEX.popover} disabled={uploadingAttachments} refreshKey={botEventRevision} onChanged={() => setBotEventRevision(value => value + 1)}/> : undefined}
         providerCatalogLoading={!directBotId && providerCatalogLoading}

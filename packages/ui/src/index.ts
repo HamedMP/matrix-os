@@ -46,7 +46,7 @@ export {
   deriveCanonicalProviderChoices,
   orderCanonicalProviderInstancesForDefault,
 } from "./canonical-provider-choice.js";
-export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath } from "./provider-projection-paths.js";
+export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath, providerSettingsManagedCreditPath } from "./provider-projection-paths.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 export {
   ChatEventFrameTooLarge,
@@ -253,3 +253,9 @@ export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus } from "./b
 export { BrowserPermissionCard } from "./browser-permission/BrowserPermissionCard.js";
 export { createBrowserPermissionClient, type BrowserPermissionClient } from "./browser-permission/client.js";
 export { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "./browser-permission/BrowserPermissionReview.js";
+
+export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./chat/attachment-input.js";
+
+export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
+
+export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";

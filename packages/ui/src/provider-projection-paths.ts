@@ -8,3 +8,6 @@ export function providerSettingsSnapshotPath(refresh = false): string {
 }
 
 export const providerSettingsActionsPath = "/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeMatrixAnthropicConnection=true";
+
+/** Fixed owner-only funding observation; no provider discovery options. */
+export const providerSettingsManagedCreditPath = "/api/ai/provider-settings/managed-credit";

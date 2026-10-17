@@ -1021,3 +1021,10 @@ it("reopens narrow permission settings after closing the previous request", asyn
     await screen.findByRole("dialog", { name: "Chat settings" });
   } finally { measure.mockRestore(); cleanup(); }
 });
+it("exposes Attach files for a recipe Bot using shared capabilities while its private adapter stays out of the picker", () => {
+  const onAttach = vi.fn();
+  render(<SharedChatComposer value="" onChange={vi.fn()} onSubmit={vi.fn()} catalog={catalogFixture()}
+    selection={{ instanceId: "matrix_bot_default", model: "auto", options: [], interactionMode: "default", permissionMode: "default" }} onSelectionChange={vi.fn()} instanceLocked={false}
+    automaticRouting attachmentsEnabled onAttach={onAttach}/>);
+  fireEvent.click(screen.getByRole("button", { name: "Attach files" })); expect(onAttach).toHaveBeenCalledOnce();
+});
