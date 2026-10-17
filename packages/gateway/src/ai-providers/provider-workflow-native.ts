@@ -295,8 +295,11 @@ export async function createNativeProviderWorkflowAdapters(options: {
           completionAbort.abort();
           commandCompletion?.stop();
           try {
-            if (finishTask) { await finishTask; return; }
-            await terminate();
+            // finish may yield to cancellation while releasing its profile lease.
+            // Await the confirmed exit, then drain any resources it left behind.
+            if (finishTask) await finishTask;
+            else await terminate();
+            if (stopped) return;
             stopped = true;
             if (timer) clearTimeout(timer);
             stream?.close();
