@@ -125,8 +125,8 @@ it("refreshes other native cards after confirmed Undo even when Chat records are
   }
   render(<Cards/>);
   await waitFor(() => expect(screen.getAllByText("Undo")).toHaveLength(2));
-  fireEvent.press(screen.getAllByText("Undo")[0]!);
-  await waitFor(() => expect(screen.queryAllByText("Undo")).toHaveLength(0));
+  await act(async () => { fireEvent.press(screen.getAllByText("Undo")[0]!); });
+  expect(screen.queryAllByText("Undo")).toHaveLength(0);
 });
 it("ignores an old decision response after changing Chat", async () => {
   let finish!: (response: Response) => void;
