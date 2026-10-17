@@ -1,7 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import type { ChatDatabase } from "./database.js";
 /** Additive owner-DB metadata only. Never stores actions, page contents or bearer values. */
-export async function bootstrapBrowserApprovalMetadata(db: Kysely<ChatDatabase>): Promise<void> {
+export async function bootstrapBrowserApprovalMetadata<Database extends ChatDatabase>(db: Kysely<Database>): Promise<void> {
   await db.transaction().execute(async trx => {
     await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
     await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
