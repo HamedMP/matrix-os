@@ -9,7 +9,7 @@ export const BotProviderConnectionSchema = z.object({
   id: BotProviderConnectionIdSchema, providerId: z.enum(['openai', 'anthropic']),
   executionKind: z.enum(['direct_pi', 'native_task']), availability: z.enum(['available', 'setup_required', 'unavailable']),
   unavailableReason: z.enum(['provider_access_required', 'authentication_required', 'unsupported_runtime', 'authorization_required']).optional(),
-  models: z.array(z.object({ id: canonicalReferenceId(128), displayName: z.string().min(1).max(160) }).strict()).max(128),
+  models: z.array(z.object({ id: canonicalReferenceId(128), displayName: z.string().min(1).max(160), input: z.array(z.enum(["text", "image"])).min(1).max(2).refine(input => input.includes("text") && new Set(input).size === input.length).optional() }).strict()).max(128),
   authorization: z.object({ revision, enabled: z.boolean(), background: z.boolean() }).strict(),
   coordinatorFunding: z.enum(['separate', 'subscription']),
 }).strict().superRefine((row, ctx) => {
