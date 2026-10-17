@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod/v4";
-import { isInjectedContext, LOCAL_CHAT_DISCOVERY_LIMIT, type ImportHarness } from "@matrix-os/contracts/local-chat-import";
+import { isInjectedContext, isLocalChatTitleMetadata, LOCAL_CHAT_DISCOVERY_LIMIT, type ImportHarness } from "@matrix-os/contracts/local-chat-import";
 export interface DiscoveredLocalChat {
     path: string; harness: ImportHarness; title: string; rawBytes: number; updatedAt: string; recordedDirectory?: string;
 }
@@ -19,6 +19,7 @@ function userText(record: Record<string, unknown>, harness: ImportHarness): stri
         return ["text","input_text"].includes(String(value.type)) && typeof value.text === "string" ? [value.text] : [];
     }).join("\n") : undefined;
     if (harness === "codex" && isInjectedContext(text)) return;
+    if (isLocalChatTitleMetadata(harness,text)) return;
     return label(text,160);
 }
 async function metadata(source: DiscoveredLocalChat, signal: AbortSignal): Promise<DiscoveredLocalChat & {sessionId?: string; subagent?: boolean}> {

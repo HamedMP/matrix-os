@@ -2,6 +2,7 @@ import React from "react";
 import { CheckCircle2, ChevronRight, X } from "lucide-react";
 import { ChatImportSourceIcon } from "../chat/ChatImportSource.js";
 import { importBytes, type ImportItem } from "./import-state.js";
+import { importProgressPresentation } from "./import-progress.js";
 export function ImportChatRow({ item, busy, single, onTitle, onRemove, onOpen }: {
     item: ImportItem; busy: boolean; single: boolean;
     onTitle(title: string): void; onRemove(): void; onOpen?: (chatId: string, title: string) => void;
@@ -28,24 +29,21 @@ export function ImportChatRow({ item, busy, single, onTitle, onRemove, onOpen }:
     </li>;
 }
 
-function percentUploaded(item: ImportItem) {
-    const progress = item.progress;
-    return progress ? Math.min(100, Math.max(0, Math.round(progress.uploadedBytes / progress.totalBytes * 100))) : 0;
-}
 function importStatus(item: ImportItem) {
     switch (item.status) {
         case "imported": return "In Matrix";
         case "failed": return "Needs retry";
         case "reading": return "Reading transcript…";
-        case "importing": return item.progress?.phase === "verifying" ? "Building chat…" : `Uploading ${percentUploaded(item)}%`;
+        case "importing": return importProgressPresentation(item.progress,item.preview.rawBytes).status;
         default: return "Ready to import";
     }
 }
 function ImportTransfer({item}: {item: ImportItem}) {
     const {preview,progress} = item;
-    return <div className="matrix-import-transfer" role="status">
-        <p>{progress?.phase === "verifying" ? "Verifying the original and building your private chat…" : `${importBytes(progress?.uploadedBytes ?? 0)} of ${importBytes(preview.rawBytes)} uploaded`}</p>
-        <progress aria-label={`Upload progress for ${item.title}`} max={100} value={percentUploaded(item)}/>
+    const presentation = importProgressPresentation(progress,preview.rawBytes);
+    return <div className="matrix-import-transfer" role="status" aria-busy="true">
+        <p>{presentation.detail}</p>
+        <progress aria-label={`${presentation.progressLabel} for ${item.title}`} max={100} value={presentation.percent}/>
     </div>;
 }
 function ImportDetails({item}: {item: ImportItem}) {
