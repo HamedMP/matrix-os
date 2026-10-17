@@ -2,6 +2,7 @@ import { CollaborationOperationSchema, type CollaborationOperation } from "@matr
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { CollaborationAuthorizationError } from "./authority-error.js";
 import {
   appendMutationRecords,
   CollaborationRepositoryError,
@@ -81,7 +82,7 @@ export interface ProjectDeletionDriver {
 
 export function createCollaborationProjectLifecycle(options: {
   db: Kysely<OwnerCollaborationDatabase>;
-  stageTransfer: ProjectTransferStager;
+  stageTransfer?: ProjectTransferStager;
   deleteProject: ProjectDeletionDriver;
   now?: () => Date;
   externalTimeoutMs?: number;
@@ -94,6 +95,9 @@ export function createCollaborationProjectLifecycle(options: {
   }
 
   async function apply(input: CollaborationProjectLifecycleInput): Promise<CollaborationOperation> {
+    if (input.type === "transfer" && !options.stageTransfer) {
+      throw new CollaborationAuthorizationError("unavailable", "Project transfer is unavailable");
+    }
     if (input.type === "archive" || input.type === "restore") {
       return applyImmediate(input);
     }
@@ -233,6 +237,8 @@ export function createCollaborationProjectLifecycle(options: {
   async function resumeJournal(journal: Journal): Promise<CollaborationOperation> {
     try {
       if (journal.operation.type === "transfer") {
+        const stageTransfer = options.stageTransfer;
+        if (!stageTransfer) throw new CollaborationAuthorizationError("unavailable", "Project transfer is unavailable");
         const successorActorId = journal.successorActorId;
         if (!successorActorId || journal.expectedSuccessorRevision === undefined) {
           throw new CollaborationRepositoryError("conflict", "Transfer journal is incomplete");
@@ -247,7 +253,7 @@ export function createCollaborationProjectLifecycle(options: {
             })
           : null;
         const transfer = persistedTransfer ?? TransferResultSchema.parse(
-          await runBounded(externalTimeoutMs, (signal) => options.stageTransfer({
+          await runBounded(externalTimeoutMs, (signal) => stageTransfer({
             scopeId: journal.operation.scopeId,
             projectId: journal.projectId,
             operationId: journal.operation.id,

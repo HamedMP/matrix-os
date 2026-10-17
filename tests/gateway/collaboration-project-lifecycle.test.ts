@@ -31,6 +31,16 @@ describe("collaboration project lifecycle", () => {
 
   afterEach(async () => fixture.destroy());
 
+  it("rejects an unconfigured transfer before fencing the project", async () => {
+    const lifecycle = createCollaborationProjectLifecycle({ db: fixture.db, deleteProject: async () => undefined });
+    await expect(lifecycle.apply({ scopeId: PROJECT_SCOPE_ID, actorId: OWNER_ID, type: "transfer",
+      clientRequestId: request(9), expectedRevision: 4, payloadHash: "f".repeat(64),
+      successorActorId: SUCCESSOR_ID, expectedMemberRevision: 1,
+    })).rejects.toMatchObject({ code: "unavailable" });
+    expect((await fixture.db.selectFrom("collaboration_scopes").select("lifecycle")
+      .where("id", "=", PROJECT_SCOPE_ID).executeTakeFirst())?.lifecycle).toBe("shared");
+  });
+
   it("archives and restores the project and every inherited child atomically", async () => {
     const lifecycle = service(fixture);
     await expect(lifecycle.apply({

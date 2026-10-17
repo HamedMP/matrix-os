@@ -9,6 +9,17 @@ import { createProjectLifecycleService } from "../../packages/gateway/src/projec
 import { withProjectLock } from "../../packages/gateway/src/state-ops.js";
 
 describe("project lifecycle", () => {
+  it("does not delete a replacement project when a caller pins another immutable ID", async () => {
+    const projectManager = await createScratch();
+    const cleanupRelatedState = vi.fn();
+    const service = createProjectLifecycleService({ projectManager, findBlockers: async () => [], cleanupRelatedState });
+    await expect(service.applyProjectLifecycleAction(principal, "customer-app", {
+      type: "delete", confirmation: "Customer app",
+    }, "proj_different_identity")).resolves.toMatchObject({ ok: false, status: 409 });
+    expect(cleanupRelatedState).not.toHaveBeenCalled();
+    expect((await projectManager.getProject("customer-app")).ok).toBe(true);
+  });
+
   let homePath: string;
   const principal = { userId: "user_123", source: "jwt" as const };
 

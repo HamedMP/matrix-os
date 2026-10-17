@@ -453,7 +453,7 @@ describe("workspace API routes", () => {
   it("requires explicit confirmation before project deletion terminates running tabs", async () => {
     const projectManager = {
       getGithubStatus: vi.fn(), createProject: vi.fn(), listManagedProjects: vi.fn(),
-      getProjectForLifecycle: vi.fn(async () => ({ ok: true as const, project: { id: "proj_repo" } })),
+      getProjectForLifecycle: vi.fn(async () => ({ ok: true as const, project: { id: "proj_repo", name: "Repo" } })),
       deleteProject: vi.fn(async () => ({ ok: true as const })), listPullRequests: vi.fn(), listBranches: vi.fn(),
     };
     const terminalRuntime = {

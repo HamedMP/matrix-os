@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { notifyCollaborationDiscoveryChanged } from "@matrix-os/ui";
 import { AppError, categoryMessage } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
 import { readSystemVersionIdentity } from "../lib/system-version";
@@ -88,6 +89,7 @@ export const useProjectLifecycle = create<ProjectLifecycleState>()((set, get) =>
     try {
       await api.post(lifecyclePath(slug), action);
       if (!isCurrentRuntimeGeneration(generation)) return false;
+      if (action.type === "delete") notifyCollaborationDiscoveryChanged();
       if (action.type !== "restore") {
         useBoard.getState().removeProjectState(slug);
         useTabs.getState().closeProjectTabs(slug);

@@ -66,7 +66,7 @@ import { createPreviewDriveWiring } from "./chat/preview-drive-wiring.js";
 import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
-import { createProjectChatCleanup } from "./chat/project-deletion.js";
+import { registerWorkspaceLifecycle } from "./server/workspace-lifecycle.js";
 import {
   CanonicalChatProviderRegistry,
   type CanonicalChatProviderAdapter,
@@ -190,12 +190,10 @@ import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
-import { createWorkspaceRoutes } from "./workspace-routes.js";
 import {
   createWorkspaceSessionOrchestrator,
   type WorkspaceSessionOrchestrator,
 } from "./workspace-session-orchestrator.js";
-import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 
 import { type Kysely } from "kysely";
@@ -1687,39 +1685,20 @@ export async function createGateway(config: GatewayConfig) {
       });
     }
   }
-  // Bind deletion and run tombstone recovery only after Chat dependencies are ready.
-  const deleteProjectChats = chatRepository && canonicalChatOrchestrator
-    ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
-    : async () => { throw new Error("Project chat cleanup unavailable"); };
-  app.route("/", createWorkspaceRoutes({
-    homePath,
-    backgroundRuntime: backgroundAgentRuntime,
-    terminalRuntime: terminalWorkspaceRuntime,
-    agentLauncher: agentCredentialLauncher,
-    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
-    eventStore: workspaceEventStore,
-    eventPublisher: workspaceEventPublisher,
-    reviewStore,
-    codingAgentThreadStore,
-    deleteProjectChats,
-    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
-    ...(gatewayCollaboration ? {
-      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
-    } : {}),
-    ...chatBoundWorkspaceRouteDeps,
-  }));
-  app.route("/api", createShellRoutes(shellRouteDeps));
-  const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
-    deleteProjectChats,
-    homePath,
-    backgroundRuntime: backgroundAgentRuntime,
-    eventPublisher: workspaceEventPublisher,
-    codingAgentThreadStore,
+  const workspaceStartupRecoveryController = await registerWorkspaceLifecycle({
+    app, shellRoutes: createShellRoutes(shellRouteDeps), chatRepository,
+    orchestrator: canonicalChatOrchestrator, collaboration: gatewayCollaboration,
+    workspace: {
+      homePath, backgroundRuntime: backgroundAgentRuntime, terminalRuntime: terminalWorkspaceRuntime,
+      agentLauncher: agentCredentialLauncher, sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+      eventStore: workspaceEventStore, eventPublisher: workspaceEventPublisher,
+      reviewStore, codingAgentThreadStore,
+      getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+      ...(gatewayCollaboration ? { projectOperationAdmission: gatewayCollaboration.projectOperationAdmission } : {}),
+      ...chatBoundWorkspaceRouteDeps,
+    },
+    recovery: { homePath, backgroundRuntime: backgroundAgentRuntime, eventPublisher: workspaceEventPublisher, codingAgentThreadStore },
   });
-  const workspaceStartupRecovery = await workspaceStartupRecoveryController.run();
-  if (workspaceStartupRecovery.status === "degraded") {
-    console.warn("[gateway] Workspace startup recovery completed with degraded steps");
-  }
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
   const workflowStore = createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity);
