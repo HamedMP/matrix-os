@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
-import { z } from "zod/v4";
 import type { SyncScope } from "@matrix-os/contracts";
 import {
   applyCommitToManifest,
@@ -35,6 +34,7 @@ import {
   buildBlobKey,
   buildFileKey,
   buildStagingKey,
+  SyncObjectTooLargeError,
   type R2Client,
 } from "./r2-client.js";
 import type { Manifest, ManifestEntry } from "./types.js";
@@ -47,24 +47,13 @@ import { awaitMirrorOperation } from "./home-mirror-abort.js";
 import { streamToBuffer } from "./home-mirror-body.js";
 import { MirrorPublicationChanged, publishMirrorManifest } from "./home-mirror-publication.js";
 import { createMirrorR2 } from "./home-mirror-r2.js";
+import { RemoteChangeMessageSchema, type RemoteChangeMessage } from "./home-mirror-protocol.js";
 
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
 const INITIAL_PUSH_CHUNK_SIZE = 50;
 const DEFAULT_TEMP_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
 const DEFAULT_TEMP_FILE_MAX_AGE_MS = 15 * 60 * 1000;
-
-const RemoteChangeFileSchema = z.object({
-  path: z.string().min(1).max(1024),
-  hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  size: z.number().int().nonnegative(),
-  action: z.enum(["add", "update", "delete"]).optional(),
-});
-const RemoteChangeMessageSchema = z.object({
-  type: z.literal("sync:change"),
-  files: z.array(RemoteChangeFileSchema).max(100),
-  peerId: z.string().min(1).max(128).optional(),
-});
 
 export interface HomeMirrorConfig {
   r2: R2Client;
@@ -125,6 +114,13 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     ? new Set(config.extraIgnoreDirs)
     : undefined;
   const maxPushBytes = config.maxPushBytes ?? DEFAULT_MAX_PUSH_BYTES;
+  // Uploads may be capped lower than downloads by the storage path (e.g. the
+  // platform broker behind the edge router). Pulls keep maxPushBytes.
+  const maxUploadBytes = (): number =>
+    Math.min(maxPushBytes, config.r2.maxPutObjectBytes ?? Number.POSITIVE_INFINITY);
+  const logUploadTooLarge = (safeRelPath: string): void => {
+    log.error(`skipping push for ${safeRelPath}: file exceeds the ${maxUploadBytes()} byte upload limit`);
+  };
   const tempCleanupIntervalMs = config.tempCleanupIntervalMs ?? DEFAULT_TEMP_CLEANUP_INTERVAL_MS;
   const tempFileMaxAgeMs = config.tempFileMaxAgeMs ?? DEFAULT_TEMP_FILE_MAX_AGE_MS;
 
@@ -318,30 +314,41 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     }
   }
 
+  // Stage the bytes and publish them as a content-addressed blob.
+  async function uploadLocalFile(localFile: Extract<LocalPushFile, { kind: "file" }>): Promise<string> {
+    const stagingId = randomUUID();
+    await r2.putObject(buildStagingKey(scope, stagingId), localFile.body);
+    const { objectKey } = await finalizeStagedObject({
+      r2,
+      scope,
+      stagingId,
+      expectedHash: localFile.hash,
+      expectedSize: localFile.size,
+      signal: lifecycle.signal,
+    });
+    return objectKey;
+  }
+
   async function publishLocalFile(safeRelPath: string): Promise<void> {
     if (ignored(safeRelPath)) return;
     const absPath = join(config.homeRoot, safeRelPath);
 
     await enqueue(async () => {
-      const localFile = await readLocalFileForPush(absPath, maxPushBytes);
+      const localFile = await readLocalFileForPush(absPath, maxUploadBytes());
       if (localFile.kind === "skip") return;
       if (localFile.kind === "too_large") {
-        log.error(
-          `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
-        );
+        logUploadTooLarge(safeRelPath);
         return;
       }
 
-      const stagingId = randomUUID();
-      await r2.putObject(buildStagingKey(scope, stagingId), localFile.body);
-      const { objectKey } = await finalizeStagedObject({
-        r2,
-        scope,
-        stagingId,
-        expectedHash: localFile.hash,
-        expectedSize: localFile.size,
-        signal: lifecycle.signal,
-      });
+      let objectKey: string;
+      try {
+        objectKey = await uploadLocalFile(localFile);
+      } catch (err: unknown) {
+        if (!(err instanceof SyncObjectTooLargeError)) throw err;
+        logUploadTooLarge(safeRelPath);
+        return;
+      }
 
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, scope);
@@ -617,12 +624,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       for (const relPath of relPathChunk) {
         const safeRelPath = normalizeRelativePath(config.userId, relPath);
         const absPath = join(config.homeRoot, safeRelPath);
-        const localFile = await readLocalFileForPush(absPath, maxPushBytes);
+        const localFile = await readLocalFileForPush(absPath, maxUploadBytes());
         if (localFile.kind === "skip") continue;
         if (localFile.kind === "too_large") {
-          log.error(
-            `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
-          );
+          logUploadTooLarge(safeRelPath);
           continue;
         }
         const snapshotEntry = snapshot.manifest.files[safeRelPath];
@@ -640,17 +645,13 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       const chunkPushed = await enqueue(async () => {
         const finalizedFiles: Array<(typeof localFiles)[number] & { objectKey: string }> = [];
         for (const local of localFiles) {
-          const stagingId = randomUUID();
-          await r2.putObject(buildStagingKey(scope, stagingId), local.file.body);
-          const finalized = await finalizeStagedObject({
-            r2,
-            scope,
-            stagingId,
-            expectedHash: local.file.hash,
-            expectedSize: local.file.size,
-            signal: lifecycle.signal,
-          });
-          finalizedFiles.push({ ...local, objectKey: finalized.objectKey });
+          try {
+            finalizedFiles.push({ ...local, objectKey: await uploadLocalFile(local.file) });
+          } catch (err: unknown) {
+            // One file the storage path cannot carry must not fail the chunk.
+            if (!(err instanceof SyncObjectTooLargeError)) throw err;
+            logUploadTooLarge(local.path);
+          }
         }
         return withManifestLock(async (lockedStore) => {
           const existing = await readManifest(lockedStore, scope);
@@ -739,7 +740,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   // recentlyWritten guard suppresses the chokidar echo so we don't push it
   // back up to R2. Errors are logged per-file; one bad file doesn't stop
   // the rest. Returns after all files have been processed.
-  async function handleRemoteChange(msg: z.infer<typeof RemoteChangeMessageSchema>): Promise<void> {
+  async function handleRemoteChange(msg: RemoteChangeMessage): Promise<void> {
     // Apply policy changes before other files in the same broadcast so a
     // freshly restored or updated .syncignore governs the whole batch.
     const files = [...msg.files].sort((left, right) =>
