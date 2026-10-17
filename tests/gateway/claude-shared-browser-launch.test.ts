@@ -10,6 +10,7 @@ it("merges dedicated browser MCP with existing Matrix tools, strict config and n
   expect(config.mcpServers.matrix_shared_browser.timeout).toBeGreaterThan(SHARED_BROWSER_ACTION_DEADLINE_MS);
   expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations", "matrix_shared_browser"]);
   expect(config.mcpServers.matrix_shared_browser.env).toEqual({ MATRIX_SHARED_BROWSER_TOKEN: "${MATRIX_SHARED_BROWSER_TOKEN}", MATRIX_SHARED_BROWSER_GATEWAY_PORT: "${MATRIX_SHARED_BROWSER_GATEWAY_PORT}" });
+  expect(launch.args[launch.args.indexOf("--allowedTools") + 1]).toBe("mcp__matrix_shared_browser__shared_browser");
   expect(launch.args).toContain("--strict-mcp-config"); expect(launch.args).toContain("--no-chrome");
   expect(launch.args.join(" ")).not.toContain("a".repeat(43)); expect(launch.env.MATRIX_SHARED_BROWSER_TOKEN).toBe("a".repeat(43));
 });

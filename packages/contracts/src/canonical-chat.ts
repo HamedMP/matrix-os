@@ -1,3 +1,4 @@
+import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "./browser-chat-approval.js";
 import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "#canonical-chat-import-parts";
 import { z } from "zod/v4";
 import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";
@@ -560,11 +561,14 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     risk: z.enum(["low", "medium", "high"]),
     safeDescription: z.string().min(1).max(4_000).optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
+    browserApproval: BrowserApprovalLifecycleSchema.optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("approval.resolved"),
     approvalId: canonicalReferenceId(128),
     decision: CanonicalChatApprovalDecisionSchema,
+    browserApproval: BrowserApprovalLifecycleSchema.optional(),
+    browserGrant: BrowserGrantViewSchema.optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.requested"),

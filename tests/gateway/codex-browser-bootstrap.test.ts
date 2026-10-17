@@ -18,6 +18,7 @@ it("puts only environment-variable names in native MCP config and clears inherit
  const config=codexBrowserThreadConfig(lease);
  expect(config['mcp_servers.matrix_shared_browser'].tool_timeout_sec * 1000).toBeGreaterThan(SHARED_BROWSER_ACTION_DEADLINE_MS);
  expect(JSON.stringify(config)).not.toContain(lease.token);
+ expect(config['mcp_servers.matrix_shared_browser'].tools).toEqual({shared_browser:{approval_mode:'approve'}});
  expect(config['mcp_servers.matrix_shared_browser']).toMatchObject({env_vars:['MATRIX_SHARED_BROWSER_TOKEN','MATRIX_SHARED_BROWSER_GATEWAY_PORT'],required:true,enabled_tools:['shared_browser'],tool_timeout_sec:390});
  expect(codexBrowserChildEnvironment({BASE:'value',MATRIX_SHARED_BROWSER_TOKEN:'stale'},lease)).toEqual({BASE:'value',MATRIX_SHARED_BROWSER_TOKEN:lease.token,MATRIX_SHARED_BROWSER_GATEWAY_PORT:'4000'});
  expect(codexBrowserChildEnvironment({BASE:'value',MATRIX_SHARED_BROWSER_TOKEN:'stale',MATRIX_SHARED_BROWSER_GATEWAY_PORT:'4000'},undefined)).toEqual({BASE:'value'});
