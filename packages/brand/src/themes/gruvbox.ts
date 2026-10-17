@@ -11,7 +11,7 @@ export const gruvbox: UnifiedThemeDefinition = {
       cardForeground: "#ebdbb2",
       popover: "#32302f",
       popoverForeground: "#ebdbb2",
-      primary: "#ebdbb2",
+      primary: "#fabd2f",
       primaryForeground: "#282828",
       secondary: "#3c3836",
       secondaryForeground: "#ebdbb2",

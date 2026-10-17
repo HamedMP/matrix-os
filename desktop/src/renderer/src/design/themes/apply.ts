@@ -30,8 +30,9 @@ export function applyUnifiedTheme(themeId: string, mode: ThemeMode, custom?: Cus
       ? "dark"
       : "light";
   root.setAttribute("data-theme", effective);
-  root.setAttribute("data-theme-id", themeId === "custom" && custom ? "custom" : theme.id);
-  const vars = chromeToSemanticVars(getThemeChrome(themeId, effective, custom));
+  const paletteId = themeId === "custom" && custom ? "custom" : theme.id;
+  root.setAttribute("data-theme-id", paletteId);
+  const vars = chromeToSemanticVars(getThemeChrome(themeId, effective, custom), paletteId);
   for (const [name, value] of Object.entries(vars)) {
     root.style.setProperty(name, value);
   }
