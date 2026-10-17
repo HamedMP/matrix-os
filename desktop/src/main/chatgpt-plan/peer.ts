@@ -1,5 +1,5 @@
 import { sign } from 'node:crypto';
-import { CHATGPT_PLAN_PEER_CLOCK_SKEW_MS, CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerChallengeSchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerPollSchema, chatGptPlanPeerProof, type ChatGptPlanPeerSnapshot, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
+import { CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT, CHATGPT_PLAN_PEER_CLOCK_SKEW_MS, CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerChallengeSchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerPollSchema, chatGptPlanPeerProof, type ChatGptPlanPeerSnapshot, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
 import { logPlanFailure, PlanFailure } from './diagnostics';
 import { boundedText } from './oauth';
 export interface PlanPeerBinding {
@@ -54,7 +54,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             await response.body?.cancel();
             throw new PlanFailure(`peer_${path}`, 'http_error', response.status);
         }
-        const text = await boundedText(response, limit);
+        const text = await boundedText(response, path === "poll" ? CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT : limit);
         if (!deps.current(binding))
             throw new Error('peer changed');
         return text ? JSON.parse(text) as unknown : {};
@@ -141,7 +141,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                             catch (error: unknown) {
                                 if (controller.signal.aborted || call.signal.aborted)
                                     return;
-                                logPlanFailure('responses', error);
+                                logPlanFailure('responses', error, { requestId: request.id, runId: request.runId, computerId: request.computerId, requestClass: request.requestClass });
                                 try {
                                     await post(binding, 'reply', {
                                         ...session, id: request.id, ok: false, error: signal.aborted ? 'cancelled' : 'unavailable'

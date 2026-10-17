@@ -2,9 +2,10 @@
 export function canonicalChatToolDetail(
   metadata: string | undefined,
   output: readonly string[] | undefined,
+  command?: string,
 ): string | undefined {
   const maxChars = 16_000;
-  let detail = metadata ?? "";
+  let detail = [command, metadata].filter(Boolean).join("\n\n");
   for (const chunk of output ?? []) {
     const next = `${detail ? "\n\n" : ""}${chunk}`;
     if (detail.length + next.length > maxChars) {
