@@ -25,7 +25,8 @@ it("shows zero ordinary Chat credit with a positive speech-inclusive total", () 
   freeze(); const s = source();
   render(<GatewayPanel source={s} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false}
     canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
-  expect(screen.getByText("Chat credit available")).toBeVisible();
+  expect(screen.getByText("Chat credit", { exact: true })).toBeVisible();
+  expect(screen.queryByText("Chat credit available")).toBeNull();
   expect(screen.getByText("$0.00")).toBeVisible();
   expect(screen.queryByText("$1.00")).toBeNull();
   expect(screen.queryByText(/voice credit/i)).toBeNull();

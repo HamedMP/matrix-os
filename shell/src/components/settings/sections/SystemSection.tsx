@@ -1,5 +1,6 @@
 "use client";
 
+import { OwnerManagedUpdateNotice } from "@matrix-os/ui";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +48,7 @@ interface HealthStatus {
 }
 
 interface SystemUpdateStatus {
+  managedByOwner?: boolean;
   channel?: string;
   latest?: {
     version?: string;
@@ -116,6 +118,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   const [info, setInfo] = useState<SystemInfo>({});
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [updateStatus, setUpdateStatus] = useState<SystemUpdateStatus | null>(null);
+  const updatesManagedByOwner = updateStatus?.managedByOwner === true;
   const [selectedChannel, setSelectedChannel] = useState<ReleaseChannel>("stable");
   const [releaseList, setReleaseList] = useState<SystemReleaseList | null>(null);
   const [releaseLoading, setReleaseLoading] = useState(false);
@@ -466,7 +469,10 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
               System upgrades are locked until billing is active.
             </div>
           )}
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+          {updatesManagedByOwner && (
+            <OwnerManagedUpdateNotice className="text-xs text-muted-foreground"/>
+          )}
+          {!updatesManagedByOwner && <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <div className="space-y-1.5">
               <label htmlFor="release-channel" className="text-xs font-medium text-muted-foreground">
                 Release channel
@@ -491,7 +497,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
             >
               {releaseLoading ? "Checking..." : "Check"}
             </button>
-          </div>
+          </div>}
 
           <div className="grid gap-2 text-sm">
             <div className="flex items-center justify-between gap-3">
@@ -540,7 +546,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
           )}
           {resolvedUpdate.autoApplying && (
             <p className="text-xs text-red-600 font-medium pt-1">
-              This is a security update scheduled for automatic installation. Use the button below if it hasn't taken effect.
+              This is a security update scheduled for automatic installation. Use the button below if it hasn&apos;t taken effect.
             </p>
           )}
           {updateFailureNotice && (
@@ -638,7 +644,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
             </p>
           )}
 
-          <Separator />
+          {!updatesManagedByOwner && <><Separator />
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -695,7 +701,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
                 );
               })}
             </div>
-          </div>
+          </div></>}
         </CardContent>
       </Card>
 
