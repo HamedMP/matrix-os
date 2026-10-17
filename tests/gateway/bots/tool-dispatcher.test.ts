@@ -175,7 +175,7 @@ describe("bot provider instance", () => {
     expect(catalog.drivers.map((driver) => driver.kind)).toEqual(["hermes", "matrix_bot"]);
     expect(catalog.instances).toEqual([expect.objectContaining({
       id: "matrix_bot_default", driverKind: "matrix_bot", catalogRevision: "rev_1",
-      supports: expect.objectContaining({ permissionModes: ["default"], attachments: [] }),
+      supports: expect.objectContaining({ permissionModes: ["default"], attachments: ["file", "image"] }),
     })]);
     // The served catalog itself is untouched, so no model picker lists the bot runtime.
     expect(served.instances).toEqual([]);

@@ -1,5 +1,6 @@
-import { CanonicalChatToolOutputTextSchema, type CanonicalChatContent, type CanonicalOwnerScope } from "@matrix-os/contracts";
-import { openToolOutput } from "../coding-agents/protected-tool-output.mjs";
+import { projectPlaintextToolPreview } from "./plaintext-tool-preview.js";
+import { CanonicalChatCommandPreviewSchema, CanonicalChatToolOutputTextSchema, type CanonicalChatRunActivity, type CanonicalChatContent, type CanonicalOwnerScope } from "@matrix-os/contracts";
+import { openToolPreview, openToolOutput } from "../coding-agents/protected-tool-output.mjs";
 import { redactAssistantCredentialParts, redactAssistantCredentials, redactAssistantParts, redactSharedAssistantText } from "./safe-activity-projection.js";
 
 export type OwnerToolOutputProjection = <T extends Pick<CanonicalChatContent, "record" | "activities" | "messages" | "messageDelta">>(owner: CanonicalOwnerScope, content: T) => T;
@@ -32,12 +33,24 @@ export function createOwnerToolOutputProjection(key: Buffer | undefined, runtime
         : message) } : {}),
       ...(content.activities ? { activities: content.activities.flatMap((activity) => {
         if (shared && activity.type === "assistant.delta") return [];
-        if (shared && activity.type === "agent.activity") {
-          return { ...activity,
-            ...(activity.preview ? { preview: redactSharedAssistantText(activity.preview) } : {}),
-            ...(activity.detail ? { detail: redactSharedAssistantText(activity.detail) } : {}),
-            ...(activity.summary ? { summary: redactSharedAssistantText(activity.summary) } : {}),
-          };
+        if (activity.type === "agent.activity") {
+          const { protectedPreview, ...storedCoarse } = activity;
+          const coarse = projectPlaintextToolPreview(storedCoarse);
+          const visible = !allowed ? {
+            ...coarse,
+            ...(coarse.preview ? { preview: redactSharedAssistantText(coarse.preview) } : {}),
+            ...(coarse.detail ? { detail: redactSharedAssistantText(coarse.detail) } : {}),
+            ...(coarse.summary ? { summary: redactSharedAssistantText(coarse.summary) } : {}),
+          } : coarse;
+          if (!protectedPreview || !key || !allowed || activity.kind !== "command"
+            || activity.chatId !== content.record.chat.id) return visible;
+          try {
+            const preview = CanonicalChatCommandPreviewSchema.safeParse(openToolPreview(key, activity.activityId, protectedPreview));
+            return preview.success ? { ...visible, preview: preview.data, previewKind: "command" as const } : visible;
+          } catch (error: unknown) {
+            console.warn("[chat/tool-output] Could not open protected command:", error instanceof Error ? error.name : "UnknownError");
+            return visible;
+          }
         }
         if (activity.type !== "tool.output") return activity;
         const { protectedOutput, ...coarse } = activity;
@@ -54,4 +67,13 @@ export function createOwnerToolOutputProjection(key: Buffer | undefined, runtime
         }
       }) } : {}) };
   };
+}
+
+/** General/export copies never carry the command reveal sidecar. */
+export function stripProtectedCommandPreviews(activities: CanonicalChatRunActivity[]): CanonicalChatRunActivity[] {
+  return activities.map(activity => {
+    if (activity.type !== "agent.activity") return activity;
+    const { protectedPreview: _protectedPreview, ...coarse } = activity;
+    return projectPlaintextToolPreview(coarse);
+  });
 }

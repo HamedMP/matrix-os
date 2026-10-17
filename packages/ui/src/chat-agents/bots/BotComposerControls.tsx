@@ -66,10 +66,10 @@ export function BotComposerControls({ agentId, client, catalog, catalogLoading =
     <Popover.Trigger asChild><button type="button" aria-label="Choose bot agent and model" aria-busy={!agent && !error || pending || catalogLoading}
       disabled={disabled || pending} title={`${agent?.name ?? "Your bot"} · ${routing}`} data-slot="bot-composer-model-trigger"
       onKeyDown={event => { if (event.key === "ArrowUp") { event.preventDefault(); setOpen(true); } }}
-      className="no-drag flex h-8 min-w-0 max-w-[24rem] items-center gap-1.5 rounded-lg px-2 text-xs outline-none hover:bg-[var(--bg-hover,var(--muted))] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50" style={chatAgentMutedStyle}>
+      className="no-drag flex h-8 min-w-0 max-w-[18rem] items-center gap-1.5 @max-[42rem]/chat-composer:w-8 @max-[42rem]/chat-composer:shrink-0 @max-[42rem]/chat-composer:justify-center @max-[42rem]/chat-composer:gap-0 @max-[42rem]/chat-composer:px-0 rounded-lg px-2 text-xs outline-none hover:bg-[var(--bg-hover,var(--muted))] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50" style={chatAgentMutedStyle}>
       <span className="matrix-bot-composer-avatar size-5 shrink-0"><AgentAvatar id={agentId} name={agent?.name ?? "Your bot"}/></span>
-      <span className="min-w-0 flex-1 truncate">{agent?.name ?? "Your bot"} · {routing}</span>
-      <svg aria-hidden="true" focusable="false" width="12" height="12" viewBox="0 0 24 24" className="shrink-0">
+      <span data-slot="bot-composer-model-label" className="min-w-0 flex-1 truncate @max-[42rem]/chat-composer:hidden">{agent?.name ?? "Your bot"} · {routing}</span>
+      <svg aria-hidden="true" focusable="false" width="12" height="12" viewBox="0 0 24 24" className="shrink-0 @max-[42rem]/chat-composer:hidden">
         <path d="M6 15L12 9L18 15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </button></Popover.Trigger>
