@@ -36,8 +36,9 @@ export const BRAIN_EXTRACTION_RUN_ID_PATTERN = /^xrn_[a-f0-9]{32}$/;
  * again, and the first write of the new version for a document removes that document's claims and state of every
  * other rules version in the same transaction (store.ts), so one document never holds two rules generations.
  * v2: fewer decisions under design-note sub-headings; open questions and open decisions are never claims.
+ * v3: Invariants and Next steps sub-headings of another claim section name their own kind.
  */
-export const BRAIN_RULES_VERSION = 2;
+export const BRAIN_RULES_VERSION = 3;
 /** Every rules extractor id starts with this; model ids start with `model:`. */
 export const BRAIN_RULES_EXTRACTOR_PREFIX = "rules/";
 export const BRAIN_RULES_EXTRACTOR_ID = `${BRAIN_RULES_EXTRACTOR_PREFIX}v${BRAIN_RULES_VERSION}`;
@@ -434,7 +435,7 @@ export interface BrainExtractionOptions {
 
 /**
  * runBrainExtraction never rejects: every failure is a code here and, once a run row exists, on the run.
- * extractor: the resolved id (`rules/v2`, `model:<id>/<version>`), "" when the options were invalid. run: the closed
+ * extractor: the resolved id (`rules/v3`, `model:<id>/<version>`), "" when the options were invalid. run: the closed
  * run, null when none could be opened or closing failed. caughtUp: nothing failed at run level and no pending
  * document was left behind by this run's limits. spend: on model runs whose store reported the window's spend.
  */
