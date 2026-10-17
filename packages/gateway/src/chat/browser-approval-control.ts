@@ -13,7 +13,7 @@ export type BrowserApprovalControlEvent = {
 } | { type: "approval.resolved"; approvalId: string; decision: "approve" | "decline" | "cancel";
   browserApproval: Lifecycle; browserGrant?: BrowserGrantView };
 type Authority = Pick<BrowserApprovalRepository, "reserve" | "activeGrant" | "consumeGrant" | "decide" | "consume" | "invalidateLease" | "cancelChallenge" | "revoke">;
-interface Pending { identity: BrowserApprovalIdentity; lifecycle: Lifecycle; signal: AbortSignal; submitting: boolean;
+interface Pending { identity: BrowserApprovalIdentity; lifecycle: Lifecycle; signal: AbortSignal; submitting: boolean; resolutionPublished: boolean;
   finished: boolean; finish(error?: Error): void }
 interface Receipt { identity: BrowserApprovalIdentity; lifecycle: Lifecycle; input: CanonicalSubmitChatApprovalRequest }
 interface Run { binding: SharedBrowserBinding; epoch: string; controller: AbortController; signal: AbortSignal;
@@ -77,7 +77,7 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
     const waiting = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     // Attach rejection handling before asynchronous event persistence.
     void waiting.catch(report);
-    const pending: Pending = { identity, lifecycle, signal, submitting: false, finished: false,
+    const pending: Pending = { identity, lifecycle, signal, submitting: false, resolutionPublished: false, finished: false,
       finish(error) { if (pending.finished) return; pending.finished = true; error ? reject(error) : resolve(); } };
     row.pending = pending;
     const abort = () => pending.finish(unavailable());
@@ -93,7 +93,9 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
     } finally {
       signal.removeEventListener("abort", abort);
       if (row.pending === pending) row.pending = undefined;
-      if (asked && signal.aborted) await row.publish({ type: "approval.resolved", approvalId: identity.approvalId, decision: "cancel",
+      // A committed decision can fail before consuming or publishing its result
+      // without aborting the run. End that exact visible request as interrupted.
+      if (asked && !pending.resolutionPublished) await row.publish({ type: "approval.resolved", approvalId: identity.approvalId, decision: "cancel",
         browserApproval: { ...lifecycle, resolution: now() >= expiresAt ? "expired" : "interrupted" } }).catch(report);
     }
     } finally {
@@ -130,6 +132,7 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
       await row.publish({ type: "approval.resolved", approvalId: identity.approvalId, decision: input.decision as "approve" | "decline" | "cancel",
         browserApproval: { ...pending.lifecycle, resolution: browser.decision === "allow_once" ? "allowed_once" : browser.decision === "allow_in_chat" ? "allowed_in_chat" : browser.decision === "not_now" ? "declined" : "cancelled" },
         ...(decision.grant ? { browserGrant: decision.grant } : {}) });
+      pending.resolutionPublished = true;
       pending.signal.throwIfAborted(); get(row.binding);
       if (row.receipts.size >= 64) row.receipts.delete(row.receipts.keys().next().value!);
       row.receipts.set(identity.approvalId, { identity, lifecycle: pending.lifecycle, input });
