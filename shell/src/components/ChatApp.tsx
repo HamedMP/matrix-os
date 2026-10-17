@@ -170,6 +170,7 @@ interface ChatAppProps {
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
   providerSelection?: CanonicalChatModelSelection;
+  executionControls?: import("@matrix-os/contracts").CanonicalChatExecutionControls;
   boundProviderInstanceId?: string;
   onSubmitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   onSubmitApproval?: (
@@ -208,6 +209,7 @@ function ChatAppContent({
   onRenameConversation,
   onSubmit,
   providerSelection,
+  executionControls,
   boundProviderInstanceId,
   browserPermissions, agentClient, agentSummaryClient, authorityKey, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn,
   onSubmitApproval,
@@ -297,7 +299,7 @@ function ChatAppContent({
   };
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
-  const providerState = useChatProviderState(providerSelection, boundProviderInstanceId);
+  const providerState = useChatProviderState(providerSelection, boundProviderInstanceId, { chatId: sessionId, scopeKey: authorityKey, executionControls });
   const botBinding = useDirectBotBinding(collaborationView ? undefined : sessionId, summaryClient);
   const directBotId = botBinding.agentId;
   const [botModelRevision, setBotModelRevision] = useState(0);

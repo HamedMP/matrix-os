@@ -18,6 +18,7 @@ import {
   type CanonicalSubmitChatInputRequest,
   type CanonicalChatDetailResponse,
   canonicalChatApprovals,
+  canonicalChatExecutionControls,
 } from "@matrix-os/contracts";
 import {
   createChatMentionRequestTracker,
@@ -756,6 +757,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     queuedTurns: selectedDetail?.queuedTurns ?? [],
     cancelQueuedTurn,
     providerSelection: selectedDetail?.record.chat.currentSelection,
+    executionControls: selectedDetail ? canonicalChatExecutionControls({
+      chatId: selectedDetail.record.chat.id, currentSelection: selectedDetail.record.chat.currentSelection, runs: selectedDetail.runs,
+    }) : undefined,
     boundProviderInstanceId: selectedDetail?.record.providerBinding?.instanceId,
     conversations: records.map(conversationMeta),
     navigationFresh:navigation.fresh,
