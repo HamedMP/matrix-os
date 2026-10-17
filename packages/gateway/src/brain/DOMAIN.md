@@ -135,7 +135,7 @@ folder's `DOMAIN.md` has the details.
   `brain_claims`, `brain_brief`, `brain_conflicts` and `brain_impact`. The dispatcher hands them and `brain_why`,
   bound to that caller, only to a run whose server-set `callerId` is an owner principal (the owner's shell, personal
   canonical Chat and `/api/message` runs); collaborators', shared or organization chats', channels' and background
-  runs get none. The app is `shell/src/components/brain/` (spec 563).
+  runs get none. The app is `packages/ui/src/brain/` (spec 563).
 - Wiring: `api/project-resolver.ts` (the one project lookup); `hooks.ts` (the change bus: per-scope queues capped at
   `BRAIN_HOOK_QUEUE_MAX_SCOPES`, coalesced, drained with a deadline on close); `api/start.ts` (`startBrainServices`,
   whose header gives the start order, what a failed start leaves off, the jobs and the change events;

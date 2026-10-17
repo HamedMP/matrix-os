@@ -103,8 +103,8 @@ export const BRAIN_ROUTE_CREATED_PATHS = ["/projects/:projectId/sources", "/proj
 /** 202: POST /jobs queues a run (or answers the one already queued for the same slot) and never runs it inline. */
 export const BRAIN_ROUTE_ACCEPTED_PATHS = ["/projects/:projectId/jobs"] as const;
 
-// Shell client. shell/src/components/brain/brain-api.ts implements this over createShellApiClient; DTOs are
-// mirrored there structurally (the shell cannot import the gateway). Every method takes a project id.
+// View client. packages/ui/src/brain/brain-client.ts implements this over an injected HTTP transport; DTOs are
+// mirrored there structurally (the UI package cannot import the gateway). Every method takes a project id.
 
 export interface BrainShellApi {
   // Existing.
