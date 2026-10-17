@@ -218,7 +218,7 @@ export function createChatGptPlanPeers(deps: {
             const reason = !selected ? 'unsupported_runtime' : !saved?.accountId ? 'authentication_required' : !saved.enabled || !saved.models.some(compatible) ? 'authorization_required' : undefined;
             return { id: 'matrix_chatgpt_plan', providerId: 'openai', executionKind: 'direct_pi', availability: reason ? selected && saved?.accountId ? 'setup_required' : 'unavailable' : 'available',
                 ...(reason ? { unavailableReason: reason } : {}), ...(saved?.accountId ? { accountId: saved.accountId } : {}),
-                models: saved?.accountId ? saved.models.filter(compatible).map(m => ({ id: m.id, displayName: m.displayName })) : [],
+                models: saved?.accountId ? saved.models.filter(compatible).map(m => ({ id: m.id, displayName: m.displayName, input: m.input })) : [],
                 authorization: { revision: saved?.grantRevision ?? 0, enabled: !reason, background: !reason && Boolean(saved?.background) }, coordinatorFunding: 'subscription' };
         },
         async resolve(selection: CanonicalChatModelSelection, owner: string, requestClass: 'interactive' | 'background') {

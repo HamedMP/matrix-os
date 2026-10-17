@@ -1,3 +1,4 @@
+import { PlanFailure } from "../../desktop/src/main/chatgpt-plan/diagnostics";
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { createPlanNativePeer } from '../../desktop/src/main/chatgpt-plan/peer';
@@ -86,4 +87,19 @@ describe('bounded native peer replay admission', () => {
     } finally { await x.peer.stop(); clock.mockRestore(); timeout.mockRestore(); }
   });
 
+});
+
+it('correlates the actual failed inference request and adds no success tracing', async () => {
+ const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+ const x = await fixture();
+ const failed = request(1, {runId: 'run_0123456789abcdef0123456789abcdef', computerId: '30000000-0000-4000-8000-000000000001'});
+ try {
+  x.infer.mockRejectedValueOnce(new PlanFailure('responses', 'incomplete_stream', 200, {responseType: 'response.incomplete', incompleteReason: 'max_messages'}));
+  x.queue(failed); await vi.waitFor(() => expect(x.replies).toHaveLength(1));
+  expect(warn).toHaveBeenCalledOnce();
+  const log = String(warn.mock.calls[0]?.[0]);
+  expect(log).toContain(`"requestId":"${failed.id}"`); expect(log).toContain(`"runId":"${failed.runId}"`); expect(log).toContain(`"computerId":"${failed.computerId}"`); expect(log).toContain('"requestClass":"interactive"');
+  expect(log).not.toContain('"accountId"'); expect(log).not.toContain('"body"'); expect(log).not.toContain('"model"');
+  x.queue(request(2)); await vi.waitFor(() => expect(x.replies).toHaveLength(2)); expect(warn).toHaveBeenCalledOnce();
+ } finally { await x.peer.stop(); warn.mockRestore(); }
 });

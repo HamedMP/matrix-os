@@ -43,7 +43,7 @@ export function ChatInput({
   draftRequest,
   onDraftConsumed,
   unavailablePlaceholder,
-  attachmentsEnabled,
+  attachmentsEnabled, attachmentPolicy,
   driveContextEnabled = false,
   botContext = false,
   botControls, botConsentResources = [], botRequiresFullAccess = false,
@@ -67,6 +67,7 @@ export function ChatInput({
   onDraftConsumed?: (id: number) => void;
   unavailablePlaceholder?: string;
   attachmentsEnabled: boolean;
+  attachmentPolicy?: (files: readonly File[]) => string | null;
   driveContextEnabled?: boolean;
   botContext?: boolean;
   botControls?: React.ReactNode;
@@ -145,6 +146,8 @@ export function ChatInput({
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!canSend) return;
+    const attachmentError = attachmentPolicy?.(attachments.map(item => item.file));
+    if (attachmentError) { setError(attachmentError); return; }
     const text = input.trim();
     setSending(true);
     setError(null);
@@ -168,7 +171,7 @@ export function ChatInput({
   };
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="@container/chat-composer flex flex-col gap-2">
       <ChatMentionPicker listRef={mentionListRef} onDismiss={() => { setDismissedQuery(input); textareaRef.current?.focus(); }} client={agentClient} scope={scope} query={query} resources={resources} onSelect={(resource) => {
         const text = input.replace(/@[^\s@]*$/, "");
         const insert = () => { composer.setResources([...resources, resource]); setInput(text); textareaRef.current?.focus(); };
