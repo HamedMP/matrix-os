@@ -103,6 +103,21 @@ it("fails closed without hanging if resolution persistence fails after consumpti
   await expect(s.control.submit(decision(s))).rejects.toThrow();
   await vi.waitFor(() => expect(settled).toBe(true), { timeout: 500 });
   expect(await pending).toBeInstanceOf(Error); expect(s.authority.consume).toHaveBeenCalledOnce();
+  expect(s.events[1]).toMatchObject({ type: "approval.resolved", decision: "cancel", browserApproval: { resolution: "interrupted" } });
+});
+it("ends a published approval when consumed authority fails, then accepts a fresh request", async () => {
+  const s = setup();
+  const pending = s.control.authorizeAction({ binding, action: { action: "snapshot" }, signal: s.controller.signal }).catch(error => error);
+  await vi.waitFor(() => expect(s.events).toHaveLength(1));
+  s.authority.consume.mockRejectedValueOnce(new Error("Synthetic storage failure"));
+  await expect(s.control.submit(decision(s))).rejects.toThrow();
+  expect(await pending).toBeInstanceOf(Error);
+  expect(s.events[1]).toMatchObject({ type: "approval.resolved", decision: "cancel", browserApproval: { resolution: "interrupted" } });
+  const fresh = s.control.authorizeAction({ binding, action: { action: "snapshot" }, signal: s.controller.signal });
+  await vi.waitFor(() => expect(s.events).toHaveLength(3));
+  const next = decision({ ...s, events: [s.events[2]!] });
+  await s.control.submit(next); await fresh;
+  expect(s.events[3]).toMatchObject({ type: "approval.resolved", browserApproval: { resolution: "allowed_once" } });
 });
 it("never releases approval if the run stops during its consumption", async () => {
   const s = setup();
