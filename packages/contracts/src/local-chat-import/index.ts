@@ -5,6 +5,7 @@ export { readLocalChatJsonl } from "#local-chat-import/jsonl";
 export type { LocalChatSourceEntry, LocalChatSourceRecord, LocalChatSourceIssue } from "#local-chat-import/jsonl";
 export { reconstructLocalChat } from "#local-chat-import/reconstruct";
 export { isInjectedContext } from "#local-chat-import/blocks";
+export { isLocalChatTitleMetadata } from "#local-chat-import/title";
 export type { ImportHarness, ImportProjection, ImportSource, ImportBlock, ImportConversation } from "#local-chat-import/types";
 
 export { uploadLocalChatArchive, LocalChatTransferError } from "#local-chat-import/client";

@@ -3,6 +3,7 @@ import { MessageSquare, RefreshCw, Search } from "lucide-react";
 import { type ImportHarness } from "@matrix-os/contracts/local-chat-import";
 import { ChatImportSourceIcon } from "../chat/ChatImportSource.js";
 import { importBytes, type LocalChatCandidate, type LocalChatLibraryState, type LocalImportOutcome, type LocalImportUpdate } from "./import-state.js";
+import { importProgressPresentation } from "./import-progress.js";
 const PAGE_SIZE = 100;
 export function LocalChatLibrary({library,harness,busy,results,imported,active,onPrepare,onImport,onOpen}: {
     library:LocalChatLibraryState; harness:ImportHarness | "all"; busy:boolean;
@@ -69,6 +70,7 @@ function SelectionActions({total,selected,hidden,disabled,onAll,onNone,onImport}
     </div></div>;
 }
 function QueueProgress({active,imported}:{active:LocalImportUpdate|null;imported:number}) {
-    return <>{active?<div className="matrix-import-transfer" role="status"><strong>{active.status==="reading"?"Reading":"Importing"} {active.title}</strong><p>{active.processed} of {active.total} processed · One conversation at a time</p>{active.progress?<progress max={active.progress.totalBytes || 1} value={active.progress.uploadedBytes}/>:null}</div>:null}
+    const presentation = importProgressPresentation(active?.progress,active?.progress?.totalBytes ?? 1);
+    return <>{active?<div className="matrix-import-transfer" role="status" aria-busy="true"><strong>{active.status==="reading"?"Reading":presentation.status} {active.title}</strong><p>{active.processed} of {active.total} processed · One conversation at a time</p>{active.progress?<><p>{presentation.detail}</p><progress aria-label={`${presentation.progressLabel} for selected conversation ${active.title}`} max={100} value={presentation.percent}/></>:null}</div>:null}
         {imported>0?<p className="matrix-import-completion" role="status">{imported} {imported===1?"chat":"chats"} ready in Matrix.</p>:null}</>;
 }
