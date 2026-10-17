@@ -21,6 +21,8 @@ export interface SharedBrowserPluginApi {
 interface RevokedGuard { sessionKey: string; bindingId?: string; nativeObserved: boolean }
 interface Lease extends z.infer<typeof Bind> { controller: AbortController; browserStarted: boolean; authenticated: boolean; nativeObserved: boolean; cancelledBindGuard?: RevokedGuard }
 interface Ticket { lease: Lease; toolCallId: string; expiresAt: number; input: string }
+type BindingDenial = "closed" | "run_context_missing" | "lease_missing" | "unauthenticated"
+  | "session_mismatch" | "call_context_missing" | "invalid_action" | "ticket_capacity";
 export type SharedBrowserLifecycleDiagnostic = {
   event: "bind_result" | "before_tool_call" | "agent_end" | "revoke" | "gateway_stop";
   generation: string;
@@ -79,7 +81,13 @@ export function createOpenClawSharedBrowserAuthority(options: {
     for (const [id,ticket] of tickets) if (ticket.expiresAt <= now()) tickets.delete(id); }
   let timer: ReturnType<typeof setInterval> | undefined;
   function startSweep() { timer ??= setInterval(sweep, 10_000); timer.unref(); }
-  const unavailable = { block: true, blockReason: "Use the Matrix shared browser tool after the owner resumes. Native browser and shell control are unavailable for this run." };
+  const unavailable = { block: true, blockReason: "Use the Matrix shared browser tool for this task. Native browser and shell control are unavailable for this run." };
+  const bindingUnavailable = { block: true, blockReason: "The Matrix browser binding is unavailable for this run. Ask the owner to retry this task. Native browser and shell control remain unavailable." };
+  function refuseBinding(reason: BindingDenial) {
+    // Fixed categories distinguish native binding failures without logging owner or tool data.
+    console.warn("[shared-browser-openclaw] Tool binding refused", reason);
+    return bindingUnavailable;
+  }
   const bind: Parameters<SharedBrowserPluginApi["registerGatewayMethod"]>[1] = async ({ params, respond }) => {
     let pending: Lease | undefined;
     try {
@@ -122,7 +130,14 @@ export function createOpenClawSharedBrowserAuthority(options: {
     if (name !== "shared_browser") return (context.runId && revoked.has(context.runId) && BYPASS.has(name ?? ""))
       || (lease && (name === "browser" || lease.browserStarted && BYPASS.has(name ?? ""))) ? unavailable : undefined;
     const input = SharedBrowserActionSchema.safeParse(event.params);
-    if (closed || !lease || !lease.authenticated || lease.sessionKey !== context.sessionKey || !context.toolCallId || !input.success || tickets.size + pendingActions.size >= 128) return unavailable;
+    if (closed) return refuseBinding("closed");
+    if (!context.runId) return refuseBinding("run_context_missing");
+    if (!lease) return refuseBinding("lease_missing");
+    if (!lease.authenticated) return refuseBinding("unauthenticated");
+    if (lease.sessionKey !== context.sessionKey) return refuseBinding("session_mismatch");
+    if (!context.toolCallId) return refuseBinding("call_context_missing");
+    if (!input.success) return refuseBinding("invalid_action");
+    if (tickets.size + pendingActions.size >= 128) return refuseBinding("ticket_capacity");
     if (input.data.action !== "status") lease.browserStarted = true;
     const id = randomBytes(16).toString("hex");
     tickets.set(id, { lease, toolCallId: context.toolCallId, expiresAt: Math.min(now() + 10_000, lease.expiresAt), input: JSON.stringify(input.data) });
