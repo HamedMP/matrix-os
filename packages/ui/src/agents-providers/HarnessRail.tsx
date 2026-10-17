@@ -38,12 +38,6 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
   );
 }
 
-/** Connection means a configured account/credential, not a successful model call.
- * Canonical auth/readiness remains untouched for Chat admission and account details. */
-export function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSource | undefined): string {
-  return resolvedWorkflowRowStatus(harness, source);
-}
-
 function installationWorkflowStatus(installState: string, override: string | undefined) {
   return installState === "installed" || override === "Installing" || override === "Uninstalling" ? override : undefined;
 }
