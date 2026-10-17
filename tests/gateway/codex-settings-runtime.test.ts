@@ -24,17 +24,19 @@ async function fixture(version = "0.162.1", mode = "success") {
   const home = join(root, "home"), prefix = join(root, "runtime");
   await mkdir(join(prefix, "bin"), { recursive: true }); await mkdir(join(home, ".codex"), { recursive: true, mode: 0o700 });
   const executable = join(prefix, "bin/codex");
-  // Implements only the public rust-v0.162.1 methods independently qualified
-  // against the official binary schema. Never invokes a provider or real profile.
+  await writeFile(join(home, 'version'), version);
+  await writeFile(join(home, 'requests'), '');
+  // Synthetic public auth methods match qualified retained official schemas;
+  // this fixture never invokes a provider, official binary or real profile.
   await writeFile(executable, `#!${process.execPath}
 const fs=require('node:fs'),path=require('node:path');
-if(process.argv[2]==='--version'){console.log('codex-cli ${version}');process.exit(0)}
+if(process.argv[2]==='--version'){console.log('codex-cli '+fs.readFileSync(path.join(process.env.HOME,'version'),'utf8'));process.exit(0)}
 if(process.argv.slice(2).join(' ')!=='app-server --stdio')process.exit(2);
 const profile=process.env.CODEX_HOME,auth=path.join(profile,'auth.json');
 const send=x=>console.log(JSON.stringify(x));
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);
 fs.appendFileSync(path.join(process.env.HOME,'requests'),r.method+'\\n');
-if(r.method==='initialize')send({id:r.id,result:{userAgent:'codex-cli/0.162.1'}});
+if(r.method==='initialize')send({id:r.id,result:{userAgent:'codex-cli/${version}'}});
 if(r.method==='config/read')send({id:r.id,result:{config:{cli_auth_credentials_store:'file'}}});
 if(r.method==='account/read')send({id:r.id,result:{account:fs.existsSync(auth)?{type:'chatgpt',email:'fixture@example.invalid',planType:'plus'}:null,requiresOpenaiAuth:true}});
 if(r.method==='account/rateLimits/read')send({id:r.id,result:{rateLimits:null,rateLimitsByLimitId:null}});
@@ -76,10 +78,11 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
   const handoff = createProviderTerminalLoginHandoff(store, async () => { throw new Error("No Terminal handoff for device login"); });
   const app = new Hono();
   const lifecycle = await createNativeProviderWorkflowRuntime({ app, homePath: home, ownerId: "owner", getPrincipal: c => c.req.header("x-test-actor") === "other" ? { userId: "other" } : { userId: "owner" }, store: handoff, terminal: terminal as never, profileGuard: guard, inventory: async () => ({ drivers: [driver] }) }); closes.push(lifecycle.close);
-  return { app, store, home, terminal, harness, guard, rollback, proofReady, resumeCompletion };
+  return { app, store, home, terminal, harness, guard, rollback, proofReady, resumeCompletion, rotateGeneration,
+    setVersion: (value: string) => writeFile(join(home, 'version'), value) };
 }
 
-it.each(["0.156.1", "0.162.1"])("runs qualified %s Settings login through production HTTP composition, real native account/source commit, and natural receipt readback", async version => {
+it.each(["0.156.1", "0.162.1", "0.163.0"])("runs qualified %s Settings login through production HTTP composition, real native account/source commit, and natural receipt readback", async version => {
   const f = await fixture(version);
   const response = await f.app.request(`${route}/capabilities`);
   expect(response.status).toBe(200);
@@ -96,12 +99,71 @@ it.each(["0.156.1", "0.162.1"])("runs qualified %s Settings login through produc
 });
 
 
-it("keeps unqualified installed versions on Terminal without starting app-server login", async () => {
-  const f = await fixture("0.156.2");
+it.each(["0.156.2", "0.163.1"])("keeps unqualified installed %s on Terminal without starting app-server login", async version => {
+  const f = await fixture(version);
   const capabilities = await (await f.app.request(`${route}/capabilities`)).json();
   expect(capabilities[0].loginMethods).toEqual(["terminal"]);
   expect(capabilities[0].connectionOptions).not.toContainEqual(expect.objectContaining({ id: "openai_device_code" }));
   expect((await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "unqualified" }))).status).toBe(503);
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+});
+
+it.each(['start', 'writer-acquired'] as const)('rechecks exact 0.163.0 qualification at %s before native authentication', async boundary => {
+  const f = await fixture('0.163.0');
+  const acquire = f.guard.acquire.bind(f.guard);
+  const release = vi.fn();
+  const acquired = vi.spyOn(f.guard, 'acquire');
+  if (boundary === 'start') await f.setVersion('0.163.1');
+  else acquired.mockImplementationOnce(async (...args) => {
+    const drain = await acquire(...args);
+    await f.setVersion('0.163.1');
+    return async () => { release(); await drain(); };
+  });
+  const response = await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: 'openai_device_code', idempotencyKey: 'version-drift' }));
+  if (boundary === 'start') { expect(response.status).toBe(503); expect(acquired).not.toHaveBeenCalled(); }
+  else {
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ state: 'failed', safeFailure: 'unavailable' });
+    expect(acquired).toHaveBeenCalledOnce(); expect(release).toHaveBeenCalledOnce();
+  }
+  await expect(f.guard.assertReadable('codex')).resolves.toBeUndefined();
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+  expect(await readFile(join(f.home, 'requests'), 'utf8')).not.toContain('account/login/start');
+  expect((await f.store.getSnapshot()).harnesses.find(row => row.id === f.harness.id)).toMatchObject({ configuredEnabled: false, configuredAccessSourceId: 'owner_openai_key' });
+});
+
+it('recovers rotated same-email 0.163.0 native consent through explicit Settings reuse without another login', async () => {
+  const f = await fixture('0.163.0');
+  const start = async (idempotencyKey: string) => {
+    const response = await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: 'openai_device_code', idempotencyKey }));
+    expect(response.status).toBe(200);
+    const operation = await response.json();
+    await vi.waitFor(async () => expect(await (await f.app.request(`${route}/${operation.id}`)).json()).toMatchObject({ state: 'succeeded', safeFailure: null }), { timeout: 5000 });
+  };
+  const snapshot = () => f.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+  const generation = async () => JSON.parse(await readFile(f.store.configurationPath, 'utf8')).harnesses
+    .find((row: { id: string }) => row.id === f.harness.id).nativeAccountGeneration;
+  await start('initial-generation');
+  expect((await snapshot()).accessSources.find(row => row.id === 'owner_openai_profile')?.readiness.state).toBe('ready');
+  const before = await generation();
+  await f.rotateGeneration();
+  // The existing native reader has a five-second cooldown. Observe bounded
+  // synthetic readback; do not weaken that cache or the generation fence.
+  await vi.waitFor(async () => {
+    const rotated = await snapshot();
+    expect(rotated.accessSources.find(row => row.id === 'owner_openai_profile')?.readiness.state).toBe('auth_required');
+    expect(rotated.harnesses.find(row => row.id === f.harness.id)).toMatchObject({ enabled: false, configuredEnabled: true });
+  }, { timeout: 7000, interval: 250 });
+  await start('accept-current-generation');
+  const recovered = await snapshot();
+  expect(recovered.accessSources.find(row => row.id === 'owner_openai_profile')?.readiness.state).toBe('ready');
+  expect(recovered.harnesses.find(row => row.id === f.harness.id)).toMatchObject({
+    enabled: true, configuredEnabled: true, accessSourceId: 'owner_openai_profile', selectedAccountId: 'owner_codex',
+  });
+  expect(await generation()).not.toBe(before);
+  const methods = (await readFile(join(f.home, 'requests'), 'utf8')).split('\n');
+  expect(methods.filter(method => method === 'account/login/start')).toHaveLength(1);
+  expect(methods).not.toContain('account/logout');
   expect(f.terminal.createTab).not.toHaveBeenCalled();
 });
 it("denies another owner before native device authentication", async () => {

@@ -7,7 +7,7 @@ const active = (operation: import("@matrix-os/contracts").ProviderWorkflow | nul
 
 export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const state = useHarnessWorkflowController(props);
-  const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, setDisconnectOpen, uninstall, setUninstall, connectionPanel, pendingStart: pendingStartRef, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
+  const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, setDisconnectOpen, setUninstall, connectionPanel, pendingStart: pendingStartRef, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
   const codexTerminal = harness.harness === "codex" && capability.connectionOptions?.some(isCodexTerminalOption);
   const codexDevice = harness.harness === "codex" && capability.connectionOptions?.some(isCodexDeviceOption);
   const codexDeviceOperation = codexDevice && isCodexDeviceOption(operation?.connectionOption);
@@ -32,7 +32,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
           setMethod(inlineLogin || terminalOnly ? "account" : "key")
         }
       >
-        Change account
+        {harness.harness === "codex" ? "Connection options" : "Change account"}
       </button>
     ) : null;
 
@@ -128,6 +128,9 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
               ) : null}
             </div>
           ) : null}
+          {codexDevice && (!connectionPresent || method !== null || failed) ? <p className="matrix-ap-help">
+            If Codex is already signed in, connecting uses that account. To use a different account, log out first.
+          </p> : null}
           {capability.connectionOptions ? ((!connectionPresent || method !== null || failed) ? <WorkflowConnectionChooser state={state} /> : null) : (inlineLogin ||
             capability.apiKeyProviders.length > 0) &&
           (!connectionPresent ||

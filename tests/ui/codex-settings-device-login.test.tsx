@@ -9,6 +9,18 @@ import { createProviderWorkflowClient } from "../../packages/ui/src/agents-provi
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 const device = { id: "openai_device_code", providerId: "openai", authKind: "subscription", method: "device_code", billingKind: "subscription", executionKind: "native", availability: "available" } as const;
 const terminal = { ...device, id: "openai_terminal", method: "terminal" } as const;
+it("opens Codex connection options with honest existing-account guidance and no implicit account operation", async () => {
+  const request = vi.fn(async () => { throw new Error("No account operation from opening options"); });
+  render(<HarnessWorkflowPanel harness={{ id: "harness_codex", harness: "codex", displayName: "Codex", installState: "installed", authState: "authenticated" }}
+    capability={{ harnessInstanceId: "harness_codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code", "terminal"], connectionOptions: [device, terminal], apiKeyProviders: [], install: false, uninstall: false, logs: false }}
+    client={createProviderWorkflowClient(request)} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} renderConnection={action => <div>{action}</div>} />);
+  expect(screen.queryByRole("button", { name: "Change account" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Connection options" }));
+  await act(async () => {});
+  expect(screen.getByText("If Codex is already signed in, connecting uses that account. To use a different account, log out first.")).toBeVisible();
+  expect(screen.getByRole("button", { name: /ChatGPT account.*Sign in with a code/ })).toBeVisible();
+  expect(request).not.toHaveBeenCalled();
+});
 it("shows the qualified official code in Settings and naturally settles after public workflow-client completion without opening Terminal", async () => {
   vi.useFakeTimers();
   const operation = { id: "workflow_fixture", harnessInstanceId: "harness_codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), authorizationUrl: "https://auth.openai.com/codex/device", deviceCode: "ABCD-EFGHI", terminalSessionId: null, safeFailure: null, connectionOption: device } as const;

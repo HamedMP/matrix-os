@@ -10,9 +10,11 @@ import { NativeProviderAdmissionNotStartedError, type NativeProviderProfileGuard
 import { ProviderWorkflowError, ProviderWorkflowNotStartedError } from "./provider-workflows.js";
 
 const run = promisify(execFile);
-// Public auth schemas and transport qualified against official 0.156.1/0.162.1.
+// Official 0.156.1/0.162.1 public auth and transport were directly qualified.
+// Retained official 0.163.0 generated schemas preserve the transitive public
+// auth contract; this does not claim a fresh binary/transport or live login test.
 // Other installed versions retain the independent official Terminal option.
-const qualifiedVersions = ["codex-cli 0.156.1", "codex-cli 0.162.1"];
+const qualifiedVersions = ["codex-cli 0.156.1", "codex-cli 0.162.1", "codex-cli 0.163.0"];
 export function createCodexSettingsConnection(options: { homePath: string; profileGuard: NativeProviderProfileGuard }) {
   const scope = () => {
     const base = buildAgentRuntimeEnvironment(options.homePath);
