@@ -103,7 +103,8 @@
     "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
     "#app-capabilities": "./src/app-capabilities.ts",
     "#remote-browser": "./src/remote-browser.ts",
-    "#shared-browser": "./src/shared-browser.ts"
+    "#shared-browser": "./src/shared-browser.ts",
+    "#browser-chat-approval": "./src/browser-chat-approval.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

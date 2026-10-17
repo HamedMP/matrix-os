@@ -1,4 +1,4 @@
-import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "./browser-chat-approval.js";
+import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "#browser-chat-approval";
 import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "#canonical-chat-import-parts";
 import { z } from "zod/v4";
 import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";

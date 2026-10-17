@@ -1,5 +1,5 @@
 import { ChatRunContextSchema } from "#chat-agent-context";
-import { BrowserApprovalIntentSchema, browserCanonicalDecision } from "./browser-chat-approval.js";
+import { BrowserApprovalIntentSchema, browserCanonicalDecision } from "#browser-chat-approval";
 import { z } from "zod/v4";
 import {
   CanonicalChatMessagePartSchema,
