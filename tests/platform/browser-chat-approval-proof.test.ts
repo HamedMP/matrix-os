@@ -12,10 +12,8 @@ const machine = { handle, runtimeSlot: handle, provisioningClass: "preview" as c
 const leaseEpoch = "178ca19d-9760-4e67-a221-62bedf393b90";
 const actionDigest = "a".repeat(64);
 
-/** New browser payload is test-first; no production contract is added here.
- * Existing authenticated proxy entry exercises the real bounded body/session
- * boundary. It currently returns null because this explicit browser request is
- * unsupported; no missing module/export is used to manufacture RED.
+/** The real bounded proxy boundary signs a distinct browser decision. Its
+ * original two positive cases established semantic RED before implementation.
  */
 function body(browserDecision: "allow_once" | "allow_in_chat") {
   return { clientRequestId: `req_${browserDecision}`, decision: "approve", actionDigest,
@@ -25,7 +23,7 @@ function body(browserDecision: "allow_once" | "allow_in_chat") {
 async function proxyProof(value: unknown, overrides: Partial<Parameters<typeof authenticatedApprovalProxyProof>[0]> = {}) {
   return authenticatedApprovalProxyProof({
     request: new Request(`https://app.example.test${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) }),
-    method: "POST", path, handle, identity, machine, platformSecret, ...overrides,
+    method: "POST", path, handle, identity, machine, platformSecret, browserApprovalsEnabled: true, ...overrides,
   });
 }
 
@@ -64,6 +62,10 @@ describe("authenticated browser decision proof contract (layer A)", () => {
     expect(await proxyProof({ clientRequestId: "req_native_session", decision: "approve_for_session", actionDigest,
       browserApproval: { kind: "shared_chrome", decision: "allow_in_chat", leaseEpoch, challengeRevision: 0, scopeVersion: 1 } })).toBeNull();
     expect(await proxyProof({ ...body("allow_once"), browserApproval: { ...body("allow_once").browserApproval, decision: "approve_for_session" } })).toBeNull();
+  });
+
+  it("keeps browser authority disabled until explicitly enabled", async () => {
+    expect(await proxyProof(body("allow_once"), { browserApprovalsEnabled: false })).toBeNull();
   });
 
   it("preserves existing integration proof semantics and domain", () => {
