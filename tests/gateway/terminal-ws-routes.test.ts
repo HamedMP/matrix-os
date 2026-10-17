@@ -154,6 +154,7 @@ function mountedRoutes() {
 describe("terminal WebSocket route registration", () => {
   it.each([
     { request: "&inputCapability=binary-input-v1", expected: ["binary-input-v1"] },
+    { request: "&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1&activityCapability=input-activity-v1", expected: ["binary-input-v1", "native-scroll-v1", "input-activity-v1"] },
     { request: "&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1", expected: ["binary-input-v1", "native-scroll-v1"] },
     { request: "", expected: undefined },
   ])("projects attached capabilities for Electron request $request", async ({ request, expected }) => {
@@ -163,7 +164,7 @@ describe("terminal WebSocket route registration", () => {
     routes.attach.mock.calls[0]![0].onFrame({
       type: "attached", terminalRef: TERMINAL_REF, revision: 1,
       canonicalSize: { cols: 120, rows: 36 }, nextSeq: 0,
-      capabilities: ["binary-input-v1", "native-scroll-v1"],
+      capabilities: ["binary-input-v1", "native-scroll-v1", "input-activity-v1"],
     });
     expect(peer.sent).toHaveLength(1);
     expect(JSON.parse(peer.sent[0]!)).toMatchObject({
@@ -204,6 +205,18 @@ describe("terminal WebSocket route registration", () => {
   it("rejects an unknown scroll capability before principal or runtime access", async () => {
     const routes = mountedRoutes();
     await routes.app.request(`/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&scrollCapability=native-scroll-v2`);
+    const peer = routes.socket();
+    routes.events?.onOpen?.(new Event("open"), peer.context);
+
+    expect(peer.sent).toEqual([JSON.stringify({ type: "error", code: "invalid_request", message: "Invalid request" })]);
+    expect(peer.close).toHaveBeenCalledOnce();
+    expect(routes.getPrincipal).not.toHaveBeenCalled();
+    expect(routes.attach).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown activity capability before principal or runtime access", async () => {
+    const routes = mountedRoutes();
+    await routes.app.request(`/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&activityCapability=input-activity-v2`);
     const peer = routes.socket();
     routes.events?.onOpen?.(new Event("open"), peer.context);
 

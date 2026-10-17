@@ -58,6 +58,16 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("useShellSessions workspace/tab contract", () => {
+  it("retains activity timestamps separately from metadata updates after a refresh", async () => {
+    const activityAt = "2026-10-14T10:00:00.000Z";
+    const metadataTime = "2026-10-14T12:00:00.000Z";
+    const response = workspaces([{ ...tab(TAB_ONE, "idle"), activityAt, updatedAt: metadataTime }]);
+    const api = makeApi({ get: vi.fn().mockResolvedValue(response) });
+    await useShellSessions.getState().load(api);
+    expect(useShellSessions.getState().sessions[0]).toMatchObject({ activityAt, updatedAt: metadataTime });
+    await useShellSessions.getState().load(api);
+    expect(useShellSessions.getState().sessions[0]?.activityAt).toBe(activityAt);
+  });
   it("accepts only stable terminal ref keys", () => {
     expect(isValidShellSessionName(REF_ONE)).toBe(true);
     expect(isValidShellSessionName("main")).toBe(false);
@@ -202,8 +212,17 @@ describe("useShellSessions workspace/tab contract", () => {
     expect(patch).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ONE}`, {
       name: "compile",
       baseRevision: 3,
+      expectedName: "build",
     });
     expect(useShellSessions.getState().sessions[0]?.subtitle).toBe("build");
+  });
+
+  it("sends the original edit precondition rather than a refreshed competing name", async () => {
+    useShellSessions.setState({ sessions: [{ name: REF_ONE, workspaceId: WORKSPACE_ID, tabId: TAB_ONE, revision: 4, workspaceRevision: 7, cwd: "projects", subtitle: "B" }] });
+    const patch = vi.fn().mockRejectedValue(new AppError("server"));
+    await expect(useShellSessions.getState().rename(makeApi({ patch }), REF_ONE, "C", { subtitle: "A", revision: 3 })).resolves.toBe(false);
+    expect(patch).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ONE}`, { name: "C", baseRevision: 3, expectedName: "A" });
+    expect(useShellSessions.getState().sessions[0]?.subtitle).toBe("B");
   });
 
   it("reorders tabs within one workspace using tab IDs and workspace revision", async () => {

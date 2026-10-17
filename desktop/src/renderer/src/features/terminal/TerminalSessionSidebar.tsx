@@ -162,9 +162,9 @@ export function TerminalSessionSidebar({
                           >
                             {title}
                           </span>
-                          <span className="flex shrink-0 items-center gap-1 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+                          <span title="Last terminal input or output; new sessions start at creation" className="flex shrink-0 items-center gap-1 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
                             {session.pinned ? <PinIcon size={11} aria-label="Pinned" /> : null}
-                            {deleting ? <span role="status">Deleting…</span> : relativeSessionActivity(session.updatedAt)}
+                            {deleting ? <span role="status">Deleting…</span> : relativeSessionActivity(session.activityAt)}
                           </span>
                         </span>
                         {session.cwd || (metadata && session.agent) ? (

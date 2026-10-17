@@ -684,6 +684,7 @@ describe("Zellij 0.44.3 structured runtime adapter", () => {
       ansi: "history\nready$ ",
       viewport: ["ready$ "],
       scrollback: ["history"],
+      isInitial: true,
     }, {
       type: "pane-update",
       paneId: "terminal_12",

@@ -8,15 +8,18 @@ import {
   TerminalRefSchema,
   TerminalTabIdSchema,
   TerminalTabSchema,
+  TerminalTabRenameInputSchema,
   TerminalWorkspaceIdSchema,
   TerminalWorkspaceSchema,
   type TerminalRef,
   type TerminalTab,
+  type TerminalTabRenameInput,
   type TerminalWorkspace,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { TerminalRuntimeError } from "./errors.js";
 import { terminalTabIncarnation } from "./incarnation.js";
+import { isTerminalOutputActivity } from "./terminal-activity.js";
 import { TerminalEndedTabArchiveInputSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import {
   MAX_TERMINAL_SNAPSHOT_ANSI_BYTES,
@@ -171,6 +174,7 @@ export class TerminalWorkspaceStore {
         ...(input.git ? { git: input.git } : {}),
         createdAt: now,
         updatedAt: now,
+        activityAt: now,
         zellijTabName: zellijTabName(),
         zellijTabId: null,
         zellijPaneId: null,
@@ -322,6 +326,7 @@ export class TerminalWorkspaceStore {
     ansi: string;
     viewport: string[];
     scrollback: string[];
+    isInitial?: boolean;
   }): Promise<TerminalSnapshot> {
     const ref = TerminalRefSchema.parse(refInput);
     return this.mutate(async (state) => {
@@ -330,6 +335,7 @@ export class TerminalWorkspaceStore {
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
       const previous = await this.readSnapshot(ref);
       const now = this.now().toISOString();
+      if (isTerminalOutputActivity(previous, input)) tab.activityAt = now;
       tab.revision = Math.max(tab.revision, previous?.revision ?? 0) + 1;
       tab.updatedAt = now;
       workspace.revision += 1;
@@ -394,6 +400,25 @@ export class TerminalWorkspaceStore {
     });
   }
 
+  captureInputActivityTime(): string { return this.now().toISOString(); }
+
+  async recordInputActivity(refInput: TerminalRef, activityAt = this.captureInputActivityTime()): Promise<void> {
+    activityAt = z.iso.datetime().parse(activityAt);
+    const ref = TerminalRefSchema.parse(refInput);
+    await this.mutate((state) => {
+      const workspace = state.workspaces[ref.workspaceId];
+      const tab = workspace?.tabs[ref.tabId];
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
+      if (!tab.activityAt || Date.parse(activityAt) > Date.parse(tab.activityAt)) tab.activityAt = activityAt;
+      const now = this.now().toISOString();
+      tab.updatedAt = now;
+      tab.revision += 1;
+      workspace.updatedAt = now;
+      workspace.revision += 1;
+      state.revision += 1;
+    });
+  }
+
   async archiveEndedTab(refInput: TerminalRef, inputRaw: TerminalEndedTabArchiveInput): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
     const input = TerminalEndedTabArchiveInputSchema.parse(inputRaw);
@@ -418,16 +443,18 @@ export class TerminalWorkspaceStore {
     });
   }
 
-  async renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
+  async renameTab(refInput: TerminalRef, inputRaw: TerminalTabRenameInput): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
-    const name = SafeDisplayStringSchema.parse(input.name);
-    const baseRevision = z.number().int().min(0).parse(input.baseRevision);
+    const input = TerminalTabRenameInputSchema.parse(inputRaw);
+    const { name, baseRevision, expectedName } = input;
     const now = this.now().toISOString();
     return this.mutate((state) => {
       const workspace = state.workspaces[ref.workspaceId];
       const tab = workspace?.tabs[ref.tabId];
       if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
-      if (tab.revision !== baseRevision) throw new TerminalRuntimeError("conflict");
+      if (expectedName === undefined ? tab.revision !== baseRevision : (
+        tab.name !== expectedName || baseRevision > tab.revision
+      )) throw new TerminalRuntimeError("conflict");
       tab.name = name;
       tab.revision += 1;
       tab.updatedAt = now;

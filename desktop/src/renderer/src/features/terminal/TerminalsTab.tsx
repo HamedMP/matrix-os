@@ -119,6 +119,7 @@ export default function TerminalsTab({
   const [deleteTarget, setDeleteTarget] = useState<ShellSessionSummary | null>(null);
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const renameBaseRef = useRef<Pick<ShellSessionSummary, "revision" | "subtitle"> | undefined>(undefined);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [agentInventory, setAgentInventory] = useState(() => ({
     api,
@@ -306,6 +307,7 @@ export default function TerminalsTab({
   };
 
   const startRename = (shell: ShellSessionSummary) => {
+    renameBaseRef.current = typeof shell.revision === "number" ? { revision: shell.revision, subtitle: shell.subtitle } : undefined;
     setRenamingName(shell.name);
     setRenameDraft(displayName(shell));
     setRenameError(null);
@@ -321,7 +323,9 @@ export default function TerminalsTab({
     }
     const renameBusyNames = [originalName, nextName];
     if (!markShellsBusy(renameBusyNames)) return;
-    const ok = await rename(api, originalName, nextName);
+    const ok = renameBaseRef.current
+      ? await rename(api, originalName, nextName, renameBaseRef.current)
+      : await rename(api, originalName, nextName);
     clearShellsBusy(renameBusyNames);
     if (!ok) {
       if (renamingNameRef.current === originalName) setRenameError("Could not rename shell");

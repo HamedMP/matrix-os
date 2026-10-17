@@ -4,6 +4,7 @@ import {
   TerminalPaneActionSchema,
   TerminalRefSchema,
   TerminalTabIdSchema,
+  TerminalTabRenameInputSchema,
   TerminalWorkspaceIdSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -47,10 +48,7 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
   z.object({
     ...RequestBase,
     operation: z.literal("RenameTab"),
-    input: TerminalRefSchema.extend({
-      name: SafeDisplayStringSchema,
-      baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-    }).strict(),
+    input: TerminalRefSchema.extend(TerminalTabRenameInputSchema.shape).strict(),
   }).strict(),
   z.object({
     ...RequestBase,

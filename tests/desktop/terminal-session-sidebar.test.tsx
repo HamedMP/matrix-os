@@ -6,6 +6,16 @@ import { describe, expect, it, vi } from "vitest";
 import { TerminalSessionSidebar } from "../../desktop/src/renderer/src/features/terminal/TerminalSessionSidebar.js";
 
 describe("TerminalSessionSidebar", () => {
+  it("shows terminal activity rather than the time of metadata synchronization", () => {
+    const activityAt = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    render(<TerminalSessionSidebar showHeader={false} sessions={[
+      { name: "idle", subtitle: "Idle terminal", activityAt, updatedAt: new Date().toISOString() },
+      { name: "legacy", subtitle: "Legacy terminal", updatedAt: new Date().toISOString() },
+    ]} selectedName={null} creating={false} disabled={false} />);
+    expect(screen.getByText("2 hours ago")).toBeTruthy();
+    expect(screen.getByText("Activity unknown")).toBeTruthy();
+    expect(screen.queryByText("Just now")).toBeNull();
+  });
   it("marks a pending deletion and prevents competing actions", () => {
     render(<TerminalSessionSidebar sessions={[{ name: "test-delete", subtitle: "Test", status: "active" }]}
       selectedName="test-delete" creating={false} disabled={false} deletingName="test-delete" />);
@@ -23,7 +33,7 @@ describe("TerminalSessionSidebar", () => {
     const { container } = render(
       <TerminalSessionSidebar
         sessions={[
-          { name: stableRef, workspaceId: `tws_${"a".repeat(32)}`, tabId: `tt_${"1".repeat(32)}`, revision: 1, workspaceRevision: 1, cwd: "projects/matrix-os", subtitle: "swift-willow", status: "active", updatedAt: new Date(Date.now() - 5 * 60_000).toISOString() },
+          { name: stableRef, workspaceId: `tws_${"a".repeat(32)}`, tabId: `tt_${"1".repeat(32)}`, revision: 1, workspaceRevision: 1, cwd: "projects/matrix-os", subtitle: "swift-willow", status: "active", activityAt: new Date(Date.now() - 5 * 60_000).toISOString() },
           { name: secondRef, workspaceId: `tws_${"a".repeat(32)}`, tabId: `tt_${"2".repeat(32)}`, revision: 1, workspaceRevision: 1, cwd: "", subtitle: "quiet-pine", status: "exited" },
         ]}
         selectedName={null}

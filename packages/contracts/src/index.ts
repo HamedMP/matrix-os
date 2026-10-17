@@ -154,6 +154,14 @@ export function createShellSessionName(): string {
 }
 export const SafeDisplayStringSchema = boundedDisplayText(120, 512);
 
+export const TerminalTabRenameInputSchema = z.object({
+  name: SafeDisplayStringSchema,
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  /** Compare the edited field instead of rejecting unrelated terminal output revisions. */
+  expectedName: SafeDisplayStringSchema.optional(),
+}).strict();
+export type TerminalTabRenameInput = z.infer<typeof TerminalTabRenameInputSchema>;
+
 export const TerminalRefSchema = z.object({
   workspaceId: TerminalWorkspaceIdSchema,
   tabId: TerminalTabIdSchema,
@@ -213,6 +221,8 @@ export const TerminalTabSchema = z.object({
   exitCode: z.number().int().nullable().optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
+  /** Last successful input or changed output; metadata refreshes are not activity. Absent for legacy tabs. */
+  activityAt: IsoTimestampSchema.optional(),
   /** Stable across restart and different for every new incarnation, even if a tab ID is reused. */
   incarnation: z.string().regex(/^ti_[a-f0-9]{32}$/).optional(),
 }).strict();
@@ -719,6 +729,7 @@ export const TerminalTabClientFrameSchema = z.discriminatedUnion("type", [
     type: z.literal("input"),
     terminalRef: TerminalRefSchema,
     data: z.string().min(1).max(64 * 1024),
+    isUserInput: z.boolean().optional(),
   }).strict(),
   z.object({
     type: z.literal("binary"),
@@ -746,7 +757,7 @@ const TerminalServerEventBaseSchema = z.object({
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
 
-export const TerminalInputCapabilitySchema = z.enum(["binary-input-v1", "native-scroll-v1"]);
+export const TerminalInputCapabilitySchema = z.enum(["binary-input-v1", "native-scroll-v1", "input-activity-v1"]);
 export type TerminalInputCapability = z.infer<typeof TerminalInputCapabilitySchema>;
 
 export const TerminalTabServerFrameSchema = z.discriminatedUnion("type", [

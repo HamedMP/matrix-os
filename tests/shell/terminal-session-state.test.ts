@@ -22,6 +22,10 @@ const mainShell: ShellSessionSummary = {
 };
 
 describe("terminal session state helpers", () => {
+  it("refreshes confirmed terminal activity independently from metadata time", () => {
+    const original = { ...mainShell, updatedAt: "2026-10-14T10:00:00Z", activityAt: "2026-10-14T04:00:00Z" };
+    expect(shellSessionsEqual([original], [{ ...original, activityAt: "2026-10-14T05:00:00Z" }])).toBe(false);
+  });
   it("treats additive agent metadata as refresh-relevant state", () => {
     const agentShell = {
       ...mainShell,
