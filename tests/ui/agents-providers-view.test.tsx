@@ -779,7 +779,7 @@ describe("AgentsProvidersView", () => {
     expect(within(dialog).getByRole("button", { name: "Next" })).toBeDisabled();
   });
 
-  it("shows exact, stale, and unavailable gateway credit without inventing balances", () => {
+  it("shows exact, stale, and unavailable gateway credit without inventing balances", async () => {
     const current = snapshot();
     const usage = current.accessSources[0]!.usage;
     if (usage.kind !== "managed_credit") throw new Error("Expected managed credit fixture");
@@ -795,7 +795,7 @@ describe("AgentsProvidersView", () => {
 
     const stale = structuredClone(current);
     stale.accessSources[0]!.usage = { ...stale.accessSources[0]!.usage, state: "stale" } as typeof stale.accessSources[0]["usage"];
-    rerender(<AgentsProvidersView {...setupProps(stale)} />);
+    await act(async () => { rerender(<AgentsProvidersView {...setupProps(stale)} />); });
     expect(screen.getByText(/Credit last confirmed/)).toBeVisible();
 
     const unavailable = structuredClone(current);
@@ -807,13 +807,13 @@ describe("AgentsProvidersView", () => {
       reason: "ledger_not_available",
       asOf: null,
     };
-    rerender(<AgentsProvidersView {...setupProps(unavailable)} />);
+    await act(async () => { rerender(<AgentsProvidersView {...setupProps(unavailable)} />); });
     expect(screen.getByText("Chat credit unavailable")).toBeVisible();
     vi.useRealTimers();
     expect(screen.queryByText("$0.00 remaining")).toBeNull();
   });
 
-  it("offers checkout for verified zero credit but not a broken route or unavailable ledger", () => {
+  it("offers checkout for verified zero credit but not a broken route or unavailable ledger", async () => {
     const current = snapshot();
     const source = current.accessSources[0]!;
     source.readiness = { state: "unavailable", checkedAt: now, staleAfter: later,
@@ -829,7 +829,7 @@ describe("AgentsProvidersView", () => {
 
     const broken = structuredClone(current);
     broken.accessSources[0]!.readiness.safeReason = "provider_unavailable";
-    rerender(<AgentsProvidersView {...setupProps(broken)} />);
+    await act(async () => { rerender(<AgentsProvidersView {...setupProps(broken)} />); });
     expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeEnabled();
 
     const ledgerMissing = structuredClone(current);
@@ -837,7 +837,7 @@ describe("AgentsProvidersView", () => {
       kind: "unavailable", authority: "unavailable", state: "unavailable",
       scope: "owner_entitlement", reason: "ledger_not_available", asOf: null,
     };
-    rerender(<AgentsProvidersView {...setupProps(ledgerMissing)} />);
+    await act(async () => { rerender(<AgentsProvidersView {...setupProps(ledgerMissing)} />); });
     expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeEnabled();
   });
 
@@ -901,7 +901,7 @@ describe("AgentsProvidersView", () => {
     expect(choices).not.toContain("Work Anthropic key");
   });
 
-  it("does not continue unsupported generic subscription login attempts", () => {
+  it("does not continue unsupported generic subscription login attempts", async () => {
     const terminalAttempt: ProviderConnectionAttempt = {
       id: "attempt_terminal",
       harnessInstanceId: "harness_hermes",
@@ -924,7 +924,7 @@ describe("AgentsProvidersView", () => {
       method: "oauth",
       action: { kind: "open_browser", authorizationPath: "/api/ai/providers/login-attempts/attempt_browser/authorize" },
     };
-    rerender(<AgentsProvidersView {...setupProps(snapshot(), { connectionAttempt: browserAttempt, onOpenTerminal, onOpenBrowser })} />);
+    await act(async () => { rerender(<AgentsProvidersView {...setupProps(snapshot(), { connectionAttempt: browserAttempt, onOpenTerminal, onOpenBrowser })} />); });
     expect(screen.queryByRole("button", { name: "Continue in browser" })).toBeNull();
     expect(onOpenBrowser).not.toHaveBeenCalled();
   });

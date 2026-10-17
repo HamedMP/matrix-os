@@ -1,3 +1,4 @@
+import { projectThreadEventForClient } from "./thread-client-projection.js";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
@@ -148,7 +149,7 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
       }
       for (const event of events) {
         const parsed = AgentThreadEventSchema.parse(event);
-        if (!sendJson(subscriber.ws, { type: "thread.event", event: parsed })) {
+        if (!sendJson(subscriber.ws, { type: "thread.event", event: projectThreadEventForClient(parsed) })) {
           deadSubscriberIds.push(id);
           break;
         }
@@ -200,7 +201,7 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
       }
       const replayedEventIds = snapshot.events.items.map((event) => event.eventId);
       for (const event of snapshot.events.items) {
-        if (!sendJson(input.ws, { type: "thread.event", event })) {
+        if (!sendJson(input.ws, { type: "thread.event", event: projectThreadEventForClient(event) })) {
           evictSubscriber(id, "send_failed");
           return { onMessage: () => undefined, onClose: () => undefined };
         }

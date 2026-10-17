@@ -3,6 +3,8 @@ import { constants } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 
+import { isOwnerManagedPreviewUpdateBase } from "./private-preview-update-policy.js";
+
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
 const UPDATE_CHANNELS = new Set(["stable", "canary", "beta", "dev"]);
 
@@ -45,6 +47,7 @@ export function isAutoApplyUpdate(input: { severity?: string; updateType?: strin
 }
 
 export interface SystemUpdateCheck {
+  managedByOwner?: true;
   channel: string;
   installed: HostBundleRelease | null;
   latest: HostBundleRelease | null;
@@ -55,6 +58,7 @@ export interface SystemUpdateCheck {
 }
 
 export interface SystemReleaseList {
+  managedByOwner?: true;
   channel: UpdateChannel;
   releases: HostBundleRelease[];
   generatedAt: string;
@@ -328,6 +332,9 @@ export async function checkForSystemUpdate(options: {
   now?: Date;
 }): Promise<SystemUpdateCheck> {
   const checkedAt = (options.now ?? new Date()).toISOString();
+  if (isOwnerManagedPreviewUpdateBase(options.platformUrl)) {
+    return { channel: options.channel, installed: options.installed, latest: null, updateAvailable: false, checkedAt, managedByOwner: true };
+  }
   if (!options.platformUrl) {
     return {
       channel: options.channel,
@@ -375,6 +382,9 @@ export async function listSystemReleases(options: {
   now?: Date;
 }): Promise<SystemReleaseList> {
   const generatedAt = (options.now ?? new Date()).toISOString();
+  if (isOwnerManagedPreviewUpdateBase(options.platformUrl)) {
+    return { channel: options.channel, releases: [], generatedAt, managedByOwner: true };
+  }
   if (!options.platformUrl) {
     return {
       channel: options.channel,

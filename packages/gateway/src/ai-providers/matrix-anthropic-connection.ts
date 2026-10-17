@@ -75,7 +75,7 @@ export function createMatrixAnthropicConnectionService(options: {
     const usable = state === "ready" ? catalog : null;
     return MatrixAnthropicConnectionSchema.parse({ connectionId: "matrix_anthropic_api", providerId: "anthropic", executionKind: "direct_pi", billingKind: "api_key",
       revision: source.revision, enabled: source.enabled, credentialGeneration: generation, sourceCredentialGeneration: source.credentialGeneration,
-      state, models: usable?.models.map(model => ({ id: model.id, displayName: model.display_name })) ?? [],
+      state, models: usable?.models.map(model => ({ id: model.id, displayName: model.display_name, input: runtimeRoute(model).data?.input })) ?? [],
       actions: state === "read_only" || state === "unsupported" ? [] : ["connect", ...(source.enabled ? ["refresh", "disconnect"] : [])],
       checkedAt: usable ? new Date(usable.checkedAt).toISOString() : null, staleAfter: usable ? new Date(usable.checkedAt + ttl).toISOString() : null,
       supports: state === "read_only" || state === "unsupported" ? { rootChat: false, recipeBots: false } : options.supports });

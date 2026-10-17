@@ -14,6 +14,7 @@ import { parseTerminalRefKey } from "../../shell/src/components/terminal/termina
 import { parseTerminalRefKey as parseElectronTerminalRefKey } from "../../desktop/src/renderer/src/lib/terminal-workspaces.js";
 import { PROVIDER_SETTINGS_NOW as NOW, providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture.js";
+import { observation as creditObservation } from "../ui/provider-managed-credit-fixture.js";
 
 const REF = { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" };
 const KEY = `${REF.workspaceId}:${REF.tabId}`;
@@ -234,6 +235,32 @@ describe("provider Terminal login handoff", () => {
     const facade = handoff({ getSnapshot: vi.fn(), mutate: vi.fn() }, vi.fn());
     expect(facade.completeClaudeNativeLogin).toBeUndefined();
     expect(Object.hasOwn(facade, "completeClaudeNativeLogin")).toBe(false);
+  });
+
+  it("preserves the quiet credit reader receiver and cancellation without involving Terminal", async () => {
+    const result = creditObservation();
+    const options = { signal: new AbortController().signal };
+    class CreditStore {
+      readonly #result = result;
+      getSnapshot = vi.fn();
+      mutate = vi.fn();
+      async getManagedCreditObservation(input?: { signal?: AbortSignal }) {
+        expect(input).toBe(options);
+        return this.#result;
+      }
+    }
+    const store = new CreditStore(), resolve = vi.fn();
+    const facade = handoff(store, resolve);
+    await expect(facade.getManagedCreditObservation!(options)).resolves.toBe(result);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(store.getSnapshot).not.toHaveBeenCalled();
+    expect(store.mutate).not.toHaveBeenCalled();
+  });
+
+  it("does not invent a credit reader or fall back to snapshots when unsupported", () => {
+    const facade = handoff({ getSnapshot: vi.fn(), mutate: vi.fn() }, vi.fn());
+    expect(facade.getManagedCreditObservation).toBeUndefined();
+    expect(Object.hasOwn(facade, "getManagedCreditObservation")).toBe(false);
   });
 
   it("checks dependencies at registration", () => {

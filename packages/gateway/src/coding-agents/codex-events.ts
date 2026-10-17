@@ -170,6 +170,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     preview: AgentToolPreviewSchema.optional().catch(undefined),
     previewKind: z.enum(["command", "path", "text"]).optional().catch(undefined),
     detail: AgentToolDetailSchema.optional().catch(undefined),
+    protectedPreview: ProtectedToolOutputSchema.optional().catch(undefined),
   }).strict(),
   z.object({
     type: z.literal("matrix.codex.tool.output"),
@@ -182,6 +183,10 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.completed"),
     toolCallId: CodexItemIdSchema,
     outcome: z.enum(["success", "failed", "cancelled"]),
+    preview: AgentToolPreviewSchema.optional().catch(undefined),
+    previewKind: z.enum(["command", "path", "text"]).optional().catch(undefined),
+    detail: AgentToolDetailSchema.optional().catch(undefined),
+    protectedPreview: ProtectedToolOutputSchema.optional().catch(undefined),
   }).strict(),
 ]);
 
@@ -323,6 +328,7 @@ function appServerRecordEvents(
       toolCallId: record.toolCallId,
       displayName: record.displayName,
       kind: record.kind,
+      ...(record.protectedPreview ? { protectedPreview: record.protectedPreview } : {}),
       ...(record.preview && record.previewKind ? { preview: record.preview, previewKind: record.previewKind } : {}),
       ...(record.detail ? { detail: record.detail } : {}),
     })];
@@ -340,6 +346,9 @@ function appServerRecordEvents(
     type: "tool.completed",
     toolCallId: record.toolCallId,
     outcome: record.outcome,
+    ...(record.preview && record.previewKind ? { preview: record.preview, previewKind: record.previewKind } : {}),
+    ...(record.detail ? { detail: record.detail } : {}),
+    ...(record.protectedPreview ? { protectedPreview: record.protectedPreview } : {}),
   })];
 }
 

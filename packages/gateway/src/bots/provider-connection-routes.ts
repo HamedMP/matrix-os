@@ -3,6 +3,11 @@ import { bodyLimit } from 'hono/body-limit';
 import { ChatAgentIdSchema, BotProviderConnectionIdSchema, BotProviderAuthorizationRequestSchema, BotExecutionBindingRequestSchema } from '@matrix-os/contracts';
 import { BotProviderConnectionError, type BotProviderConnectionsService } from './provider-connections.js';
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from '../request-principal.js';
+import { projectConnectionModelInputs } from '../ai-providers/connection-model-input-projection.js';
+import type { BotProviderConnections } from '@matrix-os/contracts';
+function projectConnections(connections: BotProviderConnections) {
+  return { ...connections, connections: connections.connections.map(projectConnectionModelInputs) };
+}
 export function createBotProviderConnectionRoutes(options: { service?: BotProviderConnectionsService; getPrincipal(context: Context): RequestPrincipal }) {
   const routes = new Hono();
   for (const path of ['/api/bot-connections', '/api/bot-connections/:id/authorization', '/api/chat-agents/:agentId/execution']) {
@@ -23,13 +28,13 @@ export function createBotProviderConnectionRoutes(options: { service?: BotProvid
   routes.get('/api/bot-connections', async c => {
     const principal = options.getPrincipal(c); const flag = c.req.query('includeChatgptPlan');
     if (flag !== undefined && flag !== 'true' && flag !== 'false') return invalid(c);
-    return options.service ? c.json(await options.service.connections(principal.userId, flag === 'true')) : unavailable(c);
+    return options.service ? c.json(projectConnections(await options.service.connections(principal.userId, flag === 'true'))) : unavailable(c);
   });
   routes.post('/api/bot-connections/:id/authorization', async c => {
     const principal = options.getPrincipal(c); const id = BotProviderConnectionIdSchema.safeParse(c.req.param('id'));
     const body = BotProviderAuthorizationRequestSchema.safeParse(await c.req.json());
     if (!id.success || !body.success) return invalid(c);
-    return options.service ? c.json(await options.service.authorize(principal.userId, id.data, body.data)) : unavailable(c);
+    return options.service ? c.json(projectConnections(await options.service.authorize(principal.userId, id.data, body.data))) : unavailable(c);
   });
   routes.get('/api/chat-agents/:agentId/execution', async c => {
     const principal = options.getPrincipal(c); const id = ChatAgentIdSchema.safeParse(c.req.param('agentId'));
