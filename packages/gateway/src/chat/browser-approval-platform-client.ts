@@ -21,7 +21,8 @@ export function createBrowserApprovalPlatformClient(options: { platformUrl: stri
     try {
       for (;;) { signal.throwIfAborted(); const next = await reader.read(); signal.throwIfAborted(); if (next.done) break;
         bytes += next.value.byteLength; if (bytes > 4096) { await reader.cancel(); throw new Error("Browser approval unavailable"); } chunks.push(next.value); }
-      const result = z.strictObject({ verified: schema }).parse(JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"))).verified;
+      const envelope = z.strictObject({ verified: z.unknown() }).parse(JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")));
+      const result = schema.parse(envelope.verified);
       // A network/fixture response must also match the requested tuple, not just its schema.
       if (!Object.entries(tuple).every(([key, field]) => (result as Record<string, unknown>)[key] === field)) throw new Error("Browser approval unavailable");
       return result;
