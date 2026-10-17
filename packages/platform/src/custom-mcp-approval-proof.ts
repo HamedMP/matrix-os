@@ -49,7 +49,7 @@ export function mintCustomMcpApprovalProof(input: {
     return null;
   }
   const parsed = CanonicalSubmitChatApprovalRequestSchema.safeParse(value);
-  if (!parsed.success || parsed.data.decision === "approve_for_session") return null;
+  if (!parsed.success || parsed.data.browserApproval || parsed.data.decision === "approve_for_session") return null;
   const now = input.now ?? Date.now();
   const payload = Payload.parse({
     version: 1, handle: input.identity.handle, actorId: input.identity.userId,

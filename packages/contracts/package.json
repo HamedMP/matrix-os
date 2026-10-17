@@ -107,6 +107,7 @@
     "#remote-browser": "./src/remote-browser.ts",
     "#shared-browser": "./src/shared-browser.ts",
     "#canonical-chat-execution-controls": "./src/canonical-chat-execution-controls.ts",
+    "#browser-chat-approval": "./src/browser-chat-approval.ts",
     "#command-preview": "./src/command-preview.ts"
   },
   "main": "src/index.ts",

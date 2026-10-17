@@ -40,6 +40,7 @@ import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { BillingEntitlement } from './billing.js';
 import type { PlatformApp } from './platform-app-types.js';
+import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import {
   PlatformStartupConfigError,
   loadPlatformRuntimeConfig,
@@ -1088,7 +1089,7 @@ async function startPlatformServerWithCleanup(
           customMcpShutdown?.(),
         ]);
         posthogProcessErrors.dispose();
-        await app.shutdownPostHog();
+        await shutdownPlatformApp(app);
         await processPosthogErrorTracker.shutdown();
         await Promise.all([db.destroy(), atsDb?.destroy()]);
       })()

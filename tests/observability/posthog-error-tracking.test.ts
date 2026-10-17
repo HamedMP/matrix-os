@@ -874,19 +874,22 @@ describe("PostHog error tracking", () => {
   });
 
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {
-    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, platformStartup, proxyMain] = await Promise.all([
+    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, platformStartup, platformShutdown, proxyMain] = await Promise.all([
       readFile("packages/gateway/src/social.ts", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
       readFile("packages/platform/src/social-api.ts", "utf8"),
       readFile("packages/platform/src/main.ts", "utf8"),
       readFile("packages/platform/src/platform-startup.ts", "utf8"),
+      readFile("packages/platform/src/shutdown-platform-app.ts", "utf8"),
       readFile("packages/proxy/src/main.ts", "utf8"),
     ]);
 
     expect(gatewaySocial).toContain("shutdownPostHog");
     expect(gatewayServer).toContain("await socialRoutes?.shutdownPostHog()");
     expect(platformSocialApi).toContain("shutdownPostHog");
-    expect(platformStartup).toContain("await app.shutdownPostHog()");
+    expect(platformStartup).toContain("import { shutdownPlatformApp } from './shutdown-platform-app.js'");
+    expect(platformStartup).toContain("await shutdownPlatformApp(app)");
+    expect(platformShutdown).toContain("await app.shutdownPostHog()");
     expect(platformMain).toContain("await Promise.allSettled(posthogShutdowns.map((shutdownPostHog) => shutdownPostHog()))");
     expect(platformMain).not.toContain("for (let i = posthogShutdowns.length - 1");
     expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");
