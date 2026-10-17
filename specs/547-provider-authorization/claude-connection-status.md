@@ -44,14 +44,19 @@ funding remain authoritative. No endpoints or persistence stores are added.
   legacy selections preserved; sign-out; unsupported runtime, API-key auth,
   expired catalog and negative readiness remain unavailable.
 - Run affected gateway/UI suites, typecheck, pattern scan and broader tests.
-- Publish a Draft PR linked to existing ENG-206 / ENG-183 / App Gallery launch.
-- Request current-head Greptile review and report CI separately. Draft metadata
-  checks are not full CI qualification.
+- Keep the independent PR linked to existing ENG-206 / ENG-183 / App Gallery
+  launch. After code review, mark it ready to run normal CI and obtain human
+  review. Draft metadata checks are not full CI qualification.
+- Verify current-head Greptile and formal CI separately; older results are
+  historical after any source change.
 - Live evidence: coordinate an English screenshot and short recording of the
   affected Web Canvas, Web Desktop and Electron Desktop Settings flows using the
-  exact candidate client/host. Main remains serialized after #2514 then #2545.
+  exact candidate client/host. Use the existing coordinator's serialized slot.
   No direct Main operation, login, model call, grant or deployment is authorized
   by this document. Native Mobile/Web Mobile applicability needs review.
+- Use [the shared English acceptance input](claude-connection-acceptance.json)
+  for every surface. Record actual installed provenance and outcomes separately;
+  a prepared case or a candidate SHA is not evidence that the case ran.
 - Public documentation: assess a separate `FinnaAI/matrix-os-site` documentation
   PR once the corrected connection-status behavior is qualified. No public docs
   change or live acceptance is claimed by the isolated regression tests.

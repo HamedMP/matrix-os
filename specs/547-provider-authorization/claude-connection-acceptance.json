@@ -1,0 +1,70 @@
+{
+  "issue": "ENG-206",
+  "pullRequest": 2632,
+  "executionStatus": "prepared_not_executed",
+  "candidateSource": "Freeze the PR head in the execution receipt; never infer installed provenance from this file.",
+  "requiredReceipt": [
+    "candidateHeadSha",
+    "clientSourceSha and artifact SHA-256",
+    "hostSourceSha and installed release",
+    "selected Computer and runtime slot (private receipt only)",
+    "managed Claude CLI version and observation time",
+    "sanitized native loggedIn/authMethod and expected-HOME match",
+    "surface, case ID, observed result, English screenshot and recording links"
+  ],
+  "executionConstraints": [
+    "The existing GUI executor uses the coordinator's serialized slot.",
+    "Reuse a qualified exact-source client/host tuple; source alone is not installed proof.",
+    "Use existing owner-native authentication. Do not create login, OAuth, Bot/background grants, or model calls.",
+    "Do not install, launch, deploy, modify Main/Private, or change credentials under this packet alone.",
+    "Do not combine other unmerged fixes into this independent candidate.",
+    "Keep tokens, account emails, customer content, paths and raw provider output out of public evidence.",
+    "Record blocked or unavailable cases without changing the test machine to manufacture a result."
+  ],
+  "surfaces": [
+    { "name": "Electron Desktop", "status": "pending_live_execution" },
+    { "name": "Web Desktop", "status": "pending_live_execution" },
+    { "name": "Web Canvas", "status": "pending_live_execution" },
+    { "name": "Web Mobile", "status": "pending_applicability_review" },
+    { "name": "Native Mobile", "status": "outside_existing_ticket_owner_scope_applicability_review_required" }
+  ],
+  "cases": [
+    {
+      "id": "C1",
+      "setup": "A generated Claude row uses the legacy alias; the selected Computer has fresh verified native subscription authentication.",
+      "action": "Open Settings > AI providers and inspect Claude Code.",
+      "expected": "Connected with the exact native account, without a redundant sign-in chooser. A saved email or Log out action alone is insufficient proof."
+    },
+    {
+      "id": "C2",
+      "setup": "C1 is available without a new login.",
+      "action": "Refresh, close and reopen Settings, then return to the same Computer.",
+      "expected": "Connected remains consistent; a stale Connecting receipt does not replace current verified native authentication."
+    },
+    {
+      "id": "C3",
+      "setup": "The supported restricted CLI has native subscription authentication and an eligible unprobed catalog; no Bot consent exists.",
+      "action": "Inspect Use for Bot tasks without enabling it.",
+      "expected": "Not enabled for Bots with the existing enable action. Opening Settings creates no Bot or background authorization; existing grants remain unchanged."
+    },
+    {
+      "id": "C4",
+      "setup": "An already-Off exact native row has verified authentication; Bot discovery may be pending or unavailable.",
+      "action": "Inspect the header and saved execution choice without changing them.",
+      "expected": "Connected while Off remains Off and execution remains disabled. No model, funding source, account or consent changes."
+    },
+    {
+      "id": "C5",
+      "setup": "An explicit API-key/funded row or another Computer is already available under existing authorization.",
+      "action": "Inspect the explicit choice; switch Computer/runtime and return normally where available.",
+      "expected": "Explicit owner selections are preserved. Each Computer displays its own authentication, pending operations and Bot state; local Mac authentication cannot establish a remote Computer's connection."
+    },
+    {
+      "id": "C6",
+      "setup": "A signed-out, expired, unsupported-runtime or read-only setup already exists without credential/permission changes.",
+      "action": "Inspect its connection and Bot guidance without logging in or changing permissions.",
+      "expected": "Unknown or negative native row authentication does not show Connected, even with saved email/Log out. Unsupported Bot runtime or read-only permissions alone do not negate verified native authentication: retain Connected and show Bot/action restrictions separately. Record unavailable negative setups as untested."
+    }
+  ],
+  "incidentAttribution": "Code regressions do not establish Stefan's installed client/host versions or native authentication. The reporting Computer's provenance and sanitized status remain necessary."
+}
