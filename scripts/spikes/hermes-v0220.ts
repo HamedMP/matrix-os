@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createServer, type ServerResponse } from "node:http";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +19,11 @@ const deadline = AbortSignal.timeout(120_000);
 await verifyJevHermesRuntimePin(source, deadline);
 await verifyJevHermesDependencies(source, "anthropic_messages", deadline);
 const python = await resolveHermesPython(source);
+// Optional task-owned SDK overlay; never changes PM facts or the selected runtime.
+const mcpPython = process.argv[3] ? await realpath(process.argv[3]) : undefined;
+if (mcpPython) assert.equal(mcpPython, await realpath("/tmp/eng306-mcp-fixture-venv/bin/python"));
+const childPython = mcpPython ? "/tmp/eng306-mcp-fixture-venv/bin/python" : python;
+const failSpawn = process.argv[4] === "--test-spawn-failure";
 const run = promisify(execFile);
 const version = await run(python, ["--version"], { timeout: 5000, env: { PATH: "/usr/bin:/bin" } });
 const sdk = await run(python, ["-I", "-c", "import importlib.util; print('present' if importlib.util.find_spec('mcp') else 'missing')"], { timeout: 10000, env: { PATH: "/usr/bin:/bin" } });
@@ -28,25 +33,38 @@ const exits: Promise<void>[] = [];
 const rpc: { child: number; method: string; session?: string }[] = [];
 const failures: string[] = [];
 const completedRows: unknown[] = [];
+const diagnostics: string[] = [];
 let blockedNetworkAttempts = 0;
 let requests = 0;
 let toolRoundTrip = false;
 let resumedHistory = false;
+let mcpRoundTrip = false;
 let cancelResponse: ServerResponse | undefined;
 let acceptHeld!: () => void;
 const held = new Promise<void>(accept => { acceptHeld = accept; });
 const marker = "ENG306_SYNTHETIC_FILE_CONTENT";
+const mcpLog = join(home, "mcp-events.jsonl");
+const mcpTool = "mcp__eng306__echo";
 const server = createServer(async (request, response) => {
   try {
     const chunks: Buffer[] = []; let bytes = 0;
     for await (const chunk of request) { bytes += chunk.length; assert(bytes <= 1_048_576); chunks.push(chunk); }
     assert(request.method === "POST" && request.url === "/v1/chat/completions", "unexpected fixture endpoint");
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    assert.equal(body.model, "gpt-4o-mini"); assert(++requests <= 4, "unexpected auxiliary/retry inference");
+    assert.equal(body.model, "gpt-4o-mini"); assert(++requests <= (mcpPython ? 5 : 4), "unexpected auxiliary/retry inference");
     const messages = body.messages as { role: string; content: unknown }[];
+    const mcpCall = (id: string, value: string) => {
+      const names = body.tools?.map((tool: { function?: { name?: string } }) => tool.function?.name) as string[];
+      assert(names?.includes(mcpTool) || names?.includes("tool_call"), `MCP invocation surface missing: ${JSON.stringify(names)}`);
+      return { index: 0, id, type: "function", function: names.includes(mcpTool)
+        ? { name: mcpTool, arguments: JSON.stringify({ value }) }
+        : { name: "tool_call", arguments: JSON.stringify({ calls: [{ name: mcpTool, arguments: { value } }] }) } };
+    };
     const lastUser = JSON.stringify(messages.filter(message => message.role === "user").at(-1)?.content);
     let text = ""; let call: object | undefined;
-    if (lastUser.includes("ENG306_CANCEL")) {
+    if (lastUser.includes("ENG306_CANCEL") && mcpPython) {
+      call = mcpCall("eng306_hold", "hold");
+    } else if (lastUser.includes("ENG306_CANCEL")) {
       cancelResponse = response;
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(`data: ${JSON.stringify({ id: "held", object: "chat.completion.chunk", model: body.model, choices: [{ index: 0, delta: { role: "assistant", content: "held" }, finish_reason: null }] })}\n\n`);
@@ -54,9 +72,15 @@ const server = createServer(async (request, response) => {
     } else if (lastUser.includes("ENG306_RESUME")) {
       assert(messages.some(message => message.role === "assistant" && JSON.stringify(message.content).includes("ENG306 first turn.")), "resume lost the first assistant message");
       assert(messages.some(message => message.role === "tool" && JSON.stringify(message.content).includes(marker)), "resume lost the genuine tool result");
+      if (mcpPython) assert(messages.some(message => message.role === "tool" && JSON.stringify(message.content).includes("ENG306_REAL_MCP_RESULT")), "resume lost the real MCP result");
       resumedHistory = true; text = "ENG306 continued turn.";
+    } else if (mcpPython && messages.some(message => message.role === "tool" && JSON.stringify(message.content).includes("ENG306_REAL_MCP_RESULT"))) {
+      mcpRoundTrip = true; text = "ENG306 first turn.";
     } else if (messages.some(message => message.role === "tool" && JSON.stringify(message.content).includes(marker))) {
-      toolRoundTrip = true; text = "ENG306 first turn.";
+      toolRoundTrip = true;
+      if (mcpPython) {
+        call = mcpCall("eng306_echo", "eng306");
+      } else text = "ENG306 first turn.";
     } else {
       assert(lastUser.includes("ENG306_READ"), "unexpected first prompt");
       assert(body.tools?.some((tool: { function?: { name?: string } }) => tool.function?.name === "read_file"), "native read_file tool absent");
@@ -75,6 +99,26 @@ const server = createServer(async (request, response) => {
 });
 server.requestTimeout = 10000;
 server.headersTimeout = 10000;
+const mcpEvents = async () => {
+  const raw = await readFile(mcpLog, "utf8"); assert(Buffer.byteLength(raw) <= 65536);
+  return raw.trim().split("\n").map(line => JSON.parse(line) as { kind: string; pid: number; method?: string; value?: string });
+};
+const waitMcpExit = async (events: Awaited<ReturnType<typeof mcpEvents>>) => {
+  for (const pid of new Set(events.filter(event => event.kind === "started").map(event => event.pid))) {
+    const started = Date.now();
+    while (true) {
+      try { process.kill(pid, 0); }
+      catch (error) { assert.equal((error as NodeJS.ErrnoException).code, "ESRCH"); break; }
+      assert(Date.now() - started < 5000, "MCP child still alive after bounded cleanup");
+      await new Promise(accept => setTimeout(accept, 50));
+    }
+  }
+};
+const waitNativeExit = async () => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { await Promise.race([Promise.all(exits), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Native fixture cleanup unconfirmed")), 5000); })]); }
+  finally { if (timer) clearTimeout(timer); }
+};
 try {
   await new Promise<void>(accept => server.listen(0, "127.0.0.1", accept));
   const address = server.address(); assert(address && typeof address === "object");
@@ -84,9 +128,10 @@ try {
   await writeFile(join(home, "project/fixture.txt"), marker, { flag: "wx", mode: 0o600 });
   await writeFile(join(home, ".hermes/config.yaml"), JSON.stringify({
     model: { default: "gpt-4o-mini", provider: "openai-api", base_url: `http://127.0.0.1:${address.port}/v1`, api_mode: "chat_completions", context_length: 128000 },
-    agent: { max_turns: 3 }, fallback_providers: [],
+    agent: { max_turns: 4 }, fallback_providers: [],
     auxiliary: { background_review: { enabled: false }, title_generation: { enabled: false } },
-    memory: { memory_enabled: false, user_profile_enabled: false }, security: { allow_lazy_installs: false }, mcp_servers: {},
+    memory: { memory_enabled: false, user_profile_enabled: false }, security: { allow_lazy_installs: false },
+    mcp_servers: mcpPython ? { eng306: { command: childPython, args: [join(process.cwd(), "scripts/spikes/fixtures/hermes-mcp-server.py"), mcpLog], timeout: 30 } } : {},
   }), { flag: "wx", mode: 0o600 });
   // Test-only network guard. Real Hermes code runs; no external DNS/socket is allowed.
   const bootstrap = `import socket, ipaddress, runpy, sys
@@ -111,13 +156,16 @@ runpy.run_module('tui_gateway.entry', run_name='__main__')`;
     HOME: home, MATRIX_HOME: home, HERMES_HOME: join(home, ".hermes"),
     PATH: "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin", PYTHONPATH: source,
     OPENAI_API_KEY: "eng306-loopback-fixture", HERMES_DISABLE_TELEMETRY: "1", HERMES_DISABLE_LAZY_INSTALLS: "1",
-    HERMES_IGNORE_RULES: "1", HERMES_SINGLE_QUERY_SESSION: "1", HERMES_TUI_TOOLSETS: "file",
+    HERMES_IGNORE_RULES: "1", HERMES_SINGLE_QUERY_SESSION: "1", HERMES_TUI_TOOLSETS: mcpPython ? "file,eng306" : "file",
   };
   const spawnFn: HermesGatewaySpawn = (command, args, options) => {
     assert.deepEqual(args, ["-u", "-m", "tui_gateway.entry"]); assert.equal(command, python);
-    const child = spawn(command, ["-u", "-c", bootstrap], { ...options, env: environment });
+    if (failSpawn) console.error("ENG306_SYNTHETIC_SPAWN_FAILURE_INJECTED");
+    const child = spawn(failSpawn ? join(home, "missing-python") : childPython, ["-u", "-c", bootstrap], { ...options, env: environment });
     const index = children.push(child) - 1;
-    exits.push(new Promise<void>(accept => child.once("exit", () => accept())));
+    diagnostics[index] = "";
+    // Failed spawns emit error + close without exit. Close also proves pipe drain.
+    exits.push(new Promise<void>(accept => child.once("close", () => accept())));
     let buffered = "";
     let observed = "";
     child.stdout!.on("data", (chunk: Buffer) => {
@@ -141,6 +189,7 @@ runpy.run_module('tui_gateway.entry', run_name='__main__')`;
     let diagnosticBytes = 0;
     child.stderr!.on("data", (chunk: Buffer) => {
       diagnosticBytes += chunk.length;
+      if (diagnosticBytes <= 64 * 1024) diagnostics[index] += chunk.toString();
       blockedNetworkAttempts += chunk.toString().split("ENG306_BLOCKED_EXTERNAL_NETWORK").length - 1;
       if (diagnosticBytes > 64 * 1024) child.kill("SIGKILL");
     });
@@ -163,6 +212,7 @@ runpy.run_module('tui_gateway.entry', run_name='__main__')`;
   const text = (events: CanonicalProviderRunEvent[]) => events.filter(event => event.type === "assistant.delta").map(event => event.delta).join("");
   const first = await collect(adapter.start(input("ENG306_READ", "first")), "completed");
   assert.equal(text(first), "ENG306 first turn."); assert(toolRoundTrip);
+  if (mcpPython) assert(mcpRoundTrip, "real MCP result did not reach the model");
   assert(first.some(event => event.type === "agent.activity" && event.status === "completed"), "native tool activity missing");
   const state = first.find(event => event.type === "state.updated"); assert(state?.type === "state.updated");
   const parsed = adapter.parseState(state.state);
@@ -171,22 +221,52 @@ runpy.run_module('tui_gateway.entry', run_name='__main__')`;
   assert.equal(text(second), "ENG306 continued turn."); assert(resumedHistory);
   assert(rpc.some(call => call.child === 1 && call.method === "session.resume" && call.session === parsed.sessionId));
   const cancelled = collect(adapter.start({ ...input("ENG306_CANCEL", "cancel"), signal: AbortSignal.any([deadline, controller.signal]) }), "aborted");
-  await Promise.race([held, cancelled.then(() => { throw new Error("Cancelled before fixture inference"); })]);
+  if (mcpPython) {
+    await Promise.race([(async () => {
+      const started = Date.now();
+      while (!(await mcpEvents()).some(event => event.kind === "tool_call" && event.value === "hold")) {
+        assert(Date.now() - started < 30000, "real MCP hold call did not start"); deadline.throwIfAborted();
+        await new Promise(accept => setTimeout(accept, 50));
+      }
+    })(), cancelled.then(() => { throw new Error("Cancelled before native MCP hold call"); })]);
+  } else await Promise.race([held, cancelled.then(() => { throw new Error("Cancelled before fixture inference"); })]);
   controller.abort(); await cancelled;
   assert(rpc.some(call => call.child === 2 && call.method === "session.interrupt"), "cancellation skipped native interrupt");
-  assert.equal(children.length, 3); assert.equal(requests, 4);
-  await Promise.all(exits);
+  assert.equal(children.length, 3); assert.equal(requests, mcpPython ? 5 : 4);
+  await waitNativeExit();
   assert(children.every(child => child.exitCode !== null || child.signalCode !== null));
+  let mcpEvidence = mcpPython ? await mcpEvents() : [];
+  if (mcpPython) {
+    assert(mcpEvidence.some(event => event.method === "initialize"));
+    assert(mcpEvidence.some(event => event.method === "tools/list"));
+    assert(mcpEvidence.some(event => event.value === "eng306"));
+    assert(mcpEvidence.some(event => event.method === "notifications/cancelled"), "real MCP cancellation notification missing");
+    await waitMcpExit(mcpEvidence);
+    mcpEvidence = await mcpEvents();
+  }
   console.log(JSON.stringify({ source: "e06df9c2eae6901f4c88f464e0ae6e753c0428b8", python: version.stdout.trim(), interpreter: python,
     sdkPreflight: "openai 2.24.0 + anthropic 0.87.0", streaming: "pass", coldResumeHistory: "pass", builtinReadTool: "pass", cancellation: "pass", cleanup: "3 native children exited",
     loopbackRequests: requests, networkBoundary: "test-only DNS/socket loopback guard", blockedNetworkAttempts, realCredentialsLoaded: false,
-    mcp: sdk.stdout.trim() === "missing" ? { status: "blocked", reason: "mcp==2.0.0 absent in existing isolated environment; no installation attempted" } : { status: "not tested" },
+    mcp: mcpPython ? { status: "pass", interpreter: childPython, sdk: "2.0.0", discoveryCallResult: true, heldToolCancellation: true, childCleanup: true, events: mcpEvidence } : sdk.stdout.trim() === "missing" ? { status: "blocked", reason: "mcp==2.0.0 absent in selected PM generation" } : { status: "not tested" },
   }, null, 2));
+} catch (error) {
+  let mcpEvents: string | undefined;
+  try { mcpEvents = (await readFile(mcpLog, "utf8")).slice(0, 65536); }
+  catch (readError) { mcpEvents = readError instanceof Error ? readError.name : "unavailable"; }
+  console.error(JSON.stringify({ diagnostics, mcpEvents }));
+  throw error;
 } finally {
   cancelResponse?.destroy();
   for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-  await Promise.all(exits);
-  server.closeAllConnections();
-  if (server.listening) await new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
-  await rm(home, { recursive: true, force: true });
+  try {
+    await waitNativeExit();
+    if (mcpPython) {
+      try { await waitMcpExit(await mcpEvents()); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+  } finally {
+    server.closeAllConnections();
+    if (server.listening) await new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()));
+    await rm(home, { recursive: true, force: true });
+  }
 }

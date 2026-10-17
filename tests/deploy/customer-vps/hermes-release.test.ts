@@ -25,9 +25,9 @@ describe("customer VPS Hermes release", () => {
     expect(installer).not.toContain("NousResearch/hermes-agent/main/scripts/install.sh");
   });
 
-  it("uses upstream PM to persist the Anthropic extra across generation rebuilds", async () => {
+  it("uses upstream PM to persist native Anthropic and Matrix MCP extras across generation rebuilds", async () => {
     const installer = await readFile(installerPath, "utf8");
-    expect(installer).toContain('timeout 600 "$MATRIX_RUNTIME_HOME/.local/bin/hermes" pm install --extra anthropic');
+    expect(installer).toContain('timeout 600 "$MATRIX_RUNTIME_HOME/.local/bin/hermes" pm install --extra anthropic --extra mcp');
     expect(installer).not.toContain("uv --no-config pip install");
     expect(installer).not.toContain("--force-commit");
     expect(installer).not.toMatch(/anthropic==|openai==/);
@@ -64,7 +64,7 @@ describe("customer VPS Hermes release", () => {
       try { execFileSync("bash", ["-c", script, "fixture", root]); }
       catch (error) { exitStatus = (error as { status: number }).status; }
       expect(exitStatus).toBe(status);
-      expect(await readFile(join(root, "invocation"), "utf8")).toBe([`${root}/.hermes`, "pm", "install", "--extra", "anthropic", ""].join("\n"));
+      expect(await readFile(join(root, "invocation"), "utf8")).toBe([`${root}/.hermes`, "pm", "install", "--extra", "anthropic", "--extra", "mcp", ""].join("\n"));
       if (status === 0) expect(await readFile(join(root, "success"), "utf8")).toBe("success");
       else await expect(access(join(root, "success"))).rejects.toThrow();
     } finally { await rm(root, { recursive: true, force: true }); }

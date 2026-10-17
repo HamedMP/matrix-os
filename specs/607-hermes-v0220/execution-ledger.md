@@ -1,5 +1,11 @@
 # ENG-306 local implementation ledger
 
+**Current phase:** the 2026-10-17 coordinator instruction resumes normal scoped
+PR publication, automated review and remote CI, and permits a task-owned MCP SDK
+fixture installation. Earlier no-install/no-push boundaries below are historical.
+See [validation.md](validation.md) for current real MCP qualification and the
+interrupted full local gate. No real credentials, GUI, Slack, merge or deployment.
+
 ## Resume boundary
 
 Coordinator explicitly resumed implementation and local synthetic tests after the
