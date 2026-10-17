@@ -11,8 +11,7 @@ export class BrowserApprovalMachineLookup {
   private closed: Promise<void> | undefined;
   constructor(options: { databaseUrl: string; poolFactory?: (config: pg.PoolConfig) => Pick<pg.Pool, "connect" | "end" | "on"> }) {
     this.pool = (options.poolFactory ?? (config => new pg.Pool(config)))({ connectionString: options.databaseUrl,
-      max: 2, connectionTimeoutMillis: 3000, query_timeout: 5000, statement_timeout: 5000,
-      idle_in_transaction_session_timeout: 5000, options: "-c lock_timeout=3000" });
+      max: 2, connectionTimeoutMillis: 3000, query_timeout: 5000 });
     this.pool.on("error", (error: Error) => console.warn("[browser-approval] Owned lookup unavailable", error.name));
   }
   private release(lease: { client: pg.PoolClient; released: boolean }, destroy = false) {
@@ -27,8 +26,16 @@ export class BrowserApprovalMachineLookup {
       if (this.closing || this.clients.size >= 2) { client.release(true); throw new Error("Browser approval unavailable"); }
       const lease = { client, released: false }; this.clients.add(lease);
       try {
+        // Transaction poolers reject server settings in the startup packet.
+        // SET LOCAL keeps the limits on this transaction's physical backend,
+        // without leaking session settings to the next pooled owner lookup.
+        await client.query("BEGIN READ ONLY");
+        await client.query("SET LOCAL statement_timeout = '5s'");
+        await client.query("SET LOCAL lock_timeout = '3s'");
+        await client.query("SET LOCAL idle_in_transaction_session_timeout = '5s'");
         const result = await client.query<{ clerk_user_id: string; runtime_slot: string; status: string }>(
           "SELECT clerk_user_id,runtime_slot,status FROM user_machines WHERE handle=$1 AND runtime_slot=$2 AND status='running' AND activation_state='authorized' AND deleted_at IS NULL LIMIT 1", [handle, runtimeSlot]);
+        await client.query("COMMIT");
         const row = result.rows[0];
         return row ? { clerkUserId: row.clerk_user_id, runtimeSlot: row.runtime_slot, status: row.status } : undefined;
       } catch (error: unknown) { this.release(lease, true); throw error; }
