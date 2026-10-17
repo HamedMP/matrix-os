@@ -57,13 +57,12 @@ import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
-import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
+import { createInitialChatAdapters } from "./server/initial-chat-adapters.js";
+import { createSharedBrowserRuntime } from "./shared-browser/runtime.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
-import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
 import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
 import { createPreviewDrivePlatformClient } from "./chat/preview-drive-platform-client.js";
 import { createPreviewDriveWiring } from "./chat/preview-drive-wiring.js";
-import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
 import { createProjectChatCleanup } from "./chat/project-deletion.js";
@@ -509,6 +508,9 @@ export async function createGateway(config: GatewayConfig) {
   // canonical when present; MATRIX_CLERK_USER_ID supports VPS-native hosts
   // provisioned before the canonical variable was added.
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
+  const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath,
+    enabled: process.env.MATRIX_BROWSER_LAB === "true", ownerId: terminalRuntimeOwnerId,
+    clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
     ? [terminalRuntimeOwnerId]
     : process.env.NODE_ENV === "production" ? [] : ["default"];
@@ -1310,13 +1312,16 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
 
-  const { processManager, customMcp } = registerDeferredRuntimeRoutes({
+  const { processManager, customMcp, browserLab } = registerDeferredRuntimeRoutes({
     app, homePath, integrationRoutes, internalIntegrationBaseUrl,
+    ...(sharedBrowserRuntime && terminalRuntimeOwnerId ? { sharedBrowser: { broker: sharedBrowserRuntime.broker, ownerId: terminalRuntimeOwnerId } } : {}),
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
       proxyIntegrationRequest(c, { targetBase, machineToken, routePrefix,
         ...(previewDriveClient ? { previewDriveClient } : {}) }),
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
+    upgradeWebSocket,
+    isAllowedBrowserLabOrigin: (origin) => allowedOriginController.resolve(origin) === origin,
     posthogErrorTracker, ownerTelemetryDistinctId,
   });
 
@@ -1553,6 +1558,7 @@ export async function createGateway(config: GatewayConfig) {
     await chatAgents.bootstrap();
     botServices = await startBots({
       homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
+      ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
       providers: aiProviderService,
       ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),
@@ -1574,11 +1580,9 @@ export async function createGateway(config: GatewayConfig) {
         ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
           () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
     });
-    const canonicalAdapters: CanonicalChatProviderAdapter[] = [
-      createKernelChatProviderAdapter({ dispatcher }),
-      createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
-      createOpenClawChatProviderAdapter({ rpc: openClawRpc, homePath }),
-    ];
+    const canonicalAdapters = createInitialChatAdapters({ homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
+      ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
+      ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port });
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
         homePath,
@@ -1933,6 +1937,7 @@ export async function createGateway(config: GatewayConfig) {
       canonicalChatOrchestrator = null;
       await botServices?.close();
       botServices = undefined;
+      await sharedBrowserRuntime?.close();
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();
@@ -1959,6 +1964,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();
       await channelManager.stop();
+      browserLab.close();
       customMcp.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();

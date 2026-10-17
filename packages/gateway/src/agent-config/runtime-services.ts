@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentConfigError } from "./errors.js";
+import { createHermesNativeCredentialKindReader } from "./hermes-native-credential-kind.js";
 import { createHermesRuntimeAdapter } from "./hermes-adapter.js";
 import { createHermesRuntimeSource, type HermesJsonReader } from "./hermes-source.js";
 import {
@@ -356,7 +357,9 @@ export function createHermesAgentRuntimeServices(options: {
   homePath: string;
   client: HermesRuntimeClient;
 }): HermesAgentRuntimeServices {
-  const source = createHermesRuntimeSource(options.client.readJson);
+  const source = createHermesRuntimeSource(options.client.readJson, {
+    readNativeCredentialKind: createHermesNativeCredentialKindReader({ homePath: options.homePath }),
+  });
   const adapter = createHermesRuntimeAdapter({
     source,
     requestJson: options.client.requestJson,
@@ -375,7 +378,9 @@ export function createAgentRuntimeServices(options: {
   openClawRpc?: OpenClawRpcClient;
 }): AgentRuntimeServices {
   const hostControl = options.hostControl ?? createHostRuntimeControl();
-  const hermesSource = createHermesRuntimeSource(options.client.readJson);
+  const hermesSource = createHermesRuntimeSource(options.client.readJson, {
+    readNativeCredentialKind: createHermesNativeCredentialKindReader({ homePath: options.homePath }),
+  });
   const openClawRpc = options.openClawRpc ?? createLazyOpenClawRpc(options.homePath);
   const hermes = createHermesRuntimeAdapter({
     source: hermesSource,

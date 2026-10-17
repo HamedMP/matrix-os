@@ -14,6 +14,7 @@ class FakeRpc implements OpenClawRpcClient {
   private readonly listeners = new Set<(event: OpenClawRpcEvent) => void>();
   agentRun = Promise.withResolvers<unknown>();
   autoAccept = true;
+  respectAgentAbort = false;
   pendingAgentOptions?: OpenClawRpcCallOptions;
   accepted: {
     runId: string;
@@ -32,12 +33,17 @@ class FakeRpc implements OpenClawRpcClient {
   call = vi.fn(async (
     method: string,
     params: unknown,
-    _signal: AbortSignal,
+    signal: AbortSignal,
     options?: OpenClawRpcCallOptions,
   ): Promise<unknown> => {
     this.calls.push({ method, params, options });
     if (method === "agent") {
+      options?.onDispatched?.();
       this.pendingAgentOptions = options;
+      if (this.respectAgentAbort) signal.addEventListener("abort", () => {
+        this.pendingAgentOptions = undefined;
+        this.agentRun.reject(new Error("agent request aborted"));
+      }, { once: true });
       if (this.autoAccept) options?.onAccepted?.(this.accepted);
       return this.agentRun.promise;
     }
@@ -318,6 +324,7 @@ describe("OpenClaw canonical Chat Provider adapter", () => {
   it("retries chat.abort when cancellation races ahead of agent acceptance", async () => {
     const rpc = new FakeRpc();
     rpc.autoAccept = false;
+    rpc.respectAgentAbort = true;
     const controller = new AbortController();
     const adapter = createOpenClawChatProviderAdapter({ rpc, homePath: "/home/matrix/home" });
     const result = collect(adapter.start({ ...baseInput, signal: controller.signal }));

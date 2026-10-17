@@ -1,16 +1,79 @@
 import { describe, expect, it, vi } from "vitest";
+import type { SharedBrowserActionResult } from "@matrix-os/contracts";
 import { createSharedBrowserBroker,SharedBrowserError } from "../../packages/gateway/src/shared-browser/broker.js";
 
 const binding = { ownerId: "owner", chatId: "chat-1", runId: "run-1", harness: "pi" as const };
 function deferred<T>() { let resolve!: (value:T)=>void; const promise=new Promise<T>(r=>{resolve=r;}); return {promise,resolve}; }
+async function settleExpectedCleanup(result: Promise<unknown>) {
+  await result.catch((error:unknown)=>{if(error instanceof SharedBrowserError && error.code==="run_unavailable")return;throw error;});
+}
+async function closeAfterResult(broker: {close():Promise<void>},result:Promise<unknown>) {
+  const settled=settleExpectedCleanup(result);await Promise.all([broker.close(),settled]);
+}
 function setup() {
   const gates: boolean[]=[];
-  const driver={ execute: vi.fn(async (_input:unknown,_signal:AbortSignal)=>({success:true,observationId:"obs-1",content:"Invoices"})), invalidateObservation:vi.fn(), detach:vi.fn(async()=>{}) };
+  const driver={ execute: vi.fn(async (_input:unknown,_signal:AbortSignal): Promise<SharedBrowserActionResult>=>({success:true,observationId:"obs-1",content:"Invoices"})), invalidateObservation:vi.fn(), detach:vi.fn(async()=>{}) };
   const broker=createSharedBrowserBroker({ ownerId:"owner", driver, setHumanControl:async(value:boolean)=>{gates.push(value);}, runTtlMs:60_000, drainTimeoutMs:100 });
   const controller=new AbortController(); const grant=broker.openRun(binding,controller.signal);
   return {broker,driver,gates,controller,grant};
 }
 describe("shared Chrome broker ownership and takeover",()=>{
+  it("surfaces unexpected test cleanup failures",async()=>{
+    await expect(settleExpectedCleanup(Promise.reject(new TypeError("stream failed")))).rejects.toThrow(TypeError);
+    await expect(settleExpectedCleanup(Promise.reject(new SharedBrowserError("browser_changed")))).rejects.toMatchObject({code:"browser_changed"});
+  });
+  it("keeps explicit owner handoff pending and returns a fresh snapshot after Resume",async()=>{
+    const s=setup();s.driver.execute.mockResolvedValueOnce({success:false,handoffRequested:true,content:"Owner sign-in required."});
+    let settled=false;const result=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).finally(()=>{settled=true;});
+    try {
+      await vi.waitFor(()=>expect(s.broker.status().phase).toBe("human"));await Promise.resolve();
+      expect(s.broker.status()).toMatchObject({handoff:{content:"Owner sign-in required."}});
+      expect(settled).toBe(false);expect(s.driver.detach).toHaveBeenCalledOnce();expect(s.gates).toEqual([false,true]);
+      await s.broker.control("owner",{action:"resume"});
+      expect(await result).toMatchObject({success:true,observationId:"obs-1"});
+      expect((await result).content).toContain("Owner sign-in required.");
+      expect((await result).content).toContain("Invoices");
+      expect(s.driver.execute.mock.calls.map(call=>(call[0] as {action:string}).action)).toEqual(["snapshot","snapshot"]);
+      expect(s.broker.status()).toMatchObject({phase:"agent",needsObservation:false});
+    } finally {await closeAfterResult(s.broker,result);}
+  });
+  it("keeps a repeated credential checkpoint pending until an acknowledged fresh observation",async()=>{
+    const s=setup();s.driver.execute.mockResolvedValueOnce({success:false,handoffRequested:true}).mockResolvedValueOnce({success:false,handoffRequested:true});
+    let settled=false;const result=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).finally(()=>{settled=true;});
+    try {
+      await vi.waitFor(()=>expect(s.broker.status().phase).toBe("human"));await s.broker.control("owner",{action:"resume"});
+      await vi.waitFor(()=>expect(s.driver.execute).toHaveBeenCalledTimes(2));await vi.waitFor(()=>expect(s.broker.status().phase).toBe("human"));
+      expect(settled).toBe(false);await s.broker.control("owner",{action:"resume"});expect(await result).toHaveProperty("success",true);
+      expect(s.driver.execute).toHaveBeenCalledTimes(3);expect(s.driver.detach).toHaveBeenCalledTimes(2);
+    } finally {await closeAfterResult(s.broker,result);}
+  });
+  it("never observes under successor authority after a handoff run closes",async()=>{
+    const s=setup();s.driver.execute.mockResolvedValueOnce({success:false,handoffRequested:true});
+    const result=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(error=>error);
+    await vi.waitFor(()=>expect(s.broker.status().phase).toBe("human"));await s.broker.closeRun(binding.runId);
+    const successor=s.broker.openRun(binding,new AbortController().signal);
+    expect((await result).code).toBe("run_unavailable");expect(s.driver.execute).toHaveBeenCalledOnce();
+    expect(s.broker.resolveCapability(s.grant.token)).toBeNull();expect(s.broker.resolveCapability(successor.token)).toEqual(binding);await s.broker.close();
+  });
+  it("never replays a download that requested owner handoff",async()=>{
+    const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);
+    s.driver.execute.mockResolvedValueOnce({success:false,handoffRequested:true,content:"Owner review required."});
+    const result=s.broker.execute(binding,{action:"download",observationId:"obs-1",ref:"r1",documentId:"INV-1"},s.controller.signal);
+    try {
+      await vi.waitFor(()=>expect(s.broker.status().phase).toBe("human"));
+      await s.broker.control("owner",{action:"resume"});await result;
+      expect(s.driver.execute.mock.calls.map(call=>(call[0] as {action:string}).action)).toEqual(["snapshot","download","snapshot"]);
+    } finally {await closeAfterResult(s.broker,result);}
+  });
+  it("cancels an explicit handoff wait without restoring old run authority",async()=>{
+    const s=setup();s.driver.execute.mockResolvedValueOnce({success:false,handoffRequested:true});
+    const result=s.broker.execute(binding,{action:"snapshot"},s.controller.signal).catch(error=>error);
+    await vi.waitFor(()=>expect(s.broker.status().phase).toBe("human"));
+    await s.broker.control("owner",{action:"stop"});
+    expect((await result).code).toBe("run_unavailable");expect(s.broker.resolveCapability(s.grant.token)).toBeNull();
+    expect(s.driver.execute).toHaveBeenCalledOnce();await s.broker.close();
+  });
+
   it("hands uncertain acknowledged mutations to the owner and refuses queued old observations",async()=>{
     const s=setup();await s.broker.execute(binding,{action:"snapshot"},s.controller.signal);
     const entered=deferred<void>();const release=deferred<void>();
