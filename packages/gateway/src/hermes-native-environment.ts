@@ -8,10 +8,10 @@ const NETWORK_ENV_KEYS = [
 ] as const;
 
 /** Preserve owner network configuration without inheriting Gateway credentials. */
-function networkEnvironment(): Record<string, string> {
+export function hermesNativeNetworkEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {
   const environment: Record<string, string> = {};
   for (const key of NETWORK_ENV_KEYS) {
-    const value = process.env[key];
+    const value = source[key];
     if (value && value.length <= 4096 && !/[\0\r\n]/.test(value)) environment[key] = value;
   }
   return environment;
@@ -21,7 +21,7 @@ function networkEnvironment(): Record<string, string> {
 export function buildHermesNativeEnvironment(homePath: string, nativeRoot: string): Record<string, string> {
   return {
     ...buildAgentRuntimeEnvironment(homePath),
-    ...networkEnvironment(),
+    ...hermesNativeNetworkEnvironment(process.env),
     HERMES_HOME: join(homePath, ".hermes"),
     HERMES_PYTHON_SRC_ROOT: nativeRoot,
     PYTHONPATH: nativeRoot,
