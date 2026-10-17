@@ -31,6 +31,7 @@ import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "../co
 import { CollaborationAuthorizationError } from "../collaboration/authority.js";
 import {
   fenceSharedChatAuthority,
+  lockSharedChatMembershipScope,
   type SharedChatAuthorizer,
 } from "../collaboration/shared-chat-authority.js";
 import {
@@ -299,6 +300,7 @@ export class ChatQueueRepository {
 
     return this.transact(async (executor) => {
       const trx = executor as unknown as Transaction<OwnerCollaborationDatabase>;
+      await lockSharedChatMembershipScope(trx, authority);
       const scope = await trx.selectFrom("collaboration_scopes").selectAll()
         .where("id", "=", scopeId)
         .forUpdate()
@@ -872,6 +874,7 @@ export class ChatQueueRepository {
       let sharedAdmission: "allowed" | "unauthorized" | "unavailable" = "allowed";
       if (candidateScope?.collaboration_scope_id) {
         const sharedTrx = trx as unknown as Transaction<OwnerCollaborationDatabase>;
+        await lockSharedChatMembershipScope(sharedTrx, freshAuthority);
         sharedScope = await sharedTrx.selectFrom("collaboration_scopes")
           .selectAll()
           .where("id", "=", candidateScope.collaboration_scope_id)

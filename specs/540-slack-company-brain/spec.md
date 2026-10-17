@@ -57,6 +57,8 @@ Slack ingress: 256 KiB raw body, five-minute timestamp window, home enqueue dead
 
 Shared Gmail attachments use only the exact Chat-scoped integration read grant. The existing `integration.call` returns stateless chunks of at most 32 KiB decoded bytes and 60 KiB serialized UTF-8 result, re-fetching through the 1 MiB attachment limit on each call. The local `params.chunk` selects a bounded offset/length and requires the complete attachment SHA-256 for continuation; it is removed before the Gmail request. Every chunk rechecks the canonical run generation, Project/worktree fingerprint, source and exact grant after the read. No private artifact capability, common Project file, retained cache or automatic company-source publication is added. Attachment bytes are untrusted binary data with no inferred MIME type.
 
+The host owner retains Brain export/erasure after canonical shared Chat deletion through the exact retained scope and Brain binding. This owner-data path requires current organization evidence and accepted owner membership, rechecks tombstone identity/runtime/epochs under the existing ordered locks, and never reopens deleted scopes to participant reads or execution. A successful bounded Brain export commits an actor/scope/revision audit in the existing owner Postgres collaboration audit table before returning data; failed authorization, capacity checks or audit persistence return no dataset or completed export audit.
+
 ## Acceptance
 
 - Two employees in one Slack thread route to the configured company agent, with recorded requester and host payer, without exposing either employee's private Brain or bot session.
