@@ -1,4 +1,4 @@
-import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
+import { canonicalChatExecutionControls, MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { TextInput } from "react-native";
@@ -63,7 +63,10 @@ export default function ChatScreen() {
   const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
-  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
+  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection,
+    detail && detail.record.chat.id === activeChatId ? canonicalChatExecutionControls({
+      chatId: detail.record.chat.id, currentSelection: detail.record.chat.currentSelection, runs: detail.runs,
+    }) : undefined);
 
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
 

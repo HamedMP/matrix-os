@@ -106,6 +106,7 @@
     "#app-capabilities": "./src/app-capabilities.ts",
     "#remote-browser": "./src/remote-browser.ts",
     "#shared-browser": "./src/shared-browser.ts",
+    "#canonical-chat-execution-controls": "./src/canonical-chat-execution-controls.ts",
     "#command-preview": "./src/command-preview.ts"
   },
   "main": "src/index.ts",
