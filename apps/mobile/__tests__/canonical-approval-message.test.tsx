@@ -1,11 +1,16 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
+import { useChatThread } from "@/components/chat/use-chat-thread";
+import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 
 jest.mock("@clerk/clerk-expo", () => { const getToken = async () => "test-token"; return { useAuth: () => ({ getToken }) }; });
 // Unrelated ESM-only export from the contracts barrel; this suite exercises approval HTTP, not shared HTML.
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock("@/lib/queries/use-cancel-run", () => ({ useCancelRun: () => ({ mutate: jest.fn(), isPending: false }) }));
+jest.mock("@/lib/queries/use-retry-chat-turn", () => ({ useRetryChatTurn: () => ({ mutate: jest.fn(), isPending: false, isError: false }) }));
 
 const approval = {
   id: "evt_approval", runId: "run_test", approvalId: "approval_test", title: "Use integration",
@@ -104,7 +109,7 @@ it("releases Undo busy state when Chat refreshes during the request", async () =
   fireEvent.press(screen.getByText("Undo"));
   await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(2));
 });
-it("refreshes other native cards after confirmed Undo", async () => {
+it("refreshes other native cards after confirmed Undo even when Chat records are unchanged", async () => {
   const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome", scopeVersion: 1, revision: 1, state: "active", createdAt: new Date().toISOString(), revokedAt: null };
   let active: typeof grant | null = grant;
   jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
@@ -112,9 +117,11 @@ it("refreshes other native cards after confirmed Undo", async () => {
     return { ok: true, json: async () => ({ grant: active }) } as Response;
   });
   const lifecycle = { kind: "shared_chrome" as const, leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1 as const, expiresAt: new Date(Date.now()+60_000).toISOString() };
+  const items = ["first", "second"].map(id => ({ id, role: "system", text: "Use Matrix Browser", toolCalls: [], activities: [], isRunning: false, createdAt: 0,
+    approval: { ...approval, approvalId: id, allowedDecisions: [...approval.allowedDecisions], browserApproval: lifecycle } })) as TranscriptMessage[];
   function Cards() {
-    const [, refreshChat] = React.useState(0);
-    return <>{["first", "second"].map(id => <CanonicalApprovalMessage key={id} {...props} onSettled={() => refreshChat(value => value + 1)} approval={{ ...approval, approvalId: id, allowedDecisions: [...approval.allowedDecisions], browserApproval: { ...lifecycle } }}/>)}</>;
+    const thread = useChatThread({ chatId: props.chatId, detail: null, gatewayUrl: props.gatewayUrl, refresh, optimisticMessages: [] });
+    return <>{items.map(thread.renderRequest)}</>;
   }
   render(<Cards/>);
   await waitFor(() => expect(screen.getAllByText("Undo")).toHaveLength(2));

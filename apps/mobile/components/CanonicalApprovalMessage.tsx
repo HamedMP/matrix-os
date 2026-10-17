@@ -15,11 +15,13 @@ import {
 import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
 
-export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettled }: {
+export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettled, grantRefreshKey }: {
   approval: CanonicalChatApprovalView;
   chatId: string;
   gatewayUrl: string;
   onSettled: () => Promise<unknown> | void;
+  /** Refresh all mounted cards even when refetched Chat records are unchanged. */
+  grantRefreshKey?: object;
 }) {
   const { getToken } = useAuth();
   const [submitting, setSubmitting] = useState(false);
@@ -48,7 +50,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
       if (!cancelled && scope.current === current && grantRead.current === read) setGrant(prior => reconcileBrowserGrantObservation(prior, result.grant, chatId));
     })().catch((error: unknown) => { console.warn("[browser-permission] Grant read failed", browserPermissionErrorKind(error)); if (!cancelled && scope.current === current && grantRead.current === read) setError("Could not check browser access. Refresh this Chat."); });
     return () => { cancelled = true; };
-  }, [chatId, gatewayUrl, approval.approvalId, approval.runId, approval.browserGrant, approval.browserApproval, getToken, grantRefresh]);
+  }, [chatId, gatewayUrl, approval.approvalId, approval.runId, approval.browserGrant, approval.browserApproval, getToken, grantRefresh, grantRefreshKey]);
   useEffect(() => {
     if (!approval.pending || !approval.browserApproval) return;
     const timer = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(timer);

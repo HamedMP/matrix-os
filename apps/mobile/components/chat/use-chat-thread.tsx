@@ -1,5 +1,5 @@
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
 
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
@@ -70,6 +70,13 @@ export function useChatThread({
   // as the same retry when it is pressed again. A later failure is a new run
   // with a notice of its own, and gets a new id.
   const retryRequest = useRef<{ noticeId: string; clientRequestId: string } | null>(null);
+  const [grantRefreshKey, setGrantRefreshKey] = useState<object>({});
+  const refreshApprovals = useCallback(() => {
+    // Grant mutations need not change any recorded Chat activity. Do not rely
+    // on refetch returning new approval objects to invalidate sibling reads.
+    setGrantRefreshKey({});
+    return refresh();
+  }, [refresh]);
 
   const messages = useMemo(() => {
     const transcript = withLocalAttachments(buildTranscript(detail), sentAttachments);
@@ -138,12 +145,13 @@ export function useChatThread({
           approval={item.approval}
           chatId={chatId}
           gatewayUrl={gatewayUrl}
-          onSettled={refresh}
+          grantRefreshKey={grantRefreshKey}
+          onSettled={refreshApprovals}
         />
       );
     }
     return null;
-  }, [chatId, gatewayUrl, refresh, retryTurn, retryPending, retryFailed, retried, activeRunId, sendOnItsWay]);
+  }, [chatId, gatewayUrl, refresh, grantRefreshKey, refreshApprovals, retryTurn, retryPending, retryFailed, retried, activeRunId, sendOnItsWay]);
 
   const openApp = useCallback((app: ChatResultApp) => {
     router.push({

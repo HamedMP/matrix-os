@@ -34,7 +34,8 @@ the recorded outcome arrives; expiry still overrides an unanswered request.
 Confirmed Undo invalidates earlier background reads and preserves its grant
 revision against older observations, including late errors. A newer grant
 revision can still restore access after an intentional permission decision.
-Confirmed Undo refreshes other mounted cards in the same Chat window. Native
+Confirmed Undo refreshes other mounted cards in the same Chat window, including
+Native Mobile when the Chat refetch returns unchanged approval records. Native
 Mobile refreshes its canonical Chat projection after revocation. Background
 grant reads do not replace the lifetime of a pending decision or Undo action;
 responses from a previous Chat cannot change the current card's busy state.
