@@ -1,6 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createProviderKeyVerifier } from '../../packages/gateway/src/ai-providers/provider-workflow-key.js';
 describe('key verification boundary', () => {
+  it.each([429, 500, 502, 503, 504])('does not blame the key or persist it after transient HTTP %s', async status => {
+    const save = vi.fn();
+    const verify = createProviderKeyVerifier({ providerId: 'anthropic', save,
+      fetchFn: vi.fn(async () => new Response(null, { status })) });
+    await expect(verify({ harnessInstanceId: 'claude', providerId: 'anthropic', apiKey: 'synthetic-only' }))
+      .rejects.toMatchObject({ code: 'unavailable' });
+    expect(save).not.toHaveBeenCalled();
+  });
+  it.each([400, 401, 403])('retains explicit auth/scope rejection for HTTP %s', async status => {
+    const save = vi.fn();
+    const verify = createProviderKeyVerifier({ providerId: 'openai', save,
+      fetchFn: vi.fn(async () => new Response(null, { status })) });
+    await expect(verify({ harnessInstanceId: 'codex', providerId: 'openai', apiKey: 'synthetic-only' }))
+      .rejects.toMatchObject({ code: 'rejected' });
+    expect(save).not.toHaveBeenCalled();
+  });
   it('does not save rejected secrets or follow redirects', async () => {
     const save = vi.fn(); const fetchFn = vi.fn(async () => new Response('{}', { status: 401 }));
     const verify = createProviderKeyVerifier({ providerId: 'openai', save, fetchFn });

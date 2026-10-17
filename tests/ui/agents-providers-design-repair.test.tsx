@@ -73,7 +73,7 @@ it("renders the connected card from source observation without a disabled connec
   p.snapshot.harnesses[0]!.selectedAccountId = "owner";
   p.snapshot.harnesses[0]!.accountIds = ["owner"];
   p.snapshot.accounts = [{ id: "owner", accessSourceId: "native", displayName: "owner@example.com", authState: "unknown", authMethod: "terminal", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } }] as never;
-  p.snapshot.accessSources = [{ id: "native", kind: "provider_account", eligibleModelIds: [], providerId: "openai", displayName: "owner@example.com", localObservation: observed, readiness: { state: "unknown" }, usage: { kind: "unavailable", reason: "unknown" } }] as never;
+  p.snapshot.accessSources = [{ id: "native", fundingKind: "owner_account", kind: "provider_account", eligibleModelIds: [], providerId: "openai", displayName: "owner@example.com", localObservation: observed, readiness: { state: "unknown" }, usage: { kind: "unavailable", reason: "unknown" } }] as never;
   render(<AgentsProvidersView {...p} />);
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
   expect(screen.getByRole("button", { name: /Codex.*Connected/ })).toBeVisible();
@@ -114,7 +114,7 @@ it("wires source-linked native profile identity and quota into the connected pag
   p.snapshot.harnesses[0]!.accountIds = ["native-owner"];
   p.snapshot.accounts = [{ id: "native-owner", providerId: "openai", accessSourceId: "native", displayName: "native@example.com", authMethod: "terminal", authState: "authenticated", connectionDetails: { email: "native@example.com", planName: "ChatGPT Pro" }, dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } },
     { id: "unrelated", providerId: "openai", accessSourceId: "other", displayName: "other@example.com", authMethod: "terminal", authState: "authenticated", connectionDetails: { email: "other@example.com", planName: "ChatGPT Plus" }, dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 } }] as never;
-  p.snapshot.accessSources = [{ id: "native", kind: "provider_account", providerId: "openai", accountId: "native-owner", displayName: "Codex account", localObservation: { state: "present_unverified", checkedAt: "2026-10-03T00:00:00Z", staleAfter: "2099-10-03T00:00:00Z" }, readiness: { state: "unknown" }, eligibleModelIds: [], usage: { kind: "subscription_allowance", authority: "provider_allowance", state: "current", scope: "account", usedBasisPoints: 2500, resetsAt: "2026-10-04T00:00:00Z", asOf: "2026-10-03T00:00:00Z" } }] as never;
+  p.snapshot.accessSources = [{ id: "native", fundingKind: "owner_account", kind: "provider_account", providerId: "openai", accountId: "native-owner", displayName: "Codex account", localObservation: { state: "present_unverified", checkedAt: "2026-10-03T00:00:00Z", staleAfter: "2099-10-03T00:00:00Z" }, readiness: { state: "unknown" }, eligibleModelIds: [], usage: { kind: "subscription_allowance", authority: "provider_allowance", state: "current", scope: "account", usedBasisPoints: 2500, resetsAt: "2026-10-04T00:00:00Z", asOf: "2026-10-03T00:00:00Z" } }] as never;
   render(<AgentsProvidersView {...p} />);
   fireEvent.click(screen.getByRole("button", { name: /^Codex.*Connected/ }));
   const card = within(screen.getByRole("region", { name: "Codex connection" }));

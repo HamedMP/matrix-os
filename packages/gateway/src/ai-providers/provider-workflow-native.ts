@@ -1,6 +1,7 @@
 import type { createGenericNativeWriter, GenericNativeWriterProfile } from "./generic-native-writer.js";
 import type { createHermesSettingsConnection } from "./hermes-settings-auth.js";
 import { nativeWorkflowConnectionOptions } from "./native-workflow-options.js";
+import { observeNativeCommandCompletion } from './native-command-completion.js';
 import { authenticatedNativeHarness } from "./native-workflow-account.js";
 import type { createPiSettingsConnection } from "./pi-settings-auth.js";
 import type { createOpenClawSettingsConnection } from "./openclaw-settings-auth.js";
@@ -31,7 +32,8 @@ const packages = { claude: '@anthropic-ai/claude-code', codex: '@openai/codex', 
 function quote(value: string) { return `'${value.replaceAll("'", "'\\''")}'`; }
 export async function createNativeProviderWorkflowAdapters(options: {
   store: ProviderSettingsStoreWriter;
-  terminal: Pick<TerminalRuntimeSocketClient, 'ensureWorkspace' | 'createTab' | 'terminateTab' | 'attach' | 'listWorkspaces'>;
+  terminal: Pick<TerminalRuntimeSocketClient, 'ensureWorkspace' | 'createTab' | 'terminateTab' | 'attach' | 'listWorkspaces'>
+    & Partial<Pick<TerminalRuntimeSocketClient, 'getCommandResult'>>;
   runtimePrefix?: string;
   hermesCodexReuse?: () => Promise<void>;
   hermesConnection?: ReturnType<typeof createHermesSettingsConnection>;
@@ -120,8 +122,9 @@ export async function createNativeProviderWorkflowAdapters(options: {
     ];
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
       ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
-    const confirmNativeLogin = async (idempotencyKey: string, startRevision?: number) => {
+    const confirmNativeLogin = async (idempotencyKey: string, startRevision?: number, current = () => true) => {
       const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+      if (!current()) throw new ProviderWorkflowError('unavailable');
       if (harness.harness === 'codex') {
         if (startRevision === undefined || fresh.revision !== startRevision || fresh.access.mode !== 'writable' || !options.store.completeCodexNativeLogin) throw new ProviderWorkflowError('unavailable');
         await options.store.completeCodexNativeLogin({ harnessInstanceId: harness.id, expectedRevision: startRevision,
@@ -150,6 +153,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
         if (request.kind === 'login' && (!request.method || !loginMethods.includes(request.method))) throw new ProviderWorkflowNotStartedError();
         if (connectionOption && (connectionOption.availability !== "available" || connectionOption.providerId !== (harness.harness === "claude" ? "anthropic" : "openai"))) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription' || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && request.method === 'terminal' && typeof options.terminal.getCommandResult !== 'function') throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && request.method === 'browser') {
           if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
           return options.claudeBrowserLogin({ publish, registerCleanup, onSuccess: async () => {
@@ -284,11 +288,28 @@ export async function createNativeProviderWorkflowAdapters(options: {
         let cancelling = false;
         let timer: NodeJS.Timeout | undefined;
         let stream: ReturnType<TerminalRuntimeSocketClient['attach']> | undefined;
-        registerCleanup(async () => { await terminate(); if (finishTask) await finishTask; });
+        let commandCompletion: ReturnType<typeof observeNativeCommandCompletion> | undefined;
+        const completionAbort = new AbortController();
+        const cancelCommand = async () => {
+          cancelling = true;
+          completionAbort.abort();
+          commandCompletion?.stop();
+          try {
+            if (finishTask) { await finishTask; return; }
+            await terminate();
+            stopped = true;
+            if (timer) clearTimeout(timer);
+            stream?.close();
+            buffer = '';
+          } finally { cancelling = false; }
+        };
+        registerCleanup(cancelCommand);
         const failStream = async () => {
           if (stopped || cancelling)
             return;
           cancelling = true;
+          completionAbort.abort();
+          commandCompletion?.stop();
           try {
             await terminate();
             if (timer)
@@ -310,7 +331,9 @@ export async function createNativeProviderWorkflowAdapters(options: {
           if (stopped || cancelling)
             return;
           await releaseProfile?.();
+          if (stopped || cancelling || request.kind === 'login' && completionAbort.signal.aborted) return;
           stopped = true;
+          commandCompletion?.stop();
           if (timer)
             clearTimeout(timer);
           stream?.close();
@@ -321,7 +344,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           }
           try {
             if (request.kind === 'login') {
-              await confirmNativeLogin(request.idempotencyKey, nativeLoginStartRevision);
+              await confirmNativeLogin(request.idempotencyKey, nativeLoginStartRevision, () => !completionAbort.signal.aborted);
               publish({ state: 'succeeded', safeFailure: null });
               return;
             }
@@ -333,7 +356,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           }
           catch (error) {
             console.warn('[provider-workflow] Completion probe failed:', error instanceof Error ? error.name : 'UnknownError');
-            publish({ state: 'failed', safeFailure: 'unavailable' });
+            if (!completionAbort.signal.aborted) publish({ state: 'failed', safeFailure: 'unavailable' });
           }
         };
         try {
@@ -349,8 +372,11 @@ export async function createNativeProviderWorkflowAdapters(options: {
                     publish(code);
                 }
               }
-              if (frame.type === 'exit' && !finishTask)
-                finishTask = finish(frame.exitCode);
+              if (frame.type === 'exit' && !finishTask) {
+                // An attachment/client exit cannot supply the inner login's code.
+                if (request.kind === 'login') void commandCompletion?.check();
+                else finishTask = finish(frame.exitCode);
+              }
             },
             onClose() { void failStream(); },
             onError(error) { console.warn('[provider-workflow] Terminal stream failed:', error.name); void failStream(); },
@@ -359,6 +385,13 @@ export async function createNativeProviderWorkflowAdapters(options: {
         catch (error) {
           await terminate();
           throw error;
+        }
+        if (request.kind === 'login') {
+          commandCompletion = observeNativeCommandCompletion({
+            read: () => options.terminal.getCommandResult!(ref!, incarnation!),
+            active: () => !stopped && !cancelling && !completionAbort.signal.aborted,
+            onExited: async code => { finishTask ??= finish(code); await finishTask; },
+          });
         }
         const expire = () => {
           if (stopped)
@@ -369,6 +402,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
             return;
           }
           cancelling = true;
+          completionAbort.abort();
+          commandCompletion?.stop();
           void terminate().then(() => { stopped = true; buffer = ''; stream?.close(); publish({ state: 'expired', safeFailure: 'expired' }); })
             .catch((error: unknown) => {
             publish({ safeFailure: 'unavailable' });
@@ -382,21 +417,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           timer = setTimeout(expire, 600000);
           timer.unref();
         }
-        return { terminalSessionId: `${ref!.workspaceId}:${ref!.tabId}`, async cancel() {
-            if (finishTask) { await finishTask; return; }
-            cancelling = true;
-            try {
-              await terminate();
-              stopped = true;
-              if (timer)
-                clearTimeout(timer);
-              stream?.close();
-              buffer = '';
-            }
-            finally {
-              cancelling = false;
-            }
-          } };
+        return { terminalSessionId: `${ref!.workspaceId}:${ref!.tabId}`, cancel: cancelCommand };
       },
     } satisfies ProviderWorkflowAdapter;
   }));

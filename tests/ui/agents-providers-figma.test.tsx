@@ -309,6 +309,7 @@ it("wires Change account inside the authenticated shared account card", async ()
     accessSources: [
       {
         id: "profile",
+        kind: "provider_account", providerId: "openai", fundingKind: "owner_api_key",
         readiness: { state: "ready" },
         usage: { kind: "unavailable", reason: "unknown" },
       },

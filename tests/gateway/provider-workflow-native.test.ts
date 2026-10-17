@@ -19,9 +19,16 @@ function nativeFixture(kind: 'codex' | 'claude' | 'hermes' | 'openclaw' | 'pi' |
   const store = { getSnapshot: vi.fn(async () => snapshot), completeClaudeNativeLogin: vi.fn(async () => ({ kind: "snapshot", snapshot })), mutate: vi.fn(async () => ({ kind: 'login_attempt', snapshot, attempt: { action: { kind: 'open_terminal', terminalSessionId: `${ref.workspaceId}:${ref.tabId}` } } })) } as unknown as ProviderSettingsStoreWriter;
   let observer: Parameters<TerminalRuntimeSocketClient['attach']>[0];
   const close = vi.fn(); const order: string[] = [];
-  const terminal = { ensureWorkspace: vi.fn(async () => ({ id: ref.workspaceId })), createTab: vi.fn(async () => ({ id: ref.tabId, workspaceId: ref.workspaceId, incarnation: 'ti_11111111111111111111111111111111' })), listWorkspaces: vi.fn(async () => [{ tabs: [{ id: ref.tabId, workspaceId: ref.workspaceId }] }]), terminateTab: vi.fn(async () => { order.push('terminate'); }), attach: vi.fn(input => { observer = input; return { close, send: vi.fn() }; }) } as unknown as Pick<TerminalRuntimeSocketClient, 'ensureWorkspace' | 'createTab' | 'listWorkspaces' | 'terminateTab' | 'attach'>;
+  const terminal = { ensureWorkspace: vi.fn(async () => ({ id: ref.workspaceId })), createTab: vi.fn(async () => ({ id: ref.tabId, workspaceId: ref.workspaceId, incarnation: 'ti_11111111111111111111111111111111' })), listWorkspaces: vi.fn(async () => [{ tabs: [{ id: ref.tabId, workspaceId: ref.workspaceId, incarnation: 'ti_11111111111111111111111111111111' }] }]), getCommandResult: vi.fn(async () => ({ state: 'exited', exitCode: 0 })), terminateTab: vi.fn(async () => { order.push('terminate'); }), attach: vi.fn(input => { observer = input; return { close, send: vi.fn() }; }) } as unknown as Pick<TerminalRuntimeSocketClient, 'ensureWorkspace' | 'createTab' | 'listWorkspaces' | 'terminateTab' | 'attach' | 'getCommandResult'>;
   return { store, terminal, row, observer: () => observer, order };
 }
+it('rejects a native terminal login before mutation when exact command results are unavailable', async () => {
+  const f = nativeFixture();
+  delete (f.terminal as Partial<TerminalRuntimeSocketClient>).getCommandResult;
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal });
+  await expect(adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'terminal', idempotencyKey: 'missing-result' }, publish: vi.fn(), registerCleanup: vi.fn() })).rejects.toThrow('unavailable');
+  expect(f.store.mutate).not.toHaveBeenCalled();
+});
 it.each(['missing-install', 'missing-method', 'wrong-provider', 'wrong-method'] as const)('refuses unqualified official Terminal starts before mutation: %s', async mode => {
   const f = nativeFixture('claude'); f.row.installState = 'installed';
   if (mode === 'missing-install') f.row.installState = 'missing';
@@ -61,6 +68,7 @@ it('retains deadline cleanup after a transient stream cleanup failure', async ()
   vi.useFakeTimers();
   try {
     const f = nativeFixture('claude'); f.row.installState = 'installed';
+    vi.mocked(f.terminal.getCommandResult).mockResolvedValue({ state: 'running' });
     vi.mocked(f.terminal.terminateTab).mockRejectedValueOnce(new Error('synthetic transport failure'));
     const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
     const publish = vi.fn();
@@ -75,6 +83,7 @@ it('does not declare expiry until failed deadline cleanup is retried successfull
   vi.useFakeTimers();
   try {
     const f = nativeFixture('claude'); f.row.installState = 'installed';
+    vi.mocked(f.terminal.getCommandResult).mockResolvedValue({ state: 'running' });
     vi.mocked(f.terminal.terminateTab).mockRejectedValueOnce(new Error('synthetic deadline failure'));
     const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
     const publish = vi.fn();

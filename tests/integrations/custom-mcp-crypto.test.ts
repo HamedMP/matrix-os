@@ -60,7 +60,9 @@ describe("Custom MCP credential encryption", () => {
     });
 
     const parts = state.split(".");
-    parts[2] = `${parts[2]!.slice(0, -2)}aa`;
+    const ciphertext = Buffer.from(parts[2]!, "base64url");
+    ciphertext[0] = ciphertext[0]! ^ 1;
+    parts[2] = ciphertext.toString("base64url");
     expect(() => decryptCustomMcpOAuthState(parts.join("."), encryptionKey)).toThrow();
   });
 });
