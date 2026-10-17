@@ -128,7 +128,7 @@ it('deliberate successful login enables the exact saved harness before reporting
   f.observer().onFrame({ type: 'exit', revision: 1, exitCode: 0, terminalRef: ref });
   await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }));
   expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', harnessInstanceId: 'harness_claude', enabled: true, expectedRevision: 0 }));
-  expect(onLoginSucceeded).toHaveBeenCalledOnce();
+  expect(onLoginSucceeded).toHaveBeenCalledExactlyOnceWith("claude");
   expect(onLoginSucceeded.mock.invocationCallOrder[0]).toBeLessThan(publish.mock.invocationCallOrder.at(-1)!);
 });
 it.each(['unverified-profile', 'replaced-harness', 'owner-denied'] as const)('does not confirm Terminal consent from stale or unverified native state: %s', async mode => {
@@ -271,7 +271,7 @@ it.each(['native-account', 'local-marker-only', 'missing-profile', 'wrong-source
       expect(f.store.completeClaudeNativeLogin).toHaveBeenCalledWith(expect.objectContaining({ harnessInstanceId: 'harness_claude', expectedRevision: 0 }));
       expect(f.store.mutate).not.toHaveBeenCalled();
       expect(f.store.getSnapshot).toHaveBeenCalledWith({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
-      expect(onLoginSucceeded).toHaveBeenCalledOnce();
+      expect(onLoginSucceeded).toHaveBeenCalledExactlyOnceWith("claude");
       const currentModels = (await models(provider, principal))?.models.map(model => model.id);
       expect(currentModels).toContain('claude-opus-5');
       expect(currentModels).not.toContain('claude-sonnet-5');

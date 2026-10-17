@@ -214,6 +214,7 @@ export function createCodingAgentProviderRegistry(
     MAX_CACHE_ENTRIES,
   );
   const healthCache = new Map<string, HealthCacheEntry>();
+  const healthRequests = new Map<string, object>(); // Bounded FIFO tokens fence obsolete health completions.
 
   function cacheKey(ownerId: string, providerId: string): string {
     return `${ownerId}:${providerId}`;
@@ -312,6 +313,12 @@ export function createCodingAgentProviderRegistry(
     const cached = cachedHealth(key, checkedAt.getTime());
     if (cached) return cached;
 
+    if (!healthRequests.has(key) && healthRequests.size >= maxCacheEntries) {
+      healthRequests.delete(healthRequests.keys().next().value!);
+    }
+    const request = {};
+    healthRequests.delete(key);
+    healthRequests.set(key, request);
     let ok = false;
     try {
       const result = provider.healthCheck
@@ -331,7 +338,7 @@ export function createCodingAgentProviderRegistry(
       checkedAt: checkedAt.toISOString(),
       expiresAt: checkedAt.getTime() + cacheTtlMs,
     };
-    storeHealth(key, entry);
+    if (healthRequests.get(key) === request) storeHealth(key, entry);
     return entry;
   }
 
@@ -386,10 +393,10 @@ export function createCodingAgentProviderRegistry(
     },
     invalidate(ownerId, providerId) {
       options.invalidateCredentialDetection?.();
-      for (const key of healthCache.keys()) {
-        const matchesOwner = !ownerId || key.startsWith(`${ownerId}:`);
+      for (const cache of [healthCache, healthRequests]) for (const key of cache.keys()) {
+        const matchesOwner = !ownerId || key.slice(0, key.lastIndexOf(":")) === ownerId;
         const matchesProvider = !providerId || key.endsWith(`:${providerId}`);
-        if (matchesOwner && matchesProvider) healthCache.delete(key);
+        if (matchesOwner && matchesProvider) cache.delete(key);
       }
     },
   };
