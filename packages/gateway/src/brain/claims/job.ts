@@ -9,7 +9,7 @@ import { z } from "zod/v4";
 import { BrainScopeKeySchema } from "../schemas.js";
 import { BrainPendingExtractionQuerySchema } from "./schemas.js";
 import { BrainStoreError, type BrainDocument, type BrainScopeKey } from "../types.js";
-import { BrainClaimModelOutcomeSchema, BrainModelError } from "./model/types.js";
+import { BRAIN_MODEL_SKIP_CODES, BrainClaimModelOutcomeSchema, BrainModelError } from "./model/types.js";
 import { claimSourceText, extractRulesClaims } from "./rules.js";
 import {
   brainModelCallWorstCostMicroUsd, brainModelSpendView, brainSpendStop, readBrainModelSpend,
@@ -98,6 +98,8 @@ const early = (code: BrainExtractionErrorCode, extractor: string): BrainExtracti
 
 /** The only provenances a model run may send to a third-party model, whatever the caller passed. */
 const MODEL_SENDABLE: ReadonlySet<string> = new Set(BRAIN_MODEL_PROVENANCES);
+/** The skip codes a model may answer for a revision it would not send; any other answer is ignored. */
+const MODEL_SKIP_CODES: ReadonlySet<string> = new Set(BRAIN_MODEL_SKIP_CODES);
 
 /** The extraction, or the early result of options that cannot run. Limits are clamped to their ceilings. */
 function parseOptions(options: BrainExtractionOptions): Extraction | BrainExtractionResult {
@@ -142,9 +144,9 @@ function rulesOutcome(state: Extraction, document: BrainDocument): BrainDocument
 }
 
 /**
- * A call that was sent but never answered (it timed out, or the caller aborted it) or answered without valid usage may
- * still be billed, and no usable usage comes back: its worst case is added to the run's cost, so the run row, the
- * per-run budget and the 30-day cap count it.
+ * A call that was sent but never answered (it timed out, the caller aborted it, or its answer was lost) or answered
+ * without valid usage may still be billed, and no usable usage comes back: its worst case is added to the run's cost,
+ * so the run row, the per-run budget and the 30-day cap count it.
  */
 function chargeUnanswered(state: Extraction, inputBytes: number): void {
   state.usage.costMicroUsd += brainModelCallWorstCostMicroUsd(inputBytes);
@@ -153,13 +155,18 @@ function chargeUnanswered(state: Extraction, inputBytes: number): void {
 /**
  * Null when the caller aborted during the call: the run stops and the document keeps its state. A BrainModelError
  * either fails the document (model_timeout, model_rejected) or stops the run (model_auth_failed, model_unavailable).
- * A timeout, an abort after the call started or invalid usage is charged at its worst case (chargeUnanswered).
+ * A timeout, an abort after the call started, an unanswered BrainModelError or invalid usage is charged at its worst
+ * case (chargeUnanswered).
  */
 async function modelOutcome(
   state: Extraction, model: BrainClaimModel, document: BrainDocument,
 ): Promise<BrainDocumentExtractionOutcome | null> {
   const text = claimSourceText(document);
   if (text.trim() === "") return { status: "done", claims: [] };
+  const input = { title: document.title, body: text, kinds: state.kinds, maxClaims: BRAIN_CLAIMS_PER_DOCUMENT_MAX };
+  // A revision the model would not send costs nothing, so it is skipped before the cap rather than left to block it.
+  const skip = model.skip?.(input) ?? null;
+  if (skip !== null && MODEL_SKIP_CODES.has(skip)) return { status: "skipped", errorCode: skip };
   // The 30-day cap: this call starts only when the budget left covers its worst case. An abort is handled below.
   const inputBytes = Buffer.byteLength(document.title, "utf8") + Buffer.byteLength(text, "utf8");
   const spendStop = state.signal?.aborted ? null
@@ -167,7 +174,6 @@ async function modelOutcome(
   if (spendStop !== null) throw new ExtractionStop(spendStop);
   const timeout = AbortSignal.timeout(state.limits.modelCallTimeoutMs);
   const signal = state.signal === undefined ? timeout : AbortSignal.any([state.signal, timeout]);
-  const input = { title: document.title, body: text, kinds: state.kinds, maxClaims: BRAIN_CLAIMS_PER_DOCUMENT_MAX };
   let output: { readonly usage?: unknown; readonly claims?: unknown; readonly outcome?: unknown } | null;
   let onAbort = (): void => undefined;
   // Set once the call is made: an abort before it sends nothing and costs nothing.
@@ -193,6 +199,8 @@ async function modelOutcome(
       return { status: "failed", errorCode: "model_timeout" };
     }
     if (modelError !== null) {
+      // An answer lost on its way back may still be billed, whatever the code does next.
+      if (modelError.unanswered) chargeUnanswered(state, inputBytes);
       if (modelError.code === "model_rejected") {
         state.stopAfter = modelError;
         return { status: "failed", errorCode: "model_failed" };
