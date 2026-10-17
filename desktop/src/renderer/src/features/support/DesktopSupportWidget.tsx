@@ -15,6 +15,7 @@ import { invoke, onEvent } from "../../lib/operator";
 import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
+import "./support-dock.css";
 
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 
@@ -47,6 +48,10 @@ function configuredToken(): string | null {
 
 function isDesktopSupportConfigured(): boolean {
   return configuredToken() !== null;
+}
+
+function showsDefaultLauncher(): boolean {
+  return import.meta.env.VITE_POSTHOG_SHOW_LAUNCHER === "1";
 }
 
 function configuredUiHost(): string {
@@ -167,6 +172,7 @@ function releaseSupportOverlay(): void {
 }
 
 function suppressDefaultLauncher(): void {
+  if (showsDefaultLauncher()) return;
   const widget = document.getElementById(POSTHOG_WIDGET_ID);
   const launcher = widget?.querySelector(POSTHOG_LAUNCHER_SELECTOR);
   const panel = widget?.querySelector(POSTHOG_CLOSE_SELECTOR);
@@ -181,11 +187,33 @@ function suppressDefaultLauncher(): void {
   hidePostHogWidget();
 }
 
+function syncSupportPanelOpen(): void {
+  const open = findPostHogButton(POSTHOG_CLOSE_SELECTOR) !== null;
+  const ui = useUi.getState();
+  if (ui.supportPanelOpen !== open) ui.setSupportPanelOpen(open);
+  if (!showsDefaultLauncher() || openSupportPromise) return;
+  if (open) {
+    acquireSupportOverlay();
+    if (!supportPanelTracked) {
+      supportPanelTracked = true;
+      captureActive({ name: "desktop_support_opened" });
+    }
+  } else {
+    closeTrackedSupportPanel();
+    releaseSupportOverlay();
+  }
+}
+
+function onPostHogWidgetMutation(): void {
+  syncSupportPanelOpen();
+  suppressDefaultLauncher();
+}
+
 function startLauncherObserver(): void {
   if (launcherObserver || !document.body) return;
-  launcherObserver = new MutationObserver(suppressDefaultLauncher);
+  launcherObserver = new MutationObserver(onPostHogWidgetMutation);
   launcherObserver.observe(document.body, { childList: true, subtree: true });
-  suppressDefaultLauncher();
+  onPostHogWidgetMutation();
 }
 
 function stopLauncherObserver(): void {
@@ -309,6 +337,10 @@ export function openDesktopSupport(): Promise<boolean> {
   return openSupportPromise;
 }
 
+export function closeDesktopSupport(): void {
+  findPostHogButton(POSTHOG_CLOSE_SELECTOR)?.click();
+}
+
 function clearActivePostHogIdentity(
   eventName: "desktop_sign_out" | "desktop_identity_reset",
 ): void {
@@ -332,6 +364,7 @@ function hideAndResetSupport(): void {
   invalidatePendingSupportOpen();
   allowPostHogWidget = false;
   releaseSupportOverlay();
+  useUi.getState().setSupportPanelOpen(false);
   if (!initialized) return;
   hidePostHogWidget();
   clearActivePostHogIdentity("desktop_sign_out");
@@ -458,8 +491,14 @@ export default function DesktopSupportWidget() {
           applicationOpenTracked = true;
           captureActive({ name: "desktop_application_opened" });
         }
-        hidePostHogWidget();
-        suppressDefaultLauncher();
+        if (showsDefaultLauncher()) {
+          void waitForConversations(generation).then((available) => {
+            if (available) posthog.conversations.show();
+          });
+        } else {
+          hidePostHogWidget();
+          suppressDefaultLauncher();
+        }
       } catch (error: unknown) {
         console.warn("[desktop-support] PostHog identification failed:", errorKind(error));
       }
@@ -513,6 +552,17 @@ export default function DesktopSupportWidget() {
     };
     void flush();
   }), []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing || !useUi.getState().supportPanelOpen) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeDesktopSupport();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
 
   useEffect(() => () => {
     invalidatePendingSupportOpen();
