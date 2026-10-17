@@ -35,7 +35,7 @@ function botInstance(catalogRevision: string, model = MATRIX_BOT_MODEL): Canonic
     // The concrete model is resolved from Provider V3 when each run starts.
     models: [{
       id: model, displayName: model === MATRIX_BOT_MODEL ? "Automatic" : model, availability: "available",
-      capabilities: ["tools"], supportsVision: false, supportsToolUse: true,
+      capabilities: ["tools"], supportsVision: model === MATRIX_BOT_MODEL, supportsToolUse: true,
     }],
     options: [],
     skills: [],
@@ -43,7 +43,7 @@ function botInstance(catalogRevision: string, model = MATRIX_BOT_MODEL): Canonic
     setupActions: [],
     supports: {
       rootChat: true, resume: false, cancellation: true, steering: "same_run",
-      attachments: [], tools: [], approvals: false, userInput: false, worktrees: "none",
+      attachments: ["file", "image"], tools: [], approvals: false, userInput: false, worktrees: "none",
       resources: [], interactionModes: ["default"], permissionModes: ["default"],
     },
     defaultSelection: { instanceId: MATRIX_BOT_INSTANCE_ID, model },
@@ -77,6 +77,7 @@ export function withBotProviderInstance(
           const managed = base.instances.find((instance) => instance.id === "matrix_pi_default");
           const chosen = managed?.models.find((model) => model.id === selection.model && model.availability === "available");
           const instance = botInstance(base.revision, selection.model);
+          if (chosen) instance.models = [{ ...chosen }];
           if (!chosen || managed?.availability !== "available" || Object.keys(selection.options ?? {}).length) {
             instance.availability = "unavailable"; instance.models = []; delete instance.defaultSelection;
           }

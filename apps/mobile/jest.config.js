@@ -1,7 +1,10 @@
 const path = require("node:path");
+const expoTransform = require("jest-expo/jest-preset").transform;
 
 module.exports = {
   preset: "jest-expo",
+  // Shared browser-safe command policy is also consumed by the plain Node runner.
+  transform: { ...expoTransform, "\\.mjs$": expoTransform["\\.[jt]sx?$"] },
   // The workspace shares a global pnpm virtual store, so packages are linked from
   // content-addressed directories outside the repo and cannot see undeclared
   // dependencies of their own (expo-modules-core -> @babel/runtime, jest-expo ->

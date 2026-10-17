@@ -117,6 +117,7 @@ export async function createScopeRuntimeHost(options: {
     },
   });
   const server = createScopeRuntimeBrokerServer({
+    botImageFrames: true,
     socketPath: options.brokerSocket ?? BROKER_SOCKET,
     broker,
     routeFrame(raw) {
