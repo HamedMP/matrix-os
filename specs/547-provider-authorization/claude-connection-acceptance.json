@@ -66,5 +66,5 @@
       "expected": "Unknown or negative native row authentication does not show Connected, even with saved email/Log out. Unsupported Bot runtime or read-only permissions alone do not negate verified native authentication: retain Connected and show Bot/action restrictions separately. Record unavailable negative setups as untested."
     }
   ],
-  "incidentAttribution": "Code regressions do not establish Stefan's installed client/host versions or native authentication. The reporting Computer's provenance and sanitized status remain necessary."
+  "incidentAttribution": "Code regressions do not establish the reporting Computer's installed client/host versions or native authentication. Its provenance and sanitized status remain necessary."
 }

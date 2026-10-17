@@ -45,8 +45,9 @@ funding remain authoritative. No endpoints or persistence stores are added.
   expired catalog and negative readiness remain unavailable.
 - Run affected gateway/UI suites, typecheck, pattern scan and broader tests.
 - Keep the independent PR linked to existing ENG-206 / ENG-183 / App Gallery
-  launch. After code review, mark it ready to run normal CI and obtain human
-  review. Draft metadata checks are not full CI qualification.
+  launch. Deliver a clean Draft for human review first. Request Greptile or
+  trigger CI/Ready only after human review and the owner's explicit instruction.
+  Draft metadata checks are not full CI qualification.
 - Verify current-head Greptile and formal CI separately; older results are
   historical after any source change.
 - Live evidence: coordinate an English screenshot and short recording of the
