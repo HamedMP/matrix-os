@@ -55,6 +55,7 @@ export interface ChatState {
   connected: boolean;
   queue: QueuedMessage[];
   providerSelection?: CanonicalChatModelSelection;
+  executionControls?: import("@matrix-os/contracts").CanonicalChatExecutionControls;
   boundProviderInstanceId?: string;
   conversations: ReturnType<typeof useConversation>["conversations"];
   activeConversationTitle?: string;

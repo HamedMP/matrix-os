@@ -661,6 +661,7 @@ function MobileAppFrame({
         onSubmitApproval={chat.submitApproval}
         onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}
+              executionControls={chat.executionControls}
         boundProviderInstanceId={chat.boundProviderInstanceId}
         composerDraftRequest={chat.composerDraftRequest}
         onComposerDraftConsumed={chat.consumeComposerDraft}

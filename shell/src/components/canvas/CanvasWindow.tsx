@@ -501,6 +501,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               onSubmitApproval={chatState.submitApproval}
               onSubmitInput={chatState.submitInput}
               providerSelection={chatState.providerSelection}
+              executionControls={chatState.executionControls}
               boundProviderInstanceId={chatState.boundProviderInstanceId}
               composerDraftRequest={chatState.composerDraftRequest}
               onComposerDraftConsumed={chatState.consumeComposerDraft}
