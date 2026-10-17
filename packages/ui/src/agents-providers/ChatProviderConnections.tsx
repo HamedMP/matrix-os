@@ -81,6 +81,10 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
   return <section aria-label="Chat provider connection" className="matrix-chat-provider-connections" aria-busy={busy || undefined}>
     <h2>Connect a coding agent</h2>
     <p>Sign in to Claude Code to start chatting. Connect Codex and configure API key connections in Agents & providers.</p>
+    {onOpenSettings && snapshot?.harnesses.some(harness => harness.harness === "codex") ? <>
+      <p className="matrix-ap-help">ChatGPT subscription management requires Electron Desktop on the owner’s device.</p>
+      <p className="matrix-ap-help">The paired device must stay connected while chats and Matrix Bots run.</p>
+    </> : null}
     <div className="matrix-chat-provider-rows">{(["claude"] as const).map((kind) => {
       const label = "Claude Code";
       const harness = snapshot?.harnesses.find((candidate) => candidate.harness === kind

@@ -13,7 +13,7 @@ function client(value = disconnected): LocalChatgptPlanClient {
   return { status: vi.fn().mockResolvedValue(value), connect: vi.fn().mockResolvedValue(connected), cancel: vi.fn().mockResolvedValue(disconnected), disconnect: vi.fn().mockResolvedValue(disconnected), refreshModels: vi.fn().mockResolvedValue(connected), setGrant: vi.fn().mockResolvedValue({ ...connected, grant: { revision: 1, enabled: true, background: false } }) };
 }
 it("shows only the personal ChatGPT card in Matrix AI without a Claude subscription or task consent entry", async () => {
-  render(<YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [] } as never} capabilities={[]} client={undefined} localChatgptClient={client()} operationIds={{}} workflowStatus={{}} forbidden={false} disabled={false} onOpen={vi.fn()} onRefresh={vi.fn()}/>);
+  render(<YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [], accessSources: [], accounts: [] } as never} capabilities={[]} client={undefined} localChatgptClient={client()} operationIds={{}} workflowStatus={{}} forbidden={false} disabled={false} onOpen={vi.fn()} onRefresh={vi.fn()}/>);
   await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
   const subscriptions = screen.getByRole("region", { name: "Your subscriptions" });
   expect(within(subscriptions).getAllByRole("article")).toHaveLength(1);
