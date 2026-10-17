@@ -114,9 +114,7 @@ describe("AppLauncher", () => {
     const launcher = screen.getByTestId("desktop-launcher-grid");
     const names = Array.from(launcher.querySelectorAll("button"))
       .map((button) => button.getAttribute("aria-label"));
-    // The Cloud desktop native tile lands in the following Electron Desktop stack layer.
-    const currentElectronNames = OS_VIEW_FIXED_APP_NAMES.filter((name) => name !== "Cloud desktop");
-    expect(names.slice(0, 2 + currentElectronNames.length)).toEqual(["Create app", "Canvas", ...currentElectronNames]);
+    expect(names.slice(0, 2 + OS_VIEW_FIXED_APP_NAMES.length)).toEqual(["Create app", "Canvas", ...OS_VIEW_FIXED_APP_NAMES]);
 
     fireEvent.click(screen.getByRole("button", { name: "Create app" }));
     expect(onCreateApp).toHaveBeenCalledOnce();

@@ -3,7 +3,7 @@ import { DEFAULT_OS_VIEW_DESKTOP_APP_PATHS } from "@matrix-os/contracts";
 import { FIXED_DESKTOP_APPS } from "@desktop/renderer/src/features/desktop-shell/desktop-apps";
 
 describe("native desktop default apps", () => {
-  it("ships Chat first with the ten canonical desktop destinations in product order", () => {
+  it("ships Chat first with the eleven canonical desktop destinations in product order", () => {
     expect(FIXED_DESKTOP_APPS.map((app) => app.id)).toEqual([
       "work",
       "terminal",
@@ -13,13 +13,11 @@ describe("native desktop default apps", () => {
       "settings",
       "plugins",
       "browser",
+      "cloud-desktop",
       "notes",
       "whiteboard",
     ]);
-    // The native Cloud desktop destination is implemented in the next Electron Desktop layer.
-    expect(FIXED_DESKTOP_APPS.map((app) => app.path)).toEqual(
-      DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.filter((path) => path !== "__cloud-desktop__"),
-    );
+    expect(FIXED_DESKTOP_APPS.map((app) => app.path)).toEqual(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS);
   });
 
   it("keeps every desktop destination identity unique even when surfaces are shared", () => {

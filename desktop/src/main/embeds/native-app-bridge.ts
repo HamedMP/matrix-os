@@ -3,6 +3,7 @@ import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { registerNativeAppCapabilityIpc } from "./native-app-capabilities";
 export { createNativeAppAiRequester } from "./native-app-ai";
 import { z } from "zod/v4";
+import { nativeBrowserProduct } from "../../shared/browser-products";
 import { NATIVE_APP_OPEN_CHANNEL, NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
 import {
   NATIVE_APP_QUERY_CHANNEL,
@@ -67,7 +68,7 @@ interface NativeAppBridgeOptions {
   capabilityRequest?: (app: string, input: AppCapabilityInput, signal?: AbortSignal) => Promise<unknown>;
   aiRoutesRequest?: (app: string, signal?: AbortSignal) => Promise<unknown>;
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
-  gatewayRequest: (slug: string, request: NativeAppGatewayRequest) => Promise<unknown>;
+  gatewayRequest: (slug: string, request: NativeAppGatewayRequest, routeSlug?: string) => Promise<unknown>;
   gatewayOrigin: () => string;
   resolveApp?: (request: NativeAppOpenRequest) => Promise<NativeAppOpenTarget>;
   openApp?: (app: NativeAppOpenTarget) => void;
@@ -97,6 +98,8 @@ interface NativeAppQueryRequesterOptions {
   getGatewayOrigin: () => string;
   getToken: () => string | null;
   fetchFn?: typeof fetch;
+  installBrowserSessionCookie?: (headers: string[], origin: string, isCurrent: () => boolean) => Promise<void>;
+  getAuthGeneration?: () => number;
 }
 
 export async function readBoundedJson(response: Response): Promise<unknown> {
@@ -171,13 +174,14 @@ export function createNativeAppQueryRequester(
 
 export function createNativeAppGatewayRequester(
   options: NativeAppQueryRequesterOptions,
-): (slug: string, request: NativeAppGatewayRequest) => Promise<unknown> {
+): (slug: string, request: NativeAppGatewayRequest, routeSlug?: string) => Promise<unknown> {
   const fetchFn = options.fetchFn ?? fetch;
-  return async (slug, rawRequest) => {
+  return async (slug, rawRequest, routeSlug = slug) => {
     const request = NativeAppGatewayRequestSchema.parse(rawRequest);
-    if (!isAllowedNativeAppGatewayRequest(slug, slug, request)) throw new Error("not authorized");
+    if (!isAllowedNativeAppGatewayRequest(slug, routeSlug, request)) throw new Error("not authorized");
     const token = options.getToken();
     if (!token) throw new Error("desktop authentication required");
+    const generation = options.getAuthGeneration?.();
     const origin = new URL(options.getGatewayOrigin());
     if (origin.protocol !== "https:" && origin.protocol !== "http:") {
       throw new Error("invalid gateway origin");
@@ -190,7 +194,14 @@ export function createNativeAppGatewayRequester(
       signal: AbortSignal.timeout(nativeAppGatewayTimeout(request)),
     });
     if (!response.ok) throw new Error(`gateway request failed (${response.status})`);
-    return readBoundedJson(response);
+    const value = await readBoundedJson(response);
+    if (nativeBrowserProduct(slug, routeSlug)) {
+      const isCurrent = () => options.getToken() === token && new URL(options.getGatewayOrigin()).toString() === origin.toString()
+        && options.getAuthGeneration?.() === generation;
+      if (!isCurrent() || !options.installBrowserSessionCookie) throw new Error("browser session unavailable");
+      await options.installBrowserSessionCookie(response.headers.getSetCookie(), origin.origin, isCurrent);
+    }
+    return value;
   };
 }
 
@@ -290,7 +301,9 @@ export class NativeAppBridge {
     ) throw new Error("not authorized");
     const parsed = NativeAppGatewayRequestSchema.safeParse(rawRequest);
     if (!parsed.success || !isAllowedNativeAppGatewayRequest(identity.appIdentity, identity.routeSlug, parsed.data)) throw new Error("invalid request");
-    return this.options.gatewayRequest(identity.appIdentity, parsed.data);
+    return nativeBrowserProduct(identity.appIdentity, identity.routeSlug)
+      ? this.options.gatewayRequest(identity.appIdentity, parsed.data, identity.routeSlug)
+      : this.options.gatewayRequest(identity.appIdentity, parsed.data);
   }
 
   async aiGenerate(sender: NativeAppSender, rawInput: unknown): Promise<unknown> {
@@ -365,7 +378,13 @@ export class NativeAppBridge {
     identity.openCount++;
     this.pendingOpens++;
     try {
-      const app = NativeAppOpenTargetSchema.parse(await this.options.resolveApp(request));
+      const productIdentity = request.path === "matrix-app:matrix-browser" ? "matrix-browser"
+        : request.path === "matrix-app:matrix-cloud-desktop" ? "matrix-cloud-desktop" : null;
+      const product = productIdentity && nativeBrowserProduct(identity.appIdentity, identity.routeSlug)
+        ? nativeBrowserProduct(productIdentity, "browser-lab") : null;
+      const app = NativeAppOpenTargetSchema.parse(product && productIdentity
+        ? { slug: "browser-lab", appIdentity: productIdentity, name: product.name }
+        : await this.options.resolveApp(request));
       if (!authorized()) throw new Error("not authorized");
       this.options.openApp(app);
     } finally {

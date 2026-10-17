@@ -66,6 +66,19 @@ beforeEach(() => {
 });
 
 describe("createWebContentsView", () => {
+  it("registers a supplied viewer transport and revokes it before closing the native view", () => {
+    const revoke = vi.fn(() => expect(electronMock.webContents.close).not.toHaveBeenCalled());
+    const registerViewerTransport = vi.fn(() => revoke);
+    const view = createWebContentsView({
+      window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
+      partition: "persist:app-browser-lab", allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(), registerViewerTransport,
+    });
+    expect(registerViewerTransport).toHaveBeenCalledWith(electronMock.webContents);
+    view.destroy();
+    expect(revoke).toHaveBeenCalledOnce();
+    expect(electronMock.webContents.close).toHaveBeenCalledOnce();
+  });
   it("clips native corners to the window geometry and resets them in a full tab", () => {
     const view = createWebContentsView({
       window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
