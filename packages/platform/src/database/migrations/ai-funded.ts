@@ -125,8 +125,13 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
       promotional_reserved_microusd BIGINT CHECK (promotional_reserved_microusd >= 0),
       addon_reserved_microusd BIGINT CHECK (addon_reserved_microusd >= 0),
       actual_microusd BIGINT CHECK (actual_microusd >= 0),
+      upstream TEXT,
+      route_id TEXT,
       resolved_model TEXT,
+      inference_profile TEXT,
+      region TEXT,
       pricing_version TEXT,
+      provider_request_id TEXT,
       period_start TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('reserved', 'starting', 'in_flight', 'settling', 'releasing', 'settled', 'released', 'expired')),
       created_at TEXT NOT NULL,
@@ -152,6 +157,11 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS manual_reviewed_at TEXT`.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS resolved_model TEXT`.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS pricing_version TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS upstream TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS route_id TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS inference_profile TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS region TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS provider_request_id TEXT`.execute(db);
   // Existing reservations intentionally remain NULL/NULL: historical rows do
   // not contain evidence of which funding source paid for them. Runtime expiry
   // reconciliation protects promotion only through explicit allocation rows.

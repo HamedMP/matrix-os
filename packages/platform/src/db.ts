@@ -173,8 +173,13 @@ export interface AiFundedUsageReservationsTable {
   promotional_reserved_microusd: number | null;
   addon_reserved_microusd: number | null;
   actual_microusd: number | null;
+  upstream: Generated<string | null>;
+  route_id: Generated<string | null>;
   resolved_model: string | null;
+  inference_profile: Generated<string | null>;
+  region: Generated<string | null>;
   pricing_version: string | null;
+  provider_request_id: Generated<string | null>;
   period_start: string;
   status: string;
   created_at: string;
