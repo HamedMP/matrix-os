@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { verifyJevHermesRuntimePin } from "../../packages/gateway/src/chat/jev-hermes-runtime-pin.js";
-const pin = "d337b736aa1e8ebecfab043842d13e4a2d2f48a3";
+const pin = "e06df9c2eae6901f4c88f464e0ae6e753c0428b8";
 describe("restricted Hermes launch verifies tested installed source", () => {
   it("requires exact pin and no tracked modifications with bounded non-shell commands", async () => {
     const command = vi.fn(async (args: string[], _signal: AbortSignal) => args.includes("rev-parse") ? `${pin}\n` : "");

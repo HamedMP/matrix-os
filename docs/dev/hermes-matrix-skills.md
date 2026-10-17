@@ -97,6 +97,10 @@ For production user VPSes, installing Hermes plus the Matrix skills is safe beca
 
 Customer VPS host bundles pin the managed Hermes source checkout to a reviewed upstream commit. After the candidate bundle passes health checks and its release metadata commits, the updater reruns `matrix-hermes.service` asynchronously to reconcile that checkout while preserving owner-managed state under `$HERMES_HOME`, including config, credentials, skills, memory, sessions, and conversations. The installer stops and restores the dashboard only when it was active before reconciliation. Change the release and commit defaults together in `/opt/matrix/bin/matrix-install-hermes`; do not replace the commit-pinned installer URL with upstream's moving `main` URL.
 
+The managed v0.22.0 source pin is `e06df9c2eae6901f4c88f464e0ae6e753c0428b8`. Its package manager owns Python dependency generations. The installer records native Anthropic and Matrix's MCP client through `hermes pm install --extra anthropic --extra mcp`; do not install them directly into the source checkout's old venv. The MCP extra is required even when optional computer-use tools are declined. Gateway execution and native Settings helpers read the committed generation from PM's `facts.json`. Legacy installations without that record retain their source venv path; an invalid committed selection requires runtime repair and cannot fall back to stale dependencies.
+
+Run the canonical npm-prefix reconciler after PM extras and bundled setup finish, as the runtime owner. It writes Matrix's external `$HERMES_HOME/matrix-npm/npmrc` rather than modifying PM package trees. Keep explicit owner npm configuration overrides and existing runtime configuration intact.
+
 For dev VPSes, also make the Hermes install path writable by the `matrix` user so `hermes`, Codex, and Claude CLIs can self-update without `EACCES`.
 
 ## Provisioning Hook

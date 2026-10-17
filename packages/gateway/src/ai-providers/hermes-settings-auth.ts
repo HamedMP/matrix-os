@@ -1,3 +1,4 @@
+import { resolveHermesPython } from "../chat/hermes-python-environment.js";
 import { NativeProviderWriteNotStartedError } from "./native-provider-profile-guard.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -44,7 +45,6 @@ export function createHermesSettingsConnection(options: {
   fetchFn?: typeof fetch;
 }) {
   const home = resolve(options.homePath); const installation = join(home, ".hermes/hermes-agent");
-  const command = join(installation, "venv/bin/python");
   const env = { ...buildAgentRuntimeEnvironment(home), HERMES_HOME: join(home, ".hermes") };
   let closed = false; let busy = false; let active: ReturnType<typeof spawnIsolatedProviderProcess> | undefined;
   let drained: Promise<void> = Promise.resolve();
@@ -55,7 +55,7 @@ export function createHermesSettingsConnection(options: {
     if (cached && Date.now() - cached.at < 15000) return cached.supported;
     probing ??= (async () => {
       try {
-        const result = await promisify(execFile)(command, ["-c", HERMES_SETTINGS_KEY_WORKER, "probe"], { cwd: installation, env, timeout: 10000, maxBuffer: 4096, windowsHide: true });
+        const result = await promisify(execFile)(await resolveHermesPython(installation), ["-c", HERMES_SETTINGS_KEY_WORKER, "probe"], { cwd: installation, env, timeout: 10000, maxBuffer: 4096, windowsHide: true });
         const value = result.stdout.trim() === '{"supported":true}'; cached = { at: Date.now(), supported: value }; return value;
       } catch (error) { console.warn("[provider-workflow] Hermes key capability unavailable:", error instanceof Error ? error.name : "UnknownError"); cached = { at: Date.now(), supported: false }; return false; }
     })();
@@ -63,6 +63,13 @@ export function createHermesSettingsConnection(options: {
   };
   const save = async (input: ProviderWorkflowKey) => {
     if (closed || busy || !(await supported())) throw new NativeProviderWriteNotStartedError();
+    if (closed || busy) throw new NativeProviderWriteNotStartedError();
+    let command: string;
+    try { command = await resolveHermesPython(installation); }
+    catch (error) {
+      console.warn("[provider-workflow] Hermes key runtime unavailable:", error instanceof Error ? error.name : "UnknownError");
+      throw new NativeProviderWriteNotStartedError();
+    }
     if (closed || busy) throw new NativeProviderWriteNotStartedError();
     busy = true;
     await new Promise<void>((accept, reject) => {
