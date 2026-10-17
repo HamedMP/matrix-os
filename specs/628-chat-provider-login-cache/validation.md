@@ -1,5 +1,7 @@
 # Local validation — 17 October 2026
 
+**Historical a851 author checkpoint below.** The later local Codex follow-up passed 297 synthetic tests in 21 explicitly selected files, Gateway types and zero pattern violations. [Cross-PR contract and English matrix](codex-cross-pr-contract.md) records source/health RED→GREEN fixes, producer head 6f152dfff3d5deb79d35a1ab62c31f2598863dfa, and missing combined live evidence. This does not promote either source or the Draft PR to human-review-ready.
+
 Branch: `codex/chat-provider-login-cache`. Fixed implementation base: `8ac1c311554eb0700032d6e5eff0f63da09f9a53`. Later `origin/main` changes are not part of this patch; a future synchronization must use rebase and appropriate revalidation.
 
 ## Result

@@ -1,5 +1,7 @@
 # Chat provider cache after login
 
+Continuation: ENG-318 / Draft PR #2691 now exists. The a851 checkpoint is published; the separate local Codex cache follow-up and exact producer dependency are documented in [codex-cross-pr-contract.md](codex-cross-pr-contract.md). Old external-publication restrictions below describe the author checkpoint. Current order is local code/contract tests, coordinated matching-version machine evidence, human review, then Greptile/formal CI/Ready only if the user explicitly requests them.
+
 Goal: make an already-open Electron Desktop Chat observe a confirmed connection immediately while retaining ordinary session caching.
 
 Base: `8ac1c311554eb0700032d6e5eff0f63da09f9a53`. Related completed contracts: ENG-168, ENG-178, ENG-222. Linear creation was rejected because the tool catalog changed after preparation; no success receipt or new issue ID exists. One read-only title query returned no exact match. No retry or PR publication while this remains unresolved.

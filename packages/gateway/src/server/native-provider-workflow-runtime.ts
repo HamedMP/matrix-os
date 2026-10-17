@@ -27,7 +27,7 @@ export async function createNativeProviderWorkflowRuntime(options: {
   terminal: Pick<TerminalRuntimeSocketClient, "ensureWorkspace" | "createTab" | "terminateTab" | "attach" | "listWorkspaces" | "getCommandResult">;
   profileGuard: NativeProviderProfileGuard;
   inventory: () => Promise<Pick<AiProviderSnapshotV3, "drivers">>;
-  invalidateClaudeLoginCatalog?: (ownerId: string) => void;
+  invalidateNativeLoginCatalog?: (ownerId: string, harness: "claude" | "codex") => void;
 }) {
   const { app, homePath, store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard } = options;
   const genericWriter = createGenericNativeWriter(homePath);
@@ -57,8 +57,8 @@ export async function createNativeProviderWorkflowRuntime(options: {
       store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
       genericWriter,
       codexSettingsConnection: createCodexSettingsConnection({ homePath, profileGuard: nativeProviderProfileGuard }),
-      onLoginSucceeded: () => {
-        if (options.ownerId !== null) options.invalidateClaudeLoginCatalog?.(options.ownerId);
+      onLoginSucceeded: harness => {
+        if (options.ownerId !== null) options.invalidateNativeLoginCatalog?.(options.ownerId, harness);
       },
       hermesConnection: hermesSettingsConnection,
       claudeBrowserLogin: createClaudeSettingsLogin({ command: "claude", cwd: homePath, env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("claude", { kind: "write", durable: true }) }),
