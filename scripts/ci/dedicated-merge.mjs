@@ -5,7 +5,11 @@ const id=value=>Number.isSafeInteger(value)&&value>0;
 const ref=value=>typeof value==='string'&&value.length>0&&value.length<=1024&&!/[\x00-\x20\x7f~^:?*\[\\]/.test(value)&&!value.includes('..')&&!value.includes('@{')&&!value.endsWith('/')&&!value.endsWith('.');
 const same=(value,repo)=>typeof value==='string'&&value.toLowerCase()===`${repo.owner}/${repo.repo}`.toLowerCase();
 const endpoint=value=>[value?.sha,value?.ref,value?.repo?.id,value?.repo?.full_name?.toLowerCase()];
-const identity=(pull,labels=false)=>JSON.stringify([pull.number,pull.state,pull.draft,endpoint(pull.head),endpoint(pull.base),pull.merge_commit_sha,pull.stack,labels?pull.labels?.map(x=>x.name).sort():null]);
+// GitHub can serialize equal metadata with different property order. Compare
+// the same validated authority fields as tuples, never raw JSON objects.
+const stackBase=value=>[value?.ref,value?.sha];
+const membershipIdentity=value=>[value?.id,value?.number,value?.size,value?.position,...stackBase(value?.base)];
+const identity=(pull,labels=false)=>JSON.stringify([pull.number,pull.state,pull.draft,endpoint(pull.head),endpoint(pull.base),pull.merge_commit_sha,membershipIdentity(pull.stack),labels?pull.labels?.map(x=>x.name).sort():null]);
 function meta(value){
  if(!value||!id(value.id)||!id(value.number)||!id(value.size)||value.size>100||!id(value.position)||value.position>value.size||!ref(value.base?.ref)||!hash.test(value.base?.sha||''))throw new Error('Invalid bounded native stack metadata');
  return value;
@@ -29,7 +33,7 @@ function stackRows(stack,membership,repositoryId){
  return stack.pull_requests;
 }
 const matches=(row,pull)=>row.number===pull.number&&row.head.sha===pull.head.sha&&row.head.ref===pull.head.ref&&row.base.sha===pull.base.sha&&row.base.ref===pull.base.ref;
-const stackIdentity=stack=>JSON.stringify([stack.id,stack.number,stack.open,stack.base,stack.pull_requests.map(p=>[p.number,p.state,p.draft,p.merged_at,p.head.sha,p.head.ref,p.base.sha,p.base.ref])]);
+const stackIdentity=stack=>JSON.stringify([stack.id,stack.number,stack.open,stackBase(stack.base),stack.pull_requests.map(p=>[p.number,p.state,p.draft,p.merged_at,p.head.sha,p.head.ref,p.base.sha,p.base.ref])]);
 function commit(value,expected){
  if(value?.sha!==expected||!Array.isArray(value.parents)||value.parents.length!==2||value.parents.some(p=>!hash.test(p?.sha||''))||value.parents[0].sha===value.parents[1].sha)throw new Error('Merge commit parents do not bind the current source');
  return value.parents.map(p=>p.sha);
