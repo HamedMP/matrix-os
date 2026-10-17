@@ -606,7 +606,7 @@ describe("mobile shell", () => {
     fireEvent.click(within(screen.getByTestId("mobile-bottom-dock")).getByRole("button", { name: destination, exact: true }));
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(tasks).toHaveBeenCalledTimes(reads);
-    fireEvent.click(within(screen.getByTestId("mobile-bottom-dock")).getByRole("button", { name: "Hermes", exact: true }));
+    fireEvent.click(within(screen.getByTestId("mobile-bottom-dock")).getByRole("button", { name: "Chat", exact: true }));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(tasks.mock.calls.length).toBeGreaterThan(reads);
     expectWorkingAgent();

@@ -269,7 +269,7 @@ export function useGlobalShortcuts(): void {
       // New chat with the OS agent.
       if (meta && e.shiftKey && key === "o") {
         e.preventDefault();
-        tabs.openTab({ kind: "chat", title: "Hermes", closable: false });
+        tabs.openTab({ kind: "chat", title: "Chat", closable: false });
         return;
       }
       if (meta && !e.altKey && !e.shiftKey && key === "t") {
