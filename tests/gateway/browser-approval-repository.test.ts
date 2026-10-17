@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import pg from "pg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapBrowserApprovalMetadata } from "../../packages/gateway/src/chat/browser-approval-database.js";
 import { BrowserApprovalRepository } from "../../packages/gateway/src/chat/browser-approval-repository.js";
 import type { ChatDatabase } from "../../packages/gateway/src/chat/database.js";
@@ -81,6 +81,32 @@ describe.runIf(Boolean(process.env.MATRIX_TEST_POSTGRES_URL))("owner PostgreSQL 
     await repository.reserve(identity("grant_revoked"), currentTime + 60_000);
     await expect(repository.consumeGrant(identity("grant_revoked"), granted.grant!.id, 1)).rejects.toThrow();
   });
+  it("cleanup skips a locked revoked grant and preserves its concurrent reactivation", async () => {
+    await repository.reserve(identity("cleanup_origin"), currentTime + 60_000);
+    const original = await repository.decide(tuple("cleanup_origin", "allow_in_chat"), "verified-owner-fixture");
+    const id = original.grant!.id;
+    await repository.revoke({ handle: "pr-1234", runtimeSlot: "pr-1234", actorId: ownerId, chatId, grantId: id,
+      clientRequestId: "req_cleanup_revoke", baseRevision: 1 }, "owner-revoke-fixture");
+    await sql`UPDATE browser_chat_grants SET revoked_at=${new Date(currentTime - 25 * 60 * 60_000)} WHERE id=${id}::uuid`.execute(db);
+    let release!: () => void, locked!: () => void;
+    const gate = new Promise<void>(yes => { release = yes; });
+    const acquired = new Promise<void>(yes => { locked = yes; });
+    const reactivation = db.transaction().execute(async trx => {
+      await sql`SELECT id FROM browser_chat_grants WHERE id=${id}::uuid FOR UPDATE`.execute(trx);
+      locked(); await gate;
+      await sql`UPDATE browser_chat_grants SET state='active',revision=3,revoked_at=NULL WHERE id=${id}::uuid`.execute(trx);
+    });
+    let sweep: Promise<void> | undefined;
+    try {
+      await Promise.race([acquired, reactivation]);
+      let swept = false; sweep = repository.sweep().then(() => { swept = true; });
+      // A maintenance sweep must skip a busy grant instead of waiting on the
+      // owner's transaction and later deleting the newly active tuple.
+      await vi.waitFor(() => expect(swept).toBe(true), { timeout: 1500 });
+    } finally { release(); await reactivation; await sweep; }
+    expect(await repository.activeGrant(ownerId, chatId)).toMatchObject({ id, state: "active", revision: 3 });
+  });
+
   it("bounds retained tombstones even when cancellation precedes challenge registration", async () => {
     await Promise.all(Array.from({ length: 16 }, () => repository.invalidateLease(ownerId, randomUUID())));
     for (let index = 16; index < 256; index++) await repository.invalidateLease(ownerId, randomUUID());
