@@ -46,7 +46,7 @@ export {
   deriveCanonicalProviderChoices,
   orderCanonicalProviderInstancesForDefault,
 } from "./canonical-provider-choice.js";
-export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath } from "./provider-projection-paths.js";
+export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath, providerSettingsManagedCreditPath } from "./provider-projection-paths.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 export {
   ChatEventFrameTooLarge,
@@ -248,3 +248,9 @@ export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
+
+export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./chat/attachment-input.js";
+
+export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
+
+export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";

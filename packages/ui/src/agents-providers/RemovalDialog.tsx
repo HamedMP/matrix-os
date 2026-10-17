@@ -8,7 +8,7 @@ import type {
 } from "@matrix-os/contracts";
 import { FeatureDialog } from "./FeatureDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
-import { dependenciesTotal } from "./utils.js";
+import { dependenciesTotal, gatewayPolicyAllowsModel } from "./utils.js";
 
 function countLabel(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? "" : "s"}`;
@@ -44,7 +44,7 @@ export function RemovalDialog({
       && isSupportedGenericHarnessCredentialRoute({ ...harness, accessSourceId: source.id }, source))
     && (source.kind !== "matrix_gateway"
       || (gatewayPolicy !== null
-        && affectedHarnesses.every((harness) => gatewayPolicy.allowedModelIds.includes(harness.route.modelId))))
+        && affectedHarnesses.every((harness) => gatewayPolicyAllowsModel(gatewayPolicy, harness.route.modelId))))
   );
   const alternatives = [
     ...sources

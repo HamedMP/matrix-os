@@ -188,3 +188,56 @@ it("refuses private subscription source in ordinary Chat before catalog or adapt
   expect(getCatalog).not.toHaveBeenCalled();
   expect(started).toEqual([]);
 });
+
+it('admits image/file parts for a vision model and rejects images for text-only managed Bot models', async () => {
+  const snapshot = makeAiProviderSnapshot();
+  snapshot.models[0]!.capabilities = ['tools', 'vision'];
+  const model = snapshot.models[0]!.id;
+  savedSelection = { instanceId: 'matrix_pi_default', model };
+  getCatalog.mockImplementation(async () => ({ revision: 'managed', drivers: [], instances: managedPiChatInstances(snapshot).map(instance => ({ ...instance, catalogRevision: 'managed' })) }));
+  const parts = [{ type: 'attachment_reference' as const, attachmentId: 'att_input', kind: 'image' as const, label: 'photo.png', mimeType: 'image/png', ownerReference: 'temporary/desktop-chat/photo.png' }];
+  await orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: 'req_vision_bot', baseRevision: 0, parts,
+    selection: savedSelection, interactionMode: 'default', permissionMode: 'default' });
+  await vi.waitFor(async () => expect((await repository.get(owner, BOT_CHAT))?.activeRun).toBeUndefined());
+  snapshot.models[0]!.capabilities = ['tools'];
+  const current = await repository.get(owner, BOT_CHAT);
+  await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: 'req_text_bot', baseRevision: current!.chat.revision, parts,
+    selection: savedSelection, interactionMode: 'default', permissionMode: 'default' })).rejects.toMatchObject({ status: 400 });
+});
+it.each([
+  { kind: "image" as const, mimeType: "image/gif", sizeBytes: 10, reason: "PNG, JPEG or WebP" },
+  { kind: "image" as const, mimeType: "image/png", sizeBytes: 2 * 1024 * 1024 + 1, reason: "2 MiB" },
+  { kind: "file" as const, mimeType: "text/plain", sizeBytes: 1024 * 1024 + 1, reason: "1 MiB" },
+])("rejects managed $reason metadata before storing or starting a turn", async part => {
+  const snapshot = makeAiProviderSnapshot(); snapshot.models[0]!.capabilities = ["tools", "vision"];
+  savedSelection = { instanceId: "matrix_pi_default", model: snapshot.models[0]!.id };
+  getCatalog.mockImplementation(async () => ({ revision: "inputs", drivers: [], instances: managedPiChatInstances(snapshot).map(instance => ({ ...instance, catalogRevision: "inputs" })) }));
+  const request = { clientRequestId: "req_input_limit", baseRevision: 0, parts: [{ type: "attachment_reference" as const, attachmentId: "att_bounded", label: "upload", kind: part.kind, mimeType: part.mimeType, sizeBytes: part.sizeBytes, ownerReference: "temporary/desktop-chat/input" }],
+    selection: savedSelection, interactionMode: "default", permissionMode: "default" };
+  await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, request)).rejects.toMatchObject({ status: 400, safeError: { safeMessage: expect.stringContaining(part.reason) } });
+  expect(started).toEqual([]); expect((await repository.get(owner, BOT_CHAT))?.chat.messageCount).toBe(0);
+});
+it("rechecks model image suitability on retry and queue without storing rejected metadata", async () => {
+  const snapshot = makeAiProviderSnapshot(); snapshot.models[0]!.capabilities = ["tools", "vision"];
+  savedSelection = { instanceId: "matrix_pi_default", model: snapshot.models[0]!.id };
+  getCatalog.mockImplementation(async () => ({ revision: "image_retry", drivers: [], instances: managedPiChatInstances(snapshot).map(instance => ({ ...instance, catalogRevision: "image_retry" })) }));
+  const parts = [{ type: "attachment_reference" as const, attachmentId: "att_retry_image", kind: "image" as const, label: "photo.png", mimeType: "image/png", sizeBytes: 100, ownerReference: "temporary/desktop-chat/photo.png" }];
+  const first = await orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_image_retry_first", baseRevision: 0, parts, selection: savedSelection, interactionMode: "default", permissionMode: "default" });
+  await vi.waitFor(async () => expect((await repository.get(owner, BOT_CHAT))?.activeRun).toBeUndefined());
+  snapshot.models[0]!.capabilities = ["tools"];
+  let current = await repository.get(owner, BOT_CHAT);
+  await expect(orchestrator.retryTurn(principal, owner, BOT_CHAT, first.turn.id, { clientRequestId: "req_image_retry_second", baseRevision: current!.chat.revision })).rejects.toMatchObject({ status: 400 });
+  blockedRun = new Promise<void>(resolve => { finishBlockedRun = resolve; });
+  await orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_queue_active", baseRevision: current!.chat.revision, parts: [{ type: "text", text: "Active" }], selection: savedSelection, interactionMode: "default", permissionMode: "default" });
+  await vi.waitFor(() => expect(started).toHaveLength(2)); current = await repository.get(owner, BOT_CHAT);
+  await expect(orchestrator.enqueueQueuedTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_queue_bad_image", baseRevision: current!.chat.revision, parts, selection: savedSelection, interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400 });
+});
+it("rejects funded image metadata above the conservative Relay aggregate before dispatch", async () => {
+  const snapshot = makeAiProviderSnapshot(); snapshot.models[0]!.capabilities = ["tools", "vision"];
+  savedSelection = { instanceId: "matrix_pi_default", model: snapshot.models[0]!.id };
+  getCatalog.mockImplementation(async () => ({ revision: "funded_image", drivers: [], instances: managedPiChatInstances(snapshot).map(instance => ({ ...instance, catalogRevision: "funded_image" })) }));
+  await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_funded_image", baseRevision: 0,
+    parts: [{ type: "attachment_reference", attachmentId: "att_funded_image", kind: "image", label: "photo.png", mimeType: "image/png", sizeBytes: 1024 * 1024 + 1, ownerReference: "temporary/desktop-chat/photo.png" }],
+    selection: savedSelection, interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400, safeError: { safeMessage: expect.stringContaining("1 MiB") } });
+  expect(started).toEqual([]); expect((await repository.get(owner, BOT_CHAT))?.chat.messageCount).toBe(0);
+});
