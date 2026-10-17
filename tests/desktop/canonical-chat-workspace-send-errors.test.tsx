@@ -66,6 +66,22 @@ describe("CanonicalChatWorkspace send failures", () => {
     expect(routeClient.create).not.toHaveBeenCalled();
   });
 
+  it("keeps the draft and image when managed image transport rejects GIF before upload", async () => {
+    const routeClient = client(); vi.mocked(routeClient.list).mockResolvedValue({ items: [] });
+    const putBytes = vi.fn();
+    const catalog = { ...providerCatalog, instances: providerCatalog.instances.map(instance => ({ ...instance, driverKind: "matrix_pi" as const,
+      models: instance.models.map(model => ({ ...model, supportsVision: true })) })) };
+    render(<CanonicalChatWorkspace api={{ putBytes } as never} client={routeClient} projectId="matrix-os" projectLabel="Matrix OS" active catalog={catalog}/>);
+    const editor = await screen.findByRole("textbox", { name: "Start a chat" });
+    await setSharedComposerText(editor, "Keep my image draft");
+    fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["GIF89a"], "photo.gif", { type: "image/gif" })] } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Use PNG, JPEG or WebP");
+    expect(editor.textContent).toBe("Keep my image draft");
+    expect(screen.getByText("photo.gif")).toBeTruthy();
+    expect(putBytes).not.toHaveBeenCalled(); expect(routeClient.create).not.toHaveBeenCalled();
+  });
+
   it("explains when the selected provider cannot send files", async () => {
     const routeClient = client();
     vi.mocked(routeClient.list).mockResolvedValue({ items: [] });

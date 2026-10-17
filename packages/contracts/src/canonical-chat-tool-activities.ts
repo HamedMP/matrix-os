@@ -76,7 +76,7 @@ export function canonicalChatToolActivities(run: CanonicalChatRun, activities: C
       const activity = agentActivities.get(id);
       if (!activity) return [];
       const preview = activity.preview ?? activity.summary;
-      const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId));
+      const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId), activity.previewKind === "command" ? activity.preview : undefined);
       return [{
         id: activity.activityId,
         kind: activity.kind,
