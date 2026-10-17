@@ -3,7 +3,7 @@ import { CanonicalChatSchema } from "#canonical-chat";
 import { ChatAgentIdSchema } from "#chat-agent-context";
 import { canonicalReferenceId } from "#canonical-chat-primitives";
 import { CanonicalChatActiveRunProjectionSchema, CanonicalChatProviderBindingSchema } from "#canonical-chat-surface";
-import { CanonicalChatLatestSuccessfulCompletionSchema, CanonicalChatReadStateSchema } from "#canonical-chat-api";
+import { CanonicalChatLatestSuccessfulCompletionSchema, CanonicalChatReadStateSchema, CanonicalChatImportSourceSchema } from "#canonical-chat-api";
 
 export const CHAT_NAVIGATION_MAX_ITEMS = 1000;
 export const CHAT_NAVIGATION_MAX_BYTES = 2 * 1024 * 1024;
@@ -12,6 +12,7 @@ export const CanonicalChatNavigationItemSchema = z.object({
   chat: CanonicalChatSchema.pick({ id: true, title: true, titleVersion: true, activityAt: true,
     lifecycle: true, attention: true, revision: true, messageCount: true, userState: true,
     createdAt: true, updatedAt: true }),
+  importSource: CanonicalChatImportSourceSchema.optional(),
   projectId: canonicalReferenceId(160).optional(),
   providerBinding: CanonicalChatProviderBindingSchema.pick({ driverKind: true }).optional(),
   activeRun: CanonicalChatActiveRunProjectionSchema.optional(),
