@@ -10,7 +10,9 @@ import { createWebProviderWorkflowClient, createWebMatrixAnthropicClient, loadWe
 
 export function AgentSection({
   onOpenTerminal,
+  automaticCreditRefreshEnabled = false,
 }: {
+  automaticCreditRefreshEnabled?: boolean;
   onOpenTerminal?: (terminalSessionId: string) => void;
 }) {
   const transport = useMemo(() => createProviderSettingsTransport(), []);
@@ -43,7 +45,8 @@ export function AgentSection({
     });
   }, [identityKey, runtimeSlot]);
   const controller = useProviderSettingsController({
-    identityKey,
+    identityKey: `${identityKey}:${runtimeSlot}`,
+    automaticCreditRefreshEnabled,
     transport,
   });
 

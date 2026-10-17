@@ -49,6 +49,8 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
       selection: context.latestRun.selection,
       boundInstanceId: context.latestRun.instanceId,
       requirements: {
+        attachments: context.message.parts.flatMap(part => part.type === "attachment_reference" ? [part.kind] : []),
+        attachmentInputs: context.message.parts.filter(part => part.type === "attachment_reference"),
         resources: context.latestRun.context?.drives?.length ? ["organization_drive"] : [],
         interactionMode: context.latestRun.interactionMode,
         permissionMode: context.latestRun.permissionMode,

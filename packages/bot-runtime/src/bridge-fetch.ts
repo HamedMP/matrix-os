@@ -1,6 +1,7 @@
+import { BOT_IMAGE_INFERENCE_MAX_BYTES, validateBotImageInferenceBody } from "@matrix-os/contracts";
 import { request as httpRequest } from "node:http";
 import { Readable, Transform } from "node:stream";
-import { MAX_BRIDGE_REQUEST_BYTES, MAX_BRIDGE_RESPONSE_BYTES } from "@matrix-os/scope-runtime/inference-bridge";
+import { MAX_BRIDGE_RESPONSE_BYTES } from "@matrix-os/scope-runtime/inference-bridge";
 
 const MAX_WAIT_MS = 11 * 60_000;
 
@@ -27,7 +28,7 @@ export function createBotBridgeFetch(socketPath: string): typeof fetch {
         const next = await reader.read();
         if (next.done) break;
         size += next.value.byteLength;
-        if (size > MAX_BRIDGE_REQUEST_BYTES) throw new RangeError("Bot inference request exceeds capacity");
+        if (size > BOT_IMAGE_INFERENCE_MAX_BYTES) throw new RangeError("Bot inference request exceeds capacity");
         chunks.push(next.value);
       }
     } finally {
@@ -36,6 +37,7 @@ export function createBotBridgeFetch(socketPath: string): typeof fetch {
       reader?.releaseLock();
     }
     signal.throwIfAborted();
+    if (size > 0 && !validateBotImageInferenceBody(Buffer.concat(chunks, size).toString("utf8")).valid) throw new RangeError("Bot inference request exceeds capacity or has invalid images");
     return new Promise<Response>((resolve, reject) => {
       const req = httpRequest({ socketPath, path: url.pathname + url.search, method: request.method,
         headers: Object.fromEntries(request.headers), signal }, (res) => {

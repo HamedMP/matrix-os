@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
 import { captureChatFailureMetadata } from "./failure-telemetry.js";
 import { redactAssistantCredentials, redactSharedAssistantText } from "./safe-activity-projection.js";
-import { createOwnerToolOutputProjection } from "./owner-tool-output.js";
+import { createOwnerToolOutputProjection, stripProtectedCommandPreviews } from "./owner-tool-output.js";
 import type { ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
   CanonicalChatRunActivitySchema,
@@ -1657,7 +1657,7 @@ export class ChatRepository {
       messages: projected.messages,
       turns: turns.map(toTurn),
       runs: runs.map(toRun),
-      activities: projected.activities,
+      activities: stripProtectedCommandPreviews(projected.activities),
       attachments: attachments.map((row) => ({
         id: row.id,
         messageId: row.message_id,

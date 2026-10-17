@@ -1,11 +1,43 @@
 # Chat tool display and replay
 
 Codex tool lifecycle records must retain their identity even when optional
-preview text cannot be displayed. A command preview uses the thread event's
+preview text cannot be displayed. A plaintext command preview uses the thread event's
 1,000-character/4,000-byte bound; working-directory detail uses its
 2,000-character/8,000-byte bound. Neither field is a 120-character tool label.
 Rejected optional metadata is omitted independently. An incomplete preview/kind
 pair is omitted together, without discarding the start event.
+
+Complete Codex commands, including absolute owner VPS paths and multiline shell
+snippets, use an optional encrypted `protectedPreview`. It reuses the runtime's
+existing owner key with a distinct `matrix-tool-preview:v1:<toolCallId>`
+authentication purpose; result ciphertext cannot be replayed as a command.
+Recognized credential assignments, headers, flags and values suppress the
+command rather than publishing them. A filename such as `.env`, `auth.json`, or
+`id_rsa`, or a `token` identifier alone, is not a credential value. Command
+contents use the existing encrypted envelope bound of 4,000 UTF-16 units /
+16 KiB UTF-8 bytes. Commands beyond that cap or with invalid controls omit
+optional command evidence while retaining tool identity and status. Plaintext
+legacy previews remain capped at 1,000 characters / 4,000 bytes; a longer
+command is retained only as protected owner content.
+
+Only an authenticated matching personal Chat owner who is also the configured
+VPS owner may open a command preview. Shared/non-owner responses, exports and
+legacy thread HTTP/WebSocket copies strip the preview sidecar; shared reads
+continue to redact private paths. Missing or invalid keys retain safe coarse
+metadata. New canonical clients opt into `commandPreviewVersion=1` for complete
+previews; unversioned responses retain the legacy safe preview contract.
+
+Provider ingestion, including Claude and Hermes tool projections, retains the
+strict plaintext preview contract. The wider owner response schema must never
+admit raw private commands: only the authenticated encrypted sidecar may supply
+them. Read, export and legacy thread projections also apply the coarse policy
+to historical unprotected metadata before any authorized owner decryption.
+
+Native completion metadata enriches the existing activity ID instead of
+emitting another start, so status, activity sequence and watchdog accounting
+remain stable. Detail expansion shows all command lines alongside the working
+directory and result; Electron Desktop's copy action preserves the exact
+command. Previously discarded commands cannot be reconstructed.
 
 All arbitrary tool result text is **private owner content**, including text that
 contains no recognizable secret marker. A denylist cannot prove a string safe.

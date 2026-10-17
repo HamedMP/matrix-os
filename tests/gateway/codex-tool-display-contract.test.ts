@@ -1,3 +1,4 @@
+import { projectCodingActivity } from "../../packages/gateway/src/chat/coding-activity-projection.js";
 import { describe, expect, it } from "vitest";
 import { parseCodexExecJsonLine } from "../../packages/gateway/src/coding-agents/codex-events.js";
 
@@ -38,9 +39,28 @@ describe("Codex tool display contract", () => {
     }
   });
 
+  it("preserves independently validated completion metadata without a second start", () => {
+    expect(parse({ type: "matrix.codex.tool.completed", toolCallId: "command_1", outcome: "success",
+      preview: "printf ok", previewKind: "command", detail: "Working directory: projects/demo" }))
+      .toEqual([expect.objectContaining({ type: "tool.completed", toolCallId: "command_1", outcome: "success", preview: "printf ok", previewKind: "command" })]);
+    expect(parse({ type: "matrix.codex.tool.completed", toolCallId: "command_1", outcome: "failed",
+      preview: "x".repeat(1001), previewKind: "command", detail: "Working directory: projects/demo" }))
+      .toEqual([expect.objectContaining({ type: "tool.completed", outcome: "failed", detail: "Working directory: projects/demo" })]);
+  });
+
   it("retains a coarse event for legacy unsealed output", () => {
     const text = `${"test passed\n".repeat(30)}30 tests passed`;
     expect(parse({ type: "matrix.codex.tool.output", toolCallId: "command_1", text, truncated: false }))
       .toEqual([expect.objectContaining({ type: "tool.output", text: "Tool output is private to its owner.", truncated: false })]);
   });
+});
+
+it.each(["ls /opt/matrix/app", "echo API_KEY=qa-fake"])("keeps unprotected old-runner optional evidence out of generic canonical activities: %s", preview => {
+  const events = parse({ ...start, preview, previewKind: "command" });
+  expect(events).toHaveLength(1);
+  const started = events[0]!;
+  if (started.type !== "tool.started") throw new Error("Invalid fixture");
+  const projected = projectCodingActivity(started);
+  expect(projected.label).toBe("Run command");
+  expect(projected).not.toHaveProperty("preview");
 });
