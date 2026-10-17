@@ -110,4 +110,13 @@ describe("gateway Chat runtime catalog composition", () => {
     options.invalidateCodingModelCatalog?.(principal);
     expect(mocks.claude.invalidate).toHaveBeenCalledWith(principal);
   });
+
+  it("invalidates only the confirmed Claude login owner without renewing sibling providers", () => {
+    const { invalidateClaudeLoginCatalog } = compose();
+    invalidateClaudeLoginCatalog(principal.userId);
+    expect(mocks.claude.invalidate).toHaveBeenCalledExactlyOnceWith({ userId: principal.userId, source: "configured-container" });
+    expect(dependencies.codingProviders.invalidate).toHaveBeenCalledExactlyOnceWith(principal.userId, "claude");
+    expect(mocks.codex).not.toHaveBeenCalled();
+    expect(mocks.native).not.toHaveBeenCalled();
+  });
 });

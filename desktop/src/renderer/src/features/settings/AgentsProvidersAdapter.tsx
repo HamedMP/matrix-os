@@ -1,6 +1,6 @@
-import { invalidateDesktopProviderCatalog } from "../chat/provider-catalog-invalidation";
+import { invalidateDesktopProviderCatalog, invalidateDesktopChatgptPlanCatalog } from "../chat/provider-catalog-invalidation";
 import type { ProviderSettingsMutationIntent } from "@matrix-os/ui";
-import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import type { ProviderSettingsSnapshot, ProviderWorkflow } from "@matrix-os/contracts";
 import {
   AgentsProvidersView,
   useProviderSettingsController,
@@ -84,8 +84,8 @@ function ConnectedAgentsProvidersAdapter({
 }) {
   const runtimeApi = useMemo(() => api.forRuntime(runtimeSlot), [api, runtimeSlot]);
   const transport = useMemo(() => createDesktopProviderSettingsTransport(runtimeApi), [runtimeApi]);
-  const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot) => {
-    invalidateDesktopProviderCatalog(identityKey, intent, snapshot);
+  const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot, receipt?: ProviderWorkflow) => {
+    invalidateDesktopProviderCatalog(identityKey, intent, snapshot, receipt);
   }, [identityKey]);
   const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, automaticCreditRefreshEnabled });
   const [actionError, setActionError] = useState<string | null>(null);
@@ -106,8 +106,9 @@ function ConnectedAgentsProvidersAdapter({
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const matrixAnthropicClient = useMemo(() => createDesktopMatrixAnthropicClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const authGeneration = useConnection((state) => state.authGeneration);
-  const localChatgptClient = useMemo(() => createDesktopChatgptPlanClient({ runtimeSlot, authGeneration }, isIdentityCurrent),
-    [runtimeSlot, authGeneration, isIdentityCurrent]);
+  const localChatgptClient = useMemo(() => createDesktopChatgptPlanClient({ runtimeSlot, authGeneration }, isIdentityCurrent,
+    undefined, () => invalidateDesktopChatgptPlanCatalog(identityKey)),
+    [runtimeSlot, authGeneration, isIdentityCurrent, identityKey]);
   const loadUsageHistory = useCallback((cursor: string | null, signal: AbortSignal) => loadDesktopAiCreditHistory({
     api: runtimeApi, runtimeSlot, cursor, signal, isIdentityCurrent,
   }), [runtimeApi, runtimeSlot, isIdentityCurrent]);
@@ -179,9 +180,9 @@ function ConnectedAgentsProvidersAdapter({
         setActionError(null);
         void controller.refresh();
       }}
-      onRefreshForConnection={async () => {
+      onRefreshForConnection={async (receipt) => {
         if (!isIdentityCurrent()) return null;
-        const snapshot = await controller.refreshForConnection();
+        const snapshot = await controller.refreshForConnection(receipt);
         return isIdentityCurrent() ? snapshot : null;
       }}
       onMutate={(intent) => {
@@ -200,6 +201,7 @@ function ConnectedAgentsProvidersAdapter({
       onOpenBrowser={openBrowser}
       workflowClient={workflowClient}
       localChatgptClient={localChatgptClient}
+      onLocalChatgptChanged={() => { if (isIdentityCurrent()) void controller.refresh({ refresh: false }); }}
       matrixAnthropicClient={matrixAnthropicClient}
       onOpenAuthorizationUrl={(url) => {
         if (!isIdentityCurrent()) return;

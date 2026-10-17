@@ -51,6 +51,7 @@ export function AgentsProvidersView({
   onSetupHarness,
   workflowClient,
   localChatgptClient,
+  onLocalChatgptChanged,
   matrixAnthropicClient,
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
@@ -190,7 +191,7 @@ export function AgentsProvidersView({
           onChooseAgent={(id) => { setExpandedRowId(id); setExpandedRowKind(snapshot.harnesses.find(item => item.id === id)?.harness ?? null); onSelectHarness(id); }}
           onUseGateway={useGateway}
           subscriptions={<YourSubscriptions snapshot={snapshot} capabilities={workflowCapabilities} client={workflowClient}
-            localChatgptClient={localChatgptClient} localChatgptRefreshRevision={localChatgptRefreshRevision}
+            localChatgptClient={localChatgptClient} localChatgptRefreshRevision={localChatgptRefreshRevision} onLocalChatgptChanged={onLocalChatgptChanged}
             matrixAnthropicClient={matrixAnthropicClient}
             operationIds={operationIds} workflowStatus={workflowStatus} forbidden={workflowPermission === "forbidden"}
             disabled={busy || gatewayPending || enablement.pending} onRefresh={refreshSettings}
@@ -348,9 +349,9 @@ export function AgentsProvidersView({
                     disabled={mutationsDisabled}
                     onSetupHarness={onSetupHarness}
                     onRefresh={refreshSettings}
-                    onRefreshAfterLogin={async () => {
+                    onRefreshAfterLogin={async (receipt) => {
                       if (!onRefreshForConnection) { refreshSettings(); return; }
-                      const refreshed = await onRefreshForConnection();
+                      const refreshed = await onRefreshForConnection(receipt);
                       if (!refreshed) throw new Error("connection refresh unavailable");
                     }}
                     onOpenTerminal={onOpenTerminal}
