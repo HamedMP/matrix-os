@@ -5,7 +5,8 @@ import { createBrowserGrantUndoTracker, browserPermissionChoices, browserPermiss
 import { chatAgentButtonClass, chatAgentPrimaryButtonClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from "../chat-agents/theme.js";
 import type { BrowserPermissionClient } from "./client.js";
 
-export function BrowserPermissionCard({ approval, onDecision, client, submitting = false, onOpenPermissionMode }: {
+export function BrowserPermissionCard({ approval, chatId, onDecision, client, submitting = false, onOpenPermissionMode }: {
+  chatId?: string;
   approval: CanonicalChatApprovalView; onDecision?: (choice: BrowserPermissionChoice) => Promise<void>;
   client?: BrowserPermissionClient; submitting?: boolean; onOpenPermissionMode?: () => void;
 }) {
@@ -16,17 +17,22 @@ export function BrowserPermissionCard({ approval, onDecision, client, submitting
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [grant, setGrant] = useState<BrowserGrantView | null>(null);
+  const [grantRefresh, setGrantRefresh] = useState(0);
   const scope = useRef<object>({});
   const activeAction = useRef(false);
-  const identity = `${approval.runId}:${approval.approvalId}`;
+  const grantChatId = chatId ?? approval.browserGrant?.chatId;
+  const identity = `${grantChatId ?? ""}:${approval.runId}:${approval.approvalId}`;
   useEffect(() => {
     const current = {}; scope.current = current; activeAction.current = false; setBusy(false); setError(null); setGrant(null);
-    const recorded = approval.browserGrant;
-    if (client && recorded) void client.getGrant(recorded.chatId).then(fresh => {
-      if (scope.current === current) setGrant(fresh?.id === recorded.id ? fresh : null);
-    }).catch((error: unknown) => { console.warn("[browser-permission] Grant read failed", browserPermissionErrorKind(error)); if (scope.current === current) setError("Browser access could not be checked. Refresh this Chat."); });
     return () => { if (scope.current === current) scope.current = {}; };
-  }, [identity, approval.browserGrant, client]);
+  }, [identity, client]);
+  useEffect(() => {
+    const current = scope.current; let cancelled = false;
+    if (client && grantChatId) void client.getGrant(grantChatId).then(fresh => {
+      if (!cancelled && scope.current === current) setGrant(fresh?.chatId === grantChatId ? fresh : null);
+    }).catch((error: unknown) => { console.warn("[browser-permission] Grant read failed", browserPermissionErrorKind(error)); if (!cancelled && scope.current === current) setError("Browser access could not be checked. Refresh this Chat."); });
+    return () => { cancelled = true; };
+  }, [identity, approval.browserGrant, client, grantChatId, grantRefresh]);
   useEffect(() => {
     if (!approval.pending || !approval.browserApproval || approval.browserApproval.resolution) return;
     const timer = setInterval(() => setClock(Date.now()), 1000);
@@ -55,12 +61,18 @@ export function BrowserPermissionCard({ approval, onDecision, client, submitting
       <div className="flex flex-wrap items-center gap-2">{browserPermissionChoices.map(choice => <button key={choice.decision} type="button"
         className={choice.decision === "allow_once" ? chatAgentPrimaryButtonClass : chatAgentButtonClass}
         disabled={busy || submitting || !onDecision} onClick={() => void perform(async () => {
-          browserPermissionRequest(approval, choice.decision, "req_ui_validation"); await onDecision!(choice.decision);
+          browserPermissionRequest(approval, choice.decision, "req_ui_validation");
+          const current = scope.current;
+          try { await onDecision!(choice.decision); }
+          finally { if (scope.current === current) setGrantRefresh(value => value + 1); }
         })}>{choice.label}</button>)}
         {onOpenPermissionMode ? <button type="button" className="ml-auto text-xs underline" onClick={onOpenPermissionMode}>Always allow → Full access</button> : null}
       </div>
     </> : <div className="flex flex-wrap items-center gap-3">
       <p style={chatAgentMutedStyle}>{browserPermissionOutcome(approval, clock)}</p>
+    </div>}
+    <div className="flex flex-wrap items-center gap-3">
+      {grant?.state === "active" && !approval.browserGrant ? <span style={chatAgentMutedStyle}>Browser access is saved for this Chat</span> : null}
       {grant?.state === "active" && client ? <button type="button" className={chatAgentButtonClass} disabled={busy} onClick={() => void perform(async () => {
         const current = scope.current;
         const attempt = undo.request(grant, () => `req_${crypto.randomUUID().replaceAll("-", "")}`);
@@ -69,7 +81,7 @@ export function BrowserPermissionCard({ approval, onDecision, client, submitting
         if (scope.current === current) setGrant(revoked);
       })}>Undo</button> : null}
       {grant?.state === "revoked" ? <span style={chatAgentMutedStyle}>Remembered browser access removed</span> : null}
-    </div>}
+    </div>
     {error ? <p role="alert" className="mt-2 text-xs">{error}</p> : null}
   </section>;
 }

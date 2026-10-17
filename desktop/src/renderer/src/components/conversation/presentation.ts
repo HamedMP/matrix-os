@@ -142,6 +142,7 @@ export interface ConversationTurnPresentation {
 }
 
 export interface ConversationPresentationCallbacks {
+  browserChatId?: string;
   browserPermissions?: BrowserPermissionClient;
   openPermissionMode?: () => void;
   renderCredentialMarker?: (message: ConversationMessagePresentation, offset: number, marker: string, number: number) => ReactNode;

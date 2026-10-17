@@ -42,3 +42,40 @@ it("retries an uncertain Undo with the same owner request identity", async () =>
   fireEvent.click(screen.getByRole("button", { name: "Undo" })); await screen.findByText("Remembered browser access removed");
   expect(revokeGrant.mock.calls[1]![1]).toBe(revokeGrant.mock.calls[0]![1]);
 });
+it("finds and revokes saved Chat access when the confirmation activity was lost", async () => {
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome" as const, scopeVersion: 1 as const, revision: 1, state: "active" as const, createdAt: new Date().toISOString(), revokedAt: null };
+  const client = { getGrant: vi.fn(async () => grant), revokeGrant: vi.fn(async () => ({ ...grant, state: "revoked" as const, revision: 2, revokedAt: new Date().toISOString() })) };
+  render(<BrowserPermissionCard chatId="chat_test" approval={approval} client={client}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+  await screen.findByText("Remembered browser access removed");
+  expect(client.getGrant).toHaveBeenCalledWith("chat_test");
+  expect(client.revokeGrant).toHaveBeenCalledWith(grant, expect.any(String));
+});
+it("checks saved access after an uncertain Allow in this Chat response", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome" as const, scopeVersion: 1 as const, revision: 1, state: "active" as const, createdAt: new Date().toISOString(), revokedAt: null };
+  const getGrant = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(grant);
+  render(<BrowserPermissionCard chatId="chat_test" approval={approval} client={{ getGrant, revokeGrant: vi.fn() }} onDecision={async () => { throw new Error("Response lost"); }}/>);
+  await waitFor(() => expect(getGrant).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole("button", { name: "Allow in this Chat" }));
+  await screen.findByRole("button", { name: "Undo" });
+  expect(screen.getByText("Browser access is saved for this Chat")).toBeTruthy();
+});
+it("never projects another Chat's returned grant", async () => {
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_other", capability: "shared_chrome" as const, scopeVersion: 1 as const, revision: 1, state: "active" as const, createdAt: new Date().toISOString(), revokedAt: null };
+  const getGrant = vi.fn(async () => grant);
+  render(<BrowserPermissionCard chatId="chat_test" approval={approval} client={{ getGrant, revokeGrant: vi.fn() }}/>);
+  await waitFor(() => expect(getGrant).toHaveBeenCalledOnce());
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});
+it("ignores a late grant read after switching Chat", async () => {
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_old", capability: "shared_chrome" as const, scopeVersion: 1 as const, revision: 1, state: "active" as const, createdAt: new Date().toISOString(), revokedAt: null };
+  let finish!: (value: typeof grant) => void;
+  const getGrant = vi.fn().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(null);
+  const client = { getGrant, revokeGrant: vi.fn() };
+  const { rerender } = render(<BrowserPermissionCard chatId="chat_old" approval={approval} client={client}/>);
+  rerender(<BrowserPermissionCard chatId="chat_new" approval={approval} client={client}/>);
+  finish(grant);
+  await waitFor(() => expect(getGrant).toHaveBeenCalledWith("chat_new"));
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});

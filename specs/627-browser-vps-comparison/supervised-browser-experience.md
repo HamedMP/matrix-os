@@ -25,6 +25,10 @@ the existing authenticated transport. UI state changes only after a confirmed
 revoked response. Failed or stale reads never imply permission was removed.
 Native Mobile uses its existing bounded authenticated transport with identical
 revision and outcome semantics. No renderer creates a platform signature.
+Every browser card reads the active Chat's authoritative grant independently
+of recorded activity, including after an uncertain decision response. A lost
+confirmation cannot hide remembered access or its Undo action. Foreign Chat
+grants and stale asynchronous reads are excluded from the current card.
 
 A composer reminder scrolls/focuses the pending card inside the same window.
 Always allow opens existing permission settings without approving the pending

@@ -704,6 +704,7 @@ function ChatAppContent({
                         />
                       ) : directBotId && msg.role === "system" && msg.metadata?.canonicalFailureCode === "model_unavailable" ? <BotModelFailureNotice/> : msg.role === "system" ? (
                         <CanonicalApprovalMessage
+                          chatId={sessionId}
                           message={msg}
                           browserPermissions={browserPermissions}
                           onOpenPermissionMode={!directBotId && !collaborationView ? () => setSetupOpen(true) : undefined}

@@ -206,7 +206,7 @@ function Request({
     }
   };
   if (request.browserApproval) return <ConversationItem messageId={`request:${request.id}`}>
-    <BrowserPermissionCard approval={request.browserApproval} client={callbacks.browserPermissions} onOpenPermissionMode={callbacks.openPermissionMode}
+    <BrowserPermissionCard chatId={callbacks.browserChatId} approval={request.browserApproval} client={callbacks.browserPermissions} onOpenPermissionMode={callbacks.openPermissionMode}
       onDecision={callbacks.performAction ? choice => callbacks.performAction!({ kind: "approval", requestId: request.requestId,
         decision: browserCanonicalDecision(choice), browserChoice: choice, label: "Browser permission" }) : undefined}/>
   </ConversationItem>;

@@ -975,6 +975,7 @@ function CanonicalChatWorkspaceContent({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
+              browserChatId: controller.detail.record.chat.id,
               browserPermissions: client.browserPermissions,
               openPermissionMode: () => setPermissionModeRequest(value => value + 1),
               ...artifactActions,

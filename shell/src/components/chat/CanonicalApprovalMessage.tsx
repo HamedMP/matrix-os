@@ -47,12 +47,14 @@ function approvalLabel(decision: CanonicalChatApprovalDecision): string {
 
 export function CanonicalApprovalMessage({
   message,
+  chatId,
   submitting,
   onSubmit,
   browserPermissions,
   onOpenPermissionMode,
 }: {
   message: ChatMessage;
+  chatId?: string;
   browserPermissions?: BrowserPermissionClient;
   onOpenPermissionMode?: () => void;
   submitting: boolean;
@@ -62,7 +64,7 @@ export function CanonicalApprovalMessage({
   if (!approval) {
     return <div className="rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">{message.content}</div>;
   }
-  if (approval.browserApproval) return <BrowserPermissionCard approval={approval as CanonicalChatApprovalView} submitting={submitting} client={browserPermissions} onOpenPermissionMode={onOpenPermissionMode}
+  if (approval.browserApproval) return <BrowserPermissionCard chatId={chatId} approval={approval as CanonicalChatApprovalView} submitting={submitting} client={browserPermissions} onOpenPermissionMode={onOpenPermissionMode}
     onDecision={onSubmit ? choice => onSubmit(approval.runId, approval.approvalId, browserCanonicalDecision(choice), choice) : undefined}/>;
   return (
     <div className="space-y-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs">

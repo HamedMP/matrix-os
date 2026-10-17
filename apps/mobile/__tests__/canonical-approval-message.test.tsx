@@ -2,7 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 
-jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: async () => "test-token" }) }));
+jest.mock("@clerk/clerk-expo", () => { const getToken = async () => "test-token"; return { useAuth: () => ({ getToken }) }; });
 // Unrelated ESM-only export from the contracts barrel; this suite exercises approval HTTP, not shared HTML.
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
@@ -67,4 +67,23 @@ it("keeps failed submissions recoverable and never displays a raw server error",
   fireEvent.press(screen.getByText("Cancel"));
   await waitFor(() => expect(screen.getByText("Could not submit approval. Try again.")).toBeTruthy());
   expect(screen.queryByText("private upstream token")).toBeNull();
+});
+
+it("recovers authoritative browser access without a recorded grant activity", async () => {
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome", scopeVersion: 1, revision: 1, state: "active", createdAt: new Date().toISOString(), revokedAt: null };
+  const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => ({ ok: true, json: async () => ({ grant: init?.method === "DELETE" ? { ...grant, state: "revoked", revision: 2, revokedAt: new Date().toISOString() } : grant }) }) as Response);
+  render(<CanonicalApprovalMessage {...props} approval={{ ...approval, allowedDecisions: [...approval.allowedDecisions], browserApproval: { kind: "shared_chrome", leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1, expiresAt: new Date(Date.now()+60_000).toISOString() } }} />);
+  fireEvent.press(await screen.findByText("Undo"));
+  await screen.findByText("Remembered browser access removed");
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/browser-grants/278ca19d-9760-4e67-a221-62bedf393b90"), expect.objectContaining({ method: "DELETE", body: expect.stringContaining('"baseRevision":1') }));
+});
+it("checks saved browser access after an uncertain native decision", async () => {
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome", scopeVersion: 1, revision: 1, state: "active", createdAt: new Date().toISOString(), revokedAt: null };
+  jest.spyOn(global, "fetch").mockResolvedValueOnce({ ok: true, json: async () => ({ grant: null }) } as Response)
+    .mockRejectedValueOnce(new Error("Response lost")).mockResolvedValue({ ok: true, json: async () => ({ grant }) } as Response);
+  render(<CanonicalApprovalMessage {...props} approval={{ ...approval, actionDigest: "a".repeat(64), allowedDecisions: [...approval.allowedDecisions], browserApproval: { kind: "shared_chrome", leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1, expiresAt: new Date(Date.now()+60_000).toISOString() } }} />);
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  fireEvent.press(screen.getByText("Allow in this Chat"));
+  await screen.findByText("Undo");
+  expect(screen.getByText("Could not submit approval. Try again.")).toBeTruthy();
 });

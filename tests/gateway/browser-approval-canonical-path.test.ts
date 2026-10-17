@@ -16,12 +16,17 @@ import { mintBrowserApprovalProof, verifyBrowserDecisionProof, verifyBrowserRevo
 
 /** PostgreSQL-compatible functional path; concurrent transaction acceptance is
  * separately required on the real disposable PostgreSQL CI service. */
-it.each(["codex", "claude_code"] as const)("binds %s's supervised browser call to canonical owner intent and consumes its real metadata once", async harness => {
+it.each(["codex", "claude_code"].flatMap(harness => [false, true].map(lostConfirmation => ({ harness: harness as "codex" | "claude_code", lostConfirmation }))))("binds $harness's supervised browser call and retains revocation after lost confirmation=$lostConfirmation", async ({ harness, lostConfirmation }) => {
   const owner = { type: "personal" as const, ownerId: "owner_browser" };
   const principal = { userId: owner.ownerId, source: "jwt" as const };
   const secret = "synthetic-platform-only-test-secret", handle = "pv-browser-test";
   const pglite = await KyselyPGlite.create();
   const repository = new ChatRepository(pglite.dialect); await repository.bootstrap();
+  const appendActivities = repository.appendRunActivities.bind(repository);
+  const activityWrite = vi.spyOn(repository, "appendRunActivities").mockImplementation(async (...args) => {
+    if (lostConfirmation && args[3].some(event => event.type === "approval.resolved" && event.browserApproval?.resolution === "allowed_in_chat")) throw new Error("Synthetic confirmation write failure");
+    return appendActivities(...args);
+  });
   const authority = new BrowserApprovalRepository(repository.kysely, { boundedConnectionAcquisition: true,
     verifyDecision: async (tuple, proof) => { const verified = verifyBrowserDecisionProof(proof, tuple, secret); if (!verified) throw new Error("Approval unavailable"); return verified; },
     verifyRevoke: async (tuple, proof) => { const verified = verifyBrowserRevokeProof(proof, tuple, secret); if (!verified) throw new Error("Approval unavailable"); return verified; },
@@ -73,12 +78,12 @@ it.each(["codex", "claude_code"] as const)("binds %s's supervised browser call t
       identity: { handle, runtimeSlot: handle, source: "auth", userId: owner.ownerId, sessionProvenance: "clerk-browser" } })!;
     expect(proof).toEqual(expect.any(String));
     const response = await app.request(path, { method: "POST", headers: { "content-type": "application/json", "x-matrix-browser-approval-proof": proof }, body: JSON.stringify(body) });
-    expect(response.status).toBe(200); await orchestrator.drain();
-    expect(driver.execute.mock.calls).toHaveLength(2);
+    expect(response.status === 200).toBe(!lostConfirmation); await orchestrator.drain();
+    expect(driver.execute.mock.calls).toHaveLength(lostConfirmation ? 0 : 2);
     expect(await authority.activeGrant(owner.ownerId, "chat_browser")).toMatchObject({ state: "active", revision: 1 });
     const detail = await repository.exportChat(owner, "chat_browser");
     expect(detail!.activities.filter(event => event.type === "approval.requested")).toHaveLength(1);
-    expect(detail!.activities.some(event => event.type === "approval.resolved" && event.browserApproval?.resolution === "allowed_in_chat")).toBe(true);
+    expect(detail!.activities.some(event => event.type === "approval.resolved" && event.browserApproval?.resolution === "allowed_in_chat")).toBe(!lostConfirmation);
     const grantApp = createBrowserGrantRoutes({ control, getPrincipal: () => principal });
     const granted = await (await grantApp.request("/api/chats/chat_browser/browser-grants")).json() as { grant: { id: string; revision: number } };
     const revokePath = `/api/chats/chat_browser/browser-grants/${granted.grant.id}`;
@@ -89,5 +94,5 @@ it.each(["codex", "claude_code"] as const)("binds %s's supervised browser call t
     const undone = await grantApp.request(revokePath, { method: "DELETE", headers: { "content-type": "application/json", "x-matrix-browser-approval-proof": undoProof }, body: revokeBody });
     expect(undone.status).toBe(200);
     expect(await authority.activeGrant(owner.ownerId, "chat_browser")).toBeNull();
-  } finally { await control.close(); await broker.close(); await orchestrator.drain(); await authority.close(); await repository.kysely.destroy(); }
+  } finally { activityWrite.mockRestore(); await control.close(); await broker.close(); await orchestrator.drain(); await authority.close(); await repository.kysely.destroy(); }
 });
