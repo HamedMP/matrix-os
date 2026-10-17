@@ -35,5 +35,7 @@ it("keeps earlier approved work valid when another pending action receives the s
     expect(second.grant).toMatchObject({ id: first.grant!.id, revision: first.grant!.revision, state: "active" });
     await expect(repository.consume(identity("approval_first"))).resolves.toBeUndefined();
     await expect(repository.consume(identity("approval_second"))).resolves.toBeUndefined();
+    await repository.sweep();
+    expect(await repository.activeGrant("owner_one", "chat_one")).toMatchObject({ state: "active", id: first.grant!.id });
   } finally { await repository.close(); await db.destroy(); }
 });

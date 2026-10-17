@@ -242,7 +242,7 @@ export class BrowserApprovalRepository {
         (SELECT id FROM browser_chat_challenges WHERE status IN ('pending','approved') AND expires_at<=${now} ORDER BY expires_at LIMIT 256 FOR UPDATE SKIP LOCKED)`.execute(trx);
       await sql`DELETE FROM browser_chat_decisions WHERE (owner_id,nonce) IN (SELECT owner_id,nonce FROM browser_chat_decisions WHERE expires_at<${cutoff} ORDER BY expires_at LIMIT 256)`.execute(trx);
       await sql`DELETE FROM browser_chat_challenges WHERE id IN (SELECT id FROM browser_chat_challenges WHERE status NOT IN ('pending','approved') AND expires_at<${cutoff} ORDER BY expires_at LIMIT 256)`.execute(trx);
-      await sql`DELETE FROM browser_chat_grants WHERE id IN (SELECT id FROM browser_chat_grants WHERE state='revoked' AND revoked_at<${cutoff} ORDER BY revoked_at LIMIT 256)`.execute(trx);
+      await sql`DELETE FROM browser_chat_grants WHERE state='revoked' AND revoked_at<${cutoff} AND id IN (SELECT id FROM browser_chat_grants WHERE state='revoked' AND revoked_at<${cutoff} ORDER BY revoked_at LIMIT 256 FOR UPDATE SKIP LOCKED)`.execute(trx);
       await sql`DELETE FROM browser_chat_leases WHERE (owner_id,epoch) IN (SELECT owner_id,epoch FROM browser_chat_leases WHERE expires_at<${cutoff} ORDER BY expires_at LIMIT 256)`.execute(trx);
     }));
   }
