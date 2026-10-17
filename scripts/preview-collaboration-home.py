@@ -102,7 +102,11 @@ def bind(root, handle, owner, machine, config, root_owned):
     pin = values(original, PIN) or values(original, "PLATFORM_INTERNAL_URL")
     if len(pin) != 1 or len(pin[0]) != 1 or not re.fullmatch(ORIGIN + "/?", pin[0][0]):
         raise ValueError("Invalid original platform binding")
-    config = {**config, PIN: pin[0][0]}
+    # The protected connector verified the exact preview handle, machine and owner
+    # under the rollback lock. Enable its second owner controller explicitly;
+    # preserve MATRIX_AUTH_TOKEN so the original controller can still restore it.
+    config = {**config, PIN: pin[0][0], "MATRIX_PREVIEW_RUNTIME": "true",
+              "MATRIX_PREVIEW_OWNER_CONTROL": "true"}
     kept = [line for line in lines if line.split("=", 1)[0] not in config]
     write_like(path, "\n".join(kept + [f"{key}={config[key]}" for key in sorted(config)]) + "\n", meta, mode)
     after = os.lstat(path)
