@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./local-chatgpt-plan-client.js";
+import { LocalChatgptDiagnosticDetails } from "./LocalChatgptDiagnosticDetails.js";
 
 const ACTION_ERROR = "ChatGPT connection could not be updated. Check again.";
 
@@ -9,7 +10,8 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
 }) {
   const [receipt, setReceipt] = useState<{ client: LocalChatgptPlanClient; status: LocalChatgptPlanStatus } | null>(null);
   const [error, setError] = useState<{ client: LocalChatgptPlanClient; text: string; recovery?: boolean } | null>(null);
-  const [active, setActive] = useState<{ client: LocalChatgptPlanClient; kind: "connect" | "action" } | null>(null);
+  const [active, setActive] = useState<{ client: LocalChatgptPlanClient; kind: "connect" | "action" | "check" } | null>(null);
+  const [details, setDetails] = useState<{ client: LocalChatgptPlanClient; refreshRevision: number } | null>(null);
   const scope = useRef<{ client: LocalChatgptPlanClient; lifetime: AbortController; revision: number; pending: boolean } | null>(null);
   const changed = useRef(onChanged);
   useEffect(() => { changed.current = onChanged; }, [onChanged]);
@@ -30,12 +32,13 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
     const current = scope.current;
     if (!client || !current || current.client !== client || current.pending) return;
     const controller = new AbortController();
+    setDetails(null);
     const revision = ++current.revision;
     const read = async () => {
       try {
         const value = await client.status(AbortSignal.any([controller.signal, current.lifetime.signal]));
         if (controller.signal.aborted || current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
-        setReceipt({ client, status: value }); setError(null);
+        setDetails(null); setReceipt({ client, status: value }); setError(null);
       } catch (caught) {
         console.warn("[chatgpt-plan] Status unavailable:", caught instanceof Error ? caught.name : typeof caught);
         if (!controller.signal.aborted && !current.lifetime.signal.aborted && scope.current === current && current.revision === revision) setError({ client, text: ACTION_ERROR });
@@ -57,10 +60,11 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
     const expires = Date.now() + 5 * 60_000;
     const read = async () => {
       const revision = current.revision;
+      setDetails(null);
       try {
         const value = await client.status(current.lifetime.signal);
         if (stopped || current.lifetime.signal.aborted || scope.current !== current || revision !== current.revision) return;
-        setReceipt({ client, status: value });
+        setDetails(null); setReceipt({ client, status: value });
         if (value.bridgeConnected) setError(previous => previous?.client === client && previous.recovery ? null : previous);
         if ((value.state === "connecting" || value.state === "connected" && !value.bridgeConnected && !value.bridgeFailure) && Date.now() < expires) {
           timer = setTimeout(() => void read(), 1500);
@@ -74,15 +78,34 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
     return () => { stopped = true; clearTimeout(timer); };
   }, [client, awaitingDevice, busy, refreshRevision]);
 
+  async function checkConnection() {
+    const current = scope.current;
+    if (!client || !current || current.client !== client || current.lifetime.signal.aborted || current.pending || disabled || readOnly) return;
+    const revision = ++current.revision; current.pending = true;
+    setDetails(null);
+    setActive({ client, kind: "check" });
+    try {
+      const value = await client.status(current.lifetime.signal);
+      if (current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
+      setDetails(null); setReceipt({ client, status: value }); setError(null);
+    } catch (caught) {
+      console.warn("[chatgpt-plan] Connection check unavailable:", caught instanceof Error ? "request_failed" : "unknown");
+      if (current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
+      setError({ client, text: ACTION_ERROR });
+    } finally {
+      if (scope.current === current && current.revision === revision) { current.pending = false; setActive(null); }
+    }
+  }
   async function act(action: (signal: AbortSignal) => Promise<LocalChatgptPlanStatus>, kind: "connect" | "action" | "cancel" | "rebind" = "action") {
     const current = scope.current;
     if (!client || !current || current.client !== client || current.lifetime.signal.aborted || current.pending && kind !== "cancel" || disabled || readOnly) return;
     const revision = ++current.revision; current.pending = true;
+    setDetails(null);
     setActive({ client, kind: kind === "connect" ? "connect" : "action" }); setError(null);
     try {
       const value = await action(current.lifetime.signal);
       if (current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
-      setReceipt({ client, status: value });
+      setDetails(null); setReceipt({ client, status: value });
       onChanged();
     } catch (caught) {
       console.warn("[chatgpt-plan] Action unavailable:", caught instanceof Error ? caught.name : typeof caught);
@@ -94,7 +117,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
         try {
           const value = await client.status(current.lifetime.signal);
           if (current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
-          setReceipt({ client, status: value });
+          setDetails(null); setReceipt({ client, status: value });
           if (value.bridgeConnected) { setError(null); onChanged(); }
         } catch (statusError) {
           console.warn("[chatgpt-plan] Recovery status unavailable:", statusError instanceof Error ? statusError.name : typeof statusError);
@@ -107,6 +130,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
   }
   const connected = status?.state === "connected" && !!status.account;
   const blocked = disabled || readOnly || busy;
+  const showingDetails = details?.client === client && details?.refreshRevision === refreshRevision && !busy;
   const label = !client ? "Unavailable on this surface" : !status ? error && error.client === client ? "Unavailable" : "Checking connection…"
     : connecting ? "Connecting" : connected ? "Connected on this device" : "Not connected";
   return <article className="matrix-ap-subscription" aria-label="ChatGPT subscription">
@@ -120,7 +144,13 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
     </> : null}
     {status?.revocation === "unconfirmed" ? <p className="matrix-ap-help" role="status">Local access stopped. Provider sign-out could not be confirmed; check your ChatGPT connected apps.</p> : null}
     {error && error.client === client ? <p className="matrix-ap-help" role="alert">{error.text}</p> : null}
+    {client ? <>
+      <button className="matrix-ap-button" type="button" disabled={disabled || busy} aria-expanded={showingDetails}
+        onClick={() => setDetails(showingDetails ? null : { client, refreshRevision })}>Connection details</button>
+      {showingDetails ? <LocalChatgptDiagnosticDetails client={client}/> : null}
+    </> : null}
     {client && !readOnly ? <div className="matrix-ap-workflow-actions matrix-ap-subscription-actions">
+      {!status && error?.client === client ? <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void checkConnection()}>Check connection</button> : null}
       {connecting ? <button className="matrix-ap-button" type="button" disabled={disabled || readOnly} onClick={() => void act(signal => client.cancel(signal), "cancel")}>Cancel ChatGPT connection</button>
         : !connected ? <button type="button" className="matrix-ap-button" disabled={blocked || !status} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Continue with ChatGPT</button>
         : <>

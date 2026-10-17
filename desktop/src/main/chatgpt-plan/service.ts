@@ -1,3 +1,5 @@
+import { createPlanStatusOperation } from './status-operation';
+import type { PlanStatusObservation } from './status-diagnostics';
 import { createPlanCatalogRefresh } from './catalog-refresh';
 import { rejectedPlanCredential } from './credential-failure';
 import { logPlanFailure, PlanFailure } from './diagnostics';
@@ -56,18 +58,20 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     let lifecycleTask: Promise<void> | null = null;
     const refreshCatalog = createPlanCatalogRefresh();
     const requests = new Set<AbortController>(); // <=4 native calls; peer enforces admission.
-    function bound(input: ChatgptPlanSession): Bound {
+    function bound(input: ChatgptPlanSession, observation?: PlanStatusObservation): Bound {
         const live = deps.auth.getStatus();
         const bearer = deps.auth.getToken();
+        observation?.compare({ runtimeSlotMatches: live.runtimeSlot === input.runtimeSlot, authGenerationMatches: live.authGeneration === input.authGeneration });
         if (disposed || !live.signedIn || !bearer || live.runtimeSlot !== input.runtimeSlot || live.authGeneration !== input.authGeneration)
             throw new Error('connection changed');
         return {
             ...input, ownerId: live.userId, computerId: live.handle, origin: deps.auth.getGatewayOrigin(), bearer
         };
     }
-    function current(value: Bound) {
+    function current(value: Bound, observation?: PlanStatusObservation) {
         try {
-            const live = bound(value);
+            const live = bound(value, observation);
+            observation?.compare({ ownerMatches: live.ownerId === value.ownerId });
             return live.ownerId === value.ownerId && live.computerId === value.computerId && live.origin === value.origin && live.bearer === value.bearer;
         }
         catch (error: unknown) {
@@ -86,8 +90,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             computerId, revision: 0, enabled: false, background: false
         };
     }
-    function snapshot(value: Bound): ChatgptPlanStatus {
-        if (!current(value) || loadedOwner !== value.ownerId)
+    function snapshot(value: Bound, observation?: PlanStatusObservation): ChatgptPlanStatus {
+        if (!current(value, observation) || loadedOwner !== value.ownerId)
             throw new Error('connection changed');
         const account = active();
         const permission = grant(value.computerId);
@@ -99,14 +103,14 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             }, bridgeConnected, ...(bridgeFailure ? { bridgeFailure } : {}), revocation
         };
     }
-    async function ensure(value: Bound): Promise<void> {
-        if (loadedScope && current(loadedScope) && record && loadedOwner === value.ownerId)
+    async function ensure(value: Bound, observation?: PlanStatusObservation): Promise<void> {
+        if (loadedScope && current(loadedScope, observation) && record && loadedOwner === value.ownerId)
             return;
         if (loadTask) {
             await loadTask.task;
-            if (!current(value))
+            if (!current(value, observation))
                 throw new Error('connection changed');
-            return ensure(value);
+            return ensure(value, observation);
         }
         const task = (async () => {
             cancelAll();
@@ -119,7 +123,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             revocation = 'none';
             bridgeFailure = undefined;
             const loaded = await deps.vault.load(value.ownerId);
-            if (!current(value))
+            if (!current(value, observation))
                 throw new Error('connection changed');
             record = loaded;
             loadedOwner = value.ownerId;
@@ -331,24 +335,11 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             state = active()?.tokens ? models.length ? 'connected' : 'error' : 'disconnected';
         void peer.stop().catch((error: unknown) => logPlanFailure('peer_disconnect', error));
     }
-    async function status(input: ChatgptPlanSession) {
-        const value = bound(input);
-        await ensure(value);
-        const epoch = generation;
-        if (active()?.tokens && (!catalogAt || Date.now() - catalogAt > 5 * 60000)) {
-            try {
-                await readCatalog(value, AbortSignal.timeout(15000));
-                await restartPeer(value);
-            }
-            catch (error: unknown) {
-                if (!current(value) || epoch !== generation)
-                    throw error;
-                logPlanFailure('catalog', error);
-                // readCatalog owns the fenced invalidation shared by every refresh entry point.
-            }
-        }
-        return snapshot(value);
-    }
+    const status = createPlanStatusOperation({
+        bound, ensure, current, snapshot, generation: () => generation,
+        needsCatalog: () => !!active()?.tokens && (!catalogAt || Date.now() - catalogAt > 5 * 60000),
+        readCatalog, restartPeer,
+    });
     async function connect(input: z.infer<typeof CHATGPT_PLAN_INVOKE['chatgpt-plan:connect']['request']>) {
         const parsed = CHATGPT_PLAN_INVOKE['chatgpt-plan:connect'].request.parse(input);
         const value = bound(parsed);

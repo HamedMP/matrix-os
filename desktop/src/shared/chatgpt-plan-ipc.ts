@@ -1,3 +1,5 @@
+import { ChatgptPlanDiagnosticSchema } from "@matrix-os/contracts";
+export { ChatgptPlanDiagnosticSchema, type ChatgptPlanDiagnostic } from "@matrix-os/contracts";
 import { z } from 'zod/v4';
 export const ChatgptPlanSessionSchema = z.object({
     runtimeSlot: z.string().min(1).max(128), authGeneration: z.number().int().nonnegative()
@@ -14,9 +16,14 @@ export const ChatgptPlanStatusSchema = z.object({
         revision: z.number().int().nonnegative(), enabled: z.boolean(), background: z.boolean()
     }).strict(), bridgeConnected: z.boolean(), bridgeFailure: z.literal('device_conflict').optional(), revocation: z.enum(['none', 'confirmed', 'unconfirmed'])
 }).strict();
+export const ChatgptPlanStatusResponseSchema = z.union([
+    ChatgptPlanStatusSchema,
+    z.object({ kind: z.literal('status_failure'), diagnostic: ChatgptPlanDiagnosticSchema }).strict(),
+    z.object({ kind: z.literal('status_result'), status: ChatgptPlanStatusSchema, diagnostic: ChatgptPlanDiagnosticSchema }).strict(),
+]);
 export const CHATGPT_PLAN_INVOKE = {
     'chatgpt-plan:status': {
-        request: ChatgptPlanSessionSchema, response: ChatgptPlanStatusSchema
+        request: ChatgptPlanSessionSchema, response: ChatgptPlanStatusResponseSchema
     },
     'chatgpt-plan:connect': {
         request: ChatgptPlanSessionSchema.extend({ purpose: z.literal('personal_local') }), response: ChatgptPlanStatusSchema

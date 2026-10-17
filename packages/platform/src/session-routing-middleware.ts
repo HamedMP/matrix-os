@@ -59,7 +59,6 @@ import { getSignupBillingHandoffPage } from './signup-billing-handoff-page.js';
 import { isAppDomainHost, isCodeDomainHost } from './ws-upgrade.js';
 import { appOrigin } from './origins.js';
 import {
-  CLERK_SCRIPT_ORIGIN,
   getAuthPage,
   getNoContainerPage,
   getVpsBootPage,
@@ -112,6 +111,7 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+import { applyAuthPageHeaders, serveAnonymousExplicitVmRequest } from './explicit-vm-auth-entry.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -222,19 +222,6 @@ function logCodeDomainUpstreamFailure(opts: {
 }): void {
   console.warn(
     `[platform] code-domain vps upstream 5xx handle=${opts.handle} runtimeSlot=${opts.runtimeSlot ?? 'unknown'} publicIPv4=${opts.publicIPv4 ?? 'unknown'} path=${JSON.stringify(opts.path)} status=${opts.status}`,
-  );
-}
-
-function applyAuthPageHeaders(
-  c: Context,
-  scriptNonce: string,
-  applyNoStoreHeaders: (c: Context) => void,
-): void {
-  applyNoStoreHeaders(c);
-  c.header('X-Frame-Options', 'DENY');
-  c.header(
-    'Content-Security-Policy',
-    `frame-ancestors 'none'; script-src 'self' 'nonce-${scriptNonce}' ${CLERK_SCRIPT_ORIGIN} https://challenges.cloudflare.com https://www.googletagmanager.com; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'`,
   );
 }
 
@@ -687,6 +674,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
+      if (isAppDomain && explicitVmRoute) {
+        return serveAnonymousExplicitVmRequest({ c, route: explicitVmRoute, env: appEnv,
+          clerkConfigured: Boolean(clerkAuth), applyNoStoreHeaders });
+      }
       if (isAppDomain && allowAuthShellUnroutedIdentity) {
         return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
       }

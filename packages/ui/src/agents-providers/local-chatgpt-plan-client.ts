@@ -1,3 +1,5 @@
+import type { ChatgptPlanDiagnostic } from "@matrix-os/contracts";
+
 /** Native public-client subscription custody. Only nonsecret presentation crosses IPC. */
 export interface LocalChatgptPlanStatus {
   state: "disconnected" | "connecting" | "connected" | "error";
@@ -11,6 +13,8 @@ export interface LocalChatgptPlanStatus {
 }
 
 export interface LocalChatgptPlanClient {
+  /** Reads one current cached receipt only; must never start IPC, storage or network work. */
+  getLastDiagnostic?(): ChatgptPlanDiagnostic | null;
   status(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   connect(input: { purpose: "personal_local" }, signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   rebind?(input: { purpose: "replace_device" }, signal: AbortSignal): Promise<LocalChatgptPlanStatus>;

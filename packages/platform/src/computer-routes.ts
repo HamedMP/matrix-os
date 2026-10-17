@@ -21,6 +21,8 @@ import {
   listUserRuntimeComputersByClerkId,
   type UserRuntimeComputerRecord,
 } from './computer-repository.js';
+import { canSelectPrivatePreviewComputer } from './computer-private-preview-access.js';
+import type { PrivatePreviewEligibility } from './private-preview-eligibility.js';
 import { isPreviewMachine } from './customer-vps-preview.js';
 import { appOrigin } from './origins.js';
 import {
@@ -57,7 +59,7 @@ function computerVersionLabel(imageVersion: string | null): MatrixComputerVersio
 }
 
 export function projectComputer(machine: UserRuntimeComputerRecord): MatrixComputer | null {
-  const preview = isPreviewMachine(machine);
+  const preview = isPreviewMachine(machine) || machine.provisioningClass === 'private-preview';
   const parsed = MatrixComputerSchema.safeParse({
     handle: machine.handle,
     runtimeSlot: machine.runtimeSlot,
@@ -115,6 +117,7 @@ function appControlPlaneHost(env: NodeJS.ProcessEnv): string | null {
 export function createComputerRoutes(opts: {
   db: PlatformDB;
   clerkAuth?: ClerkAuth;
+  privatePreviewEligibility?: PrivatePreviewEligibility;
   platformJwtSecret: string;
   legacyContainerRoutingEnabled: boolean;
   resolveIdentity?: typeof resolveAppDomainIdentity;
@@ -172,6 +175,7 @@ export function createComputerRoutes(opts: {
         identity.userId,
         COMPUTER_QUERY_LIMIT,
         requestedSelectedSlot ?? undefined,
+        opts.privatePreviewEligibility,
       );
       const projected = records.flatMap((record) => {
         const computer = projectComputer(record);
@@ -279,7 +283,8 @@ export function createComputerRoutes(opts: {
         identity.userId,
         parsedBody.data.slot,
       );
-      if (!machine) {
+      if (!machine || (machine.provisioningClass === 'private-preview'
+        && !await canSelectPrivatePreviewComputer(machine, identity.userId, opts.privatePreviewEligibility))) {
         opts.applyNoStoreHeaders(c);
         return c.json({ error: 'Computer unavailable' }, 404);
       }
