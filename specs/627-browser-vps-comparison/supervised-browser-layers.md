@@ -154,6 +154,12 @@ spoofed headers, wrong handle/runtime/Chat, request tampering and duplicate
 nonce. Real browser selection must use the same reviewed candidate for browser
 POST and Gateway internal verification; an Edge marker alone proves neither.
 
+The exact-Chat candidate also routes `DELETE /api/chats/:chatId/browser-grants/:grantId`
+for owner Undo to the same reviewed Platform signer as approval decisions. Only
+a UUID-shaped grant path with DELETE is eligible; the existing PR, runtime,
+Chat, service/tag and expiry predicates remain mandatory. This routes a request,
+not authority: Platform authentication and signed revocation still gate the write.
+
 For live qualification, preserve the existing exact PR/preview-handle/tag
 selector invariant and two-hour expiry. No relaxed selector, reused operator
 payload, new VM or default-traffic deployment is authorized by this plan.
