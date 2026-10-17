@@ -100,6 +100,13 @@ describe("matrix port forward", () => {
     expect(createForwardWebSocketUrl("http://127.0.0.1:4000/")).toBe("ws://127.0.0.1:4000/ws/forward");
   });
 
+  it("trims trailing gateway slashes in linear time", () => {
+    expect(createForwardWebSocketUrl("https://gateway.example///")).toBe("wss://gateway.example/ws/forward");
+    const started = performance.now();
+    expect(() => createForwardWebSocketUrl(`https://gateway.example/${"/".repeat(100_000)}x`)).not.toThrow();
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it("uses profile auth and gateway resolution for the command", async () => {
     const root = await tempHome();
     await writeProfiles(root);
