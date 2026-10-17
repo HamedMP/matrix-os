@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { buildHermesNativeEnvironment } from "../../packages/gateway/src/hermes-native-environment.js";
+import { buildHermesNativeEnvironment, hermesNativeNetworkEnvironment } from "../../packages/gateway/src/hermes-native-environment.js";
 
 afterEach(() => vi.unstubAllEnvs());
 it("retains bounded proxy and certificate settings while excluding Gateway credentials", () => {
@@ -14,6 +14,7 @@ it("retains bounded proxy and certificate settings while excluding Gateway crede
   expect(environment).not.toHaveProperty("MATRIX_PLATFORM_API_KEY"); expect(environment).not.toHaveProperty("ANTHROPIC_API_KEY");
 });
 it.each(["", "a".repeat(4097), "proxy\nprivate", "proxy\u0000private"])("rejects empty, oversized and malformed network settings", value => {
-  vi.stubEnv("HTTPS_PROXY", value);
-  expect(buildHermesNativeEnvironment("/home/matrix/home", "/native")).not.toHaveProperty("HTTPS_PROXY");
+  // Environment setters may truncate NUL at the OS/runtime boundary. Exercise
+  // the raw validator directly instead of asserting a value the runtime lost.
+  expect(hermesNativeNetworkEnvironment({ HTTPS_PROXY: value })).not.toHaveProperty("HTTPS_PROXY");
 });
