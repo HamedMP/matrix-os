@@ -26,6 +26,8 @@ export type SharedBrowserAction = z.infer<typeof SharedBrowserActionSchema>;
 /** Keep model-facing action guidance identical across direct and MCP harnesses. */
 export const SHARED_BROWSER_TOOL_DESCRIPTION = "Control the same visible Chrome as the Matrix Browser app. Matrix gates every action and human takeover. "
   + 'Open an authorized page with {"action":"tab_new","url":"https://example.com"}, then {"action":"snapshot"}. '
+  + 'Snapshot observes the currently selected agent tab and accepts only {"action":"snapshot"}; do not add targetId. '
+  + 'To select another known authorized agent tab, use {"action":"tab_switch","targetId":"RETURNED_TARGET_ID"}, then {"action":"snapshot"}. Use its exact returned targetId only for tab_switch. '
   + 'A snapshot returns observationId and elements containing ref/role/name. For an observed control use {"action":"click","observationId":"CURRENT_OBSERVATION","ref":"CURRENT_REF"}. '
   + 'Collect an observed original PDF with {"action":"download","observationId":"CURRENT_OBSERVATION","ref":"CURRENT_REF","documentId":"INVOICE_ID"}. '
   + "Replace the example observationId and ref with exact values from the latest snapshot; replace documentId with the displayed document ID. "

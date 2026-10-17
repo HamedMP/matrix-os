@@ -35,3 +35,20 @@ Browser admission, launch configuration, control bootstrap and native-child life
 The scope-runtime worker/profile pin now matches the qualified Codex 0.162.1 contract. A drift regression fences these independent package boundaries, and unqualified older/newer scope invocations remain refused. Sixty focused scope/acceptance tests and the scope-runtime typecheck passed. The installed native binary accepts the existing scope exec flags in its public help path; that is not evidence of isolated model inference. The profile digest changes, so the preview supervisor and gateway must restart together after active runs drain.
 
 The model-facing browser description is shared by Pi, OpenClaw and the native MCP server. It gives schema-valid observed click/download examples, explains replacement of observation/ref placeholders and preservation of original-download receipts. A failed Pi invoice attempt exposed argument confusion; the description change has 33 focused contract/plugin/skill regressions passing. Successful invoice completion still requires a fresh live run.
+
+### Ordinary two-turn information collection acceptance
+
+This is a separate live model evaluation, not a deterministic backend regression. The baseline on source `cee17b379edd33a00547f0ee2d8502c87c7507cf` failed: an ordinary first turn opened example.com and completed three shared-browser calls successfully, but its follow-up sent `targetId` with `snapshot`. The actual MCP result rejected that extra key with input-validation error `-32602`; the agent stopped without extracting the requested paragraph. An intervening schema-guided run succeeded, so transport availability does not establish ordinary multi-turn reliability.
+
+The shared schema correctly permits only `{"action":"snapshot"}` for observing the currently selected agent tab. Selecting another known, authorized agent tab uses `tab_switch` with its exact returned `targetId` first. This evaluation must not relax the schema, strip unexpected arguments, or automatically replay a potentially dispatched action.
+
+Run the acceptance check with the owner's native account in a fresh personal Chat with shared-browser authority, using ordinary prompts without teaching parameters:
+
+1. Ask: “Use Matrix Browser to open example.com in a new tab and tell me its page title and URL. Do not inspect existing tabs or use shell commands or files.”
+2. In the same Chat, ask: “From the example.com tab you just opened, take one fresh snapshot, summarize the first English paragraph, and cite its URL. Do not navigate, inspect other tabs, or use shell commands or files.”
+3. Verify actual native tool arguments and results, rather than relying on the assistant's success report. The follow-up must use an action-only snapshot, with a separate authorized tab selection only if needed. Confirm the returned URL, title and visible paragraph support the answer; a missing heading is not an extraction failure.
+4. Record the candidate source and harness/model versions, successful and failed calls, verified answer evidence, and any owner handoff. Keep identifiers, authentication material and private account content out of public evidence.
+
+Repeat the ordinary two-turn check in another fresh Chat after a reviewed guidance change. Passing examples do not prove that future model calls will always follow the schema. Existing strict-schema and real-MCP transport tests remain required; a wording assertion alone is not acceptance evidence. Codex and Claude Code are qualified separately, as are owner takeover and pause/resume.
+
+Status: baseline live evaluation failed; a reviewed guidance candidate and its post-change live acceptance are pending. Public Chat usage documentation is a separate site-repository deliverable and must state the observed qualification and remaining limits.
