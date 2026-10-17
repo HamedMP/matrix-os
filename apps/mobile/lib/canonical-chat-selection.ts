@@ -1,4 +1,6 @@
 import {
+  canonicalChatTurnModes,
+  type CanonicalChatExecutionControls,
   isChatgptPlanChatRoute,
   isLegacyMatrixSdkProvider,
   isMatrixAnthropicChatRoute,
@@ -80,18 +82,12 @@ export function defaultCatalogSelection(
 export function defaultTurnModes(
   catalog: CanonicalProviderCatalog | null,
   selection: CanonicalChatModelSelection | null,
+  controls?: CanonicalChatExecutionControls,
 ): { interactionMode: string; permissionMode: string } | null {
   if (!catalog || !selection) return null;
   const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
   if (instance?.availability !== "available" || isLegacyMatrixSdkProvider(instance)
     || !instance.models.some((model) => model.id === selection.model && model.availability === "available")
     || !selectionBindingCurrent(instance, selection)) return null;
-  const interactionMode = instance.supports.interactionModes.includes("default")
-    ? "default"
-    : instance.supports.interactionModes[0];
-  const permissionMode = instance.supports.permissionModes.includes("supervised")
-    ? "supervised"
-    : instance.supports.permissionModes[0];
-  if (!interactionMode || !permissionMode) return null;
-  return { interactionMode, permissionMode };
+  return canonicalChatTurnModes(catalog, selection, controls);
 }
