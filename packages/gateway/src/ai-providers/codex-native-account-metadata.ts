@@ -222,7 +222,7 @@ export function createCodexNativeAccountMetadataReader(input: {
                   valid = valid && freshAt(value, (input.now ?? (() => new Date()))().getTime());
                   if (!valid && cached === value) cached = null;
                   return valid;
-                });
+                }, proof);
               }
               finish(value);
             })().catch((error: unknown) => {
