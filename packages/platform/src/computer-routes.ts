@@ -57,7 +57,9 @@ function computerVersionLabel(imageVersion: string | null): MatrixComputerVersio
 }
 
 export function projectComputer(machine: UserRuntimeComputerRecord): MatrixComputer | null {
-  const preview = isPreviewMachine(machine);
+  // The existing wire category is presentation only; private machine access
+  // remains owner-only through accessibleUserMachinePredicate, not shared-preview rules.
+  const preview = machine.provisioningClass === 'private-preview' || isPreviewMachine(machine);
   const parsed = MatrixComputerSchema.safeParse({
     handle: machine.handle,
     runtimeSlot: machine.runtimeSlot,

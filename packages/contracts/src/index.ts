@@ -80,6 +80,7 @@ export * from "#jev-hermes-route";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
 export * from "#provider-settings";
+export * from "#provider-managed-credit";
 export * from "#funded-ai";
 export * from "#jev";
 export * from "#jev-inbox";

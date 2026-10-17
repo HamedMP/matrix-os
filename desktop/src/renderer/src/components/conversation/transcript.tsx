@@ -137,7 +137,7 @@ function ResponseMessage({
   }, [message.markdown, visibleMarkdown]);
 
   return (
-    <ConversationItem messageId={`${message.role}:${message.id}`} className="mt-4">
+    <ConversationItem messageId={`${message.role}:${message.id}`}>
       <Message>
         <MessageContent className="gap-0">
           {attachments.length > 0 ? (
