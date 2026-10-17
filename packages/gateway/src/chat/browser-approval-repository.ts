@@ -221,6 +221,15 @@ export class BrowserApprovalRepository {
       });
     });
   }
+  cancelChallenge(inputValue: BrowserApprovalIdentity) {
+    const input = BrowserApprovalIdentitySchema.parse(inputValue);
+    return this.perform(() => this.transaction(input.ownerId, async trx => {
+      await sql`UPDATE browser_chat_challenges SET status='cancelled',resolved_at=${new Date(this.now())}
+        WHERE id=${input.approvalId} AND owner_id=${input.ownerId} AND chat_id=${input.chatId} AND run_id=${input.runId}
+        AND lease_epoch=${input.leaseEpoch}::uuid AND action_digest=${input.actionDigest}
+        AND revision=${input.challengeRevision} AND scope_version=${input.scopeVersion} AND status IN ('pending','approved')`.execute(trx);
+    }));
+  }
   invalidateLease(ownerId: string, epoch: string) {
     BrowserApprovalIdentitySchema.shape.ownerId.parse(ownerId); BrowserApprovalIdentitySchema.shape.leaseEpoch.parse(epoch);
     return this.perform(() => this.transaction(ownerId, async trx => {

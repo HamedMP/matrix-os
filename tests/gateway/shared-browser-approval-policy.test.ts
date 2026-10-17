@@ -4,7 +4,7 @@ import { createSharedBrowserBroker, type SharedBrowserBinding } from "../../pack
 
 const binding: SharedBrowserBinding = { ownerId: "owner", chatId: "chat", runId: "run", harness: "codex" };
 const brokers: ReturnType<typeof createSharedBrowserBroker>[] = [];
-afterEach(async () => { await Promise.all(brokers.splice(0).map(broker => broker.close())); });
+afterEach(async () => { vi.restoreAllMocks(); await Promise.all(brokers.splice(0).map(broker => broker.close())); });
 interface Policy { mode: "supervised"; authorizeAction(request: { binding: SharedBrowserBinding; action: SharedBrowserAction; signal: AbortSignal }): Promise<void> }
 function setup(authorizeAction: Policy["authorizeAction"]) {
   const driver = { execute: vi.fn(async (): Promise<SharedBrowserActionResult> => ({ success: true, observationId: "fresh" })), invalidateObservation: vi.fn(), detach: vi.fn(async () => {}) };
@@ -21,6 +21,18 @@ it("a direct bearer cannot bypass a denied server-created supervised policy", as
   const s = setup(authorize);
   await expect(s.broker.execute(s.broker.resolveCapability(s.lease.token)!, { action: "snapshot" }, s.controller.signal)).rejects.toThrow();
   expect(authorize).toHaveBeenCalledOnce(); expect(s.driver.execute).not.toHaveBeenCalled();
+});
+it("an expired owner prompt leaves Chrome usable for a fresh request", async () => {
+  const expiry = new AbortController(); const original = AbortSignal.timeout;
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 5 * 60_000 ? expiry.signal : original(ms));
+  let entered!: () => void; const asking = new Promise<void>(yes => { entered = yes; }); let calls = 0;
+  const s = setup(async () => { if (++calls === 1) { entered(); await new Promise<void>(() => {}); } });
+  const pending = s.broker.execute(binding, { action: "snapshot" }, s.controller.signal).catch(error => error);
+  await asking; expiry.abort(new DOMException("Expired", "TimeoutError"));
+  expect(await pending).toHaveProperty("code", "browser_changed");
+  expect(s.broker.status().phase).toBe("agent"); expect(s.driver.execute).not.toHaveBeenCalled();
+  vi.restoreAllMocks();
+  await expect(s.broker.execute(binding, { action: "snapshot" }, s.controller.signal)).resolves.toMatchObject({ success: true });
 });
 it("captures the policy at registration and never exposes mutable authority or action arguments", async () => {
   const authorize = vi.fn<Policy["authorizeAction"]>(async request => {

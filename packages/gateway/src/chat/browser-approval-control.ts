@@ -12,12 +12,12 @@ export type BrowserApprovalControlEvent = {
   risk: "medium"; allowedDecisions: ["approve", "decline", "cancel"]; browserApproval: Lifecycle;
 } | { type: "approval.resolved"; approvalId: string; decision: "approve" | "decline" | "cancel";
   browserApproval: Lifecycle; browserGrant?: BrowserGrantView };
-type Authority = Pick<BrowserApprovalRepository, "reserve" | "activeGrant" | "consumeGrant" | "decide" | "consume" | "invalidateLease" | "revoke">;
+type Authority = Pick<BrowserApprovalRepository, "reserve" | "activeGrant" | "consumeGrant" | "decide" | "consume" | "invalidateLease" | "cancelChallenge" | "revoke">;
 interface Pending { identity: BrowserApprovalIdentity; lifecycle: Lifecycle; signal: AbortSignal; submitting: boolean;
   finished: boolean; finish(error?: Error): void }
 interface Receipt { identity: BrowserApprovalIdentity; lifecycle: Lifecycle; input: CanonicalSubmitChatApprovalRequest }
 interface Run { binding: SharedBrowserBinding; epoch: string; controller: AbortController; signal: AbortSignal;
-  publish(event: BrowserApprovalControlEvent): Promise<void>; pending?: Pending; receipts: Map<string, Receipt>; close(): Promise<void> }
+  reservationStarted: boolean; publish(event: BrowserApprovalControlEvent): Promise<void>; pending?: Pending; receipts: Map<string, Receipt>; close(): Promise<void> }
 const same = (a: SharedBrowserBinding, b: SharedBrowserBinding) => Object.keys(a).every(key => a[key as keyof typeof a] === b[key as keyof typeof b]);
 const unavailable = () => new SharedBrowserError("browser_changed");
 const report = (error: unknown) => console.warn("[browser-approval] Control unavailable", error instanceof SharedBrowserError ? error.code : "operation_failed");
@@ -38,13 +38,15 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
     const controller = new AbortController();
     let closing: Promise<void> | undefined;
     const row: Run = { binding: Object.freeze({ ...input.binding }), epoch: randomUUID(), controller,
-      signal: AbortSignal.any([input.signal, controller.signal]), publish: input.publish, receipts: new Map(),
+      signal: AbortSignal.any([input.signal, controller.signal]), reservationStarted: false, publish: input.publish, receipts: new Map(),
       close() {
         if (closing) return closing;
         if (runs.get(row.binding.runId) === row) runs.delete(row.binding.runId);
         clearTimeout(timer); input.signal.removeEventListener("abort", abort); controller.abort();
         row.pending?.finish(unavailable()); row.receipts.clear();
-        return closing = options.authority.invalidateLease(row.binding.ownerId, row.epoch);
+        // Set before starting reserve: a concurrent close must still persist a
+        // tombstone that fences a late reservation, but unused turns need none.
+        return closing = row.reservationStarted ? options.authority.invalidateLease(row.binding.ownerId, row.epoch) : Promise.resolve();
       },
     };
     const abort = () => { void row.close().catch(report); };
@@ -63,6 +65,8 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
       actionDigest: createHash("sha256").update(`matrix-browser-action:v1\0${JSON.stringify(request.action)}`).digest("hex") };
     const expiresAt = now() + 5 * 60_000;
     const lifecycle: Lifecycle = { kind: "shared_chrome", leaseEpoch: row.epoch, challengeRevision: 0, scopeVersion: 1, expiresAt: new Date(expiresAt).toISOString() };
+    row.reservationStarted = true;
+    try {
     await options.authority.reserve(identity, expiresAt); signal.throwIfAborted(); get(request.binding);
     const grant = await options.authority.activeGrant(identity.ownerId, identity.chatId); signal.throwIfAborted();
     if (grant) {
@@ -91,6 +95,11 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
       if (row.pending === pending) row.pending = undefined;
       if (asked && signal.aborted) await row.publish({ type: "approval.resolved", approvalId: identity.approvalId, decision: "cancel",
         browserApproval: { ...lifecycle, resolution: now() >= expiresAt ? "expired" : "interrupted" } }).catch(report);
+    }
+    } finally {
+      // Cancel only this exact pending/approved challenge. Pause keeps the
+      // run's epoch alive; consumed and declined decisions remain untouched.
+      await options.authority.cancelChallenge(identity).catch(report);
     }
   }
   async function submit(request: { ownerId: string; chatId: string; runId: string; approvalId: string; input: unknown; proof: string }) {

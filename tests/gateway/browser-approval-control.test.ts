@@ -8,7 +8,7 @@ const controls: ReturnType<typeof createBrowserApprovalControl>[] = [];
 afterEach(async () => { await Promise.all(controls.splice(0).map(control => control.close())); });
 function setup() {
   const authority = { reserve: vi.fn(async () => {}), activeGrant: vi.fn(async () => null),
-    consumeGrant: vi.fn(async () => {}), consume: vi.fn(async () => {}), invalidateLease: vi.fn(async () => {}),
+    consumeGrant: vi.fn(async () => {}), consume: vi.fn(async () => {}), invalidateLease: vi.fn(async () => {}), cancelChallenge: vi.fn(async () => {}),
     decide: vi.fn(async (_tuple, proof) => { if (proof !== "owner-proof") throw new Error("Invalid owner proof"); return { alreadySubmitted: false, grant: undefined }; }),
     revoke: vi.fn(async () => { throw new Error("Not configured"); }),
   };
@@ -39,6 +39,25 @@ it("holds exact browser actions until an online-verified owner decision is consu
   expect(s.events[1]).toMatchObject({ type: "approval.resolved", browserApproval: { resolution: "allowed_once" } });
   expect(await s.control.submit(input)).toEqual({ alreadySubmitted: true });
   expect(s.authority.consume).toHaveBeenCalledOnce();
+});
+it("does not retain lease tombstones for ordinary turns that never use Chrome", async () => {
+  const s = setup(); await s.registration.close();
+  expect(s.authority.invalidateLease).not.toHaveBeenCalled();
+});
+it("fences a reservation already in flight when its run closes", async () => {
+  const s = setup(); let release!: () => void;
+  s.authority.reserve.mockImplementationOnce(() => new Promise<void>(yes => { release = yes; }));
+  const pending = s.control.authorizeAction({ binding, action: { action: "snapshot" }, signal: s.controller.signal }).catch(error => error);
+  await vi.waitFor(() => expect(s.authority.reserve).toHaveBeenCalledOnce());
+  await s.registration.close(); release(); await pending;
+  expect(s.authority.invalidateLease).toHaveBeenCalledOnce(); expect(s.events).toEqual([]);
+});
+it("cancels the exact challenge on interruption without revoking the resumable run", async () => {
+  const s = setup(); const action = new AbortController();
+  const pending = s.control.authorizeAction({ binding, action: { action: "snapshot" }, signal: action.signal }).catch(error => error);
+  await vi.waitFor(() => expect(s.events).toHaveLength(1)); action.abort(); await pending;
+  expect(s.authority.cancelChallenge).toHaveBeenCalledWith(expect.objectContaining({ approvalId: s.events[0]!.approvalId }));
+  expect(s.authority.invalidateLease).not.toHaveBeenCalled();
 });
 it("rejects foreign owners, changed digests and scopes without consuming approval", async () => {
   const s = setup();

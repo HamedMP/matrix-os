@@ -1,5 +1,5 @@
 import type { SharedBrowserAction } from "@matrix-os/contracts";
-import type { SharedBrowserBinding } from "./broker.js";
+import { SharedBrowserError, type SharedBrowserBinding } from "./broker.js";
 
 export interface SharedBrowserApprovalRequest {
   binding: SharedBrowserBinding;
@@ -14,19 +14,19 @@ export interface SharedBrowserSupervisedPolicy {
 
 export async function authorizeSharedBrowserAction(policy: SharedBrowserSupervisedPolicy,
   request: SharedBrowserApprovalRequest): Promise<void> {
-  request.signal.throwIfAborted();
+  if (request.signal.aborted) throw new SharedBrowserError("browser_changed");
   // Stop and takeover must release a logical permission wait even when a
   // failed authority callback does not settle. No physical action runs here.
   await new Promise<void>((resolve, reject) => {
-    const abort = () => reject(request.signal.reason);
+    const abort = () => reject(new SharedBrowserError("browser_changed"));
     request.signal.addEventListener("abort", abort, { once: true });
     Promise.resolve().then(() => {
-      request.signal.throwIfAborted();
+      if (request.signal.aborted) throw new SharedBrowserError("browser_changed");
       return policy.authorizeAction({ ...request,
         binding: Object.freeze({ ...request.binding }), action: Object.freeze({ ...request.action }),
       });
     }).then(resolve, reject).finally(() => request.signal.removeEventListener("abort", abort));
     if (request.signal.aborted) abort();
   });
-  request.signal.throwIfAborted();
+  if (request.signal.aborted) throw new SharedBrowserError("browser_changed");
 }
