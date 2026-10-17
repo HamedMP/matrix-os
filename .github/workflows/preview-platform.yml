@@ -199,7 +199,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: steps.config.outputs.configured == 'true'
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -648,7 +648,7 @@ jobs:
           ' "$public_route" >/dev/null
           cp "$public_route" preview-share-route.json
           chmod 600 preview-share-route.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: preview-share-route
           path: preview-share-route.json
@@ -674,8 +674,8 @@ jobs:
       EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: preview-share-route
       - uses: google-github-actions/auth@v3
@@ -683,8 +683,8 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile --filter . --ignore-scripts
@@ -1115,8 +1115,8 @@ jobs:
             echo "Only an open same-repository PR at the selected head, labeled preview-vps and preview-collaboration, can be connected." >&2
             exit 1
           fi
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: preview-share-route
       - uses: google-github-actions/auth@v3
@@ -1124,8 +1124,8 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile --filter . --ignore-scripts
