@@ -183,6 +183,7 @@ jobs:
                 MATRIX_DOCKER_CHOWN_SOURCE: "true"
                 MATRIX_AUTH_ALLOW_INSECURE_DEV: "1"
                 MATRIX_SKIP_DEFAULT_APP_BUILD: "true"
+                MATRIX_DEV_DEP_WATCH: "0"
           EOF
 
       - name: Create external volumes
@@ -197,6 +198,7 @@ jobs:
         env:
           COMPOSE_OVERRIDE_FILE: ${{ github.workspace }}/docker-compose.ci.yml
           DOCKER_HEALTH_TIMEOUT: "600"
+          DOCKER_TEST_LOG_DIR: /tmp/docker-test-logs
 
       - name: Collect container logs on failure
         if: failure() && github.event_name == 'pull_request'
@@ -276,6 +278,7 @@ jobs:
                 MATRIX_DOCKER_CHOWN_SOURCE: "true"
                 MATRIX_AUTH_ALLOW_INSECURE_DEV: "1"
                 MATRIX_SKIP_DEFAULT_APP_BUILD: "true"
+                MATRIX_DEV_DEP_WATCH: "0"
           EOF
 
       - name: Create external volumes
@@ -288,6 +291,7 @@ jobs:
         env:
           COMPOSE_OVERRIDE_FILE: ${{ github.workspace }}/docker-compose.ci.yml
           DOCKER_HEALTH_TIMEOUT: "600"
+          DOCKER_TEST_LOG_DIR: /tmp/docker-test-logs
 
       - name: Collect container logs on failure
         if: failure()
