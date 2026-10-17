@@ -51,3 +51,15 @@ it("Stop cancels a pending decision even if its callback never cooperates", asyn
   expect(await result).toHaveProperty("code", "browser_changed");
   expect(s.driver.execute).not.toHaveBeenCalled(); expect(s.broker.resolveCapability(s.lease.token)).toBeNull();
 });
+it("a temporary approval-service failure leaves Chrome usable for the next request", async () => {
+  const authorize = vi.fn<Policy["authorizeAction"]>().mockRejectedValueOnce(new Error("Database temporarily unavailable")).mockResolvedValue(undefined);
+  const s = setup(authorize);
+  await expect(s.broker.execute(binding, { action: "snapshot" }, s.controller.signal)).rejects.toHaveProperty("code", "browser_changed");
+  expect(s.driver.execute).not.toHaveBeenCalled(); expect(s.broker.status().phase).toBe("agent");
+  await expect(s.broker.execute(binding, { action: "snapshot" }, s.controller.signal)).resolves.toMatchObject({ success: true });
+});
+it("still marks an actual driver failure unavailable after authorization succeeds", async () => {
+  const s = setup(async () => {}); s.driver.execute.mockRejectedValueOnce(new Error("Driver failed"));
+  await expect(s.broker.execute(binding, { action: "snapshot" }, s.controller.signal)).rejects.toHaveProperty("code", "browser_unavailable");
+  expect(s.broker.status().phase).toBe("unavailable");
+});
