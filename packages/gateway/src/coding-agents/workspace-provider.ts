@@ -1,3 +1,5 @@
+import { prepareCodexBrowser } from "./codex-browser-bootstrap-client.js";
+import { beginNativeBrowserBootstrap, markNativeBrowserCleanupUnconfirmed, nativeBrowserExecution } from "../chat/native-browser-execution-context.js";
 import { join } from "node:path";
 import { boundedOperation } from "../bounded-operation.js";
 import {
@@ -45,6 +47,7 @@ export interface WorkspaceCodingAgentProviderOptions {
   runnable?: boolean;
   codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
   codexControl?: CodexControlClient;
+  sharedBrowserEnabled?: boolean;
 }
 
 export interface WorkspaceCodingAgentProviderSetOptions {
@@ -52,6 +55,7 @@ export interface WorkspaceCodingAgentProviderSetOptions {
   runtime: WorkspaceRuntime;
   codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
   codexControl?: CodexControlClient;
+  sharedBrowserEnabled?: boolean;
   homePath?: string;
   pi?: Omit<PiCodingAgentProviderOptions, "homePath">;
   opencode?: Omit<OpenCodeCodingAgentProviderOptions, "homePath">;
@@ -213,6 +217,7 @@ export function createWorkspaceCodingAgentProvider(
   const providerId = ProviderIdSchema.parse(options.providerId);
   const agent = SupportedAgentSchema.parse(options.agent);
   const runnable = options.runnable !== false;
+  if (agent === "codex" && options.sharedBrowserEnabled && (!options.codexEvents || !options.codexControl?.prepareBrowser)) throw new Error("Browser control unavailable");
 
   return {
     providerId,
@@ -242,11 +247,13 @@ export function createWorkspaceCodingAgentProvider(
     buildSetupAction(): SafeSetupAction[] {
       return providerSetupActions(agent);
     },
-    async startThread({ principal, thread, request, now, nextEventId }) {
+    async startThread({ principal, thread, request, signal, now, nextEventId }) {
       if (!runnable) {
         throw new Error("Workspace provider execution unavailable");
       }
       const sessionId = sessionIdForThread(thread.id);
+      const browser = agent === "codex" ? nativeBrowserExecution(principal.userId) : undefined;
+      if (browser && !options.codexControl?.prepareBrowser) throw new Error("Browser startup unavailable");
       if (agent === "codex" && options.codexEvents) {
         await options.codexEvents.watch({
           principal,
@@ -255,37 +262,51 @@ export function createWorkspaceCodingAgentProvider(
           ...(options.codexControl ? { checkpoint: true } : {}),
         });
       }
+      // Startup may retain an unconfirmed native process before browser binding.
+      // Keep admission tracked through both physical startup and MCP bootstrap.
+      const startup = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
       let result;
       try {
-        result = await options.runtime.startSession({
-          ownerScope: { type: "user", id: principal.userId },
-          request: {
-            sessionId,
-            kind: "agent",
-            agent,
-            prompt: request.prompt,
-            attachments: request.attachments,
-            model: request.model,
-            modelOptions: request.modelOptions,
-            projectSlug: request.projectId,
-            taskId: request.taskId,
-            worktreeId: request.worktreeId,
-            mode: request.mode,
-            approvalPolicy: agent === "codex" && !options.codexControl
-              ? "never"
-              : request.approvalPolicy,
-            sandboxMode: request.sandboxMode,
-            runtimePreference: agent === "codex" && options.codexEvents && options.codexControl ? "background" : "zellij",
-          },
-        });
-      } catch (error: unknown) {
-        options.codexEvents?.unwatch(sessionId);
-        throw error;
-      }
-      if (!result.ok) {
-        options.codexEvents?.unwatch(sessionId);
-        throw new Error("Workspace provider start failed");
-      }
+        try {
+          result = await options.runtime.startSession({
+            ownerScope: { type: "user", id: principal.userId },
+            request: {
+              sessionId,
+              kind: "agent",
+              agent,
+              prompt: request.prompt,
+              attachments: request.attachments,
+              model: request.model,
+              modelOptions: request.modelOptions,
+              projectSlug: request.projectId,
+              taskId: request.taskId,
+              worktreeId: request.worktreeId,
+              mode: request.mode,
+              approvalPolicy: agent === "codex" && !options.codexControl
+                ? "never"
+                : request.approvalPolicy,
+              sandboxMode: request.sandboxMode,
+              runtimePreference: agent === "codex" && options.codexEvents && options.codexControl ? "background" : "zellij",
+            },
+          });
+        } catch (error: unknown) {
+          if (browser) markNativeBrowserCleanupUnconfirmed(principal.userId);
+          options.codexEvents?.unwatch(sessionId);
+          throw error;
+        }
+        if (!result.ok && browser && result.error.code === "runtime_ownership_retained") {
+          markNativeBrowserCleanupUnconfirmed(principal.userId);
+        }
+        if (result.ok && browser) {
+          try { await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control: options.codexControl!, runtime: options.runtime, signal: signal ?? new AbortController().signal }); }
+          catch (error: unknown) { options.codexEvents?.unwatch(sessionId); throw error; }
+        }
+        if (!result.ok) {
+          options.codexEvents?.unwatch(sessionId);
+          throw new Error("Workspace provider start failed");
+        }
+
+      } finally { startup?.finish(); }
 
       const terminalRef = terminalRefFor(result.session);
       return {
@@ -328,6 +349,7 @@ export function createWorkspaceCodingAgentProvider(
           checkpoint: true,
         });
         const prompt = workspaceTurnPrompt(turn.message, turn.attachments);
+        const browser = nativeBrowserExecution(principal.userId);
         try {
           await options.codexControl.submitTurn({
             sessionId,
@@ -335,6 +357,7 @@ export function createWorkspaceCodingAgentProvider(
             prompt,
             ...(turn.model ? { model: turn.model } : {}),
             modelOptions: turn.modelOptions ?? [],
+            ...(browser ? { browser: { attemptId: browser.attemptId, token: browser.token, gatewayPort: Number(browser.mcpServer.env.MATRIX_SHARED_BROWSER_GATEWAY_PORT) } } : {}),
           });
         } catch (error: unknown) {
           signal.throwIfAborted();
@@ -347,8 +370,15 @@ export function createWorkspaceCodingAgentProvider(
             "[coding-agents] Codex turn control failed; restarting session",
             { errorName: safeRecoveryErrorName(error) },
           );
+          const recovery = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
+          const recoverySignal = recovery ? AbortSignal.any([signal, recovery.signal]) : signal;
           try {
-            const session = await recoverCodexWorkspace(options.runtime, context, sessionId, prompt);
+            if (browser && !options.codexControl.prepareBrowser) throw new Error("Browser startup unavailable");
+            const session = await recoverCodexWorkspace(options.runtime, { ...context, signal: recoverySignal }, sessionId, prompt,
+              browser ? () => markNativeBrowserCleanupUnconfirmed(principal.userId) : undefined);
+            if (browser) {
+              await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control: options.codexControl, runtime: options.runtime, signal: recoverySignal });
+            }
             const terminalRef = terminalRefFor(session);
             return { events: terminalRef ? [AgentThreadEventSchema.parse({
               type: "terminal.bound", eventId: nextEventId(), threadId: thread.id,
@@ -359,7 +389,7 @@ export function createWorkspaceCodingAgentProvider(
           } catch (recoveryError: unknown) {
             options.codexEvents.unwatch(sessionId);
             throw recoveryError;
-          }
+          } finally { recovery?.finish(); }
         }
         return { events: [], outcome: "delivered", resumeState };
       }
@@ -472,6 +502,7 @@ export function createWorkspaceCodingAgentProviderSet(
     runnable: agent === "codex" || agent === "claude",
     codexEvents: agent === "codex" ? options.codexEvents : undefined,
     codexControl: agent === "codex" ? options.codexControl : undefined,
+    sharedBrowserEnabled: agent === "codex" && options.sharedBrowserEnabled,
     });
   });
   return {

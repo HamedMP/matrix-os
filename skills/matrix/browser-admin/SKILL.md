@@ -18,7 +18,8 @@ Prepare the requested task using the supplied data and the intended website/acco
 Preserve existing authorization; ask only for missing information needed to proceed.
 
 Use the tool actually present in the run catalog: `shared_browser` for Matrix Pi
-or OpenClaw, or `mcp__matrix_shared_browser__shared_browser` for Hermes. These
+or OpenClaw, or `mcp__matrix_shared_browser__shared_browser` for Hermes, Codex
+or Claude Code when advertised by the current run. These
 control Matrix's visible Chrome. Begin with `status`, then `navigate` to the
 authorized website and `snapshot`. Act using exact current `observationId` and
 `ref`; take a fresh snapshot after every page/action/control change. There are

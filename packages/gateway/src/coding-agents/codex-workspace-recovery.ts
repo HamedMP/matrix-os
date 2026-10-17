@@ -7,6 +7,7 @@ export async function recoverCodexWorkspace(
   context: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0],
   sessionId: string,
   prompt: string,
+  onCleanupUnconfirmed?: () => void,
 ) {
   const { principal, thread, turn, resumeState, signal } = context;
   signal.throwIfAborted();
@@ -17,16 +18,25 @@ export async function recoverCodexWorkspace(
     throw new Error("Workspace provider conversation recovery unavailable");
   }
   signal.throwIfAborted();
-  const restarted = await runtime.startSession({
-    ownerScope: { type: "user", id: principal.userId }, recoveryThreadId: thread.id,
-    request: {
-      sessionId, providerThreadId: resumeState.providerThreadId, kind: "agent", agent: "codex", prompt,
-      attachments: turn.attachments, model: turn.model, modelOptions: turn.modelOptions,
-      projectSlug: thread.projectId, worktreeId: previous.session.worktreeId, taskId: thread.taskId,
-      approvalPolicy: turn.approvalPolicy ?? "on_request", sandboxMode: turn.sandboxMode ?? "workspace_write",
-      runtimePreference: "background",
-    },
-  });
-  if (!restarted.ok) throw new Error("Workspace provider turn recovery failed");
+  let restarted;
+  try {
+    restarted = await runtime.startSession({
+      ownerScope: { type: "user", id: principal.userId }, recoveryThreadId: thread.id,
+      request: {
+        sessionId, providerThreadId: resumeState.providerThreadId, kind: "agent", agent: "codex", prompt,
+        attachments: turn.attachments, model: turn.model, modelOptions: turn.modelOptions,
+        projectSlug: thread.projectId, worktreeId: previous.session.worktreeId, taskId: thread.taskId,
+        approvalPolicy: turn.approvalPolicy ?? "on_request", sandboxMode: turn.sandboxMode ?? "workspace_write",
+        runtimePreference: "background",
+      },
+    });
+  } catch (error: unknown) {
+    onCleanupUnconfirmed?.();
+    throw error;
+  }
+  if (!restarted.ok) {
+    if (restarted.error.code === "runtime_ownership_retained") onCleanupUnconfirmed?.();
+    throw new Error("Workspace provider turn recovery failed");
+  }
   return restarted.session;
 }

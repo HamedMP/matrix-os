@@ -18,7 +18,8 @@ Confirm the entity/account label, period, currency and requested services. Produ
 an evidence packet for review; do not claim bookkeeping, tax or filing correctness.
 
 Use the installed shared tool: `shared_browser` in Matrix Pi/OpenClaw, or
-`mcp__matrix_shared_browser__shared_browser` in Hermes. Begin with `status`,
+`mcp__matrix_shared_browser__shared_browser` in Hermes, Codex or Claude Code
+when advertised by the current run. Begin with `status`,
 `navigate` to the authorized service and `snapshot`. Use exact current
 `observationId` and `ref` for actions, never selectors or arbitrary evaluation.
 On Take over/Pause, wait for the owner's explicit Resume and a fresh snapshot;
@@ -43,7 +44,11 @@ requested pagination/segments and state coverage; flag missing or conflicting va
 A bank transaction or screenshot alone does not establish an original invoice.
 
 In shared Chrome, use `download` with an observed original PDF link, current
-observationId/ref and stable documentId. Preserve its verified `artifact` and
+observationId/ref and stable documentId. For example:
+`{"action":"download","observationId":"CURRENT_OBSERVATION","ref":"CURRENT_REF","documentId":"INVOICE_ID"}`.
+Replace every placeholder with current observed values; take another snapshot
+before collecting the next original. Never invent a download URL or treat a plain
+click as a verified original. Preserve its verified `artifact` and
 `collectionManifest`; these record byte hashes, source links and retrieval times.
 The manifest deduplicates successful downloads and flags conflicting hashes; its
 downloads-only coverage does not prove all pagination pages were visited. Record
