@@ -1,3 +1,5 @@
+import { BrowserPermissionCard, type BrowserPermissionClient } from "@matrix-os/ui";
+import { browserCanonicalDecision, type BrowserPermissionChoice, type CanonicalChatApprovalView } from "@matrix-os/contracts";
 import {
   CanonicalChatRunIdSchema,
   canonicalChatApprovalOutcome,
@@ -19,6 +21,8 @@ interface CanonicalApprovalView {
   allowedDecisions: CanonicalChatApprovalDecision[];
   pending: boolean;
   decision?: CanonicalChatApprovalDecision;
+  browserApproval?: CanonicalChatApprovalView["browserApproval"];
+  browserGrant?: CanonicalChatApprovalView["browserGrant"];
 }
 
 export function canonicalApproval(message: ChatMessage): CanonicalApprovalView | null {
@@ -45,15 +49,21 @@ export function CanonicalApprovalMessage({
   message,
   submitting,
   onSubmit,
+  browserPermissions,
+  onOpenPermissionMode,
 }: {
   message: ChatMessage;
+  browserPermissions?: BrowserPermissionClient;
+  onOpenPermissionMode?: () => void;
   submitting: boolean;
-  onSubmit?: (runId: string, approvalId: string, decision: CanonicalChatApprovalDecision) => Promise<void>;
+  onSubmit?: (runId: string, approvalId: string, decision: CanonicalChatApprovalDecision, browserChoice?: BrowserPermissionChoice) => Promise<void>;
 }) {
   const approval = canonicalApproval(message);
   if (!approval) {
     return <div className="rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">{message.content}</div>;
   }
+  if (approval.browserApproval) return <BrowserPermissionCard approval={approval as CanonicalChatApprovalView} submitting={submitting} client={browserPermissions} onOpenPermissionMode={onOpenPermissionMode}
+    onDecision={onSubmit ? choice => onSubmit(approval.runId, approval.approvalId, browserCanonicalDecision(choice), choice) : undefined}/>;
   return (
     <div className="space-y-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
       <div>

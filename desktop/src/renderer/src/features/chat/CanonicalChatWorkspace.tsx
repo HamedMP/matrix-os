@@ -1,3 +1,4 @@
+import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { projectContext } from "./canonical-project-context";
@@ -38,7 +39,7 @@ import type {
   CanonicalChatQueuedTurn,
 } from "@matrix-os/contracts";
 import { Plus, Search } from "@renderer/lib/hugeicons";
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type ComponentProps } from "react";
 import { flushSync } from "react-dom";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
@@ -87,7 +88,11 @@ const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
 
 // react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing workspace coordinates the canonical Chat controller, composer, credential disclosure and shared routes; this change only removes live-share callbacks. Splitting it belongs in a focused refactor.
-export function CanonicalChatWorkspace({
+export function CanonicalChatWorkspace(props: ComponentProps<typeof CanonicalChatWorkspaceContent>) {
+  return <BrowserPermissionReviewProvider><CanonicalChatWorkspaceContent {...props}/></BrowserPermissionReviewProvider>;
+}
+
+function CanonicalChatWorkspaceContent({
   api,
   client,
   projectId,
@@ -132,6 +137,7 @@ export function CanonicalChatWorkspace({
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
+  const [permissionModeRequest, setPermissionModeRequest] = useState(0);
   const actorId = useConnection((state) => state.userId);
   const authStatus = useConnection((state) => state.status);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -419,7 +425,7 @@ export function CanonicalChatWorkspace({
       return;
     }
     if (action.kind === "approval") {
-      const submitted = await submitApproval(action.requestId, action.decision);
+      const submitted = await submitApproval(action.requestId, action.decision, action.browserChoice);
       if (!submitted) throw new Error("ApprovalUnavailable");
       return;
     }
@@ -743,7 +749,9 @@ export function CanonicalChatWorkspace({
         }}
       />
 
+      <BrowserPermissionReminder/>
       <SharedChatComposer
+        permissionModeRequest={permissionModeRequest}
         value={draft}
         onChange={setDraft}
         draftScopeKey={routedComposerChatId ?? `new:${projectId ?? "global"}`}
@@ -967,6 +975,8 @@ export function CanonicalChatWorkspace({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
+              browserPermissions: client.browserPermissions,
+              openPermissionMode: () => setPermissionModeRequest(value => value + 1),
               ...artifactActions,
               renderCredentialMarker: (message, offset, marker, number) => {
                 if (message.role !== "assistant" || credentialScopeKey === null) return marker;

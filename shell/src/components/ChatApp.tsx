@@ -1,3 +1,4 @@
+import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 "use client";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
 import { WebChatRailControls } from "./chat/WebChatRailControls";
@@ -5,6 +6,8 @@ import { ChatRailOrderContext, ChatRailOrderItem } from "@matrix-os/ui";
 import { WebChatLifecycleGroups, webChatLifecycleGroup } from "./chat/WebChatLifecycleGroups";
 import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigation";
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
+import type { BrowserPermissionClient } from "@matrix-os/ui";
+import type { BrowserPermissionChoice } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
 import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
@@ -156,6 +159,7 @@ interface ChatAppProps {
     options?: ChatSubmitOptions,
   ) => void | Promise<boolean>;
   agentClient?: ChatAgentClient;
+  browserPermissions?: BrowserPermissionClient;
   agentSummaryClient?: ChatAgentClient;
   authorityKey?: string;
   composerIdentity?: object;
@@ -172,6 +176,7 @@ interface ChatAppProps {
     runId: string,
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
+    browserChoice?: BrowserPermissionChoice,
   ) => Promise<boolean>;
   composerDraftRequest?: ChatAgentDraftRequest | null;
   onComposerDraftConsumed?: (id: number) => void;
@@ -183,7 +188,7 @@ interface ChatAppProps {
 }
 
 export function ChatApp(props: ChatAppProps) {
-  return <ChatAgentsWorkspace><ChatAppContent {...props} /></ChatAgentsWorkspace>;
+  return <ChatAgentsWorkspace><BrowserPermissionReviewProvider><ChatAppContent {...props} /></BrowserPermissionReviewProvider></ChatAgentsWorkspace>;
 }
 
 function ChatAppContent({
@@ -204,7 +209,7 @@ function ChatAppContent({
   onSubmit,
   providerSelection,
   boundProviderInstanceId,
-  agentClient, agentSummaryClient, authorityKey, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -700,15 +705,17 @@ function ChatAppContent({
                       ) : directBotId && msg.role === "system" && msg.metadata?.canonicalFailureCode === "model_unavailable" ? <BotModelFailureNotice/> : msg.role === "system" ? (
                         <CanonicalApprovalMessage
                           message={msg}
+                          browserPermissions={browserPermissions}
+                          onOpenPermissionMode={() => setSetupOpen(true)}
                           submitting={(() => {
                             const approval = canonicalApproval(msg);
                             return approval !== null
                               && submittingApprovalId === `${approval.runId}\0${approval.approvalId}`;
                           })()}
-                          onSubmit={onSubmitApproval ? async (runId, approvalId, decision) => {
+                          onSubmit={onSubmitApproval ? async (runId, approvalId, decision, browserChoice) => {
                             const submissionId = `${runId}\0${approvalId}`;
                             setSubmittingApprovalId(submissionId);
-                            try { await onSubmitApproval(runId, approvalId, decision); }
+                            try { if (!await onSubmitApproval(runId, approvalId, decision, browserChoice)) throw new Error("ApprovalUnavailable"); }
                             finally { setSubmittingApprovalId(null); }
                           } : undefined}
                         />
@@ -753,6 +760,7 @@ function ChatAppContent({
                   />
                 </div>
               )}
+              <BrowserPermissionReminder/>
               <ChatInput
                 slashInstance={slashInstance}
                 slashCatalogLoading={slashCatalogLoading}

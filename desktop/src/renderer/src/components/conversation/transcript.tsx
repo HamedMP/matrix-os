@@ -1,3 +1,5 @@
+import { BrowserPermissionCard } from "@matrix-os/ui";
+import { browserCanonicalDecision } from "@matrix-os/contracts";
 import { ConversationNotice } from "./notice";
 import { BotRunMessageBody, BotUnassignedMessageBody, ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
@@ -203,6 +205,11 @@ function Request({
       }
     }
   };
+  if (request.browserApproval) return <ConversationItem messageId={`request:${request.id}`}>
+    <BrowserPermissionCard approval={request.browserApproval} client={callbacks.browserPermissions} onOpenPermissionMode={callbacks.openPermissionMode}
+      onDecision={callbacks.performAction ? choice => callbacks.performAction!({ kind: "approval", requestId: request.requestId,
+        decision: browserCanonicalDecision(choice), browserChoice: choice, label: "Browser permission" }) : undefined}/>
+  </ConversationItem>;
   if (request.input) return (
     <ConversationItem messageId={`request:${request.id}`}>
       <CanonicalChatInputForm request={request.input} onSubmit={callbacks.submitInput

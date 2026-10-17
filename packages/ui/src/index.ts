@@ -250,3 +250,6 @@ export * from "./chat-navigation/metrics.js";
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
 export { BrowserSurface, createHostedBrowserSession } from "./browser/index.js";
 export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus } from "./browser/index.js";
+export { BrowserPermissionCard } from "./browser-permission/BrowserPermissionCard.js";
+export { createBrowserPermissionClient, type BrowserPermissionClient } from "./browser-permission/client.js";
+export { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "./browser-permission/BrowserPermissionReview.js";
