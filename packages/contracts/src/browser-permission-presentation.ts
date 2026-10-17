@@ -17,12 +17,21 @@ export function browserPermissionRequest(approval: CanonicalChatApprovalView | u
     actionDigest: approval.actionDigest, browserApproval: { kind: browser.kind, decision: choice, leaseEpoch: browser.leaseEpoch,
       challengeRevision: browser.challengeRevision, scopeVersion: browser.scopeVersion } });
 }
-export function browserPermissionOutcome(approval: CanonicalChatApprovalView, now = Date.now()): string {
+export function browserPermissionOutcome(approval: CanonicalChatApprovalView, now = Date.now(), submitted = false): string {
   const browser = approval.browserApproval;
-  if (approval.pending && browser && !browser.resolution && Date.parse(browser.expiresAt) > now) return "Waiting for your approval";
+  if (approval.pending && browser && !browser.resolution && Date.parse(browser.expiresAt) > now) return submitted
+    ? "Decision submitted. Waiting for confirmation." : "Waiting for your approval";
   const resolution = browser?.resolution ?? (browser && !(Date.parse(browser.expiresAt) > now) ? "expired" : "interrupted");
   return ({ allowed_once: "Allowed once", allowed_in_chat: "Allowed in this Chat", declined: "Not now · browser action skipped",
     cancelled: "Browser action cancelled", expired: "Request expired · ask the agent to try again", interrupted: "Browser action interrupted" })[resolution];
+}
+
+/** A confirmed revocation survives missing or older observations of that grant.
+ * A newer revision still permits a later, intentional grant in this Chat. */
+export function reconcileBrowserGrantObservation(prior: BrowserGrantView | null, fresh: BrowserGrantView | null, chatId: string): BrowserGrantView | null {
+  const previous = prior?.chatId === chatId ? prior : null;
+  if (!fresh || fresh.chatId !== chatId) return previous?.state === "revoked" ? previous : null;
+  return previous?.id === fresh.id && previous.revision >= fresh.revision ? previous : fresh;
 }
 
 /** Never log upstream messages, request bodies or arbitrary error names. */

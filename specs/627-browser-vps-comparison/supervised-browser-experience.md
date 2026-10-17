@@ -29,6 +29,11 @@ Every browser card reads the active Chat's authoritative grant independently
 of recorded activity, including after an uncertain decision response. A lost
 confirmation cannot hide remembered access or its Undo action. Foreign Chat
 grants and stale asynchronous reads are excluded from the current card.
+Accepted decisions show “Decision submitted. Waiting for confirmation.” until
+the recorded outcome arrives; expiry still overrides an unanswered request.
+Confirmed Undo invalidates earlier background reads and preserves its grant
+revision against older observations, including late errors. A newer grant
+revision can still restore access after an intentional permission decision.
 Confirmed Undo refreshes other mounted cards in the same Chat window. Native
 Mobile refreshes its canonical Chat projection after revocation. Background
 grant reads do not replace the lifetime of a pending decision or Undo action;

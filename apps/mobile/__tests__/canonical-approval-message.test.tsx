@@ -132,3 +132,34 @@ it("ignores an old decision response after changing Chat", async () => {
   expect(screen.getByText("Approve")).toBeTruthy();
   expect(screen.queryByText("Decision submitted. Waiting for confirmation.")).toBeNull();
 });
+it("shows a browser decision as submitted while its recorded outcome has not refreshed", async () => {
+  jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => ({ ok: true, json: async () => init?.method === "POST"
+    ? { approvalId: "approval_test", decision: "approve", submission: "accepted" } : { grant: null } }) as Response);
+  refresh.mockRejectedValueOnce(new Error("Refresh unavailable"));
+  render(<CanonicalApprovalMessage {...props} approval={{ ...approval, actionDigest: "a".repeat(64), allowedDecisions: [...approval.allowedDecisions],
+    browserApproval: { kind: "shared_chrome", leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1, expiresAt: new Date(Date.now()+60_000).toISOString() } }}/>);
+  fireEvent.press(screen.getByText("Allow once"));
+  await screen.findByText("Decision submitted. Waiting for confirmation.");
+  expect(screen.queryByText("Waiting for your approval")).toBeNull();
+  expect(screen.queryByText("Allow once")).toBeNull();
+});
+it.each(["active", "error"])("does not let an earlier %s grant read overwrite confirmed Undo", async outcome => {
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome", scopeVersion: 1, revision: 1, state: "active", createdAt: new Date().toISOString(), revokedAt: null };
+  let finish!: (value: Response) => void; let fail!: (error: Error) => void; let reads = 0;
+  jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+    if (init?.method === "DELETE") return { ok: true, json: async () => ({ grant: { ...grant, state: "revoked", revision: 2, revokedAt: new Date().toISOString() } }) } as Response;
+    if (++reads === 2) return await new Promise((resolve, reject) => { finish = resolve; fail = reject; });
+    return { ok: true, json: async () => ({ grant }) } as Response;
+  });
+  const view = { ...approval, allowedDecisions: [...approval.allowedDecisions], browserApproval: { kind: "shared_chrome" as const, leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1 as const, expiresAt: new Date(Date.now()+60_000).toISOString() } };
+  const { rerender } = render(<CanonicalApprovalMessage {...props} approval={view}/>);
+  await screen.findByText("Undo");
+  rerender(<CanonicalApprovalMessage {...props} approval={{ ...view, browserApproval: { ...view.browserApproval } }}/>);
+  await waitFor(() => expect(finish).toBeDefined());
+  fireEvent.press(screen.getByText("Undo")); await screen.findByText("Remembered browser access removed");
+  await act(async () => { if (outcome === "active") finish({ ok: true, json: async () => ({ grant }) } as Response); else fail(new Error("Old read failed")); });
+  expect(screen.getByText("Remembered browser access removed")).toBeTruthy();
+  expect(screen.queryByText("Undo")).toBeNull();
+  expect(screen.queryByText("Could not check browser access. Refresh this Chat.")).toBeNull();
+});

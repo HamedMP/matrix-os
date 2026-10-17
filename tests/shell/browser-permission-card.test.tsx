@@ -90,3 +90,25 @@ it("refreshes every browser card after another card removes the shared Chat gran
   await waitFor(() => expect(screen.queryAllByRole("button", { name: "Undo" })).toHaveLength(0));
   expect(screen.queryAllByText("Browser access is saved for this Chat")).toHaveLength(0);
 });
+it("shows an accepted browser decision as awaiting confirmation", async () => {
+  render(<BrowserPermissionCard approval={approval} onDecision={async () => {}}/>);
+  fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+  await screen.findByText("Decision submitted. Waiting for confirmation.");
+  expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
+});
+it.each(["active", "error"])("ignores an older %s read after confirmed Undo", async outcome => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome" as const, scopeVersion: 1 as const, revision: 1, state: "active" as const, createdAt: new Date().toISOString(), revokedAt: null };
+  let finish!: (value: typeof grant) => void; let fail!: (error: Error) => void;
+  const client = { getGrant: vi.fn().mockResolvedValueOnce(grant).mockImplementationOnce(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; })),
+    revokeGrant: vi.fn(async () => ({ ...grant, state: "revoked" as const, revision: 2, revokedAt: new Date().toISOString() })) };
+  const { rerender } = render(<BrowserPermissionCard chatId="chat_test" approval={{ ...approval, browserGrant: grant }} client={client}/>);
+  await screen.findByRole("button", { name: "Undo" });
+  rerender(<BrowserPermissionCard chatId="chat_test" approval={{ ...approval, browserGrant: { ...grant } }} client={client}/>);
+  await waitFor(() => expect(finish).toBeDefined());
+  fireEvent.click(screen.getByRole("button", { name: "Undo" })); await screen.findByText("Remembered browser access removed");
+  await React.act(async () => { if (outcome === "active") finish(grant); else fail(new Error("Old read failed")); });
+  expect(screen.getByText("Remembered browser access removed")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
