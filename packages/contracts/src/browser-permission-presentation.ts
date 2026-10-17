@@ -1,6 +1,6 @@
-import { CanonicalSubmitChatApprovalRequestSchema, type CanonicalSubmitChatApprovalRequest } from "./canonical-chat-api.js";
-import { browserCanonicalDecision, type BrowserApprovalIntentSchema } from "./browser-chat-approval.js";
-import type { CanonicalChatApprovalView } from "./canonical-chat-approvals.js";
+import { CanonicalSubmitChatApprovalRequestSchema, type CanonicalSubmitChatApprovalRequest } from "#canonical-chat-api";
+import { browserCanonicalDecision, type BrowserApprovalIntentSchema } from "#browser-chat-approval";
+import type { CanonicalChatApprovalView } from "#canonical-chat-approvals";
 import type { z } from "zod/v4";
 
 export type BrowserPermissionChoice = z.infer<typeof BrowserApprovalIntentSchema>["decision"];

@@ -1469,4 +1469,4 @@ export * from "#chat-navigation";
 
 export * from "#remote-browser";
 export * from "#shared-browser";
-export { browserPermissionChoices, browserPermissionRequest, browserPermissionOutcome, browserPermissionErrorKind, type BrowserPermissionChoice } from "./browser-permission-presentation.js";
+export { browserPermissionChoices, browserPermissionRequest, browserPermissionOutcome, browserPermissionErrorKind, type BrowserPermissionChoice } from "#browser-permission-presentation";
