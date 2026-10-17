@@ -6,6 +6,8 @@ import "@testing-library/jest-dom/vitest";
 import {
   initialOnboardingWidgetState,
   reduceOnboardingWidget,
+  type OnboardingAiChoice,
+  type OnboardingAiProvider,
   type OnboardingRunView,
   type OnboardingWidgetEvent,
   type OnboardingWidgetState,
@@ -36,7 +38,11 @@ function makeActions(): OnboardingWidgetActions {
   };
 }
 
-function Harness({ actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false, apps = APPS, repos = [{ name: "portfolio", url: "https://github.com/sahar/portfolio", updatedLabel: "2h ago" }] }: {
+function Harness({
+  actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false,
+  activeAi = "matrix", matrixAvailable = true, connectedProviders = [],
+  apps = APPS, repos = [{ name: "portfolio", url: "https://github.com/sahar/portfolio", updatedLabel: "2h ago" }],
+}: {
   actions: OnboardingWidgetActions;
   apps?: OnboardingWidgetApp[];
   repos?: OnboardingWidgetRepo[] | null;
@@ -45,6 +51,9 @@ function Harness({ actions, initial, runView = null, creditsExhausted = false, e
   creditsExhausted?: boolean;
   events?: OnboardingWidgetEvent[];
   aiSignInNeedsCode?: boolean;
+  activeAi?: OnboardingAiChoice;
+  matrixAvailable?: boolean;
+  connectedProviders?: readonly OnboardingAiProvider[];
 }) {
   const [state, dispatch] = useReducer(
     reduceOnboardingWidget,
@@ -66,7 +75,9 @@ function Harness({ actions, initial, runView = null, creditsExhausted = false, e
       apps={apps}
       repos={repos}
       runView={runView}
-      connectedProviders={[]}
+      activeAi={activeAi}
+      matrixAvailable={matrixAvailable}
+      connectedProviders={connectedProviders}
       creditsExhausted={creditsExhausted}
       aiSignInNeedsCode={aiSignInNeedsCode}
       prefs={{ keepInCorner: true, side: "right", showOnLogin: true }}
@@ -261,6 +272,43 @@ describe("OnboardingWidget", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(actions.submitAiKey).toHaveBeenCalledWith("claude", "sk-ant-test");
     expect(input.value).toBe("");
+  });
+
+  it("names the AI that will really run while Matrix AI can't run on this computer", () => {
+    render(<Harness actions={makeActions()} activeAi="claude" matrixAvailable={false} connectedProviders={["claude"]} />);
+    expect(screen.getByText(/Claude ·/)).toBeInTheDocument();
+    expect(screen.queryByText(/Matrix AI ·/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    const menu = screen.getByRole("menu", { name: "Change AI" });
+    const matrix = within(menu).getByRole("menuitemradio", { name: /Matrix AI/ });
+    expect(matrix).toBeDisabled();
+    expect(within(matrix).getByText("Not available on this computer")).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitemradio", { name: /Claude/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("says so when no AI can run here yet", () => {
+    render(<Harness actions={makeActions()} matrixAvailable={false} />);
+    expect(screen.getByText(/Matrix AI isn't available here ·/)).toBeInTheDocument();
+  });
+
+  it("offers to keep the AI in use, not Matrix AI, when leaving a connect flow", () => {
+    const pick = (provider: OnboardingAiProvider): OnboardingWidgetEvent[] => [{ type: "ai.menuToggled" }, { type: "ai.providerPicked", provider }];
+    const { unmount } = render(<Harness actions={makeActions()} activeAi="claude" matrixAvailable={false} connectedProviders={["claude"]} events={pick("codex")} />);
+    expect(screen.getByRole("button", { name: "Keep Claude" })).toBeInTheDocument();
+    unmount();
+    render(<Harness actions={makeActions()} matrixAvailable={false} events={pick("claude")} />);
+    expect(screen.getByRole("button", { name: "Not now" })).toBeInTheDocument();
+  });
+
+  it("shows the coding agent that will run the code follow-up", () => {
+    const done: OnboardingWidgetEvent[] = [
+      { type: "task.selected", taskId: "work-on-code", connectedServices: ["github"] },
+      { type: "answer.submitted", text: "portfolio", context: "https://github.com/sahar/portfolio" },
+      { type: "run.admitted", requestId: 1, chatId: "chat_1", runId: "run_1" },
+      { type: "run.settled", runId: "run_1", outcome: "completed" },
+    ];
+    render(<Harness actions={makeActions()} activeAi="claude" matrixAvailable={false} connectedProviders={["claude"]} events={done} runView={{ status: "completed", steps: [] }} />);
+    expect(screen.getByText(/Using Claude Code ·/)).toBeInTheDocument();
   });
 
   const claudeAccount: OnboardingWidgetEvent[] = [

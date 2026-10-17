@@ -1,17 +1,19 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { useReducer } from "react";
+import { useMemo, useReducer } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   initialOnboardingWidgetState,
   reduceOnboardingWidget,
+  type OnboardingWidgetEvent,
   type OnboardingWidgetInit,
 } from "@matrix-os/contracts";
+import { useOnboardingAiConnect, useOnboardingRun } from "@matrix-os/ui";
 import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
-import { useOnboardingRun } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-run";
-import { useOnboardingAiConnect } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-ai-connect";
+import { createDesktopOnboardingChatPort } from "@desktop/renderer/src/features/onboarding-widget/onboarding-widget-runner";
+import { useDesktopOnboardingAiPort } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-ai-connect";
 import { useOnboardingAppConnect } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-app-connect";
 import { useIntegrations } from "@desktop/renderer/src/features/integrations/integrations-store";
 
@@ -41,8 +43,13 @@ const api = { openStream: vi.fn() } as unknown as ApiClient;
 
 function useHarness(init: OnboardingWidgetInit, client: unknown) {
   const [state, dispatch] = useReducer(reduceOnboardingWidget, init, initialOnboardingWidgetState);
-  const runView = useOnboardingRun(state, dispatch, { api, client: client as never, selection, selectionPending: false });
+  const port = useMemo(() => createDesktopOnboardingChatPort(api, client as never), [client]);
+  const runView = useOnboardingRun(state, dispatch, { port, selection, selectionPending: false });
   return { state, dispatch, runView };
+}
+
+function useDesktopAiConnect(dispatch: (event: OnboardingWidgetEvent) => void) {
+  return useOnboardingAiConnect(useDesktopOnboardingAiPort(api), dispatch);
 }
 
 async function flush(ms = 0) {
@@ -185,7 +192,7 @@ describe("onboarding AI sign-in", () => {
   it("switches the AI when a sign-in the user is still waiting on succeeds", async () => {
     workflow.client = signInClient();
     const dispatch = vi.fn();
-    const { result } = renderHook(() => useOnboardingAiConnect(api, dispatch));
+    const { result } = renderHook(() => useDesktopAiConnect(dispatch));
     act(() => result.current.startSignIn("claude"));
     await flush(2_000);
     expect(dispatch).toHaveBeenCalledWith({ type: "ai.connected", provider: "claude" });
@@ -195,7 +202,7 @@ describe("onboarding AI sign-in", () => {
     const client = signInClient();
     workflow.client = client;
     const dispatch = vi.fn();
-    const { result } = renderHook(() => useOnboardingAiConnect(api, dispatch));
+    const { result } = renderHook(() => useDesktopAiConnect(dispatch));
     act(() => result.current.startSignIn("claude"));
     await flush();
     act(() => result.current.abandonSignIn());
@@ -224,7 +231,7 @@ describe("onboarding AI sign-in", () => {
     const { client, save } = keyClient();
     workflow.client = client;
     const dispatch = vi.fn();
-    const { result } = renderHook(() => useOnboardingAiConnect(api, dispatch));
+    const { result } = renderHook(() => useDesktopAiConnect(dispatch));
     act(() => result.current.submitKey("claude", "sk-ant-test"));
     await flush();
     expect(client.submitConnectionKey).toHaveBeenCalledTimes(1);
@@ -237,7 +244,7 @@ describe("onboarding AI sign-in", () => {
     const { client, save } = keyClient();
     workflow.client = client;
     const dispatch = vi.fn();
-    const { result } = renderHook(() => useOnboardingAiConnect(api, dispatch));
+    const { result } = renderHook(() => useDesktopAiConnect(dispatch));
     act(() => result.current.submitKey("claude", "sk-ant-test"));
     await flush();
     act(() => result.current.abandonSignIn());

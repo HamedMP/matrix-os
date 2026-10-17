@@ -49,6 +49,16 @@ export {
 export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath, providerSettingsManagedCreditPath } from "./provider-projection-paths.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 export {
+  applyCanonicalComposerPreference,
+  canonicalComposerSelectionIsAvailable,
+  changeCanonicalComposerInstance,
+  createCanonicalComposerSelection,
+  providerInstanceIsLocked,
+  updateCanonicalComposerOption,
+  type CanonicalComposerPreference,
+  type CanonicalComposerSelection,
+} from "./canonical-composer-selection.js";
+export {
   ChatEventFrameTooLarge,
   createCanonicalChatEventSource as createSharedCanonicalChatEventSource,
   createCanonicalChatSseParser,

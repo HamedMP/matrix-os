@@ -1,16 +1,14 @@
 import {
-  initialOnboardingWidgetState,
-  onboardingPendingRun,
-  reduceOnboardingWidget,
-  type OnboardingWidgetState,
-} from "@matrix-os/contracts";
-import {
+  DEFAULT_ONBOARDING_PREFS,
   OnboardingWidget,
-  type OnboardingWidgetActions,
-  type OnboardingWidgetPrefs,
-  type OnboardingWidgetRepo,
+  onboardingPrefsKey,
+  readOnboardingPrefs,
+  useOnboardingWidgetSession,
+  useOnboardingWidgetState,
+  type OnboardingSettingsSection,
+  type OnboardingStoredPrefs,
 } from "@matrix-os/ui";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
@@ -20,26 +18,11 @@ import { createLegacyGlobalProviderCatalog } from "../chat/canonical-composer-ad
 import { useChatProviderCatalog } from "../chat/chat-provider-catalog";
 import { useIntegrations } from "../integrations/integrations-store";
 import { closeDesktopSupport } from "../support/DesktopSupportWidget";
-import {
-  DEFAULT_ONBOARDING_PREFS,
-  onboardingPrefsKey,
-  onboardingSessionInit,
-  readOnboardingPrefs,
-  writeOnboardingPrefs,
-  type OnboardingStoredPrefs,
-} from "./onboarding-widget-prefs";
 import { showOnboardingTab as showTab } from "./onboarding-widget-navigation";
-import {
-  loadOnboardingRepos,
-  onboardingApps,
-  onboardingConnectedProviders,
-  onboardingCreditsExhausted,
-  onboardingSelection,
-} from "./onboarding-widget-runner";
-import { useOnboardingAiConnect } from "./use-onboarding-ai-connect";
+import { createDesktopOnboardingChatPort, createDesktopOnboardingRepoSource } from "./onboarding-widget-runner";
+import { useDesktopOnboardingAiPort } from "./use-onboarding-ai-connect";
 import { useOnboardingAppConnect } from "./use-onboarding-app-connect";
 import { useOnboardingOverlayLease } from "./use-onboarding-overlay-lease";
-import { useOnboardingRun } from "./use-onboarding-run";
 import { useChatMaximized } from "./use-chat-maximized";
 import { useOnboardingSupportDock } from "./use-onboarding-support-dock";
 
@@ -60,116 +43,37 @@ function OnboardingWidgetLoader({ api, prefsKey }: { api: ApiClient; prefsKey: s
   return <OnboardingWidgetSession api={api} prefsKey={prefsKey} initialPrefs={prefs} />;
 }
 
-function initialState(prefs: OnboardingStoredPrefs): OnboardingWidgetState {
-  return initialOnboardingWidgetState(onboardingSessionInit(prefs));
-}
-
 function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClient; prefsKey: string; initialPrefs: OnboardingStoredPrefs }) {
-  const [state, dispatch] = useReducer(reduceOnboardingWidget, initialPrefs, initialState);
-  const [prefs, setPrefs] = useState<OnboardingWidgetPrefs>(() => ({
-    keepInCorner: initialPrefs.keepInCorner, side: initialPrefs.side, showOnLogin: initialPrefs.showOnLogin,
-  }));
+  const { state, dispatch, prefs, setPrefs } = useOnboardingWidgetState(initialPrefs);
   const displayName = useConnection((s) => s.displayName);
   const requestSettingsSection = useUi((s) => s.requestSettingsSection);
   const available = useIntegrations((s) => s.available);
   const connections = useIntegrations((s) => s.connections);
-
-  const client = useMemo(() => createCanonicalChatClient(api), [api]);
   const { catalog, initialLoading } = useChatProviderCatalog(FALLBACK_CATALOG);
-  const selection = useMemo(() => onboardingSelection(catalog, state.aiChoice), [catalog, state.aiChoice]);
-  const connectedProviders = useMemo(() => onboardingConnectedProviders(catalog), [catalog]);
-  const creditsExhausted = useMemo(() => onboardingCreditsExhausted(catalog, selection), [catalog, selection]);
-
-  const runView = useOnboardingRun(state, dispatch, { api, client, selection, selectionPending: initialLoading });
-  const chatMaximized = useChatMaximized();
-  useOnboardingSupportDock({ size: state.size, side: prefs.side, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
-  useOnboardingOverlayLease(state.size !== "bubble" && !chatMaximized);
-  const ai = useOnboardingAiConnect(api, dispatch);
-  const connectPanelOpen = state.ai?.step === "waiting" || state.ai?.step === "key";
-  const abandonSignIn = ai.abandonSignIn;
-  useEffect(() => {
-    if (!connectPanelOpen) abandonSignIn();
-  }, [abandonSignIn, connectPanelOpen]);
+  const chatPort = useMemo(() => createDesktopOnboardingChatPort(api, createCanonicalChatClient(api)), [api]);
+  const repoSource = useMemo(() => createDesktopOnboardingRepoSource(api), [api]);
+  const aiPort = useDesktopOnboardingAiPort(api);
   const appConnect = useOnboardingAppConnect(api, dispatch);
-  const apps = useMemo(() => onboardingApps(available, connections, appConnect.connectingService), [appConnect.connectingService, available, connections]);
 
-  const github = connections.find((connection) => connection.service === "github" && connection.status === "active")
-    ?? connections.find((connection) => connection.service === "github");
-  const githubId = github?.id ?? null;
-  const githubLabel = github?.accountLabel ?? null;
-  const onRepoScreen = state.screen.kind === "repo";
-  const [repos, setRepos] = useState<OnboardingWidgetRepo[] | null>(null);
-  useEffect(() => {
-    if (!onRepoScreen) return;
-    if (!githubId || !githubLabel) { setRepos([]); return; }
-    const controller = new AbortController();
-    setRepos(null);
-    loadOnboardingRepos(api, { id: githubId, accountLabel: githubLabel }, controller.signal).then(setRepos, (error: unknown) => {
-      if (controller.signal.aborted) return;
-      console.warn("[onboarding-widget] repo list failed:", error instanceof Error ? error.name : typeof error);
-      setRepos([]);
-    });
-    return () => controller.abort();
-  }, [api, githubId, githubLabel, onRepoScreen]);
-
-  useEffect(() => {
-    writeOnboardingPrefs(prefsKey, {
-      ...prefs,
-      firstTaskCompleted: state.firstTaskCompleted,
-      aiChoice: state.aiChoice,
-      chatId: state.chatId,
-      pendingRun: onboardingPendingRun(state),
-    });
-  }, [prefs, prefsKey, state]);
-
-  const openChat = useCallback(() => {
-    showTab(state.chatId
-      ? { kind: "work", title: "Chat", workRoute: "chat", chatId: state.chatId, chatView: "conversation", closable: false }
+  const openChat = useCallback((chatId: string | null) => {
+    showTab(chatId
+      ? { kind: "work", title: "Chat", workRoute: "chat", chatId, chatView: "conversation", closable: false }
       : { kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false });
-    dispatch({ type: "size.changed", size: "bubble" });
-  }, [state.chatId]);
-
-  const openSettings = useCallback((section: string) => {
+  }, []);
+  const openSettings = useCallback((section: OnboardingSettingsSection) => {
     requestSettingsSection(section);
     showTab({ kind: "settings", title: "Settings" });
   }, [requestSettingsSection]);
 
-  const actions = useMemo<OnboardingWidgetActions>(() => ({
-    dispatch,
-    connectApp: appConnect.connectApp,
-    openResult: openChat,
-    openFullChat: openChat,
-    openSettings: () => openSettings("agents-providers"),
-    addCredits: () => openSettings("billing"),
-    startAiSignIn: ai.startSignIn,
-    reopenAiSignIn: ai.reopenSignIn,
-    cancelAiSignIn: ai.cancelSignIn,
-    submitAiKey: ai.submitKey,
-    submitAiCode: ai.submitCode,
-    changePrefs: setPrefs,
-  }), [ai.cancelSignIn, ai.reopenSignIn, ai.startSignIn, ai.submitCode, ai.submitKey, appConnect.connectApp, openChat, openSettings]);
+  const widget = useOnboardingWidgetSession({
+    prefsKey, state, dispatch, prefs, setPrefs, displayName,
+    catalog, catalogLoading: initialLoading, chatPort, aiPort, repoSource,
+    available, connections, appConnect, openChat, openSettings,
+  });
 
+  const chatMaximized = useChatMaximized();
+  useOnboardingSupportDock({ size: state.size, side: prefs.side, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
+  useOnboardingOverlayLease(state.size !== "bubble" && !chatMaximized);
   if (chatMaximized) return null;
-
-  return (
-    <OnboardingWidget
-      state={state}
-      actions={actions}
-      userName={firstName(displayName)}
-      apps={apps}
-      repos={repos}
-      runView={runView}
-      connectedProviders={connectedProviders}
-      creditsExhausted={creditsExhausted}
-      aiSignInCode={ai.signInCode}
-      aiSignInNeedsCode={ai.signInNeedsCode}
-      prefs={prefs}
-      zIndex={DESKTOP_Z_INDEX.nativeDesktopTaskbar}
-    />
-  );
-}
-
-function firstName(displayName: string | null): string | undefined {
-  const first = displayName?.trim().split(/\s+/)[0];
-  return first ? first.slice(0, 40) : undefined;
+  return <OnboardingWidget {...widget} zIndex={DESKTOP_Z_INDEX.nativeDesktopTaskbar} />;
 }
