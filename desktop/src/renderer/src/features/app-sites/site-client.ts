@@ -7,7 +7,10 @@ async function normalize<T>(work: () => Promise<T>): Promise<T> {
   catch (error: unknown) {
     console.warn("[desktop-sites] request failed", error instanceof Error ? "Error" : "UnknownError");
     if (error instanceof AppError) {
-      if (error.status !== undefined) throw new SiteClientError(error.status);
+      const httpStatus = error.httpStatus;
+      if (typeof httpStatus === "number" && Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus <= 599) {
+        throw new SiteClientError(httpStatus);
+      }
       if (error.category === "notFound") throw new SiteClientError(404);
     }
     throw error;
