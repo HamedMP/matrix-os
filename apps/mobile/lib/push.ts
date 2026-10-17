@@ -1,6 +1,7 @@
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
+import { mobilePlatformStorageKey } from "./platform-origin";
 import { Platform } from "react-native";
 import { z } from "zod/v4";
 
@@ -23,7 +24,7 @@ const NotificationDataSchema = z.object({
 
 export type NotificationData = z.input<typeof NotificationDataSchema>;
 
-const PUSH_TOKEN_KEY = "matrix_os_expo_push_token";
+const PUSH_TOKEN_KEY = mobilePlatformStorageKey("matrix_os_expo_push_token");
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
