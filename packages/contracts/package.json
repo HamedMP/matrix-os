@@ -17,6 +17,7 @@
     "./app-gallery-inventory": "./src/app-gallery-inventory.ts",
     "./integration-marketplace": "./src/integration-marketplace.ts",
     "./managed-integrations": "./src/managed-integrations.ts",
+    "./slack-bridge": "./src/slack-bridge.ts",
     "./bokio-integration": "./src/bokio-integration.ts",
     "./data-imports": "./src/data-imports.ts",
     "./command-preview-policy": "./src/command-preview-policy.mjs"

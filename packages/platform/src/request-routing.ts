@@ -1,3 +1,4 @@
+import { slackLinkReturnTarget } from "./slack/link-return.js";
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
 export const PLATFORM_SHELL_ASSET_PREFIX = '/__platform-shell';
@@ -124,6 +125,12 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
     const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
+    const directSlackLink = slackLinkReturnTarget(url.pathname + url.search);
+    if (directSlackLink && !url.hash) return directSlackLink;
+    if (/^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath) && url.searchParams.getAll("redirect_url").length === 1) {
+      const linked = slackLinkReturnTarget(url.searchParams.get("redirect_url"));
+      if (linked) return linked;
+    }
     const path = /^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath) ? '/' : normalizedPath;
     const params = new URLSearchParams();
     const runtime = url.searchParams.get('runtime');
