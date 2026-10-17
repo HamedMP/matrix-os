@@ -43,7 +43,10 @@ function connectorDb(db: Kysely<BrainDatabase>): Kysely<BrainConnectorTables> {
   return db.withTables<BrainConnectorTables>() as unknown as Kysely<BrainConnectorTables>;
 }
 
-/** Insert or replace; a row of another kind is source_config_invalid, a missing source is source_not_found. */
+/**
+ * Insert or replace; a row of another kind is source_config_invalid, a missing source is source_not_found. Runs in
+ * `db` when it is already a transaction (a source update's), else in a transaction of its own.
+ */
 export async function saveConnectorConfig(
   db: Kysely<BrainDatabase>, kind: BrainConnectorKind, scope: BrainScopeKey, sourceId: string, config: object,
 ): Promise<void> {
@@ -52,8 +55,11 @@ export async function saveConnectorConfig(
     throw new BrainFeatureError("source_config_invalid");
   }
   const lockKey = `${BRAIN_FEATURE_SCOPE_LOCK_PREFIXES.connectors}${scope.scopeId}`;
+  const connectors = connectorDb(db);
+  const run = <T>(work: (trx: Kysely<BrainConnectorTables>) => Promise<T>) =>
+    connectors.isTransaction ? work(connectors) : connectors.transaction().execute(work);
   try {
-    const saved = await connectorDb(db).transaction().execute(async (trx) => {
+    const saved = await run(async (trx) => {
       await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
       await sql`SET LOCAL statement_timeout = '15s'`.execute(trx);
       await sql`SELECT pg_advisory_xact_lock(hashtext(${scope.ownerId}), hashtext(${lockKey}))`.execute(trx);
