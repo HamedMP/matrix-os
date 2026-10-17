@@ -66,3 +66,16 @@ it('does not advertise ordinary subscription execution until the managed Pi runt
     expect(available.revision).not.toBe(unavailable.revision);
     expect(available.instances.find(instance => instance.id === 'matrix_pi_chatgpt_plan')?.defaultSelection?.model).toBe('gpt-account-model');
 });
+
+it('retains observed per-model vision for managed subscription Chat and Bot', async () => {
+  const catalog = await withChatGptPlanProviderInstance({ getCatalog: async () => ({ revision: 'base', drivers: [], instances: [] }) }, {
+    observe: async () => ({ id: 'matrix_chatgpt_plan', providerId: 'openai', executionKind: 'direct_pi', availability: 'available', accountId: 'own-account',
+      models: [{ id: 'gpt-6.1-sol', displayName: 'GPT 6.1 Sol', input: ['text', 'image'] }, { id: 'text-only', displayName: 'Text', input: ['text'] }],
+      authorization: { revision: 2, enabled: true, background: false }, coordinatorFunding: 'subscription' }),
+  }, () => true).getCatalog({ userId: 'owner', source: 'jwt' });
+  for (const instance of catalog.instances) {
+    expect(instance.supports.attachments).toEqual(['file', 'image']);
+    expect(instance.models[0]).toMatchObject({ supportsVision: true, capabilities: ['tools', 'vision'] });
+    expect(instance.models[1]).toMatchObject({ supportsVision: false, capabilities: ['tools'] });
+  }
+});

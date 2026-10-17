@@ -1,3 +1,4 @@
+import { MAX_COMMAND_PREVIEW_CHARS, MAX_COMMAND_PREVIEW_BYTES } from "@matrix-os/contracts/command-preview-policy";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { mkdir, open, lstat } from "node:fs/promises";
@@ -62,23 +63,40 @@ export async function tryLoadToolOutputKey(home) {
 }
 
 /** @param {Buffer} key @param {string} toolCallId @param {string} text */
-export function sealToolOutput(key, toolCallId, text) {
+function sealToolText(key, toolCallId, text, purpose) {
   if (key.length !== 32 || !toolCallId || text.length > 4000 || Buffer.byteLength(text) > 16 * 1024) throw new Error("Invalid tool output");
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
-  cipher.setAAD(Buffer.from(`matrix-tool-output:v1:${toolCallId}`));
+  cipher.setAAD(Buffer.from(`matrix-tool-${purpose}:v1:${toolCallId}`));
   const data = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
   return { version: 1, iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), data: data.toString("base64") };
 }
 
 /** @param {Buffer} key @param {string} toolCallId @param {unknown} envelope */
-export function openToolOutput(key, toolCallId, envelope) {
+function openToolText(key, toolCallId, envelope, purpose) {
   const value = Envelope.parse(envelope);
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(value.iv, "base64"));
-  decipher.setAAD(Buffer.from(`matrix-tool-output:v1:${toolCallId}`));
+  decipher.setAAD(Buffer.from(`matrix-tool-${purpose}:v1:${toolCallId}`));
   decipher.setAuthTag(Buffer.from(value.tag, "base64"));
   const result = Buffer.concat([decipher.update(Buffer.from(value.data, "base64")), decipher.final()]);
   const text = new TextDecoder("utf-8", { fatal: true }).decode(result);
   if (text.length > 4000 || result.length > 16 * 1024) throw new Error("Invalid tool output");
+  return text;
+}
+
+/** Result and preview envelopes use distinct authenticated purposes. */
+export function sealToolOutput(key, toolCallId, text) {
+  return sealToolText(key, toolCallId, text, "output");
+}
+export function openToolOutput(key, toolCallId, envelope) {
+  return openToolText(key, toolCallId, envelope, "output");
+}
+export function sealToolPreview(key, toolCallId, text) {
+  if (text.length > MAX_COMMAND_PREVIEW_CHARS || Buffer.byteLength(text) > MAX_COMMAND_PREVIEW_BYTES) throw new Error("Invalid tool preview");
+  return sealToolText(key, toolCallId, text, "preview");
+}
+export function openToolPreview(key, toolCallId, envelope) {
+  const text = openToolText(key, toolCallId, envelope, "preview");
+  if (text.length > MAX_COMMAND_PREVIEW_CHARS || Buffer.byteLength(text) > MAX_COMMAND_PREVIEW_BYTES) throw new Error("Invalid tool preview");
   return text;
 }

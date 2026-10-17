@@ -269,7 +269,7 @@ export function fetchChatDetail(
     url = buildGatewayRequestUrl(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}`,
-      { limit: String(CHAT_DETAIL_LIMIT), fundingVersion: "1" },
+      { limit: String(CHAT_DETAIL_LIMIT), fundingVersion: "1", commandPreviewVersion: "1" },
     );
   } catch {
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
@@ -293,7 +293,7 @@ export async function admitChatTurn(
     url = buildGatewayRequestUrl(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}/turns`,
-      { fundingVersion: "1" },
+      { fundingVersion: "1", commandPreviewVersion: "1" },
     );
   } catch {
     throw new Error(CHAT_TURN_ERROR);
