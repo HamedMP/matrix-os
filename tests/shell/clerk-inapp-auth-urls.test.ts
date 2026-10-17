@@ -58,6 +58,7 @@ describe("Clerk in-app auth URLs are baked into shell builds", () => {
 
     expect(signIn).toContain('forceRedirectUrl={returnTarget}');
     expect(signIn).toContain('slackLinkReturnTarget(params.redirect_url) ?? "/"');
-    expect(signUp).toContain('forceRedirectUrl="/"');
+    expect(signUp).toContain('forceRedirectUrl={returnTarget}');
+    expect(signUp).toContain('slackLinkReturnTarget(params.redirect_url) ?? "/"');
   });
 });
