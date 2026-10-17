@@ -14,8 +14,10 @@ contract: `../contracts/brief.ts`; tests: `tests/gateway/brain-brief-*.test.ts` 
 ## Concurrency And Recovery
 
 - Writes take the `brain-brief:<scope>` lock (5 s lock, 15 s statements), never the core `brain:` lock; the upsert keeps
-  the latest copy, its cites and sources live. Reads take no lock; a line whose document goes mid-read drops.
+  the latest copy, its cites and sources live, and stores nothing once the scope holds no source or document row.
+  Reads take no lock; a line whose document goes mid-read drops.
 - GETs, passes, `documents_changed` and `scope_erased` delete copies citing deleted documents (`scope_erased` the tries
   too). A pass (time budget, abort signal, the two-build cap) takes scopes built or failed least lately first (then
   stalest brief), skips gone projects and rebuilds day copies of the last `BRIEF_FINISH_DAYS` built before their day
   ended.
+- A project erase (`api/erase.ts`) deletes the scope's briefs and tries under this lock, brief on or off.

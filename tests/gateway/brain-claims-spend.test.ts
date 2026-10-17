@@ -169,6 +169,18 @@ describe("brain model spend cap", { timeout: 60_000 }, () => {
         .where("scope_id", "=", BRAIN_RETIRED_RUNS_SCOPE_ID).execute()).toEqual([]);
     });
 
+    it("keeps the cost of a model call in flight when its project is erased", async () => {
+      await seed(1);
+      let release: (value?: unknown) => void = () => undefined;
+      const model = costing(700, new Promise((resolve) => { release = resolve; }));
+      const running = extract({ model, limits: capped(10 * WORST) });
+      await vi.waitFor(() => expect(model.extract).toHaveBeenCalledTimes(1));
+      await h.repository.eraseScope(scopeA);
+      release();
+      expect(await running).toMatchObject({ errorCode: "run_superseded", usage: { costMicroUsd: 700 } });
+      expect(await h.repository.readModelSpend(scopeB)).toMatchObject({ costMicroUsd: 700, billedRuns: 1 });
+    });
+
     it("keeps billed runs inside the window past the 50-run prune, then prunes them once they age out", async () => {
       await insertRun(scopeA, ago(10 * DAY), 2_000_000);
       for (let n = 0; n < 60; n += 1) await insertRun(scopeA, ago(9 * DAY - n * 1_000), 0, "rules/v1");

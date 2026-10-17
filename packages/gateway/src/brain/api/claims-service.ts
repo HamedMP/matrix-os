@@ -15,7 +15,8 @@ import {
 } from "./claims-types.js";
 import { BrainApiError, type BrainProjectService, type BrainProjectServiceDeps } from "./types.js";
 
-type ResolveProject = (ownerId: string, projectRef: string) => Promise<{ readonly scope: BrainScopeKey }>;
+type ResolveProject = (ownerId: string, projectRef: string) =>
+  Promise<{ readonly project: { readonly id: string }; readonly scope: BrainScopeKey }>;
 
 const DOCUMENT_KINDS: Readonly<Record<string, BrainClaimDocumentKind>> =
   { git_pr: "pr", git_commit: "commit", git_spec: "spec" };
@@ -82,12 +83,19 @@ export function createClaimMethods(
 
   return {
     async extract(ownerId, projectRef, input, signal) {
-      const { scope } = await resolveProject(ownerId, projectRef);
+      const { project, scope } = await resolveProject(ownerId, projectRef);
       const options = input.extractor === "model" ? await modelOptions(scope) : { scope, extractor: rules, limits };
+      // The project is resolved again under the scope lock as the run opens, so a project deleted since gets no run.
+      const refusals: unknown[] = [];
+      const admit = () => resolveProject(ownerId, project.id).catch((error: unknown) => {
+        refusals.push(error);
+        throw error;
+      });
       // One run per request; the client repeats on run_again. No git source is required.
       const result = await runExtraction({
-        repository: deps.repository, ...options, ...(signal === undefined ? {} : { signal }),
+        repository: deps.repository, ...options, admit, ...(signal === undefined ? {} : { signal }),
       });
+      if (refusals.length > 0) throw refusals[0];
       // Failures that ended before a run row existed are the only extraction outcomes that are not a 200.
       if (result.run === null && result.status === "failed") {
         if (result.errorCode === "extraction_in_progress") throw new BrainApiError("extraction_in_progress");
