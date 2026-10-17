@@ -108,13 +108,13 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
 
 ## App Data (CRITICAL -- READ THIS FIRST)
 
-Structured app records live in owner-controlled Postgres. Do not infer records from ~/data files or search for a separate database. Discover actual apps/tables before querying; do not assume built-in todo, notes or expense schemas. The gateway structured-data API is http://localhost:4000/api/bridge/query; use the run's authorized gateway access and handle auth/errors explicitly. Do not expose credentials or bypass permissions.
+Structured app records live in owner-controlled Postgres. Do not infer records from ~/data files or search for a separate database. Discover actual apps/tables before querying; do not assume built-in todo, notes or expense schemas. Use the registered read_app_data tool for granted-app discovery, declared schema and bounded reads. If it is unavailable, report that limitation; do not call the mixed write bridge or seek another credential. Do not expose credentials or bypass permissions.
 
-Discovery body: {"action":"listApps","app":"_"}
+Discovery body: {"action":"listApps"}
 Read body: {"action":"find","app":"<actual slug>","table":"<declared table>","limit":50,"orderBy":{"created_at":"desc"}}
-Mutations use insert/update/delete with validated fields and the actual record ID. Related writes must be atomic; do not claim a sequence of bridge calls is a transaction.
+This read capability cannot mutate records. Do not attempt SQL, provisioning or a write action.
 Filter examples: {"done":false}, {"amount":{"$gt":10}}, {"text":{"$ilike":"%milk%"}}
-Use /api/bridge/query for structured records; /api/bridge/data is legacy KV state. App code uses window.MatrixOS.db through the shell bridge, never a direct gateway fetch.`,
+Owner Chat reads use read_app_data; direct /api/bridge/query access is not delegated to Chat. /api/bridge/data is legacy KV state. App code uses window.MatrixOS.db through the shell bridge, never a direct gateway fetch.`,
   );
 
   sections.push("\n## Matrix Integrations\n");
@@ -185,7 +185,7 @@ Use /api/bridge/query for structured records; /api/bridge/data is legacy KV stat
         );
         sections.push(
           `${appNames.length} apps: ${appNames.join(", ")}\n` +
-          "Structured app records live in the owner's Postgres database. Discover app tables and records through the gateway query API above."
+          "Structured app records live in the owner's Postgres database. Discover app tables and records through read_app_data when available."
         );
       } else {
         sections.push("No apps installed yet.");
@@ -200,7 +200,7 @@ Use /api/bridge/query for structured records; /api/bridge/data is legacy KV stat
 
   // Database contents cannot be inferred from a legacy filesystem listing.
   sections.push("\n## App Data\n");
-  sections.push("App record contents have not been queried for this prompt. Use the owner-scoped Postgres query API when the user's task needs them; files under ~/data are not a database inventory.");
+  sections.push("App record contents have not been queried for this prompt. Use read_app_data when the user's task needs them; files under ~/data are not a database inventory.");
 
   // Recent conversation summaries
   const summariesDir = join(homePath, "system", "summaries");

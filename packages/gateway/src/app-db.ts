@@ -15,7 +15,7 @@ export interface AppDb {
     indexes?: string[],
     uniqueIndexes?: string[],
   ): Promise<void>;
-  raw(query: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  raw(query: string, params?: unknown[], options?: { readOnly: true }): Promise<{ rows: Record<string, unknown>[] }>;
   destroy(): Promise<void>;
 }
 
@@ -192,7 +192,18 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
     async raw(
       query: string,
       params?: unknown[],
+      options?: { readOnly: true },
     ): Promise<{ rows: Record<string, unknown>[] }> {
+      if (options?.readOnly) {
+        return kysely.transaction().execute(async trx => {
+          await sql`SET TRANSACTION READ ONLY`.execute(trx);
+          await sql`SELECT set_config('statement_timeout', '5000', true)`.execute(trx);
+          const parts = query.split(/\$\d+/);
+          const strings = Object.assign([...parts], { raw: [...parts] }) as unknown as TemplateStringsArray;
+          const result = await sql(strings, ...(params ?? [])).execute(trx);
+          return { rows: (result.rows ?? []) as Record<string, unknown>[] };
+        });
+      }
       if (pool) {
         const result = await pool.query(query, params);
         return { rows: result.rows };
