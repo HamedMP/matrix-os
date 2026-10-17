@@ -66,7 +66,12 @@ for await(const line of createInterface({input:process.stdin})){
  const m=JSON.parse(line);
  if(m.method==='initialize')reply(m.id,{userAgent:'synthetic',platformFamily:'unix',platformOs:'linux',codexHome:'synthetic'});
  else if(m.method==='thread/start'||m.method==='thread/resume'){
-  await log({event:m.method,pid:process.pid,params:m.params});reply(m.id,{thread:{id:'native-browser-thread'}});
+  await log({event:m.method,pid:process.pid,params:m.params});
+  const transport=m.params.config?.['mcp_servers.matrix_shared_browser'];
+  if(typeof transport?.command!=='string'||!transport.command||!Array.isArray(transport.args)||!transport.args.every(value=>typeof value==='string')){
+   process.stdout.write(JSON.stringify({id:m.id,error:{code:-32600,message:'Invalid MCP transport'}})+'\n');continue;
+  }
+  reply(m.id,{thread:{id:'native-browser-thread'}});
  }else if(m.method==='mcpServerStatus/list'){
   const {Client}=await import(process.env.SYNTHETIC_MCP_CLIENT);const {StdioClientTransport}=await import(process.env.SYNTHETIC_MCP_TRANSPORT);
   const client=new Client({name:'synthetic-native',version:'1'});
@@ -89,7 +94,7 @@ for await(const line of createInterface({input:process.stdin})){
   const control=createCodexControlClient({homePath:home});
   if(mode==='restricted'){
    await waitFor(async()=> (await readTrace()).some(x=>x.event==='turn'));
-   const rows=await readTrace();expect(rows[1].params.config['mcp_servers.matrix_shared_browser']).toEqual({enabled:false});expect(calls).toEqual([]);return;
+   const rows=await readTrace();expect(rows[1].params.config['mcp_servers.matrix_shared_browser']).toEqual({command:'/opt/matrix/runtime/node/bin/node',args:['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'],enabled:false});expect(calls).toEqual([]);return;
   }
   await new Promise(r=>setTimeout(r,100));expect(await readTrace()).toEqual([]);
   if(mode==='catalog_failed'){
@@ -106,7 +111,7 @@ for await(const line of createInterface({input:process.stdin})){
   expect(rows[5].params.threadId).toBe('native-browser-thread');expect(calls).toEqual(['Bearer '+'a'.repeat(43),'Bearer '+'b'.repeat(43)]);
   await control.submitTurn({sessionId:'sess_browser_native',turnId:'turn_browser_restricted',prompt:'Restricted synthetic',modelOptions:[]});
   await waitFor(async()=> (await readTrace()).filter(x=>x.event==='turn').length===3);
-  const restrictedRows=await readTrace();expect(restrictedRows.at(-2).params.config['mcp_servers.matrix_shared_browser']).toEqual({enabled:false});expect(calls).toHaveLength(2);
+  const restrictedRows=await readTrace();expect(restrictedRows.at(-2).params.config['mcp_servers.matrix_shared_browser']).toEqual({command:'/opt/matrix/runtime/node/bin/node',args:['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'],enabled:false});expect(calls).toHaveLength(2);
   const persisted=JSON.stringify(restrictedRows)+await readFile(event,'utf8')+Buffer.from(config,'base64').toString();expect(persisted).not.toContain('a'.repeat(43));expect(persisted).not.toContain('b'.repeat(43));
   expect(rows[1].params.config['mcp_servers.matrix_shared_browser'].env_vars).toEqual(['MATRIX_SHARED_BROWSER_TOKEN','MATRIX_SHARED_BROWSER_GATEWAY_PORT']);
  }catch(error){throw new Error('Synthetic native browser regression failed: '+String(error)+' '+diagnostics);}

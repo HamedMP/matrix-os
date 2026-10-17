@@ -21,5 +21,9 @@ it("puts only environment-variable names in native MCP config and clears inherit
  expect(config['mcp_servers.matrix_shared_browser']).toMatchObject({env_vars:['MATRIX_SHARED_BROWSER_TOKEN','MATRIX_SHARED_BROWSER_GATEWAY_PORT'],required:true,enabled_tools:['shared_browser'],tool_timeout_sec:390});
  expect(codexBrowserChildEnvironment({BASE:'value',MATRIX_SHARED_BROWSER_TOKEN:'stale'},lease)).toEqual({BASE:'value',MATRIX_SHARED_BROWSER_TOKEN:lease.token,MATRIX_SHARED_BROWSER_GATEWAY_PORT:'4000'});
  expect(codexBrowserChildEnvironment({BASE:'value',MATRIX_SHARED_BROWSER_TOKEN:'stale',MATRIX_SHARED_BROWSER_GATEWAY_PORT:'4000'},undefined)).toEqual({BASE:'value'});
- expect(codexBrowserThreadConfig(undefined)).toEqual({'mcp_servers.matrix_shared_browser':{enabled:false}});
+ expect(codexBrowserThreadConfig(undefined)).toEqual({'mcp_servers.matrix_shared_browser':{
+  command:'/opt/matrix/runtime/node/bin/node',
+  args:['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'],
+  enabled:false,
+ }});
 });
