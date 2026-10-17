@@ -91,6 +91,7 @@ interface ToolActivity {
   preview?: string;
   previewKind?: "command" | "path" | "text";
   detail?: string;
+  protectedPreview?: Extract<AgentThreadEvent, { type: "tool.started" }>["protectedPreview"];
 }
 
 function activityKind(kind: string): CanonicalChatAgentActivityKind | undefined {
@@ -167,6 +168,7 @@ function normalizeEvent(
       status: "running",
       ...(toolActivity.preview ? { preview: toolActivity.preview, previewKind: toolActivity.previewKind } : {}),
       ...(toolActivity.detail ? { detail: toolActivity.detail } : {}),
+      ...(toolActivity.protectedPreview ? { protectedPreview: toolActivity.protectedPreview } : {}),
     } : {
       type: "tool.progress",
       toolCallId: event.toolCallId,
@@ -187,7 +189,9 @@ function normalizeEvent(
       ...(protectedOutput ? { protectedOutput } : {}) }];
   }
   if (event.type === "tool.completed") {
-    const toolActivity = toolActivities.get(event.toolCallId);
+    const initial = toolActivities.get(event.toolCallId);
+    const { label: _label, ...completedDetails } = projectCodingActivity(event);
+    const toolActivity = initial ? { ...initial, ...completedDetails } : undefined;
     toolActivities.delete(event.toolCallId);
     return [CanonicalProviderRunEventSchema.parse(toolActivity?.kind ? {
       type: "agent.activity",
@@ -198,6 +202,7 @@ function normalizeEvent(
       ...(event.outcome === "failed" ? { summary: failedActivitySummary(toolActivity.kind) } : {}),
       ...(toolActivity.preview ? { preview: toolActivity.preview, previewKind: toolActivity.previewKind } : {}),
       ...(toolActivity.detail ? { detail: toolActivity.detail } : {}),
+      ...(toolActivity.protectedPreview ? { protectedPreview: toolActivity.protectedPreview } : {}),
     } : {
       type: "tool.progress",
       toolCallId: event.toolCallId,

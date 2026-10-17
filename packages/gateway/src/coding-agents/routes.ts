@@ -1,3 +1,4 @@
+import { projectThreadSnapshotForClient } from "./thread-client-projection.js";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -570,7 +571,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           "run",
           () => deps.threads!.createShellThread(principal, request),
         );
-        return c.json(result.snapshot, result.existing ? 200 : 202);
+        return c.json(projectThreadSnapshotForClient(result.snapshot), result.existing ? 200 : 202);
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }
@@ -610,7 +611,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
       try {
         const principal = principalFor(c);
         const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
-        return c.json(await deps.threads!.getThread(principal, threadId));
+        return c.json(projectThreadSnapshotForClient(await deps.threads!.getThread(principal, threadId)));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }
@@ -622,7 +623,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
         const rawCursor = c.req.query("cursor");
         const cursor = rawCursor ? CursorSchema.parse(rawCursor) : undefined;
-        return c.json(await deps.threads!.getThread(principal, threadId, cursor));
+        return c.json(projectThreadSnapshotForClient(await deps.threads!.getThread(principal, threadId, cursor)));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }
@@ -634,13 +635,13 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
         const body = AbortThreadBodySchema.parse(await c.req.json());
         const snapshot = await deps.threads!.getThread(principal, threadId);
-        return c.json(await withLegacyProjectOperation(
+        return c.json(projectThreadSnapshotForClient(await withLegacyProjectOperation(
           deps,
           principal,
           snapshot.thread.projectId,
           "run",
           () => deps.threads!.abortThread(principal, threadId, body.clientRequestId),
-        ));
+        )));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }
@@ -653,13 +654,13 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const approvalId = ApprovalIdSchema.parse(c.req.param("approvalId"));
         const body = ApprovalDecisionRequestSchema.parse(await c.req.json());
         const snapshot = await deps.threads!.getThread(principal, threadId);
-        return c.json(await withLegacyProjectOperation(
+        return c.json(projectThreadSnapshotForClient(await withLegacyProjectOperation(
           deps,
           principal,
           snapshot.thread.projectId,
           "run",
           () => deps.threads!.submitApproval(principal, threadId, approvalId, body),
-        ));
+        )));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }
@@ -672,13 +673,13 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const inputRequestId = RequestIdSchema.parse(c.req.param("inputRequestId"));
         const body = UserInputAnswerRequestSchema.parse(await c.req.json());
         const snapshot = await deps.threads!.getThread(principal, threadId);
-        return c.json(await withLegacyProjectOperation(
+        return c.json(projectThreadSnapshotForClient(await withLegacyProjectOperation(
           deps,
           principal,
           snapshot.thread.projectId,
           "run",
           () => deps.threads!.submitInput(principal, threadId, inputRequestId, body),
-        ));
+        )));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }

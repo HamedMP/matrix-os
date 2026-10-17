@@ -36,10 +36,10 @@ export function projectChatGptPlanProviderInstances(catalog: CanonicalProviderCa
   const instance: CanonicalProviderInstanceDescriptor = {
       id: 'matrix_chatgpt_plan', driverKind: 'matrix_bot', displayName: 'ChatGPT subscription',
       availability: available ? 'available' : 'unavailable', workspaceRequirement: 'none', catalogRevision: revision,
-      models: available ? source!.models.slice(0, 64).map(m => ({ ...m, availability: 'available', capabilities: ['tools'], supportsToolUse: true, supportsVision: false })) : [],
+      models: available ? source!.models.slice(0, 64).map(m => ({ id: m.id, displayName: m.displayName, availability: 'available', capabilities: m.input?.includes('image') ? ['tools', 'vision'] : ['tools'], supportsToolUse: true, supportsVision: m.input?.includes('image') ?? false })) : [],
       options: selectionOptions.map(o => ({ id: o.id, label: o.id === 'accountId' ? 'Account' : 'Authorization', kind: 'enum', values: [{ value: o.value, label: o.id === 'accountId' ? 'Connected account' : 'Current permission' }], defaultValue: o.value, placement: 'advanced' })),
       skills: [], commands: [], setupActions: [],
-      supports: { rootChat: false, resume: false, cancellation: true, steering: 'same_run', attachments: [], tools: [], approvals: false,
+      supports: { rootChat: false, resume: false, cancellation: true, steering: 'same_run', attachments: ['file', 'image'], tools: [], approvals: false,
           userInput: false, worktrees: 'none', resources: [], interactionModes: ['default'], permissionModes: ['default'] },
       ...(available && source!.models[0] ? { defaultSelection: { instanceId: 'matrix_chatgpt_plan', model: source!.models[0].id, options: selectionOptions } } : {}),
   };
