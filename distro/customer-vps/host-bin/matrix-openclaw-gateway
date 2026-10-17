@@ -58,18 +58,77 @@ JSON
   trap - EXIT INT TERM
 fi
 
-if ! "$MATRIX_NODE_PREFIX/bin/node" - "$OPENCLAW_CONFIG_PATH" <<'NODE'
-const { readFileSync } = require("node:fs");
+# Coordinated startup: the native gateway has not started, so it cannot write config concurrently.
+browser_configurer="${MATRIX_OPENCLAW_BROWSER_CONFIGURER:-/opt/matrix/bin/matrix-configure-openclaw-shared-browser.mjs}"
+browser_configuration=""
+if [ -r "$browser_configurer" ]; then
+  if ! browser_configuration="$(timeout 20 env MATRIX_RUNTIME_HOME="$MATRIX_RUNTIME_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" \
+    OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" MATRIX_BROWSER_LAB="${MATRIX_BROWSER_LAB:-false}" \
+    MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}" PORT="${PORT:-4000}" \
+    MATRIX_RUNTIME_CONTROL_STATE_DIR="${MATRIX_RUNTIME_CONTROL_STATE_DIR:-/var/lib/matrix-agent-runtime}" \
+    "$MATRIX_NODE_PREFIX/bin/node" "$browser_configurer")"; then
+    echo "matrix-openclaw-gateway: browser configuration unavailable" >&2
+    exit 3
+  fi
+elif [ "${MATRIX_BROWSER_LAB:-false}" = true ]; then
+  echo "matrix-openclaw-gateway: browser configuration unavailable" >&2
+  exit 3
+fi
+
+if ! "$MATRIX_NODE_PREFIX/bin/node" - "$OPENCLAW_CONFIG_PATH" "${MATRIX_BROWSER_LAB:-false}" "$browser_configuration" "$OPENCLAW_STATE_DIR" <<'NODE'
+const { readFileSync, readSync, lstatSync, openSync, closeSync, fstatSync, constants } = require("node:fs");
+const { join } = require("node:path");
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const expectedDenied = ["cron", "gateway", "sessions_send", "sessions_spawn"];
+const browserEnabled = process.argv[3] === "true";
 const actualDenied = Array.isArray(config.tools?.deny) ? [...config.tools.deny].sort() : [];
+const mapping = value => value !== null && typeof value === "object" && !Array.isArray(value);
+const ownedDirectory = path => {
+  const value = lstatSync(path);
+  return value.isDirectory() && !value.isSymbolicLink() && value.uid === process.getuid();
+};
+function ownerUninstalledWithoutExtension() {
+  if (process.argv[4] !== "matrix-openclaw-browser: owner_uninstalled") return false;
+  const plugins = config.plugins;
+  if (plugins !== undefined && (!mapping(plugins) || plugins.allow !== undefined || plugins.installs !== undefined ||
+    plugins.entries !== undefined && (!mapping(plugins.entries) || Object.hasOwn(plugins.entries, "matrix-shared-browser")) ||
+    plugins.enabled !== undefined && typeof plugins.enabled !== "boolean" ||
+    plugins.load !== undefined && (!mapping(plugins.load) || Object.keys(plugins.load).some(key => key !== "paths") ||
+      plugins.load.paths !== undefined && (!Array.isArray(plugins.load.paths) || plugins.load.paths.length !== 0)))) return false;
+  const state = process.argv[5];
+  if (!ownedDirectory(state)) return false;
+  const marker = openSync(join(state, ".matrix-shared-browser-installed.json"), constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = fstatSync(marker);
+    if (!info.isFile() || info.uid !== process.getuid() || info.size > 4096) return false;
+    const bytes = Buffer.alloc(4097), length = readSync(marker, bytes, 0, bytes.length, 0);
+    if (length > 4096) return false;
+    const value = JSON.parse(bytes.subarray(0, length).toString("utf8"));
+    if (!mapping(value) || value.version !== 1 || !mapping(value.files) ||
+      Object.keys(value).sort().join(",") !== "files,version" ||
+      Object.keys(value.files).sort().join(",") !== "index.mjs,openclaw.plugin.json,package.json" ||
+      Object.values(value.files).some(hash => typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash))) return false;
+  } finally { closeSync(marker); }
+  try {
+    if (!ownedDirectory(join(state, "extensions"))) return false;
+    try { lstatSync(join(state, "extensions", "matrix-shared-browser")); return false; }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  return true;
+}
+// Native empty allowlists do not restrict discovery. Missing allow is equivalent only
+// after a verified uninstall with no Matrix extension tree or alternate load paths.
+// Leftover extension files fail closed; never rewrite the owner's config to repair them.
+const allow = config.plugins?.allow === undefined && ownerUninstalledWithoutExtension() ? [] : config.plugins?.allow;
 if (
   config.gateway?.mode !== "local" ||
   config.gateway?.bind !== "loopback" ||
   config.gateway?.port !== 18789 ||
   config.gateway?.auth?.mode !== "token" ||
-  !Array.isArray(config.plugins?.allow) ||
-  config.plugins.allow.length !== 0 ||
+  !Array.isArray(allow) ||
+  allow.length > 1 ||
+  allow.some(value => value !== "matrix-shared-browser") ||
+  (!browserEnabled && allow.length !== 0) ||
   !(config.tools?.allow === undefined ||
     (Array.isArray(config.tools.allow) && config.tools.allow.length === 0)) ||
   JSON.stringify(actualDenied) !== JSON.stringify(expectedDenied)
