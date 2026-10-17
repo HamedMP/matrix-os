@@ -24,11 +24,20 @@ describe("Private Preview update base in the gateway", () => {
     );
   });
 
-  it("keeps the per-machine base path for release lists", async () => {
+  it("does not request release lists from owner-managed Private Previews", async () => {
     const fetchImpl = okFetch({ releases: [], generatedAt: "2026-09-28T00:00:00.000Z" });
-    await listSystemReleases({ platformUrl: `${privatePreviewBase}/`, channel: "dev", fetchImpl });
+    const result = await listSystemReleases({ platformUrl: `${privatePreviewBase}/`, channel: "dev", fetchImpl });
+    expect(result).toMatchObject({ channel: "dev", releases: [], managedByOwner: true });
+    expect(result.error).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps configured non-Preview base paths for release lists", async () => {
+    const platformUrl = "https://app.matrix-os.com/configured-prefix";
+    const fetchImpl = okFetch({ releases: [], generatedAt: "2026-09-28T00:00:00.000Z" });
+    await listSystemReleases({ platformUrl: `${platformUrl}/`, channel: "dev", fetchImpl });
     expect(fetchImpl).toHaveBeenCalledWith(
-      `${privatePreviewBase}/system-bundles/releases?channel=dev`,
+      `${platformUrl}/system-bundles/releases?channel=dev`,
       expect.anything(),
     );
   });

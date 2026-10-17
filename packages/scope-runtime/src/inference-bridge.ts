@@ -1,3 +1,4 @@
+import { BOT_IMAGE_INFERENCE_MAX_BYTES, validateBotImageInferenceBody } from "@matrix-os/contracts";
 /**
  * Loopback inference bridge shared by scope-runtime workloads. Model SDKs
  * inside the sandbox call this HTTP server on 127.0.0.1; each request becomes
@@ -82,13 +83,13 @@ export function brokerRequest(
   });
 }
 
-async function readHttpBody(request: AsyncIterable<Buffer | string>): Promise<string> {
+async function readHttpBody(request: AsyncIterable<Buffer | string>, maximum = MAX_BRIDGE_REQUEST_BYTES): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const bytes = typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk);
     size += bytes.length;
-    if (size > MAX_BRIDGE_REQUEST_BYTES) throw new ScopeRuntimeBrokerError("Provider request exceeded capacity");
+    if (size > maximum) throw new ScopeRuntimeBrokerError("Provider request exceeded capacity");
     chunks.push(bytes);
   }
   return Buffer.concat(chunks, size).toString("utf8");
@@ -98,6 +99,8 @@ export interface ScopeInferenceBridgeOptions {
   brokerSocket: string;
   /** Bot workloads deny all IP traffic, including loopback; use a private Unix listener. */
   socketPath?: string;
+  /** Bot worker only; larger bodies must contain validated bounded native image blocks. */
+  botImages?: boolean;
   runtimeHandle: string;
   executionGeneration: string;
   /** Returns the broker action for a request, or undefined to refuse it with 404. */
@@ -120,7 +123,8 @@ export async function startInferenceBridge(options: ScopeInferenceBridgeOptions)
         response.writeHead(404).end();
         return;
       }
-      const body = await readHttpBody(request);
+      const body = await readHttpBody(request, options.botImages ? BOT_IMAGE_INFERENCE_MAX_BYTES : MAX_BRIDGE_REQUEST_BYTES);
+      if (options.botImages && !validateBotImageInferenceBody(body).valid) throw new ScopeRuntimeBrokerError("Invalid Bot inference input");
       const brokerResponse = await brokerRequest(options.brokerSocket, {
         version: 1,
         action,

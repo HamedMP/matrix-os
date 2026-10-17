@@ -29,7 +29,7 @@ vi.mock("../../shell/src/components/settings/sections/AppearanceSection.js", () 
   AppearanceSection: () => <div>Appearance settings</div>,
 }));
 vi.mock("../../shell/src/components/settings/sections/AgentSection.js", () => ({
-  AgentSection: () => <div>Agents and providers settings</div>,
+  AgentSection: ({ automaticCreditRefreshEnabled }: { automaticCreditRefreshEnabled: boolean }) => <div data-testid="credit-refresh-scope" data-enabled={String(automaticCreditRefreshEnabled)}>Agents and providers settings</div>,
 }));
 vi.mock("../../shell/src/components/settings/sections/IdentityPersonalitySection.js", () => ({
   IdentityPersonalitySection: () => <div>Identity and personality settings</div>,
@@ -229,4 +229,12 @@ describe("Settings panel", () => {
     expect(buildButton.querySelector(".animate-spin")).toBeTruthy();
     expect(screen.queryByText(/Starting|Preparing|Loading/i)).toBeNull();
   });
+});
+
+it("pauses credit renewal immediately while closed Settings retains its exit content", async () => {
+  const { Settings } = await import("../../shell/src/components/Settings.js");
+  const view = render(<Settings open defaultSection="agents-providers" onOpenChange={() => {}} />);
+  await waitFor(() => expect(screen.getByTestId("credit-refresh-scope").dataset.enabled).toBe("true"));
+  view.rerender(<Settings open={false} defaultSection="agents-providers" onOpenChange={() => {}} />);
+  expect(screen.getByTestId("credit-refresh-scope").dataset.enabled).toBe("false");
 });
