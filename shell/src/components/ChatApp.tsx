@@ -1,4 +1,5 @@
 "use client";
+import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
 import { WebChatRailControls } from "./chat/WebChatRailControls";
 import { ChatRailOrderContext, ChatRailOrderItem } from "@matrix-os/ui";
@@ -300,6 +301,7 @@ function ChatAppContent({
   const botComposerControls = directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={agentClient} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision} zIndex={SHELL_Z_INDEX.popover} onChanged={() => setBotModelRevision(value => value + 1)}/> : undefined;
   const botExecution = useBotExecution(directBotId, summaryClient, providerState.catalog, (botEventRevision ?? 0) + botModelRevision);
   const botPresentation = botExecution.presentation;
+  const attachmentPolicy = shellChatAttachmentPolicy(providerState.catalog, directBotId ? botExecution.agent?.selection : providerState.selected ? { instanceId: providerState.selected.instanceId, model: providerState.selected.modelId } : undefined, botPresentation?.kind === "recipe");
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const slashInstance = !botIdentityUnknown && !directBotId ? providerState.activeInstance ?? undefined : undefined;
   const slashCatalogLoading = botBinding.loading || providerState.loading;
@@ -657,7 +659,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/></div><EmptyState
-            composerProps={{ slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             suggestions={suggestions}
@@ -666,7 +668,7 @@ function ChatAppContent({
             onComposerDraftConsumed={consumeDraftRequest}
             modelLabel={directBotId ? null : providerState.selected?.modelLabel ?? null}
             providerReady={providerReady}
-            attachmentsEnabled={!botIdentityUnknown && !directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
+            attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -754,6 +756,7 @@ function ChatAppContent({
                 </div>
               )}
               <ChatInput
+                attachmentPolicy={attachmentPolicy.error}
                 slashInstance={slashInstance}
                 slashCatalogLoading={slashCatalogLoading}
                 botContext={Boolean(directBotId)}
@@ -771,7 +774,7 @@ function ChatAppContent({
                 unavailablePlaceholder={!providerState.loading && !providerReady
                   ? "Write or dictate a draft — connect a harness to send"
                   : undefined}
-                attachmentsEnabled={!botIdentityUnknown && !directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
+                attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
               />
             </div>
           </div>
@@ -800,7 +803,7 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "attachmentPolicy">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   suggestions: string[];

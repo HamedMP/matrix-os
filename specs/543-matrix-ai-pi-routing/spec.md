@@ -31,7 +31,8 @@ projects and worktrees beneath the fixed `projects/` and `worktrees/` home direc
 arbitrary folder projects outside those roots remain unavailable for this route.
 Artifacts remain root-scoped.
 Reading is supported; full-access writes create files exclusively. Overwriting existing
-files and managed Chat image attachments are explicitly unavailable in this increment.
+files remain unavailable. Managed Chat attachments were unavailable in the initial
+increment; spec 550 adds explicitly admitted images/files without broadening mounts.
 
 ## Managed Pi sandbox contract
 
@@ -126,7 +127,8 @@ obtain exact-head Greptile 5/5 and green CI before merging PR #2117. Automated
 faux-provider tests prove wiring; they do not prove deployed paid inference.
 
 Deferred: broader Hermes migration, arbitrary provider routes, full filesystem editing,
-managed attachments, fleet promotion, credit grants, and automatic pricing renewal.
+fleet promotion, credit grants, and automatic pricing renewal. Managed attachments
+are governed by spec 550 rather than this initial deferral.
 
 ## Runtime and presentation boundary regressions
 

@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod/v4";
 import type { AiProviderSnapshotReader } from "./service.js";
+import { projectConnectionModelInputs } from "./connection-model-input-projection.js";
 
 const ProviderQuerySchema = z.object({
   includeNativeProfiles: z.enum(["true", "false"]).optional(),
@@ -36,7 +37,7 @@ export function createAiProviderRoutes(options: {
       const { matrixAnthropicConnection, ...baseSnapshot } = internalSnapshot;
       const snapshot = {
         ...baseSnapshot,
-        ...(query.data.includeMatrixAnthropicConnection === "true" && options.canReadMatrixConnections?.(context) === true && matrixAnthropicConnection ? { matrixAnthropicConnection } : {}),
+        ...(query.data.includeMatrixAnthropicConnection === "true" && options.canReadMatrixConnections?.(context) === true && matrixAnthropicConnection ? { matrixAnthropicConnection: projectConnectionModelInputs(matrixAnthropicConnection) } : {}),
         accessSources: internalSnapshot.accessSources.map(legacyReadiness),
         accounts: internalSnapshot.accounts.map(legacyReadiness),
         instances: internalSnapshot.instances.map(instance => ({ ...instance, readiness: legacyReadiness(instance.readiness) })),
