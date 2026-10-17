@@ -1,11 +1,13 @@
 import type { createGenericNativeWriter, GenericNativeWriterProfile } from "./generic-native-writer.js";
 import type { createHermesSettingsConnection } from "./hermes-settings-auth.js";
+import type { NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
 import { nativeWorkflowConnectionOptions } from "./native-workflow-options.js";
 import { observeNativeCommandCompletion } from './native-command-completion.js';
 import { authenticatedNativeHarness } from "./native-workflow-account.js";
 import type { createPiSettingsConnection } from "./pi-settings-auth.js";
 import type { createOpenClawSettingsConnection } from "./openclaw-settings-auth.js";
 import type { createOpenCodeSettingsConnection } from "./opencode-settings-auth.js";
+import type { createCodexSettingsConnection } from "./codex-settings-connection.js";
 import type { createClaudeSettingsLogin } from "./provider-workflow-browser.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import type { ProviderKeyVerifier } from "./provider-workflow-key.js";
@@ -35,9 +37,11 @@ export async function createNativeProviderWorkflowAdapters(options: {
   terminal: Pick<TerminalRuntimeSocketClient, 'ensureWorkspace' | 'createTab' | 'terminateTab' | 'attach' | 'listWorkspaces'>
     & Partial<Pick<TerminalRuntimeSocketClient, 'getCommandResult'>>;
   runtimePrefix?: string;
+  onLoginSucceeded?: (harness: 'claude' | 'codex') => void;
   hermesCodexReuse?: () => Promise<void>;
   hermesConnection?: ReturnType<typeof createHermesSettingsConnection>;
   claudeBrowserLogin?: ReturnType<typeof createClaudeSettingsLogin>;
+  codexSettingsConnection?: ReturnType<typeof createCodexSettingsConnection>;
   piConnection?: ReturnType<typeof createPiSettingsConnection>;
   openclawConnection?: ReturnType<typeof createOpenClawSettingsConnection>;
   opencodeConnection?: ReturnType<typeof createOpenCodeSettingsConnection>;
@@ -114,21 +118,25 @@ export async function createNativeProviderWorkflowAdapters(options: {
     const packageName = harness.harness in packages ? packages[harness.harness as keyof typeof packages] : null;
     const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && (harness.harness === 'claude' || harness.harness === 'codex') && snapshot.access.mode === 'writable';
     const canBrowserLogin = canLogin && harness.harness === 'claude' && !!options.claudeBrowserLogin;
+    const canDeviceLogin = canLogin && harness.harness === 'codex' && !!options.store.completeCodexNativeLogin
+      && await options.codexSettingsConnection?.available() === true;
     const system = harness.harness === 'hermes' || harness.harness === 'openclaw';
     const keyAdapter = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
     const loginMethods: NonNullable<ProviderWorkflowStart['method']>[] = [
       ...(canBrowserLogin ? ['browser' as const] : []),
+      ...(canDeviceLogin ? ['device_code' as const] : []),
       ...(canLogin ? ['terminal' as const] : []),
     ];
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
       ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
-    const confirmNativeLogin = async (idempotencyKey: string, startRevision?: number, current = () => true) => {
+    const confirmNativeLogin = async (idempotencyKey: string, startRevision?: number, current = () => true, verifyNativeAccount?: NativeAccountCompletionProof) => {
       const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
       if (!current()) throw new ProviderWorkflowError('unavailable');
       if (harness.harness === 'codex') {
         if (startRevision === undefined || fresh.revision !== startRevision || fresh.access.mode !== 'writable' || !options.store.completeCodexNativeLogin) throw new ProviderWorkflowError('unavailable');
         await options.store.completeCodexNativeLogin({ harnessInstanceId: harness.id, expectedRevision: startRevision,
-          idempotencyKey: `connect-${createHash('sha256').update(idempotencyKey).digest('hex')}` });
+          idempotencyKey: `connect-${createHash('sha256').update(idempotencyKey).digest('hex')}`, ...(verifyNativeAccount ? { verifyNativeAccount } : {}) });
+        options.onLoginSucceeded?.('codex');
         return;
       }
       const exact = authenticatedNativeHarness(fresh, harness.id, harness.harness);
@@ -148,12 +156,23 @@ export async function createNativeProviderWorkflowAdapters(options: {
         await enableConnectedKey(harness.id, `key-connect-${randomUUID()}`, key.providerId);
       } } : {}),
       async start({ request, connectionOption, publish, registerCleanup }) {
-        // Embedded Codex auth remains excluded; only official owner CLI handoff is admitted.
-        if (request.kind === 'login' && harness.harness !== 'claude' && !(harness.harness === 'codex' && request.method === 'terminal')) throw new ProviderWorkflowNotStartedError();
+        // Codex admits only the qualified official native protocol or Terminal handoff.
+        if (request.kind === 'login' && harness.harness !== 'claude' && !(harness.harness === 'codex' && (request.method === 'terminal' || request.method === 'device_code' && canDeviceLogin))) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && (!request.method || !loginMethods.includes(request.method))) throw new ProviderWorkflowNotStartedError();
         if (connectionOption && (connectionOption.availability !== "available" || connectionOption.providerId !== (harness.harness === "claude" ? "anthropic" : "openai"))) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription' || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && request.method === 'terminal' && typeof options.terminal.getCommandResult !== 'function') throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && request.method === 'device_code') {
+          if (harness.harness !== 'codex' || !canDeviceLogin || !options.codexSettingsConnection) throw new ProviderWorkflowNotStartedError();
+          const fresh = await options.store.getSnapshot();
+          const exact = fresh.harnesses.find(row => row.id === harness.id && row.harness === 'codex');
+          if (!exact || exact.installState !== 'installed' || fresh.access.mode !== 'writable') throw new ProviderWorkflowNotStartedError();
+          return options.codexSettingsConnection.start({ publish, registerCleanup,
+            onSuccess: proof => {
+              if (!proof) throw new ProviderWorkflowError("unavailable");
+              return confirmNativeLogin(request.idempotencyKey, fresh.revision, () => true, proof);
+            } });
+        }
         if (request.kind === 'login' && request.method === 'browser') {
           if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
           return options.claudeBrowserLogin({ publish, registerCleanup, onSuccess: async () => {
@@ -295,8 +314,11 @@ export async function createNativeProviderWorkflowAdapters(options: {
           completionAbort.abort();
           commandCompletion?.stop();
           try {
-            if (finishTask) { await finishTask; return; }
-            await terminate();
+            // finish may yield to cancellation while releasing its profile lease.
+            // Await the confirmed exit, then drain any resources it left behind.
+            if (finishTask) await finishTask;
+            else await terminate();
+            if (stopped) return;
             stopped = true;
             if (timer) clearTimeout(timer);
             stream?.close();

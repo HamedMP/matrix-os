@@ -3492,7 +3492,13 @@ describe("platform proxy routing", () => {
     expect(html).toContain("var billingSetupTarget = ");
     expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
-    expect(html).toContain("window.location.replace(provisioningAccepted ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
+    expect(html).toContain("var preserveExplicitVmReturn = false;");
+    const sessionRedirect = /window\.location\.replace\((provisioningAccepted[^\n]+)\);/.exec(html)?.[1];
+    expect(sessionRedirect).toBeDefined();
+    expect(runInNewContext(sessionRedirect!, {
+      provisioningAccepted: false, preserveExplicitVmReturn: false,
+      deviceReturnTarget: "/auth/device?user_code=BCDF-GHJK", payload: { redirectTo: "/runtime" }, redirectTarget: "/",
+    })).toBe("/auth/device?user_code=BCDF-GHJK");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toBe("auth shell");

@@ -27,6 +27,8 @@ Use an explicit operation-local observation/context or typed result carried thro
 
 Diagnostics contain only finite allowlisted phase/category, bounded timestamp, fresh random correlation ID, optional finite allowlisted HTTP status and equality booleans actually compared during the natural operation. Missing comparison is omitted. Never include raw exception name/message, path, URL, headers/body, token material, account label, identity tuple or user content. Map unknown errors to a fixed category; do not infer an upstream cause. Annotating vault phases preserves existing protection/owner/cleanup and error semantics without replaying work.
 
+Every status-failure envelope emits one main-process warning using only its strict-schema validated phase, category and correlation ID. Do not log the original exception or arbitrary metadata. Successful status and caught partial status results retain their existing logging behavior without a duplicate IPC warning or another status operation.
+
 Pre/post current-client and abort guards precede all response/diagnostic consumption. A late response or failure from an old identity cannot return a status, replace the current error, retain diagnostic metadata or perform callbacks. Bound retained client metadata to one receipt; discard on success or client invalidation/unmount. No new timer, unbounded collection, persistent log or credential store is required.
 
 ## Cached connection details

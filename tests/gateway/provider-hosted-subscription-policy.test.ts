@@ -25,9 +25,16 @@ function registryFixture() {
   return { create: vi.fn(), get: vi.fn(), delete: vi.fn(), rename: vi.fn(), observeAgentLiveness: vi.fn() };
 }
 describe('embedded Codex subscription exclusion', () => {
-  it('does not turn stale registry methods into subscription options; API keys remain available', () => {
-    expect(nativeWorkflowConnectionOptions({ harness: 'codex', methods: [...methods], keyProviders: ['openai'] }))
+  it('excludes unsupported browser and legacy methods while retaining API keys', () => {
+    expect(nativeWorkflowConnectionOptions({ harness: 'codex', methods: ['browser', 'existing_codex'], keyProviders: ['openai'] }))
       .toEqual([expect.objectContaining({ id: 'openai_api_key', authKind: 'api_key', availability: 'available' })]);
+  });
+  it('projects the qualified native device-code method without restoring browser or legacy login', () => {
+    expect(nativeWorkflowConnectionOptions({ harness: 'codex', methods: [...methods], keyProviders: ['openai'] }))
+      .toEqual([
+        expect.objectContaining({ id: 'openai_device_code', method: 'device_code', authKind: 'subscription', availability: 'available' }),
+        expect.objectContaining({ id: 'openai_api_key', authKind: 'api_key', availability: 'available' }),
+      ]);
   });
   it('retains existing native account state and API key verification while denying every login entry point', async () => {
     const f = nativeFixture();

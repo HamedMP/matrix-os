@@ -8,18 +8,18 @@ Restore the owner-initiated native Codex subscription entry under Coding agents 
 
 Preserve legacy native profile IDs and owner intent. Native subscription calls fail closed on changed owner, account, Computer, credential generation, expiry, revocation or uncertain recovery. No automatic API-key or Matrix-credit fallback and no whole revert of #2198.
 
-## Native CLI and embedded authentication
+## Native CLI and Settings authentication
 
 [Official Codex authentication](https://learn.chatgpt.com/docs/auth#login-on-headless-devices) documents owner-operated remote/headless `codex login --device-auth`. The native entry opens this official CLI flow in the selected Computer's Terminal; Codex owns its credential lifecycle. Matrix AI's SIWC registration is not a universal prerequisite for this native CLI flow.
 
-[App-server authentication](https://learn.chatgpt.com/docs/app-server#auth-endpoints) separately describes local/open-source application authentication and excludes commercial/hosted service authentication from that path. Do not restore the removed embedded app-server browser/device-code login, reuse Matrix AI tokens, or present Terminal as a way to evade an excluded integration. This change does not establish vendor qualification for every service composition. Any separately proposed hosted OAuth integration must follow its actual supported provider contract.
+The authorized [native Settings device-code restoration](./native-codex-settings-device-login.md) supersedes the earlier Terminal-only restriction for the owner-scoped official app-server workflow. Its public protocol is qualified against official Codex 0.156.1 and 0.162.1 source/generated schemas and the exact retained published 0.163.0 schema. Preserve independent credential custody and every native principal/completion guard. This does not authorize Matrix AI token reuse or establish qualification for unrelated hosted OAuth compositions; those require their own supported provider contract.
 
 [SIWC plan usage](https://learn.chatgpt.com/siwc/token-sharing-open-source) and the [owner self-hosted VM guide](https://learn.chatgpt.com/siwc/token-sharing-open-source/self-hosted-vms) describe separate integrations; neither is a requirement to replace every native CLI account. Do not infer a policy change date from #2198 or require the user to supply a registration merely because it was not found in the repository.
 
 ## Foreground login contract
 
 1. Require the current authenticated writable Computer owner and an installed exact native Codex harness. Use its runtime-owned HOME and profile writer fencing.
-2. Publish terminal-only Codex login and the explicit `openai_terminal` native subscription option. Backend, V1/V2 capability, direct coordinator and shared UI agree. Embedded browser/device-code and stale injected options stay unavailable.
+2. Publish the explicit `openai_terminal` fallback and the exact qualified Settings device-code option under the restoration contract. Backend, V1/V2 capability, coordinator and shared UI agree; stale or unqualified injected options stay unavailable.
 3. Preserve existing credentials. Native CLI login can clear prior credentials before consent; an already connected profile must not be silently replaced. Reuse only an independently verified exact native subscription account; changing accounts requires the explicit native sign-out lifecycle. Ambiguous status never authorizes a new login or completion.
 4. A successful process exit or generic authenticated flag is insufficient. Require fresh privately bound native principal, current source/account/model and owner identity.
 5. Complete the exact fixed-native selection through a private serialized store operation and the production coordinator. Check revision, recheck identity before persistence and compensate admitted runtime changes on failure. Never enable whichever key/funded source was previously selected.
@@ -66,9 +66,9 @@ inference acceptance.
 
 | Path | Authority | Required behavior |
 | --- | --- | --- |
-| V1/V2 native Terminal workflow | Current writable Computer owner, installed native harness and profile lease | Official owner CLI handoff only; reject embedded or forged methods |
+| V1/V2 native login workflow | Current writable Computer owner, qualified installed native harness and profile lease | Official Terminal fallback or qualified Settings device-code flow; reject forged methods |
 | Private native completion | Foreground coordinator plus fresh privately bound native identity | Exact revisioned source/account selection; no renderer proof |
-| Direct Settings/Terminal login | Same owner, harness and writer authority | No alternate embedded OAuth path or implicit account replacement |
+| Direct Settings/Terminal login | Same owner, harness and writer authority | Qualified official native flow only; no implicit account replacement |
 | Existing `POST /api/sessions` native Codex start | Authenticated request principal, existing project authority and current native owner consent | Shared start reservation, exact registered intent and shared logout runtime; no dispatch while Off or unconfirmed |
 | Native launch/turn/steer/approval/input/defer | Current exact owner/Computer/source/account/generation | Identity drift and revoke deny continuation; no key/funded fallback |
 | Native logout/removal | Exact current native principal under writer lease | Independent lifecycle; stale account cannot log out a replacement |
@@ -78,7 +78,7 @@ No new public endpoint is required. Existing route authentication, body limits, 
 
 ## Validation and delivery
 
-Write targeted failing tests before each change. Cover current terminal capability and actual handoff, stale embedded methods, existing account preservation, exact native completion with a saved key route, unrelated Matrix AI account, wrong owner/source/model, principal drift, revision conflict, replay after Off and coordinator compensation. Exercise real production store/facade/coordinator seams rather than a stub claiming support.
+Write targeted failing tests before each change. Cover qualified Settings and Terminal capability with actual handoff, stale unqualified methods, existing account preservation, exact native completion with a saved key route, unrelated Matrix AI account, wrong owner/source/model, principal drift, revision conflict, replay after Off and coordinator compensation. Exercise real production store/facade/coordinator seams rather than a stub claiming support.
 
 Test native launch, turn, steer, expiry/revoke and changed account generation with no key/Matrix-credit fallback. Cover independent native/Matrix AI revoke and legacy accounts. Shared UI must preserve equivalent semantics across Web Canvas, Web Desktop and Electron Desktop and applicable mobile. Claude and API-key behavior remain compatible.
 

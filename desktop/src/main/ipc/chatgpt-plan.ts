@@ -1,9 +1,17 @@
 import { createPlanStatusObservation } from '../chatgpt-plan/status-diagnostics';
-import { CHATGPT_PLAN_INVOKE, ChatgptPlanStatusSchema } from '../../shared/chatgpt-plan-ipc';
+import { CHATGPT_PLAN_INVOKE, ChatgptPlanStatusSchema, type ChatgptPlanDiagnostic } from '../../shared/chatgpt-plan-ipc';
 import type { createNativeChatgptPlanService } from '../chatgpt-plan/service';
 type Service = ReturnType<typeof createNativeChatgptPlanService>;
 interface Main {
     handle(channel: string, listener: (event: unknown, input: unknown) => Promise<unknown>): void;
+}
+function statusFailure(diagnostic: ChatgptPlanDiagnostic) {
+    const result = CHATGPT_PLAN_INVOKE['chatgpt-plan:status'].response.parse({ kind: 'status_failure', diagnostic });
+    if ('kind' in result && result.kind === 'status_failure') {
+        const { phase, category, correlationId } = result.diagnostic;
+        console.warn('[chatgpt-plan] Status operation failed', { phase, category, correlationId });
+    }
+    return result;
 }
 /** This capability is main-frame only; apps/embeds never receive subscription authority. */
 export function registerChatgptPlanIpc(ipc: Main, service: Service, isTrusted: (event: unknown) => boolean) {
@@ -24,15 +32,11 @@ export function registerChatgptPlanIpc(ipc: Main, service: Service, isTrusted: (
                 try {
                     const value = await service.status(parsed.data, observation);
                     const result = ChatgptPlanStatusSchema.safeParse(value);
-                    if (!result.success) return CHATGPT_PLAN_INVOKE[channel].response.parse({
-                        kind: 'status_failure', diagnostic: observation.fail(result.error, 'response_schema'),
-                    });
+                    if (!result.success) return statusFailure(observation.fail(result.error, 'response_schema'));
                     return CHATGPT_PLAN_INVOKE[channel].response.parse(observation.diagnostic
                         ? { kind: 'status_result', status: result.data, diagnostic: observation.diagnostic } : result.data);
                 } catch (error: unknown) {
-                    return CHATGPT_PLAN_INVOKE[channel].response.parse({
-                        kind: 'status_failure', diagnostic: observation.diagnostic ?? observation.fail(error, 'status'),
-                    });
+                    return statusFailure(observation.diagnostic ?? observation.fail(error, 'status'));
                 }
             }
             try {

@@ -135,7 +135,11 @@ export function supplementPrivateComputers(
   const selectedSlot = [canonical.selectedSlot, profileSlot && isPrivatePreviewHandle(profileSlot) ? profileSlot : null]
     .find((slot) => slot && items.some((item) => item.runtimeSlot === slot)) ?? null;
   const selected = items.find((item) => item.runtimeSlot === selectedSlot);
-  const ordered = selected ? [selected, ...items.filter((item) => item !== selected)] : items;
+  const remaining = items.filter((item) => item !== selected);
+  // Fresh owner-private choices must survive a full canonical page. The
+  // selected computer wins at limit1; other canonical choices keep their order.
+  const freshPrivate = remaining.filter((item) => privateComputers.some((candidate) => candidate.runtimeSlot === item.runtimeSlot));
+  const ordered = [...(selected ? [selected] : []), ...freshPrivate, ...remaining.filter((item) => !freshPrivate.includes(item))];
   return {
     items: ordered.slice(0, canonical.limit), selectedSlot,
     limit: canonical.limit, hasMore: canonical.hasMore || ordered.length > canonical.limit,

@@ -51,6 +51,10 @@ selection, cancellation waits for that result: preserve committed success rather
 than label it cancelled. Later owner Off and source/account drift retain their
 existing revision protections. Never enable an unrelated key/funded source.
 
+Cancellation that awaits an observed command exit must still drain any remaining
+attachment and deadline timer if completion yielded during profile release.
+Already settled completion must not close or release those resources twice.
+
 ## Validation and rollout
 
 Formal REDs cover transient key classification and actual TerminalRuntime with

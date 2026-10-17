@@ -94,6 +94,39 @@ describe("normal owner-private computer discovery", () => {
     expect((await deduped.listRuntimeComputers()).items).toHaveLength(2);
   });
 
+  it.each([10, 20])("keeps a fresh private choice reachable behind a full %s-item canonical page", async (limit) => {
+    const additionalCustomer = { ...main, runtimeSlot: "secondary", gatewayPath: "/vm/owner?runtime=secondary" };
+    const previews = Array.from({ length: limit - 2 }, (_, index) => ({
+      ...main, handle: `review-${index}`, runtimeSlot: `review-${index}`, kind: "preview", label: "Preview Computer",
+      gatewayPath: `/vm/review-${index}?runtime=review-${index}`,
+    }));
+    const canonical = { ...inventory, items: [main, additionalCustomer, ...previews], limit };
+    const { auth } = service(transport(async () => json({ privatePreviews: [row, row] }), canonical)); await auth.init();
+    const result = await auth.listRuntimeComputers();
+    expect(result.items.map((item) => item.runtimeSlot)).toEqual([
+      "primary", SLOT, "secondary", ...previews.slice(0, -1).map((item) => item.runtimeSlot),
+    ]);
+    expect(result.items).toHaveLength(limit); expect(result.selectedSlot).toBe("primary"); expect(result.hasMore).toBe(true);
+    expect(result.items.filter((item) => item.runtimeSlot === SLOT)).toHaveLength(1);
+    expect(result.items[2]).toEqual(additionalCustomer);
+  });
+
+  it("keeps the selected customer when limit one cannot also fit a fresh private choice", async () => {
+    const canonical = { ...inventory, limit: 1 };
+    const { auth } = service(transport(async () => json({ privatePreviews: [row] }), canonical)); await auth.init();
+    expect(await auth.listRuntimeComputers()).toEqual({ ...canonical, hasMore: true });
+  });
+
+  it.each([403, 503])("preserves a full canonical page when private admission is unavailable (%s)", async (status) => {
+    const items = [main, ...Array.from({ length: 19 }, (_, index) => ({
+      ...main, handle: `review-${index}`, runtimeSlot: `review-${index}`, kind: "preview", label: "Preview Computer",
+      gatewayPath: `/vm/review-${index}?runtime=review-${index}`,
+    }))];
+    const canonical = { ...inventory, items };
+    const { auth } = service(transport(async () => json({}, status), canonical)); await auth.init();
+    expect(await auth.listRuntimeComputers()).toEqual(canonical);
+  });
+
   it("keeps canonical private capability/version/availability projection after fresh owner admission", async () => {
     const privateComputer = { ...main, handle: SLOT, runtimeSlot: SLOT, label: "Preview Computer", kind: "preview", availability: "unavailable", versionLabel: "dev", capabilities: ["chat"], gatewayPath: `/vm/${SLOT}?runtime=${SLOT}` };
     const { auth } = service(transport(async () => json({ privatePreviews: [row] }), { ...inventory, items: [main, privateComputer] })); await auth.init();

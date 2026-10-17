@@ -41,10 +41,16 @@ it("does not start or continue login for read-only users", async () => {
   expect(button).toBeDisabled(); fireEvent.click(button);
   expect(open).not.toHaveBeenCalled(); expect(client.startConnection).not.toHaveBeenCalled();
 });
-it.each(["browser", "device_code", "existing_codex"] as const)("filters embedded %s methods even beside a current terminal option", method => {
-  const filtered = managedConnectionCapability({ ...capability, loginMethods: [method, "terminal"], connectionOptions: [option, { ...option, id: `openai_${method}`, method }] });
+it.each(["browser", "device_code", "existing_codex"] as const)("filters unsupported or legacy %s options even beside a current terminal option", method => {
+  const filtered = managedConnectionCapability({ ...capability, loginMethods: [method, "terminal"], connectionOptions: [option, { ...option, id: method === "device_code" ? "legacy_device_code" : `openai_${method}`, method }] });
   expect(filtered.loginMethods).toEqual(["terminal"]);
   expect(filtered.connectionOptions).toEqual([option]);
+});
+it("retains the exact current native device-code option independently alongside Terminal", () => {
+  const device = { ...option, id: "openai_device_code", method: "device_code" } as const;
+  const filtered = managedConnectionCapability({ ...capability, loginMethods: ["device_code", "terminal"], connectionOptions: [device, option] });
+  expect(filtered.loginMethods).toEqual(["device_code", "terminal"]);
+  expect(filtered.connectionOptions).toEqual([device, option]);
 });
 it.each([
   { connectionOptions: undefined },

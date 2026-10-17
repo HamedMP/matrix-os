@@ -241,11 +241,17 @@ export class AuthService {
           handle: token.handle,
         };
         let runtimeSlot = token.runtimeSlot ?? this.profile?.runtimeSlot ?? "primary";
+        let privateLeaseExpiresAt: number | undefined;
+        const isCurrentFlow = () => nonce === this.flowNonce
+          && (privateLeaseExpiresAt === undefined || privateLeaseExpiresAt > this.now());
         if (!token.runtimeSlot && runtimeSlot !== "primary") {
           let verifiedCustomer = false;
           try {
-            credential = await this.exchangeRuntimeCredential(credential, runtimeSlot, () => nonce === this.flowNonce,
-              (admission) => { verifiedCustomer = admission.kind === "customer"; });
+            credential = await this.exchangeRuntimeCredential(credential, runtimeSlot, isCurrentFlow,
+              (admission) => {
+                verifiedCustomer = admission.kind === "customer";
+                privateLeaseExpiresAt = admission.kind === "private" ? admission.expiresAt : undefined;
+              });
           } catch (err: unknown) {
             if (nonce !== this.flowNonce) return;
             // A private restore needs fresh owner/member/lease evidence. Never
@@ -259,7 +265,6 @@ export class AuthService {
           }
         }
         if (nonce !== this.flowNonce) return;
-        this.replaceCredential(credential);
         const profile: ConnectionProfile = {
           handle: credential.handle,
           userId: token.userId,
@@ -269,40 +274,51 @@ export class AuthService {
           ...(token.imageUrl ? { imageUrl: token.imageUrl } : {}),
           ...(token.email ? { email: token.email } : {}),
         };
-        this.profile = profile;
-        try {
+        const discardInvalidPersistence = async () => {
+          await this.clearStaleFlowPersistence();
+          if (nonce === this.flowNonce) throw new DeviceFlowError("expired");
+        };
+        const persist = async () => {
           if (nonce !== this.flowNonce) return;
-          await this.deps.credentialStore.save(credential);
-          if (nonce !== this.flowNonce) {
-            await this.clearStaleFlowPersistence();
-            return;
+          if (!isCurrentFlow()) throw new DeviceFlowError("expired");
+          try {
+            await this.deps.credentialStore.save(credential);
+          } catch (err: unknown) {
+            console.warn(
+              "[auth] failed to persist credential:",
+              err instanceof Error ? err.message : String(err),
+            );
           }
-        } catch (err: unknown) {
-          console.warn(
-            "[auth] failed to persist credential:",
-            err instanceof Error ? err.message : String(err),
-          );
+          if (!isCurrentFlow()) { await discardInvalidPersistence(); return; }
+          try {
+            await this.deps.saveProfile(profile);
+          } catch (err: unknown) {
+            console.warn(
+              "[auth] failed to persist profile:",
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+          if (!isCurrentFlow()) { await discardInvalidPersistence(); return; }
+          if (privateLeaseExpiresAt !== undefined) {
+            // Private authority stays staged until both persistence boundaries
+            // settle with the same flow and an unexpired admitted lease.
+            this.replaceCredential(credential);
+            this.profile = profile;
+          }
+          this.flowState = "authorized";
+          this.pendingDeviceCode = null;
+          this.deps.onAuthChanged(this.getStatus());
+        };
+        if (privateLeaseExpiresAt !== undefined) await this.runPersistence(persist);
+        else {
+          // A newer flow must not persist ahead of an older private restore's
+          // cleanup or queued sign-out. Legacy persistence remains best-effort.
+          await this.persistenceTail;
+          if (nonce !== this.flowNonce) return;
+          this.replaceCredential(credential);
+          this.profile = profile;
+          await persist();
         }
-        try {
-          if (nonce !== this.flowNonce) {
-            await this.clearStaleFlowPersistence();
-            return;
-          }
-          await this.deps.saveProfile(profile);
-          if (nonce !== this.flowNonce) {
-            await this.clearStaleFlowPersistence();
-            return;
-          }
-        } catch (err: unknown) {
-          console.warn(
-            "[auth] failed to persist profile:",
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-        if (nonce !== this.flowNonce) return;
-        this.flowState = "authorized";
-        this.pendingDeviceCode = null;
-        this.deps.onAuthChanged(this.getStatus());
       })
       .catch((err: unknown) => {
         if (nonce !== this.flowNonce) return;
