@@ -27,6 +27,12 @@ export async function authorizeSharedBrowserAction(policy: SharedBrowserSupervis
       });
     }).then(resolve, reject).finally(() => request.signal.removeEventListener("abort", abort));
     if (request.signal.aborted) abort();
+  }).catch((error: unknown) => {
+    // This boundary has not called Chrome. Storage/proof failures must not be
+    // classified as physical driver failures or carry a dispatched marker.
+    if (error instanceof SharedBrowserError) throw new SharedBrowserError(error.code === "browser_unavailable" ? "browser_changed" : error.code);
+    console.warn("[shared-browser-approval] Authorization unavailable", error instanceof Error ? error.name : "UnknownError");
+    throw new SharedBrowserError("browser_changed");
   });
   if (request.signal.aborted) throw new SharedBrowserError("browser_changed");
 }
