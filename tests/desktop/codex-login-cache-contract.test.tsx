@@ -27,6 +27,11 @@ const ready = CanonicalProviderCatalogSchema.parse({ ...seed,
     { ...row, id: "unrelated_claude", driverKind: "claude_code", defaultSelection: { ...row.defaultSelection, instanceId: "unrelated_claude" } },
     { ...row, id: "independent_device_plan", driverKind: "pi", defaultSelection: { ...row.defaultSelection, instanceId: "independent_device_plan" } }],
 });
+const signedOut = CanonicalProviderCatalogSchema.parse({ ...ready, instances: ready.instances.map(instance => {
+  if (instance.driverKind !== "codex") return instance;
+  const { defaultSelection: _selection, ...rest } = instance;
+  return { ...rest, availability: "auth_required" };
+}) });
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (error: Error) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
@@ -44,7 +49,7 @@ async function boundary() {
   let catalogReads = 0;
   const get = vi.fn((path: string) => {
     trace.push(path);
-    if (path.startsWith("/api/chat-providers?")) return ++catalogReads === 2 ? catalogRead.promise : Promise.resolve(ready);
+    if (path.startsWith("/api/chat-providers?")) return ++catalogReads === 2 ? catalogRead.promise : Promise.resolve(catalogReads === 1 ? signedOut : ready);
     if (path === "/api/ai/provider-settings/workflows/v2/native_codex_receipt") return completion.promise;
     throw new Error(`Unexpected synthetic route: ${path}`);
   });
@@ -76,6 +81,7 @@ async function boundary() {
 
 it("reprojects only native Codex routes before advisory Settings settles and makes mounted Chat ready without reopening", async () => {
   const b = await boundary();
+  expect(b.chat.result.current.catalog.instances[0]!.availability).toBe("auth_required");
   await act(async () => b.completion.resolve(receipt));
   expect(b.readCount()).toBe(2);
   expect(useConnection.getState().providerCatalogAffectedInstanceIds).toEqual(["codex_fixture", "native_codex_second"]);
@@ -92,6 +98,7 @@ it("reprojects only native Codex routes before advisory Settings settles and mak
 
 it("retains a confirmed Codex catalog refresh when only advisory Settings fails", async () => {
   const b = await boundary();
+  expect(b.chat.result.current.catalog.instances[0]!.availability).toBe("auth_required");
   await act(async () => b.completion.resolve(receipt));
   await act(async () => b.advisory.reject(new Error("Synthetic advisory failure")));
   expect(b.controller.getState().error).toBe("Provider settings are unavailable.");
