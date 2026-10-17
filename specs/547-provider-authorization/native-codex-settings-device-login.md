@@ -52,3 +52,30 @@ TDD must exercise three public seams: the verified app-server request/event prot
 Combine the existing pending private-inventory cap correction into one final local independent review and commit. Run focused tests, affected type checks and lint. Then prepare matching Electron Desktop and existing Preview host artifacts through supported installation paths, keeping provenance and installation separate from source-test evidence. Actual OAuth and a real model reply remain separate coordinated acceptance gates.
 
 The authorized order is local implementation/tests/check → matching client/host live tests → user review → Greptile/CI/publication after that review. No intermediate push, paid review, full CI, new VM or Main change is authorized. Retain the existing Preview budget and cleanup deadline. Include a separate public documentation PR in `FinnaAI/matrix-os-site` as a delivery follow-up; this local phase does not publish it.
+
+
+## Immediate canonical identity after a signed-out read
+
+A normal signed-out metadata observation can precede successful native device
+completion by less than five seconds. Its ordinary quota cooldown is not evidence
+that the newly completed account is unavailable. Canonical completion uses the
+server-only metadata read purpose `native_completion`; no public DTO or caller
+assertion can select this mode. Other reads retain the existing quota cooldown.
+
+The completion read drains any preceding ordinary and identity observation,
+coalesces concurrent completion requests, then observes fresh identity without
+`account/rateLimits/read`. It retains the unconfirmed-child-exit fence and the
+same current file authority, account principal, generation, timestamp and private
+binding verification. Only the existing private completion path requests it;
+revision, saved Off, exact source eligibility, expected native proof and pre-save
+rechecks remain unchanged. A bound fresh identity may replace the reader cache
+so the subsequent ordinary receipt reflects the committed account without a new
+quota probe. Failed or uncertain reads never become authenticated evidence.
+
+Regression evidence uses a fixed clock at100ms after signed-out observation,
+including real production HTTP/store completion; ordinary calls remain throttled
+at4999ms and may query quota at5000ms. Additional cases cover pending process
+cleanup, concurrent completions, stale pre-completion verification, changed file
+generation and an unconfirmed exit. These are synthetic checks, not real OAuth
+or model acceptance. Any earlier0eb8ac QA client remains an immutable older
+artifact after this Gateway-only fix; do not relabel or rebuild it implicitly.

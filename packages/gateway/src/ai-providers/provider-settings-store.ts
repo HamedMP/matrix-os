@@ -5,7 +5,7 @@ import { readVerifiedClaudeNativeSignedOut, type ClaudeNativeSignedOut } from ".
 import type { ClaudeNativeAccountMetadata, ClaudeNativeAccountMetadataReader } from "./claude-native-account-metadata.js";
 import { renewProviderSettingsNativeObservation } from "./provider-settings-native-renewal.js";
 import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
-import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
+import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
 import { randomUUID } from "node:crypto";
@@ -88,7 +88,7 @@ interface ProviderSettingsStoreOptions {
   observationScope?: () => "canonical_matrix" | undefined;
   prepareNativeCodexRevocation?: () => Promise<() => Promise<void>>;
   claudeNativeAccountMetadataReader?: ClaudeNativeAccountMetadataReader;
-  codexNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
+  codexNativeAccountMetadataReader?: CodexNativeAccountMetadataReader;
   hermesNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
   homePath: string;
   providerSnapshotReader: CanonicalProviderSnapshotReader;
@@ -111,7 +111,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #reader: CanonicalProviderSnapshotReader;
   readonly #prepareNativeCodexRevocation?: () => Promise<() => Promise<void>>;
   readonly #claudeAccountMetadata?: ClaudeNativeAccountMetadataReader;
-  readonly #nativeAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
+  readonly #nativeAccountMetadata?: CodexNativeAccountMetadataReader;
   readonly #hermesAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
   readonly #dependencies?: ProviderAccountDependencyCoordinator;
   readonly #lifecycle?: ProviderAccountLifecycleCoordinator;
@@ -591,7 +591,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       let claudeSignedOut = nativeClaudeLifecycle && mutation.type === "remove_account" && !claudeMetadata
         ? await readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut) : null;
       if (claudeNativeCompletion && !claudeMetadata) throw new ProviderSettingsStoreError("invalid_route", 400);
-      let codexMetadata = (codexNativeCompletion || (mutation.type === "logout_account" || mutation.type === "remove_account") && mutation.accountId === "owner_codex") ? await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.()) : null;
+      let codexMetadata = (codexNativeCompletion || (mutation.type === "logout_account" || mutation.type === "remove_account") && mutation.accountId === "owner_codex") ? await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.(codexNativeCompletion ? { purpose: "native_completion" } : undefined)) : null;
       if (codexNativeCompletion && (!codexMetadata || codexMetadata.authMethod !== "terminal" || verifyExpectedCodexAccount && !await verifyExpectedCodexAccount(codexMetadata))) throw new ProviderSettingsStoreError("invalid_route", 400);
       const snapshot = await this.#project(canonical, config, false, enrichment, codexMetadata, null, claudeMetadata);
       if (codexNativeCompletion) assertCodexNativeLoginSelection({ mutation, snapshot });

@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 const route = "/api/ai/provider-settings/workflows/v2";
 const post = (value: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
-async function fixture(version = "0.162.1", mode = "success") {
+async function fixture(version = "0.162.1", mode = "success", metadataNow?: () => Date) {
   const root = await mkdtemp(join(tmpdir(), "codex-settings-runtime-")); roots.push(root);
   const home = join(root, "home"), prefix = join(root, "runtime");
   await mkdir(join(prefix, "bin"), { recursive: true }); await mkdir(join(home, ".codex"), { recursive: true, mode: 0o700 });
@@ -67,7 +67,7 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
   generic.applyConfiguration = async input => { await apply(input); if (mode === "rotate-before-persist" && input.codexNativeCompletion) await rotateGeneration(); };
   const store = new ProviderSettingsStore({ homePath: home, privateRootPath: join(root, "private"), providerSnapshotReader: service, runtimeCoordinator: generic,
     loginCoordinator: { supportedMethods: () => ["terminal"], startLogin: async () => { throw new Error("Settings device login must not start Terminal"); } },
-    codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({ executable, cwd: home, environment: { HOME: home, CODEX_HOME: join(home, ".codex") } }),
+    codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({ executable, cwd: home, ...(metadataNow ? { now: metadataNow } : {}), environment: { HOME: home, CODEX_HOME: join(home, ".codex") } }),
   });
   const initial = await store.getSnapshot(), harness = initial.harnesses.find(row => row.harness === "codex")!;
   await store.mutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false, expectedRevision: initial.revision, idempotencyKey: "initial-off" });
@@ -224,4 +224,15 @@ it("cancels through public workflow after proof capture but before private compl
     expect(after.harnesses.find(row => row.id === f.harness.id)).toMatchObject({ configuredEnabled: false, configuredAccessSourceId: "owner_openai_key" });
     expect(f.rollback).not.toHaveBeenCalled();
   } finally { f.resumeCompletion(); }
+});
+
+it("commits immediate native completion after a signed-out metadata preflight inside quota cooldown", async () => {
+  const clock=new Date(); const f=await fixture("0.163.0","success",()=>clock);
+  await f.store.getSnapshot({includeNativeAccountMetadata:true,includeNativeAccountUsage:false});
+  const start=await f.app.request(`${route}/start`,post({harnessInstanceId:f.harness.id,optionId:"openai_device_code",idempotencyKey:"immediate-after-cold-metadata"}));
+  expect(start.status).toBe(200); const operation=await start.json();
+  await vi.waitFor(async()=>expect(await(await f.app.request(`${route}/${operation.id}`)).json()).toMatchObject({state:"succeeded",safeFailure:null}),{timeout:5000});
+  const connected=await f.store.getSnapshot({includeNativeAccountMetadata:true,includeNativeAccountUsage:false});
+  expect(connected.harnesses.find(row=>row.id===f.harness.id)).toMatchObject({configuredEnabled:true,enabled:true,accessSourceId:"owner_openai_profile",selectedAccountId:"owner_codex"});
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
 });
