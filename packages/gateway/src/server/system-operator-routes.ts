@@ -13,11 +13,13 @@ import type { InteractionLogger } from "../logger.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "../request-principal.js";
 import { timingSafeStringEquals } from "../security/timing-safe.js";
 import { getSystemInfo } from "../system-info.js";
+import { createSystemLogReader } from "../system-logs.js";
 import {
   checkForSystemUpdate, listSystemReleases, readSystemUpdateFailure,
   resolveInternalUpgradeInstallTarget, resolveInternalUpgradeStartTarget,
   resolveSystemUpdateChannel, startSystemUpdate, startSystemUpdateRepair,
 } from "../system-update.js";
+import { registerSystemLogRoutes } from "./system-log-routes.js";
 import type { GatewayConfig } from "./types.js";
 
 const PushRegisterBodySchema = z.object({
@@ -50,6 +52,8 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
     const today = new Date().toISOString().slice(0, 10);
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
+
+  registerSystemLogRoutes({ app, reader: createSystemLogReader() });
 
   app.get("/api/system/update", async (c) => {
     const info = getSystemInfo(homePath, { model: model, runningVersion });
