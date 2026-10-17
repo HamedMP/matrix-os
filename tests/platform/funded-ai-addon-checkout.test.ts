@@ -201,7 +201,7 @@ describe("funded AI add-on checkout", () => {
       priceId: "price_ai_5",
       amountMicrousd: 5_000_000,
       automaticTax: false,
-      successUrl: "https://app.matrix-os.com/?billing=success&checkout=success",
+      successUrl: "https://app.matrix-os.com/?billing=success&checkout=success&session_id={CHECKOUT_SESSION_ID}",
       cancelUrl: "https://app.matrix-os.com/?billing=canceled",
     });
   });

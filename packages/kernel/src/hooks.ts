@@ -214,6 +214,7 @@ export function createApprovalHook(
 
 export const MANAGED_WRITE_ACTIONS = new Set([
   "gmail/send_email",
+  "gmail/create_draft",
   "gmail/create_label",
   "gmail/modify_message",
   "google_calendar/create_event",
