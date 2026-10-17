@@ -1,0 +1,4 @@
+interface:
+  display_name: "Matrix Handoff"
+  short_description: "Continue this coding task on your Matrix computer"
+  default_prompt: "Use $matrix-handoff to move this repository and task to my Matrix computer and continue there in a project Chat."
