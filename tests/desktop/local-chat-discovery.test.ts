@@ -8,6 +8,24 @@ afterEach(async () => { await Promise.all(dirs.splice(0).map(path => rm(path, {r
 async function fixture() { const home = await mkdtemp(join(tmpdir(), "matrix-discovery-")); dirs.push(home); return home; }
 async function transcript(home: string, relative: string, records: unknown[]) { const path = join(home, relative); await mkdir(path.slice(0,path.lastIndexOf("/")), {recursive:true}); await writeFile(path, records.map(record=>JSON.stringify(record)).join("\n")+"\n"); return path; }
 describe("local conversation discovery", () => {
+    it("uses the next human prompt after Claude command metadata, retaining saved-title precedence",async()=>{
+        const home=await fixture();
+        const command="<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>";
+        const records=[{type:"user",message:{content:command}},{type:"assistant",message:{content:"Synthetic compacted reply"}},
+            {type:"user",message:{content:[{type:"text",text:"Fix the import progress"}]}}];
+        await transcript(home,".claude/projects/project/normal.jsonl",records);
+        await transcript(home,".claude/projects/project/saved.jsonl",[...records,{type:"custom-title",customTitle:"My saved <command-name> title"}]);
+        const result=await discoverLocalChats({home},new AbortController().signal);
+        expect(result.sources.map(source=>source.title).sort()).toEqual(["Fix the import progress","My saved <command-name> title"]);
+    });
+    it("uses the existing fallback for command-only Claude history without removing ordinary tag discussion",async()=>{
+        const home=await fixture();
+        await transcript(home,".claude/projects/project/control.jsonl",[{type:"user",message:{content:"<command-name>/compact</command-name><command-message>compact</command-message>"}}]);
+        const prose="Explain <command-name> tags in Claude transcripts";
+        await transcript(home,".claude/projects/project/prose.jsonl",[{type:"user",message:{content:prose}}]);
+        const result=await discoverLocalChats({home},new AbortController().signal);
+        expect(result.sources.map(source=>source.title).sort()).toEqual(["Claude Code conversation control",prose]);
+    });
     it.each([
         "# AGENTS.md instructions for /synthetic\n<INSTRUCTIONS>Project rules</INSTRUCTIONS>",
         "<environment_context>Synthetic environment</environment_context>",

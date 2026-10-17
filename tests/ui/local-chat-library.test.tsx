@@ -9,6 +9,29 @@ const sources=[{sourceKey:"a",harness:"codex" as const,title:"Fix import progres
 function adapter(){return {discover:vi.fn(async()=>({sources,limited:false})),prepare:vi.fn(async(keys:string[])=>({selections:keys.map(key=>({selectionId:key,preview:{harness:"codex" as const,sourceId:key,sourceHash:"a".repeat(64),rawBytes:1000,title:"Fix import progress",firstVisibleText:"Synthetic preview",parserVersion:1 as const,counts}})),errors:[]})),apply:vi.fn<NativeChatImportAdapter["apply"]>(async()=>({chatId:"chat_a",jobId:"a",messageCount:2})),pause:vi.fn()};}
 afterEach(cleanup);
 describe("automatic local chat library",()=>{
+    it("distinguishes uploaded bytes from a chat that is still finishing",async()=>{
+        const native=adapter(); let emit!:Parameters<NativeChatImportAdapter["apply"]>[3];
+        let finish!:(value:{chatId:string;jobId:string;messageCount:number})=>void;
+        native.apply.mockImplementationOnce((_id,_title,_signal,onProgress)=>{emit=onProgress;return new Promise(resolve=>{finish=resolve;});});
+        render(<ChatImportPanel native={native}/>);
+        fireEvent.click(await screen.findByRole("checkbox",{name:"Select Plan the launch"}));
+        fireEvent.click(screen.getByRole("button",{name:"Import 1 selected chat"}));
+        await waitFor(()=>expect(native.apply).toHaveBeenCalledTimes(1));
+        act(()=>emit({phase:"uploading",uploadedBytes:500,totalBytes:1000,jobId:"synthetic"}));
+        expect(screen.getByRole("progressbar").hasAttribute("value")).toBe(true);
+        act(()=>emit({phase:"verifying",uploadedBytes:1000,totalBytes:1000,jobId:"synthetic"}));
+        await screen.findByText("Checking and saving your chat");
+        expect(screen.getByText(/Finishing import/)).toBeTruthy();
+        const progress=screen.getByRole("progressbar");
+        expect(progress.hasAttribute("value")).toBe(false);
+        expect(progress.hasAttribute("aria-valuenow")).toBe(false);
+        expect(progress.getAttribute("aria-label")).toBeTruthy();
+        expect(screen.queryByText("1 chat ready in Matrix.")).toBeNull();
+        expect((screen.getByRole("button",{name:"Stop waiting"}) as HTMLButtonElement).disabled).toBe(false);
+        await act(async()=>{finish({chatId:"chat_synthetic",jobId:"synthetic",messageCount:2});});
+        await screen.findByText("1 chat ready in Matrix.");
+        expect(screen.queryByText("Checking and saving your chat")).toBeNull();
+    });
     it("honors deselection after preview and offers one selection-based import action",async()=>{
         const native=adapter();render(<ChatImportPanel native={native}/>);
         fireEvent.click(await screen.findByRole("button",{name:"Preview Fix import progress"}));await screen.findByText("Synthetic preview");
