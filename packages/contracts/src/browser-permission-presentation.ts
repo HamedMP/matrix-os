@@ -1,5 +1,5 @@
 import { CanonicalSubmitChatApprovalRequestSchema, type CanonicalSubmitChatApprovalRequest } from "#canonical-chat-api";
-import { browserCanonicalDecision, type BrowserApprovalIntentSchema } from "#browser-chat-approval";
+import { browserCanonicalDecision, BrowserGrantRevokeRequestSchema, BrowserGrantViewSchema, type BrowserGrantView, type BrowserApprovalIntentSchema } from "#browser-chat-approval";
 import type { CanonicalChatApprovalView } from "#canonical-chat-approvals";
 import type { z } from "zod/v4";
 
@@ -29,4 +29,17 @@ export function browserPermissionOutcome(approval: CanonicalChatApprovalView, no
 export function browserPermissionErrorKind(error: unknown): string {
   if (!(error instanceof Error)) return "UnknownError";
   return ["Error", "TypeError", "AbortError", "TimeoutError", "ZodError"].includes(error.name) ? error.name : "RequestError";
+}
+
+/** One bounded uncertain Undo attempt. Retain its identity until the exact
+ * grant revision changes; the owner repository can replay a lost response. */
+export function createBrowserGrantUndoTracker() {
+  let attempt: { key: string; clientRequestId: string } | undefined;
+  return { request(value: BrowserGrantView, createId: () => string) {
+    const grant = BrowserGrantViewSchema.parse(value);
+    if (grant.state !== "active") throw new Error("Browser access unavailable");
+    const key = `${grant.chatId}\0${grant.id}\0${grant.revision}`;
+    if (!attempt || attempt.key !== key) attempt = { key, clientRequestId: createId() };
+    return BrowserGrantRevokeRequestSchema.parse({ clientRequestId: attempt.clientRequestId, baseRevision: grant.revision });
+  } };
 }

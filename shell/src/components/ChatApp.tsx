@@ -1,5 +1,5 @@
-import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 "use client";
+import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
 import { WebChatRailControls } from "./chat/WebChatRailControls";
 import { ChatRailOrderContext, ChatRailOrderItem } from "@matrix-os/ui";

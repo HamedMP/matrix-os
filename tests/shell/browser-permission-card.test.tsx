@@ -33,3 +33,12 @@ it("checks expiry again between rendering and a click", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
   await screen.findByRole("alert"); expect(onDecision).not.toHaveBeenCalled(); vi.restoreAllMocks();
 });
+it("retries an uncertain Undo with the same owner request identity", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome" as const, scopeVersion: 1 as const, revision: 1, state: "active" as const, createdAt: new Date().toISOString(), revokedAt: null };
+  const revokeGrant = vi.fn().mockRejectedValueOnce(new Error("Response lost")).mockResolvedValueOnce({ ...grant, state: "revoked", revision: 2, revokedAt: new Date().toISOString() });
+  render(<BrowserPermissionCard approval={{ ...approval, pending: false, browserApproval: { ...approval.browserApproval!, resolution: "allowed_in_chat" }, browserGrant: grant }} client={{ getGrant: async () => grant, revokeGrant }}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "Undo" })); await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", { name: "Undo" })); await screen.findByText("Remembered browser access removed");
+  expect(revokeGrant.mock.calls[1]![1]).toBe(revokeGrant.mock.calls[0]![1]);
+});

@@ -1,6 +1,6 @@
 import { useBrowserPermissionReview } from "./BrowserPermissionReview.js";
 import React, { useEffect, useRef, useState } from "react";
-import { browserPermissionChoices, browserPermissionOutcome, browserPermissionRequest, browserPermissionErrorKind,
+import { createBrowserGrantUndoTracker, browserPermissionChoices, browserPermissionOutcome, browserPermissionRequest, browserPermissionErrorKind,
   type BrowserPermissionChoice, type CanonicalChatApprovalView, type BrowserGrantView } from "@matrix-os/contracts";
 import { chatAgentButtonClass, chatAgentPrimaryButtonClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from "../chat-agents/theme.js";
 import type { BrowserPermissionClient } from "./client.js";
@@ -11,6 +11,7 @@ export function BrowserPermissionCard({ approval, onDecision, client, submitting
 }) {
   const element = useRef<HTMLElement>(null);
   const registerReview = useBrowserPermissionReview();
+  const [undo] = useState(createBrowserGrantUndoTracker);
   const [clock, setClock] = useState(Date.now);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +63,8 @@ export function BrowserPermissionCard({ approval, onDecision, client, submitting
       <p style={chatAgentMutedStyle}>{browserPermissionOutcome(approval, clock)}</p>
       {grant?.state === "active" && client ? <button type="button" className={chatAgentButtonClass} disabled={busy} onClick={() => void perform(async () => {
         const current = scope.current;
-        const revoked = await client.revokeGrant(grant, `req_${crypto.randomUUID().replaceAll("-", "")}`);
+        const attempt = undo.request(grant, () => `req_${crypto.randomUUID().replaceAll("-", "")}`);
+        const revoked = await client.revokeGrant(grant, attempt.clientRequestId);
         if (revoked.state !== "revoked") throw new Error("Access not removed");
         if (scope.current === current) setGrant(revoked);
       })}>Undo</button> : null}

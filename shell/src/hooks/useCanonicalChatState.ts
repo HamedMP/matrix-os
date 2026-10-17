@@ -1,5 +1,5 @@
-import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 "use client";
+import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 
 import {
   generatedChatTitle,

@@ -1,6 +1,6 @@
+"use client";
 import type { BrowserPermissionClient } from "@matrix-os/ui";
 import type { BrowserPermissionChoice } from "@matrix-os/contracts";
-"use client";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import type { ChatAgentClient, ChatCollaborationView } from "@matrix-os/ui";

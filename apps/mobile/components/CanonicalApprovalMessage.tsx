@@ -7,7 +7,7 @@ import {
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   canonicalChatApprovalOutcome,
-  browserPermissionChoices, browserPermissionRequest, browserPermissionErrorKind, browserPermissionOutcome, browserCanonicalDecision, BrowserGrantViewSchema, BrowserGrantRevokeRequestSchema,
+  createBrowserGrantUndoTracker, browserPermissionChoices, browserPermissionRequest, browserPermissionErrorKind, browserPermissionOutcome, browserCanonicalDecision, BrowserGrantViewSchema,
   type BrowserPermissionChoice, type BrowserGrantView,
   type CanonicalChatApprovalDecision,
   type CanonicalChatApprovalView,
@@ -25,6 +25,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [undo] = useState(createBrowserGrantUndoTracker);
   const [clock, setClock] = useState(Date.now);
   const [grant, setGrant] = useState<BrowserGrantView | null>(null);
   const scope = useRef<object>({});
@@ -88,7 +89,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
       if (inFlight.current) return; const current = scope.current; inFlight.current = true; setSubmitting(true); setError(null);
       try {
         const token = await getToken(); if (!token) throw new Error("Not signed in");
-        const body = BrowserGrantRevokeRequestSchema.parse({ clientRequestId: canonicalChatRequestId(), baseRevision: grant.revision });
+        const body = undo.request(grant, canonicalChatRequestId);
         const result = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/browser-grants/${encodeURIComponent(grant.id)}`),
           token, method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), schema: z.strictObject({ grant: BrowserGrantViewSchema }), errorMessage: "Could not undo browser access." });
         if (result.grant.state !== "revoked") throw new Error("Access not removed");
