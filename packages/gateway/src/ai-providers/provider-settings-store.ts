@@ -1,3 +1,4 @@
+import { readManagedCreditObservation } from "./provider-managed-credit-observation.js";
 import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
 import { assertClaudeNativeLoginSelection } from "./claude-native-login-completion.js";
 import { readVerifiedClaudeNativeSignedOut, type ClaudeNativeSignedOut } from "./claude-native-signed-out.js";
@@ -16,6 +17,7 @@ import {
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
   type AiProviderSnapshotV3,
+  type ProviderManagedCreditObservation,
   type ProviderConnectionAttempt,
   type ProviderDependencyCounts,
   type ProviderSettingsMutation,
@@ -78,6 +80,7 @@ export type {
 } from "./provider-settings-coordinators.js";
 export interface ProviderSettingsStoreWriter {
   getSnapshot(options?: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot>;
+  getManagedCreditObservation?(options?: { signal?: AbortSignal }): Promise<ProviderManagedCreditObservation>;
   mutate(mutation: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse>;
   /** Server-only completion; never accepts a client-supplied source or proof. */
   completeClaudeNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse>;
@@ -303,6 +306,17 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       throw new ProviderSettingsStoreError("projection_unavailable", 503);
     }
     return snapshot;
+  }
+
+  async getManagedCreditObservation(options: { signal?: AbortSignal } = {}): Promise<ProviderManagedCreditObservation> {
+    return readManagedCreditObservation({
+      configurationPath: this.configurationPath,
+      fundingSummaryReader: this.#fundingSummary,
+      now: this.#now,
+      signal: options.signal,
+      serialize: operation => this.#serialize(operation),
+      generation: () => this.#mutationGeneration,
+    });
   }
 
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<ProviderSettingsSnapshot> {

@@ -43,6 +43,7 @@ function safeError(
 
 export function chatProviderRequirements(input: CanonicalQueueChatTurnRequest) {
   return {
+    attachmentInputs: input.parts.filter(part => part.type === "attachment_reference"),
     attachments: input.parts.flatMap((part) =>
       part.type === "attachment_reference" ? [part.kind] : []
     ),

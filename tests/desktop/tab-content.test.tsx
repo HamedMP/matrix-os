@@ -8,6 +8,9 @@ import DesktopSurfaceFrame from "@desktop/renderer/src/features/desktop-shell/De
 import { useSurfaceChromeHost } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 import type { Tab } from "@desktop/renderer/src/stores/tabs";
 
+const settingsMock = vi.hoisted(() => vi.fn(() => <div>Settings</div>));
+vi.mock("@desktop/renderer/src/features/settings/SettingsView", () => ({ default: settingsMock, SettingsSidebar: () => <div>Settings sidebar</div> }));
+
 const workTabMock = vi.hoisted(() => vi.fn(() => <div>Work</div>));
 const taskWorkspaceMock = vi.hoisted(() => vi.fn(() => <div>Task</div>));
 const terminalsTabMock = vi.hoisted(() => vi.fn(() => <div>Terminal</div>));
@@ -310,4 +313,27 @@ describe("current desktop tab panes", () => {
     expect(screen.queryByText(/private terminal failure/i)).toBeNull();
     vi.restoreAllMocks();
   });
+});
+
+it.each(["desktop", "canvas"] as const)("keeps visible unfocused Settings renewing and pauses hidden Settings in %s", presentation => {
+  const props = {
+    tab: { id: "settings", kind: "settings" as const, title: "Settings", closable: true },
+    surface: { tabId: "settings", mode: "window" as const, bounds: { x: 100, y: 80, width: 800, height: 600 }, zIndex: 1 },
+    active: false, tabWorkspaceActive: false, presentation, overlayOpen: false,
+    onFocus: vi.fn(), onClose: vi.fn(), onMinimize: vi.fn(), onMaximize: vi.fn(), onBoundsChange: vi.fn(),
+  };
+  const view = render(<DesktopSurfaceFrame {...props} />);
+  expect(settingsMock.mock.lastCall?.[0]).toMatchObject({ automaticCreditRefreshEnabled: true });
+  if (presentation === "desktop") {
+    view.rerender(<DesktopSurfaceFrame {...props} desktopHiddenSurfaceIds={["settings"]} />);
+    expect(settingsMock.mock.lastCall?.[0]).toMatchObject({ automaticCreditRefreshEnabled: false });
+    for (const phase of ["hiding", "restoring"] as const) {
+      view.rerender(<DesktopSurfaceFrame {...props} desktopTransition={{ phase, surfaceIds: ["settings"] }} />);
+      expect(settingsMock.mock.lastCall?.[0]).toMatchObject({ automaticCreditRefreshEnabled: false });
+    }
+  }
+  view.rerender(<DesktopSurfaceFrame {...props} surface={{ ...props.surface, mode: "minimized" }} />);
+  expect(settingsMock.mock.lastCall?.[0]).toMatchObject({ automaticCreditRefreshEnabled: false });
+  view.rerender(<TabPane tab={props.tab} active={false} visible={false} />);
+  expect(settingsMock.mock.lastCall?.[0]).toMatchObject({ automaticCreditRefreshEnabled: false });
 });

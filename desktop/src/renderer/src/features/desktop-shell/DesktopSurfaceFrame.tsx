@@ -266,6 +266,7 @@ export default function DesktopSurfaceFrame({
       topBar={showsSurfaceTopBar ? (
         <TopBar
           title={surfaceChrome?.hideTitle ? undefined : workChatTitle ?? (sidebarHidesTitle && !surfaceChrome?.showTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title)}
+          titleLayout={surfaceChrome?.titleLayout}
           leftActions={surfaceChrome?.leftActions}
           rightActions={surfaceChrome?.rightActions}
           leftPaneWidth={surfaceChrome?.leftPaneWidth ?? (isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined)}
@@ -312,7 +313,7 @@ export default function DesktopSurfaceFrame({
           <TabPane
             tab={tab}
             active={paneActive}
-            visible={visible}
+            visible={tab.kind === "settings" ? visible && !isDesktopHidden && !isDesktopTransition : visible}
             layoutRevision={layoutRevision}
             visualScale={presentation === "canvas" ? interactionScale : 1}
             settingsSection={tab.kind === "settings" ? settingsSection : undefined}
