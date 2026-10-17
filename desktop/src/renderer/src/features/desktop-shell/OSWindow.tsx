@@ -401,6 +401,8 @@ export function OSWindow({
               width: sidebarWidth,
               minWidth: OS_WINDOW_SIDEBAR_MIN_WIDTH,
               maxWidth: OS_WINDOW_SIDEBAR_WIDTH,
+              background: "var(--sidebar)",
+              color: "var(--sidebar-foreground)",
               borderRight: "1px solid var(--border-default, #F3F2F2)",
             }}
           >

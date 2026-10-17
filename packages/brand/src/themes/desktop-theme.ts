@@ -2,8 +2,8 @@ import { themeSemantics } from "./semantics.js";
 import type { ChromeColors } from "./theme-types.js";
 
 /** Semantic variables driven by a theme's chrome layer. */
-export function chromeToSemanticVars(chrome: ChromeColors): Record<string, string> {
-  const semantic = themeSemantics(chrome);
+export function chromeToSemanticVars(chrome: ChromeColors, paletteId = 'matrix'): Record<string, string> {
+  const semantic = themeSemantics(chrome, paletteId);
   return {
     "--bg-app": chrome.background,
     "--bg-surface": chrome.card,
