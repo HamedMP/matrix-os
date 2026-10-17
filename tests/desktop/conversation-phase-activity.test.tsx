@@ -46,3 +46,14 @@ it("preserves earlier tool expansion and copy alongside the current model", asyn
   fireEvent.click(previous);
   expect(screen.queryByText("Working tree clean")).not.toBeInTheDocument();
 });
+
+it("copies the exact private multiline command and shows all lines on expansion", async () => {
+  const copyText = vi.fn(async () => {});
+  const command = "cat /home/matrix/home/projects/demo/README.md\n" + "printf synthetic-line\n".repeat(70).trim();
+  render(<ConversationActivityGroup activities={[{ id: "owner_command", kind: "command", state: "completed", label: "Run command",
+    preview: command, previewKind: "command", copyText: command, detail: command + "\n\nWorking directory: ~/projects/demo" }]} callbacks={{ copyText }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+  await waitFor(() => expect(copyText).toHaveBeenCalledWith(command));
+  fireEvent.click(screen.getByRole("button", { name: /Run command: cat/ }));
+  expect(screen.getByText(/Working directory/).textContent).toContain(command);
+});
