@@ -24,18 +24,18 @@ export function projectMatrixAnthropicProviderInstances(catalog: CanonicalProvid
   const instance: CanonicalProviderInstanceDescriptor = {
     id: MATRIX_ANTHROPIC_API_INSTANCE_ID, driverKind: "matrix_bot", displayName: "Claude · Anthropic API", connectionLabel: "Anthropic API",
     availability: ready && runnable && source!.supports.recipeBots ? "available" : "unavailable", workspaceRequirement: "none", catalogRevision: revision,
-    models: ready && runnable && source!.supports.recipeBots ? source!.models.slice(0, 64).map(model => ({ ...model, availability: "available", capabilities: ["tools"], supportsToolUse: true, supportsVision: false })) : [],
+    models: ready && runnable && source!.supports.recipeBots ? source!.models.slice(0, 64).map(model => ({ id: model.id, displayName: model.displayName, availability: "available", capabilities: model.input?.includes("image") ? ["tools", "vision"] : ["tools"], supportsToolUse: true, supportsVision: model.input?.includes("image") ?? false })) : [],
     options: selectionOptions.map(option => ({ id: option.id, label: option.id === "connectionRevision" ? "Connection" : "Credential", kind: "enum", placement: "advanced",
       values: [{ value: option.value, label: "Current connection" }], defaultValue: option.value })), skills: [], commands: [],
     setupActions: [{ id: "matrix_anthropic_settings", kind: "open_settings", label: "Agents & providers" }],
-    supports: { rootChat: false, resume: false, cancellation: true, steering: "same_run", attachments: [], tools: [], approvals: false,
+    supports: { rootChat: false, resume: false, cancellation: true, steering: "same_run", attachments: ["file", "image"], tools: [], approvals: false,
       userInput: false, worktrees: "none", resources: [], interactionModes: ["default"], permissionModes: ["default"] },
   };
   if (instance.availability === "available" && source!.models[0]) instance.defaultSelection = { instanceId: instance.id, model: source!.models[0].id, options: selectionOptions };
   const chat: CanonicalProviderInstanceDescriptor = { ...instance, id: MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, driverKind: "matrix_pi",
     displayName: "Matrix AI · Anthropic API", workspaceRequirement: "project_optional", supports: MANAGED_PI_CHAT_SUPPORTS,
     availability: ready && runnable && source!.supports.rootChat ? "available" : "unavailable",
-    models: ready && runnable && source!.supports.rootChat ? source!.models.slice(0, 64).map(model => ({ ...model, availability: "available", capabilities: ["tools"], supportsToolUse: true, supportsVision: false })) : [],
+    models: ready && runnable && source!.supports.rootChat ? source!.models.slice(0, 64).map(model => ({ id: model.id, displayName: model.displayName, availability: "available", capabilities: model.input?.includes("image") ? ["tools", "vision"] : ["tools"], supportsToolUse: true, supportsVision: model.input?.includes("image") ?? false })) : [],
     ...(!runnable ? { unavailabilityReason: "runtime_unavailable" } : {}),
   };
   delete chat.defaultSelection;

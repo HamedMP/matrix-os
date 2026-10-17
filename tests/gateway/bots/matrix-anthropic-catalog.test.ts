@@ -1,12 +1,24 @@
 import { expect, it, vi } from "vitest";
 import { providerSettingsCanonicalFixture } from "../provider-settings-test-support.js";
-import { withMatrixAnthropicProviderInstances } from "../../../packages/gateway/src/bots/matrix-anthropic-provider-instance.js";
+import { projectMatrixAnthropicProviderInstances, withMatrixAnthropicProviderInstances } from "../../../packages/gateway/src/bots/matrix-anthropic-provider-instance.js";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { createCanonicalProviderCatalogFixture } from "../../contracts/fixtures/canonical-chat.js";
 const gen = "e16625fe-cad7-4983-a9db-e808bbf104cc";
 const status = { connectionId: "matrix_anthropic_api" as const, providerId: "anthropic" as const, executionKind: "direct_pi" as const, billingKind: "api_key" as const,
  revision: 3, enabled: true, credentialGeneration: gen, sourceCredentialGeneration: gen, state: "ready" as const,
  models: [{ id: "claude-model", displayName: "Claude Model" }], actions: ["connect", "refresh", "disconnect"] as const, checkedAt: "2026-10-07T00:00:00Z", staleAfter: "2026-10-08T00:00:00Z", supports: { rootChat: true, recipeBots: true } };
+it("keeps authenticated image modalities in the shared Anthropic projection", () => {
+ const source = { ...status, actions: [...status.actions], models: [
+   { id: "vision", displayName: "Vision", input: ["text", "image"] as ("text" | "image")[] },
+   { id: "text", displayName: "Text" },
+ ] };
+ const catalog = CanonicalProviderCatalogSchema.parse(projectMatrixAnthropicProviderInstances({ revision: "base", drivers: [], instances: [] }, source, true));
+ for (const instance of catalog.instances) {
+   expect(instance.supports.attachments).toEqual(["file", "image"]);
+   expect(instance.models[0]).toMatchObject({ supportsVision: true, capabilities: ["tools", "vision"] });
+   expect(instance.models[1]).toMatchObject({ supportsVision: false, capabilities: ["tools"] });
+ }
+});
 function fixture(ready = true, runtime = true) {
  const base = { getCatalog: vi.fn(async () => ({ revision: "base", drivers: [], instances: [] })) };
  const authority = { getSnapshot: vi.fn(async () => ({ ...providerSettingsCanonicalFixture(), matrixAnthropicConnection: { ...status, actions: [...status.actions], ...(!ready ? { state: "auth_required" as const, models: [] } : {}) } })) };

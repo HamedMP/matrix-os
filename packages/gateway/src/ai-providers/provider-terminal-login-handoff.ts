@@ -20,6 +20,10 @@ export function createProviderTerminalLoginHandoff(
     throw new Error("Provider login attempt resolver is required");
   }
   return {
+    // The production Settings route also uses this facade for quiet credit reads.
+    ...(typeof store.getManagedCreditObservation === "function" ? {
+      getManagedCreditObservation: (options) => store.getManagedCreditObservation!(options),
+    } : {}),
     // Production native workflows use this facade too. Preserve server-only
     // completion without rerouting it through the public Terminal mutation path.
     ...(typeof store.completeClaudeNativeLogin === "function" ? {
