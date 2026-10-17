@@ -33,3 +33,8 @@ Matrix remains first in the theme picker and the installation default in light m
 Use exact Matrix brand scale steps for Matrix and Matrix Neon. Keep menu and button hover states visible, use neutral Matrix navigation states, separate semantic fills/tints/text, use 8px controls, and pass AA for secondary text on raised and selected surfaces and for status/button text. Neon retains green links/code/prompt, a neutral main action, gold focus, and coral/teal/gold/blue ANSI meanings.
 
 Retire Tokyo Night, Solarized and Catppuccin. Saved preset IDs and custom bases fall back to Matrix while preserving light/dark/system mode; unrelated custom palettes remain saved. The eleven remaining presets need fresh light/dark designer sheets. Automated checks cover all preset text and semantic status pairs.
+
+
+## Contrast consumer layer
+
+The native stack includes a final consumer layer after design evidence. Electron badge/icon foregrounds on accent-muted backgrounds use the shared contrast-checked `--accent-text`; primary button fills continue to use `--accent`. This separates owner-selected button colours from readable text without changing Browser behavior or provider/runtime actions. Web System-mode consumers receive the same resolved colours as the page; failed background refreshes retain loaded appearance and unsaved drafts while writes remain disabled. Live qualification remains required on every affected surface.

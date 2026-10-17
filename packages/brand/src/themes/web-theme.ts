@@ -8,7 +8,7 @@ export function buildWebTheme(input: AppearancePreferences = DEFAULT_APPEARANCE,
   const appearance = normalizeAppearance(input);
   const mode = appearance.mode === 'system' ? systemDark ? 'dark' : 'light' : appearance.mode;
   const { chrome: c } = getThemeVariant(appearance.themeId, mode, appearance.customTheme);
-  const semantic = themeSemantics(c);
+  const semantic = themeSemantics(c, appearance.themeId);
   return {
     name: appearance.themeId, mode, appearance,
     colors: {
