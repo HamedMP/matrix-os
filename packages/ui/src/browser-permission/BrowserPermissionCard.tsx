@@ -1,4 +1,4 @@
-import { useBrowserPermissionReview } from "./BrowserPermissionReview.js";
+import { useBrowserPermissionReview, useBrowserPermissionGrants } from "./BrowserPermissionReview.js";
 import React, { useEffect, useRef, useState } from "react";
 import { createBrowserGrantUndoTracker, browserPermissionChoices, browserPermissionOutcome, browserPermissionRequest, browserPermissionErrorKind,
   type BrowserPermissionChoice, type CanonicalChatApprovalView, type BrowserGrantView } from "@matrix-os/contracts";
@@ -12,6 +12,7 @@ export function BrowserPermissionCard({ approval, chatId, onDecision, client, su
 }) {
   const element = useRef<HTMLElement>(null);
   const registerReview = useBrowserPermissionReview();
+  const sharedGrants = useBrowserPermissionGrants();
   const [undo] = useState(createBrowserGrantUndoTracker);
   const [clock, setClock] = useState(Date.now);
   const [busy, setBusy] = useState(false);
@@ -29,10 +30,10 @@ export function BrowserPermissionCard({ approval, chatId, onDecision, client, su
   useEffect(() => {
     const current = scope.current; let cancelled = false;
     if (client && grantChatId) void client.getGrant(grantChatId).then(fresh => {
-      if (!cancelled && scope.current === current) setGrant(fresh?.chatId === grantChatId ? fresh : null);
+      if (!cancelled && scope.current === current) setGrant(prior => fresh?.chatId === grantChatId ? fresh : prior?.state === "revoked" ? prior : null);
     }).catch((error: unknown) => { console.warn("[browser-permission] Grant read failed", browserPermissionErrorKind(error)); if (!cancelled && scope.current === current) setError("Browser access could not be checked. Refresh this Chat."); });
     return () => { cancelled = true; };
-  }, [identity, approval.browserGrant, client, grantChatId, grantRefresh]);
+  }, [identity, approval.browserGrant, client, grantChatId, grantRefresh, sharedGrants?.grantsRevision]);
   useEffect(() => {
     if (!approval.pending || !approval.browserApproval || approval.browserApproval.resolution) return;
     const timer = setInterval(() => setClock(Date.now()), 1000);
@@ -64,7 +65,7 @@ export function BrowserPermissionCard({ approval, chatId, onDecision, client, su
           browserPermissionRequest(approval, choice.decision, "req_ui_validation");
           const current = scope.current;
           try { await onDecision!(choice.decision); }
-          finally { if (scope.current === current) setGrantRefresh(value => value + 1); }
+          finally { if (scope.current === current) { if (sharedGrants) sharedGrants.grantsChanged(); else setGrantRefresh(value => value + 1); } }
         })}>{choice.label}</button>)}
         {onOpenPermissionMode ? <button type="button" className="ml-auto text-xs underline" onClick={onOpenPermissionMode}>Always allow → Full access</button> : null}
       </div>
@@ -78,7 +79,7 @@ export function BrowserPermissionCard({ approval, chatId, onDecision, client, su
         const attempt = undo.request(grant, () => `req_${crypto.randomUUID().replaceAll("-", "")}`);
         const revoked = await client.revokeGrant(grant, attempt.clientRequestId);
         if (revoked.state !== "revoked") throw new Error("Access not removed");
-        if (scope.current === current) setGrant(revoked);
+        if (scope.current === current) { setGrant(revoked); sharedGrants?.grantsChanged(); }
       })}>Undo</button> : null}
       {grant?.state === "revoked" ? <span style={chatAgentMutedStyle}>Remembered browser access removed</span> : null}
     </div>

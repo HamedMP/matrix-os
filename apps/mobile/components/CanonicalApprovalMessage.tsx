@@ -30,26 +30,32 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
   const [grant, setGrant] = useState<BrowserGrantView | null>(null);
   const [grantRefresh, setGrantRefresh] = useState(0);
   const scope = useRef<object>({});
+  const inFlight = useRef(false);
+  // At most seven decision keys; preserve an ambiguous request's id on retry.
+  const requestIds = useRef<Partial<Record<CanonicalChatApprovalDecision | BrowserPermissionChoice, string>>>({});
   useEffect(() => {
-    const current = {}; scope.current = current; setGrant(null);
+    const current = {}; scope.current = current; inFlight.current = false;
+    setGrant(null); setSubmitting(false); setSubmitted(false); setError(null); requestIds.current = {};
+    return () => { if (scope.current === current) scope.current = {}; };
+  }, [chatId, gatewayUrl, approval.approvalId, approval.runId, getToken]);
+  useEffect(() => {
+    const current = scope.current; let cancelled = false;
     if (approval.browserApproval) void (async () => {
       const token = await getToken(); if (!token) throw new Error("Not signed in");
       const result = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/browser-grants`), token,
         schema: z.strictObject({ grant: BrowserGrantViewSchema.nullable() }), errorMessage: "Could not check browser access." });
-      if (scope.current === current) setGrant(result.grant?.chatId === chatId ? result.grant : null);
-    })().catch((error: unknown) => { console.warn("[browser-permission] Grant read failed", browserPermissionErrorKind(error)); if (scope.current === current) setError("Could not check browser access. Refresh this Chat."); });
-    return () => { if (scope.current === current) scope.current = {}; };
+      if (!cancelled && scope.current === current) setGrant(prior => result.grant?.chatId === chatId ? result.grant : prior?.state === "revoked" ? prior : null);
+    })().catch((error: unknown) => { console.warn("[browser-permission] Grant read failed", browserPermissionErrorKind(error)); if (!cancelled && scope.current === current) setError("Could not check browser access. Refresh this Chat."); });
+    return () => { cancelled = true; };
   }, [chatId, gatewayUrl, approval.approvalId, approval.runId, approval.browserGrant, approval.browserApproval, getToken, grantRefresh]);
   useEffect(() => {
     if (!approval.pending || !approval.browserApproval) return;
     const timer = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(timer);
   }, [approval.pending, approval.browserApproval?.expiresAt]);
   const pending = approval.pending && (!approval.browserApproval || (!approval.browserApproval.resolution && Date.parse(approval.browserApproval.expiresAt) > clock));
-  const inFlight = useRef(false);
-  // At most seven native/browser decision keys; preserve an ambiguous request's id on retry.
-  const requestIds = useRef<Partial<Record<CanonicalChatApprovalDecision | BrowserPermissionChoice, string>>>({});
   async function submit(decision: CanonicalChatApprovalDecision, browserChoice?: BrowserPermissionChoice) {
     if (inFlight.current || submitted || !approval.pending || !approval.allowedDecisions.includes(decision)) return;
+    const current = scope.current;
     inFlight.current = true;
     setSubmitting(true);
     setError(null);
@@ -65,14 +71,15 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
         schema: CanonicalChatApprovalSubmissionResponseSchema,
         errorMessage: "Could not submit approval. Try again.",
       });
-      setSubmitted(true);
+      if (scope.current === current) setSubmitted(true);
     } catch (_error) {
-      setError("Could not submit approval. Try again.");
+      if (scope.current === current) setError("Could not submit approval. Try again.");
     } finally {
-      if (browserChoice) setGrantRefresh(value => value + 1);
-      try { await onSettled(); } catch (_error) { setError("Could not refresh chat. Try again."); }
-      inFlight.current = false;
-      setSubmitting(false);
+      if (scope.current === current) {
+        if (browserChoice) setGrantRefresh(value => value + 1);
+        try { await onSettled(); } catch (_error) { if (scope.current === current) setError("Could not refresh chat. Try again."); }
+        if (scope.current === current) { inFlight.current = false; setSubmitting(false); }
+      }
     }
   }
   return <View style={styles.card}>
@@ -95,7 +102,11 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
         const result = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/browser-grants/${encodeURIComponent(grant.id)}`),
           token, method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), schema: z.strictObject({ grant: BrowserGrantViewSchema }), errorMessage: "Could not undo browser access." });
         if (result.grant.state !== "revoked") throw new Error("Access not removed");
-        if (scope.current === current) setGrant(result.grant);
+        if (scope.current === current) {
+          setGrant(result.grant);
+          try { await onSettled(); }
+          catch (error: unknown) { console.warn("[browser-permission] Grant refresh failed", browserPermissionErrorKind(error)); if (scope.current === current) setError("Could not refresh Chat. Browser access was removed."); }
+        }
       } catch (error: unknown) { console.warn("[browser-permission] Undo failed", browserPermissionErrorKind(error)); if (scope.current === current) setError("Could not undo browser access. Try again."); }
       finally { if (scope.current === current) { inFlight.current = false; setSubmitting(false); } }
     })()}><Text style={styles.text}>Undo</Text></Pressable> : null}

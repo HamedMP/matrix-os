@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 
 jest.mock("@clerk/clerk-expo", () => { const getToken = async () => "test-token"; return { useAuth: () => ({ getToken }) }; });
@@ -86,4 +86,49 @@ it("checks saved browser access after an uncertain native decision", async () =>
   fireEvent.press(screen.getByText("Allow in this Chat"));
   await screen.findByText("Undo");
   expect(screen.getByText("Could not submit approval. Try again.")).toBeTruthy();
+});
+it("releases Undo busy state when Chat refreshes during the request", async () => {
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome", scopeVersion: 1, revision: 1, state: "active", createdAt: new Date().toISOString(), revokedAt: null };
+  let rejectUndo!: (error: Error) => void;
+  const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+    if (init?.method === "DELETE") return await new Promise((_resolve, reject) => { rejectUndo = reject; });
+    return { ok: true, json: async () => ({ grant }) } as Response;
+  });
+  const view = { ...approval, allowedDecisions: [...approval.allowedDecisions], browserApproval: { kind: "shared_chrome" as const, leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1 as const, expiresAt: new Date(Date.now()+60_000).toISOString() } };
+  const { rerender } = render(<CanonicalApprovalMessage {...props} approval={view}/>);
+  fireEvent.press(await screen.findByText("Undo")); await waitFor(() => expect(rejectUndo).toBeDefined());
+  rerender(<CanonicalApprovalMessage {...props} approval={{ ...view, browserApproval: { ...view.browserApproval } }}/>);
+  rejectUndo(new Error("Response lost"));
+  await waitFor(() => expect(screen.getByText("Could not undo browser access. Try again.")).toBeTruthy());
+  fireEvent.press(screen.getByText("Undo"));
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(2));
+});
+it("refreshes other native cards after confirmed Undo", async () => {
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome", scopeVersion: 1, revision: 1, state: "active", createdAt: new Date().toISOString(), revokedAt: null };
+  let active: typeof grant | null = grant;
+  jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+    if (init?.method === "DELETE") { active = null; return { ok: true, json: async () => ({ grant: { ...grant, state: "revoked", revision: 2, revokedAt: new Date().toISOString() } }) } as Response; }
+    return { ok: true, json: async () => ({ grant: active }) } as Response;
+  });
+  const lifecycle = { kind: "shared_chrome" as const, leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1 as const, expiresAt: new Date(Date.now()+60_000).toISOString() };
+  function Cards() {
+    const [, refreshChat] = React.useState(0);
+    return <>{["first", "second"].map(id => <CanonicalApprovalMessage key={id} {...props} onSettled={() => refreshChat(value => value + 1)} approval={{ ...approval, approvalId: id, allowedDecisions: [...approval.allowedDecisions], browserApproval: { ...lifecycle } }}/>)}</>;
+  }
+  render(<Cards/>);
+  await waitFor(() => expect(screen.getAllByText("Undo")).toHaveLength(2));
+  fireEvent.press(screen.getAllByText("Undo")[0]!);
+  await waitFor(() => expect(screen.queryAllByText("Undo")).toHaveLength(0));
+});
+it("ignores an old decision response after changing Chat", async () => {
+  let finish!: (response: Response) => void;
+  jest.spyOn(global, "fetch").mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const view = { ...approval, allowedDecisions: [...approval.allowedDecisions] };
+  const { rerender } = render(<CanonicalApprovalMessage {...props} approval={view}/>);
+  fireEvent.press(screen.getByText("Approve")); await waitFor(() => expect(finish).toBeDefined());
+  rerender(<CanonicalApprovalMessage {...props} chatId="chat_new" approval={{ ...view, runId: "run_new", approvalId: "approval_new" }}/>);
+  await act(async () => { finish({ ok: true, json: async () => ({ approvalId: "approval_test", decision: "approve", submission: "accepted" }) } as Response); });
+  expect(screen.getByText("Approve")).toBeTruthy();
+  expect(screen.queryByText("Decision submitted. Waiting for confirmation.")).toBeNull();
 });

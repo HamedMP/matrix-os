@@ -29,6 +29,10 @@ Every browser card reads the active Chat's authoritative grant independently
 of recorded activity, including after an uncertain decision response. A lost
 confirmation cannot hide remembered access or its Undo action. Foreign Chat
 grants and stale asynchronous reads are excluded from the current card.
+Confirmed Undo refreshes other mounted cards in the same Chat window. Native
+Mobile refreshes its canonical Chat projection after revocation. Background
+grant reads do not replace the lifetime of a pending decision or Undo action;
+responses from a previous Chat cannot change the current card's busy state.
 
 A composer reminder scrolls/focuses the pending card inside the same window.
 Always allow opens existing permission settings without approving the pending

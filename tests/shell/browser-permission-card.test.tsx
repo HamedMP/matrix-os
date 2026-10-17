@@ -3,6 +3,7 @@ import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BrowserPermissionCard } from "../../packages/ui/src/browser-permission/BrowserPermissionCard";
+import { BrowserPermissionReviewProvider } from "../../packages/ui/src/browser-permission/BrowserPermissionReview";
 import type { CanonicalChatApprovalView } from "@matrix-os/contracts";
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const approval: CanonicalChatApprovalView = { id: "activity", runId: "run", approvalId: "browser_one", title: "Use Matrix Browser", description: "Use your Chrome profile.", risk: "medium", allowedDecisions: ["approve", "decline", "cancel"], pending: true, timestamp: Date.now(), actionDigest: "a".repeat(64),
@@ -78,4 +79,14 @@ it("ignores a late grant read after switching Chat", async () => {
   finish(grant);
   await waitFor(() => expect(getGrant).toHaveBeenCalledWith("chat_new"));
   expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});
+it("refreshes every browser card after another card removes the shared Chat grant", async () => {
+  const grant = { id: "278ca19d-9760-4e67-a221-62bedf393b90", chatId: "chat_test", capability: "shared_chrome" as const, scopeVersion: 1 as const, revision: 1, state: "active" as const, createdAt: new Date().toISOString(), revokedAt: null };
+  let active: typeof grant | null = grant;
+  const client = { getGrant: vi.fn(async () => active), revokeGrant: vi.fn(async () => { active = null; return { ...grant, state: "revoked" as const, revision: 2, revokedAt: new Date().toISOString() }; }) };
+  render(<BrowserPermissionReviewProvider>{["first", "second"].map(id => <BrowserPermissionCard key={id} chatId="chat_test" approval={{ ...approval, approvalId: id }} client={client}/>)}</BrowserPermissionReviewProvider>);
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Undo" })).toHaveLength(2));
+  fireEvent.click(screen.getAllByRole("button", { name: "Undo" })[0]!);
+  await waitFor(() => expect(screen.queryAllByRole("button", { name: "Undo" })).toHaveLength(0));
+  expect(screen.queryAllByText("Browser access is saved for this Chat")).toHaveLength(0);
 });
