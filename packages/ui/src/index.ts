@@ -248,6 +248,8 @@ export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
+export { BrowserSurface, createHostedBrowserSession } from "./browser/index.js";
+export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus } from "./browser/index.js";
 
 export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./chat/attachment-input.js";
 

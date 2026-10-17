@@ -2,13 +2,15 @@ import type { LayoutWindow } from "@/hooks/useWindowManager";
 import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { getCodeEditorUrl } from "./feature-flags";
-import { resolveWebDesktopBuiltInLaunch } from "./web-desktop-app-launch";
+import { openWebAppBridgeWindow, resolveWebDesktopBuiltInLaunch } from "./web-desktop-app-launch";
 
 const BUILT_IN_APP_VALUES = [
   "__terminal__",
   "__file-browser__",
   "__chat__",
   "__activity-monitor__",
+  "__browser__",
+  "__cloud-desktop__",
 ] as const;
 
 const RETIRED_BUILT_IN_APP_PATHS = new Set(["__workspace__"]);
@@ -21,6 +23,8 @@ export const TERMINAL_MIN_WINDOW_WIDTH = 440;
 export const TERMINAL_MIN_WINDOW_HEIGHT = 300;
 
 const BUILT_IN_APP_ALIASES = new Map<string, string>([
+  ["apps/browser/index.html", "__browser__"],
+  ["apps/browser/dist/index.html", "__browser__"],
   ["workspace", "__workspace__"],
   ["apps/workspace/index.html", "__workspace__"],
   ["/files/apps/workspace/index.html", "__workspace__"],
@@ -41,6 +45,8 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
 
 const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__workspace__", "Workspace"],
+  ["__browser__", "Browser"],
+  ["__cloud-desktop__", "Cloud desktop"],
   ["__terminal__", "Terminal"],
   ["__file-browser__", "Files"],
   ["__chat__", "Hermes"],
@@ -82,7 +88,7 @@ export function routeAppBridgeLaunch(
     useDesktopMode.getState().setMode(destination.mode);
     return;
   }
-  openWindow(destination?.kind === "app" ? destination.name : name, destination?.kind === "app" ? destination.path : path);
+  openWebAppBridgeWindow(destination?.kind === "app" ? destination.name : name, destination?.kind === "app" ? destination.path : path, openWindow);
 }
 
 const BUILT_IN_PATHS = new Set<string>(BUILT_IN_APP_VALUES);
