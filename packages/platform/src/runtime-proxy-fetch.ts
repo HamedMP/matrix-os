@@ -1,3 +1,5 @@
+import { SITE_PUBLISH_PROXY_TIMEOUT_MS } from "@matrix-os/contracts";
+
 /** Keep header waits bounded without timing out a healthy streaming body. */
 export async function fetchRuntimeProxy(
   targetUrl: string,
@@ -7,8 +9,10 @@ export async function fetchRuntimeProxy(
 ): Promise<Response> {
   // Sync commits include bounded staged-object validation/publication. Keep the
   // proxy alive beyond the gateway's four-minute budget, but below the CLI's six.
-  const operationTimeoutMs = init.method === "POST" && new URL(targetUrl).pathname === "/api/sync/commit"
-    ? 300_000 : timeoutMs;
+  const path = new URL(targetUrl).pathname;
+  const operationTimeoutMs = init.method === "POST" && path === "/api/sync/commit"
+    ? 300_000 : init.method === "POST" && /^\/api\/apps\/[a-z0-9][a-z0-9-]{0,63}\/site$/.test(path)
+      ? SITE_PUBLISH_PROXY_TIMEOUT_MS : timeoutMs;
   if (!releaseTimeoutAfterHeaders) {
     const deadline = AbortSignal.timeout(operationTimeoutMs);
     const upstreamSignal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;

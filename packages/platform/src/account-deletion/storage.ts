@@ -40,8 +40,10 @@ export async function eraseOwnerStorage(store: AccountDeletionObjectStore, owner
 export function createAccountDeletionObjectStore(config: R2ClientConfig): AccountDeletionObjectStore {
   const endpoint = config.endpoint ?? (config.accountId ? `https://${config.accountId}.r2.cloudflarestorage.com` : undefined);
   if (!endpoint || !config.bucket || !config.accessKeyId || !config.secretAccessKey) throw new Error('Storage cleanup configuration unavailable');
+  const sessionToken = config.sessionToken?.trim();
   const s3 = new S3Client({ region: 'auto', endpoint, forcePathStyle: config.forcePathStyle,
-    credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey } });
+    credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey,
+      ...(sessionToken ? { sessionToken } : {}) } });
   return {
     async listObjects(prefix, cursor) {
       const result = await s3.send(new ListObjectsV2Command({ Bucket: config.bucket, Prefix: prefix,
