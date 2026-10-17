@@ -109,14 +109,14 @@
     "#ai-credit-history": "./src/ai-credit-history.ts",
     "#provider-workflows": "./src/provider-workflows.ts",
     "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
+    "#sites": "./src/sites.ts",
     "#app-capabilities": "./src/app-capabilities.ts",
     "#remote-browser": "./src/remote-browser.ts",
     "#shared-browser": "./src/shared-browser.ts",
     "#canonical-chat-execution-controls": "./src/canonical-chat-execution-controls.ts",
     "#browser-chat-approval": "./src/browser-chat-approval.ts",
     "#browser-permission-presentation": "./src/browser-permission-presentation.ts",
-    "#command-preview": "./src/command-preview.ts",
-    "#sites": "./src/sites.ts"
+    "#command-preview": "./src/command-preview.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",
