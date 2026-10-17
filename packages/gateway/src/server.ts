@@ -1517,7 +1517,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/",chatDriveContext.routes);
   app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
   const {
-    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch, invalidateClaudeLoginCatalog,
+    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch, invalidateNativeLoginCatalog,
   } = createGatewayChatProviderCatalog({
     observationScope: canonicalPhaseDiscovery.observationScope,
     homePath,
@@ -1732,7 +1732,7 @@ export async function createGateway(config: GatewayConfig) {
     ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
     getPrincipal: getOptionalRequestPrincipal,
     inventory: () => aiProviderService.getSnapshot(),
-    invalidateClaudeLoginCatalog,
+    invalidateNativeLoginCatalog,
   });
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
