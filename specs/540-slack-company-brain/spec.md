@@ -11,6 +11,20 @@ One native Matrix Slack app is installed once per workspace. An employee links t
 
 The first release is an owner-hosted company context pilot: the host owner supplies storage, the Pi model access source, and funding. Do not advertise organization-owned durability or employee-departure recovery. Organization-owned principal, billing, source transfer, and failover need a subsequent ownership feature. Every employee remains a distinct requester; no fake Clerk user or impersonation is permitted.
 
+## Direct-user agent parity with WhatsApp Cloud API
+
+The personal Slack DM and the Direct WhatsApp access flow in spec 546 share the same user promise: a verified person can message Matrix from a channel they already use, get a private agent response in that same channel, and continue their private Matrix-owned conversation without entering a company conversation. They should share acceptance scenarios and failure semantics, while retaining channel-specific identity proof and the currently qualified agent runtime.
+
+| Scenario | Shared behavior | Slack channel behavior | WhatsApp Cloud API behavior |
+|---|---|---|---|
+| Link identity | Prove control of the external sender and authenticate the Matrix owner; never infer identity from email, display name, or a caller-supplied ID. | An employee links the Slack sender from a signed private DM using a one-time challenge and an authenticated Matrix session. | A sender claims a short-lived link while signed in to Matrix, then proves the association with a code delivered back to WhatsApp. |
+| Route a private message | Attribute each inbound event to exactly one owner and one stable personal conversation; keep it isolated from other users and company scopes. | A Slack DM maps to that employee's durable direct bot Chat and personal `matrix_bot`/Pi route. | The linked sender maps to the owner's persistent general Matrix Chat on the primary runtime. |
+| Respond | Return only the committed result for that inbound request to the same sender/conversation; deduplicate event retries and do not blindly replay uncertain sends. | Reply in the invoking Slack DM/thread as the Matrix agent. | Reply to the originating WhatsApp sender within Meta's supported reply window. |
+| Needs user action | Keep approvals, questions, or unavailable-runtime status truthful and private; do not claim a reply was sent before delivery is confirmed. | Surface any required action through the private Slack/Matrix path supported by the canonical Chat. | Direct the user to their authenticated Matrix Chat when the canonical run needs approval or input. |
+| Disconnect or revoke | Stop admitting future messages and cancel or fence pending work for that link without affecting another user's private agent or company context. | Remove the verified Slack-user link under current Matrix authority. | Disconnect the linked WhatsApp sender under the authenticated Matrix owner. |
+
+This parity does not make the transports or conversation stores interchangeable. The Slack app also supports explicitly configured company channels and a Company Brain; those requests use a separate shared agent and scope. The WhatsApp Cloud API flow is direct-user only, text-first, and constrained by Meta's reply window. Neither flow is the WhatsApp personal-account bridge in spec 077, where conversations are mirrored into Matrix rooms and AI access defaults off until granted per room. Keep these three scopes distinct. Do not change a route's agent, funding source, memory, or conversation authority merely to make channel behavior look alike.
+
 ## Compatibility baseline
 
 - Latest inspected main: `3f4ec7b90`; spec 124 supplies home authority, organization membership leases, scoped resource grants, canonical shared queues and revocation fences.
@@ -37,7 +51,8 @@ The first release is an owner-hosted company context pilot: the host owner suppl
 | Endpoint / operation | Authentication | Authority |
 |---|---|---|
 | `POST /api/slack/install` | Matrix account session, same-origin cookies or bearer | Current org admin |
-| `GET /api/slack/oauth/callback` | Single-use hashed state + Slack code exchange | Recheck initiating actor/admin/workspace |
+| `GET /api/slack/oauth/callback` | Fresh initiating Matrix session + single-use hashed state + Slack code exchange | Recheck initiating actor/admin/workspace; unauthenticated browser navigation only hands off to sign-in without consuming state |
+| `GET /slack/oauth/complete` | Public brand auth shell; Clerk sign-in and fresh own-session token | No installation or runtime access until authenticated callback succeeds |
 | `POST /webhooks/slack/events` | Raw-body Slack HMAC + five-minute timestamp/app/workspace | Verified link, current Matrix membership and configured Project |
 | `GET /slack/link`, `POST /api/slack/link/complete` | Matrix account session + private-DM single-use challenge | One verified Slack sender; account-only employees supported |
 | Channel binding `PUT`, workspace/link `DELETE` under `/api/slack/workspaces/` | Matrix account session + CSRF origin check | Current org admin; exact owner Project management and explicit output approval |

@@ -175,14 +175,17 @@ describe("preview collaboration host scripts", () => {
     expect(hostEnv()).toBe(ORIGINAL);
   });
 
-  it("keeps exactly one rollback copy: the host environment before the first connection", () => {
+  it("keeps one immutable origin copy and at most one uncommitted attempt snapshot", () => {
     expect(apply().status).toBe(0);
     expect(apply({ ...BINDING, UPGRADE_TOKEN: "c".repeat(64) }).status).toBe(0);
     const rollback = join(root, ".host.env.preview-collaboration-rollback");
     expect(readFileSync(rollback, "utf8")).toBe(ORIGINAL);
     expect(statSync(rollback).mode & 0o7777).toBe(0o640);
     expect(envValue("MATRIX_UPDATE_MANIFEST_BASE_URL")).toEqual([`MATRIX_UPDATE_MANIFEST_BASE_URL=${PRODUCTION_URL}`]);
-    expect(readdirSync(root).filter((name) => name.includes("rollback") || name.startsWith(".pc-tmp."))).toEqual([".host.env.preview-collaboration-rollback"]);
+    expect(readdirSync(root).filter((name) => name.includes("rollback") || name.startsWith(".pc-tmp.")).sort())
+      .toEqual([".host.env.preview-collaboration-attempt-rollback", ".host.env.preview-collaboration-rollback"]);
+    expect(JSON.parse(guard("commit", NONCE).stdout)).toBe("committed");
+    expect(readdirSync(root).filter((name) => name.includes("rollback"))).toEqual([".host.env.preview-collaboration-rollback"]);
   });
 
   it.each([
@@ -197,6 +200,7 @@ describe("preview collaboration host scripts", () => {
     expect(result.status).not.toBe(0);
     expect(hostEnv()).toBe(ORIGINAL);
     expect(existsSync(join(root, ".host.env.preview-collaboration-rollback"))).toBe(false);
+    expect(existsSync(join(root, ".host.env.preview-collaboration-attempt-rollback"))).toBe(false);
     expect(result.stderr).not.toContain(BINDING.UPGRADE_TOKEN);
   });
 
@@ -228,7 +232,8 @@ describe("preview collaboration host scripts", () => {
     expect(JSON.parse(restored.stdout)).toBe("restored");
     expect(hostEnv()).toBe(ORIGINAL);
     expect(statSync(join(root, "host.env")).mode & 0o7777).toBe(0o640);
-    expect(existsSync(join(root, ".host.env.preview-collaboration-rollback"))).toBe(false);
+    expect(readFileSync(join(root, ".host.env.preview-collaboration-rollback"), "utf8")).toBe(ORIGINAL);
+    expect(existsSync(join(root, ".host.env.preview-collaboration-attempt-rollback"))).toBe(false);
     expect(JSON.parse(guard("restore", "101-1").stdout)).toBe("unchanged");
     // A commit after a restore must fail, so the workflow never reports a connection the guard undid.
     expect(guard("commit", "101-1").status).not.toBe(0);
@@ -239,10 +244,59 @@ describe("preview collaboration host scripts", () => {
     expect(JSON.parse(guard("commit", "102-1").stdout)).toBe("committed");
     expect(JSON.parse(guard("restore", "102-1").stdout)).toBe("unchanged");
     expect(envValue("UPGRADE_TOKEN")).toEqual([`UPGRADE_TOKEN=${BINDING.UPGRADE_TOKEN}`]);
-    // A later connection that fails before committing returns the home to its original binding.
+    // A later failed attempt returns to this committed binding, retaining original release provenance.
+    const committed = hostEnv();
     expect(connect("103-1", { ...BINDING, UPGRADE_TOKEN: "d".repeat(64) }).status).toBe(0);
     expect(JSON.parse(guard("restore", "103-1").stdout)).toBe("restored");
+    expect(hostEnv()).toBe(committed);
+  });
+
+  it("preserves a legacy armed restorer instead of replacing its source mid-claim", () => {
+    const legacy = "import os\ndef restore(root):\n    os.replace(root / '.host.env.preview-collaboration-rollback', root / 'host.env')\n";
+    writeFileSync(join(root, ".preview-collaboration-guard.py"), legacy, { mode: 0o700 });
+    writeFileSync(join(root, ".preview-collaboration-state"), JSON.stringify({ nonce: "199-1", state: "claimed" }), { mode: 0o600 });
+    writeFileSync(join(root, ".host.env.preview-collaboration-rollback"), ORIGINAL, { mode: 0o640 });
+    const partial = ORIGINAL.replace(PRODUCTION_URL, BINDING.PLATFORM_INTERNAL_URL);
+    writeFileSync(join(root, "host.env"), partial);
+    expect(prepare().status).not.toBe(0);
+    expect(readFileSync(join(root, ".preview-collaboration-guard.py"), "utf8")).toBe(legacy);
+    expect(hostEnv()).toBe(partial);
+    const restored = python(join(root, ".preview-collaboration-guard.py"), 'm["restore"](pathlib.Path(sys.argv[2]))');
+    expect(restored.status, restored.stderr).toBe(0);
     expect(hostEnv()).toBe(ORIGINAL);
+  });
+
+  it.each([false, true])("keeps a committed binding when a retry fails with applied=%s", (applied) => {
+    expect(connect("201-1").status).toBe(0);
+    expect(JSON.parse(guard("commit", "201-1").stdout)).toBe("committed");
+    const committed = hostEnv();
+    expect(JSON.parse(claim("202-1").stdout)).toBe("claimed");
+    if (applied) expect(applyAs("202-1", { ...BINDING, UPGRADE_TOKEN: "c".repeat(64) }).status).toBe(0);
+    expect(JSON.parse(guard("restore", "202-1").stdout)).toBe(applied ? "restored" : "none");
+    expect(hostEnv()).toBe(committed);
+    expect(envValue("MATRIX_UPDATE_MANIFEST_BASE_URL")).toEqual([`MATRIX_UPDATE_MANIFEST_BASE_URL=${PRODUCTION_URL}`]);
+    expect(applyAs("202-1").status).not.toBe(0);
+  });
+
+  it("cannot commit a retry before that attempt applies its binding", () => {
+    expect(connect("203-1").status).toBe(0);
+    expect(JSON.parse(guard("commit", "203-1").stdout)).toBe("committed");
+    const committed = hostEnv();
+    expect(JSON.parse(claim("204-1").stdout)).toBe("claimed");
+    expect(guard("commit", "204-1").status).not.toBe(0);
+    expect(JSON.parse(guard("restore", "204-1").stdout)).toBe("none");
+    expect(hostEnv()).toBe(committed);
+  });
+
+  it("carries the last committed rollback target across superseded uncommitted attempts", () => {
+    expect(connect("205-1").status).toBe(0);
+    expect(JSON.parse(guard("commit", "205-1").stdout)).toBe("committed");
+    const committed = hostEnv();
+    expect(connect("206-1", { ...BINDING, UPGRADE_TOKEN: "d".repeat(64) }).status).toBe(0);
+    expect(connect("207-1", { ...BINDING, UPGRADE_TOKEN: "e".repeat(64) }).status).toBe(0);
+    expect(JSON.parse(guard("restore", "206-1").stdout)).toBe("unchanged");
+    expect(JSON.parse(guard("restore", "207-1").stdout)).toBe("restored");
+    expect(hostEnv()).toBe(committed);
   });
 
   it("never lets an earlier run's timer undo a newer connection", () => {
@@ -263,9 +317,9 @@ describe("preview collaboration host scripts", () => {
 
   it("refuses to restore from a symlinked rollback copy", () => {
     expect(connect("107-1").status).toBe(0);
-    rmSync(join(root, ".host.env.preview-collaboration-rollback"));
+    rmSync(join(root, ".host.env.preview-collaboration-attempt-rollback"));
     writeFileSync(join(root, "elsewhere"), "MATRIX_HANDLE=alice\n");
-    symlinkSync(join(root, "elsewhere"), join(root, ".host.env.preview-collaboration-rollback"));
+    symlinkSync(join(root, "elsewhere"), join(root, ".host.env.preview-collaboration-attempt-rollback"));
     expect(guard("restore", "107-1").status).not.toBe(0);
     expect(envValue("UPGRADE_TOKEN")).toEqual([`UPGRADE_TOKEN=${BINDING.UPGRADE_TOKEN}`]);
   });

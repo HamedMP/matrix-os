@@ -4,7 +4,7 @@ The run that claimed a connection last owns it. A run installs the guard before
 arming its timer. `claim <nonce>` verifies that exact source and the live timer,
 then records the claim, so ownership only moves to a
 run whose timer still covers the home, and host.env changes only after that. `restore <nonce> [--restart]`
-puts the pre-connection host environment back only while that run's claim is
+puts the last committed host environment back only while that run's claim is
 uncommitted, so an earlier run's timer never undoes a newer connection; the
 rollback copy carries the original owner, group and mode. `commit <nonce>`
 records a verified connection and refuses once a restore has run. Claim, commit,
@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 
 ROLLBACK = ".host.env.preview-collaboration-rollback"
+ATTEMPT_ROLLBACK = ".host.env.preview-collaboration-attempt-rollback"
 STATE = ".preview-collaboration-state"
 # The workflow arms `systemd-run --unit=matrix-preview-collaboration-guard-<nonce>`.
 TIMER = "matrix-preview-collaboration-guard-{}.timer"
@@ -73,6 +74,9 @@ def prepare(root, source):
         raise ValueError("Invalid guard source")
     lock = locked(root)
     try:
+        # An already armed older guard must retain the code that can restore its snapshot.
+        if owner(root).get("state") == "claimed" and not guard_installed(root, source):
+            raise ValueError("An uncommitted connection still uses another rollback guard")
         write_atomic(root / GUARD, source, 0o700)
     finally:
         os.close(lock)
@@ -99,6 +103,9 @@ def claim(root, nonce, source, armed=timer_armed):
         # its service waits on this lock and restores the newly recorded claim.
         if not guard_installed(root, source) or not armed(nonce):
             raise ValueError("This run has no installed and armed rollback guard")
+        # An uncommitted predecessor carries the last committed baseline forward.
+        if owner(root).get("state") != "claimed" and os.path.lexists(root / ATTEMPT_ROLLBACK):
+            os.unlink(root / ATTEMPT_ROLLBACK)
         record(root, nonce, "claimed")
     finally:
         os.close(lock)
@@ -110,7 +117,11 @@ def commit(root, nonce):
     try:
         if owner(root) != {"nonce": nonce, "state": "claimed"} or not os.path.isfile(root / ROLLBACK):
             raise ValueError("This run no longer owns an applied connection")
+        snapshot = os.lstat(root / ATTEMPT_ROLLBACK)
+        if not stat.S_ISREG(snapshot.st_mode) or snapshot.st_mode & 0o022 or snapshot.st_size > 1 << 20:
+            raise ValueError("Unsafe attempt rollback copy")
         record(root, nonce, "committed")
+        os.unlink(root / ATTEMPT_ROLLBACK)
     finally:
         os.close(lock)
     return "committed"
@@ -121,14 +132,14 @@ def restore(root, nonce, restart=None):
     try:
         if owner(root) != {"nonce": nonce, "state": "claimed"}:
             return "unchanged"
-        rollback = root / ROLLBACK
+        rollback = root / ATTEMPT_ROLLBACK
         try:
             metadata = os.lstat(rollback)
         except FileNotFoundError:
             # Nothing was applied yet; end the claim anyway so a late apply cannot outlive the timer.
             record(root, nonce, "restored")
             return "none"
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o022:
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o022 or metadata.st_size > 1 << 20:
             raise ValueError("Unsafe rollback copy")
         os.replace(rollback, root / "host.env")
         directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
