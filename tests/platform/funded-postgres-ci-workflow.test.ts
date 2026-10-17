@@ -84,6 +84,7 @@ describe("funded PostgreSQL CI coverage", () => {
       "tests/platform/ai-funded-recovery-migration.test.ts",
       "tests/platform/ai-funded-usage-waiver.test.ts", "tests/platform/ai-funded-usage-waiver-cli.test.ts",
       "tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts",
+      "tests/platform/customer-funded-starter-backfill.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
     ]);
   });

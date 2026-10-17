@@ -52,6 +52,7 @@ import { createCustomerVpsProvisioningDispatcher } from './customer-vps-provisio
 import { createCustomerVpsProvisioner } from './customer-vps-provision.js';
 import { createCustomerVpsRecovery } from './customer-vps-recovery.js';
 import { createCustomerVpsRegistration } from './customer-vps-registration.js';
+import { createCustomerFundedStarterReconciler } from './customer-funded-starter-reconciliation.js';
 import { createCustomerVpsPrivatePreviews } from './customer-vps-private-preview.js';
 
 export type {
@@ -78,6 +79,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   const { provision } = createCustomerVpsProvisioner(context, dispatcher);
   const { reconcilePendingRecoveryCreate, recover } = createCustomerVpsRecovery(context);
   const { register } = createCustomerVpsRegistration(context);
+  const reconcileFundedStarter = createCustomerFundedStarterReconciler({
+    db: deps.db, batchSize: deps.config.reconciliationBatchSize, now,
+  });
   const privatePreviews = createCustomerVpsPrivatePreviews(context, dispatcher);
 
   async function waitForServerStatus(
@@ -640,6 +644,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async reconcileProvisioning() {
+      try { await reconcileFundedStarter(); }
+      catch (error) { logCustomerVpsError('funded starter reconciliation', error); }
       await dispatchProvisioningJobs();
       await prebillingFallbackReconciler?.();
       const staleBefore = new Date(now().getTime() - deps.config.reconciliationStaleAfterMs).toISOString();
