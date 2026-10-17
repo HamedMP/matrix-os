@@ -44,6 +44,7 @@ beforeEach(async () => {
 afterEach(async () => { vi.unstubAllEnvs(); await destroy(); });
 
 function setup(options: {
+  homePath?: string;
   worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
   resolveRoute?: (selection?: CanonicalChatModelSelection) => Promise<import("../../../packages/gateway/src/bots/route-resolver.js").ResolvedBotRoute>;
   admit?: () => Promise<never>;
@@ -86,6 +87,7 @@ function setup(options: {
   const transact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
   const interactions = createBotInteractionService({ transact });
   orchestrator = createBotTaskOrchestrator({
+    homePath: options.homePath, expectedOwnerId: OWNER,
     bindings: createBotBindingsRepository(db),
     transact,
     interactions: options.answerWithMessage ? { answerWithMessage: options.answerWithMessage } : interactions,
@@ -207,7 +209,8 @@ describe("bot turns through the matrix_bot adapter", () => {
   it("keeps the normal sixty-tool spec when no runtime generation ceiling is configured", async () => {
     vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", undefined);
     const context = setup({ worker: async input => {
-      const spec = await context.orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      const binding = context.registry.lookupRun({ ...input, runId: input.command.runId })!;
+      const spec = await context.orchestrator.runSource.loadRunSpec(binding);
       expect(spec.limits).toEqual({ maxToolActions: 60 });
       expect(spec.route.maxOutputTokens).toBe(8192);
       return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
@@ -232,7 +235,7 @@ describe("bot turns through the matrix_bot adapter", () => {
     const admit = vi.fn(async () => { throw new Error("foreign native owner"); });
     const executorReady = createBotExecutorReadiness({ runtimeOwnerId: "different_host_owner", computerId: "preview", nativeTasks: true, connections: { execution, admit } });
     const { adapter, orchestrator } = setup({ executorReady, worker: async (input) => {
-      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
       expect(spec.capabilities).not.toContain("agent.task");
       expect(spec.capabilities).toContain("artifact.write");
       return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
@@ -247,7 +250,7 @@ describe("bot turns through the matrix_bot adapter", () => {
   it("advertises the selected native task executor only after fresh Bot authorization with a Matrix-funded coordinator", async () => {
     const executorReady = vi.fn(async () => true);
     const { adapter, orchestrator, admission } = setup({ executorReady, worker: async (input) => {
-      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
       expect(spec.capabilities).toContain("agent.task"); expect(spec.route).toEqual(ROUTE);
       return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
     } });
@@ -264,7 +267,7 @@ describe("bot turns through the matrix_bot adapter", () => {
   it("runs one turn in the bot workload and projects its events onto Chat", async () => {
     const { adapter, orchestrator, admission, commands } = setup({
       worker: async (input, { publish }) => {
-        const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+        const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
         expect(spec).toMatchObject({ route: ROUTE, turn: { kind: "prompt", text: "Tighten my intro." }, limits: { maxToolActions: 60 } });
         // Only tools the broker serves today reach the worker.
         expect(spec.capabilities).toEqual(["interaction.create", "memory.search", "memory.propose", "artifact.read", "artifact.write"]);
@@ -312,7 +315,7 @@ describe("bot turns through the matrix_bot adapter", () => {
       rootFingerprint: "f".repeat(64), route: ROUTE, accessSourceId: "matrix_included", capabilities: ["interaction.create"], requestClass: "interactive",
     }, { blocking: true, payload: { kind: "question", questions: [{ questionId: "q1", header: "Tone", question: "Formal or casual?", allowOther: true, secret: false }] } });
     worker.mockImplementationOnce(async (input) => {
-      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
       expect(spec.systemPrompt).toContain("- (preference) Keep it short.");
       return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 2 };
     });
@@ -523,7 +526,7 @@ it("runs new custom coordinators through the Bot adapter with exact subscription
  const route={...ROUTE,api:"openai-responses" as const,modelId:selection.model};
  const resolveRoute=vi.fn(async(selected?:CanonicalChatModelSelection)=>{expect(selected).toEqual(selection);return {route,accessSourceId:"matrix_chatgpt_plan" as const,subscription};});
  const x=setup({agent,resolveProcedure,resolveRoute,worker:async(input)=>{
-  const spec=await x.orchestrator.runSource.loadRunSpec({runId:input.command.runId} as never);
+  const spec=await x.orchestrator.runSource.loadRunSpec({runId:input.command.runId, ownerId:OWNER, chatId:CHAT, runtimeHandle:RUNTIME, executionGeneration:"3"} as never);
   expect(spec.systemPrompt).toContain(agent.instructions); expect(spec.route).toEqual(route);
   expect(x.registry.lookupRun({...input,runId:input.command.runId})).toMatchObject({ownerId:OWNER,botId:BOT,managedDefinitionRevision:1,subscription});
   return {runId:input.command.runId,status:"completed",toolActions:0,sessionRevision:1};
@@ -535,4 +538,61 @@ it("runs new custom coordinators through the Bot adapter with exact subscription
  expect(resolveProcedure).toHaveBeenCalledTimes(2);expect(resolveRoute).toHaveBeenCalledTimes(2);
  const bad=x.orchestrator.start({ownerId:OWNER,chatId:CHAT,runId:"run_custom_changed",text:"No source changes",selection:{...selection,model:"foreign-model"},signal:new AbortController().signal});
  expect(await bad.result).toEqual({status:"failed"}); expect(resolveRoute).toHaveBeenCalledTimes(2);
+});
+
+it("forwards image/file-only recipe Bot turns through the real broker and image-hydrating Pi worker", async () => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path"); const { tmpdir } = await import("node:os");
+  const { fauxProvider, fauxAssistantMessage, fauxToolCall, fauxText } = await import("@earendil-works/pi-ai");
+  const { createBotWorker } = await import("../../../packages/bot-runtime/src/worker.js");
+  const { BotBrokerError } = await import("../../../packages/bot-runtime/src/broker-client.js");
+  const { createBotBrokerActions } = await import("../../../packages/gateway/src/bots/broker-actions.js");
+  const { createBotCheckpointsRepository } = await import("../../../packages/gateway/src/bots/repositories/checkpoints.js");
+  const { createBotSessionsRepository } = await import("../../../packages/gateway/src/bots/repositories/sessions.js");
+  const home = await mkdtemp(join(tmpdir(), "recipe-inputs-"));
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==", "base64");
+  const route = { ...ROUTE, input: ["text", "image"] as ("text" | "image")[] };
+  const faux = fauxProvider({ models: [{ id: route.modelId, input: route.input, contextWindow: route.contextWindow, maxTokens: route.maxOutputTokens }] });
+  let observed = 0;
+  for (let index = 0; index < 2; index++) faux.appendResponses([
+    context => {
+      const user = [...context.messages].reverse().find(message => message.role === "user")!;
+      const content = user.content as Array<{ type: string; text?: string }>;
+      expect(content.find(item => item.type === "image")).toMatchObject({ data: png.toString("base64"), mimeType: "image/png" }); observed++;
+      const alias = content.find(item => item.type === "text")!.text!.match(/read_artifact path=(submitted-inputs\/[a-f0-9-]+)/)![1]!;
+      return fauxAssistantMessage(fauxToolCall("read_artifact", { path: alias }, { id: `recipe_read_${index}` }), { stopReason: "toolUse" });
+    },
+    context => { expect(JSON.stringify(context.messages.at(-1))).toContain("RECIPE_FILE_MARKER"); return fauxAssistantMessage(fauxText("RECIPE_FILE_MARKER")); },
+  ]);
+  let actions: ReturnType<typeof createBotBrokerActions>;
+  const x = setup({ homePath: home, resolveRoute: async () => ({ route, accessSourceId: "matrix_included" }), worker: async input => {
+    const call = async (body: Record<string, unknown>) => {
+      const reply = await actions.handleFrame({ version: 1, requestId: crypto.randomUUID(), runtimeHandle: input.runtimeHandle, executionGeneration: input.executionGeneration, runId: input.command.runId, ...body });
+      if (!reply?.ok) throw new BotBrokerError((reply?.code ?? "unavailable") as never); return reply.result;
+    };
+    const worker = createBotWorker({ bridgeOrigin: "http://127.0.0.1:41000", route: { provider: faux.provider, model: faux.getModel() }, brokerFor: () => ({
+      loadRun: () => call({ action: "bot.run.load" }) as never, readImageChunk: image => call({ action: "bot.input.image", image }) as never,
+      loadSession: () => call({ action: "bot.session.load" }) as never, saveSession: session => call({ action: "bot.session.save", session }) as never,
+      event: async event => { await call({ action: "bot.event", event }); }, tool: tool => call({ action: "bot.tool", tool }) as never,
+    }) });
+    return worker.handle({ version: 1, kind: "bot.run", runId: input.command.runId });
+  } });
+  actions = createBotBrokerActions({ db, registry: x.registry, sessions: createBotSessionsRepository(db), checkpoints: createBotCheckpointsRepository(db),
+    runs: x.orchestrator.runSource, events: x.orchestrator.eventSink,
+    tools: { effectClass: () => "read", dispatch: async (binding, request) => {
+      if (request.capability !== "artifact.read") throw new Error("Only submitted reads");
+      const text = await x.orchestrator.readSubmittedArtifact(binding, request.args); expect(text).toBe("RECIPE_FILE_MARKER");
+      return { result: { ok: true, content: [{ type: "text", text: text! }] } };
+    } }, inference: { homePath: home, lifetime: new AbortController().signal } });
+  try {
+    await mkdir(join(home, "temporary/desktop-chat"), { recursive: true }); await writeFile(join(home, "temporary/desktop-chat/photo.png"), png); await writeFile(join(home, "temporary/desktop-chat/marker.txt"), "RECIPE_FILE_MARKER");
+    const parts = [{ type: "attachment_reference" as const, attachmentId: "att_recipe_photo", kind: "image" as const, mimeType: "image/png", label: "photo.png", ownerReference: "temporary/desktop-chat/photo.png" },
+      { type: "attachment_reference" as const, attachmentId: "att_recipe_file", kind: "file" as const, mimeType: "text/plain", label: "marker.txt", ownerReference: "temporary/desktop-chat/marker.txt" }];
+    for (let index = 0; index < 2; index++) {
+      const events = await collect(x.adapter.start({ ...turn(undefined, `run_recipe_input_${index}`, ""), prompt: "Inspect attached files", parts }));
+      expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+      expect(events).toContainEqual({ type: "assistant.delta", delta: "RECIPE_FILE_MARKER" });
+    }
+    expect(observed).toBe(2); expect(faux.state.callCount).toBe(4); expect(x.registry.size).toBe(0);
+  } finally { await rm(home, { recursive: true, force: true }); }
 });

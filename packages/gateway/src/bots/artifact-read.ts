@@ -20,6 +20,13 @@ export async function readBotArtifact(file: FileHandle, args: ReadArgs): Promise
     if (next.bytesRead === 0) break;
   }
   const bytes = buffer.subarray(0, length);
+  return readBotArtifactBytes(bytes, args);
+}
+
+/** Same bounded reader for immutable submitted-upload snapshots. */
+export function readBotArtifactBytes(bytes: Buffer, args: ReadArgs): string {
+  if (bytes.length > (args.chunk ? BOT_ARTIFACT_BINARY_MAX_BYTES : BOT_ARTIFACT_MAX_BYTES)) throw new BotBrokerActionError("invalid_arguments");
+  const length = bytes.length;
   if (!args.chunk) return bytes.toString("utf8");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   if (sha256 !== args.chunk.sha256) throw new BotBrokerActionError("stale_generation");

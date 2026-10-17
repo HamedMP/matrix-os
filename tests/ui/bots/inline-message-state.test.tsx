@@ -93,19 +93,33 @@ it('places Web state once after the last row of its canonical run, including a t
 });
 it('continues the same task in its new run after a confirmed answer and drops the old pending card', async () => {
   const client = clientFor();
+  let releaseTaskRefresh!: () => void;
+  const taskRefreshGate = new Promise<void>(resolve => { releaseTaskRefresh = resolve; });
   client.bots.interactions.mockResolvedValueOnce([interaction]).mockResolvedValue([]);
-  client.bots.tasks.mockResolvedValueOnce([task]).mockResolvedValue([{ ...task, runId: 'run_continued', status: 'running' }]);
+  client.bots.tasks.mockResolvedValueOnce([task]).mockImplementation(async () => {
+    await taskRefreshGate;
+    return [{ ...task, runId: 'run_continued', status: 'running', revision: 2,
+      updatedAt: '2026-10-05T00:00:01.000Z' }];
+  });
   render(<BotChatPanel chatId={interaction.chatId} client={client as never}>
     <article data-agent-message-body={task.runId}><BotRunMessageBody runIds={[task.runId]}/></article>
     <article data-agent-message-body="run_continued"><BotRunMessageBody runIds={['run_continued']}/></article>
     <BotUnassignedMessageBody runIds={[task.runId, 'run_continued']}/>
   </BotChatPanel>);
-  fireEvent.change(await screen.findByRole('textbox', { name: 'Answer Target' }), { target: { value: 'Acme' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
-  const progress = await screen.findByText('Working');
-  expect(progress.closest('[data-agent-message-body]')?.getAttribute('data-agent-message-body')).toBe('run_continued');
-  expect(screen.queryByRole('button', { name: 'Answer' })).toBeNull();
-  expect(screen.queryByText('Waiting for your answer')).toBeNull();
+  try {
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Answer Target' }), { target: { value: 'Acme' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Answer' })).toBeNull());
+    await waitFor(() => expect(client.bots.tasks).toHaveBeenCalledTimes(2));
+    // Resolving the question hides its action before the authoritative task read
+    // confirms the resumed run. Preserve the last known wait during that read.
+    expect(screen.getByText('Waiting for your answer').closest('[data-agent-message-body]')
+      ?.getAttribute('data-agent-message-body')).toBe(task.runId);
+    releaseTaskRefresh();
+    await waitFor(() => expect(screen.queryByText('Waiting for your answer')).toBeNull());
+    expect(screen.queryByText('Working')).toBeNull();
+    expect(document.querySelector('[data-bot-message-state]')).toBeNull();
+  } finally { releaseTaskRefresh(); }
 });
 it('keeps independent permission approvals actionable when an identical question is represented canonically', async () => {
   const approval = { ...interaction, interactionId: 'in_approval1', kind: 'approval', payload: { kind: 'approval', tool: 'gmail.send',
