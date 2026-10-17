@@ -129,8 +129,11 @@ export class BrowserApprovalRepository {
             || (existing.rows[0]?.state !== "active" && Number(count.rows[0]?.active) >= 128)) throw unavailable();
           grant = (await sql<Grant>`INSERT INTO browser_chat_grants(id,owner_id,chat_id,capability,scope_version,revision,state,origin_approval_id)
             VALUES(${randomUUID()}::uuid,${tuple.actorId},${tuple.chatId},'shared_chrome',1,1,'active',${tuple.approvalId})
-            ON CONFLICT(chat_id) DO UPDATE SET revision=browser_chat_grants.revision+1,state='active',revoked_at=NULL,origin_approval_id=EXCLUDED.origin_approval_id
-            WHERE browser_chat_grants.owner_id=EXCLUDED.owner_id AND browser_chat_grants.revision<2147483647 RETURNING *`.execute(trx)).rows[0];
+            ON CONFLICT(chat_id) DO UPDATE SET revision=CASE WHEN browser_chat_grants.state='active'
+              THEN browser_chat_grants.revision ELSE browser_chat_grants.revision+1 END,state='active',revoked_at=NULL,
+              origin_approval_id=CASE WHEN browser_chat_grants.state='active' THEN browser_chat_grants.origin_approval_id ELSE EXCLUDED.origin_approval_id END
+            WHERE browser_chat_grants.owner_id=EXCLUDED.owner_id
+              AND (browser_chat_grants.state='active' OR browser_chat_grants.revision<2147483647) RETURNING *`.execute(trx)).rows[0];
           if (!grant) throw unavailable();
         }
         const status = tuple.browserDecision === "not_now" ? "denied" : tuple.browserDecision === "cancel" ? "cancelled" : "approved";

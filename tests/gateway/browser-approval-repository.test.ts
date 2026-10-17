@@ -46,6 +46,15 @@ describe.runIf(Boolean(process.env.MATRIX_TEST_POSTGRES_URL))("owner PostgreSQL 
     const data = await sql<{ count: string }>`SELECT count(*)::text AS count FROM browser_chat_decisions`.execute(db);
     expect(data.rows[0]?.count).toBe("1");
   });
+  it("keeps both approvals executable when pending actions receive the same active Chat grant", async () => {
+    await repository.reserve(identity("grant_first"), currentTime + 60_000);
+    await repository.reserve(identity("grant_second"), currentTime + 60_000);
+    const first = await repository.decide(tuple("grant_first", "allow_in_chat"), "verified-owner-fixture");
+    const second = await repository.decide(tuple("grant_second", "allow_in_chat"), "verified-owner-fixture");
+    expect(second.grant).toMatchObject({ id: first.grant!.id, revision: first.grant!.revision });
+    await repository.consume(identity("grant_first"));
+    await repository.consume(identity("grant_second"));
+  });
   it("creates a Chat-only grant with the decision, and Undo fences approved-but-unconsumed work", async () => {
     await repository.reserve(identity("approval_two"), currentTime + 60_000);
     const result = await repository.decide(tuple("approval_two", "allow_in_chat"), "verified-owner-fixture");
