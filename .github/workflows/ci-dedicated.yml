@@ -60,7 +60,7 @@ jobs:
       RACE_LOST_ERRORS: '["A newer controller superseded this lease", "A newer requesting CI attempt superseded this lease", "Dedicated qualification revision or admission is stale", "Current parent ref has changed", "Current ordered merge parents are stale", "Current main source is stale", "Main moved during source attestation"]'
     steps:
       - name: Authenticate reviewed controller pin before helper or secret use
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
@@ -73,14 +73,14 @@ jobs:
             const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.commit.sha}`,request:{timeout:10000}});
             if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed controller pin is not on main');
       - name: Checkout reviewed default-controller helpers
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Admit current source head
         id: admit
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           INPUT_SHA: ${{ inputs.source_sha }}
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
@@ -138,7 +138,7 @@ jobs:
       - name: Revalidate exact PR snapshot before dispatch
         id: current
         if: steps.admit.outputs.admitted == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           SNAPSHOT: ${{ toJSON(steps.admit.outputs) }}
         with:
@@ -164,7 +164,7 @@ jobs:
       - name: Dispatch authenticated PR qualification lease
         id: dispatch
         if: steps.admit.outputs.admitted == 'true' && (steps.admit.outputs.pr_number != '0' || steps.admit.outputs.source_kind == 'main') && steps.current.outputs.current == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONFIGURATION_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
           CONFIGURATION_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
@@ -220,7 +220,7 @@ jobs:
 
       - name: Settle source-head check
         if: always() && steps.admit.outputs.check_id != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONFIGURATION_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
           CONFIGURATION_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
@@ -313,7 +313,7 @@ jobs:
 
       - name: Upload immutable qualification provenance
         if: always() && (steps.dispatch.outputs.verified == 'true' || steps.dispatch.outputs.infrastructure_proof != '')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dedicated-qualification-${{ steps.admit.outputs.head_sha }}-${{ steps.admit.outputs.sha }}-${{ steps.admit.outputs.base_sha }}-pr${{ steps.admit.outputs.pr_number }}-request${{ steps.admit.outputs.requesting_run_id }}-${{ steps.admit.outputs.requesting_run_attempt }}-attempt${{ github.run_attempt }}
           path: output/ci-dedicated/receipt.json
@@ -340,7 +340,7 @@ jobs:
     steps:
       - name: Authenticate default-main reconciliation source
         id: origin
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
@@ -353,14 +353,14 @@ jobs:
             const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.commit.sha}`,request:{timeout:10000}});
             if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed controller pin is not on main');
             core.setOutput('controller_sha',pin);
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.origin.outputs.controller_sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Create repository-scoped configuration read token
         id: configuration-token
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONFIGURATION_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
           CONFIGURATION_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
@@ -375,7 +375,7 @@ jobs:
 
       - name: Create repository-scoped checks-only gate token
         id: gate-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.MATRIX_CI_GATE_APP_ID }}
           private-key: ${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}
@@ -383,7 +383,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-checks: write
       - name: Verify gate installation identity
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GATE_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
           TOKEN_INSTALLATION_ID: ${{ steps.gate-token.outputs.installation-id }}
@@ -392,7 +392,7 @@ jobs:
             const expected=process.env.GATE_INSTALLATION_ID;
             if(expected && (!/^[1-9][0-9]{0,15}$/.test(expected)||expected!==process.env.TOKEN_INSTALLATION_ID))throw new Error('Dedicated gate App installation mismatch');
       - name: Reconcile completed child source checks
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONFIGURATION_TOKEN: ${{ steps.configuration-token.outputs.token }}
           GATE_TOKEN: ${{ steps.gate-token.outputs.token }}
@@ -429,7 +429,7 @@ jobs:
 
       - name: Revoke configuration read token
         if: always() && steps.configuration-token.outputs.token != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONFIGURATION_TOKEN: ${{ steps.configuration-token.outputs.token }}
         with:
