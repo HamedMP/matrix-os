@@ -38,6 +38,7 @@ function runInterruptedLegacyUpdateRecovery(options: {
   installedReleaseVersion: string;
   rollbackAppVersion: string;
   rollbackStatus?: number;
+  sourcePaddingBytes?: number;
 }) {
   const root = process.cwd();
   const tempDir = mkdtempSync(join(tmpdir(), 'matrix-interrupted-update-'));
@@ -62,15 +63,21 @@ recover_interrupted_update
 `;
 
   try {
-    return spawnSync('bash', ['-c', `${syncAgentHarnessSource()}\n${invocation}`], {
+    const result = spawnSync('bash', ['-s'], {
+      input: `${'#'.repeat(options.sourcePaddingBytes ?? 0)}\n${syncAgentHarnessSource()}\n${invocation}`,
       cwd: root,
       encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
       env: {
         ...process.env,
         TEST_ROOT: tempDir,
         ROLLBACK_STATUS: String(options.rollbackStatus ?? 0),
       },
     });
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
+    return result;
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -107,11 +114,17 @@ current_version
 `;
 
   try {
-    return spawnSync('bash', ['-c', `${syncAgentHarnessSource()}\n${invocation}`], {
+    const result = spawnSync('bash', ['-s'], {
+      input: `${syncAgentHarnessSource()}\n${invocation}`,
       cwd: root,
       encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
       env: { ...process.env, TEST_ROOT: tempDir },
     });
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
+    return result;
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -153,7 +166,11 @@ describe('customer VPS update recovery', () => {
       ], {
         cwd: root,
         encoding: 'utf8',
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
       });
+      expect(inline.error).toBeUndefined();
+      expect(inline.signal).toBeNull();
       expect(inline.status, inline.stderr || inline.stdout).toBe(0);
       const staged = readFileSync(stagedAgent, 'utf8');
       expect(staged).toContain('recover_interrupted_update() {');
@@ -162,7 +179,11 @@ describe('customer VPS update recovery', () => {
       expect(staged).not.toContain('source "$BIN_DIR/matrix-update-manifest"');
       expect(staged).not.toContain('source "$BIN_DIR/matrix-update-request-rejection"');
       expect(staged).not.toContain('source "$BIN_DIR/matrix-sync-agent-recovery"');
-      const syntax = spawnSync('bash', ['-n', stagedAgent], { encoding: 'utf8' });
+      const syntax = spawnSync('bash', ['-n', stagedAgent], {
+        encoding: 'utf8', timeout: 10_000, maxBuffer: 1024 * 1024,
+      });
+      expect(syntax.error).toBeUndefined();
+      expect(syntax.signal).toBeNull();
       expect(syntax.status, syntax.stderr || syntax.stdout).toBe(0);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -173,6 +194,18 @@ describe('customer VPS update recovery', () => {
     const result = runInterruptedLegacyUpdateRecovery({
       installedReleaseVersion: 'v2026.09.08-1195',
       rollbackAppVersion: 'v2026.09.08-1195',
+    });
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.stdout).toContain('rollback:false');
+    expect(result.stdout).toContain('error:apply_interrupted:v2026.09.11-pr-test');
+  });
+
+  it('executes recovery when the generated updater exceeds Linux single-argument limits', () => {
+    const result = runInterruptedLegacyUpdateRecovery({
+      installedReleaseVersion: 'v2026.09.08-1195',
+      rollbackAppVersion: 'v2026.09.08-1195',
+      sourcePaddingBytes: 256 * 1024,
     });
 
     expect(result.status, result.stderr || result.stdout).toBe(0);

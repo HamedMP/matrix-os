@@ -45,8 +45,12 @@ docker() {
   try {
     const result = spawnSync('bash', ['-c', `${stubs}\n${cloudInitPostgresBlock()}`], {
       encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
       env: { ...process.env, TEST_ROOT: testRoot, RUNNING: options.running ?? '', EXISTING: options.existing ?? '' },
     });
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
     const calls = existsSync(join(testRoot, 'calls')) ? readFileSync(join(testRoot, 'calls'), 'utf8') : '';
     return { result, calls };
   } finally {
@@ -108,10 +112,15 @@ sudo() {
 reconcile_postgres_root_service
 `;
   try {
-    const result = spawnSync('bash', ['-c', `${syncAgentHarnessSource()}\n${invocation}`], {
+    const result = spawnSync('bash', ['-s'], {
+      input: `${syncAgentHarnessSource()}\n${invocation}`,
       encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
       env: { ...process.env, TEST_ROOT: testRoot },
     });
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
     const calls = existsSync(join(testRoot, 'calls')) ? readFileSync(join(testRoot, 'calls'), 'utf8') : '';
     const helperExists = existsSync(protectedHelper);
     const helper = helperExists && options.protectedHelper !== 'symlink' ? readFileSync(protectedHelper, 'utf8') : '';
@@ -230,7 +239,7 @@ describe('customer VPS PostgreSQL privilege boundary', () => {
 
   it('refuses a symlinked protected helper destination', () => {
     const { result, calls } = runPostgresRootServiceReconcile({ unit: true, bundleHelper: true, protectedHelper: 'symlink' });
-    expect(result.status).not.toBe(0);
+    expect(result.status, result.stderr).toBe(1);
     expect(calls).not.toContain('systemctl');
   });
 
