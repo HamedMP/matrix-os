@@ -50,7 +50,7 @@ describe("AppearanceSection", () => {
 
     const radios = screen.getAllByRole("radio");
     expect(radios).toHaveLength(unifiedThemes.length);
-    expect(screen.getByRole("radio", { name: "Use Operator theme" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: "Use Matrix theme" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("radio", { name: "Use Matrix theme" })).not.toBeNull();
     expect(screen.getByRole("radio", { name: "Use Matrix Neon theme" })).not.toBeNull();
   });
@@ -80,20 +80,21 @@ describe("AppearanceSection", () => {
   it("moves between theme swatches with arrow keys", () => {
     renderSection();
 
-    const selected = screen.getByRole("radio", { name: "Use Operator theme" });
+    const selected = screen.getByRole("radio", { name: "Use Matrix theme" });
     expect(selected.getAttribute("tabindex")).toBe("0");
-    expect(screen.getByRole("radio", { name: "Use Matrix theme" }).getAttribute("tabindex")).toBe("-1");
+    expect(screen.getByRole("radio", { name: "Use Operator theme" }).getAttribute("tabindex")).toBe("-1");
 
     // ArrowRight selects and focuses the next swatch (WAI-ARIA radio group).
     fireEvent.keyDown(selected, { key: "ArrowRight" });
-    expect(useAppearance.getState().themeId).toBe("matrix");
-    expect(document.activeElement).toBe(screen.getByRole("radio", { name: "Use Matrix theme" }));
-
-    // ArrowLeft wraps backwards from the first entry.
-    fireEvent.keyDown(screen.getByRole("radio", { name: "Use Matrix theme" }), { key: "ArrowLeft" });
     expect(useAppearance.getState().themeId).toBe("operator");
-    fireEvent.keyDown(screen.getByRole("radio", { name: "Use Operator theme" }), { key: "ArrowUp" });
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: "Use Operator theme" }));
+
+    fireEvent.keyDown(screen.getByRole("radio", { name: "Use Operator theme" }), { key: "ArrowLeft" });
+    expect(useAppearance.getState().themeId).toBe("matrix");
+    // ArrowUp wraps backwards from the first entry.
+    fireEvent.keyDown(screen.getByRole("radio", { name: "Use Matrix theme" }), { key: "ArrowUp" });
     expect(useAppearance.getState().themeId).toBe(unifiedThemes.at(-1)?.id);
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: `Use ${unifiedThemes.at(-1)?.name} theme` }));
   });
 
   it("switches the mode through the store", () => {
