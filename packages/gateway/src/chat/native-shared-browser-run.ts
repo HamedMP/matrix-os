@@ -1,5 +1,6 @@
+import type { SharedBrowserSupervisedPolicy } from "../shared-browser/approval-policy.js";
 import { randomUUID } from "node:crypto";
-import type { SharedBrowserBroker } from "../shared-browser/broker.js";
+import { SharedBrowserError, type SharedBrowserBroker } from "../shared-browser/broker.js";
 import { sharedBrowserEndpoint } from "./shared-browser-client.js";
 
 export const NATIVE_SHARED_BROWSER_SERVER = "matrix_shared_browser";
@@ -11,12 +12,15 @@ export interface NativeBrowserRunInput {
 /** An execution-only lease. Never put this value in a persisted Chat or session. */
 export function openNativeSharedBrowserRun(options: {
   broker: SharedBrowserBroker; gatewayPort: number; harness: "codex" | "claude_code";
+  authorizeAction?: SharedBrowserSupervisedPolicy["authorizeAction"];
 }, input: NativeBrowserRunInput) {
   sharedBrowserEndpoint(options.gatewayPort);
-  if (input.owner.type !== "personal" || input.sharedScopeId || input.permissionMode !== "full_access" || input.interactionMode !== "default") return undefined;
+  if (input.owner.type !== "personal" || input.sharedScopeId || !["full_access", "supervised"].includes(input.permissionMode) || input.interactionMode !== "default") return undefined;
   input.signal.throwIfAborted();
   let lease: ReturnType<SharedBrowserBroker["openRun"]>;
-  try { lease = options.broker.openRun({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, harness: options.harness }, input.signal); }
+  try { lease = options.broker.openRun({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, harness: options.harness }, input.signal,
+      input.permissionMode === "supervised" ? { mode: "supervised", authorizeAction: options.authorizeAction ?? options.broker.authorizeAction
+        ?? (async () => { throw new SharedBrowserError("browser_changed"); }) } : undefined); }
   catch (error: unknown) {
     console.warn("[shared-browser-native] Run admission unavailable", error instanceof Error ? error.name : "UnknownError");
     throw new Error("Browser run unavailable");

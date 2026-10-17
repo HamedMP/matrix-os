@@ -1091,6 +1091,7 @@ describe("canonical Chat routes", () => {
       "run_route",
       "appr_command",
       { clientRequestId: "req_route_approval", decision: "approve_for_session" },
+      {},
     );
   });
 });

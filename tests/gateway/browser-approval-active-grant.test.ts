@@ -28,6 +28,14 @@ it("keeps earlier approved work valid when another pending action receives the s
     await sql`INSERT INTO chats VALUES('chat_one','personal','owner_one','active',NULL)`.execute(db);
     await sql`INSERT INTO chat_runs VALUES('run_one','chat_one','running')`.execute(db);
     await bootstrapBrowserApprovalMetadata(db);
+    // Repeated Pause/Resume must release the live per-run slots immediately.
+    for (let i = 0; i < 20; i++) {
+      const interrupted = identity(`approval_interrupted_${i}`);
+      await repository.reserve(interrupted, Date.now() + 60_000);
+      await repository.cancelChallenge(interrupted);
+    }
+    const cancelled = await sql<{ count: string }>`SELECT count(*)::text AS count FROM browser_chat_challenges WHERE status='cancelled'`.execute(db);
+    expect(Number(cancelled.rows[0]!.count)).toBe(20);
     await repository.reserve(identity("approval_first"), Date.now() + 60_000);
     await repository.reserve(identity("approval_second"), Date.now() + 60_000);
     const first = await repository.decide(tuple("approval_first"), "verified-fixture");

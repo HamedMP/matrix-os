@@ -5,8 +5,8 @@ import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
 import { nativeBrowserExecution } from "../../packages/gateway/src/chat/native-browser-execution-context.js";
 it("carries canonical owner authority into delayed durable initial and successor dispatch only",async()=>{
- const home=await mkdtemp('/tmp/mx-browser-chat-');const live=new Set<string>();const seen:Array<string|undefined>=[];
- const broker={openRun:(_binding,signal)=>{const token=randomBytes(32).toString('base64url');live.add(token);signal.addEventListener('abort',()=>live.delete(token));return{token,expiresAt:1,close:async()=>{live.delete(token)}};},resolveCapability:token=>live.has(token)?{}:null} as never;
+ const home=await mkdtemp('/tmp/mx-browser-chat-');const live=new Set<string>();const seen:Array<string|undefined>=[];const policies:unknown[]=[];
+ const broker={openRun:(_binding,signal,policy)=>{policies.push(policy);const token=randomBytes(32).toString('base64url');live.add(token);signal.addEventListener('abort',()=>live.delete(token));return{token,expiresAt:1,close:async()=>{live.delete(token)}};},resolveCapability:token=>live.has(token)?{}:null} as never;
  const finish=async({principal,thread,turn,now,nextEventId})=>{await Promise.resolve();seen.push(nativeBrowserExecution(principal.userId)?.token);return{outcome:'completed',events:turn?[]:[{type:'thread.completed',eventId:nextEventId(),threadId:thread.id,occurredAt:now().toISOString(),outcome:'completed'}],resumeState:{conversationId:'native_owner_thread'}};};
  const threads=createCodingAgentThreadStore({homePath:home,providers:[{providerId:'codex',initialRunExecution:'background',startThread:finish,resumeTurn:finish}],relationValidator:{validateCreate:async()=>{},validateThread:async()=>{}}});
  const adapter=createCanonicalCodingChatProviderAdapter({providerId:'codex',threads,sharedBrowser:broker,gatewayPort:4000});
@@ -15,7 +15,7 @@ it("carries canonical owner authority into delayed durable initial and successor
   for await(const _ of adapter.resume!({...base,runId:'run_second',resumeState:state})){}
   expect(seen[1]).toHaveLength(43);expect(seen[1]).not.toBe(seen[0]);expect(live.size).toBe(0);
   for await(const _ of adapter.resume!({...base,runId:'run_restricted',permissionMode:'supervised',resumeState:state})){}
-  expect(seen[2]).toBeUndefined();expect(live.size).toBe(0);
+  expect(seen[2]).toHaveLength(43);expect(policies[2]).toMatchObject({mode:"supervised",authorizeAction:expect.any(Function)});expect(live.size).toBe(0);
  }finally{await rm(home,{recursive:true,force:true});}
 });
 

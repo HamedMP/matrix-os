@@ -27,6 +27,8 @@ export function codexBrowserThreadConfig(lease) {
     env_vars: ["MATRIX_SHARED_BROWSER_TOKEN", "MATRIX_SHARED_BROWSER_GATEWAY_PORT"],
     required: true,
     enabled_tools: ["shared_browser"],
+    // This fixed broker tool owns its separate owner authorization gate.
+    tools: { shared_browser: { approval_mode: "approve" } },
     startup_timeout_sec: 20,
     tool_timeout_sec: 390,
   } : { ...transport, enabled: false } };

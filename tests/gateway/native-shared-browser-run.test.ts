@@ -9,9 +9,9 @@ function fixture() {
   const input = { owner: { type: "personal", ownerId: "owner" }, chatId: "chat", runId: "run", permissionMode: "full_access", interactionMode: "default", signal: new AbortController().signal };
   return { broker, input, options: { broker, gatewayPort: 4000, harness: "claude_code" as const } };
 }
-it("admits only exact owner personal full-access default runs and fixed gateway ports", () => {
+it("admits only supported exact-owner personal default runs and fixed gateway ports", () => {
   const f = fixture();
-  for (const patch of [{ owner: { type: "org", ownerId: "owner" } }, { sharedScopeId: "shared" }, { permissionMode: "supervised" }, { interactionMode: "review" }]) expect(openNativeSharedBrowserRun(f.options, { ...f.input, ...patch })).toBeUndefined();
+  for (const patch of [{ owner: { type: "org", ownerId: "owner" } }, { sharedScopeId: "shared" }, { permissionMode: "auto_accept_edits" }, { interactionMode: "review" }]) expect(openNativeSharedBrowserRun(f.options, { ...f.input, ...patch })).toBeUndefined();
   expect(() => openNativeSharedBrowserRun(f.options, { ...f.input, owner: { type: "personal", ownerId: "foreign" } })).toThrow("Browser run unavailable");
   expect(() => openNativeSharedBrowserRun({ ...f.options, gatewayPort: 0 }, f.input)).toThrow();
 });

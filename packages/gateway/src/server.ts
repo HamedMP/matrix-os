@@ -1,3 +1,4 @@
+import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
@@ -508,7 +509,8 @@ export async function createGateway(config: GatewayConfig) {
   // canonical when present; MATRIX_CLERK_USER_ID supports VPS-native hosts
   // provisioned before the canonical variable was added.
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
-  const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath,
+  const supervisedBrowserRuntime = createSupervisedBrowserRuntime({ env: process.env, ownerId: terminalRuntimeOwnerId, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
+  const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath, authorizeAction: supervisedBrowserRuntime?.control.authorizeAction,
     enabled: process.env.MATRIX_BROWSER_LAB === "true", ownerId: terminalRuntimeOwnerId,
     clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
@@ -1633,7 +1635,7 @@ export async function createGateway(config: GatewayConfig) {
       canonicalExecutableDriverKinds.push("matrix_pi");
     }
     canonicalChatRuntime = await createCanonicalChatRuntime({
-      homePath,
+      homePath, browserApprovals: supervisedBrowserRuntime?.control,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
       repository: chatRepository,
@@ -1743,6 +1745,7 @@ export async function createGateway(config: GatewayConfig) {
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
+    browserApprovals: supervisedBrowserRuntime?.control,
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
     credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,
@@ -1941,6 +1944,7 @@ export async function createGateway(config: GatewayConfig) {
       await botServices?.close();
       botServices = undefined;
       await sharedBrowserRuntime?.close();
+      await supervisedBrowserRuntime?.close();
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();
