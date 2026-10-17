@@ -178,6 +178,14 @@ function defaultAccountConfigurations(canonical: AiProviderSnapshotV3): AccountC
   });
 }
 
+function nativeClaudeSource(canonical: AiProviderSnapshotV3) {
+  return canonical.accessSources.find(source => source.id === "owner_claude_profile"
+    && source.vendor === "anthropic" && source.fundingKind === "owner_account"
+    && canonical.accounts.some(account => account.id === source.id && account.vendor === "anthropic" && account.authMethod === "provider_profile")
+    && canonical.instances.some(instance => instance.driverId === "claude_code" && instance.vendor === "anthropic"
+      && instance.accessSourceId === source.id && instance.accountId === source.id));
+}
+
 function sourceForHarness(
   harness: ProviderHarnessKind,
   canonical: AiProviderSnapshotV3,
@@ -191,7 +199,12 @@ function sourceForHarness(
     return candidates.find((source) => source.id === "owner_openai_profile") ?? null;
   }
   if (harness === "claude") {
-    return candidates.find((source) => source.id === canonical.active.accessSourceId
+    // Keep active key/funded routes. Only replace the kernel profile's alias.
+    const native = nativeClaudeSource(canonical);
+    return candidates.find(source => source.id === canonical.active.accessSourceId
+      && source.id !== "owner_anthropic_profile" && source.vendor === "anthropic")
+      ?? candidates.find(source => source.id === native?.id)
+      ?? candidates.find((source) => source.id === canonical.active.accessSourceId
       && source.vendor === "anthropic")
       ?? candidates.find((source) => source.id === "owner_anthropic_profile")
       ?? candidates.find((source) => source.id === "owner_anthropic_key")
@@ -279,6 +292,17 @@ function reconcileProviderSettingsConfiguration(
   for (const driver of canonical.drivers) {
     const fallback = defaultHarnessConfiguration(driver, canonical, genericModelCatalog, now);
     const existing = config.harnesses.find((harness) => harness.driverId === driver.id);
+    const nativeClaude = driver.id === "claude_code" ? nativeClaudeSource(canonical) : undefined;
+    // Older generated Claude rows used the kernel alias for this same HOME
+    // profile. Align only that default; explicit sources and Off stay owned.
+    if (existing?.harness === "claude" && existing.enablementOrigin === "generated_default"
+      && existing.accessSourceId === "owner_anthropic_profile" && existing.selectedAccountId === "owner_anthropic"
+      && existing.route.kind === "fixed" && existing.route.providerId === "anthropic"
+      && nativeClaude?.eligibleModelIds.includes(existing.route.modelId)) {
+      existing.accessSourceId = nativeClaude.id;
+      existing.selectedAccountId = nativeClaude.id;
+      changed = true;
+    }
     if (genericModelCatalog && existing?.enablementOrigin === "generated_default"
       && (existing.harness === "pi" || existing.harness === "opencode" || existing.harness === "hermes" || existing.harness === "openclaw")) {
       const native = generatedNativeHarnessConfiguration(driver, genericModelCatalog, now);

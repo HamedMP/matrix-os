@@ -1,0 +1,143 @@
+{
+  "contractVersion": 1,
+  "atomicConnectSupported": false,
+  "projectionOf": {
+    "contract": "AiProviderSnapshotV3",
+    "contractVersion": 3,
+    "revision": 2
+  },
+  "revision": 2,
+  "refreshedAt": "2026-09-20T00:00:00.000Z",
+  "access": {
+    "mode": "writable"
+  },
+  "supportedActions": [
+    "logout_account",
+    "set_harness_enabled"
+  ],
+  "harnessCatalog": [
+    {
+      "harness": "hermes",
+      "displayName": "Hermes",
+      "installState": "unknown",
+      "available": false,
+      "runnable": false,
+      "setupAction": "none",
+      "safeReason": "runtime_not_supported"
+    },
+    {
+      "harness": "openclaw",
+      "displayName": "OpenClaw",
+      "installState": "unknown",
+      "available": false,
+      "runnable": false,
+      "setupAction": "none",
+      "safeReason": "runtime_not_supported"
+    },
+    {
+      "harness": "pi",
+      "displayName": "Pi",
+      "installState": "unknown",
+      "available": false,
+      "runnable": false,
+      "setupAction": "none",
+      "safeReason": "runtime_not_supported"
+    },
+    {
+      "harness": "opencode",
+      "displayName": "Opencode",
+      "installState": "unknown",
+      "available": false,
+      "runnable": false,
+      "setupAction": "none",
+      "safeReason": "runtime_not_supported"
+    }
+  ],
+  "modelProviders": [
+    {
+      "id": "anthropic",
+      "displayName": "Anthropic",
+      "models": [
+        {
+          "id": "anthropic/claude-opus-5",
+          "displayName": "Claude Opus 5",
+          "enabled": true
+        }
+      ]
+    }
+  ],
+  "accessSources": [
+    {
+      "id": "owner_claude_profile",
+      "kind": "provider_account",
+      "fundingKind": "owner_account",
+      "providerId": "anthropic",
+      "accountId": "owner_claude_profile",
+      "displayName": "Synthetic Claude account",
+      "readiness": {
+        "state": "unknown",
+        "checkedAt": null,
+        "staleAfter": null,
+        "action": "retry",
+        "safeReason": "unknown"
+      },
+      "eligibleModelIds": [
+        "anthropic/claude-opus-5"
+      ],
+      "usage": {
+        "kind": "unavailable",
+        "authority": "unavailable",
+        "state": "unavailable",
+        "scope": "account",
+        "reason": "provider_does_not_report",
+        "asOf": "2026-09-20T00:00:00.000Z"
+      }
+    }
+  ],
+  "accounts": [
+    {
+      "id": "owner_claude_profile",
+      "providerId": "anthropic",
+      "displayName": "Synthetic Claude account",
+      "authMethod": "terminal",
+      "authState": "authenticated",
+      "lastCheckedAt": "2026-09-20T00:00:00.000Z",
+      "accessSourceId": "owner_claude_profile",
+      "dependencies": {
+        "activeChatCount": 0,
+        "resumableChatCount": 0,
+        "harnessInstanceCount": 1
+      }
+    }
+  ],
+  "harnesses": [
+    {
+      "id": "claude_harness",
+      "harness": "claude",
+      "displayName": "Claude Code",
+      "accentColor": "orange",
+      "enabled": false,
+      "configuredEnabled": false,
+      "version": "fixture",
+      "installState": "installed",
+      "authState": "authenticated",
+      "loginMethods": [
+        "terminal"
+      ],
+      "recommendedLoginMethod": "terminal",
+      "connectivity": "online",
+      "accountIds": [
+        "owner_claude_profile"
+      ],
+      "selectedAccountId": "owner_claude_profile",
+      "accessSourceId": "owner_claude_profile",
+      "route": {
+        "kind": "fixed",
+        "providerId": "anthropic",
+        "modelId": "anthropic/claude-opus-5"
+      },
+      "activeChatCount": 0
+    }
+  ],
+  "gatewayPolicy": null
+}
