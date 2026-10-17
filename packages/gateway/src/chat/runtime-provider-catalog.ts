@@ -74,5 +74,11 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
     },
   });
   // Execution and metadata discovery must resolve the same owner credentials.
-  return { catalog, resolveClaudeCredentialLaunch };
+  const invalidateClaudeLoginCatalog = (ownerId: string) => {
+    // Trusted workflow completion is owner-bound by the workflow service. This
+    // evicts metadata only; the next read still checks current admission.
+    claudeModelCatalogSource.invalidate({ userId: ownerId, source: "configured-container" });
+    catalogOptions.codingProviders.invalidate(ownerId, "claude");
+  };
+  return { catalog, resolveClaudeCredentialLaunch, invalidateClaudeLoginCatalog };
 }

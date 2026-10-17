@@ -204,7 +204,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   setFailure(null);
                   if (active(next)) restartPolling();
                   if (next.state === "succeeded") {
-                    if (next.kind === "login") void refreshAfterLogin();
+                    if (next.kind === "login") void refreshAfterLogin(next);
                     else onRefresh();
                   }
                 }
@@ -233,7 +233,8 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   if (["cancelled", "succeeded"].includes(result.state)) {
                     pendingStartRef.current = null;
                     onOperationId?.(null);
-                    onRefresh();
+                    if (result.kind === "login" && result.state === "succeeded") void refreshAfterLogin(result);
+                    else if (result.kind !== "login") onRefresh();
                   }
                 }
               })
