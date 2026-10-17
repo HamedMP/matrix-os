@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildSyncStoragePrefix } from '../../packages/contracts/src/sync.js';
+import { encodeExportCursor } from '../../packages/platform/src/account-deletion/export-cursor.js';
 import { listAccountExportFiles } from '../../packages/platform/src/account-deletion/export.js';
 import {
   eraseOwnerStorage, ownerStoragePrefixes, type AccountDeletionObjectStore,
@@ -92,7 +93,7 @@ describe('account deletion secondary runtime storage', () => {
 
     await expect(eraseOwnerStorage(fixture.store, owner, 'matrixos-sync')).rejects.toThrow('Storage ownership mismatch');
     expect(fixture.store.deleteObject).not.toHaveBeenCalled();
-    const cursor = Buffer.from(JSON.stringify({ prefixIndex: 1 })).toString('base64url');
+    const cursor = encodeExportCursor({ prefixIndex: 1 }, owner, 'files:matrixos-sync');
     await expect(listAccountExportFiles(fixture.store, owner, 'matrixos-sync', cursor)).rejects.toThrow('Storage ownership mismatch');
     expect(fixture.store.getPresignedGetUrl).not.toHaveBeenCalled();
   });

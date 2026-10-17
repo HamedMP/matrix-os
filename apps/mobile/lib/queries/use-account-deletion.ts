@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/clerk-expo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -86,8 +86,24 @@ const MAX_EXPORT_PAGE_REQUESTS = 5;
  * the list is fetched on demand and kept only while the screen is mounted.
  */
 export function useAccountExport() {
-  const { getToken } = useAuth();
-  const [page, setPage] = useState<AccountExportPage | null>(null);
+  const { getToken, userId } = useAuth();
+  const currentOwner = useRef(userId);
+  const pendingRecords = useRef<{ owner: string | null | undefined; json: string; cursor?: string } | null>(null);
+  const [recordsProgress, setRecordsProgress] = useState<{ owner: string | null | undefined; cursor: string | null; page: number; complete: boolean } | null>(null);
+  const progress = recordsProgress?.owner === userId ? recordsProgress : null;
+  useLayoutEffect(() => {
+    currentOwner.current = userId;
+    pendingRecords.current = null;
+    return () => { currentOwner.current = undefined; pendingRecords.current = null; };
+  }, [userId]);
+  const [fileState, setFileState] = useState<{
+    owner: string | null | undefined;
+    page: AccountExportPage;
+  } | null>(null);
+  // Signed download URLs are bearer capabilities. Never project one owner's
+  // cached links into another owner's render, even for the render before an
+  // account-change effect can run.
+  const page = fileState !== null && fileState.owner === userId ? fileState.page : null;
 
   async function requireToken(): Promise<string> {
     const token = await getToken();
@@ -97,24 +113,35 @@ export function useAccountExport() {
 
   const files = useMutation({
     mutationFn: async (cursor: string | undefined) => {
-      let next = await fetchAccountExportFiles(await requireToken(), cursor);
+      const owner = userId;
+      const token = await requireToken();
+      let next = await fetchAccountExportFiles(token, cursor);
       for (
         let requests = 1;
         next.files.length === 0 && next.nextCursor && requests < MAX_EXPORT_PAGE_REQUESTS;
         requests += 1
       ) {
-        next = await fetchAccountExportFiles(await requireToken(), next.nextCursor);
+        next = await fetchAccountExportFiles(token, next.nextCursor);
       }
-      return next;
+      if (currentOwner.current !== owner) throw new AccountDeletionRequestError("unavailable");
+      return { owner, page: next };
     },
     onSuccess: (next, cursor) => {
-      setPage((current) => cursor && current
-        ? { ...next, files: [...current.files, ...next.files] }
+      if (currentOwner.current !== next.owner) return;
+      setFileState((current) => cursor && current !== null && current.owner === next.owner
+        ? { owner: next.owner, page: { ...next.page, files: [...current.page.files, ...next.page.files] } }
         : next);
     },
   });
   const records = useMutation({
-    mutationFn: async () => fetchAccountRecords(await requireToken()),
+    mutationFn: async (cursor: string | undefined) => {
+      const owner = userId;
+      const token = await requireToken();
+      const json = cursor ? await fetchAccountRecords(token, cursor) : await fetchAccountRecords(token);
+      if (currentOwner.current !== owner) throw new AccountDeletionRequestError("unavailable");
+      pendingRecords.current = { owner, json, cursor };
+      return json;
+    },
   });
 
   return {
@@ -124,7 +151,22 @@ export function useAccountExport() {
     loadFiles: () => files.mutateAsync(undefined),
     loadMoreFiles: () => files.mutateAsync(page?.nextCursor ?? undefined),
     isLoadingFiles: files.isPending,
-    fetchRecords: records.mutateAsync,
+    fetchRecords: () => records.mutateAsync(undefined),
+    fetchMoreRecords: () => progress?.cursor
+      ? records.mutateAsync(progress.cursor) : Promise.reject(new AccountDeletionRequestError("unavailable")),
+    confirmRecordsSaved: (json: string) => {
+      const pending = pendingRecords.current;
+      if (!pending || pending.owner !== currentOwner.current || pending.json !== json) return;
+      const value: unknown = JSON.parse(json);
+      const cursor = value && typeof value === "object" && "nextCursor" in value ? value.nextCursor : null;
+      if (cursor !== null && cursor !== undefined && (typeof cursor !== "string" || cursor.length > 4096)) throw new AccountDeletionRequestError("unavailable");
+      setRecordsProgress(current => ({ owner: pending.owner, cursor: typeof cursor === "string" ? cursor : null,
+        page: pending.cursor && current && current.owner === pending.owner ? current.page + 1 : 1, complete: !cursor }));
+      pendingRecords.current = null;
+    },
+    recordsPage: progress?.page ?? 0,
+    hasMoreRecords: Boolean(progress?.cursor),
+    recordsComplete: progress?.complete ?? false,
     isFetchingRecords: records.isPending,
   };
 }

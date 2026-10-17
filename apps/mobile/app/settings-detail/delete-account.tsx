@@ -281,6 +281,11 @@ function DataExport() {
     loadMoreFiles,
     isLoadingFiles,
     fetchRecords,
+    fetchMoreRecords,
+    confirmRecordsSaved,
+    recordsPage,
+    hasMoreRecords,
+    recordsComplete,
     isFetchingRecords,
   } = useAccountExport();
   const [exportError, setExportError] = useState<string | null>(null);
@@ -303,9 +308,12 @@ function DataExport() {
     void run(load);
   }
 
-  function saveRecords() {
+  function saveRecords(more = false) {
     if (isFetchingRecords) return;
-    void run(async () => saveAccountRecords(await fetchRecords()));
+    void run(async () => {
+      const json = await (more ? fetchMoreRecords() : fetchRecords());
+      if (await saveAccountRecords(json, more ? recordsPage + 1 : 1)) confirmRecordsSaved(json);
+    });
   }
 
   return (
@@ -333,8 +341,17 @@ function DataExport() {
           icon={IdentityCardIcon}
           accessibilityLabel="Save account records"
           trailing={isFetchingRecords ? spinner : download}
-          onPress={saveRecords}
+          onPress={() => saveRecords()}
         />
+        {hasMoreRecords ? <SettingsRow
+          card
+          title="Next account records page"
+          detail={`Save page ${recordsPage + 1}; keep every numbered JSON file`}
+          icon={IdentityCardIcon}
+          accessibilityLabel="Save next account records page"
+          trailing={isFetchingRecords ? spinner : download}
+          onPress={() => saveRecords(true)}
+        /> : null}
         <SettingsRow
           card
           title="Open your computers"
@@ -345,6 +362,9 @@ function DataExport() {
           onPress={() => openLink(MATRIX_COMPUTERS_URL)}
         />
       </SettingsCardStack>
+      {recordsPage > 0 ? <NativeText style={styles.sectionBody}>
+        {recordsComplete ? `Account records export complete. Keep all ${recordsPage} JSON page(s).` : `Saved account records page ${recordsPage}. Download the next page to finish.`}
+      </NativeText> : null}
       {exportError ? (
         <>
           <Spacer size="md" />
@@ -369,7 +389,7 @@ function DataExport() {
                   <FileRow
                     key={file.url}
                     first={index === 0}
-                    label={file.name}
+                    label={file.name + (file.lastModified ? ` — uploaded ${file.lastModified}` : ("lastModified" in file ? " — upload time unavailable" : "")) + (typeof file.sizeBytes === "number" ? ` (${file.sizeBytes} bytes)` : "")}
                     accessibilityLabel={`Download ${file.name}`}
                     trailing={external}
                     onPress={() => openLink(file.url)}

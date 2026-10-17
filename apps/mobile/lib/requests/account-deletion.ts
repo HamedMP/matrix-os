@@ -21,6 +21,9 @@ const AccountExportPageSchema = z.looseObject({
   downloads: z.array(z.looseObject({
     name: z.string().min(1).max(2048),
     url: z.string().min(1).max(8192),
+    lastModified: z.iso.datetime().nullable().optional(),
+    sizeBytes: z.number().int().nonnegative().nullable().optional(),
+    expiresAt: z.iso.datetime().optional(),
   })).max(1000),
   instructions: z.array(z.string().max(4000)).max(10).optional(),
   nextCursor: z.string().max(4096).nullable().optional(),
@@ -34,6 +37,9 @@ export type AccountDeletionStatus = z.infer<typeof AccountDeletionStatusSchema>;
 export interface AccountExportFile {
   name: string;
   url: string;
+  lastModified?: string | null;
+  sizeBytes?: number | null;
+  expiresAt?: string;
 }
 
 export interface AccountExportPage {
@@ -79,15 +85,20 @@ export async function fetchAccountExportFiles(
   return {
     files: page.downloads
       .filter((file) => isHttpsUrl(file.url))
-      .map((file) => ({ name: file.name, url: file.url })),
+      .map((file) => ({ name: file.name, url: file.url,
+        ...(file.lastModified !== undefined ? { lastModified: file.lastModified } : {}),
+        ...(file.sizeBytes !== undefined ? { sizeBytes: file.sizeBytes } : {}),
+        ...(file.expiresAt !== undefined ? { expiresAt: file.expiresAt } : {}), })),
     instructions: page.instructions ?? [],
     nextCursor: page.nextCursor ?? null,
   };
 }
 
 /** Personal platform records as indented JSON text, ready to be saved to a file. */
-export async function fetchAccountRecords(clerkToken: string): Promise<string> {
-  const records = await requestAccount("/api/account/delete/export/platform", clerkToken, AccountRecordsSchema);
+export async function fetchAccountRecords(clerkToken: string, cursor?: string): Promise<string> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const records = await requestAccount(`/api/account/delete/export/platform${query}`, clerkToken, AccountRecordsSchema);
+  if (records.nextCursor !== undefined && records.nextCursor !== null && (typeof records.nextCursor !== "string" || records.nextCursor.length > 4096)) throw new AccountDeletionRequestError("unavailable");
   return JSON.stringify(records, null, 2);
 }
 

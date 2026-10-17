@@ -233,6 +233,17 @@ describe("account deletion requests", () => {
       );
     });
 
+    it("preserves timestamps and resumes numbered record pages", async () => {
+      const sourceTime = "2026-10-01T12:00:00.123Z";
+      const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(respond({
+        downloads: [{ name: "notes.txt", url: "https://storage.example/notes", lastModified: sourceTime, sizeBytes: 42, expiresAt: "2026-10-14T12:15:00.000Z" }], nextCursor: null,
+      })).mockResolvedValueOnce(respond({ version: 2, posts: [{ id: "two" }], nextCursor: null, complete: true }));
+      expect((await fetchAccountExportFiles("clerk-token")).files[0]).toMatchObject({ lastModified: sourceTime, sizeBytes: 42 });
+      const records = JSON.parse(await fetchAccountRecords("clerk-token", "next-page"));
+      expect(records.complete).toBe(true);
+      expect(fetchMock).toHaveBeenLastCalledWith("https://app.matrix-os.com/api/account/delete/export/platform?cursor=next-page", expect.objectContaining({ method: "GET" }));
+    });
+
     it("reports records that are not a JSON object as unavailable", async () => {
       jest.spyOn(global, "fetch").mockResolvedValue(respond("not records"));
 
