@@ -9,26 +9,15 @@
 
 /* Rail-only aliases preserve every custom theme's semantic palette. */
 .matrix-chat-work-rail {
-  --matrix-chat-rail-text: var(--text-primary);
+  --matrix-chat-rail-text: var(--sidebar-foreground);
   --matrix-chat-rail-muted: var(--text-secondary);
-  --matrix-chat-rail-hover: var(--bg-hover);
-  --matrix-chat-rail-current: var(--bg-selected);
-  --matrix-chat-rail-current-border: var(--border-subtle);
+  --matrix-chat-rail-hover: var(--sidebar-accent);
+  --matrix-chat-rail-current: var(--sidebar-accent);
+  --matrix-chat-rail-current-border: var(--sidebar-border);
   --matrix-chat-rail-current-shadow: var(--shadow-1);
   --matrix-chat-rail-count: var(--text-tertiary);
   --matrix-chat-rail-success: var(--success);
   --matrix-chat-rail-warning: var(--warning);
-}
-:root[data-theme-id="matrix"][data-theme="light"] .matrix-chat-work-rail {
-  --matrix-chat-rail-text: #242323;
-  --matrix-chat-rail-muted: #6e6969;
-  --matrix-chat-rail-hover: #f3f2f0;
-  --matrix-chat-rail-current: #fffffd;
-  --matrix-chat-rail-current-border: #ebeae6;
-  --matrix-chat-rail-current-shadow: 0 1px 2px rgb(0 0 0 / 4%);
-  --matrix-chat-rail-count: #999494;
-  --matrix-chat-rail-success: #339e6b;
-  --matrix-chat-rail-warning: #d98c1f;
 }
 
 /* Figma section frame stays 40px; only visible content contributes the 2px gap. */
