@@ -1,6 +1,6 @@
 import { useBrowserPermissionReview } from "./BrowserPermissionReview.js";
 import React, { useEffect, useRef, useState } from "react";
-import { browserPermissionChoices, browserPermissionOutcome, browserPermissionRequest,
+import { browserPermissionChoices, browserPermissionOutcome, browserPermissionRequest, browserPermissionErrorKind,
   type BrowserPermissionChoice, type CanonicalChatApprovalView, type BrowserGrantView } from "@matrix-os/contracts";
 import { chatAgentButtonClass, chatAgentPrimaryButtonClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from "../chat-agents/theme.js";
 import type { BrowserPermissionClient } from "./client.js";
@@ -23,7 +23,7 @@ export function BrowserPermissionCard({ approval, onDecision, client, submitting
     const recorded = approval.browserGrant;
     if (client && recorded) void client.getGrant(recorded.chatId).then(fresh => {
       if (scope.current === current) setGrant(fresh?.id === recorded.id ? fresh : null);
-    }).catch(() => { if (scope.current === current) setError("Browser access could not be checked. Refresh this Chat."); });
+    }).catch((error: unknown) => { console.warn("[browser-permission] Grant read failed", browserPermissionErrorKind(error)); if (scope.current === current) setError("Browser access could not be checked. Refresh this Chat."); });
     return () => { if (scope.current === current) scope.current = {}; };
   }, [identity, approval.browserGrant, client]);
   useEffect(() => {
@@ -39,7 +39,7 @@ export function BrowserPermissionCard({ approval, onDecision, client, submitting
     if (activeAction.current || submitting) return;
     const current = scope.current; activeAction.current = true; setBusy(true); setError(null);
     try { await work(); }
-    catch { if (scope.current === current) setError("The decision could not be saved. Refresh and try again."); }
+    catch (error: unknown) { console.warn("[browser-permission] Decision failed", browserPermissionErrorKind(error)); if (scope.current === current) setError("The decision could not be saved. Refresh and try again."); }
     finally { if (scope.current === current) { activeAction.current = false; setBusy(false); } }
   }
   return <section ref={element} tabIndex={-1} aria-label="Matrix Browser permission" className="w-full rounded-xl p-4 text-sm" style={{ ...chatAgentSurfaceStyle,

@@ -7,7 +7,7 @@ import {
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   canonicalChatApprovalOutcome,
-  browserPermissionChoices, browserPermissionRequest, browserPermissionOutcome, browserCanonicalDecision, BrowserGrantViewSchema, BrowserGrantRevokeRequestSchema,
+  browserPermissionChoices, browserPermissionRequest, browserPermissionErrorKind, browserPermissionOutcome, browserCanonicalDecision, BrowserGrantViewSchema, BrowserGrantRevokeRequestSchema,
   type BrowserPermissionChoice, type BrowserGrantView,
   type CanonicalChatApprovalDecision,
   type CanonicalChatApprovalView,
@@ -36,7 +36,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
       const result = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/browser-grants`), token,
         schema: z.strictObject({ grant: BrowserGrantViewSchema.nullable() }), errorMessage: "Could not check browser access." });
       if (scope.current === current) setGrant(result.grant?.id === recorded.id ? result.grant : null);
-    })().catch(() => { if (scope.current === current) setError("Could not check browser access. Refresh this Chat."); });
+    })().catch((error: unknown) => { console.warn("[browser-permission] Grant read failed", browserPermissionErrorKind(error)); if (scope.current === current) setError("Could not check browser access. Refresh this Chat."); });
     return () => { if (scope.current === current) scope.current = {}; };
   }, [chatId, gatewayUrl, approval.approvalId, approval.runId, approval.browserGrant, getToken]);
   useEffect(() => {
@@ -93,7 +93,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
           token, method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), schema: z.strictObject({ grant: BrowserGrantViewSchema }), errorMessage: "Could not undo browser access." });
         if (result.grant.state !== "revoked") throw new Error("Access not removed");
         if (scope.current === current) setGrant(result.grant);
-      } catch { if (scope.current === current) setError("Could not undo browser access. Try again."); }
+      } catch (error: unknown) { console.warn("[browser-permission] Undo failed", browserPermissionErrorKind(error)); if (scope.current === current) setError("Could not undo browser access. Try again."); }
       finally { if (scope.current === current) { inFlight.current = false; setSubmitting(false); } }
     })()}><Text style={styles.text}>Undo</Text></Pressable> : null}
     {grant?.state === "revoked" ? <Text style={styles.text}>Remembered browser access removed</Text> : null}

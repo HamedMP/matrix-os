@@ -24,3 +24,9 @@ export function browserPermissionOutcome(approval: CanonicalChatApprovalView, no
   return ({ allowed_once: "Allowed once", allowed_in_chat: "Allowed in this Chat", declined: "Not now · browser action skipped",
     cancelled: "Browser action cancelled", expired: "Request expired · ask the agent to try again", interrupted: "Browser action interrupted" })[resolution];
 }
+
+/** Never log upstream messages, request bodies or arbitrary error names. */
+export function browserPermissionErrorKind(error: unknown): string {
+  if (!(error instanceof Error)) return "UnknownError";
+  return ["Error", "TypeError", "AbortError", "TimeoutError", "ZodError"].includes(error.name) ? error.name : "RequestError";
+}

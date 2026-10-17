@@ -706,7 +706,7 @@ function ChatAppContent({
                         <CanonicalApprovalMessage
                           message={msg}
                           browserPermissions={browserPermissions}
-                          onOpenPermissionMode={() => setSetupOpen(true)}
+                          onOpenPermissionMode={!directBotId && !collaborationView ? () => setSetupOpen(true) : undefined}
                           submitting={(() => {
                             const approval = canonicalApproval(msg);
                             return approval !== null

@@ -581,8 +581,7 @@ export function SharedChatComposer({
                   <Popover.Portal>
                     <Popover.Content
                       role="dialog"
-                      ref={settingsTrigger}
-                    aria-label="Chat settings"
+                      aria-label="Chat settings"
                       side={menuSide}
                       align="end"
                       sideOffset={8}
