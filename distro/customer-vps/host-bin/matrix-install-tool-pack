@@ -16,7 +16,7 @@ MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
 MATRIX_RUNTIME_DIR="${MATRIX_RUNTIME_DIR:-/opt/matrix/runtime}"
 NODE_PREFIX="${MATRIX_NODE_PREFIX:-$MATRIX_RUNTIME_DIR/node}"
 CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"
-CODEX_VERSION="0.156.1"
+CODEX_VERSION="0.163.0"
 CLAUDE_CODE_VERSION="2.1.280"
 OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"
 PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"
@@ -168,6 +168,16 @@ sync_agent_skills() {
   fi
 }
 
+reconcile_agent_npm_prefix() {
+  if [ -f "$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs" ]; then
+    run_as_matrix env \
+      MATRIX_RUNTIME_HOME="$MATRIX_RUNTIME_HOME" \
+      MATRIX_NODE_PREFIX="$NODE_PREFIX" \
+      HERMES_HOME="${HERMES_HOME:-$MATRIX_RUNTIME_HOME/.hermes}" \
+      "$NODE_PREFIX/bin/node" "$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs"
+  fi
+}
+
 finish_agent_install() {
   runtime_chmod
   sync_agent_skills
@@ -197,6 +207,7 @@ install_codex_package() {
 install_codex() {
   log "installing Codex CLI"
   install_codex_package
+  reconcile_agent_npm_prefix
   finish_agent_install
   log "Codex CLI installed"
 }
@@ -233,6 +244,7 @@ install_coding_agents() {
   install_codex_package
   install_opencode_package
   install_pi_package
+  reconcile_agent_npm_prefix
   finish_agent_install
   log "coding agent CLIs installed"
 }

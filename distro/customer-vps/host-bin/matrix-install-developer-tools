@@ -15,7 +15,7 @@ TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"
 STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
 FAILED_FILE="$STATE_DIR/failed-tools"
 INSTALLED_FILE="$STATE_DIR/installed-tools"
-CODEX_VERSION="0.156.1"
+CODEX_VERSION="0.163.0"
 CLAUDE_CODE_VERSION="2.1.280"
 NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
 
@@ -199,6 +199,12 @@ for tool in $TOOLS; do
     log "installed optional developer tool ${tool}"
   else
     failed=1
+    # Codex can upgrade before its owner-local prefix repair fails. Do not let
+    # the previous installed marker turn the next retry into a version-only skip.
+    if [ "$tool" = "codex" ]; then
+      grep -vxF "$tool" "$INSTALLED_FILE" >"$INSTALLED_FILE.tmp" || true
+      mv "$INSTALLED_FILE.tmp" "$INSTALLED_FILE"
+    fi
     if ! grep -qxF "$tool" "$FAILED_FILE"; then
       printf '%s\n' "$tool" >>"$FAILED_FILE"
     fi

@@ -19,10 +19,10 @@ const SUPERVISOR_START_TIMEOUT_MS = 30_000;
 // The gateway is executing this command, so its own restart must fire after
 // the signed response has been returned and the workflow's remote cleanup ran.
 const GATEWAY_REATTACH_DELAY_SECONDS = 45;
-const EXPECTED_PROFILE_DIGEST = "9f4e3e2ad9e63cb300854dfca7bc31370d4cbae6d15fab902841b2b50a6443c0";
+const EXPECTED_PROFILE_DIGEST = "78383a57bef1f4086d6a53091297833d79f6ba044f34ab84d7da19d4efcb251f";
 const EXPECTED_PROFILE_ID = "scope-runtime-chat-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
-const EXPECTED_CODEX_VERSION = "0.154.0";
+const EXPECTED_CODEX_VERSION = "0.163.0";
 const EXPECTED_BOT_PROFILE_ID = "scope-runtime-bot-v1";
 const EXPECTED_BOT_PROFILE_DIGEST = "884f3410867236443e79580ae16425c23909bc15fb79daec11db6c3dc81eebd4";
 const EXPECTED_MANAGED_PI_PROFILE_ID = "scope-runtime-managed-pi-v1";
