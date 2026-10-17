@@ -83,6 +83,9 @@ export function Dialog({
   top = "18vh",
   preserveTitlebar = false,
   onCloseAutoFocus,
+  modal = true,
+  trigger,
+  onOpenChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -94,9 +97,13 @@ export function Dialog({
   top?: string;
   preserveTitlebar?: boolean;
   onCloseAutoFocus?: (event: Event) => void;
+  modal?: boolean;
+  trigger?: ReactNode;
+  onOpenChange?: (open: boolean) => void;
 }) {
   return (
-    <RadixDialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+    <RadixDialog.Root modal={modal} open={open} onOpenChange={(next) => { if (onOpenChange) onOpenChange(next); else if (!next) onClose(); }}>
+      {trigger ? <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger> : null}
       <RadixDialog.Portal>
         {preserveTitlebar && open ? (
           <div
@@ -132,7 +139,7 @@ export function Dialog({
             } : { top }),
           }}
         >
-          <GettingStartedBlocker />
+          <GettingStartedBlocker active={modal} />
           <RadixDialog.Title className="sr-only">{title}</RadixDialog.Title>
           {children}
         </RadixDialog.Content>
