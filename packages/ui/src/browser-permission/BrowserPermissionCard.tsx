@@ -79,7 +79,26 @@ export function BrowserPermissionCard({ approval, chatId, onDecision, client, su
       {grant?.state === "active" && client ? <button type="button" className={chatAgentButtonClass} disabled={busy} onClick={() => void perform(async () => {
         const current = scope.current;
         const attempt = undo.request(grant, () => `req_${crypto.randomUUID().replaceAll("-", "")}`);
-        const revoked = await client.revokeGrant(grant, attempt.clientRequestId);
+        let revoked: BrowserGrantView;
+        try { revoked = await client.revokeGrant(grant, attempt.clientRequestId); }
+        catch (failure: unknown) {
+          console.warn("[browser-permission] Undo refresh requested", browserPermissionErrorKind(failure));
+          if (scope.current !== current) return;
+          const read = {}; grantRead.current = read;
+          let fresh: BrowserGrantView | null;
+          try { fresh = await client.getGrant(grantChatId!); }
+          catch (refreshFailure: unknown) {
+            console.warn("[browser-permission] Undo refresh failed", browserPermissionErrorKind(refreshFailure));
+            throw failure;
+          }
+          if (scope.current !== current || grantRead.current !== read) return;
+          if (fresh && (fresh.chatId !== grantChatId || (fresh.state === "active" && fresh.id === grant.id && fresh.revision <= grant.revision))) throw failure;
+          setGrant(prior => reconcileBrowserGrantObservation(prior, fresh, grantChatId!));
+          setError(!fresh || fresh.state === "revoked" ? "Browser access is no longer saved for this Chat."
+            : "Browser access changed. Review it before using Undo again.");
+          sharedGrants?.grantsChanged();
+          return;
+        }
         if (revoked.state !== "revoked") throw new Error("Access not removed");
         if (scope.current === current) { grantRead.current = {}; setGrant(prior => reconcileBrowserGrantObservation(prior, revoked, grantChatId!)); sharedGrants?.grantsChanged(); }
       })}>Undo</button> : null}
