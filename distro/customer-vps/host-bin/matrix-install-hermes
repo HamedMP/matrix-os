@@ -94,8 +94,9 @@ run_installer_as_runtime_user env \
   PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
   bash "$HERMES_INSTALLER_PATH" --branch main --commit "$HERMES_COMMIT" --skip-setup
 
-# Native Anthropic is an upstream optional extra, so the base installer may
-# omit it. PM records the extra and commits a new dependency generation, so
+# Native Anthropic and MCP are upstream optional extras; Matrix integrations
+# need the MCP client even when optional computer-use tools are declined.
+# PM records both extras and commits a new dependency generation, so
 # future updates retain it and the source lock remains authoritative.
 # A failed dependency install fails the unit and is retried by systemd; never
 # claim successful setup while leaving the selected provider unusable.
@@ -104,7 +105,7 @@ run_installer_as_runtime_user env \
   HOME="$MATRIX_RUNTIME_HOME" \
   HERMES_HOME="$HERMES_HOME" \
   PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
-  timeout 600 "$MATRIX_RUNTIME_HOME/.local/bin/hermes" pm install --extra anthropic
+  timeout 600 "$MATRIX_RUNTIME_HOME/.local/bin/hermes" pm install --extra anthropic --extra mcp
 
 for cli in uv uvx hermes; do
   if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/$cli" ]; then
