@@ -59,11 +59,19 @@ export interface BrainMatrixHandlerBaseDeps {
   readonly kysely: Kysely<BrainDatabase>;
   readonly now?: () => Date;
 }
-export interface BrainMatrixNotesHandlerDeps extends BrainMatrixHandlerBaseDeps {
+/** Notes and files are the gateway owner's, not the caller's: only these principals may read them. */
+export interface BrainMatrixOwnedHandlerDeps extends BrainMatrixHandlerBaseDeps {
+  /**
+   * Principals that may read the gateway's Notes or home: its configured owner. Absent or empty: nobody, so a
+   * collaborator never copies them into a project of their own. Anyone else reads not_configured and gets no adapter.
+   */
+  readonly ownerIds?: readonly string[];
+}
+export interface BrainMatrixNotesHandlerDeps extends BrainMatrixOwnedHandlerDeps {
   /** Null when the owner database has no app storage: the kind answers not_configured. */
   readonly notes: BrainMatrixNotesReader | null;
 }
-export interface BrainMatrixFilesHandlerDeps extends BrainMatrixHandlerBaseDeps {
+export interface BrainMatrixFilesHandlerDeps extends BrainMatrixOwnedHandlerDeps {
   /** The Matrix home; every root is relative to it. */
   readonly homePath: string;
 }
