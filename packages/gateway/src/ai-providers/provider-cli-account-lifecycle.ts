@@ -1,3 +1,7 @@
+import { codexNativeEnvironment } from "./codex-native-environment.js";
+import { resolveCodexNativeExecutable } from "./codex-native-terminal-command.js";
+import { createCodexNativeAccountMetadataReader, type CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
+import { NativeProviderWriteNotStartedError } from "./native-provider-profile-guard.js";
 import { resolveClaudeNativeExecutable } from "./claude-native-executable.js";
 import { isBoundClaudeNativeSignedOut, verifyClaudeNativeSignedOut } from "./claude-native-signed-out.js";
 import { createClaudeAccountReaderUnderLease, assertClaudeLifecyclePrincipal, assertClaudeLifecycleSignedOut, type ClaudeAccountReaderUnderLease } from "./claude-account-lifecycle-proof.js";
@@ -139,6 +143,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
   run?: CommandRunner;
   profileGuard?: NativeProviderProfileGuard;
   readClaudeAccountUnderLease?: ClaudeAccountReaderUnderLease;
+  readCodexAccountUnderLease?: () => Promise<CodexNativeAccountMetadata | null>;
 }): ProviderAccountLifecycleCoordinator {
   if (!options.homePath) throw new Error("Provider lifecycle home path is required");
   const homePath = resolve(options.homePath);
@@ -147,6 +152,10 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
   const run = options.run ?? defaultRun;
   const readClaudeUnderLease = options.readClaudeAccountUnderLease
     ?? createClaudeAccountReaderUnderLease(homePath, lifecycleEnvironment(homePath));
+  const readCodexUnderLease = options.readCodexAccountUnderLease ?? (async () => {
+    const environment = codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME);
+    return createCodexNativeAccountMetadataReader({ executable: resolveCodexNativeExecutable(homePath, environment), cwd: homePath, environment })();
+  });
   if (typeof run !== "function") throw new Error("Provider lifecycle command runner is required");
   let tail: Promise<void> = Promise.resolve();
 
@@ -196,6 +205,9 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
         || action === "logout_account" && !input.account.authenticated) {
         throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
       }
+      const nativeCodex = driver === "codex" && input.account.authMethod === "terminal";
+      if (nativeCodex && (!options.profileGuard || input.account.id !== "owner_codex" || input.account.accessSourceId !== "owner_openai_profile"
+        || (input.account.authenticated ? !await verifyNativeAccountMetadata(input.account.nativeCodexAccount) : action !== "remove_account"))) throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
       const nativeClaude = isNativeClaudeLifecycleAccount(input.account);
       if (nativeClaude && (!options.profileGuard
         || !(input.account.authenticated
@@ -204,6 +216,40 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
         throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
       }
       const mutateProfile = async () => {
+        if (nativeCodex) {
+          if (input.account.authenticated) {
+            const current = await readCodexUnderLease();
+            if (!current || !input.account.nativeCodexAccount || !sameBoundNativeAccountPrincipal(current, input.account.nativeCodexAccount)
+              || !await verifyNativeAccountMetadata(current)) throw new NativeProviderWriteNotStartedError();
+          } else {
+            const env = codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME);
+            let signedOut = false;
+            let phase: "resolve_executable" | "login_status" = "resolve_executable";
+            try {
+              const executable = resolveCodexNativeExecutable(homePath, env);
+              phase = "login_status";
+              await run(executable, ["login", "status"], {
+                cwd: homePath, env, timeoutMs: COMMAND_TIMEOUT_MS, maxOutputBytes: MAX_OUTPUT_BYTES,
+              });
+            } catch (error: unknown) {
+              // Only the official CLI's exact signed-out response proves absence.
+              // Missing executables, timeouts, unknown output, and successful key or
+              // subscription status must never authorize removal or trigger logout.
+              if (error instanceof Error && "code" in error && error.code === 1
+                && "stdout" in error && typeof error.stdout === "string"
+                && "stderr" in error && typeof error.stderr === "string") {
+                signedOut = `${error.stdout}${error.stderr}`.trim() === "Not logged in";
+              }
+              if (!signedOut) {
+                // Exception names, messages and command output may contain private data.
+                const code = error instanceof Error && "code" in error
+                  && (error.code === "ENOENT" || error.code === "ETIMEDOUT" || error.code === 1) ? error.code : "unknown";
+                console.warn("[provider-lifecycle] Native sign-out status unavailable:", { phase, code });
+              }
+            }
+            if (!signedOut) throw new NativeProviderWriteNotStartedError();
+          }
+        }
         if (nativeClaude) {
           if (input.account.authenticated) await assertClaudeLifecyclePrincipal(input.account.nativeClaudeAccount, readClaudeUnderLease);
           else await assertClaudeLifecycleSignedOut(homePath, readClaudeUnderLease);
@@ -238,11 +284,11 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
             await revokeOwnerAnthropicKey(homePath);
           } else {
           const command = COMMANDS[driver];
-          CommandResultSchema.parse(await run(driver === "claude_code" ? resolveClaudeNativeExecutable(homePath, lifecycleEnvironment(homePath)) : command.command, [...command.args], {
+          CommandResultSchema.parse(await run(driver === "claude_code" ? resolveClaudeNativeExecutable(homePath, lifecycleEnvironment(homePath)) : nativeCodex ? resolveCodexNativeExecutable(homePath, codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME)) : command.command, [...command.args], {
             cwd: homePath,
             timeoutMs: COMMAND_TIMEOUT_MS,
             maxOutputBytes: MAX_OUTPUT_BYTES,
-            env: lifecycleEnvironment(homePath),
+            env: nativeCodex ? codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME) : lifecycleEnvironment(homePath),
           }));
           }
         } catch (error) {
@@ -298,6 +344,7 @@ export function createDefaultProviderCliAccountLifecycleCoordinator(options: {
   run?: CommandRunner;
   profileGuard?: NativeProviderProfileGuard;
   readClaudeAccountUnderLease?: ClaudeAccountReaderUnderLease;
+  readCodexAccountUnderLease?: () => Promise<CodexNativeAccountMetadata | null>;
 }): ProviderAccountLifecycleCoordinator {
   const enabledHarnesses = z.enum(["codex", "claude", "opencode", "pi"]).array().max(4)
     .parse(options.enabledHarnesses);
@@ -310,6 +357,7 @@ export function createDefaultProviderCliAccountLifecycleCoordinator(options: {
     }),
     ...(options.run ? { run: options.run } : {}),
     ...(options.profileGuard ? { profileGuard: options.profileGuard } : {}),
+    ...(options.readCodexAccountUnderLease ? { readCodexAccountUnderLease: options.readCodexAccountUnderLease } : {}),
     ...(options.readClaudeAccountUnderLease ? { readClaudeAccountUnderLease: options.readClaudeAccountUnderLease } : {}),
   });
 }
