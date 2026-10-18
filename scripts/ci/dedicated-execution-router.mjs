@@ -37,7 +37,13 @@ export async function routeControllerEvent(github,repo,controllerSha,context,sna
   const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request});
   const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
   if(run.id!==candidate.id||run.run_attempt!==candidate.run_attempt)return{dispatched:false,stale:true};
-  if(run.workflow_id!==workflow.id||run.path!=='.github/workflows/ci.yml'||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))throw new Error('Untrusted controller bridge requester');
+  if(run.workflow_id!==workflow.id||run.path!=='.github/workflows/ci.yml'||!same(run.repository?.full_name,repo))throw new Error('Untrusted controller bridge requester');
+  if(!same(run.head_repository?.full_name,repo)){
+   // Fork pull_request CI is genuine but cannot receive privileged qualification.
+   // Authenticate its workflow/base repository first; other foreign-head events fail closed.
+   if(run.event==='pull_request'&&typeof run.head_repository?.full_name==='string'&&/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(run.head_repository.full_name))return{dispatched:false};
+   throw new Error('Untrusted controller bridge requester');
+  }
   await verifyRunExecution(github,repo,run,'.github/workflows/ci.yml');
   if(context.payload.action==='completed'){
    if(run.display_title?.startsWith('CI routing-v1 '))return{dispatched:false};

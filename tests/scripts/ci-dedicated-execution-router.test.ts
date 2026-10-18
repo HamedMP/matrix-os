@@ -54,3 +54,27 @@ it('does not create reconciliation work for ordinary manual Main CI without a PR
  await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:false});
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();expect(f.variables).not.toHaveBeenCalled();
 });
+
+it.each(['requested','completed'])('benignly ignores an authenticated fork PR %s event without dispatching work',async action=>{
+ const f=fixture(`CI coverage-v1 · ${merge}`);
+ Object.assign(f.run,{event:'pull_request',head_branch:'fork-feature',head_sha:head,head_repository:{full_name:'contributor/matrix-os'}});
+ f.context.payload.action=action;
+ await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:false});
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ expect(f.github.rest.actions.listJobsForWorkflowRun).not.toHaveBeenCalled();
+ expect(f.variables).not.toHaveBeenCalled();
+});
+
+it.each(['base-repository','workflow-id','workflow-path','manual-event','push-event','missing-head','malformed-head'])('does not use the fork no-op to hide %s authentication failure',async kind=>{
+ const f=fixture(`CI coverage-v1 · ${merge}`);
+ Object.assign(f.run,{event:'pull_request',head_repository:{full_name:'contributor/matrix-os'}});
+ if(kind==='base-repository')f.run.repository.full_name='attacker/matrix-os';
+ if(kind==='workflow-id')f.run.workflow_id=99;
+ if(kind==='workflow-path')f.run.path='.github/workflows/untrusted.yml';
+ if(kind==='manual-event')f.run.event='workflow_dispatch';
+ if(kind==='push-event')f.run.event='push';
+ if(kind==='missing-head')f.run.head_repository.full_name='';
+ if(kind==='malformed-head')f.run.head_repository.full_name='not-a-repository';
+ await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).rejects.toThrow('Untrusted controller bridge requester');
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});

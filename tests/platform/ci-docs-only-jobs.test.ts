@@ -42,8 +42,9 @@ function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, p
 
 function aggregateStatus(docsResult: string) {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-ci-docs-'));
-  const step = workflow.jobs['ci-results'].steps.find((value: { run?: string }) => value.run);
+  const step = workflow.jobs['ci-results'].steps.find((value: { name?: string }) => value.name === 'Summarize required CI jobs');
   try {
+    if (!step?.run) throw new Error('Missing required CI aggregate script');
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       CI_TRIGGER_REQUESTED: 'true',
