@@ -1,11 +1,12 @@
 import {pinArtifactFixture} from './helpers/dedicated-artifact-fixture';
 import {describe,expect,it,vi} from 'vitest';
 import * as gate from '../../scripts/ci/dedicated-source-gate.mjs';
+import {reconciliationCycle} from '../../scripts/ci/dedicated-source-gate-cycle.mjs';
 const head='a'.repeat(40),base='b'.repeat(40),merge='c'.repeat(40),main='d'.repeat(40);
 const repo={owner:'HamedMP',repo:'matrix-os'},origin={sha:main,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'};
 function fixture(){
  const pull={number:2454,state:'open',draft:false,labels:[] as {name:string}[],head:{sha:head,ref:'child',repo:{full_name:'HamedMP/matrix-os'}},base:{sha:base,ref:'stack/parent',repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
- const github={rest:{pulls:{get:vi.fn(async()=>({data:pull})),list:vi.fn(async()=>({data:[pull]}))},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:base}}})),getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[] as any[]}})),create:vi.fn(async(args:any)=>({data:{id:10,...args}})),update:vi.fn(async()=>({data:{}}))},actions:{getWorkflow:vi.fn(async(args:{workflow_id:string})=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+args.workflow_id}})),getRepoVariable:vi.fn(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?main:args.name.includes('IMAGE')?'sha256:'+'e'.repeat(64):args.name.includes('HARNESS')?'f'.repeat(64):args.name.includes('SHADOW')?'true':'false'}})),getWorkflowRun:vi.fn(async()=>({data:{id:123,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'schedule',head_sha:main,head_branch:'main',run_attempt:1,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}}})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[] as any[]}})),createWorkflowDispatch:vi.fn(async()=>({data:{}}))}}};
+ const github={rest:{pulls:{get:vi.fn(async()=>({data:pull})),list:vi.fn(async()=>({data:[pull]}))},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:base}}})),getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[] as any[]}})),create:vi.fn(async(args:any)=>({data:{id:10,...args}})),update:vi.fn(async()=>({data:{}}))},actions:{getWorkflow:vi.fn(async(args:{workflow_id:string})=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+args.workflow_id}})),getRepoVariable:vi.fn(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?main:args.name.includes('IMAGE')?'sha256:'+'e'.repeat(64):args.name.includes('HARNESS')?'f'.repeat(64):args.name.includes('SHADOW')?'true':'false'}})),getWorkflowRun:vi.fn(async()=>({data:{id:123,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'schedule',head_sha:main,head_branch:'main',run_attempt:1,created_at:'2026-10-18T00:00:00Z',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}}})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[] as any[]}})),createWorkflowDispatch:vi.fn(async()=>({data:{}}))}}};
  const reviewed={rest:{...github.rest,actions:{...github.rest.actions,listRepoVariables:vi.fn(async()=>({data:{total_count:5,variables:await Promise.all(['MATRIX_CI_CONTROLLER_SHA','MATRIX_CI_DEDICATED_ENABLED','MATRIX_CI_DEDICATED_SHADOW','MATRIX_CI_RUNNER_IMAGE_DIGEST','MATRIX_CI_RUNNER_HARNESS_DIGEST'].map(async name=>(await github.rest.actions.getRepoVariable({name})).data))}}))}}};
  const gateGithub={rest:{checks:{create:vi.fn(async(args:any)=>({data:{id:10,...args,app:{id:777}}})),update:vi.fn(async(args:any)=>({data:{id:args.check_run_id,name:'CI Source Qualification',head_sha:head,...args,app:{id:777}}}))}}};return{pull,github:reviewed,gateGithub};
 }
@@ -312,16 +313,16 @@ describe('scoped reconciliation after a PR push',()=>{
 
 
 describe('large repository reconciliation',()=>{
- it('qualifies all 306 open PRs without imposing the old 300-PR repository ceiling',async()=>{
+ it('enumerates all 306 open PRs while qualifying only its bounded maintenance batch',async()=>{
   const f=fixture();
   const pulls=Array.from({length:306},(_,index)=>({...structuredClone(f.pull),number:3000+index}));
   f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
   f.github.rest.pulls.list.mockImplementation(async(args:any)=>({data:pulls.slice((args.page-1)*100,args.page*100)}));
   f.github.rest.pulls.get.mockImplementation(async(args:any)=>({data:pulls.find(p=>p.number===args.pull_number)!}));
   const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
-  expect(result).toEqual({examined:306,dispatched:0});
+  expect(result).toMatchObject({examined:8,dispatched:0,deferred:298,budgetDeferred:false});
   expect(f.github.rest.pulls.list).toHaveBeenCalledTimes(4);
-  expect(f.gateGithub.rest.checks.create).toHaveBeenCalledTimes(306);
+  expect(f.gateGithub.rest.checks.create).toHaveBeenCalledTimes(8);
   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  });
  it('uses the API base filter for direct children and gets the pushed PR separately',async()=>{
@@ -385,7 +386,9 @@ it('keeps the full open-PR scan bounded and never silently truncates an oversize
  const f=fixture();f.github.rest.pulls.list.mockResolvedValue({data:Array.from({length:100},()=>({...f.pull,base:{...f.pull.base,repo:{full_name:'foreign/repository'}}}))});
  await expect(gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub})).rejects.toThrow('Open pull request scan exceeds bounded coverage');
  expect(f.github.rest.pulls.list).toHaveBeenCalledTimes(100);
- expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();
+ expect(f.gateGithub.rest.checks.create.mock.calls.filter(([args])=>JSON.parse(args.output.summary).prNumber>0)).toHaveLength(0);
+ expect(f.gateGithub.rest.checks.update.mock.calls.filter(([args])=>JSON.parse(args.output.summary).prNumber>0)).toHaveLength(0);
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
 });
 
 it('does not refresh an already active requester when a ready PR still has its draft N/A gate',async()=>{
@@ -491,4 +494,59 @@ describe('bounded full-scope maintenance',()=>{
    expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
   }finally{clock.mockRestore();}
  });
+});
+
+
+it.each(['off-main','rollback'])('denies a well-formed %s replacement controller instead of silently superseding',async kind=>{
+ const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];const replacement='9'.repeat(40);
+ const variables=f.github.rest.actions.getRepoVariable.getMockImplementation()!;
+ f.github.rest.actions.getRepoVariable.mockImplementation(async args=>args.name==='MATRIX_CI_CONTROLLER_SHA'?{data:{name:args.name,value:replacement}}:variables(args));
+ Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async({basehead}:{basehead:string})=>{
+  const [before]=basehead.split('...');
+  return{data:{status:kind==='off-main'?'diverged':before===main?'behind':'ahead',merge_base_commit:{sha:kind==='off-main'?base:before}}};
+ })});
+ await reconcile(f);expect(lastWrite(f)).toMatchObject({conclusion:'failure',output:{title:'Reviewed execution configuration is incomplete'}});
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+it.each(['current-source','requester','qualification','dispatch'])('does not convert admitted-path %s deadline deferral into a failure check',async stage=>{
+ const f=completeFixture();let now=Date.UTC(2026,9,18);const clock=vi.spyOn(Date,'now').mockImplementation(()=>now);
+ const run={...f.controller,id:123,event:'schedule',head_sha:main,head_branch:'main',created_at:'2026-10-18T00:00:00Z'};
+ const history=f.github.rest.actions.getWorkflowRun.getMockImplementation()!;
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>args.run_id===123?{data:run}:history(args));
+ const commit=f.github.rest.repos.getCommit.getMockImplementation()!;
+ // The fixture's absent main commit fails closed separately; the PR still has genuine full evidence.
+ const branch=f.github.rest.repos.getBranch.getMockImplementation()!;
+ f.github.rest.repos.getBranch.mockImplementation(async args=>args.branch==='main'?{data:{name:'main',commit:{sha:main}}}:branch(args));
+ if(stage==='current-source')f.github.rest.repos.getCommit.mockImplementation(async(...args)=>{if((args[0] as any)?.ref===merge)now+=240001;return commit(...args);});
+ if(stage==='requester'||stage==='qualification'){
+  const original=f.github.rest.actions.listWorkflowRuns.getMockImplementation()!;let searches=0;
+  f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>{const value=await original(args);if(++searches===(stage==='requester'?1:3))now+=240001;return value;});
+ }
+ if(stage==='dispatch'){
+  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[]}});
+  const create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+  f.gateGithub.rest.checks.create.mockImplementation(async args=>{const value=await create(args);if(JSON.parse(args.output.summary).prNumber>0)now+=240001;return value;});
+ }
+ try{
+  const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
+  const writes=[...f.gateGithub.rest.checks.create.mock.calls,...f.gateGithub.rest.checks.update.mock.calls].map(([args])=>args).filter(args=>JSON.parse(args.output.summary).prNumber>0);
+  expect(result).toMatchObject({budgetDeferred:true,deferred:1});
+  expect(writes.every(args=>args.conclusion===undefined)).toBe(true);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ }finally{clock.mockRestore();}
+});
+
+
+it.each(['malformed','off-main','enabled'])('does not use hosted recovery to bypass %s dedicated configuration',async kind=>{
+ const f=fixture();const values:Record<string,string>={MATRIX_CI_CONTROLLER_SHA:main,MATRIX_CI_DEDICATED_ENABLED:'false',MATRIX_CI_DEDICATED_SHADOW:'false'};
+ if(kind==='malformed')values.MATRIX_CI_RUNNER_HARNESS_DIGEST='invalid';
+ if(kind==='enabled')values.MATRIX_CI_DEDICATED_ENABLED='true';
+ if(kind==='off-main'){values.MATRIX_CI_CONTROLLER_SHA='9'.repeat(40);values.MATRIX_CI_RUNNER_IMAGE_DIGEST='sha256:'+'e'.repeat(64);values.MATRIX_CI_RUNNER_HARNESS_DIGEST='f'.repeat(64);}
+ f.github.rest.actions.listRepoVariables.mockImplementation(async()=>({data:{total_count:Object.keys(values).length,variables:Object.entries(values).map(([name,value])=>({name,value}))}}));
+ Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'diverged',merge_base_commit:{sha:base}}}))});
+ const cycle=reconciliationCycle(f.github,f.gateGithub,repo,origin,{runId:123,runAttempt:1,prNumber:2454});
+ try{
+  await expect(cycle.beforeWrite('success',false,true)).rejects.toThrow('configuration changed');
+  await expect(cycle.beforeDispatch(true)).rejects.toThrow('configuration changed');
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ }finally{cycle.close();}
 });

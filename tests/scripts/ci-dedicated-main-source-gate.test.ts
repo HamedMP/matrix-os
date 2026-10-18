@@ -341,13 +341,13 @@ describe('controller pin generation fencing',()=>{
  });
  it('preserves a qualified main check when the pin moves before a late failure write',async()=>{
   const f=fixture(),history=retainAppHistory(f),move=await movingPin(f);await reconcile(f);
-  const previous=structuredClone(history.current());expect(previous.conclusion).toBe('success');
+  const previous=structuredClone({...history.current(),request:undefined});expect(previous.conclusion).toBe('success');
   f.gateGithub.rest.checks.create.mockClear();f.gateGithub.rest.checks.update.mockClear();
   const commit=f.github.rest.repos.getCommit.getMockImplementation()!;
   f.github.rest.repos.getCommit.mockImplementation(async(...args)=>{const value=await commit(...args);move();return value;});
   f.jobs[0].conclusion='failure';await reconcile(f);
   expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
-  expect(history.current()).toEqual(previous);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  expect({...history.current(),request:undefined}).toEqual(previous);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  });
  it('still fails closed on a malformed harness digest with the current pin',async()=>{
   const f=fixture(),configuration=(await f.github.rest.actions.listRepoVariables()).data;

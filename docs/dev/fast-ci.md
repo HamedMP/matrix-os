@@ -24,8 +24,8 @@ label-triggered controllers; configure them while still a draft.
 Only open, non-draft, same-repository PRs with **both** labels run on Linux,
 and only when the change runs CI lanes at all: a docs-only change (only
 `docs/`, `specs/` or Markdown files) never gets `Dedicated CI Results`. Main CI
-runs on hosted runners (`MATRIX_CI_DEDICATED_MAIN=false`), so main never holds
-the Linux host.
+uses Linux first when `MATRIX_CI_DEDICATED_MAIN=true`; otherwise it uses
+hosted runners. Full hosted fallback still requires verified coverage.
 
 ## One host, one job at a time
 
@@ -49,7 +49,18 @@ with a 30-minute queue deadline. A job that waits longer fails with
 | `CI Backend Decision` | Waits for and verifies the Linux result, then tells `CI Results` whether hosted lanes must run. | Read it when `CI Results` failed. |
 | `Type Check`, `Unit Tests (${{ matrix.shard }}/4)`, `E2E Tests (${{ matrix.lane }})`, `Shell Production Build`, ... **Skipped** | The hosted copies of lanes that ran on Linux. GitHub only fills in matrix names for jobs that run, so skipped matrix jobs show the raw template. | No. |
 | `Verified Dedicated Linux Qualification` **Skipped** | Not used by the current routing; `CI Backend Decision` does that verification. | No. |
-| `CI Source Qualification` pending, red or "not admitted" | An internal freshness gate. Pending means exact-source coverage is queued, running, or being dispatched; it never grants qualification. The `main` ruleset does not currently require it (spec 605 intends to), so today it never blocks a merge. It also turns red after a PR merges, by design. | No, unless the ruleset starts requiring it. |
+| `CI Source Qualification` pending, red or "not admitted" | An internal freshness gate. Pending means exact-source coverage is queued, running, or being dispatched; it never grants qualification. The `main` ruleset does not currently require it (spec 605 intends to), so today it never blocks a merge. A red result needs investigation; it does not change the Actions-owned aggregate. | Inspect its failure evidence. |
+
+Scheduled source reconciliation qualifies main before PR maintenance. It then
+rotates through batches of at most eight open PRs, with a shared ceiling of 256
+API calls and four minutes per invocation. Deferred PRs retain their existing
+checks; deferral never grants qualification or turns missing coverage into
+success. PR-specific events still reconcile their scope immediately. The
+schedule is a trigger cadence, not a guaranteed refresh deadline.
+
+A controller superseded by a later reviewed pin on main stops before writing
+checks or dispatching work. Invalid configuration and unauthenticated replacement
+pins still fail closed. An operator pin change requires the rollout steps below.
 
 The host is deliberately **not** a GitHub self-hosted runner, so it does not
 appear under Settings → Actions → Runners. A reviewed controller on a hosted
@@ -134,6 +145,14 @@ When a change takes effect depends on where it runs:
   only after an operator moves the pin and the host's root policy. By
   procedure the target is a green `main` commit containing the change; the
   controller itself only checks that the pin is on `main`.
+
+Before activating a new pin, verify the host is idle and update its existing
+trusted-controller policy first, preserving the old entries and other limits.
+Drain obsolete reconciliation-only writers before changing the repository pin;
+preserve legitimate Linux work and unknown runs. After activation, let a genuine
+scheduled or completed-main-CI controller verify exact-source coverage. Do not
+clear checks by writing success, deleting failures, or rerunning workloads whose
+existing authenticated coverage still applies.
 
 ## Measuring Linux against hosted CI
 

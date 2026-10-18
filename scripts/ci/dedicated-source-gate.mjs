@@ -8,6 +8,7 @@ import {readReviewedConfiguration} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
 import {reconcileMainSourceQualification} from './dedicated-main-source-gate.mjs';
 import {logGateEvent} from './gate-log.mjs';
+import {reconciliationCycle,maintenanceBatch,isDeferredReconciliation} from './dedicated-source-gate-cycle.mjs';
 import {recordedMainSources,recordedControllerAttempt} from './dedicated-main-provenance.mjs';
 import {mainPrCoverage,mainPrRequest,mainPrRunSource,mainPrSourceBindings,resolveMainPrSnapshot} from './dedicated-main-pr.mjs';
 const request={timeout:10_000};
@@ -35,7 +36,7 @@ async function ownedGate(github,repo,pull,workflow,appId){
  for(const check of data.check_runs.filter(check=>check.name===name&&check.app?.id===appId&&check.app?.slug!=='github-actions'&&check.head_sha===pull.head.sha).sort((a,b)=>b.id-a.id)){
   const prefix=`https://github.com/${repo.owner}/${repo.repo}/actions/runs/`;
   if(!id(check.id)||!check.details_url?.startsWith(prefix)||typeof check.output?.summary!=='string'||check.output.summary.length>4096)continue;
-  let evidence;try{evidence=JSON.parse(check.output.summary);}catch(error){if(error instanceof SyntaxError)continue;throw error;}
+  let evidence;try{evidence=JSON.parse(check.output.summary);}catch(error){if(isDeferredReconciliation(error))throw error;if(error instanceof SyntaxError)continue;throw error;}
   const runId=Number(check.details_url.slice(prefix.length));
   if(!id(runId)||evidence?.schemaVersion!==1||evidence.prNumber!==pull.number||evidence.controllerRef!=='refs/heads/main'||!sha.test(evidence.controllerSha||'')||!id(evidence.controllerAttempt))continue;
   const run=await recordedControllerAttempt(github,repo,runId,evidence.controllerAttempt);
@@ -90,19 +91,35 @@ export async function reconcileSourceQualification(github,repo,controller,option
  assertDefaultController(repo,controller);
  if(!id(options.gateAppId)||!options.gateGithub?.rest?.checks||options.gateGithub===github)throw new Error('Protected dedicated App gate issuer is required');
  if(!id(options.runId)||!id(options.runAttempt))throw new Error('Invalid source gate controller identity');
+ const cycle=reconciliationCycle(github,options.gateGithub,repo,controller,options);
+ github=cycle.github;options={...options,gateGithub:cycle.gateGithub,cycle};
+ let examined=0,dispatched=0,completed=0,candidates=0;
+ try{
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
  if(!id(workflow.id)||workflow.path!==path)throw new Error('Unexpected source gate workflow');
  const config=await settings(github,repo);
+ await cycle.initial({MATRIX_CI_CONTROLLER_SHA:config.controllerSha,MATRIX_CI_RUNNER_IMAGE_DIGEST:config.imageDigest,MATRIX_CI_RUNNER_HARNESS_DIGEST:config.harnessDigest});
  const children=options.childrenOf;
  if(children!==undefined&&(!id(children?.number)||typeof children.headRef!=='string'||!children.headRef))throw new Error('Invalid source gate scope');
  // A push only changes the pushed PR and the merge source of PRs stacked directly on its branch.
- const pulls=options.prNumber?[ (await github.rest.pulls.get({...repo,pull_number:options.prNumber,request})).data ]
+ if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,{...config,mode:config.mainMode},workflow,{ownedGate,currentRequester});
+ let pulls=options.prNumber?[ (await github.rest.pulls.get({...repo,pull_number:options.prNumber,request})).data ]
   :children?(async function*(){
    yield (await github.rest.pulls.get({...repo,pull_number:children.number,request})).data;
    for await(const child of openPulls(github,repo,children.headRef))if(child.number!==children.number&&child.base?.ref===children.headRef)yield child;
   })():openPulls(github,repo);
- let examined=0,dispatched=0;
+ if(!options.prNumber&&!children){
+  const catalog=[];for await(const pull of pulls)catalog.push(pull);candidates=catalog.length;
+  if(candidates){
+   const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:options.runId,request});
+   if(run.id!==options.runId||run.run_attempt!==options.runAttempt||run.workflow_id!==workflow.id||run.path!==path||!['schedule','push','workflow_run','pull_request_target'].includes(run.event)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))throw new Error('Untrusted maintenance slot origin');
+   pulls=maintenanceBatch(catalog,run.created_at);
+  }else pulls=[];
+ }
  for await(const listed of pulls){
+  let deferred=false;
+  try{
+  cycle.assertAvailable();
   if(!id(listed.number)||typeof listed.head?.repo?.full_name!=='string'||!same(listed.base?.repo?.full_name,repo)||!sha.test(listed.head.sha||''))continue;
   const pull=children&&listed.number===children.number?listed:(await github.rest.pulls.get({...repo,pull_number:listed.number,request})).data;
   if(pull.head?.sha!==listed.head.sha)continue;
@@ -125,13 +142,14 @@ export async function reconcileSourceQualification(github,repo,controller,option
    if(binding)canonicalMain={baseSha:binding.baseSha,sourceSha:binding.sourceSha,mergeParents:[binding.baseSha,pull.head.sha]};
    else if(admitted||recovery)canonicalMain=await resolveMainPrSnapshot(github,repo,pull);
    if(canonicalMain&&!sameRecovery)snapshot={...snapshot,baseSha:canonicalMain.baseSha,sourceSha:canonicalMain.sourceSha,mergeParents:canonicalMain.mergeParents};
-  }catch(error){if(!(error instanceof Error))throw error;discoveryError=error;}
+  }catch(error){if(isDeferredReconciliation(error))throw error;if(!(error instanceof Error))throw error;discoveryError=error;}
   const evidence={schemaVersion:1,admittedPreviously:previouslyAdmitted||admitted,...snapshot,...(sourceBindings.length?{sourceBindings}:{}),controllerSha:controller.sha,controllerRef:controller.ref,controllerAttempt:options.runAttempt};
   // Keep the authenticated generation while source/API validation fails closed.
   // Otherwise its already-running hosted replacement becomes older than itself.
   if(sameRecovery){evidence.recoveryStartedAt=old.recoveryStartedAt;evidence.recoveryAfterRunId=old.recoveryAfterRunId;}
   let currentCheck=prior?.check;
   const write=async(conclusion,title,extra={})=>{
+   await cycle.beforeWrite(conclusion,extra.notApplicable===true,recovery);
    const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,...(conclusion?{status:'completed',conclusion}:{status:'in_progress'}),request,output:{title,summary:JSON.stringify({...evidence,...extra})}};
    if(args.output.summary.length>4096)throw new Error('Source gate evidence exceeds bounded summary');
    const update=currentCheck&&(conclusion||currentCheck.status==='in_progress');
@@ -144,7 +162,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
   if(!discoveryError&&snapshot.baseRef==='main'&&admitted)try{
    const coverage=await mainPrCoverage(github,repo,snapshot);
    if(coverage){snapshot=coverage.snapshot;Object.assign(evidence,snapshot);}
-  }catch(error){if(!(error instanceof Error))throw error;discoveryError=error;}
+  }catch(error){if(isDeferredReconciliation(error))throw error;if(!(error instanceof Error))throw error;discoveryError=error;}
   if(discoveryError){logGateError(pull.number,'requester-discovery',discoveryError);await write('failure','Fresh requesting CI discovery failed');continue;}
   if(!admitted&&!recovery){
    // Unchanged N/A rewrites dominated the shared installation API budget.
@@ -154,7 +172,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
   }
   if(admitted&&(!sha.test(config.controllerSha||'')||config.controllerSha!==controller.sha||!/^sha256:[a-f0-9]{64}$/.test(config.imageDigest||'')||!/^[a-f0-9]{64}$/.test(config.harnessDigest||''))){await write('failure','Reviewed execution configuration is incomplete');continue;}
   try{const current=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);snapshot.mergeParents=current.mergeParents;evidence.mergeParents=current.mergeParents;}
-  catch(error){if(error instanceof Error)logGateError(pull.number,'current-source',error);await write('failure','Current source candidate is not available');if(!(error instanceof Error))throw error;continue;}
+  catch(error){if(isDeferredReconciliation(error))throw error;if(error instanceof Error)logGateError(pull.number,'current-source',error);await write('failure','Current source candidate is not available');if(!(error instanceof Error))throw error;continue;}
   let requester;
   try{
    if(recovery){
@@ -178,14 +196,14 @@ export async function reconcileSourceQualification(github,repo,controller,option
     snapshot.mergeParents=current.mergeParents;
     Object.assign(evidence,snapshot);
    }
-  }catch(error){if(error instanceof Error)logGateError(pull.number,'requester-discovery',error);await write('failure','Fresh requesting CI discovery failed');if(!(error instanceof Error))throw error;continue;}
+  }catch(error){if(isDeferredReconciliation(error))throw error;if(error instanceof Error)logGateError(pull.number,'requester-discovery',error);await write('failure','Fresh requesting CI discovery failed');if(!(error instanceof Error))throw error;continue;}
   if(!requester){
    const duplicate=prior?.evidence.refreshDispatchFailed!==true&&prior?.evidence.refreshDispatchedAt&&prior.evidence.executionMode===snapshot.executionMode&&prior.evidence.sourceSha===snapshot.sourceSha&&prior.evidence.baseSha===snapshot.baseSha&&(!recovery||(prior.evidence.recoveryStartedAt===evidence.recoveryStartedAt&&prior.evidence.recoveryAfterRunId===evidence.recoveryAfterRunId))&&Date.now()-Date.parse(prior.evidence.refreshDispatchedAt)<30*60*1000;
    const refresh=duplicate?{refreshDispatchedAt:prior.evidence.refreshDispatchedAt}:{refreshDispatchedAt:new Date().toISOString()};
    await write(null,recovery?'Waiting for fresh exact-source hosted replacement':'Waiting for fresh exact-source hosted and Linux coverage',refresh);
    try{
-    if(!duplicate){await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:snapshot.headSha,base_sha:snapshot.baseSha,source_sha:snapshot.sourceSha,...(recovery?{execution_mode:'hosted-only'}:{})},request});dispatched++;}
-   }catch(error){await write('failure','Fresh requesting CI could not be dispatched',{...refresh,refreshDispatchFailed:true});throw error;}
+    if(!duplicate){await cycle.beforeDispatch(recovery);await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:snapshot.headSha,base_sha:snapshot.baseSha,source_sha:snapshot.sourceSha,...(recovery?{execution_mode:'hosted-only'}:{})},request});dispatched++;}
+   }catch(error){if(isDeferredReconciliation(error))throw error;await write('failure','Fresh requesting CI could not be dispatched',{...refresh,refreshDispatchFailed:true});throw error;}
    continue;
   }
   if(requester.status!=='completed'){await write(null,'Waiting for current requesting CI to finish',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
@@ -196,7 +214,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
    else {
     let result;
     try{result=await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true});}
-    catch(error){
+    catch(error){if(isDeferredReconciliation(error))throw error;
      // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block the PR.
      if(config.mode!=='shadow'||!(error instanceof Error))throw error;
      // Shadow mode only observes Linux, so a miss is logged as observed rather than failed.
@@ -225,8 +243,13 @@ export async function reconcileSourceQualification(github,repo,controller,option
    }
    phase='write';
    await write('success',snapshot.baseRef==='main'?'Unchanged PR head passed against its recorded main source':recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
-  }catch(error){if(error instanceof Error)logGateError(pull.number,phase,error);await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
+  }catch(error){if(isDeferredReconciliation(error))throw error;if(error instanceof Error)logGateError(pull.number,phase,error);await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
+  }catch(error){if(isDeferredReconciliation(error)){deferred=true;break;}throw error;}
+  finally{if(!deferred)completed++;}
  }
- if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,{...config,mode:config.mainMode},workflow,{ownedGate,currentRequester});
- return{examined,dispatched};
+ return{examined,dispatched,...(!options.prNumber&&!children?{deferred:Math.max(0,candidates-completed),...cycle.metrics()}: {})};
+ }catch(error){
+  if(!isDeferredReconciliation(error))throw error;
+  return{examined,dispatched,deferred:Math.max(0,candidates-completed),...cycle.metrics()};
+ }finally{cycle.close();}
 }

@@ -6,6 +6,7 @@ import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {verifyFullHostedCoverage} from './dedicated-hosted.mjs';
 import {verifyMainCiDecision,authenticatedMainDecisionProof} from './main-ci-decision.mjs';
 import {logGateEvent} from './gate-log.mjs';
+import {isDeferredReconciliation} from './dedicated-source-gate-cycle.mjs';
 const request={timeout:10000};
 export async function reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester}){
  const source=await readCurrentBranchSha(github,repo,'main',request);
@@ -19,6 +20,7 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
  const retained=authenticatedMainDecisionProof(prior,repo,oldRun,{...prior?.evidence,...snapshot},controller,config,mode);
  if(retained)Object.assign(evidence,retained.source,{coverageProof:retained,requestingRunId:oldRun.id,requestingRunAttempt:oldRun.run_attempt});
  const write=async(conclusion,title,extra={})=>{
+  await options.cycle?.beforeWrite(conclusion);
   const summary=JSON.stringify({...evidence,...extra});if(Buffer.byteLength(summary)>4096)throw new Error('Main qualification App summary exceeds bound');
   const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,...(conclusion?{status:'completed',conclusion}:{status:'in_progress'}),request,output:{title,summary}};
   const update=prior&&(conclusion||prior.check.status==='in_progress');
@@ -50,7 +52,7 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   stage='linux';
   let result;
   try{result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};}
-  catch(error){
+  catch(error){if(isDeferredReconciliation(error))throw error;
    if(!(error instanceof Error))throw error;
    // Delegated main runs full hosted CI whenever Linux does not verify; that hosted coverage qualifies main.
    if(mode!=='delegated'&&mode!=='shadow')throw error;
@@ -82,7 +84,7 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   Object.assign(evidence,{coverageProof:decision.coverageProof});
   stage='write';
   await write('success',result.docsOnly?'Current exact-main selected documentation coverage passed':result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':result.linuxFallback?'Current exact-main full hosted fallback coverage passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
- }catch(error){
+ }catch(error){if(isDeferredReconciliation(error))throw error;
   if(!(error instanceof Error))throw error;
   logGateEvent('Main source qualification failed',stage,error);
   await write('failure','Fresh exact-main qualification evidence is missing or stale');
