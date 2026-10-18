@@ -1,6 +1,9 @@
 import { CreditCard, ExternalLink } from "@renderer/lib/hugeicons";
 import {
   MatrixBillingStatusSchema,
+  getMatrixBillingDefaultPlanSlug,
+  getMatrixBillingTrialDurationDays,
+  MATRIX_HOSTED_TRIAL_RETENTION_NOTICE,
   closestMatrixRegionSlug,
   type MatrixBillingPublicEntitlement,
   type MatrixBillingStatus,
@@ -26,7 +29,7 @@ type BillingRegion = "region_fsn1" | "region_nbg1" | "region_ash" | "region_hil"
 type BillingAction = "checkout" | "portal";
 
 interface BillingUiState {
-  plan: BillingPlan;
+  plan: BillingPlan | null;
   interval: BillingInterval;
   region: BillingRegion;
   actionError: string | null;
@@ -41,7 +44,7 @@ type BillingUiAction =
   | { type: "fail-action"; message: string };
 
 const INITIAL_BILLING_UI_STATE: BillingUiState = {
-  plan: "matrix_builder",
+  plan: null,
   interval: "monthly",
   region: "region_fsn1",
   actionError: null,
@@ -125,7 +128,7 @@ function useBillingStatus() {
     setLoading(true);
     setError(false);
     try {
-      const raw = await api.get<unknown>("/billing/status");
+      const raw = await api.get<unknown>("/billing/status?trialOfferVersion=2");
       const parsed = MatrixBillingStatusSchema.parse(raw);
       setStatus(parsed);
     } catch (err: unknown) {
@@ -154,6 +157,8 @@ export default function BillingSection() {
     (initialState) => ({ ...initialState, region: closestBillingRegion() }),
   );
 
+  const selectedPlan = ui.plan ?? getMatrixBillingDefaultPlanSlug(status?.trialOffer);
+  const trialDurationDays = getMatrixBillingTrialDurationDays(status?.trialOffer, selectedPlan);
   const active = status?.access.runtimeProxyAllowed === true;
   const entitlement = status?.entitlement ?? null;
   const portalAvailable = entitlement?.portalAvailable === true;
@@ -167,7 +172,7 @@ export default function BillingSection() {
     dispatchUi({ type: "start-action", action: "checkout" });
     try {
       const raw = await api.post<unknown>("/billing/checkout", {
-        planSlug: ui.plan,
+        planSlug: selectedPlan,
         interval: ui.interval,
         regionSlug: ui.region,
       });
@@ -272,7 +277,7 @@ export default function BillingSection() {
               <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
                 Plan
                 <select
-                  value={ui.plan}
+                  value={selectedPlan}
                   onChange={(event) => dispatchUi({ type: "set-plan", plan: event.currentTarget.value as BillingPlan })}
                   className="h-9 rounded-md border px-2 text-sm"
                   style={{ background: "var(--bg-sunken)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
@@ -301,12 +306,19 @@ export default function BillingSection() {
                 </label>
               </details>
             </div>
+            {trialDurationDays !== null ? (
+              <div className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                <p className="font-semibold" style={{ color: "var(--text-primary)" }}>$0 today</p>
+                <p>{trialDurationDays}-day free trial. Your selected plan is billed after the trial unless you cancel.</p>
+                <p className="mt-2 text-xs">{MATRIX_HOSTED_TRIAL_RETENTION_NOTICE}</p>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                Checkout opens in your browser and returns to Matrix OS after Stripe confirms payment.
+                Checkout opens in your browser and returns to Matrix OS after billing is confirmed.
               </p>
               <Button variant="primary" onClick={() => void startCheckout()} disabled={!api || ui.actionLoading !== null}>
-                {ui.actionLoading === "checkout" ? "Opening..." : "Continue to checkout"}
+                {ui.actionLoading === "checkout" ? "Opening..." : trialDurationDays !== null ? `Start ${trialDurationDays}-day trial` : "Continue to checkout"}
                 <ExternalLink size={14} />
               </Button>
             </div>

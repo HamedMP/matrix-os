@@ -89,7 +89,7 @@ describe("desktop billing settings", () => {
     render(<BillingSection />);
 
     await waitFor(() => expect(screen.getByText("Billing active")).not.toBeNull());
-    expect(api.get).toHaveBeenCalledWith("/billing/status");
+    expect(api.get).toHaveBeenCalledWith("/billing/status?trialOfferVersion=2");
     expect(screen.getByText("Builder")).not.toBeNull();
     expect(screen.getByText("2 of 2")).not.toBeNull();
     expect(screen.queryByText("Default machine")).toBeNull();
@@ -198,6 +198,58 @@ describe("desktop billing settings", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
+  it("defaults to the eligible Starter trial and removes the offer on selecting Builder", async () => {
+    const api = makeApi({
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 7, eligiblePlanSlugs: ["matrix_starter"] },
+    });
+    useConnection.setState({ api: api as never });
+    render(<BillingSection />);
+    await screen.findByRole("button", { name: "Start 7-day trial" });
+    expect((screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement).value).toBe("matrix_starter");
+    expect(screen.getByText("$0 today")).toBeTruthy();
+    expect(screen.getByText(/permanently deleted.*7 days after.*trial ends/)).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox", { name: "Plan" }), { target: { value: "matrix_builder" } });
+    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeTruthy();
+    expect(screen.queryByText("$0 today")).toBeNull();
+    expect(screen.queryByText(/permanently deleted.*7 days after/)).toBeNull();
+    fireEvent.change(screen.getByRole("combobox", { name: "Plan" }), { target: { value: "matrix_starter" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start 7-day trial" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/billing/checkout", {
+      planSlug: "matrix_starter", interval: "monthly", regionSlug: "region_fsn1",
+    }));
+  });
+
+  it("shows fourteen Starter days and three Builder and Max days from the server policy", async () => {
+    useConnection.setState({ api: makeApi({
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" }, entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3,
+        eligiblePlanSlugs: ["matrix_starter", "matrix_builder", "matrix_max"],
+        durationDaysByPlan: { matrix_starter: 14, matrix_builder: 3, matrix_max: 3 } },
+    }) as never });
+    render(<BillingSection />);
+    await screen.findByRole("button", { name: "Start 14-day trial" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Plan" }), { target: { value: "matrix_builder" } });
+    expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox", { name: "Plan" }), { target: { value: "matrix_max" } });
+    expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
+    expect(screen.getByText("$0 today")).toBeTruthy();
+  });
+
+  it("preserves a reserved legacy Builder trial", async () => {
+    useConnection.setState({ api: makeApi({
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3, eligiblePlanSlugs: ["matrix_builder"] },
+    }) as never });
+    render(<BillingSection />);
+    await screen.findByRole("button", { name: "Start 3-day trial" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Plan" }), { target: { value: "matrix_starter" } });
+    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeTruthy();
+    expect(screen.queryByText("$0 today")).toBeNull();
+  });
+
   it("starts checkout with the selected native billing options", async () => {
     const api = makeApi({
       access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
@@ -208,7 +260,7 @@ describe("desktop billing settings", () => {
 
     render(<BillingSection />);
     await waitFor(() => expect(screen.getByText("Billing required")).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: /Continue to checkout/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Continue to checkout|Start 3-day trial/i }));
 
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith(
@@ -245,7 +297,7 @@ describe("desktop billing settings", () => {
         target: { value: explicitRegion },
       });
     }
-    fireEvent.click(screen.getByRole("button", { name: /Continue to checkout/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Continue to checkout|Start 3-day trial/i }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       "/billing/checkout",
@@ -268,6 +320,6 @@ describe("desktop billing settings", () => {
     await waitFor(() => expect(screen.getByText("Billing required")).not.toBeNull());
 
     expect(screen.getByRole("button", { name: /Manage billing/i })).not.toBeNull();
-    expect(screen.getByRole("button", { name: /Continue to checkout/i })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Continue to checkout|Start 3-day trial/i })).not.toBeNull();
   });
 });

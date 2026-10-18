@@ -195,7 +195,7 @@ export async function claimCheckoutAttempt(
 export async function claimCardTrialCheckoutAttempt(
   db: PlatformDB,
   record: Omit<BillingCheckoutClaimInput, 'trialPeriodDays'>,
-  durationDays: number,
+  durationDays: number | null,
 ): Promise<{ attempt: BillingCheckoutAttemptRecord; claimed: boolean; selectionMatches: boolean }> {
   await db.ready;
   return withAccountDeletionAdmission(db, record.clerkUserId, async (trx) => {
@@ -238,8 +238,14 @@ export async function claimCardTrialCheckoutAttempt(
       .where('clerk_user_id', '=', record.clerkUserId)
       .limit(1)
       .executeTakeFirst();
-    const trialPeriodDays = reservedAttempt?.trial_period_days
-      ?? (!account.consumed_at && !historicalSubscription ? durationDays : null);
+    // The payable attempt governs retries even without a trial-ledger pointer.
+    // In particular NULL is an immediate-payment promise, not a missing value
+    // to replace when the rollout flag or plan durations change.
+    const activeAttempt = await getActiveCheckoutAttempt(trx, record.clerkUserId, record.runtimeSlot);
+    const trialPeriodDays = activeAttempt
+      ? activeAttempt.trialPeriodDays
+      : reservedAttempt?.trial_period_days
+        ?? (!account.consumed_at && !historicalSubscription ? durationDays : null);
     const result = await claimCheckoutAttempt(trx, { ...record, trialPeriodDays }, true);
     if (result.attempt.trialPeriodDays) {
       await trx.executor

@@ -12,6 +12,7 @@ const clerkState = vi.hoisted(() => ({
   isSignedIn: true,
   userId: "user_123" as string | null,
   activePlan: null as string | null,
+  selectedPlan: null as string | null,
 }));
 const posthogClientMock = vi.hoisted(() => ({
   capturePostHogEvent: vi.fn(),
@@ -28,7 +29,7 @@ function installClerkMock() {
       userId: clerkState.userId,
       has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
     }),
-    useUser: () => ({ user: { publicMetadata: {} } }),
+    useUser: () => ({ user: { publicMetadata: { selectedPlan: clerkState.selectedPlan } } }),
   }));
 }
 
@@ -64,6 +65,7 @@ describe("BillingSection", () => {
     clerkState.isSignedIn = true;
     clerkState.userId = "user_123";
     clerkState.activePlan = null;
+    clerkState.selectedPlan = null;
     posthogClientMock.capturePostHogEvent.mockReset();
     posthogClientMock.capturePostHogLog.mockReset();
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
@@ -83,14 +85,14 @@ describe("BillingSection", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses the three-day offer in deterministic screenshot mode", async () => {
+  it("uses the Starter fourteen-day offer in deterministic screenshot mode", async () => {
     vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
     const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection mode="provisioning" />);
 
-    expect(screen.queryByText("Start your 3-day free trial")).toBeNull();
-    expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
+    expect(screen.queryByText("Start your 14-day free trial")).toBeNull();
+    expect(screen.getByRole("button", { name: "Start 14-day trial" })).toBeTruthy();
     vi.unstubAllEnvs();
   });
 
@@ -179,7 +181,7 @@ describe("BillingSection", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it.each([1, 7])("shows a concise %i-day trial summary before opening Checkout", async (durationDays) => {
+  it.each([1, 7, 14])("shows a concise %i-day trial summary before opening Checkout", async (durationDays) => {
     const trialEnd = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
     const formattedTrialEnd = new Intl.DateTimeFormat(undefined, {
       month: "short",
@@ -206,6 +208,101 @@ describe("BillingSection", () => {
     expect(screen.getByText(`Then $100/month on ${formattedTrialEnd}`)).toBeTruthy();
     expect(screen.queryByText(`Cancel before ${formattedTrialEnd}`)).toBeNull();
     expect(screen.getByRole("button", { name: `Start ${durationDays}-day trial` })).toBeTruthy();
+  });
+
+  it("removes the free offer when switching from an eligible Starter plan to Builder", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: false },
+      trialOffer: { eligible: true, durationDays: 7, eligiblePlanSlugs: ["matrix_starter"] },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const { BillingSection } = await loadBillingSection();
+    render(<BillingSection mode="provisioning" />);
+    await waitForBillingConfigurator();
+    expect(screen.getByRole("button", { name: /Starter/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Start 7-day trial" })).toBeTruthy();
+    expect(screen.getByText("$0 today")).toBeTruthy();
+    expect(screen.getByText(/permanently deleted.*7 days after.*trial ends/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Builder.*Recommended/ }));
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+    expect(screen.queryByText("$0 today")).toBeNull();
+    expect(screen.queryByText(/Then .*month on/)).toBeNull();
+    expect(screen.queryByText(/permanently deleted.*7 days after/)).toBeNull();
+  });
+
+  it("switches from fourteen Starter days to three Builder and Max days", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: false },
+      trialOffer: { eligible: true, durationDays: 3,
+        eligiblePlanSlugs: ["matrix_starter", "matrix_builder", "matrix_max"],
+        durationDaysByPlan: { matrix_starter: 14, matrix_builder: 3, matrix_max: 3 } },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const { BillingSection } = await loadBillingSection();
+    render(<BillingSection mode="provisioning" />);
+    await screen.findByRole("button", { name: "Start 14-day trial" });
+    fireEvent.click(screen.getByRole("button", { name: /Builder.*Recommended/ }));
+    expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Max/ }));
+    expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
+    expect(screen.getByText("$0 today")).toBeTruthy();
+  });
+
+  it("selects the newly offered plan after loading without replacing a user choice", async () => {
+    await loadBillingSection();
+    const { BillingPanel } = await import("../../shell/src/components/settings/sections/BillingPanel.js");
+    const offer = { eligible: true, durationDays: 3, eligiblePlanSlugs: ["matrix_starter"] as const,
+      durationDaysByPlan: { matrix_starter: 14 } };
+    const trialOffer = { ...offer, eligiblePlanSlugs: [...offer.eligiblePlanSlugs] };
+    const view = render(<BillingPanel active={false} trialOffer={null} />);
+    expect(screen.getByRole("button", { name: /Builder.*Recommended/ }).getAttribute("aria-pressed")).toBe("true");
+    view.rerender(<BillingPanel active={false} trialOffer={trialOffer} />);
+    expect(screen.getByRole("button", { name: "Start 14-day trial" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Max/ }));
+    view.rerender(<BillingPanel active={false} trialOffer={{ ...trialOffer }} />);
+    expect(screen.getByRole("button", { name: /Max/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+  });
+
+  it("honors an explicit account plan arriving after the initial offer", async () => {
+    await loadBillingSection();
+    const { BillingPanel } = await import("../../shell/src/components/settings/sections/BillingPanel.js");
+    const trialOffer = { eligible: true, durationDays: 3,
+      eligiblePlanSlugs: ["matrix_starter", "matrix_builder", "matrix_max"] as Array<"matrix_starter" | "matrix_builder" | "matrix_max">,
+      durationDaysByPlan: { matrix_starter: 14, matrix_builder: 3, matrix_max: 3 } };
+    const view = render(<BillingPanel active={false} trialOffer={trialOffer} />);
+    expect(screen.getByRole("button", { name: "Start 14-day trial" })).toBeTruthy();
+    clerkState.selectedPlan = "matrix_builder";
+    view.rerender(<BillingPanel active={false} trialOffer={trialOffer} />);
+    expect(screen.getByRole("button", { name: /Builder.*Recommended/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Max/ }));
+    clerkState.selectedPlan = "matrix_starter";
+    view.rerender(<BillingPanel active={false} trialOffer={trialOffer} />);
+    expect(screen.getByRole("button", { name: /Max/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps the reserved three-day Builder offer instead of applying Starter policy", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: false },
+      trialOffer: { eligible: true, durationDays: 3, eligiblePlanSlugs: ["matrix_builder"] },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const { BillingSection } = await loadBillingSection();
+    render(<BillingSection mode="provisioning" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start 3-day trial" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /Starter/ }));
+    expect(screen.queryByText("$0 today")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+  });
+
+  it("fails closed when the server sends an invalid eligible-plan list", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(new Response(JSON.stringify({
+      access: { runtimeProxyAllowed: false },
+      trialOffer: { eligible: true, durationDays: 7, eligiblePlanSlugs: ["not_a_plan"] },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const { BillingSection } = await loadBillingSection();
+    render(<BillingSection mode="provisioning" />);
+    await waitForBillingConfigurator();
+    expect(screen.queryByText("$0 today")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
 
   it("keeps immediate-payment language for additional computers", async () => {
@@ -340,6 +437,20 @@ describe("BillingSection", () => {
     expect(screen.queryByRole("button", { name: "Continue to pay" })).toBeNull();
   });
 
+  it("opts into plan-specific offers while preserving the requested runtime slot", async () => {
+    await loadBillingSection();
+    const { useMatrixBillingAccess } = await import("../../shell/src/hooks/useMatrixBillingAccess.js");
+    function ScopedBillingProbe() {
+      useMatrixBillingAccess("studio");
+      return null;
+    }
+    render(<ScopedBillingProbe />);
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/billing/status?runtimeSlot=studio&trialOfferVersion=2",
+      expect.objectContaining({ method: "GET", credentials: "include" }),
+    ));
+  });
+
   it("shows a reconnecting billing session state when signed-out app-session billing returns 401", async () => {
     clerkState.isLoaded = true;
     clerkState.isSignedIn = false;
@@ -357,7 +468,7 @@ describe("BillingSection", () => {
     render(<BillingSection />);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/billing/status",
+      "/billing/status?trialOfferVersion=2",
       expect.objectContaining({
         credentials: "include",
         method: "GET",

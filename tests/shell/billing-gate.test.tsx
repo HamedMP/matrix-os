@@ -220,7 +220,7 @@ describe("BillingGate", () => {
 
     await screen.findByRole("button", { name: "Continue to pay" });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/billing/status?runtimeSlot=studio",
+      "/billing/status?runtimeSlot=studio&trialOfferVersion=2",
       expect.objectContaining({ method: "GET" }),
     );
 
@@ -260,7 +260,7 @@ describe("BillingGate", () => {
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/billing/status",
+      "/billing/status?trialOfferVersion=2",
       expect.objectContaining({
         credentials: "include",
         method: "GET",
@@ -611,7 +611,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = null;
     clerkState.getToken.mockResolvedValue("clerk-token");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (input === "/billing/status") {
+      if (input === "/billing/status?trialOfferVersion=2") {
         return new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
           status: 200,
           headers: { "content-type": "application/json" },
