@@ -69,18 +69,39 @@ describe.each([
   ['platform', createPlatformDb],
   ['ATS', createAtsDb],
 ] as const)('%s Postgres connections', (_name, createDb) => {
-  it.each([
-    ['read ETIMEDOUT', timeout],
-    ['Connection terminated unexpectedly', () => new Error('Connection terminated unexpectedly')],
-  ])('handles checked-out %s and replaces the failed connection', async (_message, makeError) => {
+  it('handles checked-out timeouts and replaces the failed connection', async () => {
     const db = createDb('postgres://fixture:fixture@localhost/fixture');
     await db.ready;
     const client = await pool.connect();
-    const error = makeError();
+    const error = timeout();
     try {
       try {
         expect(() => sockets[0].emit('error', error)).not.toThrow();
         expect(log).toHaveBeenCalledWith(expect.any(String), error);
+        await expect(client.query('SELECT 1')).rejects.toThrow('not queryable');
+      } finally { client.release(); }
+      const replacement = await pool.connect();
+      try {
+        expect(replacement).not.toBe(client);
+        await expect(replacement.query('SELECT 1')).resolves.toMatchObject({ command: 'SELECT' });
+      } finally { replacement.release(); }
+    } finally { await db.destroy(); }
+  });
+
+  it('handles a checked-out socket closing without an error event and reconnects', async () => {
+    const db = createDb('postgres://fixture:fixture@localhost/fixture');
+    await db.ready;
+    const client = await pool.connect();
+    sockets[0].holdQueries = true;
+    try {
+      try {
+        const rejected = expect(client.query('SELECT 1')).rejects.toThrow('Connection terminated unexpectedly');
+        // A remote EOF takes pg's connection-end path, without a stream error.
+        sockets[0].destroy();
+        await rejected;
+        expect(log).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+          message: 'Connection terminated unexpectedly',
+        }));
         await expect(client.query('SELECT 1')).rejects.toThrow('not queryable');
       } finally { client.release(); }
       const replacement = await pool.connect();
