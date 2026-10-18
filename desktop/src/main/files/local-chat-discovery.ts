@@ -29,13 +29,18 @@ async function metadata(source: DiscoveredLocalChat, signal: AbortSignal): Promi
         file = await open(source.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
         const stat = await file.stat(); if (!stat.isFile()) return source;
         // At most 128 KiB per candidate. Full validation/hash happens only after selection.
-        const chunks: string[] = [];
+        const chunks: Buffer[] = [];
         const head = Buffer.alloc(Math.min(stat.size,64 * 1024));
-        const first = await file.read(head,0,head.length,0); chunks.push(head.subarray(0,first.bytesRead).toString("utf8"));
-        if (stat.size > head.length) { const tail = Buffer.alloc(Math.min(stat.size-head.length,64*1024)); const last = await file.read(tail,0,tail.length,stat.size-tail.length); chunks.push(tail.subarray(0,last.bytesRead).toString("utf8")); }
+        const first = await file.read(head,0,head.length,0); chunks.push(head.subarray(0,first.bytesRead));
+        if (stat.size > head.length) {
+            const tail = Buffer.alloc(Math.min(stat.size-head.length,64*1024)); const offset = stat.size-tail.length;
+            const last = await file.read(tail,0,tail.length,offset); const bytes = tail.subarray(0,last.bytesRead);
+            if (offset === first.bytesRead) chunks[0] = Buffer.concat([chunks[0]!,bytes]);
+            else chunks.push(bytes);
+        }
         let sessionId: string | undefined; let subagent = false;
         let title: string | undefined; let explicitTitle: string | undefined; let recordedDirectory: string | undefined;
-        for (const chunk of chunks) for (const line of chunk.split("\n")) {
+        for (const chunk of chunks) for (const line of chunk.toString("utf8").split("\n")) {
             signal.throwIfAborted();
             let value: unknown;
             try { value = JSON.parse(line); } catch (error: unknown) { if (!(error instanceof SyntaxError)) throw error; continue; }
