@@ -39,6 +39,15 @@ describe('Worker fetch pattern classification', () => {
   it('accepts a real outbound fetch with its explicit timeout', async () => {
     expect((await scan("const result = await fetch('https://external.example/api', { signal: AbortSignal.timeout(10000) });")).status).toBe(0);
   });
+  it.each([
+    "fetch('https://external.example/api');",
+    'fetch(request);',
+    "fetch(\n  'https://external.example/api'\n);",
+  ])('rejects standalone outbound calls: %s', async (source) => {
+    const result = await scan(source);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('fetch() without signal');
+  });
   it('does not exempt arbitrary app.fetch calls outside the known Hono dispatch', async () => {
     const result = await scan("const result = await app.fetch(new Request('https://external.example/api')); ");
     expect(result.status).toBe(1);

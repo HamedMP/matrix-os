@@ -157,8 +157,9 @@ if [[ -n "$MATCHES" ]]; then
       continue
     fi
     source_line=$(sed -n "${line_no}p" "$file")
-    # A named Worker handler is an inbound method declaration, not a call.
-    if grep -Eq '^[[:space:]]*(async[[:space:]]+)?fetch[[:space:]]*\(' <<< "$source_line"; then
+    # A typed Worker request parameter identifies an inbound declaration.
+    # A standalone fetch(url) call must still pass the timeout check.
+    if grep -Eq '^[[:space:]]*(async[[:space:]]+)?fetch[[:space:]]*\([[:space:]]*[A-Za-z_$][[:alnum:]_$]*[[:space:]]*:[[:space:]]*Request[[:space:]]*[,)]' <<< "$source_line"; then
       continue
     fi
     # This exact dispatch invokes the locally constructed Hono application.
