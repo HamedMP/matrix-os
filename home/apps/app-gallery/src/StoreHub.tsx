@@ -2,8 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { GalleryBridge } from "./model";
 import { createStoreClient, type StoreStatus } from "./store-model";
 import Community from "./store/Community";
+import Publish from "./store/Publish";
+import Submissions from "./store/Submissions";
+import Review from "./store/Review";
 import "./store/store.css";
-type Tab = "picks" | "community";
+type Tab = "picks" | "community" | "publish" | "submissions" | "review";
 export default function StoreHub({
   bridge,
   onActiveChange,
@@ -37,7 +40,13 @@ export default function StoreHub({
     onActiveChange?.(value !== "picks");
   };
   if (!client || !status?.enabled) return null;
-  const tabs: [Tab, string][] = [["picks", "Matrix picks"], ["community", "Community"]];
+  const tabs: [Tab, string][] = [
+    ["picks", "Matrix picks"],
+    ["community", "Community"],
+    ["publish", "Publish"],
+    ["submissions", "My submissions"],
+    ...(status.reviewer ? [["review", "Review"] as [Tab, string]] : []),
+  ];
   return (
     <section className="store-hub" aria-label="App store">
       <nav className="store-tabs" aria-label="Gallery sections">
@@ -52,6 +61,9 @@ export default function StoreHub({
         ))}
       </nav>
       {tab === "community" && <Community client={client} />}
+      {tab === "publish" && <Publish client={client} status={status} />}
+      {tab === "submissions" && <Submissions client={client} />}
+      {tab === "review" && status.reviewer && <Review client={client} />}
     </section>
   );
 }
