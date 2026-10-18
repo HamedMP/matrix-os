@@ -78,8 +78,8 @@ describe("Matrix OS Codex marketplace plugin", () => {
     }
   });
 
-  it("exposes four uniquely discoverable skills", () => {
-    const skillNames = ["matrix-onboarding", "matrix-cloud-run", "matrix-github-project", "matrix-chat-import"];
+  it("exposes five uniquely discoverable skills", () => {
+    const skillNames = ["matrix-onboarding", "matrix-cloud-run", "matrix-github-project", "matrix-chat-import", "matrix-move"];
     const discoveredNames = skillNames.map((name) => frontmatterName(readSkill(name)));
 
     expect(discoveredNames).toEqual(skillNames);
