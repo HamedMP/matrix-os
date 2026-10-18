@@ -1,4 +1,5 @@
-import {rename,rm,rmdir} from 'node:fs/promises';
+import {rename,rm} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
 import {AppStoreInstallRecordSchema,AppStoreInstallJobSchema,type AppStoreInstallRecord} from '@matrix-os/contracts/app-store-gateway';
 import {z} from 'zod/v4';
 import {bundleDigest,encodeAppBundle} from '@matrix-os/contracts/app-store-bundle';
@@ -34,9 +35,15 @@ async function quarantinePublication(homePath:string,jobId:string,stage:PinnedDi
  * or TTL-delete them during normal recovery, or refresh the associated job TTL. */
 async function preservePublicationConflict(homePath:string,stages:PinnedDirectory,jobId:string):Promise<void>{
  await withStoreDirectory(homePath,['install-conflicts'],async conflicts=>{
-  const reserved=await conflicts.createChild(jobId);await reserved.close();
-  try{await rename(`${stages.path}/${jobId}`,`${conflicts.path}/${jobId}`);}
-  catch(error:unknown){await rmdir(`${conflicts.path}/${jobId}`);throw error;}
+  // Linux directory rename atomically accepts an absent/empty destination, but
+  // cannot replace a nonempty directory, file or symlink with this directory.
+  // This also absorbs empty reservations left by the older two-step protocol.
+  // Occupied names retain every owner file and get a bounded fresh sibling.
+  for(let attempt=0;attempt<4;attempt++){
+   const destination=attempt===0?jobId:`${jobId}-${randomUUID()}`;
+   try{await rename(`${stages.path}/${jobId}`,`${conflicts.path}/${destination}`);return;}
+   catch(error:unknown){if(attempt===3||!['ENOTEMPTY','EEXIST','ENOTDIR','EISDIR'].some(code=>isFsError(error,code)))throw error;}
+  }
  });
 }
 /** Called before admitting new jobs. Unknown owner edits keep their recovery backup intact. */

@@ -1,4 +1,4 @@
-import {describe,it,expect} from 'vitest';import {mkdtemp,mkdir,writeFile,readFile,rm,rename,cp,stat,utimes} from 'node:fs/promises';import {join} from 'node:path';import {tmpdir} from 'node:os';
+import {describe,it,expect} from 'vitest';import {mkdtemp,mkdir,writeFile,readFile,rm,rename,cp,stat,utimes,readdir,symlink} from 'node:fs/promises';import {join} from 'node:path';import {tmpdir} from 'node:os';
 import {publishCommunityInstall} from '../../../packages/gateway/src/app-store/install-publication.js';
 import {installedMatches,recoverInstallPublications} from '../../../packages/gateway/src/app-store/install-recovery.js';
 import {readStoreProvenance,writeStoreProvenance} from '../../../packages/gateway/src/app-store/provenance.js';
@@ -6,7 +6,7 @@ import {encodeAppBundle,bundleDigest} from '../../../packages/contracts/src/app-
 import {deriveAppStoreCapabilities} from '../../../packages/contracts/src/app-store.js';
 const id=(n:number)=>`e53000b2-83ab-4c64-b8fc-ff176d733cb${n}`;
 describe.skipIf(process.platform!=='linux')('actual filesystem install recovery',()=>{
- it('quarantines an edited destination and backup without blocking another recovery',async()=>{
+ it.each(['none','empty','occupied','symlink'] as const)('quarantines an edited destination with a %s reservation without blocking another recovery',async(reservation)=>{
  const home=await mkdtemp(join(tmpdir(),'matrix-store-quarantine-'));await mkdir(join(home,'apps'),{mode:0o700});
  const manifest={name:'Fixture',description:'Recovery fixture',slug:'fixture',runtime:'vite',version:'1.0.0',permissions:[]};
  const source=new Map([['matrix.json',Buffer.from(JSON.stringify(manifest))],['package.json',Buffer.from('{}')],['pnpm-lock.yaml',Buffer.from('lock')],['index.html',Buffer.from('source')]]);const dist=new Map([['index.html',Buffer.from('built')]]);
@@ -19,8 +19,16 @@ describe.skipIf(process.platform!=='linux')('actual filesystem install recovery'
  await writeFile(join(conflict,'journal.json'),JSON.stringify({record:intended,previous}));await writeFile(join(other,'journal.json'),JSON.stringify({record:otherIntended,previous:otherPrevious}));
  const jobDirectory=join(home,`data/app-store/install-jobs/${id(2)}`);await mkdir(jobDirectory,{recursive:true,mode:0o700});await writeFile(join(jobDirectory,'job.json'),JSON.stringify({job:{id:id(2),status:'building'},listingSlug:'fixture',versionId:intended.versionId,consentDigest:'0'.repeat(64),updatedAt:Date.now(),receiptPending:true}));
  await writeStoreProvenance(home,{version:1,installs:[intended,otherIntended]});
+ const conflictRoot=join(home,'data/app-store/install-conflicts'),reserved=join(conflictRoot,id(2));
+ if(reservation!=='none'){
+  await mkdir(conflictRoot,{mode:0o700});
+  if(reservation==='symlink'){await mkdir(join(home,'owner-files'),{mode:0o700});await writeFile(join(home,'owner-files/keep.txt'),'owner reservation');await symlink(join(home,'owner-files'),reserved);}
+  else{await mkdir(reserved,{mode:0o700});if(reservation==='occupied')await writeFile(join(reserved,'keep.txt'),'owner reservation');}
+ }
  await expect(recoverInstallPublications(home)).resolves.toBeUndefined();
- const quarantine=join(home,`data/app-store/install-conflicts/${id(2)}`);
+ const quarantinedName=reservation==='occupied'||reservation==='symlink'?(await readdir(conflictRoot)).find(name=>name.startsWith(id(2)+'-'))!:id(2);
+ const quarantine=join(conflictRoot,quarantinedName);
+ if(reservation==='occupied'||reservation==='symlink')expect(await readFile(join(reserved,'keep.txt'),'utf8')).toBe('owner reservation');
  expect(await readFile(join(home,'apps/fixture/index.html'),'utf8')).toBe('owner customization');expect(await readFile(join(quarantine,'backup/index.html'),'utf8')).toBe('source');
  expect(JSON.parse(await readFile(join(quarantine,'conflict.json'),'utf8')).listingSlug).toBe('fixture');
  expect(JSON.parse(await readFile(join(jobDirectory,'job.json'),'utf8'))).toMatchObject({job:{status:'failed',error:'unavailable'},receiptPending:false});
