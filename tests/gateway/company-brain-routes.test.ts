@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { CompanyBrainError, type CompanyBrainService } from "../../packages/gateway/src/company-brain/service.js";
 import { createCompanyBrainRoutes } from "../../packages/gateway/src/company-brain/routes.js";
+import { PublishBrainSourceSchema, SearchBrainSchema } from "../../packages/gateway/src/company-brain/schemas.js";
 
 const scope = "10000000-0000-4000-8000-000000000001";
 const sourceId = "a".repeat(64);
@@ -26,6 +27,38 @@ describe("Company Brain route validation and verified actor binding", () => {
     expect(response.status).toBe(201);
     expect(service.publish).toHaveBeenCalledWith(scope, "user_owner", source);
     expect((await app().request(`${base}/sources`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...source, actorId: "user_owner" }) })).status).toBe(400);
+  });
+  it.each(["title", "text"] as const)("rejects embedded NUL in source %s at the actual schema boundary", (field) => {
+    expect(PublishBrainSourceSchema.safeParse({ ...source, [field]: "notes\u0000more" }).success).toBe(false);
+  });
+  it("rejects embedded NUL in search at the actual schema boundary", () => {
+    expect(SearchBrainSchema.safeParse({ query: "notes\u0000more" }).success).toBe(false);
+  });
+  it.each(["title", "text"] as const)("returns 400 before publication for embedded NUL in source %s", async (field) => {
+    service.publish.mockResolvedValue({ sourceId, revision: 1 });
+    const response = await app().request(`${base}/sources`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...source, [field]: "notes\u0000more" }) });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid Company Brain request" });
+    expect(service.publish).not.toHaveBeenCalled();
+  });
+  it("returns 400 before search for a percent-encoded embedded NUL query", async () => {
+    service.search.mockResolvedValue([]);
+    const response = await app().request(`${base}/search?q=notes%00more`);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid Company Brain request" });
+    expect(service.search).not.toHaveBeenCalled();
+  });
+  it("preserves Unicode and ordinary whitespace through publication and search", async () => {
+    const input = { ...source, title: "Décision 🚀", text: "Line one\nLine two\tЖ" }, query = "Décision 🚀";
+    expect(PublishBrainSourceSchema.parse(input)).toEqual(input);
+    expect(SearchBrainSchema.parse({ query })).toEqual({ query, limit: 5 });
+    service.publish.mockResolvedValue({ sourceId, revision: 1 });
+    service.search.mockResolvedValue([]);
+    expect((await app().request(`${base}/sources`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) })).status).toBe(201);
+    expect(service.publish).toHaveBeenCalledWith(scope, "user_owner", input);
+    expect((await app().request(`${base}/search?q=${encodeURIComponent(query)}`)).status).toBe(200);
+    expect(service.search).toHaveBeenCalledWith(scope, "user_owner", { query, limit: 5 });
   });
   it("requires authenticated access before invoking source reads", async () => {
     expect((await app(null).request(`${base}/search?q=launch`)).status).toBe(401);
