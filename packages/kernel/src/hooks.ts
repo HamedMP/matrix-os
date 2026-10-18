@@ -1,3 +1,4 @@
+import { MANAGED_INTEGRATIONS } from "@matrix-os/contracts/managed-integrations";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -213,6 +214,8 @@ export function createApprovalHook(
 }
 
 export const MANAGED_WRITE_ACTIONS = new Set([
+  ...Object.values(MANAGED_INTEGRATIONS).flatMap(service => Object.entries(service.actions)
+    .filter(([, action]) => action.risk === "write").map(([action]) => `${service.id}/${action}`)),
   "gmail/send_email",
   "gmail/create_draft",
   "gmail/create_label",
