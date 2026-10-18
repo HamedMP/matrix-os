@@ -27,6 +27,7 @@ const GALLERY_ROUTES: readonly Route[] = [
 
 /** Reviewer surface inside Gallery; the platform enforces the reviewer allowlist on every call. */
 const REVIEW_ROUTES: readonly Route[] = [
+  route("GET", "/api/app-store/review/listings", { allowed: ["q", "category", "sort", "cursor", "limit"] }),
   route("GET", "/api/app-store/review/queue", { allowed: ["status", "cursor"] }),
   route("GET", `/api/app-store/review/versions/${UUID}`),
   route("GET", `/api/app-store/review/versions/${UUID}/file`, { allowed: ["path", "previous"], required: ["path"] }),

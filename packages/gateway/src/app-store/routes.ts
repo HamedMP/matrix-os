@@ -40,6 +40,7 @@ export function registerAppStoreRoutes(app:Hono,options:{homePath:string;ownerId
  post('/listings/:slug/install',G.AppStoreInstallRequestSchema,(c,input)=>install().start(slug(c),input),202);
  get('/installs/:id',c=>install().job(id(c)));
  post('/listings/:slug/rating',G.AppStoreGatewayRatingInputSchema,(c,input)=>platform().rate(slug(c),input.stars));
+ get('/review/listings',c=>platform().request('review/listings',C.AppStoreCatalogPageSchema,{query:C.AppStoreCatalogQuerySchema.parse(query(c))}));
  get('/review/queue',c=>platform().reviewQueue(C.AppStoreReviewQueueQuerySchema.parse(query(c))));
  get('/review/versions/:id',c=>platform().reviewDetail(id(c)));
  get('/review/versions/:id/file',c=>platform().reviewFile(id(c),C.AppStoreReviewFileQuerySchema.parse(query(c))));

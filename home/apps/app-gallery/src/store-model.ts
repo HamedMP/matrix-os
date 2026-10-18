@@ -187,6 +187,11 @@ export function createStoreClient(bridge: GalleryBridge) {
         `/review/queue${query(S.AppStoreReviewQueueQuerySchema.parse({ status, cursor }))}`,
         S.AppStoreReviewQueuePageSchema,
       ),
+    reviewListings: (input: Partial<S.AppStoreCatalogQuery>) =>
+      request(
+        `/review/listings${query(S.AppStoreCatalogQuerySchema.parse(input))}`,
+        S.AppStoreCatalogPageSchema,
+      ),
     review: (value: string) =>
       request(`/review/versions/${id(value)}`, S.AppStoreReviewDetailSchema),
     reviewFile: (value: string, path: string, previous = false) =>
