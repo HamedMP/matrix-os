@@ -14,14 +14,14 @@ const status = { enabled: true, reviewer: false, signingKeys: [], generalizer: {
 async function consentInstall() { fireEvent.click(await screen.findByRole("button", { name: /Get app|Update app/ })); fireEvent.click(screen.getByLabelText(/I agree to these capabilities/)); fireEvent.click(screen.getByRole("button", { name: "Install source" })); }
 describe("store workflow recovery", () => {
   it("resumes a local build after reopening and opens only the installed app", async () => {
-    let installed = false;
-    const b = bridge(url => { if (url.includes("/installs/")) { installed = true; return { id, status: "installed", appSlug: "sample-notes", launchPath: "apps/sample-notes" }; } if (url.endsWith("/install")) return { id, status: "building" }; return { ...listing, local: { installed, updateAvailable: false, ...(installed ? { launchPath: "apps/sample-notes" } : {}) } }; });
+    let installed = false, started = false;
+    const b = bridge(url => { if (url.includes("/installs/")) { installed = true; return { id, status: "installed", appSlug: "sample-notes", launchPath: "apps/sample-notes" }; } if (url.endsWith("/install")) { started = true; return { id, status: "building" }; } return { ...listing, ...(started && !installed ? { installJob: { id, status: "building" } } : {}), local: { installed, updateAvailable: false, ...(installed ? { launchPath: "apps/sample-notes" } : {}) } }; });
     const client = createStoreClient(b); const first = render(<ListingDetail client={client} slug={listing.slug} onBack={vi.fn()} />);
     await consentInstall(); await screen.findByText(/Building on your Matrix computer/); first.unmount();
     render(<ListingDetail client={client} slug={listing.slug} onBack={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Open app" }, { timeout: 10000 }));
     await waitFor(() => expect(b.openApp).toHaveBeenCalledWith("Sample Notes", "apps/sample-notes"));
-    expect(sessionStorage.getItem("matrix-store-pending-install")).toBeNull();
+    expect(b.gatewayFetch.mock.calls.filter(([url]) => url.endsWith("/install"))).toHaveLength(1);
   });
   it("keeps the old app available on local build failure and never leaks backend errors", async () => {
     const b = bridge(url => url.endsWith("/install") ? { id, status: "failed", error: "unavailable" } : { ...listing, local: { installed: true, updateAvailable: true, launchPath: "apps/sample-notes" } });
