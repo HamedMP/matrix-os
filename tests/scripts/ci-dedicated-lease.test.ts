@@ -102,3 +102,44 @@ it('authenticates the live exact requester before granting a placeholder-title r
  f.ciRun.display_title=`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${head}`;
  await expect(verify(f)).rejects.toThrow(/requesting|CI/);
 });
+
+
+it('revokes an old main-target lease when a newer same-head refresh tests a newer main base',async()=>{
+ const f=fixture(),newBase='1'.repeat(40),newMerge='2'.repeat(40);
+ f.pull.base.ref='main';f.request.baseRef='main';
+ Object.assign(f.ciRun,{event:'workflow_dispatch',head_sha:controller,head_branch:'main',pull_requests:[],display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`});
+ // Main may advance while this old canonical merge and its exact lease remain valid.
+ f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:args.branch==='main'?newBase:base}}}));
+ f.github.rest.repos.compareCommitsWithBasehead.mockImplementation(async(args:any)=>({data:{status:'ahead',merge_base_commit:{sha:args.basehead.split('...')[0]}}}));
+ await verify(f);
+ const newer={...f.ciRun,id:322,status:'queued',display_title:`CI refresh-v1 pr=2454 head=${head} base=${newBase} merge=${newMerge}`};
+ f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>({data:{workflow_runs:args.workflow_id===99?[f.controllerRun]:[newer,f.ciRun]}}));
+ // Discovery must retain the newer request despite its different base/source tuple.
+ // Grant validation of the original run remains exact; no request or source is replaced.
+ await expect(verify(f)).rejects.toThrow(/newer requesting|superseded/);
+});
+
+
+function isolatedLeaseFixture(){
+ const f=fixture(),execution='1'.repeat(40),tree='2'.repeat(40),branch=`ci-execution/${controller}`,github:any=f.github;
+ Object.assign(f.controllerRun,{event:'workflow_dispatch',head_branch:branch,head_sha:execution,display_title:'dedicated-isolated-v1 mode=qualification request=321 attempt=1'});
+ const origin={schemaVersion:1,controllerSha:controller,controllerRef:'refs/heads/main',executionRef:`refs/heads/${branch}`,executionSha:execution,executionWorkflowSha:execution,workflowPath:'.github/workflows/ci-dedicated.yml',treeSha:tree};
+ Object.assign(f.origin,{executionOrigin:origin});
+ const originalBranch=github.rest.repos.getBranch.getMockImplementation();
+ github.rest.repos.getBranch.mockImplementation(async(args:any)=>args.branch===branch?{data:{name:branch,commit:{sha:execution}}}:originalBranch(args));
+ github.rest.git={getCommit:vi.fn(async(args:any)=>({data:{sha:args.commit_sha,tree:{sha:tree},parents:[{sha:controller}]}}))};
+ let enabled='true';
+ const names=['MATRIX_CI_CONTROLLER_SHA','MATRIX_CI_DEDICATED_ENABLED','MATRIX_CI_DEDICATED_SHADOW','MATRIX_CI_RUNNER_IMAGE_DIGEST','MATRIX_CI_RUNNER_HARNESS_DIGEST','MATRIX_CI_ISOLATED_EXECUTION'];
+ github.rest.actions.listRepoVariables.mockImplementation(async()=>({data:{total_count:names.length,variables:await Promise.all(names.map(async name=>name==='MATRIX_CI_ISOLATED_EXECUTION'?{name,value:enabled}:(await github.rest.actions.getRepoVariable({name})).data))}}));
+ return{...f,originProof:origin,disable:()=>{enabled='false';}};
+}
+it('grants and renews isolated execution only with an independently proved actual execution origin',async()=>{
+ const f=isolatedLeaseFixture();await verify(f);await verify(f);
+ expect((f.github as any).rest.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({commit_sha:f.originProof.executionSha}));
+});
+it('revokes an isolated lease if the live isolation flag is disabled before renewal',async()=>{
+ const f=isolatedLeaseFixture();await verify(f);f.disable();await expect(verify(f)).rejects.toThrow(/disabled/);
+});
+it('rejects a caller-side isolated origin that differs from the independently read controller run',async()=>{
+ const f=isolatedLeaseFixture();f.originProof.executionSha='3'.repeat(40);await expect(verify(f)).rejects.toThrow(/origin/);
+});

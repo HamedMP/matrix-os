@@ -193,3 +193,66 @@ evidence still requires matching suite identity. A pending index never qualifies
 coverage: completion still requires that exact controller's immutable artifact,
 source/request tuple, reviewed execution inputs, complete phases and cleanup
 proof. A contradictory run ID is rejected even when its URL or suite matches.
+
+## Isolating auxiliary checks from Main
+
+GitHub attaches `workflow_dispatch` checks to the dispatched ref's commit, even
+when a later checkout tests a different PR. A branch alias at Main's existing
+SHA therefore does not isolate those checks.
+
+Auxiliary execution uses `ci-execution/<controller-sha>`. Its commit is a
+distinct, empty child of the reviewed controller: exactly one parent, the
+controller SHA, and exactly the same tree. The execution commit changes no
+source files. Protect these refs against creation, updates and deletion by
+untrusted writers; only the existing operator creates them from reviewed Main.
+Retain refs while historical receipts or active runs depend on them.
+
+The execution ref/SHA, workflow path and workflow SHA are authenticated before
+loading privileged helpers or admitting credentials. The reviewed controller
+must remain on Main. New admission and grant checks also require the current
+reviewed configuration. `controllerRef=refs/heads/main` in the host request
+continues to identify the approved **source authority**, not the actual
+execution ref. Isolated indexes record the actual execution origin separately;
+the versioned artifact envelope binds that origin to the unchanged host receipt.
+Consumers verify both against GitHub metadata. Historical Main receipts retain
+their existing schema and validation.
+
+With `MATRIX_CI_ISOLATED_EXECUTION=true`, Main handles routing for auxiliary
+requests; their actual tests, previews and maintenance execute on the isolated
+commit. A successful routing job proves only that routing succeeded. It never
+replaces source-bound PR checks, complete hosted coverage, or an authenticated
+Linux receipt. Genuine Main push CI and its Linux qualification still execute
+against Main and can make Main red when Main itself fails.
+
+Preview origin checks use the existing protected variable snapshot supplied to
+the job. They do not acquire an additional Variables-read credential. Immutable
+ref protection, exact tree/parent proof and fresh PR-head checks remain required;
+operators drain legacy jobs during rollout. CI grants retain their independent
+live configuration checks.
+
+### Staged activation
+
+1. Merge only after current-head Greptile 5/5 and genuine complete PR CI. Leave
+   the isolation flag false/unset while the new Main commit completes genuine
+   Main qualification through the existing route.
+2. Protect `ci-execution/*`, create its tree-identical execution commit, and
+   read back the exact parent, tree and ref. Add only that protected ref pattern
+   to the existing CI environment's allowed deployment branches when required.
+3. Follow the host-first controller procedure: genuine Main coverage, idle
+   host, preserved policy backup, one reviewed controller append, and exact
+   readback. Keep the approved image, harness, existing routing flags and Main
+   review/CI protections unchanged.
+4. Drain only proven legacy auxiliary writers before advancing the repository
+   pin. Preserve real qualification workloads, unknown work and immutable failure
+   evidence. Pause auxiliary trigger admission during the pin/flag transition if
+   needed to prevent a new legacy invocation racing that drain; Main CI remains
+   enabled. Enable `MATRIX_CI_ISOLATED_EXECUTION` last, then restore admission.
+   False/unset is the explicit temporary compatibility path, not the completed
+   isolation state.
+5. Verify real PR refresh, qualification and preview runs execute at the
+   isolated SHA and retain their actual outcomes. Check all pages of check runs
+   and commit statuses on the actual latest Main commit. Main's own successful
+   CI run alone is insufficient to call the commit green.
+
+Do not replace failures with synthetic passing checks, hide failing tests with
+`continue-on-error`, or delete diagnostic history to produce a green badge.

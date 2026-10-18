@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import YAML from 'yaml';
 
 type Step = { name?: string; uses?: string; run?: string; with?: Record<string, string>; env?: Record<string, string> };
@@ -19,6 +20,7 @@ function context(eventName: string, ref: string, allowed = 'false', action = 'bu
   return {
     github: { event_name: eventName, ref, run_id: 42, event: { action: '', pull_request: { number: 1907 }, label: { name: '' } } },
     inputs: { pr: '1907', bundle_only: true, reap },
+    vars: { MATRIX_CI_ISOLATED_EXECUTION: 'true' },
     needs: { execution_origin: { result: allowed === 'true' ? 'success' : 'failure', outputs: { allowed } }, gate: { result: 'success', outputs: { action } }, build: { result: 'success' } },
   };
 }
@@ -106,6 +108,11 @@ describe('Preview execution uses an isolated immutable workflow origin', () => {
     expect(JSON.stringify(guard)).toContain('github.workflow_ref');
     expect(JSON.stringify(guard)).toContain('github.workflow_sha');
     expect(JSON.stringify(guard)).toContain('MATRIX_CI_CONTROLLER_SHA');
+    for (const name of ['route_execution', 'execution_origin']) {
+      const checkout = workflow.jobs[name]?.steps.find((candidate) => candidate.name === 'Checkout reviewed origin verifier');
+      expect(checkout?.uses, name).toBe('actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803');
+      expect(checkout?.with, name).toMatchObject({ ref: '${{ vars.MATRIX_CI_CONTROLLER_SHA }}', 'persist-credentials': false });
+    }
     for (const name of actualJobs) {
       const needs = workflow.jobs[name]?.needs;
       expect(needs ? [needs].flat() : [], name).toContain('execution_origin');
@@ -117,6 +124,21 @@ describe('Preview execution uses an isolated immutable workflow origin', () => {
     expect(runs('reaper', context('workflow_dispatch', executionRef, 'true', 'skip', true))).toBe(true);
     expect(runs('gate', context('workflow_dispatch', executionRef, 'true', 'skip', true))).toBe(false);
     expect(runs('reaper', context('workflow_dispatch', executionRef, 'true', 'skip', false))).toBe(false);
+    const cancel = (workflow as unknown as { concurrency: { 'cancel-in-progress': string } }).concurrency['cancel-in-progress'];
+    expect(expression(cancel, context('workflow_dispatch', executionRef, 'true', 'skip', true))).toBe(false);
+  });
+
+  it.each(['', 'false'])('preserves staged legacy execution while the flag is %j', (flag) => {
+    const manual = context('workflow_dispatch', 'refs/heads/main', 'true');
+    manual.vars.MATRIX_CI_ISOLATED_EXECUTION = flag;
+    expect(runs('route_execution', manual)).toBe(false);
+    expect(runs('execution_origin', manual)).toBe(true);
+    expect(runs('build', manual)).toBe(true);
+    const scheduled = context('schedule', 'refs/heads/main', 'true', 'skip');
+    scheduled.vars.MATRIX_CI_ISOLATED_EXECUTION = flag;
+    expect(runs('route_execution', scheduled)).toBe(false);
+    expect(runs('execution_origin', scheduled)).toBe(true);
+    expect(runs('reaper', scheduled)).toBe(true);
   });
 
   it('separates route and execution concurrency so the child cannot cancel its router', () => {
@@ -124,5 +146,92 @@ describe('Preview execution uses an isolated immutable workflow origin', () => {
       .not.toBe(group(context('workflow_dispatch', executionRef)));
     expect(group(context('schedule', 'refs/heads/main', 'false', 'skip', true)))
       .not.toBe(group(context('workflow_dispatch', executionRef, 'true', 'skip', true)));
+  });
+});
+
+// Execute the actual github-script body with synthetic GitHub responses. The
+// shared verifier is imported from the real checkout, not reimplemented here.
+const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (...args: string[]) => (...args: unknown[]) => Promise<unknown>;
+function scriptFixture(eventName = 'workflow_dispatch') {
+  const execution = 'b'.repeat(40), tree = 'c'.repeat(40), main = 'd'.repeat(40);
+  const commits: Record<string, { sha: string; tree: { sha: string }; parents: { sha: string }[] }> = {
+    [controller]: { sha: controller, tree: { sha: tree }, parents: [{ sha: 'e'.repeat(40) }] },
+    [execution]: { sha: execution, tree: { sha: tree }, parents: [{ sha: controller }] },
+  };
+  const github = { rest: {
+    git: { getCommit: vi.fn(async ({ commit_sha }: { commit_sha: string }) => ({ data: commits[commit_sha] })) },
+    repos: {
+      getBranch: vi.fn(async ({ branch }: { branch: string }) => ({ data: { name: branch, commit: { sha: branch === 'main' ? main : execution } } })),
+      compareCommitsWithBasehead: vi.fn(async () => ({ data: { status: 'ahead', merge_base_commit: { sha: controller } } })),
+    },
+    actions: { createWorkflowDispatch: vi.fn(async () => ({ status: 204 })) },
+  } };
+  const runtimeContext = { repo: { owner: 'HamedMP', repo: 'matrix-os' }, eventName,
+    ref: executionRef, sha: execution,
+    payload: { inputs: { pr: '1907', version: '', bundle_only: 'true', verify_inventory: 'false', teardown_preview: 'false', reap: 'false' } } };
+  const env = { GITHUB_WORKSPACE: process.cwd(), MATRIX_CI_CONTROLLER_SHA: controller,
+    ISOLATED_EXECUTION: 'true', PREVIEW_WORKFLOW_REF: `HamedMP/matrix-os/.github/workflows/preview-vps.yml@${executionRef}`, PREVIEW_WORKFLOW_SHA: execution };
+  const core = { setOutput: vi.fn(), notice: vi.fn() };
+  return { github, runtimeContext, env, core, commits, execution };
+}
+async function runActualScript(jobName: string, f: ReturnType<typeof scriptFixture>) {
+  const body = workflow.jobs[jobName]?.steps.find((candidate) => candidate.with?.script)?.with?.script;
+  if (!body) throw new Error(`Missing actual github-script body: ${jobName}`);
+  await new AsyncFunction('github', 'context', 'core', 'require', 'process', body)(
+    f.github, f.runtimeContext, f.core, createRequire(import.meta.url), { env: f.env });
+}
+
+describe('Actual isolated preview router and origin scripts', () => {
+  it.each(['workflow_dispatch', 'schedule'])('dispatches %s once to the verified P with the intended operation only', async (eventName) => {
+    const f = scriptFixture(eventName);
+    await runActualScript('route_execution', f);
+    expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledExactlyOnceWith({
+      ...f.runtimeContext.repo, workflow_id: 'preview-vps.yml', ref: `ci-execution/${controller}`,
+      inputs: { pr: eventName === 'schedule' ? '0' : '1907', version: '',
+        bundle_only: eventName === 'schedule' ? 'false' : 'true', verify_inventory: 'false', teardown_preview: 'false', reap: String(eventName === 'schedule') },
+      request: { timeout: 10000 },
+    });
+  });
+
+  it('never dispatches when the execution tree differs from the reviewed pin', async () => {
+    const f = scriptFixture();
+    f.commits[f.execution]!.tree.sha = 'f'.repeat(40);
+    await expect(runActualScript('route_execution', f)).rejects.toThrow();
+    expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a maintenance request mixed with a PR operation before granting credentials', async () => {
+    const f = scriptFixture();
+    f.runtimeContext.payload.inputs.reap = 'true';
+    await expect(runActualScript('execution_origin', f)).rejects.toThrow('Invalid isolated maintenance request');
+    expect(f.core.setOutput).not.toHaveBeenCalledWith('allowed', 'true');
+  });
+
+  it('does not retry an invoked dispatch with an unknown external outcome', async () => {
+    const f = scriptFixture();
+    f.github.rest.actions.createWorkflowDispatch.mockRejectedValue(new Error('transport interrupted'));
+    await expect(runActualScript('route_execution', f)).rejects.toThrow('transport interrupted');
+    expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('permits credentials only after verifying the actual workflow SHA/ref', async () => {
+    const f = scriptFixture();
+    await runActualScript('execution_origin', f);
+    expect(f.core.setOutput).toHaveBeenCalledWith('allowed', 'true');
+    expect(f.core.setOutput).toHaveBeenCalledWith('trusted_ref', f.execution);
+    const wrong = scriptFixture();
+    wrong.env.PREVIEW_WORKFLOW_SHA = controller;
+    await expect(runActualScript('execution_origin', wrong)).rejects.toThrow();
+    expect(wrong.core.setOutput).not.toHaveBeenCalledWith('allowed', 'true');
+  });
+
+  it.each(['pull_request', 'legacy'])('keeps the %s bootstrap control independent of an isolated verifier checkout', async (mode) => {
+    const f = scriptFixture(mode === 'pull_request' ? 'pull_request' : 'workflow_dispatch');
+    if (mode === 'legacy') f.env.ISOLATED_EXECUTION = '';
+    await runActualScript('execution_origin', f);
+    expect(f.core.setOutput).toHaveBeenCalledWith('allowed', 'true');
+    expect(f.core.setOutput).toHaveBeenCalledWith('mode', mode);
+    expect(f.core.setOutput).toHaveBeenCalledWith('trusted_ref', 'main');
+    expect(f.github.rest.git.getCommit).not.toHaveBeenCalled();
   });
 });

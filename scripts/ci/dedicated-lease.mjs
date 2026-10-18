@@ -1,7 +1,8 @@
+import {isolatedRunPin,verifyRunExecution} from './dedicated-isolated.mjs';
 // Called after host lock and before each renewal, using only controller-owned
 // code and the GitHub token kept on the authenticated default-branch runner.
 import {assertDefaultController,verifyCurrentDedicatedSource} from './dedicated-admission.mjs';
-import {authenticatedRequestingRun,authenticatedControllerRun} from './dedicated-refresh.mjs';
+import {verifiedRequestingRun,verifiedControllerRun} from './dedicated-refresh.mjs';
 import {verifyControllerPin} from './dedicated-pin.mjs';
 import {readReviewedConfiguration} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
@@ -11,11 +12,11 @@ const id=value=>Number.isSafeInteger(value)&&value>0;
 const workflowPath=name=>`.github/workflows/${name}`;
 const active=run=>['queued','requested','waiting','pending','in_progress'].includes(run.status);
 async function requestingRuns(github,repo,value,workflow){
- const run=await newestWorkflowRun(github,repo,workflow,run=>value.sourceKind===undefined&&value.baseRef==='main'?Boolean(mainPrRequest(run,repo,value,workflow)):authenticatedRequestingRun(run,repo,value,workflow),{kind:'requester',sourceKind:value.sourceKind,headSha:value.headSha,headRef:value.headRef});
+ const run=await newestWorkflowRun(github,repo,workflow,async run=>value.sourceKind===undefined&&value.baseRef==='main'?Boolean(mainPrRequest(run,repo,value,workflow))&&(await verifyRunExecution(github,repo,run,workflowPath('ci.yml')),true):verifiedRequestingRun(github,repo,run,value,workflow,value.controllerSha),{kind:'requester',sourceKind:value.sourceKind,headSha:value.headSha,headRef:value.headRef,controllerSha:value.controllerSha});
  return run?[run]:[];
 }
 async function newestControllerRun(github,repo,value,workflow,headRef){
- return newestWorkflowRun(github,repo,workflow,run=>authenticatedControllerRun(run,repo,value,workflow,headRef),{kind:'controller',sourceKind:value.sourceKind,headSha:value.headSha,headRef});
+ return newestWorkflowRun(github,repo,workflow,run=>verifiedControllerRun(github,repo,run,value,workflow,headRef,value.controllerSha),{kind:'controller',sourceKind:value.sourceKind,headSha:value.headSha,headRef,controllerSha:value.controllerSha});
 }
 export async function newestRequestingCiRun(github,repo,value,mode){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
@@ -36,13 +37,19 @@ export async function verifyDedicatedLeaseGrant(github,repo,controller,value){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
  if(!id(workflow.id)||workflow.path!==workflowPath('ci-dedicated.yml'))throw new Error('Unexpected controller definition');
  const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:value.controllerRunId,request});
- if(!authenticatedControllerRun(run,repo,value,workflow,(value.sourceKind==='main'?'main':pull.head.ref))||run.id!==value.controllerRunId||run.run_attempt!==value.controllerRunAttempt||!active(run))throw new Error('Current controller attempt is no longer admitted');
+ if(!await verifiedControllerRun(github,repo,run,value,workflow,(value.sourceKind==='main'?'main':pull.head.ref),controller.sha)||run.id!==value.controllerRunId||run.run_attempt!==value.controllerRunAttempt||!active(run))throw new Error('Current controller attempt is no longer admitted');
+ if(isolatedRunPin(run)){
+  if(configuration.MATRIX_CI_ISOLATED_EXECUTION!=='true')throw new Error('Isolated execution was disabled during the lease');
+  const actual=await verifyRunExecution(github,repo,run,workflowPath('ci-dedicated.yml'),controller.sha);
+  if(JSON.stringify(actual)!==JSON.stringify(controller.executionOrigin))throw new Error('Controller execution origin changed during the lease');
+ }else if(controller.executionOrigin)throw new Error('Controller execution origin does not match its run');
  const newest=await newestControllerRun(github,repo,value,workflow,(value.sourceKind==='main'?'main':pull.head.ref));
  if(!newest||newest.id!==value.controllerRunId||newest.run_attempt!==value.controllerRunAttempt)throw new Error('A newer controller superseded this lease');
  const {data:ciWorkflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(ciWorkflow.id)||ciWorkflow.path!==workflowPath('ci.yml'))throw new Error('Unexpected requesting CI definition');
  const {data:ciRun}=await github.rest.actions.getWorkflowRun({...repo,run_id:value.requestingRunId,request});
- if(!authenticatedRequestingRun(ciRun,repo,value,ciWorkflow)||ciRun.id!==value.requestingRunId||ciRun.run_attempt!==value.requestingRunAttempt||(ciRun.event==='pull_request'&&ciRun.head_branch!==(value.sourceKind==='main'?'main':pull.head.ref))||(!active(ciRun)&&!(value.mode==='shadow'&&ciRun.status==='completed'&&ciRun.conclusion==='success')))throw new Error('Current requesting CI attempt is no longer admitted');
+ if(!await verifiedRequestingRun(github,repo,ciRun,value,ciWorkflow,controller.sha)||ciRun.id!==value.requestingRunId||ciRun.run_attempt!==value.requestingRunAttempt||(ciRun.event==='pull_request'&&ciRun.head_branch!==(value.sourceKind==='main'?'main':pull.head.ref))||(!active(ciRun)&&!(value.mode==='shadow'&&ciRun.status==='completed'&&ciRun.conclusion==='success')))throw new Error('Current requesting CI attempt is no longer admitted');
+ if(configuration.MATRIX_CI_ISOLATED_EXECUTION==='true'&&ciRun.event==='workflow_dispatch'&&ciRun.head_branch==='main')throw new Error('Main routing-only dispatch cannot hold a qualification lease');
  const latest=(await requestingRuns(github,repo,{...value,headRef:value.sourceKind==='main'?'main':pull.head.ref},ciWorkflow))[0];
  if(!latest||latest.id!==value.requestingRunId||latest.run_attempt!==value.requestingRunAttempt)throw new Error('A newer requesting CI attempt superseded this lease');
 }

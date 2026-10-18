@@ -41,8 +41,8 @@ describe("OS-view parity CI path planning", () => {
     expect(ciWorkflow).toContain("OS View Parity");
     expect(ciWorkflow).toContain("OS_VIEW_PARITY_RESULT: ${{ needs.os-view-parity.result }}");
     expect(ciWorkflow).toContain("| OS View Parity | $OS_VIEW_PARITY_RESULT |");
-    expect(ciWorkflow).toContain("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6");
+    expect(ciWorkflow).toMatch(/^\s+(?:-\s+)?uses: actions\/checkout@[a-f0-9]{40}(?:\s+#.*)?$/m);
     expect(ciWorkflow).toContain("pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6");
-    expect(ciWorkflow).toContain("actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6");
+    expect(ciWorkflow).toMatch(/^\s+(?:-\s+)?uses: actions\/setup-node@[a-f0-9]{40}(?:\s+#.*)?$/m);
   });
 });

@@ -153,11 +153,12 @@ describe("desktop release workflows", () => {
     const macJob = workflow.slice(workflow.indexOf("  mac:"), workflow.indexOf("  linux:"));
     const linuxJob = workflow.slice(workflow.indexOf("  linux:"), workflow.indexOf("  windows:"));
     const windowsJob = workflow.slice(workflow.indexOf("  windows:"));
-    expect(macJob.indexOf(validationName)).toBeLessThan(macJob.indexOf("uses: actions/checkout@v6"));
-    expect(linuxJob.indexOf(validationName)).toBeLessThan(linuxJob.indexOf("uses: actions/checkout@v6"));
-    expect(windowsJob.indexOf(validationName)).toBeLessThan(
-      windowsJob.indexOf("uses: actions/checkout@"),
-    );
+    for (const job of [macJob, linuxJob, windowsJob]) {
+      const checkoutIndex = job.indexOf("uses: actions/checkout@");
+      expect(checkoutIndex).toBeGreaterThan(-1);
+      expect(job.indexOf(validationName)).toBeGreaterThan(-1);
+      expect(job.indexOf(validationName)).toBeLessThan(checkoutIndex);
+    }
   });
 
   it("builds, signs, installs, launches, and uninstalls an exact Windows NSIS release", () => {
@@ -174,15 +175,21 @@ describe("desktop release workflows", () => {
     expect(windowsJob).toContain("id-token: write");
     expect(windowsJob).toContain("name: Validate Windows signing configuration");
     expect(windowsJob).toContain("MATRIX_DESKTOP_WINDOWS_SIGNING_MODE");
-    for (const pinnedAction of [
-      "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
-      "pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86",
-      "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
-      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
-      "azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6",
-      "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+    for (const actionRepository of [
+      "actions/checkout",
+      "pnpm/action-setup",
+      "actions/setup-node",
+      "oven-sh/setup-bun",
+      "azure/login",
+      "actions/upload-artifact",
     ]) {
-      expect(windowsJob).toContain(`uses: ${pinnedAction}`);
+      const pinnedAction = new RegExp(`^${actionRepository.replaceAll("/", "\\/")}@[a-f0-9]{40}$`);
+      const uses = [...windowsJob.matchAll(/^\s+(?:-\s+)?uses:\s+(\S+)/gm)].map((match) => match[1]);
+      expect(uses).toContainEqual(expect.stringMatching(pinnedAction));
+      // A mutable ref or a fork cannot satisfy the protected upstream action contract.
+      expect(`${actionRepository}@v7`).not.toMatch(pinnedAction);
+      expect(`untrusted/${actionRepository.split("/")[1]}@${"a".repeat(40)}`).not.toMatch(pinnedAction);
+      expect(`${actionRepository}@${"a".repeat(39)}`).not.toMatch(pinnedAction);
     }
     expect(windowsJob).not.toMatch(/^\s+-?\s*uses:\s+[^\s]+@v\d+\s*$/m);
     expect(windowsJob).toContain("secrets.MATRIX_DESKTOP_WINDOWS_AZURE_CLIENT_ID");
@@ -279,7 +286,7 @@ describe("desktop release workflows", () => {
 
   it("publishes an immutable canary before advancing the channel pointer", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
-    const downloadIndex = workflow.indexOf("uses: actions/download-artifact@v6");
+    const downloadIndex = workflow.indexOf("uses: actions/download-artifact@");
     const notesIndex = workflow.indexOf("name: Generate Desktop release notes");
     const channelManifestIndex = workflow.indexOf("name: Prepare channel pointer manifests");
     const immutablePublishIndex = workflow.indexOf("name: Publish immutable canary release");

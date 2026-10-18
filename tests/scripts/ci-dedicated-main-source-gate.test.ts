@@ -130,6 +130,44 @@ function retainAppHistory(f:ReturnType<typeof fixture>){
  f.gateGithub.rest.checks.create.mockImplementation(save);f.gateGithub.rest.checks.update.mockImplementation(save);
  return{current:()=>prior};
 }
+function isolatedMainAppFixture(){
+ const f=docsFixture(),history=retainAppHistory(f),execution='f'.repeat(40);
+ const executionOrigin={schemaVersion:1,controllerSha,controllerRef:'refs/heads/main',executionRef:`refs/heads/ci-execution/${controllerSha}`,executionSha:execution,executionWorkflowSha:execution,workflowPath:'.github/workflows/ci-dedicated.yml',treeSha:tree};
+ const actual={...f.controller,id:123,event:'workflow_dispatch',head_sha:execution,head_branch:`ci-execution/${controllerSha}`};
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>({data:args.run_id===123?actual:f.controller}));
+ f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:args.branch===actual.head_branch?execution:source}}}));
+ const g:any=f.github;
+ g.rest.git={getCommit:vi.fn(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:tree},parents:commit_sha===execution?[{sha:controllerSha}]:[]}}))};
+ g.rest.repos.compareCommitsWithBasehead=vi.fn(async()=>({data:{status:'ahead',merge_base_commit:{sha:controllerSha}}}));
+ const run=()=>reconcileSourceQualification(f.github,repo,{...origin,executionOrigin},{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
+ return{f,history,executionOrigin,run};
+}
+it('retains a genuine Main push decision through an authenticated isolated reconciliation origin',async()=>{
+ const {f,history,executionOrigin,run}=isolatedMainAppFixture();
+ await run();expect(history.current()).toMatchObject({conclusion:'success',head_sha:source});
+ const first=JSON.parse(history.current().output.summary),proof=first.coverageProof;
+ expect(first).toMatchObject({sourceKind:'main',sourceSha:source,requestingRunId:321,executionOrigin});
+ expect(f.ci).toMatchObject({event:'push',head_branch:'main',head_sha:source});
+ f.artifact.expired=true;f.gateGithub.rest.checks.create.mockClear();
+ await run();expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();
+ expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:100,conclusion:'success'}));
+ expect(JSON.parse(history.current().output.summary)).toMatchObject({executionOrigin,coverageProof:proof});
+});
+it('never reuses a Main decision whose recorded isolated reconciliation origin was substituted',async()=>{
+ const {f,history,run}=isolatedMainAppFixture();await run();
+ const evidence=JSON.parse(history.current().output.summary);
+ expect(evidence.executionOrigin).toBeDefined();evidence.executionOrigin.executionSha=base;
+ history.current().output.summary=JSON.stringify(evidence);f.artifact.expired=true;
+ f.gateGithub.rest.checks.update.mockClear();await run();
+ expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+ expect(history.current().conclusion).toBe('failure');
+});
+it('does not turn an isolated reconciliation into genuine Main coverage for a manual requester',async()=>{
+ const {f,history,run}=isolatedMainAppFixture();f.ci.event='workflow_dispatch';
+ await run();expect(history.current()).toMatchObject({status:'in_progress'});
+ expect(history.current().conclusion).not.toBe('success');
+ expect(JSON.parse(history.current().output.summary).coverageProof).toBeUndefined();
+});
 it.each(['expired','deleted','transient-failure','source-api-failure'])('revalidates durable authenticated main decision after artifact %s',async kind=>{
  const f=docsFixture(),history=retainAppHistory(f);await reconcile(f);
  expect(history.current().conclusion).toBe('success');const proof=JSON.parse(history.current().output.summary).coverageProof;
@@ -246,7 +284,7 @@ it('wires the main-only immutable proof after the actual detector and route, wit
  expect(steps.indexOf(record)).toBeGreaterThan(steps.findIndex((step:any)=>step.name==='Select guarded Linux delegation'));expect(steps.indexOf(upload)).toBeGreaterThan(steps.indexOf(record));
  expect(record.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'");expect(upload.if).toBe(record.if);expect(record.run).toBe('node scripts/ci/main-ci-decision.mjs');
  expect(record.env).toEqual({COVERAGE_BASE_SHA:'${{ steps.changed.outputs.base_sha }}',COVERAGE_BOOTSTRAP:'${{ steps.changed.outputs.bootstrap }}',SHOULD_RUN:'${{ steps.changed.outputs.should_run }}',DOCS_CONTRACT_TESTS:'${{ steps.changed.outputs.docs_contract_tests }}',OS_VIEW_PARITY_TESTS:'${{ steps.changed.outputs.os_view_parity_tests }}',DEDICATED_ELIGIBLE:'${{ steps.route.outputs.eligible }}',DEDICATED_REQUIRED:'${{ steps.route.outputs.required }}'});
- expect(upload.uses).toBe('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a');expect(upload.with).toEqual({name:'main-ci-decision-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}',path:'${{ runner.temp }}/main-ci-decision/receipt.json','if-no-files-found':'error','retention-days':1});
+ const pinnedAction=/^actions\/upload-artifact@[a-f0-9]{40}$/;expect(upload.uses).toMatch(pinnedAction);expect('actions/upload-artifact@v7').not.toMatch(pinnedAction);expect('untrusted/upload-artifact@'+'a'.repeat(40)).not.toMatch(pinnedAction);expect(upload.with).toEqual({name:'main-ci-decision-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}',path:'${{ runner.temp }}/main-ci-decision/receipt.json','if-no-files-found':'error','retention-days':1});
  expect(cleanup.if).toBe("always() && github.event_name == 'push' && github.ref == 'refs/heads/main'");expect(cleanup.run).toBe('node scripts/ci/main-ci-decision.mjs --cleanup');
 });
 describe('shadow mode observes without blocking main',()=>{

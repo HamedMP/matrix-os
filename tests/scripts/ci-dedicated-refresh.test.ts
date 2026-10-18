@@ -34,6 +34,8 @@ it('pins every refreshed lane checkout and preserves mandatory hosted gates unde
  expect(ci.jobs.changes.steps.find((step:any)=>step.id==='refresh').with.script).toContain('resolveRequestingSource');
  for(const [key,job] of Object.entries(ci.jobs) as [string,any][]){
   if(key==='changes'||key==='ci-results')continue;
+  if(key==='redirect'){expect(job.steps.find((step:any)=>String(step.uses).startsWith('actions/checkout@')).with.ref).toBe('${{ vars.MATRIX_CI_CONTROLLER_SHA }}');continue;}
+  if(key==='ci-backend'){expect(job.steps.find((step:any)=>String(step.uses).startsWith('actions/checkout@')).with.ref).toBe("${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/ci-execution/') && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && vars.MATRIX_CI_CONTROLLER_SHA || needs.changes.outputs.source_sha }}");continue;}
   for(const step of job.steps.filter((step:any)=>String(step.uses).startsWith('actions/checkout@')))expect(step.with.ref,key).toBe(key==='dedicated-linux'?'${{ github.sha }}':'${{ needs.changes.outputs.source_sha }}');
  }
  const dedicated=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
@@ -41,7 +43,10 @@ it('pins every refreshed lane checkout and preserves mandatory hosted gates unde
  expect(dedicated.on.pull_request_target.types).toContain('opened');
  expect(dedicated.jobs.reconcile.if).not.toContain('vars.MATRIX_CI_DEDICATED');
  // Only completed CI can settle a gate; requested/in_progress reconciles exhausted the installation API budget.
- expect(dedicated.jobs.reconcile.if).toMatch(/^github\.ref == 'refs\/heads\/main' && !\(github\.event_name == 'pull_request_target' && .*\) && \(github\.event_name != 'workflow_run' \|\| github\.event\.action == 'completed'\)$/);
+ for(const action of ['requested','in_progress','completed']){
+  const github={ref:'refs/heads/main',event_name:'workflow_run',event:{action}};
+  expect(Function('vars','github',`return (${jsCondition(dedicated.jobs.reconcile.if)});`)({},github)).toBe(action==='completed');
+ }
  expect(dedicated.on.schedule).toEqual([{cron:'*/15 * * * *'}]);
  expect(dedicated.jobs.reconcile.steps.find((step:any)=>step.name==='Reconcile completed child source checks').with.script).toContain('reconcileSourceQualification');
 });
@@ -95,7 +100,7 @@ it.each([['requested',1,'refresh',true],['in_progress',1,'refresh',false],['in_p
  const source={id:321,run_attempt:attempt,display_title:kind==='refresh'?helpers.refreshMarker(scope):`CI coverage-v1 · ${merge}`};
  const github={event_name:'workflow_run',ref:'refs/heads/main',event:{action,workflow_run:source}};
  const startsWith=(text:string,prefix:string)=>text.startsWith(prefix),format=(text:string,...args:any[])=>text.replace(/\{([0-9]+)\}/g,(_,i)=>String(args[Number(i)]));
- const marker=Function('github','format','startsWith','contains',`return (${jsCondition(w['run-name'].trim().slice(3,-2))});`)(github,format,startsWith,contains);
+ const marker=Function('vars','github','format','startsWith','contains',`return (${jsCondition(w['run-name'].trim().slice(3,-2))});`)({},github,format,startsWith,contains);
  const run={id:124,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'workflow_run',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:marker};
  expect(helpers.authenticatedControllerRun(run,repo,scope,{id:99},'child')).toBe(expected);
  expect(helpers.refreshExecutionRequested(action,source)).toBe(expected);
@@ -282,4 +287,39 @@ it('continues genuine main Linux execution after auxiliary isolation is enabled'
  const github={ref:'refs/heads/main',event_name:'workflow_run',event:{action:'requested',workflow_run:source}};
  const vars={MATRIX_CI_DEDICATED_ENABLED:'true',MATRIX_CI_DEDICATED_MAIN:'true',MATRIX_CI_ISOLATED_EXECUTION:'true'};
  expect(Function('vars','github','startsWith','contains',`return (${jsCondition(workflow.jobs.benchmark.if)});`)(vars,github,(text:string,prefix:string)=>text.startsWith(prefix),contains)).toBe(true);
+});
+
+it('marks opted-in Main refresh redirects as routing metadata rather than PR coverage',async()=>{
+ const {readFileSync}=await import('node:fs'),{parse}=await import('yaml');const workflow=parse(readFileSync('.github/workflows/ci.yml','utf8'));
+ expect(workflow['run-name']).toContain('CI routing-v1');
+ expect(workflow.jobs.changes.outputs.routed).toContain('needs.redirect.outputs.routed');
+ for(const key of ['should_run','docs_contract_tests','os_view_parity_tests','dedicated_required'])expect(workflow.jobs.changes.outputs[key]).toContain("needs.redirect.outputs.routed == 'true'");
+ expect(workflow.jobs['ci-results'].steps.some((step:any)=>step.name==='Summarize isolated CI routing')).toBe(true);
+});
+
+
+it('admits the sole requested P refresh before its exact-source title is rendered',async()=>{
+ const f=isolatedExecutionFixture();
+ Object.assign(f.requester,{event:'workflow_dispatch',head_branch:f.branch,head_sha:f.execution,run_attempt:1,display_title:'CI',pull_requests:[]});
+ const rendered={...f.requester,display_title:helpers.refreshMarker({prNumber:2454,headSha:head,baseSha:base,sourceSha:merge})};
+ f.github.rest.actions.getWorkflowRun.mockResolvedValueOnce({data:{...f.requester}}).mockResolvedValue({data:rendered});
+ const delay=vi.fn(async()=>{});
+ expect(helpers.refreshExecutionRequested('requested',f.requester)).toBe(true);
+ expect(helpers.refreshExecutionRequested('in_progress',f.requester)).toBe(false);
+ await expect(helpers.admitRefreshController(f.github,repo,{action:'requested',workflow_run:f.requester},{delay})).resolves.toMatchObject({prNumber:2454,sourceSha:merge});
+ expect(delay).toHaveBeenCalledTimes(1);
+ expect(f.github.rest.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({commit_sha:f.execution}));
+});
+
+
+it('keeps legacy hosted refresh bootstrap available when the optional controller pin is absent',async()=>{
+ const {readFileSync}=await import('node:fs'),{parse}=await import('yaml');
+ const w=parse(readFileSync('.github/workflows/ci.yml','utf8')),source=w.jobs.changes.steps.find((step:any)=>step.id==='origin').with.script;
+ vi.stubEnv('CONTROLLER_SHA','');vi.stubEnv('ISOLATED_EXECUTION','');vi.stubEnv('EXECUTION_WORKFLOW_PATH','.github/workflows/ci.yml');vi.stubEnv('EXECUTION_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci.yml@refs/heads/main');
+ try{
+  const github={rest:{repos:{getBranch:vi.fn(async()=>({data:{name:'main',commit:{sha:main}}})),compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'identical',merge_base_commit:{sha:main}}}))}}},core={setOutput:vi.fn()};
+  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
+  await new AsyncFunction('github','context','core',source)(github,{repo,ref:'refs/heads/main',sha:main},core);
+  expect(core.setOutput).toHaveBeenCalledWith('helper_sha',main);
+ }finally{vi.unstubAllEnvs();}
 });
