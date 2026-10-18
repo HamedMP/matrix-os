@@ -77,6 +77,8 @@ grep "  ${NODE_ARCHIVE}$" "$DIST_DIR/SHASUMS256.txt" > "$DIST_DIR/${NODE_ARCHIVE
 (cd "$DIST_DIR" && sha256sum -c "${NODE_ARCHIVE}.sha256")
 tar -xJf "$DIST_DIR/$NODE_ARCHIVE" -C "$STAGE_DIR/runtime"
 mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
+# The isolated App Store builder requires this verified offline-install toolchain.
+node "$ROOT_DIR/scripts/stage-host-pnpm.mjs" "$STAGE_DIR/runtime/node"
 
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
