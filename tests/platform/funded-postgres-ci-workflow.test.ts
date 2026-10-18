@@ -53,6 +53,7 @@ describe("funded PostgreSQL CI coverage", () => {
       "tests/platform/canonical-funding-expiry-projection.test.ts",
       "tests/gateway/canonical-phase-discovery.test.ts",
       "tests/platform/canonical-phase-postgres-cleanup.test.ts",
+      "tests/gateway/company-brain-owner-data.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
     ]);
     const absentUrl = executeSettlementStep(undefined, step);
@@ -70,6 +71,7 @@ describe("funded PostgreSQL CI coverage", () => {
       "tests/platform/canonical-funding-expiry-projection.test.ts",
       "tests/gateway/canonical-phase-discovery.test.ts",
       "tests/platform/canonical-phase-postgres-cleanup.test.ts",
+      "tests/gateway/company-brain-owner-data.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
     ]);
     const absentUrl = executeSettlementStep(undefined, step);
