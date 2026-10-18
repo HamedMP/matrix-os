@@ -178,10 +178,10 @@ export class CustomMcpBroker {
     if (row.user_id !== userId || row.preset_id !== presetId || !row.enabled || row.status !== "ready" || !row.encrypted_credentials) return denied;
     try {
       const { oauth } = decryptCustomMcpCredential<CustomMcpCredential>(row.encrypted_credentials, this.options.encryptionKey, { userId, serverId: row.id });
-      if (!oauth?.managedWriteAccess || oauth.state || oauth.removing || oauth.refreshing || !oauth.accessToken
+      if (!oauth || oauth.state || oauth.removing || oauth.refreshing || !oauth.accessToken
         || !Array.isArray(oauth.grantedScopes) || oauth.grantedScopes.length > 100
         || !oauth.grantedScopes.every(scope => typeof scope === "string" && scope.length > 0 && scope.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(scope))) return denied;
-      return { enabled: true, scopes: [...oauth.grantedScopes] };
+      return { enabled: oauth.managedWriteAccess === true, scopes: [...oauth.grantedScopes] };
     } catch (error: unknown) {
       console.warn("[custom-mcp] managed write grant unreadable", { errorName: error instanceof Error ? error.name : "UnknownError" });
       return denied;

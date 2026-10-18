@@ -32,6 +32,12 @@ describe("managed MCP final write grant enforcement", () => {
     await expect(f.broker.callManagedPresetTool(f.input)).rejects.toMatchObject({ code: "forbidden" });
     expect(f.resolve).not.toHaveBeenCalled(); expect(f.remote).not.toHaveBeenCalled();
   });
+  it("reports proven read scopes without granting write opt-in", async () => {
+    const f = fixture("posthog_oauth", "insight-update", { accessToken: "token", grantedScopes: ["insight:read"] });
+    expect(await f.broker.getPresetWriteAuthorization("owner", "posthog_oauth")).toEqual({ enabled: false, scopes: ["insight:read"] });
+    await expect(f.broker.callManagedPresetTool(f.input)).rejects.toMatchObject({ code: "forbidden" });
+    expect(f.remote).not.toHaveBeenCalled();
+  });
   it("allows an explicitly authorized current grant", async () => {
     const f = fixture(); await expect(f.broker.callManagedPresetTool(f.input)).resolves.toEqual({ ok: true });
     expect(f.remote).toHaveBeenCalledOnce();
