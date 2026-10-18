@@ -21,6 +21,12 @@ export class IntegrationActionNotImplementedError extends Error {
   }
 }
 
+/**
+ * Runs one registry action for a connected account. signal: the caller's deadline, passed to the provider request so
+ * a dropped call stops it (the catalog-bound, Drive content and Gmail reads keep their own deadlines).
+ * maxResponseBytes: the call must be a byte-capped raw read (a directApi GET or POST through pipedream.boundedProxy);
+ * anything that cannot be capped throws BoundedPipedreamReadError instead of buffering an unbounded response.
+ */
 export async function executeIntegrationAction(opts: {
   pipedream: PipedreamConnectClient;
   externalUserId: string;
@@ -30,12 +36,15 @@ export async function executeIntegrationAction(opts: {
   serviceId: string;
   actionId: string;
   params?: Record<string, unknown>;
+  signal?: AbortSignal;
+  maxResponseBytes?: number;
 }): Promise<{ data: unknown; summary?: string }> {
-  const { pipedream, externalUserId, connection, def, actionDef, serviceId, actionId, params } = opts;
+  const { pipedream, externalUserId, connection, def, actionDef, serviceId, actionId, params, signal } = opts;
 
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");
   }
+  signal?.throwIfAborted();
   const boundCatalog = await executeCatalogBoundAction({ pipedream, externalUserId,
     accountId: connection.pipedream_account_id, serviceId, actionId, params });
   if (boundCatalog) return boundCatalog;
@@ -58,6 +67,21 @@ export async function executeIntegrationAction(opts: {
       : { ...identity, kind: "thread-ids", id: String(params?.threadId) }) };
   }
 
+  if (opts.maxResponseBytes !== undefined) {
+    const api = actionDef.directApi;
+    if (!pipedream.boundedProxy || !api || (api.method !== "GET" && api.method !== "POST")) {
+      throw new BoundedPipedreamReadError();
+    }
+    return { data: await pipedream.boundedProxy({
+      externalUserId, accountId: connection.pipedream_account_id, method: api.method,
+      url: typeof api.url === "function" ? api.url(params ?? {}) : api.url,
+      ...(api.method === "GET" && api.mapParams ? { params: api.mapParams(params ?? {}) } : {}),
+      ...(api.method === "POST" ? { body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}) } : {}),
+      ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
+      maxBytes: opts.maxResponseBytes,
+    }, signal ?? AbortSignal.timeout(30_000)) };
+  }
+
   // Discovered components have different parameter/cursor contracts.
   // Preserve reviewed direct mappings when both execution paths exist.
   if (actionDef.componentKey && !actionDef.directApi) {
@@ -72,6 +96,7 @@ export async function executeIntegrationAction(opts: {
       externalUserId,
       componentKey: actionDef.componentKey,
       configuredProps,
+      ...(signal ? { signal } : {}),
     });
     const exports = result.exports as Record<string, unknown> | undefined;
     return {
@@ -94,6 +119,7 @@ export async function executeIntegrationAction(opts: {
             url,
             params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
+            ...(signal ? { signal } : {}),
           }),
         };
       case "DELETE":
@@ -104,6 +130,7 @@ export async function executeIntegrationAction(opts: {
             url,
             params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
+            ...(signal ? { signal } : {}),
           }),
         };
       case "POST":
@@ -114,6 +141,7 @@ export async function executeIntegrationAction(opts: {
             url,
             body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
+            ...(signal ? { signal } : {}),
           }),
         };
       case "PUT":
@@ -124,6 +152,7 @@ export async function executeIntegrationAction(opts: {
             url,
             body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
+            ...(signal ? { signal } : {}),
           }),
         };
       case "PATCH":
@@ -134,6 +163,7 @@ export async function executeIntegrationAction(opts: {
             url,
             body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
+            ...(signal ? { signal } : {}),
           }),
         };
       default: {
