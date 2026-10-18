@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { isolatedTestJob, waitForTestJob } from '../../scripts/dev/isolated-test-job.mjs';
 
@@ -6,6 +7,10 @@ const host = { platform: 'linux', uid: 999, gid: 1000, totalMemory: 16 * 1024 **
   home: '/home/matrix', cwd: '/work/tree', unitId: 'a'.repeat(24) };
 
 describe('bounded Matrix test jobs', () => {
+  it('runs the unfiltered canonical suite with one worker inside the shared memory budget', async () => {
+    const pkg = JSON.parse(await readFile('package.json','utf8'));
+    expect(pkg.scripts['test:isolated']).toBe('node scripts/dev/isolated-test-job.mjs -- bun run test -- --maxWorkers=1');
+  });
   it('keeps stopping a canceled launch until a late-created service closes', async () => {
     vi.useFakeTimers();
     const child = new EventEmitter(), signals = new EventEmitter();
@@ -32,6 +37,7 @@ describe('bounded Matrix test jobs', () => {
     expect(job.unit).toBe(`matrix-test-999-${host.unitId}.service`);
     expect(job.args).toEqual(expect.arrayContaining(['--uid=999', '--gid=1000', '--wait', '--pipe', '--collect',
       '--property=MemoryMax=6144M', '--property=MemorySwapMax=0', '--property=CPUQuota=400%',
+      '--property=MemoryHigh=6144M',
       '--property=KillMode=control-group', '--property=RuntimeMaxSec=10800', '--expand-environment=no']));
     expect(job.args).not.toContain('--user'); expect(job.args).not.toContain('--scope');
     expect(job.args.slice(-7)).toEqual(['/usr/bin/flock', '--no-fork', '--timeout=7200', '/home/matrix/.cache/matrix-test-jobs/admission.lock', 'bun', 'run', 'test']);
@@ -51,6 +57,7 @@ describe('bounded Matrix test jobs', () => {
   it('reserves machine capacity rather than assigning all RAM or CPUs', () => {
     const job = isolatedTestJob({...host,totalMemory:8*1024**3,cpus:2}, ['bun','run','test'], {});
     expect(job.memoryMiB).toBeLessThan(4*1024);expect(job.args).toContain('--property=CPUQuota=100%');
+    expect(job.args).toContain(`--property=MemoryHigh=${job.memoryMiB}M`);
   });
   it.each([[], [''], ['x'.repeat(4097)]])('rejects malformed commands', command => {
     expect(() => isolatedTestJob(host, command, {})).toThrow();

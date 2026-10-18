@@ -26,7 +26,7 @@ export function isolatedTestJob(host, command, env) {
   const preserve = Object.keys(env).filter(key => environmentKeys.has(key));
   const args = ['--quiet','--wait','--pipe','--collect','--service-type=exec','--expand-environment=no',
     `--unit=${unit}`,`--uid=${host.uid}`,`--gid=${host.gid}`,`--working-directory=${host.cwd}`,
-    `--property=MemoryMax=${memoryMiB}M`,`--property=MemoryHigh=${Math.floor(memoryMiB*.85)}M`,
+    `--property=MemoryMax=${memoryMiB}M`,`--property=MemoryHigh=${memoryMiB}M`,
     '--property=MemorySwapMax=0',`--property=CPUQuota=${Math.min(4,host.cpus-1)*100}%`,
     '--property=TasksMax=2048','--property=Nice=10','--property=RuntimeMaxSec=10800',
     '--property=TimeoutStopSec=10','--property=KillMode=control-group','--property=OOMPolicy=stop',

@@ -10,6 +10,8 @@ Prerequisites: systemd with cgroup accounting, passwordless sudo for this owner,
 
 Each job gets at most 6 GiB or 45% of host RAM, four CPU equivalents while reserving one core, no swap, bounded processes and a three-hour lifetime. One owner-wide lock serializes heavy jobs across worktrees; queued jobs wait at most two hours within that lifetime. SIGINT/SIGTERM stops the owned unit; systemd collects it and drains descendants. Admission does not promise parallel full suites on a 16 GiB host.
 
+Keep the soft memory threshold equal to the hard cap: the initial 85% threshold caused approximately 74% memory-pressure stalls in a full-run worker. The hard cap remains unchanged. The isolated full-suite command defaults to one worker; two workers exhausted this budget even though the focused suite passed. No test selection, assertion, backend or deadline changes.
+
 Split all 97 customer-VPS cases (including both parameterized US-location cases) into responsibility-focused files. Preserve every test body; only eight pure cases avoid unnecessary DB setup. Every DB case still receives a fresh fixture and closes it. Preserve the golden-snapshot gate's original selection by explicitly adding moved files. Compare all test declarations, including `it.each`, against the immutable baseline.
 
 ## Measured evidence
