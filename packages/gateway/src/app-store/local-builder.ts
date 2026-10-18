@@ -14,10 +14,12 @@ export class StoreBuildError extends Error {
 }
 export interface StoreToolchain {nodeVersion:string;pnpmVersion:string;policyDigest:string}
 export interface StoreBuildResult {files:Map<string,Buffer>;toolchain:StoreToolchain}
+export type StoreBuildCommandRunner=(command:string,args:readonly string[],options:{env:NodeJS.ProcessEnv;cwd?:string;timeout:number;maxBuffer:number;signal?:AbortSignal;killSignal?:NodeJS.Signals;encoding?:'utf8'})=>Promise<{stdout:string;stderr:string}>;
 export interface LocalStoreBuilder {build(files:ReadonlyMap<string,Buffer>,signal?:AbortSignal):Promise<StoreBuildResult>;close():Promise<void>}
 const run=promisify(execFile);
 const BLOCKED_CONFIG=/(?:^|\/)(?:\.npmrc|\.pnpmfile\.(?:cjs|js)|pnpm-workspace\.yaml|\.yarnrc(?:\.yml)?)$/;
-export function createLocalStoreBuilder(options:{homePath:string;nodeRoot?:string;available?:()=>boolean;fetcher?:typeof fetch}):LocalStoreBuilder {
+export function createLocalStoreBuilder(options:{homePath:string;nodeRoot?:string;available?:()=>boolean;fetcher?:typeof fetch;runCommand?:StoreBuildCommandRunner}):LocalStoreBuilder {
+ const execute:StoreBuildCommandRunner=options.runCommand??(async(command,args,settings)=>{const result=await run(command,args,settings);return {stdout:String(result.stdout),stderr:String(result.stderr)};});
  const active=new Set<Promise<StoreBuildResult>>(); // Cap two; evicted only on settlement.
  const stop=new AbortController();
  const sweep=()=>withStoreDirectory(options.homePath,['builds'],dir=>sweepPrivateChildren(dir,/^build-[A-Za-z0-9]+$/,3600_000,32));
@@ -31,7 +33,7 @@ export function createLocalStoreBuilder(options:{homePath:string;nodeRoot?:strin
   const nodeRoot=options.nodeRoot??'/opt/matrix/runtime/node';
   const runtimeInfo=await lstat(nodeRoot);if(!runtimeInfo.isDirectory()||![0,process.getuid?.()].includes(runtimeInfo.uid)||(runtimeInfo.mode&0o022)!==0)throw new StoreBuildError('unavailable');
   const versionEnv={PATH:nodeRoot+'/bin:/usr/bin:/bin',HOME:'/nonexistent',CI:'1'};
-  const [nodeResult,pnpmResult]=await Promise.all([run(join(nodeRoot,'bin/node'),['--version'],{env:versionEnv,cwd:nodeRoot,timeout:5000,maxBuffer:1024}),run(join(nodeRoot,'bin/pnpm'),['--version'],{env:versionEnv,cwd:nodeRoot,timeout:5000,maxBuffer:1024})]);
+  const [nodeResult,pnpmResult]=await Promise.all([execute(join(nodeRoot,'bin/node'),['--version'],{env:versionEnv,cwd:nodeRoot,timeout:5000,maxBuffer:1024}),execute(join(nodeRoot,'bin/pnpm'),['--version'],{env:versionEnv,cwd:nodeRoot,timeout:5000,maxBuffer:1024})]);
   const nodeVersion=nodeResult.stdout.trim(),pnpmVersion=pnpmResult.stdout.trim();
   if(!/^v24\.\d+\.\d+$/.test(nodeVersion)||pnpmVersion!=='10.33.4')throw new StoreBuildError('unavailable');
   const policyDigest=createHash('sha256').update(STORE_BUILD_DRIVER).update(JSON.stringify(buildSandboxLaunch({source:'/source',dependencies:'/deps',driver:'/driver.mjs',nodeRoot:'/node',unit:'matrix-store-build-policy',uid:1000}).args)).digest('hex');
@@ -54,7 +56,7 @@ export function createLocalStoreBuilder(options:{homePath:string;nodeRoot?:strin
    }
    await writeFile(driver,STORE_BUILD_DRIVER,{flag:'wx',mode:0o600});
    launch=buildSandboxLaunch({source,dependencies,driver,nodeRoot:options.nodeRoot??'/opt/matrix/runtime/node',unit,uid:process.getuid!()});
-   const output=await run(launch.command,launch.args,{env:launch.env,signal:abort,timeout:130_000,maxBuffer:40*1024*1024,killSignal:'SIGKILL',encoding:'utf8'});
+   const output=await execute(launch.command,launch.args,{env:launch.env,signal:abort,timeout:130_000,maxBuffer:40*1024*1024,killSignal:'SIGKILL',encoding:'utf8'});
    const entries:unknown=JSON.parse(output.stdout);
    if(!Array.isArray(entries)||entries.length>512)throw new StoreBuildError('build_failed');
    const dist=new Map<string,Buffer>();
@@ -68,17 +70,16 @@ export function createLocalStoreBuilder(options:{homePath:string;nodeRoot?:strin
    console.warn('[app-store] Isolated build failed',error instanceof Error?error.name:'UnknownError');
    throw new StoreBuildError('build_failed');
   }finally{
-   if(launch){
+   try{if(launch){
     // Stop the entire service cgroup, including descendants that outlived Vite.
-    try{await run('/usr/bin/systemctl',['--user','stop',`${unit}.service`],{env:launch.env,timeout:10_000,maxBuffer:16_384});}
+    try{await execute('/usr/bin/systemctl',['--user','stop',`${unit}.service`],{env:launch.env,timeout:10_000,maxBuffer:16_384});}
     catch(error:unknown){
      // --collect removes completed transient units before stop can find them.
-     let state='';try{state=(await run('/usr/bin/systemctl',['--user','is-active',`${unit}.service`],{env:launch.env,timeout:5000,maxBuffer:1024})).stdout.trim();}
+     let state='';try{state=(await execute('/usr/bin/systemctl',['--user','is-active',`${unit}.service`],{env:launch.env,timeout:5000,maxBuffer:1024})).stdout.trim();}
      catch(probe:unknown){if(probe&&typeof probe==='object'&&'stdout' in probe&&typeof probe.stdout==='string')state=probe.stdout.trim();}
      if(!['inactive','failed','unknown'].includes(state)){console.warn('[app-store] Build service drain failed',error instanceof Error?error.name:'UnknownError');throw new StoreBuildError('unavailable');}
     }
-   }
-   await rm(directory,{recursive:true,force:true});
+   }}finally{await rm(directory,{recursive:true,force:true});}
   }
  }
  return {build(files,signal){
