@@ -1,12 +1,14 @@
 /** Opt-in isolated PostgreSQL proof. Never drops databases or touches unrelated owners. */
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Kysely, PostgresDialect } from "kysely";
 import { Pool } from "pg";
 import { PostgresComputeBudgetStore, reserveComputeBudget, type ComputeBudgetDatabase } from "../../packages/workspace-worker/src/data/compute-budget.js";
 
 const secretFile = process.env.MATRIX_SHARED_WORKSPACE_TEST_DATABASE_FILE;
-const enabled = !!secretFile && existsSync(secretFile);
+const testDatabaseUrl = process.env.MATRIX_TEST_POSTGRES_URL;
+// Explicit configuration must run and fail visibly if invalid, never silently skip.
+const enabled = secretFile !== undefined || testDatabaseUrl !== undefined;
 describe.skipIf(!enabled)("isolated Postgres compute budget concurrency", () => {
   const prefix = `compute_test_${crypto.randomUUID().replaceAll("-", "")}`;
   const owners = Array.from({ length: 6 }, (_, index) => `${prefix}_${index}`);
@@ -16,7 +18,9 @@ describe.skipIf(!enabled)("isolated Postgres compute budget concurrency", () => 
   const reserve = (index: number, ownerId: string, reservationId: string, amountMs = 200, periodId = "october", now = 100) => stores[index].reserve({ ownerId, reservationId, amountMs, periodId, now });
   beforeAll(async () => {
     // Separate pools are required: the in-process fixture cannot prove row-lock isolation.
-    const connectionString = readFileSync(secretFile!, "utf8").trim();
+    // A configured private file takes precedence; missing/unreadable files fail setup.
+    const connectionString = secretFile !== undefined ? readFileSync(secretFile, "utf8").trim() : testDatabaseUrl!.trim();
+    if (!connectionString) throw new Error("A disposable PostgreSQL test connection is required");
     databases = [0, 1].map(() => new Kysely<ComputeBudgetDatabase>({ dialect: new PostgresDialect({ pool: new Pool({
       connectionString, max: 2, connectionTimeoutMillis: 5_000, idleTimeoutMillis: 5_000,
       statement_timeout: 10_000, query_timeout: 12_000,
