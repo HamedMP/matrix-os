@@ -35,11 +35,11 @@ curl -sL get.matrix-os.com | sh
 
 ```sh
 matrix chats read chat_example --profile cloud --json
-matrix chats read chat_example --cursor chatcur_from_previous_read --json
-matrix chats send chat_example --message "Continue with the next step"
-matrix chats watch chat_example --timeout 60
-matrix chats export chat_example --output ./chat.json
-matrix chats export chat_example --format markdown --output ./chat.md
+matrix chats read chat_example --profile cloud --cursor chatcur_from_previous_read --json
+matrix chats send chat_example --profile cloud --message "Continue with the next step"
+matrix chats watch chat_example --profile cloud --timeout 60
+matrix chats export chat_example --profile cloud --output ./chat.json
+matrix chats export chat_example --profile cloud --format markdown --output ./chat.md
 ```
 
 `get` is an alias for `read`. Use the profile for the computer that owns the
