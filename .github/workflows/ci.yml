@@ -680,6 +680,7 @@ jobs:
             tests/platform/ci-docs-only-jobs.test.ts \
             tests/platform/ci-workflows.test.ts \
             tests/platform/customer-vps-host-bundle.test.ts \
+            tests/platform/funded-postgres-ci-workflow.test.ts \
             tests/scripts/os-view-parity-plan.test.ts \
             tests/scripts/ci-dedicated-main-admission.test.ts \
             tests/scripts/ci-dedicated-main-fallback.test.ts \
