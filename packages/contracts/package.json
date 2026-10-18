@@ -82,6 +82,7 @@
     "#provider-settings": "./src/provider-settings.ts",
     "#provider-managed-credit": "./src/provider-managed-credit.ts",
     "#funded-ai": "./src/funded-ai.ts",
+    "#funded-host-activation": "./src/funded-host-activation.ts",
     "#funded-workers-models": "./src/funded-workers-models.ts",
     "#funded-ai-execution-recovery": "./src/funded-ai-execution-recovery.ts",
     "#jev": "./src/jev.ts",
