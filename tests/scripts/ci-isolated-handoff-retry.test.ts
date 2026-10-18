@@ -126,6 +126,14 @@ describe('completion ownership under whole and failed-job retries',()=>{
   await expect(complete(f)).rejects.toThrow();
   expect(modes(f)).toEqual(['qualification']);expect(f.github.rest.actions.downloadArtifact).toHaveBeenCalledTimes(1);
  });
+ it('preserves verified infrastructure fallback from a successful current backend without redispatch',async()=>{
+  const f=fixture(),summary=JSON.parse(f.check.output.summary);Object.assign(f.backend,{status:'completed',conclusion:'success'});
+  Object.assign(summary,{receiptVerified:false,outcome:'infrastructure-unavailable',status:76,reason:'queue_timeout',stage:'admission',workloadStarted:false,containerGone:true});
+  f.envelope.receipt=receiptFor(summary,654,[base,head]);
+  f.check.conclusion='neutral';f.check.output.summary=JSON.stringify({...summary,requestDigest:f.envelope.receipt.requestDigest});f.pinReceipt();
+  expect(await complete(f)).toEqual({dispatched:true,attempt:2,qualificationDispatched:false});
+  expect(modes(f)).toEqual(['reconcile']);expect(f.github.rest.actions.downloadArtifact).toHaveBeenCalledTimes(1);
+ });
  it.each(['image','harness','required-boolean'])(
   'validates %s configuration before dispatching retained-backend work',async kind=>{
    const f=retainedSuccess(),config:any={...configuration,backendAttempt:f.backendAttempt};
