@@ -43,7 +43,7 @@ permissions:
 jobs:
   redirect:
     name: Route isolated PR refresh
-    if: github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && github.ref == 'refs/heads/main' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true'
+    if: github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && (github.ref == 'refs/heads/main' || github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA))
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -53,12 +53,39 @@ jobs:
     outputs:
       routed: ${{ steps.isolate.outputs.routed }}
     steps:
+      - name: Authenticate isolated CI handoff before helper checkout
+        id: origin
+        if: github.ref != 'refs/heads/main'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+          EXECUTION_WORKFLOW_PATH: .github/workflows/ci.yml
+          EXECUTION_WORKFLOW_REF: ${{ github.workflow_ref }}
+          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        with:
+          script: |
+            const pin=process.env.CONTROLLER_SHA || (context.ref==='refs/heads/main'&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:''),path=process.env.EXECUTION_WORKFLOW_PATH;
+            if(!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Reviewed controller pin is missing');
+            const ref=`refs/heads/ci-execution/${pin}`;
+            if(process.env.ISOLATED_EXECUTION!=='true'||context.ref!==ref||process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@${ref}`||process.env.EXECUTION_WORKFLOW_SHA!==context.sha||context.sha===pin)throw new Error('Untrusted isolated workflow origin');
+            const request={timeout:10000};
+            const {data:child}=await github.rest.git.getCommit({...context.repo,commit_sha:context.sha,request});
+            const {data:source}=await github.rest.git.getCommit({...context.repo,commit_sha:pin,request});
+            const {data:branch}=await github.rest.repos.getBranch({...context.repo,branch:`ci-execution/${pin}`,request});
+            const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});
+            if(tip.name!=='main'||!/^[a-f0-9]{40}$/.test(tip.commit?.sha||''))throw new Error('Invalid current Main identity');
+            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});
+            if(child.sha!==context.sha||source.sha!==pin||child.parents?.length!==1||child.parents[0].sha!==pin||!/^[a-f0-9]{40}$/.test(child.tree?.sha||'')||child.tree.sha!==source.tree?.sha||branch.name!==`ci-execution/${pin}`||branch.commit?.sha!==context.sha||!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Isolated workflow does not match reviewed Main source');
+            core.setOutput('helper_sha',pin);
+            core.setOutput('execution_origin',JSON.stringify({schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:context.sha,executionWorkflowSha:context.sha,workflowPath:path,treeSha:child.tree.sha}));
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Route exact PR source without executing candidate code
+        if: github.ref == 'refs/heads/main'
         id: isolate
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
@@ -71,6 +98,21 @@ jobs:
             const result=await routeManualCi(github,context.repo,process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION});
             core.setOutput('routed','true');
             await core.summary.addRaw(result.stale?'Superseded PR request skipped; no candidate coverage claimed.':'PR request routed to isolated execution; this Main run claims routing only.').write();
+
+      - name: Request isolated CI self qualification
+        if: github.ref != 'refs/heads/main'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+          CI_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          REQUESTING_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url'),{resolve}=require('node:path');
+            const {requestIsolatedCiQualification}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-ci-handoff.mjs')).href);
+            await requestIsolatedCiQualification(github,context.repo,{...context,runId:context.runId,runAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA},process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION});
 
   changes:
     needs: redirect
@@ -1156,12 +1198,69 @@ jobs:
               await core.summary.addRaw(`Shadow Linux qualification not verified (non-blocking): ${error.message}\n`).write();
             }
 
+  completion-handoff:
+    name: Handoff isolated CI completion
+    needs: [redirect, changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
+    if: always() && !cancelled() && github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Authenticate isolated CI handoff before helper checkout
+        id: origin
+        if: github.ref != 'refs/heads/main'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+          EXECUTION_WORKFLOW_PATH: .github/workflows/ci.yml
+          EXECUTION_WORKFLOW_REF: ${{ github.workflow_ref }}
+          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        with:
+          script: |
+            const pin=process.env.CONTROLLER_SHA || (context.ref==='refs/heads/main'&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:''),path=process.env.EXECUTION_WORKFLOW_PATH;
+            if(!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Reviewed controller pin is missing');
+            const ref=`refs/heads/ci-execution/${pin}`;
+            if(process.env.ISOLATED_EXECUTION!=='true'||context.ref!==ref||process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@${ref}`||process.env.EXECUTION_WORKFLOW_SHA!==context.sha||context.sha===pin)throw new Error('Untrusted isolated workflow origin');
+            const request={timeout:10000};
+            const {data:child}=await github.rest.git.getCommit({...context.repo,commit_sha:context.sha,request});
+            const {data:source}=await github.rest.git.getCommit({...context.repo,commit_sha:pin,request});
+            const {data:branch}=await github.rest.repos.getBranch({...context.repo,branch:`ci-execution/${pin}`,request});
+            const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});
+            if(tip.name!=='main'||!/^[a-f0-9]{40}$/.test(tip.commit?.sha||''))throw new Error('Invalid current Main identity');
+            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});
+            if(child.sha!==context.sha||source.sha!==pin||child.parents?.length!==1||child.parents[0].sha!==pin||!/^[a-f0-9]{40}$/.test(child.tree?.sha||'')||child.tree.sha!==source.tree?.sha||branch.name!==`ci-execution/${pin}`||branch.commit?.sha!==context.sha||!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Isolated workflow does not match reviewed Main source');
+            core.setOutput('helper_sha',pin);
+            core.setOutput('execution_origin',JSON.stringify({schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:context.sha,executionWorkflowSha:context.sha,workflowPath:path,treeSha:child.tree.sha}));
+      - name: Checkout reviewed completion handoff helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.origin.outputs.helper_sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Request isolated CI completion reconciliation
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+          CI_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          REQUESTING_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url'),{resolve}=require('node:path');
+            const {requestIsolatedCiCompletion}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-ci-handoff.mjs')).href);
+            await requestIsolatedCiCompletion(github,context.repo,{...context,runId:context.runId,runAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA},process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION});
+
   ci-results:
     # Every non-draft suite executes this stable required check. Metadata edits
     # verify earlier exact-source coverage instead of renaming/skipping the job:
     # GitHub's merge box only considers the latest suite for this workflow.
     name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft == true) && 'CI Draft (ignored)' || 'CI Results' }}
-    needs: [redirect, changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
+    needs: [redirect, changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux, completion-handoff]
     if: always() && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true)
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1199,6 +1298,8 @@ jobs:
       - name: Summarize required CI jobs
         if: ${{ needs.redirect.outputs.routed != 'true' && !(github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) }}
         env:
+          CI_HANDOFF_RESULT: ${{ needs.completion-handoff.result }}
+          CI_REDIRECT_RESULT: ${{ needs.redirect.result }}
           CI_TRIGGER_REQUESTED: ${{ needs.changes.outputs.trigger_requested }}
           SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
           DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
@@ -1223,6 +1324,8 @@ jobs:
           E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           set -euo pipefail
+          CI_HANDOFF_RESULT=${CI_HANDOFF_RESULT:-skipped}
+          CI_REDIRECT_RESULT=${CI_REDIRECT_RESULT:-skipped}
           DEDICATED_ELIGIBLE=${DEDICATED_ELIGIBLE:-false}
           DEDICATED_REQUIRED=${DEDICATED_REQUIRED:-$DEDICATED_ELIGIBLE}
           DEDICATED_LINUX_RESULT=${DEDICATED_LINUX_RESULT:-skipped}
@@ -1262,7 +1365,7 @@ jobs:
           # Shadow Linux qualification is observed in the table above but never gates the aggregate.
           LINUX_GATE_RESULT="$DEDICATED_LINUX_RESULT"
           if [ "${DEDICATED_MODE:-delegated}" = "shadow" ]; then LINUX_GATE_RESULT=skipped; fi
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$LINUX_GATE_RESULT"; do
+          for result in "$CI_HANDOFF_RESULT" "$CI_REDIRECT_RESULT" "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$LINUX_GATE_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;

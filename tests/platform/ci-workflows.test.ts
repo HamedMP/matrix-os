@@ -343,7 +343,7 @@ describe('CI workflows', () => {
     const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
     expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [redirect, changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]');
+    expect(aggregate.needs).toEqual(['redirect', 'changes', 'ci-backend', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'funded-host-root', 'docs-contract', 'os-view-parity', 'e2e', 'dedicated-linux', 'completion-handoff']);
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');

@@ -31,7 +31,7 @@ export async function isolatedTrigger(github,repo,inputs,mode){
   if(run.run_attempt>attempt||run.status==='completed')throw new InactiveIsolatedRequester('Isolated qualification requester is no longer active');
   if(!['queued','requested','waiting','pending','in_progress'].includes(run.status))throw new Error('Isolated qualification requester is stale or unsupported');
  }else if(mode==='reconcile'){
-  if(run.run_attempt!==attempt||action!=='completed'||run.status!=='completed'||!['pull_request','workflow_dispatch','push'].includes(run.event))throw new Error('Isolated completion requester is not terminal');
+  if(run.run_attempt!==attempt||!['completed','settling'].includes(action)||run.status!=='completed'||!['pull_request','workflow_dispatch','push'].includes(run.event))throw new Error('Isolated completion requester is not terminal');
  }else if(run.run_attempt!==attempt||action!=='requested'||!['schedule','push'].includes(run.event)||run.head_branch!=='main'||!sha.test(run.head_sha||''))throw new Error('Isolated maintenance needs an authenticated Main scheduler');
  return{action,workflow_run:run};
 }

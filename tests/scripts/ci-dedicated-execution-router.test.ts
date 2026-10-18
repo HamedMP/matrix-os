@@ -37,7 +37,7 @@ describe('secret-free isolated Main routers',()=>{
 });
 
 
-it.each(['pull_request','isolated-placeholder'])('routes genuine %s execution to the proved distinct commit without Variables API access',async kind=>{
+it.each(['pull_request','isolated-placeholder'])('authenticates genuine %s before dispatching ordinary PR work or skipping the explicit P handoff',async kind=>{
  const f=fixture(`CI coverage-v1 · ${merge}`),execution='e'.repeat(40),tree='f'.repeat(40),branch=`ci-execution/${pin}`;
  Object.assign(f.run,{event:'pull_request',head_branch:'child',head_sha:head,status:'queued',conclusion:null});
  if(kind==='isolated-placeholder')Object.assign(f.run,{event:'workflow_dispatch',head_branch:branch,head_sha:execution,display_title:'CI'});
@@ -47,8 +47,15 @@ it.each(['pull_request','isolated-placeholder'])('routes genuine %s execution to
  github.rest.git={getCommit:vi.fn(async(args:any)=>({data:{sha:args.commit_sha,tree:{sha:tree},parents:[{sha:pin}]}}))};
  github.rest.actions.getWorkflow.mockImplementation(async(args:any)=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:`.github/workflows/${args.workflow_id}`}}));
  github.rest.actions.listWorkflowRuns=vi.fn(async()=>({data:{workflow_runs:[]}}));
- await expect(routeControllerEvent(github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:true,mode:'qualification'});
- expect(github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({workflow_id:'ci-dedicated.yml',ref:branch,inputs:{controller_mode:'qualification',requesting_run_id:'321',requesting_run_attempt:'1',requesting_action:'requested'}}));
+ if(kind==='pull_request'){
+  await expect(routeControllerEvent(github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:true,mode:'qualification'});
+  expect(github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({workflow_id:'ci-dedicated.yml',ref:branch,inputs:{controller_mode:'qualification',requesting_run_id:'321',requesting_run_attempt:'1',requesting_action:'requested'}}));
+ }else{
+  await expect(routeControllerEvent(github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:false});
+  expect(github.rest.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({commit_sha:execution}));
+  expect(github.rest.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({commit_sha:pin}));
+  expect(github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ }
  expect(f.variables).not.toHaveBeenCalled();
 });
 
@@ -57,6 +64,34 @@ it('does not create reconciliation work for ordinary manual Main CI without a PR
  const f=fixture(`CI coverage-v1 · ${pin}`);
  await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:false});
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();expect(f.variables).not.toHaveBeenCalled();
+});
+
+it.each(['requested','completed'])('ignores authenticated ordinary manual branch CI %s without a PR source marker',async action=>{
+ const f=fixture(`CI coverage-v1 · ${head}`);
+ f.run.head_branch='codex/test-only';f.run.head_sha=head;f.context.payload.action=action;
+ await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:false});
+ expect(f.github.rest.actions.getWorkflowRun).toHaveBeenCalled();expect(f.github.rest.actions.getWorkflow).toHaveBeenCalled();
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ expect(f.github.rest.actions.listJobsForWorkflowRun).not.toHaveBeenCalled();
+});
+it.each(['repository','workflow-id','workflow-path','head-repository'])('does not hide an unauthenticated manual branch %s behind no-op',async kind=>{
+ const f=fixture(`CI coverage-v1 · ${head}`);f.run.head_branch='codex/test-only';f.run.head_sha=head;
+ if(kind==='repository')f.run.repository.full_name='attacker/matrix-os';
+ if(kind==='workflow-id')f.run.workflow_id=99;if(kind==='workflow-path')f.run.path='.github/workflows/other.yml';
+ if(kind==='head-repository')f.run.head_repository.full_name='attacker/matrix-os';
+ await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).rejects.toThrow();
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+it.each(['CI refresh-v1 pr=2454','CI hosted-refresh-v1 pr=not-a-number'])('rejects malformed claimed refresh rather than ordinary manual no-op: %s',async title=>{
+ const f=fixture(title);f.run.head_branch='codex/test-only';f.run.head_sha=head;
+ await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).rejects.toThrow();
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+it('stands down a stale manual branch attempt before considering no-op',async()=>{
+ const f=fixture(`CI coverage-v1 · ${head}`);f.run.head_branch='codex/test-only';f.run.head_sha=head;
+ f.context.payload.workflow_run={...f.run,run_attempt:1};f.run.run_attempt=2;
+ await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:false,stale:true});
+ expect(f.github.rest.actions.getWorkflow).toHaveBeenCalled();expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
 });
 
 it.each(['requested','completed'])('benignly ignores an authenticated fork PR %s event without dispatching work',async action=>{

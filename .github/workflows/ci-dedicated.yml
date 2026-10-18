@@ -447,6 +447,10 @@ jobs:
         with:
           script: |
             const {pathToFileURL}=require('node:url'),{resolve}=require('node:path');
+            if(context.payload.inputs?.requesting_action==='settling'){
+              const {awaitTerminalIsolatedRequester}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-ci-handoff.mjs')).href);
+              await awaitTerminalIsolatedRequester(github,context.repo,context.payload.inputs);
+            }
             const {validatedIsolatedReconciliationScope}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-isolated.mjs')).href);
             await validatedIsolatedReconciliationScope(github,context.repo,context.payload.inputs);
       - name: Create repository-scoped configuration read token

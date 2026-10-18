@@ -14,6 +14,7 @@ function fixture(){
   getWorkflow:vi.fn(async({workflow_id}:any)=>({data:{id:workflow_id==='ci.yml'?98:99,path:`.github/workflows/${workflow_id}`}})),
   getWorkflowRun:vi.fn(async()=>({data:run})),
   listWorkflowRuns:vi.fn(async()=>({data:{total_count:0,workflow_runs:[]}})),
+  listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[{name:'CI Results',steps:[{name:'Summarize required CI jobs',status:'completed',conclusion:'success'}]}]}})),
   createWorkflowDispatch:vi.fn(async()=>({status:204})),
   createWorkflowDispatchEvent:vi.fn(),
  },repos:{

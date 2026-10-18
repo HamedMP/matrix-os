@@ -36,6 +36,8 @@ describe('actual isolated CI handoff workflow graph',()=>{
   expect(evaluates(job.if)).toBe(true);
   expect(evaluates(job.if,{actualRef:'refs/heads/main'})).toBe(true);
   expect(evaluates(job.if,{flag:'false'})).toBe(false);
+  expect(evaluates(job.if,{actualRef:`refs/heads/ci-execution/${'b'.repeat(40)}`})).toBe(false);
+  expect(evaluates(job.if,{actualRef:`${ref}/extra`})).toBe(false);
   expect(evaluates(job.if,{event:'push',actualRef:'refs/heads/main'})).toBe(false);
   const handoff=helperStep(job,'requestIsolatedCiQualification');
   expect(evaluates(handoff.if)).toBe(true);
@@ -64,6 +66,8 @@ describe('actual isolated CI handoff workflow graph',()=>{
   expect(evaluates(job.if,{event:'push',actualRef:'refs/heads/main'})).toBe(false);
   expect(evaluates(job.if,{actualRef:'refs/heads/main'})).toBe(false);
   expect(evaluates(job.if,{flag:'false'})).toBe(false);
+  expect(evaluates(job.if,{actualRef:`refs/heads/ci-execution/${'b'.repeat(40)}`})).toBe(false);
+  expect(evaluates(job.if,{actualRef:`${ref}/extra`})).toBe(false);
   expect(job.permissions).toEqual({actions:'write',contents:'read','pull-requests':'read'});
   expect(job['timeout-minutes']).toBeLessThanOrEqual(5);
   const step=helperStep(job,'requestIsolatedCiCompletion');
