@@ -46,6 +46,8 @@ function OwnerWhatsAppSettings({
   useEffect(() => {
     let active = true;
     busy.current = true;
+    openGeneration.current += 1;
+    setFailedLink(null);
     setSnapshot(null);
     setError(false);
     void loadRef
@@ -76,10 +78,12 @@ function OwnerWhatsAppSettings({
     return () => {
       active = false;
     };
-  }, [refresh]);
+  }, [refresh, platformOrigin, allowDevelopmentOrigin]);
   useEffect(() => {
     const returned = () => {
       if (document.visibilityState !== "visible") return;
+      openGeneration.current += 1;
+      setFailedLink(null);
       if (busy.current) {
         refreshQueued.current = true;
         return;
