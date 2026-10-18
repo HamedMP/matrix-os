@@ -4,13 +4,15 @@ import { z } from "zod/v4";
 const MAX_PERIOD_MS = 366 * 86_400_000;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
+// Authenticated owner and Queue job identity share one public boundary contract.
+const identity = z.string().regex(/^[A-Za-z0-9_-]{1,160}$/);
 const milliseconds = z.number().int().min(0).max(MAX_PERIOD_MS);
 const timestamp = z.number().int().min(0).max(MAX_TIMESTAMP);
-const scopeSchema = z.object({ ownerId: id, periodId: id }).strict();
-const reservationScopeSchema = z.object({ ownerId: id, reservationId: id }).strict();
+const scopeSchema = z.object({ ownerId: identity, periodId: id }).strict();
+const reservationScopeSchema = z.object({ ownerId: identity, reservationId: identity }).strict();
 const policySchema = scopeSchema.extend({ startsAt: timestamp, endsAt: timestamp, allowanceMs: milliseconds })
   .refine((value) => value.endsAt > value.startsAt && value.endsAt - value.startsAt <= MAX_PERIOD_MS);
-const reserveSchema = scopeSchema.extend({ reservationId: id, amountMs: milliseconds.min(1).max(30 * 60_000), now: timestamp });
+const reserveSchema = scopeSchema.extend({ reservationId: identity, amountMs: milliseconds.min(1).max(30 * 60_000), now: timestamp });
 const settleSchema = reservationScopeSchema.extend({ actualMs: milliseconds });
 
 export interface ComputePolicyTable {

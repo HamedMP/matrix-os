@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Kysely } from "kysely";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { PostgresComputeBudgetStore, type ComputeBudgetDatabase } from "../../packages/workspace-worker/src/data/compute-budget.js";
+import { parseQueuedJob } from '../../packages/workspace-worker/src/bridge.js';
 
 describe("durable owner compute budgets", () => {
   let engine: Awaited<ReturnType<typeof createTestPGlite>>;
@@ -17,6 +18,13 @@ describe("durable owner compute budgets", () => {
     await store.initialize();
   });
   afterAll(async () => { await db?.destroy(); if (engine && !engine.client.closed) await engine.client.close(); });
+
+  it.each(['_preview','-preview','_','-','a'.repeat(160)])('reserves authenticated job identities without narrowing them: %s',async ownerId=>{
+    const job=parseQueuedJob({ownerId,jobId:ownerId,type:'wake'});
+    await store.provisionPolicy(policy(job.ownerId));
+    expect(await reserve(job.ownerId,job.jobId,100)).toMatchObject({ownerId,reservationId:ownerId,state:'held'});
+    expect(await store.settle({ownerId,reservationId:ownerId,actualMs:20})).toMatchObject({settledMs:20});
+  });
 
   it("fails closed without a provisioned active policy and never creates one on admission", async () => {
     await expect(reserve("absent")).rejects.toMatchObject({ code: "policy_unavailable" });
@@ -93,10 +101,12 @@ describe("durable owner compute budgets", () => {
     }).execute()).rejects.toThrow();
   });
   it("rejects malformed IDs, unsafe or negative numbers, and unbounded windows/tasks", async () => {
-    for (const value of ["", "bad/id", "a".repeat(129)]) {
+    for (const value of ["", "bad/id", "a".repeat(161), 'owner.with.dot', 'owner:scope']) {
       await expect(store.provisionPolicy(policy(value))).rejects.toMatchObject({ code: "invalid" });
-      await expect(store.snapshot({ ownerId: "valid", periodId: value })).rejects.toMatchObject({ code: "invalid" });
       await expect(store.markUncertain({ ownerId: "valid", reservationId: value })).rejects.toMatchObject({ code: "invalid" });
+    }
+    for (const periodId of ['', 'bad/id', 'a'.repeat(129)]) {
+      await expect(store.snapshot({ ownerId:'valid', periodId })).rejects.toMatchObject({code:'invalid'});
     }
     for (const amountMs of [-1, 0, 0.5, Number.MAX_SAFE_INTEGER, Infinity, NaN, 1_800_001]) {
       await expect(reserve("valid", "job", amountMs)).rejects.toMatchObject({ code: "invalid" });
