@@ -26,7 +26,7 @@ export type HarnessWorkflowPanelProps = {
   client: ProviderWorkflowClient;
   disabled: boolean;
   onRefresh: () => void | Promise<void>;
-  onRefreshAfterLogin?: () => Promise<void>;
+  onRefreshAfterLogin?: (receipt: ProviderWorkflow) => Promise<void>;
   onOpenTerminal: (reference: string) => void;
   onOpenAuthorizationUrl?: (url: string) => void;
   onConnectSaved?: () => Promise<void>;
@@ -99,9 +99,10 @@ export function useHarnessWorkflowController({
   }, [connectRequest, method, operation, pending]);
   const scope = useRef<AbortController | null>(null);
   const completionRefresh = useRef<object | null>(null);
-  const refreshAfterLogin = async () => {
+  const refreshAfterLogin = async (receipt: ProviderWorkflow) => {
     const controller = scope.current;
-    if (!controller || controller.signal.aborted) return;
+    if (!controller || controller.signal.aborted || receipt.kind !== "login"
+      || receipt.state !== "succeeded" || receipt.harnessInstanceId !== harness.id) return;
     // Poll recovery and a manual status check can complete the same receipt.
     // Only the latest account read may settle foreground feedback.
     const refresh = {};
@@ -119,7 +120,7 @@ export function useHarnessWorkflowController({
     try {
       await Promise.race([
         cancelled,
-        Promise.resolve(onRefreshAfterLogin ? onRefreshAfterLogin() : onRefresh()),
+        Promise.resolve(onRefreshAfterLogin ? onRefreshAfterLogin(receipt) : onRefresh()),
         new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("refresh timeout")), 30_000); }),
       ]);
       if (current()) setFailure(value => value === completionRefreshFailure ? null : value);
@@ -199,8 +200,8 @@ export function useHarnessWorkflowController({
         if (value.kind === "login" && active(value)) setMethod("account");
         if (["succeeded", "cancelled"].includes(value.state)) {
           onOperationId?.(null);
-          if (value.kind === "login" && value.state === "succeeded") void refreshAfterLogin();
-          else onRefresh();
+          if (value.kind === "login" && value.state === "succeeded") void refreshAfterLogin(value);
+          else if (value.kind !== "login") onRefresh();
         }
       })
       .catch((caught) => {
@@ -313,7 +314,7 @@ export function useHarnessWorkflowController({
         if (kind === "login") setMethod(result.state === "succeeded" ? null : "account");
         if (result.state === "succeeded") {
           onOperationId?.(null);
-          if (kind === "login") void refreshAfterLogin();
+          if (kind === "login") void refreshAfterLogin(result);
           else onRefresh();
         }
         if (
@@ -363,7 +364,7 @@ export function useHarnessWorkflowController({
         onOperationId?.(null);
         setMethod(null);
         setApiKey("");
-        if (next.kind === "login") void refreshAfterLogin();
+        if (next.kind === "login") void refreshAfterLogin(next);
         else onRefresh();
       }
     },

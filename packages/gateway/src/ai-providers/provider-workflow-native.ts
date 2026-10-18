@@ -36,6 +36,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
   hermesCodexReuse?: () => Promise<void>;
   hermesConnection?: ReturnType<typeof createHermesSettingsConnection>;
   claudeBrowserLogin?: ReturnType<typeof createClaudeSettingsLogin>;
+  /** Evict only this owner's native source after confirmed consent, before success publication. */
+  onLoginSucceeded?: (harness: "claude" | "codex") => void;
   piConnection?: ReturnType<typeof createPiSettingsConnection>;
   openclawConnection?: ReturnType<typeof createOpenClawSettingsConnection>;
   opencodeConnection?: ReturnType<typeof createOpenCodeSettingsConnection>;
@@ -127,6 +129,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
       if (!exact.enabled) await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: exact.id,
         enabled: true, expectedRevision: fresh.revision,
         idempotencyKey: `connect-${createHash('sha256').update(idempotencyKey).digest('hex')}` });
+      options.onLoginSucceeded?.("claude");
     };
     return {
       harnessInstanceId: harness.id, harness: harness.harness, displayName: harness.displayName, installState: harness.installState,
@@ -164,6 +167,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
             await options.store.completeClaudeNativeLogin({ harnessInstanceId: exact.id,
               expectedRevision: fresh.revision,
               idempotencyKey: `connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}` });
+            options.onLoginSucceeded?.("claude");
           } });
         }
         let releaseProfile: (() => void | Promise<void>) | undefined;

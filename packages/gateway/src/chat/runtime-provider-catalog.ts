@@ -65,14 +65,23 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
   const catalog = createChatProviderCatalogService({
     ...catalogOptions,
     skillsSource: () => loadSkills(homePath),
-    invalidateCodingModelCatalog: claudeModelCatalogSource.invalidate,
+    invalidateCodingModelCatalog: principal => {
+      claudeModelCatalogSource.invalidate(principal);
+      codexModelCatalogSource?.invalidate(principal);
+    },
     codingModelCatalogSource: async (provider, principal) => {
       const claudeModels = await claudeModelCatalogSource(provider, principal);
       if (claudeModels) return claudeModels;
-      const codexModels = await codexModelCatalogSource?.(provider);
+      const codexModels = await codexModelCatalogSource?.(provider, principal);
       return codexModels ?? nativeCodingModelCatalogSource(provider);
     },
   });
   // Execution and metadata discovery must resolve the same owner credentials.
-  return { catalog, resolveClaudeCredentialLaunch };
+  const invalidateNativeLoginCatalog = (ownerId: string, harness: "claude" | "codex") => {
+    const principal = { userId: ownerId, source: "configured-container" as const };
+    if (harness === "codex") codexModelCatalogSource?.invalidate(principal);
+    else claudeModelCatalogSource.invalidate(principal);
+    catalogOptions.codingProviders.invalidate(ownerId, harness);
+  };
+  return { catalog, resolveClaudeCredentialLaunch, invalidateNativeLoginCatalog };
 }

@@ -3,7 +3,7 @@ import type { createChatProviderCatalogService } from "../../packages/gateway/sr
 
 const mocks = vi.hoisted(() => ({
   claude: Object.assign(vi.fn(), { invalidate: vi.fn() }),
-  codex: vi.fn(), native: vi.fn(), credentials: vi.fn(), skills: vi.fn(),
+  codex: Object.assign(vi.fn(), { invalidate: vi.fn() }), native: vi.fn(), credentials: vi.fn(), skills: vi.fn(),
   createClaude: vi.fn(), createCodex: vi.fn(), createNative: vi.fn(),
   catalog: vi.fn(),
 }));
@@ -93,7 +93,7 @@ describe("gateway Chat runtime catalog composition", () => {
     mocks.codex.mockResolvedValue(projection);
     const { source } = compose("/runtime/codex");
     await expect(source(provider, principal)).resolves.toBe(projection);
-    expect(mocks.codex).toHaveBeenCalledWith(provider);
+    expect(mocks.codex).toHaveBeenCalledWith(provider, principal);
     expect(mocks.native).not.toHaveBeenCalled();
   });
 
@@ -110,4 +110,28 @@ describe("gateway Chat runtime catalog composition", () => {
     options.invalidateCodingModelCatalog?.(principal);
     expect(mocks.claude.invalidate).toHaveBeenCalledWith(principal);
   });
+
+  it("invalidates only the confirmed Claude login owner without renewing sibling providers", () => {
+    const { invalidateNativeLoginCatalog } = compose();
+    invalidateNativeLoginCatalog(principal.userId, "claude");
+    expect(mocks.claude.invalidate).toHaveBeenCalledExactlyOnceWith({ userId: principal.userId, source: "configured-container" });
+    expect(dependencies.codingProviders.invalidate).toHaveBeenCalledExactlyOnceWith(principal.userId, "claude");
+    expect(mocks.codex).not.toHaveBeenCalled();
+    expect(mocks.native).not.toHaveBeenCalled();
+  });
+});
+
+
+it("evicts only Codex metadata and health for the confirmed owner at the public composition seam", () => {
+  vi.resetAllMocks();
+  mocks.createClaude.mockReturnValue(mocks.claude);
+  mocks.createCodex.mockReturnValue(mocks.codex);
+  mocks.createNative.mockReturnValue(mocks.native);
+  const { invalidateNativeLoginCatalog } = compose("/synthetic/codex");
+  invalidateNativeLoginCatalog(principal.userId, "codex");
+  expect(mocks.codex.invalidate).toHaveBeenCalledExactlyOnceWith({ userId: principal.userId, source: "configured-container" });
+  expect(dependencies.codingProviders.invalidate).toHaveBeenCalledExactlyOnceWith(principal.userId, "codex");
+  expect(mocks.claude.invalidate).not.toHaveBeenCalled();
+  expect(mocks.codex).not.toHaveBeenCalled();
+  expect(mocks.native).not.toHaveBeenCalled();
 });

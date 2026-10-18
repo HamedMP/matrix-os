@@ -10,6 +10,7 @@ describe('native device login extraction', () => {
 
 import { vi } from 'vitest';
 import { createNativeProviderWorkflowAdapters } from '../../packages/gateway/src/ai-providers/provider-workflow-native.js';
+import { createClaudeModelCatalogSource } from '../../packages/gateway/src/chat/claude-model-catalog.js';
 import type { ProviderSettingsStoreWriter } from '../../packages/gateway/src/ai-providers/provider-settings-store.js';
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 const ref = { workspaceId: 'tws_11111111111111111111111111111111', tabId: 'tt_11111111111111111111111111111111' };
@@ -120,12 +121,15 @@ it('releases a profile on observed native exit and reaps an ambiguous launch bef
 it('deliberate successful login enables the exact saved harness before reporting success', async () => {
   const f = nativeFixture('claude'); f.row.installState = 'installed';
   Object.assign(f.row, { enabled: false, authState: 'authenticated' });
-  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
+  const onLoginSucceeded = vi.fn();
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, onLoginSucceeded, hostControl: { available: false, run: vi.fn() } });
   const publish = vi.fn();
   await adapter!.start({ registerCleanup: () => {},  request: { harnessInstanceId: 'harness_claude', kind: 'login', method: 'terminal', idempotencyKey: 'connect-off' }, publish });
   f.observer().onFrame({ type: 'exit', revision: 1, exitCode: 0, terminalRef: ref });
   await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }));
   expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', harnessInstanceId: 'harness_claude', enabled: true, expectedRevision: 0 }));
+  expect(onLoginSucceeded).toHaveBeenCalledExactlyOnceWith("claude");
+  expect(onLoginSucceeded.mock.invocationCallOrder[0]).toBeLessThan(publish.mock.invocationCallOrder.at(-1)!);
 });
 it.each(['unverified-profile', 'replaced-harness', 'owner-denied'] as const)('does not confirm Terminal consent from stale or unverified native state: %s', async mode => {
   const f = nativeFixture('claude'); f.row.installState = 'installed'; const snapshot = await f.store.getSnapshot();
@@ -248,17 +252,30 @@ it.each(['native-account', 'local-marker-only', 'missing-profile', 'wrong-source
       if (mode === 'replaced-harness') f.row.id = 'replacement';
       await onSuccess(); return { cancel: vi.fn(), submitCode: vi.fn(async () => {}) };
     });
-    const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, claudeBrowserLogin: login, hostControl: { available: false, run: vi.fn() } });
+    const principal = { userId: 'synthetic-owner', source: 'configured-container' as const };
+    const provider = { id: 'claude', kind: 'claude', availability: 'available' } as never;
+    const discover = vi.fn().mockResolvedValueOnce([{ value: 'claude-sonnet-5', displayName: 'Sonnet' }])
+      .mockResolvedValue([{ value: 'claude-opus-5', displayName: 'Opus' }]);
+    const models = createClaudeModelCatalogSource({ resolveContext: async () => ({ key: 'same-native-profile', retainOnRefresh: false, maxAgeMs: 5000, discover }) });
+    await models(provider, principal);
+    const onLoginSucceeded = vi.fn(() => models.invalidate(principal));
+    const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, claudeBrowserLogin: login, onLoginSucceeded, hostControl: { available: false, run: vi.fn() } });
     if (mode === 'read-only') { expect(adapter).toBeUndefined(); return; }
     const pending = adapter!.start({ registerCleanup: () => {}, request: { harnessInstanceId: 'harness_claude', kind: 'login', method: 'browser', idempotencyKey: 'exact-claude-connect' }, publish: vi.fn() });
     if (mode !== 'native-account') {
       await expect(pending).rejects.toThrow('unavailable'); expect(f.store.mutate).not.toHaveBeenCalled();
       expect(complete).not.toHaveBeenCalled();
+      expect(onLoginSucceeded).not.toHaveBeenCalled();
     } else {
       await expect(pending).resolves.toMatchObject({ cancel: expect.any(Function) });
       expect(f.store.completeClaudeNativeLogin).toHaveBeenCalledWith(expect.objectContaining({ harnessInstanceId: 'harness_claude', expectedRevision: 0 }));
       expect(f.store.mutate).not.toHaveBeenCalled();
       expect(f.store.getSnapshot).toHaveBeenCalledWith({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+      expect(onLoginSucceeded).toHaveBeenCalledExactlyOnceWith("claude");
+      const currentModels = (await models(provider, principal))?.models.map(model => model.id);
+      expect(currentModels).toContain('claude-opus-5');
+      expect(currentModels).not.toContain('claude-sonnet-5');
+      expect(discover).toHaveBeenCalledTimes(2);
     }
     expect(f.terminal.createTab).not.toHaveBeenCalled();
   },
