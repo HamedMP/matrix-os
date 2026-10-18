@@ -4,7 +4,7 @@ import {routeControllerEvent} from '../../scripts/ci/dedicated-execution-router.
 const repo={owner:'HamedMP',repo:'matrix-os'},pin='a'.repeat(40),execution='e'.repeat(40),tree='f'.repeat(40);
 const head='b'.repeat(40),base='c'.repeat(40),source='d'.repeat(40),branch=`ci-execution/${pin}`;
 const inputs={execution_mode:'linux',pr_number:'2454',head_sha:head,base_sha:base,source_sha:source};
-const configuration={pin,flag:'true',imageDigest:'sha256:'+'1'.repeat(64),harnessDigest:'2'.repeat(64),linuxRequired:true};
+const configuration={pin,flag:'true',imageDigest:'sha256:'+'1'.repeat(64),harnessDigest:'2'.repeat(64),linuxRequired:true,backendAttempt:1};
 const module=()=>import('../../scripts/ci/dedicated-ci-handoff.mjs');
 function fixture(){
  const run={id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_branch:branch,head_sha:execution,status:'in_progress',conclusion:null as string|null,
@@ -61,9 +61,19 @@ describe('explicit isolated CI handoff without workflow_run delivery',()=>{
   expect(await(await module()).requestIsolatedCiQualification(f.github,repo,f.context,pin,hosted,configuration)).toMatchObject({dispatched:false});
   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  });
+ it('authenticates but does not dispatch Linux qualification for hosted/docs work',async()=>{
+  const f=fixture();
+  expect(await(await module()).requestIsolatedCiQualification(f.github,repo,f.context,pin,inputs,{...configuration,linuxRequired:false})).toEqual({dispatched:false});
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('rejects non-boolean qualification routing before a dispatch',async()=>{
+  const f=fixture();
+  await expect((await module()).requestIsolatedCiQualification(f.github,repo,f.context,pin,inputs,{...configuration,linuxRequired:'true'})).rejects.toThrow();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
  it('hands completion to a distinct settling run, never a fabricated completed requester',async()=>{
   const f=fixture();
-  expect(await(await module()).requestIsolatedCiCompletion(f.github,repo,f.context,pin,inputs,configuration)).toMatchObject({dispatched:true});
+  expect(await(await module()).requestIsolatedCiCompletion(f.github,repo,f.context,pin,inputs,{...configuration,linuxRequired:false})).toMatchObject({dispatched:true});
   expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({workflow_id:'ci-dedicated.yml',ref:branch,inputs:expect.objectContaining({controller_mode:'reconcile',requesting_run_id:'321',requesting_run_attempt:'1',requesting_action:'settling',reconciliation_pr:'2454'})}));
   expect(f.run.status).toBe('in_progress');expect(f.github.rest.apps.createInstallationAccessToken).not.toHaveBeenCalled();
  });
