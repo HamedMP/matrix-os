@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import * as executionOriginHelpers from '../../scripts/ci/execution-origin.mjs';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import YAML from 'yaml';
@@ -110,7 +112,11 @@ describe('Preview execution uses an isolated immutable workflow origin', () => {
     expect(JSON.stringify(guard)).toContain('MATRIX_CI_CONTROLLER_SHA');
     for (const name of ['route_execution', 'execution_origin']) {
       const checkout = workflow.jobs[name]?.steps.find((candidate) => candidate.name === 'Checkout reviewed origin verifier');
-      expect(checkout?.uses, name).toBe('actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803');
+      const pinnedCheckout = /^actions\/checkout@[a-f0-9]{40}$/;
+      expect(checkout?.uses, name).toMatch(pinnedCheckout);
+      for (const unsafe of ['actions/checkout@v6', 'actions/checkout@d23441a', `untrusted/checkout@${'a'.repeat(40)}`]) {
+        expect(unsafe).not.toMatch(pinnedCheckout);
+      }
       expect(checkout?.with, name).toMatchObject({ ref: '${{ vars.MATRIX_CI_CONTROLLER_SHA }}', 'persist-credentials': false });
     }
     for (const name of actualJobs) {
@@ -177,8 +183,19 @@ function scriptFixture(eventName = 'workflow_dispatch') {
 async function runActualScript(jobName: string, f: ReturnType<typeof scriptFixture>) {
   const body = workflow.jobs[jobName]?.steps.find((candidate) => candidate.with?.script)?.with?.script;
   if (!body) throw new Error(`Missing actual github-script body: ${jobName}`);
-  await new AsyncFunction('github', 'context', 'core', 'require', 'process', body)(
-    f.github, f.runtimeContext, f.core, createRequire(import.meta.url), { env: f.env });
+  // Vitest's VM cannot import from AsyncFunction. Replace only the loader;
+  // the workflow computes its real path and runs the actual protected helper.
+  const importCall = 'await import(';
+  if (body.split(importCall).length !== 2) throw new Error('Expected one protected workflow helper import');
+  const script = body.replace(importCall, 'await loadHelper(');
+  const loadHelper = async (url: string) => {
+    if (url !== pathToFileURL(resolve(process.cwd(), 'scripts/ci/execution-origin.mjs')).href) {
+      throw new Error('Unexpected protected workflow helper path');
+    }
+    return executionOriginHelpers;
+  };
+  await new AsyncFunction('github', 'context', 'core', 'require', 'process', 'loadHelper', script)(
+    f.github, f.runtimeContext, f.core, createRequire(import.meta.url), { env: f.env }, loadHelper);
 }
 
 describe('Actual isolated preview router and origin scripts', () => {
@@ -191,6 +208,14 @@ describe('Actual isolated preview router and origin scripts', () => {
         bundle_only: eventName === 'schedule' ? 'false' : 'true', verify_inventory: 'false', teardown_preview: 'false', reap: String(eventName === 'schedule') },
       request: { timeout: 10000 },
     });
+  });
+
+  it('rejects any helper path outside the actual protected module', async () => {
+    const f = scriptFixture();
+    f.env.GITHUB_WORKSPACE = '/tmp/unreviewed-preview-source';
+    await expect(runActualScript('route_execution', f)).rejects.toThrow('Unexpected protected workflow helper path');
+    expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+    expect(f.core.setOutput).not.toHaveBeenCalledWith('allowed', 'true');
   });
 
   it('never dispatches when the execution tree differs from the reviewed pin', async () => {

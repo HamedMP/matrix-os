@@ -673,6 +673,9 @@ jobs:
           GITHUB_SHA="$UNIT_SOURCE_SHA" pnpm exec vitest run \
             tests/scripts/ci-dedicated-admission.test.ts \
             tests/scripts/ci-dedicated-api.test.ts \
+            tests/scripts/ci-dedicated-bridge.test.ts \
+            tests/scripts/ci-dedicated-metadata.test.ts \
+            tests/scripts/ci-superseded-pr-heads.test.ts \
             tests/scripts/ci-dedicated-main-admission.test.ts \
             tests/scripts/ci-dedicated-main-fallback.test.ts \
             tests/scripts/ci-dedicated-main-source-gate.test.ts \
