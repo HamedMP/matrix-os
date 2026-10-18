@@ -17,6 +17,7 @@ export default function ListingDetail({
 }) {
   const [detail, setDetail] = useState<StoreListing | null>(null),
     [error, setError] = useState(""),
+    [actionError, setActionError] = useState(""),
     [consentedVersion, setConsentedVersion] = useState<string | null>(null),
     [showConsent, setShowConsent] = useState(false);
   const [busy, setBusy] = useState(false),
@@ -112,11 +113,11 @@ export default function ListingDetail({
     if (lock.current) return;
     lock.current = true;
     setBusy(true);
-    setError("");
+    setActionError("");
     try {
       await operation();
     } catch (cause) {
-      if (alive.current) setError(storeErrorMessage(cause));
+      if (alive.current) setActionError(storeErrorMessage(cause));
     } finally {
       lock.current = false;
       if (alive.current) setBusy(false);
@@ -126,6 +127,7 @@ export default function ListingDetail({
     perform(async () => {
       if (!detail?.currentVersion || !detail.capabilitiesDigest || !consent)
         return;
+      setError("");
       const result = await client.install(
         slug,
         detail.currentVersion.id,
@@ -157,6 +159,7 @@ export default function ListingDetail({
       <button className="store-back" onClick={onBack}>
         ← Back to community
       </button>
+      <ErrorNotice error={actionError} />
       <ErrorNotice error={error} />
       {error && building && (
         <button
