@@ -1,3 +1,4 @@
+import type { ExecutionAdmissionFence } from "../execution-admission-fence.js";
 import { contextForChatSession } from "./session-history.js";
 import { admitCanonicalRetry } from "./retry-admission.js";
 import { createOrderedRunControls } from "./ordered-run-controls.js";
@@ -157,6 +158,7 @@ export class CanonicalChatOrchestrator {
   private readonly orderedControls = createOrderedRunControls();
 
   constructor(private readonly options: {
+    executionAdmissionFence?: ExecutionAdmissionFence;
     repository: Pick<ChatRepository,
       | "getDetailPage"
       | "get"
@@ -252,6 +254,7 @@ export class CanonicalChatOrchestrator {
   }
 
   private atCapacity(owner: ChatOwner): boolean {
+    if (this.options.executionAdmissionFence?.blocked) return true;
     if (this.active.size >= MAX_ACTIVE_RUNS_GLOBAL) return true;
     let ownerActive = 0;
     for (const entry of this.active.values()) {
@@ -261,6 +264,12 @@ export class CanonicalChatOrchestrator {
   }
 
   private assertOpen(): void {
+    if (this.options.executionAdmissionFence?.blocked) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "Chat execution is temporarily unavailable.", true, ["retry"]),
+        503,
+      );
+    }
     if (this.closing) {
       throw new CanonicalChatOrchestrationError(
         safeError("run_unavailable", "Chat execution is shutting down.", true, ["retry"]),
@@ -367,6 +376,7 @@ export class CanonicalChatOrchestrator {
     sharedScopeId?: string,
     onComplete?: () => Promise<void>,
   ): Promise<void> {
+    this.assertOpen();
     const controller = new AbortController();
     const completion = this.dispatch(
       owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId,

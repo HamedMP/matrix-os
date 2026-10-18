@@ -553,10 +553,10 @@ jobs:
   # A failed or timed-out deployment must not suppress speech activation.
   # Keep its failure visible while activation gets a separate runner and budget.
   activate-speech:
-    name: Activate and verify managed speech fleet
+    name: Activate and verify managed AI and speech
     needs: [deploy, targeted-deploy]
     if: >-
-      ${{ !cancelled() && vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED == 'true' &&
+      ${{ !cancelled() &&
           (needs.deploy.result != 'skipped' || needs['targeted-deploy'].result != 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -571,4 +571,4 @@ jobs:
         with:
           node-version: '24'
       - name: Activate and verify every eligible customer computer
-        run: node scripts/ci/targeted-fleet-maintenance.mjs activate-fleet
+        run: node scripts/ci/targeted-fleet-maintenance.mjs activate-managed-features
