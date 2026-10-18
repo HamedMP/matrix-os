@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { DockerFixture, prepareCheckpointRoot, runCycle, verifyBackup, verifyMutationState } from "../../scripts/spikes/disposable-runtime/benchmark.mjs";
+import { DockerFixture, prepareCheckpointRoot, runCycle, verifyBackup, verifyMutationState, validateEvidenceOutput } from "../../scripts/spikes/disposable-runtime/benchmark.mjs";
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, stat, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -20,6 +20,19 @@ function adapter() {
 }
 
 describe("disposable runtime lifecycle", () => {
+  it("rejects evidence inside a checkpoint, including symlink aliases, before destructive work", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "matrix-evidence-path-"));
+    try {
+      const root = join(parent, "checkpoint");
+      await expect(validateEvidenceOutput(root, join(root, "manifest.json"))).rejects.toThrow("checkpoint");
+      await expect(validateEvidenceOutput(root, join(root, "database.sql"))).rejects.toThrow("checkpoint");
+      await expect(validateEvidenceOutput(root, root)).rejects.toThrow("checkpoint");
+      await mkdir(root);
+      await symlink(root, join(parent, "alias"));
+      await expect(validateEvidenceOutput(root, join(parent, "alias", "state.json"))).rejects.toThrow("checkpoint");
+      await expect(validateEvidenceOutput(root, join(parent, "evidence.json"))).resolves.toBeUndefined();
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  });
   it("applies the same post-wake write checks to every restore mode", () => {
     const mutated = { ...acknowledged, revision: 2, rows: "mutated-rows" };
     expect(() => verifyMutationState(acknowledged, mutated)).not.toThrow();

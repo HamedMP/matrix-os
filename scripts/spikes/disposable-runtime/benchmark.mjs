@@ -1,9 +1,9 @@
 // Synthetic Linux/Docker experiment; no production gateway or security claims.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile, lstat, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, lstat, mkdtemp, rm, realpath } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
@@ -230,6 +230,41 @@ export async function prepareCheckpointRoot(options) {
   return root;
 }
 
+/** Resolve missing leaf components through their nearest existing ancestor. */
+async function canonicalFuturePath(path) {
+  let ancestor = resolve(path);
+  const missing = [];
+  for (;;) {
+    try {
+      return resolve(await realpath(ancestor), ...missing);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      // A dangling symlink is present, not a missing component. Refuse it
+      // rather than letting a later write follow an unchecked target.
+      try {
+        if ((await lstat(ancestor)).isSymbolicLink()) throw new Error('unsafe checkpoint evidence symlink');
+      } catch (entryError) {
+        if (entryError?.code !== 'ENOENT') throw entryError;
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) throw error;
+      missing.unshift(basename(ancestor));
+      ancestor = parent;
+    }
+  }
+}
+
+export async function validateEvidenceOutput(checkpointRoot, output) {
+  if (!output) return;
+  const [root, destination] = await Promise.all([
+    canonicalFuturePath(checkpointRoot), canonicalFuturePath(output),
+  ]);
+  const descendant = relative(root, destination);
+  if (!descendant || (!isAbsolute(descendant) && descendant !== '..' && !descendant.startsWith(`..${sep}`))) {
+    throw new Error('evidence output must be outside the checkpoint root');
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const allowed = ['--output', '--checkpoint-root', '--save-only', '--restore-only'];
@@ -243,6 +278,7 @@ async function main() {
   if (options['--save-only'] && options['--restore-only']) throw new Error('conflicting modes');
   if ((options['--save-only'] || options['--restore-only']) && !options['--checkpoint-root']) throw new Error('checkpoint-root required');
   const root = await prepareCheckpointRoot(options);
+  await validateEvidenceOutput(root, options['--output']);
   const evidence = { observedAt: new Date().toISOString(), workload: 'synthetic Node file API + 1000 Postgres rows; no Matrix gateway/agent', checkpointRoot: root, cycles: [] };
   const probe = new DockerFixture({ checkpointRoot: root });
   evidence.dockerVersion = await probe.docker(['version', '--format', '{{.Server.Version}}']);

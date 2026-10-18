@@ -428,9 +428,9 @@
     "remainingLabeledServers": 0
   },
   "reviewValidation": {
-    "finalScriptSha256": "b020ae44d2b0bb77b2fa87eb191317fc7c7a0360092f58a8fc8924edd23c644f",
-    "changeAfterRemoteMeasurement": "Extract existing post-mutation assertions into verifyMutationState and also apply them to restore-only before cleanup; no workload or timing changes.",
+    "finalScriptSha256": "ccd2e7a1b81c888092efee253bb0025885510fd10552889c5414b1999d6d1a32",
+    "changeAfterRemoteMeasurement": "Extract existing post-mutation assertions into verifyMutationState and also apply them to restore-only before cleanup; reject evidence output inside checkpoint roots, including symlink aliases and missing descendants, before Docker or destructive work. No workload or timing changes; remote measurements remain historical.",
     "storedCrossHostOutputsPassStricterAssertions": true,
-    "focusedTestsPassed": 18
+    "focusedTestsPassed": 19
   }
 }
