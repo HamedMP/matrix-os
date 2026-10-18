@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { KeyboardAvoidingView, Text } from "react-native";
+import { KeyboardAvoidingView, Platform, Text } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { ChatScreenView, type ChatScreenViewProps } from "../components/chat/ChatScreenView";
@@ -35,9 +35,12 @@ function props(overrides: Partial<ChatScreenViewProps> = {}): ChatScreenViewProp
 }
 
 describe("ChatScreenView", () => {
+  const originalPlatform = Platform.OS;
+
   afterEach(() => {
     cleanup();
     mockKeyboardVisible = false;
+    Platform.OS = originalPlatform;
   });
 
   it("draws a new chat from its props alone: top bar, greeting, suggestions and composer", () => {
@@ -110,6 +113,15 @@ describe("ChatScreenView", () => {
     expect(keyboardView.props.keyboardVerticalOffset).toBeUndefined();
     expect(flat(keyboardView).paddingBottom).toBeUndefined();
     expect(flat(screen.getByTestId("composer")).paddingBottom).toBe(10);
+  });
+
+  // Android draws the app under the keyboard too: the app is edge to edge, so
+  // the window no longer shrinks for it.
+  it.each(["ios", "android"] as const)("makes room for the keyboard itself on %s", (os) => {
+    Platform.OS = os;
+    render(<ChatScreenView {...props()} />);
+
+    expect(screen.UNSAFE_getByType(KeyboardAvoidingView).props.behavior).toBe("padding");
   });
 
   it("rests the composer 8pt above the keyboard while it is open", () => {

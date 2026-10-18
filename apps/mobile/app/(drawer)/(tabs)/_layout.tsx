@@ -1,22 +1,18 @@
-import { Platform } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
 import { Tabs, type BottomTabBarProps } from "expo-router/tabs";
 
 import { useAgentsWaitingCount } from "@/components/agents/use-agents-waiting-count";
 import { TABS, TabBar } from "@/components/shell/TabBar";
 import { focusedNestedRouteName, isTabBarHidden } from "@/lib/tab-bar-visibility";
-import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
 function ShellTabBar({ state, navigation }: BottomTabBarProps) {
-  const keyboardVisible = useKeyboardVisible();
   const agentsWaiting = useAgentsWaitingCount();
   const focused = state.routes[state.index];
 
   if (isTabBarHidden(focused.name, focusedNestedRouteName(focused))) return null;
-  // Android resizes the window for the keyboard, which would lift the bar on
-  // top of it. On iOS the keyboard simply covers the bar.
-  if (Platform.OS === "android" && keyboardVisible) return null;
 
+  // An open keyboard covers the bar where it stands, on Android too: the app
+  // is edge to edge, so the window does not shrink for the keyboard.
   return (
     <TabBar
       activeRoute={focused.name}

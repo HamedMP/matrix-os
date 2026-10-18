@@ -1,4 +1,4 @@
-import { KeyboardAvoidingView, Platform } from "react-native";
+import { KeyboardAvoidingView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
@@ -57,13 +57,12 @@ export function ChatScreenView({
   const keyboardOpen = useKeyboardVisible();
 
   return (
-    // The screen starts at the top of the window and ends at the tab bar, so
-    // the keyboard's overlap with it needs no offset: the part of the keyboard
-    // that covers the tab bar is already outside this view.
-    <KeyboardAvoidingView
-      style={[styles.screen, { paddingTop: insets.top }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    // The keyboard is drawn over the screen on both platforms (Android does not
+    // shrink the window for it, as the app is edge to edge), so the screen
+    // makes room for it. The screen starts at the top of the window and ends
+    // at the tab bar, so the keyboard's overlap with it needs no offset: the
+    // part of the keyboard that covers the tab bar is already outside this view.
+    <KeyboardAvoidingView style={[styles.screen, { paddingTop: insets.top }]} behavior="padding">
       <TopBar
         title={title}
         leading={
