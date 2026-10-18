@@ -1359,7 +1359,16 @@ jobs:
             await core.summary.addRaw(`Metadata edit verified tested-source CI run ${result.runId}, attempt ${result.runAttempt}. Tested merge: ${result.sourceSha}; recorded base: ${result.baseSha}. No workload was skipped as a substitute for coverage.\n`).write();
       - name: Summarize isolated CI routing
         if: needs.redirect.outputs.routed == 'true'
-        run: echo "Routing-only request accepted. No candidate tests or coverage are claimed." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          CI_REDIRECT_RESULT: ${{ needs.redirect.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+        run: |
+          set -euo pipefail
+          if [ "$CI_REDIRECT_RESULT" != "success" ] || [ "$CHANGES_RESULT" != "success" ]; then
+            echo "Routing or change detection did not complete successfully." >&2
+            exit 1
+          fi
+          echo "Routing-only request accepted. No candidate tests or coverage are claimed." >> "$GITHUB_STEP_SUMMARY"
       - name: Summarize required CI jobs
         if: ${{ needs.redirect.outputs.routed != 'true' && !(github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) }}
         env:
@@ -1395,6 +1404,7 @@ jobs:
           CI_ISOLATED_REQUEST=${CI_ISOLATED_REQUEST:-false}
           CI_HANDOFF_RESULT=${CI_HANDOFF_RESULT:-skipped}
           CI_REDIRECT_RESULT=${CI_REDIRECT_RESULT:-skipped}
+          CI_BACKEND_RESULT=${CI_BACKEND_RESULT:-skipped}
           DEDICATED_ELIGIBLE=${DEDICATED_ELIGIBLE:-false}
           DEDICATED_REQUIRED=${DEDICATED_REQUIRED:-$DEDICATED_ELIGIBLE}
           DEDICATED_LINUX_RESULT=${DEDICATED_LINUX_RESULT:-skipped}
@@ -1441,7 +1451,7 @@ jobs:
           # Shadow Linux qualification is observed in the table above but never gates the aggregate.
           LINUX_GATE_RESULT="$DEDICATED_LINUX_RESULT"
           if [ "${DEDICATED_MODE:-delegated}" = "shadow" ]; then LINUX_GATE_RESULT=skipped; fi
-          for result in "$CI_HANDOFF_RESULT" "$CI_REDIRECT_RESULT" "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$LINUX_GATE_RESULT"; do
+          for result in "$CI_HANDOFF_RESULT" "$CI_REDIRECT_RESULT" "$CI_BACKEND_RESULT" "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$LINUX_GATE_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
