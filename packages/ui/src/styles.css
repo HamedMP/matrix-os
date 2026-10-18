@@ -50,3 +50,16 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+.matrix-add-to-slack {
+  background: var(--matrix-card, var(--bg-surface, var(--card)));
+}
+
+.matrix-add-to-slack:not(:disabled):not([aria-disabled="true"]):hover {
+  background: var(--matrix-secondary, var(--bg-hover, var(--secondary)));
+}
+
+.matrix-add-to-slack:not(:disabled):not([aria-disabled="true"]):focus-visible {
+  outline: 2px solid var(--matrix-ring, var(--ring, var(--text-primary)));
+  outline-offset: 2px;
+}
