@@ -326,11 +326,11 @@ export class CompanyBrainService {
   }
 
   async erase(scopeId: string, actorId: string) {
-    const { context, deleted } = await this.authorizeOwnerData(scopeId, actorId, "publish_snapshot");
+    const { context, deleted } = await this.authorizeOwnerData(scopeId, actorId, "read");
     await this.options.db.transaction().execute(async (trx) => {
       await trx.selectFrom("company_brain_scopes").select("scope_id").where("scope_id", "=", scopeId).forUpdate().execute();
       await this.recheckOrganization(context);
-      await this.fenceOwner(context,trx,deleted ? "deleted" : "shared");
+      await this.fenceOwner(context,trx,deleted ? "deleted" : "erase");
       if (!await this.binding(context, trx) && deleted) throw new CompanyBrainError("not_found");
       await trx.deleteFrom("company_brain_documents").where("scope_id", "=", scopeId).execute();
       await trx.deleteFrom("company_brain_scopes").where("scope_id", "=", scopeId).execute();

@@ -5,7 +5,7 @@ import type { CollaborationScopesTable } from "../collaboration/database.js";
 import type { OrganizationPrecondition } from "../collaboration/organization-precondition.js";
 import type { CompanyBrainDatabase } from "./database.js";
 
-export type BrainOwnerAvailability = "shared" | "export" | "deleted";
+export type BrainOwnerAvailability = "shared" | "export" | "erase" | "deleted";
 export function ownerDataScopeAvailable(scope: Selectable<CollaborationScopesTable>, mode: BrainOwnerAvailability): boolean {
   if (mode === "deleted" && scope.lifecycle === "deleted" && scope.deleted_at !== null) return true;
   return scope.deleted_at === null && (scope.lifecycle === "shared" || (mode !== "shared" && scope.lifecycle === "archived"));
