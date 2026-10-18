@@ -53,7 +53,8 @@ export function useTerminalKeys(send: (data: string) => void, focusKeyboard: () 
     send(typed);
   }, [ctrlArmed, send]);
 
-  // A key from the rows is sent as it is; it does not combine with ctrl.
+  // A key from the rows, or one the surface presses for a tap, is sent as it
+  // is; it does not combine with ctrl and uses it up.
   const sendKey = useCallback((data: string) => {
     setCtrlArmed(false);
     send(data);

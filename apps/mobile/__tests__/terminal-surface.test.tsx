@@ -242,6 +242,28 @@ describe("native mobile terminal surface", () => {
     const html = String(webView.props.source.html);
     expect(html).toContain(TAP_CURSOR_SCRIPT);
     expect(html).toContain("terminalTapCursorMove({");
+    // The arrows are keys pressed for the user, not text from the emulator.
+    expect(html).toContain('post({ type: "keys", data: keys })');
+  });
+
+  it("hands keys pressed for the user to onKeys, or to onInput without one", () => {
+    const onInput = jest.fn();
+    const onKeys = jest.fn();
+    const view = render(
+      <TerminalSurface fontScale={1} onInput={onInput} onBinary={jest.fn()} onKeys={onKeys} onResize={jest.fn()} />,
+    );
+    const say = (message: Record<string, unknown>) => act(() => screen.getByTestId("terminal-webview").props.onMessage({
+      nativeEvent: { data: JSON.stringify(message) },
+    }));
+
+    say({ type: "keys", data: "\x1b[C\x1b[C" });
+    expect(onKeys).toHaveBeenCalledWith("\x1b[C\x1b[C");
+    expect(onInput).not.toHaveBeenCalled();
+    view.unmount();
+
+    render(<TerminalSurface fontScale={1} onInput={onInput} onBinary={jest.fn()} onResize={jest.fn()} />);
+    say({ type: "keys", data: "\x1b[D" });
+    expect(onInput).toHaveBeenCalledWith("\x1b[D");
   });
 
   describe("tap to move the cursor", () => {

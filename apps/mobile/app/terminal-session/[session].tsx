@@ -239,6 +239,7 @@ export default function TerminalSessionScreen() {
           ref={surfaceRef}
           fontScale={fontScale}
           onInput={keys.sendTyped}
+          onKeys={keys.sendKey}
           onBinary={sendBinary}
           onResize={handleResize}
         />

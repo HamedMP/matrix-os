@@ -51,6 +51,7 @@ jest.mock("@/components/TerminalSurface", () => {
     TerminalSurface: React.forwardRef((props: {
       onInput: (data: string) => void;
       onBinary: (data: string) => void;
+      onKeys?: (data: string) => void;
       onResize: (cols: number, rows: number) => void;
     }, ref: React.Ref<unknown>) => {
       React.useImperativeHandle(ref, () => ({
@@ -73,6 +74,10 @@ jest.mock("@/components/TerminalSurface", () => {
           accessibilityLabel: "Type return",
           onPress: () => props.onInput("\r"),
         }, React.createElement(Text, null, "return")),
+        React.createElement(Pressable, {
+          accessibilityLabel: "Tap to move the cursor",
+          onPress: () => props.onKeys?.("\x1b[C\x1b[C"),
+        }, React.createElement(Text, null, "tap")),
         React.createElement(Pressable, {
           accessibilityLabel: "Reply with cursor position",
           onPress: () => props.onInput("\x1b[12;5R"),
@@ -361,6 +366,19 @@ describe("live terminal session modal", () => {
 
     fireEvent.press(screen.getByLabelText("Type terminal input"));
     expect(mockSendInput).toHaveBeenLastCalledWith("\x01");
+    rendered.unmount();
+  });
+
+  it("uses up an armed ctrl when a tap moves the cursor", async () => {
+    const rendered = await openAttached();
+
+    act(() => mockBarProps!.onToggleCtrl());
+    fireEvent.press(screen.getByLabelText("Tap to move the cursor"));
+    expect(mockSendInput).toHaveBeenLastCalledWith("\x1b[C\x1b[C");
+    expect(mockBarProps!.ctrlArmed).toBe(false);
+
+    fireEvent.press(screen.getByLabelText("Type terminal input"));
+    expect(mockSendInput).toHaveBeenLastCalledWith("a");
     rendered.unmount();
   });
 

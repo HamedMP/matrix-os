@@ -38,6 +38,8 @@ interface TerminalSurfaceProps {
   onInput: (data: string) => void;
   /** Byte-valued xterm protocol replies such as OSC and binary mouse reports. */
   onBinary: (data: string) => void;
+  /** Keys the surface presses for the user, such as the arrows that move the cursor to a tap. Defaults to onInput. */
+  onKeys?: (data: string) => void;
   /**
    * Reports the grid that fits the surface at the configured font size, when
    * it lays out or resizes. Once the computer's grid has been applied the
@@ -350,7 +352,7 @@ function buildHtml(fontScale: number): string {
             cursorHidden: !!(core && core.isCursorHidden),
             applicationCursor: !!(term.modes && term.modes.applicationCursorKeysMode),
           });
-          if (keys) post({ type: "input", data: keys });
+          if (keys) post({ type: "keys", data: keys });
         } catch (e) { reportFault("tap-cursor", e); }
       }
       termEl.addEventListener("touchmove", function (e) {
@@ -403,7 +405,7 @@ function buildHtml(fontScale: number): string {
 }
 
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
-  function TerminalSurface({ fontScale, onInput, onBinary, onResize, onCursor }, ref) {
+  function TerminalSurface({ fontScale, onInput, onBinary, onKeys, onResize, onCursor }, ref) {
     const webRef = useRef<WebView | null>(null);
     const readyRef = useRef(false);
     // Held for an emulator that has not booted yet; one queue per surface.
@@ -494,6 +496,10 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           onBinary(msg.data);
           return;
         }
+        if (msg.type === "keys" && typeof msg.data === "string") {
+          (onKeys ?? onInput)(msg.data);
+          return;
+        }
         if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           onResize(msg.cols, msg.rows);
           return;
@@ -510,7 +516,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           console.warn("[mobile] terminal emulator fault", where, name);
         }
       },
-      [flush, onInput, onBinary, onResize, onCursor],
+      [flush, onInput, onBinary, onKeys, onResize, onCursor],
     );
 
     return (

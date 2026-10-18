@@ -31,9 +31,10 @@ cursor follows a tap or a swipe.
   down), ⋯ (opens and closes the extra pages), Enter.
 - ctrl is sticky: pressing it arms it (drawn inverted) and brings up the
   keyboard; the next letter or control punctuation typed is sent as its
-  control key and disarms it. Another key from the rows also disarms it and
-  is sent as it is. Replies the emulator sends to the program (they start
-  with ESC, which the on-screen keyboard never types) leave it armed.
+  control key and disarms it. Another key from the rows, or a tap that moves
+  the cursor, also disarms it and is sent as it is. Replies the emulator
+  sends to the program (they start with ESC, which the on-screen keyboard
+  never types) leave it armed.
 - Extra page 1: left, right, Home, End, Shift+Tab, Paste and symbols
   (/ ~ | - _ $ * >). Page 2: Kill line, Search history, Clear screen,
   Page up, Page down, Scroll to bottom. A page key turns between them.
