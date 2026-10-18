@@ -34,13 +34,17 @@ export function createManagedFeatureRestartCoordinator(options: {
         releaseFence = options.fence.tryAcquire();
         if (!releaseFence) return;
         operation = (options.restart ?? restartGatewayNow)().catch((error: unknown) => {
-          releaseFence?.();
-          releaseFence = null;
+          if (!closed) {
+            releaseFence?.();
+            releaseFence = null;
+          }
           console.warn("[managed-features] restart failed", error instanceof Error ? error.name : "UnknownError");
         }).finally(() => { operation = null; });
       } catch (error: unknown) {
-        releaseFence?.();
-        releaseFence = null;
+        if (!closed) {
+          releaseFence?.();
+          releaseFence = null;
+        }
         console.warn("[managed-features] restart unavailable", error instanceof Error ? error.name : "UnknownError");
       }
     }, 2_000);
@@ -49,11 +53,12 @@ export function createManagedFeatureRestartCoordinator(options: {
 
   async function close(): Promise<void> {
     closed = true;
+    // HTTP/WS teardown still has awaits ahead. No prior holder or failed
+    // restart may reopen admission after SIGTERM starts shutting the gateway down.
+    options.fence.close();
     if (timer) clearTimeout(timer);
     timer = null;
     await operation;
-    releaseFence?.();
-    releaseFence = null;
   }
 
   return { schedule, close };

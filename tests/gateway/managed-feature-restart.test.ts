@@ -50,7 +50,7 @@ describe("managed feature restart coordinator", () => {
     expect(restart).toHaveBeenCalledOnce();
     expect(fence.blocked).toBe(true);
     await coordinator.close();
-    expect(fence.blocked).toBe(false);
+    expect(fence.blocked).toBe(true);
   });
   it("coalesces schedules and holds the fence before invoking an immediate restart", async () => {
     vi.useFakeTimers();
@@ -82,6 +82,7 @@ describe("managed feature restart coordinator", () => {
     vi.useFakeTimers(); const fence = createExecutionAdmissionFence(), restart = vi.fn();
     const coordinator = createManagedFeatureRestartCoordinator({ fence, isIdle: () => true, restart });
     coordinator.schedule(); await coordinator.close();
+    expect(fence.blocked).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
     expect(() => coordinator.schedule()).toThrow("unavailable");
     await vi.advanceTimersByTimeAsync(2_000); expect(restart).not.toHaveBeenCalled();
@@ -92,7 +93,23 @@ describe("managed feature restart coordinator", () => {
     const coordinator = createManagedFeatureRestartCoordinator({ fence, isIdle: () => true, restart });
     coordinator.schedule(); await vi.advanceTimersByTimeAsync(2_000);
     expect(restart).not.toHaveBeenCalled(); await coordinator.close(); expect(fence.blocked).toBe(true);
-    release(); expect(fence.blocked).toBe(false);
+    release(); expect(fence.blocked).toBe(true);
+  });
+  it("keeps admission fenced when an accepted restart begins gateway shutdown", async () => {
+    vi.useFakeTimers(); const fence = createExecutionAdmissionFence();
+    const coordinator = createManagedFeatureRestartCoordinator({ fence, isIdle: () => true, restart: async () => {} });
+    coordinator.schedule(); await vi.advanceTimersByTimeAsync(2_000);
+    expect(fence.blocked).toBe(true); await coordinator.close();
+    expect(fence.blocked).toBe(true); expect(fence.tryAcquire()).toBeNull();
+  });
+  it("holds shutdown admission closed when an in-flight restart command subsequently fails", async () => {
+    vi.useFakeTimers(); const fence = createExecutionAdmissionFence();
+    let reject!: (error: Error) => void;
+    const coordinator = createManagedFeatureRestartCoordinator({ fence, isIdle: () => true, restart: () => new Promise<void>((_resolve, fail) => { reject = fail; }) });
+    coordinator.schedule(); await vi.advanceTimersByTimeAsync(2_000);
+    const closing = coordinator.close(); expect(fence.blocked).toBe(true);
+    reject(new Error("restart command failed during shutdown")); await closing;
+    expect(fence.blocked).toBe(true); expect(fence.tryAcquire()).toBeNull();
   });
   it("makes fence releases idempotent across subsequent acquisitions", () => {
     const fence = createExecutionAdmissionFence(); const first = fence.tryAcquire()!;
