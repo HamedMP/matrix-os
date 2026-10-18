@@ -517,7 +517,9 @@ prepare_runtime_permissions() {
   if [ -d /opt/matrix/runtime/node ]; then
     run_required "setting Node runtime owner group" chown -R root:matrix /opt/matrix/runtime/node
     run_required "allowing matrix user Node runtime writes" chmod -R g+rwX /opt/matrix/runtime/node
-    if find /opt/matrix/runtime/node -type d -exec chmod g+s {} + >>"$MATRIX_INSTALL_LOG" 2>&1; then
+    # App Store sandbox verifies this trusted mount root is not group-writable.
+    run_required "sealing Node runtime root" chmod 0755 /opt/matrix/runtime/node
+    if find /opt/matrix/runtime/node -mindepth 1 -type d -exec chmod g+s {} + >>"$MATRIX_INSTALL_LOG" 2>&1; then
       ok "Runtime permissions ready"
       return
     fi
