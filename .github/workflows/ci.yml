@@ -603,6 +603,32 @@ jobs:
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
+      - name: Check controller regressions before the full suite
+        if: matrix.shard == 4 && needs.changes.outputs.should_run == 'true'
+        timeout-minutes: 3
+        env:
+          UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
+        run: |
+          GITHUB_SHA="$UNIT_SOURCE_SHA" pnpm exec vitest run \
+            tests/scripts/ci-dedicated-admission.test.ts \
+            tests/scripts/ci-dedicated-api.test.ts \
+            tests/scripts/ci-dedicated-main-admission.test.ts \
+            tests/scripts/ci-dedicated-main-fallback.test.ts \
+            tests/scripts/ci-dedicated-main-source-gate.test.ts \
+            tests/scripts/ci-dedicated-main.test.ts \
+            tests/scripts/ci-dedicated-result.test.ts \
+            tests/scripts/ci-dedicated-source-gate.test.ts \
+            --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=output/ci/controller-regression.json
+
+      - name: Upload controller regression evidence
+        if: always() && matrix.shard == 4 && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-regression
+          path: output/ci/controller-regression.json
+          if-no-files-found: error
+          retention-days: 7
+
       - run: GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json
         env:
           UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
