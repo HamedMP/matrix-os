@@ -90,7 +90,53 @@ async function inheritedTombstone(deleteParent = false) {
   return parent;
 }
 
+async function archivedOwnerDataScope(kind: "chat" | "project" | "inherited_chat") {
+  if (kind === "chat") { await lifecycle("archive"); return ids.scope; }
+  const parent = "10000000-0000-4000-8000-000000000045";
+  await repository.createDirectScope({ scopeId: parent, organizationId: "org_team", ownerId: actors.owner,
+    kind: "project", resourceId: "project_archived_brain", authorityRuntimeId: ids.runtime });
+  await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" }).where("id", "=", parent).execute();
+  if (kind === "project") await service.publish(parent, actors.owner, { ...document, audienceScopeId: parent });
+  else {
+    const owner = { type: "personal" as const, ownerId: actors.owner };
+    const chats = new ChatRepository(fixture.db);
+    const assignments = createProjectChatAssignmentCoordinator({ db: fixture.db, chatRepository: chats, now: () => at });
+    const chat = await chats.get(owner, ids.chat);
+    await assignments.run(owner, repository => repository.update(owner, ids.chat,
+      { baseRevision: chat!.chat.revision, projectId: "project_archived_brain" }));
+  }
+  const projectLifecycle = createCollaborationProjectLifecycle({ db: fixture.db, now: () => at,
+    stageTransfer: async () => { throw new Error("Unexpected archived fixture transfer"); },
+    deleteProject: async () => { throw new Error("Unexpected archived fixture deletion"); } });
+  const project = await fixture.db.selectFrom("collaboration_scopes").select("revision").where("id", "=", parent).executeTakeFirstOrThrow();
+  await expect(projectLifecycle.apply({ scopeId: parent, actorId: actors.owner, type: "archive", expectedRevision: Number(project.revision),
+    clientRequestId: "50000000-0000-4000-8000-000000000045", payloadHash: "e".repeat(64) }))
+    .resolves.toMatchObject({ status: "completed" });
+  return kind === "project" ? parent : ids.scope;
+}
+
 describe("owner-controlled Brain data and durable export audit", () => {
+  it.each(["chat", "project", "inherited_chat"] as const)("erases archived %s owner data without restoring publication", async kind => {
+    const scopeId = await archivedOwnerDataScope(kind);
+    const scope = await fixture.db.selectFrom("collaboration_scopes").selectAll().where("id", "=", scopeId).executeTakeFirstOrThrow();
+    expect(scope).toMatchObject({ lifecycle: "archived", deleted_at: null });
+    const context = await authority.authorize({ scopeId, actorId: actors.owner, action: "read" });
+    const owner = await fixture.db.selectFrom("collaboration_members").selectAll()
+      .where("scope_id", "=", context.membershipScopeId).where("actor_id", "=", actors.owner).executeTakeFirstOrThrow();
+    await fixture.db.insertInto("collaboration_members").values({ ...owner, actor_id: actors.editor, role: "editor" }).execute();
+    await expect(authority.authorize({ scopeId, actorId: actors.editor, action: "read" })).resolves.toMatchObject({ role: "editor" });
+    await expect(service.erase(scopeId, actors.editor)).rejects.toBeDefined();
+    organizationMember = false;
+    await expect(service.erase(scopeId, actors.owner)).rejects.toBeDefined();
+    organizationMember = true;
+    await expect(service.publish(scopeId, actors.owner, { ...document, audienceScopeId: scopeId, expectedRevision: 1 })).rejects.toBeDefined();
+    expect(await db.selectFrom("company_brain_documents").select("source_id").where("scope_id", "=", scopeId).execute()).toHaveLength(1);
+    await expect(service.erase(scopeId, actors.owner)).resolves.toBeUndefined();
+    expect(await db.selectFrom("company_brain_documents").select("source_id").where("scope_id", "=", scopeId).execute()).toEqual([]);
+    expect(await db.selectFrom("company_brain_scopes").select("scope_id").where("scope_id", "=", scopeId).execute()).toEqual([]);
+    expect(await fixture.db.selectFrom("collaboration_scopes").selectAll().where("id", "=", scopeId).executeTakeFirstOrThrow()).toEqual(scope);
+    await expect(service.publish(scopeId, actors.owner, { ...document, audienceScopeId: scopeId })).rejects.toBeDefined();
+  });
   it.each([false, true])("exports and erases the inherited Chat tombstone with deleted parent=%s", async deleteParent => {
     const parent = await inheritedTombstone(deleteParent);
     expect((await service.export(ids.scope, actors.owner)).documents).toEqual([expect.objectContaining({ text: document.text })]);
