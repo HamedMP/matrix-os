@@ -7,8 +7,12 @@ export function createCommunityRepository(db: PlatformDB, now: () => string) {
     return db.transaction(async trx => {
       const listing = await getStoreListing(trx, slug, true); const version = await getStoreVersion(trx, versionId);
       const old = await trx.executor.selectFrom('app_store_installs').selectAll().where('listing_id', '=', listing.id).where('clerk_user_id', '=', owner).forUpdate().executeTakeFirst();
-      if (listing.status === 'suspended' || version.listing_id !== listing.id || !['published', 'superseded'].includes(version.status)
-        || (!(listing.status === 'live' && listing.current_version_id === versionId) && old?.version_id !== versionId)) throw new AppStoreError('forbidden');
+      // Receipts are authenticated owner telemetry, not proof of a local build.
+      // A signed grant may finish after a newer approval supersedes its version;
+      // accept that receipt for live apps without issuing any fresh old grant.
+      if (listing.publisher_clerk_user_id.startsWith('deleted:') || listing.status === 'suspended' || version.listing_id !== listing.id || !['published', 'superseded'].includes(version.status)
+        || !version.approval_key_id || !version.approval_signature
+        || (listing.status !== 'live' && old?.version_id !== versionId)) throw new AppStoreError('forbidden');
       const time = now();
       await trx.executor.insertInto('app_store_installs').values({ listing_id: listing.id, clerk_user_id: owner, version_id: versionId,
         first_installed_at: time, last_installed_at: time, uninstalled_at: null }).onConflict(oc => oc.columns(['listing_id', 'clerk_user_id']).doUpdateSet({ version_id: versionId, last_installed_at: time, uninstalled_at: null })).execute();

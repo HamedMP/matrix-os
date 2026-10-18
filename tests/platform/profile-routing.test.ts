@@ -83,6 +83,9 @@ describe('platform/profile-routing', () => {
 
       expect(existsSync(join(homePath, 'apps', 'profile', 'matrix.json'))).toBe(true);
       expect(existsSync(join(homePath, 'apps', 'profile', 'index.html'))).toBe(true);
+      const html=require('node:fs').readFileSync(join(homePath,'apps','profile','index.html'),'utf8');
+      expect(html).not.toContain('/api/store/');
+      expect(html).not.toContain('Loading apps...');
     });
 
     it('does not overwrite existing profile', async () => {

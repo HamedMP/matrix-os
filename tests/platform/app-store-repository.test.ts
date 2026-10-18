@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { generateKeyPairSync } from 'node:crypto';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
-import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { sql } from 'kysely';
+import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createAppStoreRepository } from '../../packages/platform/src/app-store/repository.js';
 import { AppStoreCreateSubmissionSchema, AppStoreManifestSchema } from '../../packages/contracts/src/app-store.js';
 import { verifyStoreApproval } from '../../packages/contracts/src/app-store-signing.js';
@@ -22,7 +23,20 @@ function input(version = '1.0.0', key = 'submission:one') {
 describe('App Store repository', () => {
   let db: PlatformDB;
   let repository: ReturnType<typeof createAppStoreRepository>;
-  beforeEach(async () => { ({ db } = await createTestPlatformDb()); repository = createAppStoreRepository(db, { signing }); });
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
+    if (!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL) {
+      // PGlite has one session: its dialect otherwise interleaves unrelated BEGINs.
+      // Serialize whole fallback transactions; native contention is verified below.
+      const transaction = db.transaction.bind(db); let turn = Promise.resolve();
+      db.transaction = async work => {
+        const previous = turn; let release!: () => void;
+        turn = new Promise<void>(resolve => { release = resolve; }); await previous;
+        try { return await transaction(work); } finally { release(); }
+      };
+    }
+    repository = createAppStoreRepository(db, { signing });
+  });
   afterEach(async () => { await destroyTestPlatformDb(db); });
   async function reviewed(version = '1.0.0', key = 'submission:one') {
     const created = await repository.createSubmission(author, input(version, key));
@@ -64,14 +78,43 @@ describe('App Store repository', () => {
     expect((await repository.getVersion(first.id)).status).toBe('superseded');
     expect((await repository.detail('garden', consumer.userId)).currentVersion?.id).toBe(third.id);
   });
-  it('serializes concurrent decisions, install upserts and rating deltas', async () => {
+  it('serializes concurrent decisions so exactly one decision and audit event wins', async () => {
     const created = await reviewed();
     const decisions = await Promise.allSettled([repository.decide('reviewer', created.id, { type: 'approve' }), repository.decide('reviewer', created.id, { type: 'reject', message: 'No' })]);
     expect(decisions.filter(result => result.status === 'fulfilled')).toHaveLength(1);
-    if ((await repository.getVersion(created.id)).status !== 'published') return;
-    await Promise.all(Array.from({ length: 5 }, () => repository.install(consumer.userId, 'garden', created.id)));
-    await Promise.all(Array.from({ length: 5 }, (_, i) => repository.rate(consumer.userId, 'garden', i + 1)));
-    const detail = await repository.detail('garden', consumer.userId); expect(detail.installCount).toBe(1); expect(detail.activeInstallCount).toBe(1); expect(detail.ratingCount).toBe(1); expect(detail.ratingAverage).toBe(detail.myRating);
+    expect((await repository.events(created.listing_id)).filter(event => ['approve', 'reject'].includes(event.action))).toHaveLength(1);
+  });
+  it('always exercises concurrent install upserts and rating deltas on an approved fixture', async () => {
+    let concurrentDb: PlatformDB | undefined;
+    try {
+      if (process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL) {
+        // The native fixture manager leases one connection. Open this clone with
+        // the production pool size so these requests really contend in Postgres.
+        const result = await sql<{ name: string }>`SELECT current_database() AS name`.execute(db.executor);
+        const url = new URL(process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL); url.pathname = `/${result.rows[0].name}`;
+        concurrentDb = createPlatformDb(url.toString()); await concurrentDb.ready;
+        repository = createAppStoreRepository(concurrentDb, { signing });
+      }
+      const created = await published();
+      await Promise.all(Array.from({ length: 5 }, () => repository.install(consumer.userId, 'garden', created.id)));
+      await Promise.all(Array.from({ length: 5 }, (_, i) => repository.rate(consumer.userId, 'garden', i + 1)));
+      const detail = await repository.detail('garden', consumer.userId); expect(detail.installCount).toBe(1); expect(detail.activeInstallCount).toBe(1); expect(detail.ratingCount).toBe(1); expect(detail.ratingAverage).toBe(detail.myRating);
+    } finally { await concurrentDb?.destroy(); }
+  });
+  it('accepts a first receipt for signed source superseded during the installer build without offering new old downloads', async () => {
+    const first = await published();
+    expect((await repository.downloadVersion('garden', consumer.userId, first.id)).id).toBe(first.id);
+    const second = await reviewed('1.1.0', 'submission:next');
+    await repository.decide('reviewer', second.id, { type: 'approve' });
+    // A previous grant can finish building, but fresh old-version grants stay denied.
+    await expect(repository.downloadVersion('garden', consumer.userId, first.id)).rejects.toMatchObject({ code: 'forbidden' });
+    expect(await repository.install(consumer.userId, 'garden', first.id)).toMatchObject({ installed: true, installCount: 1, activeInstallCount: 1 });
+    expect(await repository.install(consumer.userId, 'garden', first.id)).toMatchObject({ installCount: 1, activeInstallCount: 1 });
+    await expect(repository.downloadVersion('garden', 'user_new', first.id)).rejects.toMatchObject({ code: 'forbidden' });
+    const pending = await reviewed('1.2.0', 'submission:pending');
+    await expect(repository.install('user_new', 'garden', pending.id)).rejects.toMatchObject({ code: 'forbidden' });
+    await repository.listingAction('reviewer', first.listing_id, { type: 'suspend', message: 'Review' });
+    await expect(repository.install('user_new', 'garden', first.id)).rejects.toMatchObject({ code: 'forbidden' });
   });
   it('counts first installs and active reactivation exactly once', async () => {
     const created = await published();

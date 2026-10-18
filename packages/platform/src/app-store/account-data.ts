@@ -1,7 +1,8 @@
 import { sql } from 'kysely';
 import type { PlatformDB } from '../db.js';
 /** Called within the account erasure transaction, after storage cleanup. Public
- * signed manifests remain immutable; private reports and owner identifiers do not. */
+ * signed manifests remain immutable; never-published metadata, private reports,
+ * owner identifiers and authored private review messages do not. */
 export async function eraseAppStoreOwnerData(trx: PlatformDB, owner: string, anonymous: string): Promise<void> {
   const present = await sql<{ present: boolean }>`SELECT to_regclass('app_store_listings') IS NOT NULL AS present`.execute(trx.executor);
   if (!present.rows[0]?.present) return;
@@ -23,6 +24,15 @@ export async function eraseAppStoreOwnerData(trx: PlatformDB, owner: string, ano
       await trx.executor.deleteFrom('app_store_installs').where('listing_id', '=', listing.id).where('clerk_user_id', '=', owner).execute();
       await trx.executor.deleteFrom('app_store_ratings').where('listing_id', '=', listing.id).where('clerk_user_id', '=', owner).execute();
       if (listing.publisher_clerk_user_id === owner) {
+        const published = await trx.executor.selectFrom('app_store_versions').select('id').where('listing_id', '=', listing.id)
+          .where('published_at', 'is not', null).executeTakeFirst();
+        if (!published) {
+          // No public source exception applies to an app that never shipped.
+          await trx.executor.deleteFrom('app_store_moderation_events').where('listing_id', '=', listing.id).execute();
+          await trx.executor.deleteFrom('app_store_versions').where('listing_id', '=', listing.id).execute();
+          await trx.executor.deleteFrom('app_store_listings').where('id', '=', listing.id).execute();
+          continue;
+        }
         await trx.executor.deleteFrom('app_store_versions').where('listing_id', '=', listing.id).where('status', 'not in', ['published', 'superseded']).execute();
         // Explicit account-erasure exception to ordinary append-only moderation.
         await trx.executor.updateTable('app_store_moderation_events').set({ message: null }).where('listing_id', '=', listing.id).execute();
@@ -33,16 +43,21 @@ export async function eraseAppStoreOwnerData(trx: PlatformDB, owner: string, ano
   await trx.executor.updateTable('app_store_versions').set({ submitted_by_clerk_user_id: anonymous, generalization_report: { ai: 'unavailable', changes: [] }, reviewer_message: null,
     upload_cleaned_at: new Date().toISOString(), submission_key: sql`'deleted:' || id`, source_object_key: sql`'app-store/deleted/' || id`, scan_report: null })
     .where('submitted_by_clerk_user_id', '=', owner).execute();
-  await trx.executor.updateTable('app_store_versions').set({ decided_by_clerk_user_id: anonymous }).where('decided_by_clerk_user_id', '=', owner).execute();
+  await trx.executor.updateTable('app_store_versions').set({ decided_by_clerk_user_id: anonymous, reviewer_message: null }).where('decided_by_clerk_user_id', '=', owner).execute();
   await trx.executor.updateTable('app_store_moderation_events').set({ actor_clerk_user_id: anonymous, message: null }).where('actor_clerk_user_id', '=', owner).execute();
 }
 export async function exportAppStoreOwnerData(db: PlatformDB, owner: string) {
   const present = await sql<{ present: boolean }>`SELECT to_regclass('app_store_listings') IS NOT NULL AS present`.execute(db.executor);
-  if (!present.rows[0]?.present) return { listings: [], versions: [], installs: [], ratings: [] };
+  if (!present.rows[0]?.present) return { listings: [], versions: [], installs: [], ratings: [], moderationEvents: [] };
   const listings = await db.executor.selectFrom('app_store_listings').selectAll().where('publisher_clerk_user_id', '=', owner).limit(10001).execute();
   const versions = await db.executor.selectFrom('app_store_versions').selectAll().where('submitted_by_clerk_user_id', '=', owner).limit(10001).execute();
   const installs = await db.executor.selectFrom('app_store_installs').selectAll().where('clerk_user_id', '=', owner).limit(10001).execute();
   const ratings = await db.executor.selectFrom('app_store_ratings').selectAll().where('clerk_user_id', '=', owner).limit(10001).execute();
-  if ([listings, versions, installs, ratings].some(rows => rows.length > 10000)) throw new Error('Platform export capacity exceeded');
-  return { listings, versions, installs, ratings };
+  // Authored staff messages belong to their author; a publisher also exports
+  // moderation feedback attached to their own listing.
+  const moderationEvents = await db.executor.selectFrom('app_store_moderation_events').selectAll().where(eb => eb.or([
+    eb('actor_clerk_user_id', '=', owner), eb('listing_id', 'in', eb.selectFrom('app_store_listings').select('id').where('publisher_clerk_user_id', '=', owner)),
+  ])).limit(10001).execute();
+  if ([listings, versions, installs, ratings, moderationEvents].some(rows => rows.length > 10000)) throw new Error('Platform export capacity exceeded');
+  return { listings, versions, installs, ratings, moderationEvents };
 }

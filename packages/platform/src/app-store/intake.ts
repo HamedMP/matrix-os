@@ -3,12 +3,29 @@ import { bundleDigest, decodeAppBundle, AppBundleError } from '@matrix-os/contra
 import { scanAppFiles } from '@matrix-os/contracts/app-store-scan';
 import type { PlatformDB } from '../db.js';
 import type { AppStoreRepository } from './repository.js';
+import type { StoreVersionRow } from './types.js';
 import type { StoreObjects } from './object-store.js';
 import { storeSourceKey } from './storage-keys.js';
 import { AppStoreError } from './errors.js';
 export function createStoreIntake(db: PlatformDB, repository: AppStoreRepository, objects: StoreObjects) {
+  async function owned(owner: string, versionId: string): Promise<StoreVersionRow> {
+    const version = await repository.getVersion(versionId);
+    if (version.submitted_by_clerk_user_id !== owner) throw new AppStoreError('not_found');
+    return version;
+  }
+  const finished = (version: StoreVersionRow) => ['scan_failed', 'in_review', 'changes_requested', 'rejected', 'published', 'superseded'].includes(version.status);
   return async function finalize(owner: string, versionId: string, ownerTerms: string[]) {
-    const version = await repository.beginScan(owner, versionId);
+    // A lost HTTP response must not require re-reading an author-writable upload.
+    let version = await owned(owner, versionId);
+    if (finished(version)) return version;
+    try { version = await repository.beginScan(owner, versionId); }
+    catch (error) {
+      if (error instanceof AppStoreError && error.code === 'conflict') {
+        const latest = await owned(owner, versionId);
+        if (finished(latest)) return latest;
+      }
+      throw error;
+    }
     try {
       const bytes = await objects.read(version.source_object_key, version.source_size);
       if (bundleDigest(bytes) !== version.source_sha256) throw new AppStoreError('invalid');

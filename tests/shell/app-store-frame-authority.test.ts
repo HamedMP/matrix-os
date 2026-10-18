@@ -8,6 +8,7 @@ describe('per-document bridge authority',()=>{
   expect(isCurrentAppFrame({source,origin:'null',data:{app:'apps/app-gallery',bridgeToken:'new-document'}} as never,expected as never)).toBe(true);
  });
  it('does not grant forms, popups, or downloads to community code',()=>{
-  expect(communityIframeSandbox(true)).toBe('allow-scripts');expect(communityDocumentPolicy).toContain("form-action 'none'");expect(communityDocumentPolicy).toContain("frame-src 'none'");
+  const policy=communityDocumentPolicy('https://app.matrix-os.com/apps/fixture/');
+  expect(communityIframeSandbox(true)).toBe('allow-scripts');expect(policy).toContain("form-action 'none'");expect(policy).toContain("frame-src 'none'");
  });
 });
