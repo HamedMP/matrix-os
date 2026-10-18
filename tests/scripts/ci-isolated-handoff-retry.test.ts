@@ -47,12 +47,14 @@ function fixture(attempt=2){
   github.rest.actions.downloadArtifact=vi.fn(artifactDownloadApi(bytes));
  };
  pinReceipt();
- return{github,run,pull,context,backend,controller,check,envelope,artifact,state,pinReceipt};
+ return{github,run,pull,context,backend,backendAttempt:attempt as number|undefined,controller,check,envelope,artifact,state,pinReceipt};
 }
 
-const complete=(f:ReturnType<typeof fixture>,config=configuration)=>(module()).then(value=>value.requestIsolatedCiCompletion(f.github,repo,f.context,pin,inputs,config));
+const complete=(f:ReturnType<typeof fixture>,config:any={...configuration,backendAttempt:f.backendAttempt})=>(module()).then(value=>value.requestIsolatedCiCompletion(f.github,repo,f.context,pin,inputs,config));
 const modes=(f:ReturnType<typeof fixture>)=>f.github.rest.actions.createWorkflowDispatch.mock.calls.map(([args]:any[])=>args.inputs.controller_mode);
-function retainedSuccess(){const f=fixture();Object.assign(f.backend,{run_attempt:1,status:'completed',conclusion:'success'});return f;}
+// GitHub materializes retained successful jobs with the latest API attempt and
+// a new ID. The protected job output retains the attempt that actually executed.
+function retainedSuccess(){const f=fixture();f.backendAttempt=1;Object.assign(f.backend,{status:'completed',conclusion:'success'});return f;}
 
 describe('completion ownership under whole and failed-job retries',()=>{
  it.each([1,2])('the executing backend explicitly requests qualification for its own attempt %s without relying on automatic events',async attempt=>{
@@ -61,7 +63,7 @@ describe('completion ownership under whole and failed-job retries',()=>{
   expect(modes(f)).toEqual(['qualification']);
   expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({ref:branch,inputs:expect.objectContaining({requesting_run_id:'321',requesting_run_attempt:String(attempt),requesting_action:attempt===1?'requested':'in_progress'})}));
  });
- it('requalifies a retained successful backend for the current attempt before posting completion',async()=>{
+ it('requalifies an API-cloned retained successful backend for the current attempt before posting completion',async()=>{
   const f=retainedSuccess();
   expect(await complete(f)).toEqual({dispatched:true,attempt:2,qualificationDispatched:true});
   expect(modes(f)).toEqual(['qualification','reconcile']);
@@ -78,7 +80,18 @@ describe('completion ownership under whole and failed-job retries',()=>{
   const f=fixture();Object.assign(f.backend,{status:'completed',conclusion});
   expect(await complete(f)).toEqual({dispatched:true,attempt:2,qualificationDispatched:false});
   expect(modes(f)).toEqual(['reconcile']);
-  expect(f.github.rest.actions.downloadArtifact).not.toHaveBeenCalled();
+  if(conclusion==='success')expect(f.github.rest.actions.downloadArtifact).toHaveBeenCalledTimes(1);
+  else expect(f.github.rest.actions.downloadArtifact).not.toHaveBeenCalled();
+ });
+ it.each(['failure','cancelled','timed_out'])('settles an actual current %s backend even when it emitted no successful output',async conclusion=>{
+  const f=fixture();f.backendAttempt=undefined;Object.assign(f.backend,{status:'completed',conclusion});
+  expect(await complete(f)).toEqual({dispatched:true,attempt:2,qualificationDispatched:false});
+  expect(modes(f)).toEqual(['reconcile']);expect(f.github.rest.actions.downloadArtifact).not.toHaveBeenCalled();
+ });
+ it.each([undefined,0,-1,1.5,NaN,3,'1'])('rejects invalid successful backend output attempt %j before any dispatch',async value=>{
+  const f=fixture();Object.assign(f.backend,{status:'completed',conclusion:'success'});
+  await expect(complete(f,{...configuration,backendAttempt:value})).rejects.toThrow();
+  expect(modes(f)).toEqual([]);expect(f.github.rest.actions.downloadArtifact).not.toHaveBeenCalled();
  });
  it.each(['missing','duplicate','id','run-id','future-attempt','invalid-attempt','head-sha','head-branch','running','old-failure','old-cancelled','truncated','oversized'])(
   'rejects %s backend ownership metadata before any new dispatch',async kind=>{
@@ -94,15 +107,15 @@ describe('completion ownership under whole and failed-job retries',()=>{
    await expect(complete(f)).rejects.toThrow();
    expect(modes(f)).toEqual([]);expect(f.github.rest.actions.downloadArtifact).not.toHaveBeenCalled();
   });
- it.each(['envelope-version','envelope-origin','request-source','digest'])(
-  'requires a genuine current-attempt immutable receipt after redispatch: %s',async kind=>{
-   const f=retainedSuccess();
+ it.each((['retained','current'] as const).flatMap(owner=>['envelope-version','envelope-origin','request-source','digest'].map(kind=>({owner,kind}))))(
+  'requires a genuine current-attempt immutable receipt for $owner backend: $kind',async({owner,kind})=>{
+   const f=owner==='retained'?retainedSuccess():fixture();Object.assign(f.backend,{status:'completed',conclusion:'success'});
    if(kind==='envelope-version')f.envelope.schemaVersion=1;
    if(kind==='envelope-origin')f.envelope.executionOrigin={...f.envelope.executionOrigin,executionSha:pin};
    if(kind==='request-source')f.envelope.receipt.sourceSha=pin;
    f.pinReceipt();if(kind==='digest')f.artifact.digest='sha256:'+'0'.repeat(64);
    await expect(complete(f)).rejects.toThrow();
-   expect(modes(f)).toEqual(['qualification']);
+   expect(modes(f)).toEqual(owner==='retained'?['qualification']:[]);
    expect(f.github.rest.actions.downloadArtifact).toHaveBeenCalledTimes(1);
   });
  it('does not accept proved infrastructure unavailability as full retained-backend qualification',async()=>{
@@ -115,7 +128,7 @@ describe('completion ownership under whole and failed-job retries',()=>{
  });
  it.each(['image','harness','required-boolean'])(
   'validates %s configuration before dispatching retained-backend work',async kind=>{
-   const f=retainedSuccess(),config:any={...configuration};
+   const f=retainedSuccess(),config:any={...configuration,backendAttempt:f.backendAttempt};
    if(kind==='image')config.imageDigest='latest';if(kind==='harness')config.harnessDigest='bad';if(kind==='required-boolean')config.linuxRequired='true';
    await expect(complete(f,config)).rejects.toThrow();expect(modes(f)).toEqual([]);
   });
