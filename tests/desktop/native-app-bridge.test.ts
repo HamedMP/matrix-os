@@ -149,6 +149,7 @@ describe("native app database bridge", () => {
       headers: {
         authorization: "Bearer desktop-token",
         "content-type": "application/json",
+        "x-matrix-app-identity":"notes",
       },
       body: JSON.stringify({ app: "notes", action: "find", table: "notes" }),
       signal: expect.any(AbortSignal),

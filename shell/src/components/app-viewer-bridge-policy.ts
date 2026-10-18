@@ -1,3 +1,4 @@
+import {isAllowedAppStoreGalleryRequest,isCommunityBridgeRequestAllowed} from '@matrix-os/contracts/app-store-bridge-policy';
 import { isAllowedAppGalleryBridgeRequest, isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
 
 const RESOURCE_MANAGER_ACTIVITY_PATH = /^\/api\/system\/activity(?:[?#]|$)/;
@@ -11,6 +12,7 @@ export function isAllowedBridgeFetchUrl(
   appName: string,
   url: string,
   method = "GET",
+  community = false,
 ): boolean {
   // Reject aliases and encoded paths so app-scoped AI cannot bypass identity binding.
   const parsed = new URL(url, "https://bridge.invalid");
@@ -20,7 +22,8 @@ export function isAllowedBridgeFetchUrl(
   )
     return false;
   const slug = appSlugFromName(appName);
-  if (isAppGalleryIdentity(appName.replace(/^apps\//, ""), slug)) return isAllowedAppGalleryBridgeRequest(url, method);
+  if(community)return isCommunityBridgeRequestAllowed(url,method);
+  if (isAppGalleryIdentity(appName.replace(/^apps\//, ""), slug)) return isAllowedAppGalleryBridgeRequest(url, method)||isAllowedAppStoreGalleryRequest(url,method);
   if (url === "/api/integrations")
     return method === "GET" && isAppGalleryInventoryIdentity(appName.replace(/^apps\//, ""), slug);
   if (

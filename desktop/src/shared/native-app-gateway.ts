@@ -1,3 +1,4 @@
+import {isAllowedAppStoreGalleryRequest,appStoreBridgeTimeoutMs} from '@matrix-os/contracts/app-store-bridge-policy';
 import { z } from "zod/v4";
 import { isAllowedAppGalleryBridgeRequest, isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
 import { parseGalleryInventory } from "@matrix-os/contracts/app-gallery-inventory";
@@ -38,11 +39,12 @@ export const NativeAppGatewayRequestSchema = z.strictObject({
   init: z.strictObject({
     method: z.enum(["GET", "POST"]).optional(),
     headers: z.strictObject({ "Content-Type": z.literal("application/json").optional(), "content-type": z.literal("application/json").optional() }).optional(),
-    body: z.string().max(4096).refine(emptyJsonBody).optional(),
+    body: z.string().max(16384).optional(),
   }).optional(),
 }).refine(({ url, init }) => {
   const method = init?.method ?? "GET";
-  if (!isActivityRead(url, method) && !isAllowedAppGalleryBridgeRequest(url, method)) return false;
+  if (!isActivityRead(url, method) && !isAllowedAppGalleryBridgeRequest(url, method)&&!isAllowedAppStoreGalleryRequest(url,method)) return false;
+  if(method==='POST'&&isAllowedAppGalleryBridgeRequest(url,method)&&!isAllowedAppStoreGalleryRequest(url,method)&&!emptyJsonBody(init?.body??''))return false;
   return method === "POST" ? init?.body !== undefined : init?.body === undefined && init?.headers === undefined;
 });
 export type NativeAppGatewayRequest = z.infer<typeof NativeAppGatewayRequestSchema>;
@@ -50,10 +52,11 @@ export type NativeAppGatewayRequest = z.infer<typeof NativeAppGatewayRequestSche
 export function isAllowedNativeAppGatewayRequest(appIdentity: string, routeSlug: string, request: NativeAppGatewayRequest): boolean {
   const method = request.init?.method ?? "GET";
   if (isNativeAppActivityIdentity(appIdentity, routeSlug)) return isActivityRead(request.url, method);
-  if (isAppGalleryIdentity(appIdentity, routeSlug)) return isAllowedAppGalleryBridgeRequest(request.url, method);
+  if (isAppGalleryIdentity(appIdentity, routeSlug)) return isAllowedAppGalleryBridgeRequest(request.url, method)||isAllowedAppStoreGalleryRequest(request.url,method);
   return isAppGalleryInventoryIdentity(appIdentity, routeSlug) && request.url === "/api/integrations" && method === "GET";
 }
 export function nativeAppGatewayTimeout(request: NativeAppGatewayRequest): number {
+  if(request.url.startsWith('/api/app-store/'))return appStoreBridgeTimeoutMs(request.url);
   return request.init?.method === "POST" ? NATIVE_APP_GALLERY_INSTALL_TIMEOUT_MS : NATIVE_APP_GATEWAY_TIMEOUT_MS;
 }
 export function createNativeAppGatewayFetch(invoke: (request: NativeAppGatewayRequest) => Promise<unknown>) {
@@ -69,6 +72,7 @@ export function createNativeAppGatewayFetch(invoke: (request: NativeAppGatewayRe
       })]) as T;
     } catch (error) {
       console.warn("[native-app-bridge] gateway request failed:", error instanceof Error ? error.name : typeof error);
+      if(url.startsWith('/api/app-store/')&&error instanceof Error&&['invalid','unauthorized','forbidden','not_found','conflict','limit','unavailable'].includes(error.message))throw error;
       throw new Error("app gateway request failed");
     } finally { clearTimeout(timer); }
   };
