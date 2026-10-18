@@ -49,6 +49,7 @@ describe("drawer settings hub", () => {
     render(<SettingsScreen />);
 
     expect(screen.getAllByLabelText(/^(Open .+|Sign out)$/).map((row) => row.props.accessibilityLabel)).toEqual([
+      "Open Messaging",
       "Open System",
       "Open Account",
       "Open App settings",
