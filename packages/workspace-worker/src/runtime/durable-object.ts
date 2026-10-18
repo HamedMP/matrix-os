@@ -3,6 +3,7 @@ import { DirectoryBackup } from '@cloudflare/sandbox';
 import { RuntimeLifecycle } from './lifecycle.js';
 import { NativeRuntimeDriver, type NativeRuntimeEnvironment, type RuntimeOutput } from './native-driver.js';
 import { runtimePolicyFromEnvironment, type RuntimeJob, type RuntimeLease, type RuntimeStore } from './contracts.js';
+import { readRuntimeMetrics } from './memory-metrics.js';
 export { DirectoryBackupGateway } from '@cloudflare/sandbox';
 
 export interface RuntimeConnection {
@@ -55,12 +56,7 @@ export abstract class WorkspaceRuntime extends DurableObject<WorkspaceRuntimeEnv
 
   /** Internal RPC for spike measurements; never starts a stopped container. */
   async metrics(): Promise<unknown> {
-    const container = this.ctx.container!;
-    if (!container.running) return {running:false};
-    const proc = await container.exec(['node','packages/workspace-worker/runtime/control.mjs','metrics'], {cwd:'/opt/matrix',user:'1000:1000'});
-    const result = await proc.output();
-    if (result.exitCode !== 0 || result.stdout.byteLength > 4096) throw new Error('Metrics unavailable');
-    return {running:true,...JSON.parse(new TextDecoder().decode(result.stdout))};
+    return readRuntimeMetrics(this.ctx.container!);
   }
 
   private async connectRuntime(): Promise<{runtime:RuntimeLifecycle; connection:RuntimeConnection}> {
