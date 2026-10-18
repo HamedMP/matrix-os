@@ -617,6 +617,45 @@ it("forwards image/file-only recipe Bot turns through the real broker and image-
 });
 
 describe("group Pi run isolation", () => {
+  it.each((["resolve", "authorize"] as const).flatMap(stage => (["signal", "cancel", "deadline"] as const).map(stop => ({ stage, stop }))))("settles stalled group $stage on $stop before late authority", async ({ stage, stop }) => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    const group = { scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project" as const, projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" };
+    const authority = { scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat" as const, organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai" as const, role: "editor" as const };
+    const input = new AbortController(), deadline = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const resolveGroupRun = vi.fn(async () => { if (stage === "resolve") await gate; return group; });
+    const authorizeGroup = vi.fn(async () => { if (stage === "authorize") await gate; return authority; });
+    const service = setup({ resolveGroupRun, authorizeGroup });
+    const originalTimeout = AbortSignal.timeout;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 10_000 ? deadline.signal : originalTimeout(ms));
+    const runId = `run_prelaunch_${stage}_${stop}`;
+    const handle = service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId, text: "Synthetic group turn", signal: input.signal });
+    const result = handle.result.then(value => ({ kind: "settled" as const, value }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let observed: Awaited<typeof result> | { kind: "still_waiting" };
+    let slotReleased = false;
+    try {
+      await vi.waitFor(() => expect(stage === "resolve" ? resolveGroupRun : authorizeGroup).toHaveBeenCalledOnce());
+      if (stop === "signal") input.abort();
+      else if (stop === "cancel") await service.orchestrator.cancel(runId);
+      else deadline.abort(new DOMException("Synthetic authorization deadline", "TimeoutError"));
+      observed = await Promise.race([result, new Promise<{ kind: "still_waiting" }>(resolve => { timer = setTimeout(() => resolve({ kind: "still_waiting" }), 750); })]);
+      if (observed.kind === "settled") {
+        const cancelled = new AbortController(); cancelled.abort();
+        const next = service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId, text: "Already cancelled", signal: cancelled.signal });
+        slotReleased = true; await next.result;
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+      release(); await result; timeout.mockRestore();
+    }
+    expect(observed!, stop).toMatchObject({ kind: "settled", value: stop === "deadline" ? { status: "blocked", blockedReason: "deadline_reached" } : { status: "cancelled" } });
+    expect(slotReleased, stop).toBe(true);
+    expect(service.admission.admit, stop).not.toHaveBeenCalled();
+    expect(service.commands, stop).not.toContainEqual(expect.objectContaining({ kind: "bot.run" }));
+  });
   it.each(["text", "image", "file"] as const)("never calls owner history or upload resolution for a group %s turn", async kind => {
     const fs = await import("node:fs/promises");
     const { join } = await import("node:path"); const { tmpdir } = await import("node:os");

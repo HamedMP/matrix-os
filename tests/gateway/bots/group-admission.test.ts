@@ -62,6 +62,36 @@ function setup(authorizeGroup?: GroupBotAuthorizer, duringLaunch?: () => void) {
   return { admission, registry, roots, client, revocation };
 }
 describe("shared group Pi admission", () => {
+  it.each(([1, 2] as const).flatMap(check => (["abort", "deadline"] as const).map(stop => ({ check, stop }))))("bounds authorization check $check on $stop and cleans a late launch", async ({ check, stop }) => {
+    const cancelled = new AbortController(), deadline = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let checks = 0;
+    const authorize = vi.fn(async () => { if (++checks === check) await gate; return context; });
+    const fixture = setup(authorize);
+    const originalTimeout = AbortSignal.timeout;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 10_000 ? deadline.signal : originalTimeout(ms));
+    const input: PrivateBotRunRequest & { signal: AbortSignal } = { ...request, signal: cancelled.signal };
+    const pending = fixture.admission.admit(input).then(value => ({ kind: "admitted" as const, value }), (error: unknown) => ({ kind: "refused" as const, error }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let observed: Awaited<typeof pending> | { kind: "still_waiting" };
+    let afterLateRegistrySize: number;
+    try {
+      await vi.waitFor(() => expect(authorize).toHaveBeenCalledTimes(check));
+      if (stop === "abort") cancelled.abort();
+      else deadline.abort(new DOMException("Synthetic authorization deadline", "TimeoutError"));
+      observed = await Promise.race([pending, new Promise<{ kind: "still_waiting" }>(resolve => { timer = setTimeout(() => resolve({ kind: "still_waiting" }), 750); })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      release(); await pending; timeout.mockRestore();
+      afterLateRegistrySize = fixture.registry.size;
+      await fixture.admission.release(RUNTIME);
+    }
+    expect(observed!).toMatchObject({ kind: "refused", error: expect.objectContaining({ code: "unavailable" }) });
+    expect(afterLateRegistrySize!).toBe(0);
+    if (check === 1) expect(fixture.client.createRuntime).not.toHaveBeenCalled();
+    else expect(fixture.client.stopRuntime).toHaveBeenCalledWith({ runtimeHandle: RUNTIME });
+  });
   it("refuses group launch without live revocation tracking", async () => {
     const { roots, registry, client } = setup(async () => context);
     const admission = createPrivateBotAdmission({ db, roots, registry, homePath, authorizeGroup: async () => context, host: { available: true, client: client as never } });
