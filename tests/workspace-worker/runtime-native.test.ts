@@ -23,6 +23,12 @@ function fixture() {
 }
 
 describe('native Cloudflare runtime adapter', () => {
+  it('preserves a sanitized startup restore diagnostic through RPC', async () => {
+    const f=fixture(); f.backups.restore.mockRejectedValue(Object.assign(new Error('execution-secret postgres://owner@db/runtime'),{code:'EACCES'}));
+    const error=await f.driver.start('owner',{generation:1,createdAt:0,backup:{}},2).catch(error=>error);
+    expect(error.message).toContain('"phase":"restore"'); expect(error.message).toContain('"code":"EACCES"');
+    expect(error.message).not.toContain('execution-secret'); expect(error.message).not.toContain('postgres://');
+  });
   it('restores and overlays shared files before starting the actual gateway', async () => {
     const f=fixture(); await f.driver.start('owner',{generation:1,createdAt:0,backup:{id:'old'}},2);
     expect(f.backups.restore).toHaveBeenCalledWith({id:'old'},expect.objectContaining({signal:expect.any(AbortSignal)}));

@@ -7,6 +7,7 @@ import { createWorkspaceRoutes } from './routes.js';
 import { createWorkspaceAuthenticator } from './auth.js';
 import { hydrateWorkspace, parseQueuedJob, publishRuntimeOutput } from './bridge.js';
 import type { RuntimeJob } from './runtime/contracts.js';
+import { safeRuntimeDiagnostic } from './runtime/diagnostic.js';
 export { DirectoryBackupGateway } from '@cloudflare/sandbox';
 
 interface Environment extends WorkspaceRuntimeEnvironment {
@@ -88,7 +89,7 @@ export default {
         await env.WORKSPACE_RUNTIME.get(env.WORKSPACE_RUNTIME.idFromName(job.ownerId)).run(job);
         message.ack();
       } catch (error) {
-        console.error('[workspace-queue] execution unavailable',error instanceof Error ? error.name : 'UnknownError');
+        console.error('[workspace-queue] execution unavailable',safeRuntimeDiagnostic(error));
         message.retry({delaySeconds:60});
       }
     }

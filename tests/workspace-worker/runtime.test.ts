@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RuntimeLifecycle } from '../../packages/workspace-worker/src/runtime/lifecycle.js';
+import { runtimeDiagnostic } from '../../packages/workspace-worker/src/runtime/diagnostic.js';
 import type { RuntimeDriver, RuntimeLease, RuntimeStore, RuntimeSummary } from '../../packages/workspace-worker/src/runtime/contracts.js';
 
 function fixture() {
@@ -35,6 +36,11 @@ function fixture() {
 }
 
 describe('shared runtime active-work lifecycle', () => {
+  it('retains tagged native diagnostics through interruption cleanup', async () => {
+    const f=fixture(); const error=runtimeDiagnostic('execute',new Error('safe detail'),()=> 'safe detail');
+    vi.mocked(f.driver.execute).mockRejectedValue(error);
+    await expect(f.lifecycle.run({ownerId:'owner',jobId:'diag',type:'chat',message:'test'})).rejects.toThrow('"phase":"execute"');
+  });
   it('keeps the runtime alive during model waits without any browser connection', async () => {
     const f = fixture(); let complete!: () => void;
     vi.mocked(f.driver.execute).mockImplementation(() => new Promise<void>((resolve) => { complete = resolve; }));

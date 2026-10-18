@@ -2,6 +2,7 @@ import {
   DEFAULT_RUNTIME_POLICY,
   type RuntimeDriver, type RuntimeJob, type RuntimeLease, type RuntimePolicy, type RuntimeStore,
 } from './contracts.js';
+import { runtimeDiagnostic, safeRuntimeDiagnostic } from './diagnostic.js';
 
 /** Durable work, rather than a browser socket, owns the compute lease. */
 export class RuntimeLifecycle {
@@ -30,9 +31,9 @@ export class RuntimeLifecycle {
       if (!finished) throw new Error('Runtime lease is no longer current');
       return { accepted: true };
     } catch (error: unknown) {
-      console.error('[workspace-runtime] Execution interrupted', error instanceof Error ? error.name : 'UnknownError');
+      console.error('[workspace-runtime] Execution interrupted', safeRuntimeDiagnostic(error));
       await this.interrupt(lease);
-      throw new Error('Workspace execution interrupted');
+      throw runtimeDiagnostic('lifecycle',error,()=> 'Execution interrupted');
     } finally {
       await this.schedule(this.now() + this.policy.heartbeatMs);
     }

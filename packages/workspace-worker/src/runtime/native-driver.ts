@@ -1,5 +1,6 @@
 import { DirectoryBackup, type DirectoryBackupRecord } from '@cloudflare/sandbox';
 import type { RuntimeCheckpoint, RuntimeDriver, RuntimeJob, RuntimeLease } from './contracts.js';
+import { runtimeDiagnostic } from './diagnostic.js';
 
 export interface NativeRuntimeEnvironment {
   ANTHROPIC_API_KEY: string;
@@ -30,6 +31,7 @@ export class NativeRuntimeDriver implements RuntimeDriver {
   get running(): boolean { return this.container.running; }
 
   async start(ownerId: string, checkpoint: RuntimeCheckpoint | null, generation: number): Promise<void> {
+    return this.withPhase('start',async()=>{
     if (!this.env.ANTHROPIC_API_KEY || !this.env.RUNTIME_AUTH_SECRET || !this.env.RUNTIME_DATABASE_URL) throw new Error('Runtime credentials unavailable');
     const key = await crypto.subtle.importKey('raw', encoder.encode(this.env.RUNTIME_AUTH_SECRET),
       {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
@@ -48,15 +50,16 @@ export class NativeRuntimeDriver implements RuntimeDriver {
       // The 6h failsafe is separate from idle grace; explicit alarms checkpoint
       // before sleep. A checkpoint error must not trigger a short platform stop.
       await this.container.setInactivityTimeout(6 * 60 * 60_000);
-      if (checkpoint) await this.backups.restore(checkpoint.backup as DirectoryBackupRecord,{signal:AbortSignal.timeout(60_000)});
+      if (checkpoint) await this.withPhase('restore',()=>this.backups.restore(checkpoint.backup as DirectoryBackupRecord,{signal:AbortSignal.timeout(60_000)}));
     }
-    const files = await this.hydrate(ownerId);
+    const files = await this.withPhase('hydrate',()=>this.hydrate(ownerId));
     if (files.length > 100 || new TextEncoder().encode(JSON.stringify(files)).byteLength > 1_000_000) throw new Error('Workspace hydration limit exceeded');
     if (files.length) {
       await this.command('stop', undefined, 35_000);
       await this.command('hydrate', JSON.stringify(files));
     }
     await this.command('start', undefined, 100_000);
+    });
   }
 
   async execute(job: RuntimeJob, lease: RuntimeLease): Promise<void> {
@@ -64,10 +67,10 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     if (job.type === 'wake') return;
     // The spike admits one task per workspace. Stop writers before archiving.
     const checkpoint = await this.checkpoint(job.ownerId, lease.generation);
-    await this.checkpointSaved(checkpoint);
+    await this.withPhase('checkpoint-publish',()=>this.checkpointSaved(checkpoint));
     const raw = await this.command('export');
-    const output = JSON.parse(raw) as RuntimeOutput;
-    await this.publish(lease, output);
+    const output = await this.withPhase('export',async()=>JSON.parse(raw) as RuntimeOutput);
+    await this.withPhase('publish',()=>this.publish(lease, output));
   }
   async keepAlive(): Promise<void> {
     if (!this.container.running) return;
@@ -87,7 +90,7 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     } catch (error: unknown) {
       const value = error as {name?:unknown;message?:unknown;code?:unknown;operation?:unknown;path?:unknown;detail?:unknown};
       console.error('[workspace-runtime] Native backup failed',this.redact(JSON.stringify({name:value?.name,message:value?.message,code:value?.code,operation:value?.operation,path:value?.path,detail:value?.detail})));
-      throw error;
+      throw runtimeDiagnostic('checkpoint',error,(text)=>this.redact(text));
     }
   }
   async stop(): Promise<void> { await this.container.destroy(); }
@@ -117,6 +120,11 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     return text.replace(/sk-[A-Za-z0-9_-]+/g,'[redacted-key]').replace(/postgres(?:ql)?:\/\/[^\s"']+/g,'[redacted-database]').slice(-4096);
   }
 
+  private async withPhase<T>(phase:string,action:()=>Promise<T>):Promise<T> {
+    try {return await action();}
+    catch(error:unknown) {throw runtimeDiagnostic(phase,error,(text)=>this.redact(text));}
+  }
+
   private async command(operation: string, input?: string, timeoutMs = 10_000): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -130,11 +138,12 @@ export class NativeRuntimeDriver implements RuntimeDriver {
       if (result.exitCode !== 0) {
         const detail = this.redact(new TextDecoder().decode(result.stderr));
         console.error('[workspace-runtime] Command failed',{operation,exitCode:result.exitCode,detail});
-        throw new Error('Runtime command failed');
+        throw new Error(`Runtime command failed (exit ${result.exitCode}): ${detail}`);
       }
       if (result.stdout.byteLength > MAX_OUTPUT) throw new Error('Runtime output limit exceeded');
       return new TextDecoder().decode(result.stdout);
-    } finally { clearTimeout(timer); }
+    } catch(error:unknown) {throw runtimeDiagnostic(operation,error,(text)=>this.redact(text));}
+    finally { clearTimeout(timer); }
   }
 }
 
