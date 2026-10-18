@@ -65,13 +65,18 @@ beforeEach(async () => {
 });
 afterEach(async () => destroy());
 
-function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>, assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>, homePath?: string, recipe = RECIPE) {
+function fixtureTransactions(beforeTransaction?: (number: number) => Promise<void>) {
   const baseTransact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
   let transactions = 0;
   const transact: BotStateTransactions = async (ownerId, work) => {
     await beforeTransaction?.(++transactions);
     return baseTransact(ownerId, work);
   };
+  return transact;
+}
+
+function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>, assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>, homePath?: string, recipe = RECIPE) {
+  const transact = fixtureTransactions(beforeTransaction);
   const client = { inventory: vi.fn(async () => connected), call };
   const tools = createBotIntegrationTools({
     client, transact, ...(homePath ? { homePath } : {}), recipes: createBotRecipeCatalog([recipe]), assertSource,
