@@ -42,11 +42,19 @@ async function snapshot(rootInput, brief) {
     status: await optionalGit(root, ["status", "--porcelain=v1"]),
   } : null;
   let tracked = null;
+  const selectedDirectories = new Set(); // Bounded by the selected-file/entry limit.
   if (git) {
     const result = await run("git", ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"]);
     const paths = result.stdout.split("\0").filter(Boolean);
     if (paths.length > MAX_ENTRIES) throw new Error("Project exceeds 20000 entries");
     tracked = new Set(paths);
+    for (const path of paths) {
+      const segments = path.split("/"); segments.pop();
+      while (segments.length) {
+        selectedDirectories.add(segments.join("/")); segments.pop();
+        if (selectedDirectories.size > MAX_ENTRIES) throw new Error("Project exceeds 20000 entries");
+      }
+    }
   }
   const directory = await mkdtemp(join(tmpdir(), "matrix-move-"));
   await chmod(directory, 0o700);
@@ -62,7 +70,10 @@ async function snapshot(rootInput, brief) {
         if (/[\u0000-\u001f\u007f\\]/.test(name)) throw new Error("Unsupported project filename");
         if (excluded.has(entry.name) || secret.test(entry.name)) { skipped.push({ path: name, reason: "excluded" }); continue; }
         if (entry.isSymbolicLink()) { skipped.push({ path: name, reason: "symlink" }); continue; }
-        if (entry.isDirectory()) { await walk(name, depth + 1); continue; }
+        if (entry.isDirectory()) {
+          if (!tracked || selectedDirectories.has(name)) await walk(name, depth + 1);
+          continue;
+        }
         if (!entry.isFile()) { skipped.push({ path: name, reason: "special" }); continue; }
         if (tracked && !tracked.has(name)) continue;
         const source = join(root, name);

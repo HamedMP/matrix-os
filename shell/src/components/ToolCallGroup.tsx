@@ -41,6 +41,7 @@ function toolContext(msg: ChatMessage): string | undefined {
 interface ToolCallGroupProps {
   tools: ChatMessage[];
   openImportedAsset?: (ref: import("@matrix-os/contracts").ImportedChatAssetRef) => Promise<void>;
+  loadImage?: (src: string) => Promise<Blob>;
 }
 
 function ToolStatus({ tool }: { tool: ChatMessage }) {
@@ -51,7 +52,7 @@ function ToolStatus({ tool }: { tool: ChatMessage }) {
   return <CheckCircleIcon aria-label="Completed" className="size-4 shrink-0 text-green-600" />;
 }
 
-export function ToolCallGroup({ tools, openImportedAsset }: ToolCallGroupProps) {
+export function ToolCallGroup({ tools, openImportedAsset, loadImage }: ToolCallGroupProps) {
   const imageGeneration = tools.find((tool) => (
     tool.toolDisplay?.kind === "image_generation" && tool.toolDisplay.state === "running"
   ));
@@ -66,7 +67,7 @@ export function ToolCallGroup({ tools, openImportedAsset }: ToolCallGroupProps) 
       <span className="text-sm font-medium text-muted-foreground">{imageGeneration.toolDisplay?.label ?? "Generating image"}…</span>
     </div>;
   }
-  if (!tools.some((tool) => tool.toolDisplay?.subagent)) return <OrdinaryToolCallGroup tools={tools} openImportedAsset={openImportedAsset} />;
+  if (!tools.some((tool) => tool.toolDisplay?.subagent)) return <OrdinaryToolCallGroup tools={tools} openImportedAsset={openImportedAsset} loadImage={loadImage} />;
   const sections: ChatMessage[][] = [];
   for (const tool of tools) {
     const previous = sections.at(-1);
@@ -76,11 +77,11 @@ export function ToolCallGroup({ tools, openImportedAsset }: ToolCallGroupProps) 
   return <div className="flex min-w-0 flex-col gap-1.5">
     {sections.map((section) => section[0].toolDisplay?.subagent
       ? <ConversationSubagentActivity key={section[0].id} agent={section[0].toolDisplay.subagent} />
-      : <OrdinaryToolCallGroup key={section[0].id} tools={section} openImportedAsset={openImportedAsset} />)}
+      : <OrdinaryToolCallGroup key={section[0].id} tools={section} openImportedAsset={openImportedAsset} loadImage={loadImage} />)}
   </div>;
 }
 
-function OrdinaryToolCallGroup({ tools, openImportedAsset }: ToolCallGroupProps) {
+function OrdinaryToolCallGroup({ tools, openImportedAsset, loadImage }: ToolCallGroupProps) {
   const statusTool = tools.find((tool) => tool.toolDisplay?.state === "running" || (!tool.toolDisplay && tool.content.startsWith("Using ")))
     ?? tools.find((tool) => tool.toolDisplay?.state === "failed")
     ?? tools.find((tool) => tool.toolDisplay?.state === "partial" || tool.toolDisplay?.state === "stopped") ?? tools[0];
@@ -119,7 +120,7 @@ function OrdinaryToolCallGroup({ tools, openImportedAsset }: ToolCallGroupProps)
                   {ctx && <span className="break-all font-mono">{ctx}</span>}
                 </div>
                 {t.toolDisplay?.detail && <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono">{t.toolDisplay.detail}</pre>}
-                {t.attachments?.length ? <ChatAttachments align="start" attachments={t.attachments} openImportedAsset={openImportedAsset} /> : null}
+                {t.attachments?.length ? <ChatAttachments align="start" attachments={t.attachments} openImportedAsset={openImportedAsset} loadImage={loadImage} /> : null}
               </div>
             );
           })}

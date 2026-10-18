@@ -685,7 +685,7 @@ function ChatAppContent({
                 <ChatHistoryControl history={history} />
                 {grouped.map((group, groupIndex) => {
                   if (group.type === "tool_group") {
-                    return <div key={`tg-${group.messages[0].id}`}><ToolCallGroup tools={group.messages} openImportedAsset={importedAssets.openImportedAsset} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/></div>;
+                    return <div key={`tg-${group.messages[0].id}`}><ToolCallGroup tools={group.messages} openImportedAsset={importedAssets.openImportedAsset} loadImage={loadMessageImage} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/></div>;
                   }
                   const msg = group.message;
                   return (

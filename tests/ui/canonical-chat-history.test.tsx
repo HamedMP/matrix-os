@@ -24,6 +24,26 @@ it("does not lose an expanded history window when a new message streams in", () 
   expect(result?.messages).toHaveLength(255);
   expect(result?.messages[0]?.seq).toBe(1);
 });
+it("keeps the fresh cursor reachable when a reconnect snapshot has no overlap with saved history", () => {
+  const fresh = page("chat_one", [301, 302], "before301", 2);
+  expect(mergeLoadedChatHistory(fresh, page("chat_one", [1, 2], "before1"))).toBe(fresh);
+});
+it("does not skip an earlier page when streaming fills the display limit during its request", async () => {
+  const start = page("chat_one", Array.from({ length: 9900 }, (_, i) => i + 201), "before201");
+  let current: CanonicalChatDetailResponse | null = start;
+  let resolve!: (value: CanonicalChatDetailResponse) => void;
+  const loadPage = vi.fn(() => new Promise<CanonicalChatDetailResponse>(r => { resolve = r; }));
+  const update = (apply: (value: CanonicalChatDetailResponse | null) => CanonicalChatDetailResponse | null) => { current = apply(current); };
+  const hook = renderHook(() => useCanonicalChatHistory({ detail: start, activeChatId: "chat_one", loadPage, update }));
+  let task!: Promise<void>;
+  act(() => { task = hook.result.current.loadEarlier(); });
+  current = page("chat_one", Array.from({ length: 9901 }, (_, i) => i + 201), "before201", 2);
+  await act(async () => { resolve(page("chat_one", Array.from({ length: 100 }, (_, i) => i + 101), "before101")); await task; });
+  expect(current?.nextCursor).toBe("before201");
+  expect(current?.messages).toHaveLength(9901);
+  expect(hook.result.current.error).toContain("History display limit reached");
+  hook.unmount();
+});
 it("loads earlier history, keeps newest data, and ignores a result after switching chats", async () => {
   let value = page("chat_one", [3, 4], "before3");
   const update = vi.fn((apply) => { value = apply(value); });

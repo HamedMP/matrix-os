@@ -21,6 +21,9 @@ export function mergeLoadedChatHistory(
   if (!current || current.record.chat.id !== fresh.record.chat.id) return fresh;
   const firstSeq = fresh.messages[0]?.seq;
   if (firstSeq === undefined || !current.messages.some(message => message.seq < firstSeq)) return fresh;
+  // A disconnected client may have missed whole pages. Keep the fresh cursor
+  // until those pages are loaded; joining disjoint windows would hide the gap.
+  if ((current.messages.at(-1)?.seq ?? 0) < firstSeq - 1) return fresh;
   const messages = [...current.messages.filter(message => message.seq < firstSeq), ...fresh.messages];
   if (messages.length > MAX_LOADED_CHAT_MESSAGES) return fresh;
   const turnIds = new Set(messages.flatMap(message => message.turnId ? [message.turnId] : []));
@@ -37,6 +40,7 @@ export function useCanonicalChatHistory({ detail, activeChatId, loadPage, update
   detail: CanonicalChatDetailResponse | null;
   activeChatId: string | null | undefined;
   loadPage(chatId: string, cursor: string): Promise<CanonicalChatDetailResponse>;
+  /** Applies synchronously against the latest live snapshot, including streaming updates. */
   update(apply: (current: CanonicalChatDetailResponse | null) => CanonicalChatDetailResponse | null): void;
 }): CanonicalChatHistoryControls {
   const live = useRef({ detail, activeChatId, loadPage, epoch: 0 });
@@ -58,17 +62,19 @@ export function useCanonicalChatHistory({ detail, activeChatId, loadPage, update
       const older = await loadPage(chatId, start.nextCursor);
       if (live.current.epoch !== epoch) return;
       if (older.record.chat.id !== chatId || older.nextCursor === start.nextCursor
-        || !older.messages.length || older.messages.at(-1)!.seq >= start.messages[0]!.seq) throw new Error("InvalidHistoryPage");
+        || !older.messages.length || older.messages.at(-1)!.seq !== start.messages[0]!.seq - 1) throw new Error("InvalidHistoryPage");
       if (start.messages.length + older.messages.length > MAX_LOADED_CHAT_MESSAGES) {
         setState({ epoch, loading: false, error: "History display limit reached. The original archive retains the full conversation." });
         return;
       }
+      let limitReached = false;
       update(current => {
         if (current?.record.chat.id !== chatId || current.nextCursor !== start.nextCursor) return current;
+        if (current.messages.length + older.messages.length > MAX_LOADED_CHAT_MESSAGES) { limitReached = true; return current; }
         const { nextCursor: _, ...merged } = mergeLoadedChatHistory(current, older);
         return { ...merged, ...(older.nextCursor ? { nextCursor: older.nextCursor } : {}) };
       });
-      setState({ epoch, loading: false, error: null });
+      setState({ epoch, loading: false, error: limitReached ? "History display limit reached. The original archive retains the full conversation." : null });
     } catch (error: unknown) {
       if (live.current.epoch !== epoch) return;
       console.warn("[canonical-chat] earlier history unavailable:", error instanceof Error ? error.name : "UnknownError");

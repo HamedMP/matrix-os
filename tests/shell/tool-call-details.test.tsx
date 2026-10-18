@@ -1,10 +1,19 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
 import { ToolCallGroup } from "../../shell/src/components/ToolCallGroup";
 import { projectCanonicalMessages } from "../../shell/src/lib/canonical-chat-client";
 afterEach(cleanup);
+it("loads saved tool images through the selected computer's image loader", async () => {
+  const src = "/api/chats/chat_history/imports/assets/019eb0ae-9a30-7541-bdb8-db4d17e65146/content";
+  const loadImage = vi.fn(() => new Promise<Blob>(() => {}));
+  render(<ToolCallGroup loadImage={loadImage} tools={[{ id: "tool_image", role: "system", tool: "Read image", content: "Used Read image", timestamp: 0,
+    toolDisplay: { id: "tool_image", kind: "tool", state: "completed", label: "Read image" },
+    attachments: [{ id: "image", kind: "image", label: "Imported image", src }] }]} />);
+  fireEvent.click(screen.getByRole("button"));
+  await waitFor(() => expect(loadImage).toHaveBeenCalledWith(src));
+});
 it("keeps imported output collapsed and exposes the saved full input inside its completed tool", () => {
   const provenance = { type: "import_provenance" as const, harness: "codex" as const, sourceId: "source", sourceKey: "key", phase: "tool" as const, origin: "tool" as const, offset: 0, end: 1 };
   const base = { chatId: "chat_history", role: "tool" as const, state: "committed" as const, createdAt: "2026-10-18T00:00:00Z" };

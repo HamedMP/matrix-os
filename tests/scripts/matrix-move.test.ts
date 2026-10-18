@@ -18,6 +18,19 @@ async function fixture() {
 afterEach(async () => { await Promise.all(temporary.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
 describe("Matrix move workspace snapshot", () => {
+  it("does not traverse ignored dependency directories", async () => {
+    const { source } = await fixture();
+    await execFile("git", ["init", "-q"], { cwd: source });
+    await writeFile(join(source, ".gitignore"), "vendor/\n");
+    await writeFile(join(source, "main.ts"), "selected source");
+    const ignored = join(source, "vendor", ...Array.from({ length: 66 }, () => "dependency"));
+    await mkdir(ignored, { recursive: true });
+    await writeFile(join(ignored, "generated.txt"), "ignored content");
+    const { stdout } = await execFile(process.execPath, [script, source]);
+    const result = JSON.parse(stdout); temporary.push(result.directory);
+    const manifest = JSON.parse(await readFile(result.manifest, "utf8"));
+    expect(manifest.files.map((file: { path: string }) => file.path)).toEqual([".gitignore", "main.ts"]);
+  });
   it("captures dirty and untracked files, excludes secrets/ignored files/symlinks, and verifies archive bytes", async () => {
     const { path, source } = await fixture();
     await execFile("git", ["init", "-q"], { cwd: source });
