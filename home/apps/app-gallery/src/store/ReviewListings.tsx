@@ -123,7 +123,9 @@ export default function ReviewListings({
             onChange={(event) => setSearch(event.target.value)}
           />
         </label>
-        <button type="submit" disabled={busy}>Search listings</button>
+        <button type="submit" disabled={busy}>
+          Search listings
+        </button>
         <button
           type="button"
           disabled={busy || loading}
@@ -210,7 +212,13 @@ export default function ReviewListings({
         ))}
       </div>
       {cursor && (
-        <button disabled={loading || busy} onClick={() => setPage(cursor)}>
+        <button
+          disabled={loading || busy}
+          onClick={() => {
+            setPage(cursor);
+            setRefresh((value) => value + 1);
+          }}
+        >
           Load more published listings
         </button>
       )}

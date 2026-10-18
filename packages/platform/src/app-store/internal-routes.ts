@@ -131,6 +131,12 @@ export function createStoreInternalRoutes(deps: StoreRouteDeps) {
     const query = parseStore(z.strictObject({ cursor: z.string().regex(/^[A-Za-z0-9_-]{1,200}$/).optional() }), c.req.query());
     return c.json(await deps.repository.submissions(c.get('storeActor').userId, query.cursor));
   });
+  app.get('/submissions/:versionId',async c=>{
+    const version=await deps.db.executor.selectFrom('app_store_versions').selectAll().where('id','=',storeId(c)).where('submitted_by_clerk_user_id','=',c.get('storeActor').userId).executeTakeFirst();
+    if(!version)throw new AppStoreError('not_found');
+    const listing=await deps.db.executor.selectFrom('app_store_listings').select('slug').where('id','=',version.listing_id).executeTakeFirstOrThrow();
+    return c.json(submissionSummary(version,listing.slug));
+  });
   app.post('/submissions/:versionId/finalize', async c => {
     const id = storeId(c); if (!deps.finalize) throw new AppStoreError('unavailable');
     const version = await deps.finalize(c.get('storeActor').userId, id, c.get('storeOwnerTerms'));

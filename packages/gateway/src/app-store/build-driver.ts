@@ -14,7 +14,7 @@ async function run(command,args){
  });
 }
 await run('/opt/matrix/runtime/node/bin/pnpm',['install','--offline','--frozen-lockfile','--ignore-scripts','--ignore-pnpmfile','--store-dir=/workspace/store','--config.node-linker=hoisted','--config.manage-package-manager-versions=false','--config.verify-store-integrity=true']);
-await run('/opt/matrix/runtime/node/bin/node',['/workspace/app/node_modules/vite/bin/vite.js','build','--base','./']);
+await run('/opt/matrix/runtime/node/bin/node',['/workspace/app/node_modules/vite/bin/vite.js','build','--base','./','--outDir','/workspace/app/dist']);
 const files=[];let total=0,entries=0;
 async function visit(dir,prefix='',depth=0){
  if(depth>12)throw new Error('Build depth limit');

@@ -5,7 +5,7 @@ import { z } from 'zod/v4';
 import * as C from '@matrix-os/contracts/app-store';
 import { isPrivateIp } from '@matrix-os/kernel/security/ssrf-guard';
 import { readBoundedResponse } from './dependency-broker.js';
-export class StoreError extends Error {constructor(readonly code:z.infer<typeof C.AppStoreErrorCodeSchema> = 'unavailable'){super('App Store is unavailable');this.name='StoreError';}}
+export class StoreError extends Error {constructor(readonly code:z.infer<typeof C.AppStoreErrorCodeSchema> = 'unavailable',readonly httpStatus?:number){super('App Store is unavailable');this.name='StoreError';}}
 export async function validateTransferUrl(value:string):Promise<void>{
  const url=new URL(value);
  if(url.protocol!=='https:'||url.username||url.password||url.hash||url.port&&url.port!=='443'||!url.hostname.includes('.'))throw new StoreError();
@@ -25,7 +25,7 @@ export function createAppStorePlatformClient(options:{platformUrl:string;handle:
   try{
    const response=await fetcher(target.toString(),{method:init.method??'GET',headers:{authorization:`Bearer ${options.token}`,...(init.body!==undefined?{'content-type':'application/json'}:{})},...(init.body!==undefined?{body:JSON.stringify(init.body)}:{}),redirect:'error',signal:AbortSignal.timeout(10_000)});
    const payload:unknown=JSON.parse((await readBoundedResponse(response,/^review\/versions\/[0-9a-f-]{36}\/file$/.test(path)?MAX_APP_STORE_BRIDGE_REPLY_BYTES:2*1024*1024)).toString('utf8'));
-   if(!response.ok){const error=C.AppStoreErrorSchema.safeParse(payload);throw new StoreError(error.success?error.data.error:'unavailable');}
+   if(!response.ok){const error=C.AppStoreErrorSchema.safeParse(payload);throw new StoreError(error.success?error.data.error:'unavailable',response.status);}
    const parsed=schema.safeParse(payload);if(!parsed.success)throw new StoreError();return parsed.data;
   }catch(error:unknown){if(error instanceof StoreError)throw error;console.warn('[app-store] Platform request failed',error instanceof Error?error.name:'UnknownError');throw new StoreError();}
  }
@@ -42,6 +42,11 @@ export function createAppStorePlatformClient(options:{platformUrl:string;handle:
   createSubmission:(input:C.AppStoreCreateSubmission)=>request('submissions',C.AppStoreCreateSubmissionResultSchema,{method:'POST',body:C.AppStoreCreateSubmissionSchema.parse(input)}),
   finalize:(value:string)=>request(`submissions/${id(value)}/finalize`,C.AppStoreSubmissionSummarySchema,{method:'POST',body:{}}),
   submissions:(cursor?:string)=>request('submissions',C.AppStoreSubmissionsPageSchema,{query:{cursor:C.AppStoreCatalogQuerySchema.shape.cursor.parse(cursor)}}),
+  async submission(value:string):Promise<C.AppStoreSubmissionSummary|null>{
+   const versionId=id(value);
+   try{const result=await request(`submissions/${versionId}`,C.AppStoreSubmissionSummarySchema);if(result.versionId!==versionId)throw new StoreError();return result;}
+   catch(error:unknown){if(error instanceof StoreError&&error.code==='not_found'&&error.httpStatus===404)return null;throw error;}
+  },
   withdraw:(value:string)=>request(`submissions/${id(value)}/withdraw`,C.AppStoreSubmissionSummarySchema,{method:'POST',body:{}}),
   reviewQueue:(query:Record<string,unknown>)=>request('review/queue',C.AppStoreReviewQueuePageSchema,{query:C.AppStoreReviewQueueQuerySchema.parse(query)}),
   reviewDetail:(value:string)=>request(`review/versions/${id(value)}`,C.AppStoreReviewDetailSchema),

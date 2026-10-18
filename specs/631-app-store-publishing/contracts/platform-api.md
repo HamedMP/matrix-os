@@ -24,6 +24,7 @@ Auth is `Authorization: Bearer HMAC_SHA256(handle, PLATFORM_SECRET)`, compared t
 | POST | `/submissions` | `AppStoreCreateSubmission` | `{ versionId, upload: { url, expiresAt }, status }` | Idempotent by `submissionKey`; claims the slug; enforces semver ordering |
 | POST | `/submissions/:versionId/finalize` | — | `AppStoreSubmissionSummary` | Moves the version `awaiting_upload → scanning → in_review \| scan_failed` |
 | GET | `/submissions` | `cursor?` | `{ submissions: AppStoreSubmissionSummary[], listings: AppStorePublisherListing[], nextCursor? }` | The caller's versions and listing metrics; both streams are paged, at most100 rows each |
+| GET | `/submissions/:versionId` | — | `AppStoreSubmissionSummary` | Exact caller-owned version only; invalid UUID returns400, missing/another owner's version returns404. Existing authenticated owner, feature flag and rate budgets apply. Used by the gateway for at most four10-second orphan-upload checks per poll; only an explicit404 retires an upload baseline. |
 | POST | `/submissions/:versionId/withdraw` | — | `AppStoreSubmissionSummary` | CAS from withdrawable states |
 | GET | `/status` | — | `AppStoreStatus` `{ enabled: boolean, reviewer: boolean, signingKeys: [{ keyId, publicKey }] }` | Authentication still required; the only route that answers while `MATRIX_APP_STORE_ENABLED` is off |
 | GET | `/review/listings` | `AppStoreCatalogQuery` | `AppStoreCatalogPage` | Reviewer only; published history including delisted/suspended listings; excludes never-published drafts |

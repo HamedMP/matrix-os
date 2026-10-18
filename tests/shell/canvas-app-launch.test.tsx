@@ -10,6 +10,7 @@ import { useDesktopMode } from "../../shell/src/stores/desktop-mode";
 import { getCodeEditorUrl } from "../../shell/src/lib/feature-flags";
 import { listApps } from "../../shell/src/api/apps";
 import { OS_VIEW_DESTINATION_PATHS } from "@matrix-os/contracts";
+import { injectedAppBridgeToken } from "./app-frame-test-utils";
 
 const socket = vi.hoisted(() => ({ send: vi.fn(), subscribe: vi.fn(() => () => undefined) }));
 vi.mock("../../shell/src/hooks/useSocket", () => ({ useSocket: () => socket }));
@@ -64,7 +65,7 @@ async function mountedGalleryFrame(surface: "canvas" | "desktop" = "canvas"): Pr
 async function requestOpen(frame: HTMLIFrameElement, path: string, app = "app-gallery") {
   await act(async () => { window.dispatchEvent(new MessageEvent("message", {
     source: frame.contentWindow, origin: "null",
-    data: { type: "os:open-app", app, payload: { name: "Focus", path } },
+    data: { type: "os:open-app", app, bridgeToken: injectedAppBridgeToken(frame), payload: { name: "Focus", path } },
   })); });
 }
 
@@ -199,7 +200,7 @@ it.each(["dispose", "close"])("does not launch after a pending catalog lookup ou
   const frame = await mountedGalleryFrame();
   await requestOpen(frame, "apps/finance/renamed-ledger");
   if (change === "close") cleanup();
-  else act(() => window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin: "null", data: { type: "os:bridge-dispose", app: "app-gallery" } })));
+  else act(() => window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin: "null", data: { type: "os:bridge-dispose", app: "app-gallery", bridgeToken: injectedAppBridgeToken(frame) } })));
   await act(async () => finish(new Response(JSON.stringify([{ slug: "folio", name: "Ledger", path: "/files/apps/finance/renamed-ledger/index.html" }]))));
   expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
 });
@@ -312,3 +313,16 @@ for (const surface of ["canvas", "desktop"] as const) {
     expect(calls.some(url => url.endsWith(`/apps/${slug}/`))).toBe(true);
   });
 }
+
+
+it.each(["canvas", "desktop"] as const)("rejects missing or stale Gallery document tokens on Web %s", async surface => {
+  const frame = await mountedGalleryFrame(surface);
+  for (const bridgeToken of [undefined, "previous-document"]) {
+    await act(async () => window.dispatchEvent(new MessageEvent("message", {
+      source: frame.contentWindow, origin: "null",
+      data: { type: "os:open-app", app: "app-gallery", bridgeToken, payload: { name: "Focus", path: "apps/focus" } },
+    })));
+    expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
+  }
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/api/apps"))).toBe(false);
+});

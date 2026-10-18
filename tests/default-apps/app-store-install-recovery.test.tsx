@@ -111,3 +111,123 @@ it("shows a build failure discovered on reopen without polling or starting anoth
   ).toBe(false);
   expect(gatewayFetch).toHaveBeenCalledTimes(1);
 });
+
+it.each(["rating", "open"] as const)(
+  "keeps a failed %s action visible when build polling recovers and refreshes details",
+  async (action) => {
+    let polls = 0;
+    const gatewayFetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/rating")) return { error: "forbidden" };
+      if (url.includes("/installs/")) {
+        if (++polls === 1) throw new Error("Disconnected");
+        return {
+          id,
+          status: polls === 2 ? "building" : "installed",
+          appSlug: listing.slug,
+          launchPath: `apps/${listing.slug}`,
+        };
+      }
+      return {
+        ...listing,
+        installJob: { id, status: polls >= 3 ? "installed" : "building" },
+        myRating: 4,
+        local: {
+          installed: true,
+          updateAvailable: polls < 3,
+          launchPath: `apps/${listing.slug}`,
+        },
+      };
+    });
+    const openApp = vi.fn(async () => {
+      throw new Error("Host app unavailable");
+    });
+    vi.useFakeTimers();
+    render(
+      <ListingDetail
+        client={createStoreClient({ gatewayFetch, openApp })}
+        slug={listing.slug}
+        onBack={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: action === "rating" ? "Rate 5 stars" : "Open app",
+      }),
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const message = screen.getByRole("alert").textContent;
+    expect(message).toContain(
+      action === "rating"
+        ? "do not have access"
+        : "unavailable on your Matrix computer",
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(
+      screen
+        .getAllByRole("alert")
+        .some((alert) => alert.textContent === message),
+    ).toBe(true);
+    await act(async () => vi.advanceTimersByTimeAsync(10000));
+    expect(polls).toBe(3);
+    expect(screen.getByRole("alert").textContent).toBe(message);
+    expect(
+      screen.queryByRole("button", { name: "Retry build status" }),
+    ).toBeNull();
+  },
+);
+
+it("offers retry when all initial status polls fail for a durable job restored on reopen", async () => {
+  unavailableStorage();
+  let polls = 0,
+    recovered = false;
+  const gatewayFetch = vi.fn(async (url: string) => {
+    if (url.includes("/installs/")) {
+      polls++;
+      if (!recovered) throw new Error("Disconnected");
+      return {
+        id,
+        status: "installed",
+        appSlug: listing.slug,
+        launchPath: `apps/${listing.slug}`,
+      };
+    }
+    return {
+      ...listing,
+      installJob: { id, status: recovered ? "installed" : "building" },
+      local: {
+        installed: recovered,
+        updateAvailable: false,
+        ...(recovered ? { launchPath: `apps/${listing.slug}` } : {}),
+      },
+    };
+  });
+  vi.useFakeTimers();
+  render(
+    <ListingDetail
+      client={createStoreClient({ gatewayFetch, openApp: vi.fn() })}
+      slug={listing.slug}
+      onBack={vi.fn()}
+    />,
+  );
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(60000));
+  expect(polls).toBe(4);
+  recovered = true;
+  fireEvent.click(screen.getByRole("button", { name: "Retry build status" }));
+  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  expect(screen.getByRole("button", { name: "Open app" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(
+    gatewayFetch.mock.calls.some(([url]) => url.endsWith("/install")),
+  ).toBe(false);
+});

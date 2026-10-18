@@ -1,6 +1,6 @@
 import {describe,it,expect,vi,beforeEach} from 'vitest';
 const mocks=vi.hoisted(()=>({agent:vi.fn(),sources:vi.fn(),launch:vi.fn()}));
-vi.mock('@matrix-os/kernel',async()=>{const actual=await import('../../../packages/kernel/src/confined-file-agent.js');return {...actual,runConfinedFileAgent:mocks.agent};});
+vi.mock('@matrix-os/kernel',async()=>{const actual=await import('../../../packages/kernel/src/confined-file-agent.js');return {...actual,...await import('../../../packages/kernel/src/options.js'),runConfinedFileAgent:mocks.agent};});
 vi.mock('../../../packages/gateway/src/kernel-credentials.js',()=>({resolveKernelCredentialSources:mocks.sources,buildKernelCredentialLaunch:mocks.launch}));
 import {createStoreGeneralizer} from '../../../packages/gateway/src/app-store/generalizer.js';
 const listing={slug:'sample-app',name:'Sample',tagline:'A useful app',description:'A sample utility',category:'utilities',version:'1.0.0',changelog:''};

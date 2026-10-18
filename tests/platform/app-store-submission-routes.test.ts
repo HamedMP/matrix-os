@@ -49,6 +49,14 @@ describe('App Store authenticated platform routes', () => {
     const result = await request(target, '/submissions', 'POST', submission(bytes)); expect(result.status).toBe(201); const row = await result.json() as { versionId: string; upload: { url: string } };
     objects.set(`app-store/owners/user_publisher/uploads/${row.versionId}`, bytes); return row;
   }
+  it('looks up exactly one owner submission and conceals another owner or missing row',async()=>{
+    const target=app();const created=await create(target);
+    const own=await request(target,`/submissions/${created.versionId}`);expect(own.status).toBe(200);expect(AppStoreSubmissionSummarySchema.parse(await own.json()).versionId).toBe(created.versionId);
+    expect((await request(target,`/submissions/${created.versionId}`,'GET',undefined,'consumer')).status).toBe(404);
+    expect((await request(target,`/submissions/${randomUUID()}`)).status).toBe(404);
+    expect((await request(target,'/submissions/invalid')).status).toBe(400);
+    expect((await request(target,`/submissions/${created.versionId}`,'GET',undefined,'publisher','wrong')).status).toBe(401);
+  });
   it('requires valid HMAC, authoritative active owner, and validates all boundaries', async () => {
     const target = app();
     expect((await request(target, '/status', 'GET', undefined, 'publisher', 'wrong')).status).toBe(401);
