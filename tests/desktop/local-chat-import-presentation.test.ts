@@ -4,6 +4,14 @@ import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/c
 const createdAt = "2026-09-30T00:00:00Z";
 const provenance = { type: "import_provenance", harness: "codex", sourceId: "019eb0ae-9a30-7541-bdb8-db4d17e65146", sourceKey: "a".repeat(64), phase: "final", origin: "assistant", offset: 100, end: 200 };
 describe("historical Chat presentation", () => {
+  it("keeps injected instructions collapsed without hiding the real human request", () => {
+    const saved = (id: string, seq: number, text: string) => CanonicalChatMessageSchema.parse({ id, chatId: "chat_imported_test", seq,
+      role: "user", state: "committed", createdAt, parts: [{ type: "text", text }, { ...provenance, phase: "human", origin: "human" }] });
+    const context = '<skill>\n<name>example</name>\n<path>/skills/example/SKILL.md</path>\nSaved instructions\n</skill>';
+    const view = canonicalChatPresentation({ messages: [saved("msg_context", 1, context), saved("msg_request", 2, "My actual request")], turns: [], runs: [], activities: [] });
+    expect(view[0]?.work[0]).toMatchObject({ kind: "activity-group", activities: [{ kind: "phase", state: "completed", label: "Imported instructions", detail: context }] });
+    expect(view[0]?.userFollowups).toEqual([expect.objectContaining({ markdown: "My actual request" })]);
+  });
   it("shows imported assistant-only history without inventing a user message or live run", () => {
     const message = CanonicalChatMessageSchema.parse({ id: "msg_imported_assistant", chatId: "chat_imported_test", seq: 1,
       role: "assistant", state: "committed", createdAt, parts: [{ type: "text", text: "An imported answer" }, provenance] });
