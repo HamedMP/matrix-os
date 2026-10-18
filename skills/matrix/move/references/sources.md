@@ -20,6 +20,14 @@ preview/apply hash must refer to the same capture. A transcript stored on a
 remote Codex host must be captured there or obtained through an authorized export;
 a matching-looking local session is not a substitute.
 
+For an active current-chat move, use the end of the invoking user turn as the
+capture boundary, before transfer tooling starts. Report that boundary in the
+receipt. Preserve the complete original prefix through that request; transfer
+diagnostics belong to this operation, not the conversation being moved. Do not
+remove earlier records to bypass importer errors. If an earlier capture failed,
+verify it did not publish before applying a new capture; do not replace a
+successful import with a changed snapshot automatically.
+
 Tools, supported embedded media, and readable prose can be reconstructed. Original
 unknown/internal/encrypted records stay in the private archive. External file/URL
 references are not fetched. Preserve source-reported missing assets in the receipt.

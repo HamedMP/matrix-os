@@ -245,7 +245,7 @@ export class LocalChatImportPublisher {
         const last = page.at(-1)!; cursor = { offset: Number(last.source_offset), block: last.source_block, chunk: last.chunk };
       }
       await saveTurn();
-      await trx.updateTable("chats").set({ last_message_preview: lastMessage ? messageSearchText(lastMessage).slice(0, 280) : null,
+      await trx.updateTable("chats").set({ last_message_preview: lastMessage ? messageSearchText(lastMessage).trim().slice(0, 280) || null : null,
         activity_at: lastMessage?.createdAt ?? createdAt, updated_at: lastMessage?.createdAt ?? createdAt }).where("id", "=", chatId).execute();
       await trx.updateTable("local_chat_import_assets").set({ chat_id: chatId }).where("job_id", "=", jobId).where("status", "=", "ready")
         .where(sql<boolean>`EXISTS (SELECT 1 FROM local_chat_import_records r WHERE r.job_id = ${jobId} AND r.parts @> jsonb_build_array(jsonb_build_object('type','import_reference','assetId',local_chat_import_assets.id::text)))`).execute();

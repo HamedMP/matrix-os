@@ -42,6 +42,8 @@ state reporting on failures.
 
 - Current-chat selection uses the actual source identity. Project inventory
   cannot infer membership from mtime, title, or a shared directory alone.
+- Active current-chat capture ends at the invoking user turn; earlier source
+  bytes remain unchanged and transfer diagnostics stay outside that snapshot.
 - Imported Chats verify canonical read-back and original archives; source
   snapshots are reused on retries. Unknown/missing content remains explicit.
 - Project files verify against their manifest before registration. Imported
@@ -52,6 +54,10 @@ state reporting on failures.
   private files until a validated adapter exists; no fabricated transcript.
 - Tests exercise Git dirty/untracked/ignored data, secret/symlink exclusion,
   archive reconstruction/checksums, non-Git folders, briefs, and collisions.
+- Canonical publication accepts an original ending in tool activity without
+  storing a blank `lastMessagePreview`. A synthetic regression verifies history,
+  Chat-list read-back, and idempotent publication; private operator transcripts
+  are never committed as fixtures.
 
 ## Deferred work
 
