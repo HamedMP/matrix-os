@@ -84,13 +84,13 @@ describe('managed feature activation page', () => {
     });
     const activate = createManagedFeatureActivator({ db, platformSecret: secret, relayOrigin, fundedAiEnabled: false, speechEnabled: true, activateSpeech: speech });
     const pending = activate({});
-    await vi.waitFor(() => expect(speech).toHaveBeenCalledTimes(4));
-    expect(maximum).toBe(4);
+    await vi.waitFor(() => expect(speech).toHaveBeenCalledTimes(8));
+    expect(maximum).toBe(8);
     release();
     const first = await pending;
     expect(first).toEqual({ activated: 7, failed: 1, complete: false, nextCursor: '22345678-1234-4234-8234-000000000007' });
     expect(speech).toHaveBeenCalledTimes(8);
-    expect(maximum).toBe(4);
+    expect(maximum).toBe(8);
     expect(await activate({ afterMachineId: first.nextCursor! })).toEqual({ activated: 2, failed: 0, complete: true, nextCursor: null });
     expect(speech).toHaveBeenCalledTimes(10);
     expect(new Set(speech.mock.calls.map(([target]) => target.handle)).size).toBe(10);
@@ -121,7 +121,7 @@ describe('managed feature activation page', () => {
       expect(activeRequests).toBe(0);
     } finally { vi.useRealTimers(); }
   });
-  it('defers unstarted hosts after the page deadline without leaving child speech requests running', async () => {
+  it('starts every host before the page deadline and drains child speech requests', async () => {
     for (let index = 1; index <= 4; index += 1) await insertUserMachine(db, { machineId: `22345678-1234-4234-8234-${String(index).padStart(12, '0')}`, clerkUserId: `user_host_${index}`, handle: `host-${index}`, runtimeSlot: 'primary', status: 'running', activationState: 'authorized', provisionedAt: at });
     vi.useFakeTimers();
     try {
@@ -133,11 +133,31 @@ describe('managed feature activation page', () => {
       const speech = vi.fn((target: { handle: string; signal?: AbortSignal }) => activatePlatformSpeechFleet({ machines: [{ machineId: 'machine_test', clerkUserId: 'user_test', handle: target.handle, runtimeSlot: 'primary', runtimeTokenEpoch: 1, publicIPv4: '203.0.113.10' }], platformOrigin: 'https://app.matrix-os.com', platformSecret: secret, fetchImpl: fetchImpl as typeof fetch, signal: target.signal }));
       const activate = createManagedFeatureActivator({ db, platformSecret: secret, relayOrigin, fundedAiEnabled: false, speechEnabled: true, activateSpeech: speech, pageTimeoutMs: 1000 });
       const pending = activate({});
-      await vi.waitFor(() => expect(speech).toHaveBeenCalledTimes(4));
+      await vi.waitFor(() => expect(speech).toHaveBeenCalledTimes(5));
       await vi.advanceTimersByTimeAsync(1000);
       expect(await pending).toMatchObject({ activated: 0, failed: 5, complete: true });
-      expect(speech).toHaveBeenCalledTimes(4);
+      expect(speech).toHaveBeenCalledTimes(5);
       expect(active).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+  it('activates healthy hosts behind slow hosts on every page cycle', async () => {
+    for (let index = 1; index <= 7; index += 1) await insertUserMachine(db, { machineId: `22345678-1234-4234-8234-${String(index).padStart(12, '0')}`, clerkUserId: `user_host_${index}`, handle: `host-${index}`, runtimeSlot: 'primary', status: 'running', activationState: 'authorized', provisionedAt: at });
+    vi.useFakeTimers();
+    try {
+      let active = 0;
+      const speech = vi.fn(({ handle, signal }: { handle: string; signal?: AbortSignal }) => {
+        if (['host-4', 'host-5', 'host-6', 'host-7'].includes(handle)) return Promise.resolve({ activated: 1, failed: 0 });
+        active += 1;
+        return new Promise<{ activated: number; failed: number }>((_resolve, reject) => signal!.addEventListener('abort', () => { active -= 1; reject(signal!.reason); }, { once: true }));
+      });
+      const activate = createManagedFeatureActivator({ db, platformSecret: secret, relayOrigin, fundedAiEnabled: false, speechEnabled: true, activateSpeech: speech, pageTimeoutMs: 1000 });
+      for (let cycle = 0; cycle < 2; cycle += 1) {
+        const pending = activate({});
+        await vi.waitFor(() => expect(speech).toHaveBeenCalledTimes((cycle + 1) * 8));
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(await pending).toMatchObject({ activated: 4, failed: 4 });
+        expect(active).toBe(0);
+      }
     } finally { vi.useRealTimers(); }
   });
   it('does not enable AI without policy and respects feature kill switches', async () => {

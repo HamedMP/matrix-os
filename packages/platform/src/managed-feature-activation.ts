@@ -74,7 +74,8 @@ export function createManagedFeatureActivator(options: {
       const machines = first.done ? [] : first.value;
       const results = new Array<{ activated: boolean; failed: boolean }>(machines.length);
       let next = 0;
-      await Promise.all(Array.from({ length: Math.min(4, machines.length) }, async () => {
+      // Start every host in the bounded page before waiting on a slow host.
+      await Promise.all(Array.from({ length: Math.min(pageSize, machines.length) }, async () => {
         while (next < machines.length) {
           const index = next++;
           const machine = machines[index]!;
