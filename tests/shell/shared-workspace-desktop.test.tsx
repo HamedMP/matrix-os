@@ -3,6 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/components/ShellHome", () => ({ ShellHome: () => <div>Existing Matrix desktop</div> }));
+import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering";
 import { SharedWorkspaceDesktop } from "../../shell/src/components/workspace/SharedWorkspaceDesktop";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -14,6 +15,15 @@ describe("shared desktop compute independence", () => {
     expect(screen.getByText("Existing Matrix desktop")).toBeTruthy();
     await waitFor(() => expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/api/workspace/runtime"))).toBe(true));
     expect(screen.getByRole("status").textContent).toContain("starting");
+  });
+  it("keeps workspace controls above app windows but below Settings and hard gates", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    render(<SharedWorkspaceDesktop />);
+    const panel = screen.getByRole("complementary", { name: "Workspace compute" });
+    expect(Number(panel.style.zIndex)).toBe(SHELL_Z_INDEX.sharedWorkspaceControls);
+    expect(Number(panel.style.zIndex)).toBeGreaterThan(SHELL_Z_INDEX.fullscreenWindow);
+    expect(Number(panel.style.zIndex)).toBeLessThan(SHELL_Z_INDEX.settings);
+    expect(Number(panel.style.zIndex)).toBeLessThan(SHELL_Z_INDEX.hardGate);
   });
   it("uses authoritative status after an ambiguous wake timeout instead of staying unavailable", async () => {
     let rejectWake!: (error: Error) => void;

@@ -28,6 +28,9 @@ export const SHELL_Z_INDEX = {
   // "always on top" by default, Win11 keeps it above app windows too) but
   // below Settings, which must stay reachable over shell chrome.
   taskbar: 650,
+  // Shared workspace compute controls remain reachable above app windows and
+  // desktop chrome, while Settings and hard gates retain priority.
+  sharedWorkspaceControls: 660,
   settings: 700,
   hardGate: 800,
   // Simulated OS session overlays (lock screens, XP welcome/log-off/shutdown
