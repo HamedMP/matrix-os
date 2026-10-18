@@ -291,7 +291,7 @@ export function createWorkspaceCodingAgentProvider(
           options.codexEvents?.unwatch(sessionId);
           // Only the manager-owned reservation can prove a settled predispatch
           // failure clean; HTTP-style not-found is not filesystem absence.
-          if (!runtimeInvoked && nativeAccountBinding && scope) {
+          if (!runtimeInvoked && agent === "codex" && scope) {
             try {
               const proof = await scope.cleanFailure({});
               await options.codexAdmission?.releaseFailedStart(principal.userId, sessionId, nativeAccountBinding, proof);

@@ -35,6 +35,8 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
   const reject = (): never => { throw new Error(UNAVAILABLE); };
   async function current(userId: string) {
     if (!await options.isOwner(userId)) reject();
+    // Do not wait on the Settings lock while its revocation is stopping children.
+    await sessions.assertOpen();
     const config = await readSavedProviderSettingsConfiguration(path);
     const rows = config?.harnesses.filter(row => row.harness === "codex") ?? [];
     if (!rows.length) {
@@ -61,7 +63,10 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     if (!source || source.kind !== "provider_account" || source.providerId !== "openai"
       || source!.accountId !== row.selectedAccountId || !account || account!.providerId !== "openai"
       || account!.accessSourceId !== source!.id) reject();
-    if (source!.fundingKind === "owner_api_key" && account!.authMethod === "api_key") return undefined;
+    if (source!.fundingKind === "owner_api_key" && account!.authMethod === "api_key") {
+      await sessions.assertOpen();
+      return undefined;
+    }
     if (source!.id !== "owner_openai_profile" || source!.fundingKind !== "owner_account" || account!.authMethod !== "terminal"
       || account!.authState !== "authenticated") reject();
     await sessions.assertOpen();
@@ -87,7 +92,7 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     if (value?.binding !== binding) {
       reject();
     }
-    if (binding) await sessions.register(userId, sessionId, binding);
+    await sessions.register(userId, sessionId, value?.binding ?? null);
     return value;
   }
   return {
@@ -97,19 +102,19 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
       await sessions.releaseCleanFailure(userId, sessionId);
     },
     async releaseFailedStart(userId, sessionId, binding, result) {
-      if (!binding || !isSessionStartClean(result, userId, sessionId)) return;
-      await sessions.releaseCleanFailure(userId, sessionId, binding);
+      if (!isSessionStartClean(result, userId, sessionId)) return;
+      await sessions.releaseCleanFailure(userId, sessionId, binding ?? null);
     },
     async start(userId, sessionId) {
       const value = await current(userId);
-      if (value) await sessions.register(userId, sessionId, value.binding);
+      await sessions.register(userId, sessionId, value?.binding ?? null);
       return value?.binding;
     },
     async validate(userId, binding, sessionId) { await validate(userId, binding, sessionId); },
     async validateLaunch(userId, sessionId) {
       const prior = await sessions.get(sessionId);
       if (prior && prior.userId !== userId) reject();
-      const value = await validate(userId, prior?.binding, sessionId);
+      const value = await validate(userId, prior?.binding ?? undefined, sessionId);
       return value ? { expectedPrincipalFingerprint: value.principal, expectedConsentRevision: value.consentRevision,
         expectedHarnessInstanceId: value.harnessInstanceId, expectedAccountId: value.accountId, expectedConfigurationFingerprint: value.configurationFingerprint } : undefined;
     },

@@ -11,10 +11,10 @@ const unavailable = () => new Error("Selected Codex account is unavailable");
 /** Execution references have a hard cap; stale references drain before eviction. */
 export function createCodexExecutionSessions(homePath: string, stopSession?: (id: string) => Promise<void>) {
   const marker = join(homePath, "system/ai-providers/codex-execution-revocation.json");
-  const sessions = new Map<string, { userId: string; binding: string; expiresAt: number }>();
+  const sessions = new Map<string, { userId: string; binding: string | null; expiresAt: number }>();
   const indexPath = join(homePath, "system/ai-providers/codex-execution-sessions.json");
   const IndexSchema = z.array(z.object({ sessionId: z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/),
-    userId: z.string().min(1).max(256), binding: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().finite(),
+    userId: z.string().min(1).max(256), binding: z.string().regex(/^[a-f0-9]{64}$/).nullable(), expiresAt: z.number().finite(),
   }).strict()).max(MAX_SESSIONS);
   let loaded = false;
   let blocked = false;
@@ -107,12 +107,13 @@ export function createCodexExecutionSessions(homePath: string, stopSession?: (id
   return {
     assertOpen,
     prepareRevocation: () => serialize(prepareRevocationInternal),
-    register(userId: string, sessionId: string | undefined, binding: string | undefined) {
+    register(userId: string, sessionId: string | undefined, binding: string | null) {
       return serialize(async () => {
         await load();
         await assertOpen();
         await evictExpired();
-        if (!sessionId || !binding) return;
+        // Null tracks an API-key child for cleanup; it is never native subscription proof.
+        if (!sessionId) return;
         if (!sessions.has(sessionId) && sessions.size >= MAX_SESSIONS) throw unavailable();
         const prior = sessions.get(sessionId);
         if (prior && (prior.userId !== userId || prior.binding !== binding)) throw unavailable();
@@ -120,7 +121,7 @@ export function createCodexExecutionSessions(homePath: string, stopSession?: (id
         await persist();
       });
     },
-    releaseCleanFailure(userId: string, sessionId: string, binding?: string) {
+    releaseCleanFailure(userId: string, sessionId: string, binding?: string | null) {
       return serialize(async () => {
         await load();
         const prior = sessions.get(sessionId);

@@ -199,3 +199,69 @@ it('rejects legacy unknown authentication before generic launch', async () => {
   const admission = createCodexExecutionAdmission({ ...f.options, readNativeAccount: async () => null });
   await expect(admission.start('owner')).rejects.toThrow('unavailable');
 });
+
+it.each(["configured", "legacy"] as const)("tracks %s API-key work for owner-scoped revocation without subscription intent", async mode => {
+  const f = await fixture(); f.change({ method: "api_key" }); await f.save();
+  if (mode === "legacy") await rm(join(f.homePath, "system/ai-providers/settings.json"));
+  const stopSession = vi.fn(async () => undefined);
+  const admission = createCodexExecutionAdmission({ ...f.options, stopSession });
+  await expect(admission.start("other", "sess_foreign")).rejects.toThrow("unavailable");
+  await expect(admission.start("owner", "sess_key_running")).resolves.toBeUndefined();
+  await expect(admission.validateLaunch("owner", "sess_key_running")).resolves.toBeUndefined();
+  const restarted = createCodexExecutionAdmission({ ...f.options, stopSession });
+  const release = await restarted.prepareRevocation();
+  expect(stopSession).toHaveBeenCalledExactlyOnceWith("sess_key_running");
+  await expect(restarted.start("owner", "sess_key_late")).rejects.toThrow("unavailable");
+  await release();
+});
+it("fences configured API-key starts while revocation is held", async () => {
+  const f = await fixture(); f.change({ method: "api_key" }); await f.save();
+  const release = await f.admission.prepareRevocation();
+  try { await expect(f.admission.start("owner", "sess_racing_key")).rejects.toThrow("unavailable"); }
+  finally { await release(); }
+});
+it("retains an API-key execution fence when its exact child stop is uncertain", async () => {
+  const f = await fixture(); f.change({ method: "api_key" }); await f.save();
+  const stopSession = vi.fn(async () => { throw new Error("uncertain child stop"); });
+  const admission = createCodexExecutionAdmission({ ...f.options, stopSession });
+  await admission.start("owner", "sess_key_uncertain");
+  await expect(admission.prepareRevocation()).rejects.toThrow("unavailable");
+  expect(stopSession).toHaveBeenCalledExactlyOnceWith("sess_key_uncertain");
+  await expect(createCodexExecutionAdmission(f.options).start("owner", "sess_after_restart")).rejects.toThrow("unavailable");
+});
+it("releases only an owner-matched proved clean API-key start failure", async () => {
+  const f = await fixture(); f.change({ method: "api_key" }); await f.save();
+  const stopSession = vi.fn(async () => undefined);
+  const admission = createCodexExecutionAdmission({ ...f.options, stopSession });
+  await admission.start("owner", "sess_key_clean");
+  await admission.releaseFailedStart("owner", "sess_key_clean", undefined,
+    markSessionStartClean({ ok: false }, "owner", "sess_key_clean"));
+  const release = await admission.prepareRevocation(); await release();
+  expect(stopSession).not.toHaveBeenCalled();
+});
+it("never promotes a tracked API-key execution into native subscription authority", async () => {
+  const f = await fixture(); f.change({ method: "api_key" }); await f.save();
+  await f.admission.start("owner", "sess_key_mode");
+  f.change({ method: "terminal" }); await f.save();
+  await expect(f.admission.validateLaunch("owner", "sess_key_mode")).rejects.toThrow("unavailable");
+});
+it.each(["unproved", "foreign-owner", "wrong-session", "subscription-binding"] as const)("retains API-key work after %s cleanup", async mode => {
+  const f = await fixture(); f.change({ method: "api_key" }); await f.save();
+  const stopSession = vi.fn(async () => undefined);
+  const admission = createCodexExecutionAdmission({ ...f.options, stopSession });
+  await admission.start("owner", "sess_key_proof");
+  const proof = mode === "unproved" ? {} : markSessionStartClean({ ok: false },
+    mode === "foreign-owner" ? "other" : "owner", mode === "wrong-session" ? "sess_other" : "sess_key_proof");
+  await admission.releaseFailedStart("owner", "sess_key_proof", mode === "subscription-binding" ? "a".repeat(64) : undefined, proof);
+  const release = await admission.prepareRevocation(); await release();
+  expect(stopSession).toHaveBeenCalledExactlyOnceWith("sess_key_proof");
+});
+it("does not let an API-key clean failure release a native subscription session", async () => {
+  const f = await fixture(); const stopSession = vi.fn(async () => undefined);
+  const admission = createCodexExecutionAdmission({ ...f.options, stopSession });
+  await admission.start("owner", "sess_subscription_proof");
+  await admission.releaseFailedStart("owner", "sess_subscription_proof", undefined,
+    markSessionStartClean({ ok: false }, "owner", "sess_subscription_proof"));
+  const release = await admission.prepareRevocation(); await release();
+  expect(stopSession).toHaveBeenCalledExactlyOnceWith("sess_subscription_proof");
+});

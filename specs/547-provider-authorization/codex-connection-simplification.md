@@ -53,3 +53,13 @@ Matrix AI fixture remains unchanged. Existing UI confirmations consume the
 admitted action; this fix does not merely force buttons visible.
 
 Final publication follows independent review of the exact Main-relative diff, then current-head Greptile and full CI. Live credential mutation and deployment remain separate from source tests. The companion public documentation deliverable is FinnaAI/matrix-os-site PR #237.
+
+## Active API-key work during native sign-out
+
+API-key execution retains its key-funded launch path and receives no native
+subscription intent. Track its exact owner/session reference for cleanup with a
+null subscription binding, including legacy starts and process restart. Native
+Log out/Change account must await that work stopping before CLI logout and the
+successful Settings receipt. Failed or uncertain stops retain the durable fence;
+only manager-proved clean failures release a reference. This lifecycle bookkeeping
+does not grant subscription authority or affect the independent Matrix AI grant.

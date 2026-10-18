@@ -330,13 +330,18 @@ describe("public native Codex session admission", () => {
     await release();
   });
 
-  it("preserves the independently verified legacy API-key start without native subscription intent", async () => {
+  it("drains real legacy API-key work without granting native subscription intent", async () => {
     const f = await fixture();
     await f.change({ method: "api_key", missingSettings: true });
-    expect((await f.start()).status).toBe(201);
+    const response = await f.start();
+    expect(response.status).toBe(201);
+    const { session } = await response.json();
     expect(f.effects[0]?.nativeCodexSubscription).toBeUndefined();
+    expect(await f.index()).toEqual([expect.objectContaining({ sessionId: session.id, userId: "owner", binding: null })]);
     const release = await f.runtime.admission.prepareRevocation();
-    expect(f.terminal.terminateTab).not.toHaveBeenCalled();
+    expect(f.terminal.terminateTab).toHaveBeenCalledExactlyOnceWith(session.terminalRef);
+    expect(await f.manager.getSession(session.id)).toMatchObject({ ok: true, session: { runtime: { status: "exited" } } });
+    expect(await f.index()).toEqual([]);
     await release();
   });
 

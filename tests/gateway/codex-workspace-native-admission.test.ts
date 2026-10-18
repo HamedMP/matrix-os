@@ -58,3 +58,16 @@ describe("native admission at the actual Codex command boundary", () => {
     expect(f.control.submitTurn).not.toHaveBeenCalled();
   });
 });
+
+it("releases proved predispatch API-key registration without a subscription binding", async () => {
+  const f = fixture();
+  f.admission.start.mockResolvedValueOnce(undefined as never);
+  f.events.watch.mockRejectedValueOnce(new Error("watch unavailable"));
+  const proof = markSessionStartClean({}, "owner", "sess_native");
+  const cleanFailure = vi.fn(async () => proof);
+  Object.assign(f.runtime, { withSessionStart: async (_owner: string, _id: string, operation: (scope: unknown) => unknown) =>
+    operation({ startSession: f.runtime.startSession, cleanFailure }) });
+  await expect(f.provider.startThread({ ...f.base, request: { providerId: "codex", prompt: "Inspect", clientRequestId: "req_key_watch" } })).rejects.toThrow("watch unavailable");
+  expect(f.runtime.startSession).not.toHaveBeenCalled();
+  expect(f.admission.releaseFailedStart).toHaveBeenCalledWith("owner", "sess_native", undefined, proof);
+});
