@@ -1,11 +1,9 @@
 import { DirectoryBackup, type DirectoryBackupRecord } from '@cloudflare/sandbox';
 import type { RuntimeCheckpoint, RuntimeDriver, RuntimeJob, RuntimeLease } from './contracts.js';
 import { runtimeDiagnostic } from './diagnostic.js';
+import { resolveRuntimeCredentials, type RuntimeCredentialResolver, type RuntimeCredentials } from './credentials.js';
 
 export interface NativeRuntimeEnvironment {
-  ANTHROPIC_API_KEY: string;
-  RUNTIME_AUTH_SECRET: string;
-  RUNTIME_DATABASE_URL?: string;
   RUNTIME_INSTANCE?: string;
 }
 export interface RuntimeOutput {
@@ -15,37 +13,39 @@ export interface RuntimeOutput {
 const ROOT = '/opt/matrix';
 const CONTROL = 'packages/workspace-worker/runtime/control.mjs';
 const MAX_OUTPUT = 256_000;
-const encoder = new TextEncoder();
 
 /** Native ctx.container API only. Credentials never enter the image or backup. */
 export class NativeRuntimeDriver implements RuntimeDriver {
   private executionEnv: Record<string, string> = {};
+  private credentials?:RuntimeCredentials;
+  private boundOwner?:string;
+  private readonly instance:ReturnType<typeof runtimeInstance>;
   constructor(
     private readonly container: Container,
     private readonly backups: DirectoryBackup,
-    private readonly env: NativeRuntimeEnvironment,
+    env: NativeRuntimeEnvironment,
     private readonly publish: (lease: RuntimeLease, output: RuntimeOutput) => Promise<void>,
     private readonly checkpointSaved: (checkpoint: RuntimeCheckpoint) => Promise<void>,
     private readonly hydrate: (ownerId: string) => Promise<RuntimeOutput['files']> = async () => [],
-  ) {}
+    private readonly resolveCredentials?:RuntimeCredentialResolver,
+  ) {this.instance=runtimeInstance(env.RUNTIME_INSTANCE);}
   get running(): boolean { return this.container.running; }
 
   async start(ownerId: string, checkpoint: RuntimeCheckpoint | null, generation: number): Promise<void> {
     return this.withPhase('start',async()=>{
-    if (!this.env.ANTHROPIC_API_KEY || !this.env.RUNTIME_AUTH_SECRET || !this.env.RUNTIME_DATABASE_URL) throw new Error('Runtime credentials unavailable');
-    const key = await crypto.subtle.importKey('raw', encoder.encode(this.env.RUNTIME_AUTH_SECRET),
-      {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
-    const auth = await crypto.subtle.sign('HMAC', key, encoder.encode(`${ownerId}:${generation}`));
-    const token = Array.from(new Uint8Array(auth), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    if (this.boundOwner!==undefined && this.boundOwner!==ownerId) throw new Error('Runtime credentials unavailable');
+    const credentials=await resolveRuntimeCredentials(this.resolveCredentials,{ownerId,generation});
+    this.boundOwner=ownerId;
+    this.credentials=credentials;
     this.executionEnv = {
       HOME: '/workspace/home', MATRIX_HOME: '/workspace/home', NODE_ENV: 'production',
-      MATRIX_AUTH_TOKEN: token, ANTHROPIC_API_KEY: this.env.ANTHROPIC_API_KEY,
-      ...(this.env.RUNTIME_DATABASE_URL ? {DATABASE_URL:this.env.RUNTIME_DATABASE_URL} : {}),
+      MATRIX_AUTH_TOKEN:credentials.authToken, ANTHROPIC_API_KEY:credentials.inferenceKey,
+      DATABASE_URL:credentials.databaseUrl,
     };
     if (!this.container.running) {
       this.container.start({
         image: this.container.images.workspace, enableInternet: true,
-        instance: runtimeInstance(this.env.RUNTIME_INSTANCE),
+        instance:this.instance,
       });
       // The 6h failsafe is separate from idle grace; explicit alarms checkpoint
       // before sleep. A checkpoint error must not trigger a short platform stop.
@@ -59,10 +59,15 @@ export class NativeRuntimeDriver implements RuntimeDriver {
       await this.command('hydrate', JSON.stringify(files));
     }
     await this.command('start', undefined, 100_000);
-    });
+    }).catch(error=>{this.clearCredentials();throw error;});
   }
 
   async execute(job: RuntimeJob, lease: RuntimeLease): Promise<void> {
+    try {
+    if (!this.credentials || this.credentials.ownerId!==job.ownerId || lease.ownerId!==job.ownerId
+      || lease.jobId!==job.jobId
+      || this.credentials.generation!==lease.generation || this.credentials.expiresAt<lease.maxRunAt
+      || this.credentials.expiresAt<=Date.now() || lease.maxRunAt<=Date.now()) throw new Error('Runtime credentials unavailable');
     await this.command('execute', JSON.stringify(job), Math.max(1000, lease.maxRunAt - Date.now()));
     if (job.type === 'wake') return;
     // The spike admits one task per workspace. Stop writers before archiving.
@@ -71,6 +76,7 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     const raw = await this.command('export');
     const output = await this.withPhase('export',async()=>JSON.parse(raw) as RuntimeOutput);
     await this.withPhase('publish',()=>this.publish(lease, output));
+    } finally {this.clearCredentials();}
   }
   async keepAlive(): Promise<void> {
     if (!this.container.running) return;
@@ -83,18 +89,22 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     } finally { clearTimeout(timer); }
   }
   async checkpoint(_ownerId: string, generation: number): Promise<RuntimeCheckpoint> {
-    await this.command('stop', undefined, 35_000);
     try {
+      await this.command('stop', undefined, 35_000);
       const backup = await this.backups.backup({ dir:'/workspace/home', exclude:['.cache/', 'system/heap-snapshots/', 'system/ai-providers/anthropic-key.json', 'system/ai-providers/.matrix-anthropic-key-staging/', '.claude.json', '.claude/.claude.json', '.claude/.credentials.json', '.claude/settings.json', '.claude/settings.local.json'], signal:AbortSignal.timeout(60_000) });
       return { backup, generation, createdAt:Date.now() };
     } catch (error: unknown) {
       const value = error as {name?:unknown;message?:unknown;code?:unknown;operation?:unknown;path?:unknown;detail?:unknown};
       console.error('[workspace-runtime] Native backup failed',this.redact(JSON.stringify({name:value?.name,message:value?.message,code:value?.code,operation:value?.operation,path:value?.path,detail:value?.detail})));
-      throw runtimeDiagnostic('checkpoint',error,(text)=>this.redact(text));
-    }
+      throw this.diagnostic('checkpoint',error);
+    } finally {this.clearCredentials();}
   }
-  async stop(): Promise<void> { await this.container.destroy(); }
+  async stop(): Promise<void> {
+    try {await this.withPhase('stop',()=>this.container.destroy());}
+    finally {this.clearCredentials();}
+  }
   async cancel(_lease: RuntimeLease): Promise<void> {
+    try {await this.withPhase('stop',async()=>{
     // A fetch client exiting cannot abort gateway SDK descendants. Destroy the
     // isolated compute boundary to enforce the hard budget; saved work is in R2.
     if (this.container.running) {
@@ -106,6 +116,7 @@ export class NativeRuntimeDriver implements RuntimeDriver {
         throw error;
       }
     }
+    });} finally {this.clearCredentials();}
   }
   async metrics(): Promise<unknown> {
     if (!this.running) return {running:false};
@@ -114,15 +125,26 @@ export class NativeRuntimeDriver implements RuntimeDriver {
 
   private redact(input: string): string {
     let text=input;
-    for (const value of [...Object.values(this.executionEnv),...Object.values(this.env)]) {
-      if (typeof value === 'string' && value.length>=6) text=text.split(value).join('[redacted]');
+    for (const value of Object.values(this.executionEnv)) {
+      if (typeof value === 'string' && value.length>=6) {
+        text=text.split(value).join('[redacted]');
+        text=text.split(JSON.stringify(value).slice(1,-1)).join('[redacted]');
+      }
     }
     return text.replace(/sk-[A-Za-z0-9_-]+/g,'[redacted-key]').replace(/postgres(?:ql)?:\/\/[^\s"']+/g,'[redacted-database]').slice(-4096);
   }
 
+  private clearCredentials():void {this.executionEnv={};this.credentials=undefined;}
+
+  private diagnostic(phase:string,error:unknown):Error {
+    const diagnostic=runtimeDiagnostic(phase,error,text=>this.redact(text));
+    // Tagged upstream errors also pass through this driver's secret scrubber.
+    return new Error(this.redact(diagnostic.message));
+  }
+
   private async withPhase<T>(phase:string,action:()=>Promise<T>):Promise<T> {
     try {return await action();}
-    catch(error:unknown) {throw runtimeDiagnostic(phase,error,(text)=>this.redact(text));}
+    catch(error:unknown) {throw this.diagnostic(phase,error);}
   }
 
   private async command(operation: string, input?: string, timeoutMs = 10_000): Promise<string> {
@@ -142,7 +164,7 @@ export class NativeRuntimeDriver implements RuntimeDriver {
       }
       if (result.stdout.byteLength > MAX_OUTPUT) throw new Error('Runtime output limit exceeded');
       return new TextDecoder().decode(result.stdout);
-    } catch(error:unknown) {throw runtimeDiagnostic(operation,error,(text)=>this.redact(text));}
+    } catch(error:unknown) {throw this.diagnostic(operation,error);}
     finally { clearTimeout(timer); }
   }
 }

@@ -4,10 +4,12 @@ import { RuntimeLifecycle } from './lifecycle.js';
 import { NativeRuntimeDriver, type NativeRuntimeEnvironment, type RuntimeOutput } from './native-driver.js';
 import { runtimePolicyFromEnvironment, type RuntimeJob, type RuntimeLease, type RuntimeStore } from './contracts.js';
 import { readRuntimeMetrics } from './memory-metrics.js';
+import type { RuntimeCredentialResolver } from './credentials.js';
 export { DirectoryBackupGateway } from '@cloudflare/sandbox';
 
 export interface RuntimeConnection {
   store: RuntimeStore;
+  resolveCredentials: RuntimeCredentialResolver;
   publishOutput(lease: RuntimeLease, output: RuntimeOutput): Promise<void>;
   hydrate?(ownerId: string): Promise<RuntimeOutput['files']>;
   close(): Promise<void>;
@@ -25,9 +27,6 @@ export abstract class WorkspaceRuntime extends DurableObject<WorkspaceRuntimeEnv
   constructor(ctx: DurableObjectState, env: WorkspaceRuntimeEnvironment) {
     super(ctx, env);
     if (!ctx.container) throw new Error('Workspace container is not configured');
-    if (ctx.container.running) {
-      void ctx.blockConcurrencyWhile(() => ctx.container!.setInactivityTimeout(6 * 60 * 60_000));
-    }
   }
 
   async run(job: RuntimeJob): Promise<{accepted:boolean}> {
@@ -69,7 +68,7 @@ export abstract class WorkspaceRuntime extends DurableObject<WorkspaceRuntimeEnv
       async (checkpoint) => {
         const ownerId = await connection.store.ownerForRuntime(this.ctx.id.toString());
         if (!ownerId || !await connection.store.saveCheckpoint(ownerId, checkpoint)) throw new Error('Checkpoint fence rejected');
-      }, (ownerId) => connection.hydrate?.(ownerId) ?? Promise.resolve([]));
+      }, (ownerId) => connection.hydrate?.(ownerId) ?? Promise.resolve([]), connection.resolveCredentials);
     const policy = runtimePolicyFromEnvironment(this.env);
     const runtime = new RuntimeLifecycle(connection.store, driver, (at) => this.ctx.storage.setAlarm(at), Date.now, policy);
     return {runtime,connection};
