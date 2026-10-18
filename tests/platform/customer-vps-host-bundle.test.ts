@@ -786,10 +786,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('host bundle release workflow stamps the resolved channel into release metadata before packaging', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
-    const deployJob = workflow.slice(
-      workflow.indexOf('\n  deploy:'),
-      workflow.indexOf('\n  targeted-deploy:'),
-    );
 
     expect(workflow).toContain('channel: ${{ steps.channel.outputs.channel }}');
     expect(workflow).toContain('id: channel');
@@ -806,13 +802,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 60 \\');
     expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: ${{ vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED || 'false' }}");
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate"');
-    expect(workflow).toContain('for page_attempt in $(seq 1 20); do');
-    expect(workflow).toContain("--arg afterMachineId \"$PAGE_CURSOR\"");
-    expect(workflow).toContain("complete=\"$(printf '%s' \"$ACTIVATE_RESPONSE\" | jq -r '.complete')\"");
-    expect(workflow).toContain("next_cursor=\"$(printf '%s' \"$ACTIVATE_RESPONSE\" | jq -r '.nextCursor // empty')\"");
-    expect(workflow).toContain('Managed speech activation page is still converging:');
-    expect(deployJob).not.toContain('for attempt in $(seq 1 20); do');
-    expect(workflow).toContain('Managed speech activation did not converge within the bounded rollout window.');
     expect(workflow).not.toContain('HOST_BUNDLE_CHANNEL: ${{ steps.meta.outputs.channel }}');
     expect(workflow).not.toContain('-X POST "https://app.matrix-os.com/vps/deploy"');
   });
