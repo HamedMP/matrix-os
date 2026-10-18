@@ -7,7 +7,7 @@ import { parseGatewayResult, isSdkSessionId } from './result.mjs';
 const MAX_BYTES = 262_144;
 const MAX_CHATS = 1000;
 const CHAT = /^chat_[A-Za-z0-9_-]{1,128}$/;
-const OWNER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/;
+const OWNER = /^[A-Za-z0-9_-]{1,160}$/;
 const unavailable = () => new Error('Runtime session state unavailable');
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const keys = (value, names) => object(value) && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));

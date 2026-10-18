@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, stat, realpath } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRuntimeSessions, runChatJob } from '../../packages/workspace-worker/runtime/sessions.mjs';
+import { parseQueuedJob } from '../../packages/workspace-worker/src/bridge.js';
 
 const idA = 'f46dd3a2-fb54-460c-883d-d8cce11f4fe3';
 const idB = '326f3235-4e3d-48e6-898f-a7b522c531b7';
@@ -13,6 +14,15 @@ const job = (chatId = 'chat_a') => ({ ownerId: 'user_a', type: 'chat', chatId, m
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 describe('private runtime Chat identity', () => {
+  it.each(['_preview','-preview','a'.repeat(160)])('runs Chat for every canonical queued owner form: %s',async ownerId=>{
+    const home=await fixture();
+    const queued=parseQueuedJob({...job(),ownerId,jobId:'accepted_owner'});
+    await runChatJob(home,queued,async()=>new Response(result()));
+    expect(await createRuntimeSessions(home,ownerId).get('chat_a')).toBe(idA);
+  });
+  it.each(['a'.repeat(161),'owner.with.dot','owner:scope','../owner'])('rejects noncanonical session owner %s',async ownerId=>{
+    expect(()=>createRuntimeSessions('/private/tmp',ownerId)).toThrow('Runtime session');
+  });
   it('passes only server-associated session identity and persists before success', async () => {
     const home = await fixture(); const requests: unknown[] = [];
     const request = async (_path: string, body: unknown) => { requests.push(body); return new Response(result()); };
