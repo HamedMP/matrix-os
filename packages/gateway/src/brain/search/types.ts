@@ -199,10 +199,11 @@ type BrainVectorReplace = Parameters<BrainVectorStore["replaceChunks"]>[1];
 export type BrainSearchChunkWrite = BrainVectorReplace["chunks"][number] & { readonly textKey?: string };
 
 /**
- * The search stores: replaceChunks also keeps text keys, and is skipped (nothing deleted or written) unless the
+ * The search stores: replaceChunks also keeps text keys; a write is skipped (nothing deleted or written) unless the
  * document is live at the input's (incarnation, revision) and, when the input carries a claims key, its search row
- * still holds that claims set (isLiveAt, in the write's transaction). Optional: remaining() says how many more rows
- * fit when the listed documents' rows are replaced; storedVectors() returns kept vectors by text key.
+ * still holds that claims set (isLiveAt, in the write's transaction), and a removal (no chunks) while the document is
+ * live at another one. Optional: remaining() says how many more rows fit when the listed documents' rows are
+ * replaced; storedVectors() returns kept vectors by text key.
  */
 export interface BrainSearchVectorStore extends BrainVectorStore {
   replaceChunks(scope: BrainScopeKey, input: Omit<BrainVectorReplace, "chunks"> & {
