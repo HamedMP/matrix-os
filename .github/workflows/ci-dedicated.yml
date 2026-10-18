@@ -2,7 +2,7 @@ name: Dedicated CI Benchmark
 # Data-only identity is available in the API even while the controller is queued.
 # Exact ref/merge/attempt provenance is still verified after admission.
 run-name: >-
-  ${{ github.event_name == 'workflow_run' && format('dedicated-refresh-v2 execution={0} request={1} title={2}', ((github.event.workflow_run.event != 'push' || (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && vars.MATRIX_CI_DEDICATED_MAIN == 'true')) && (((startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ') || startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ')) && ((github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1))) || (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.display_title == 'CI' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1))) && 'true' || 'false', github.event.workflow_run.id, github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && format('CI coverage-v1 · {0}', github.event.workflow_run.head_sha) || github.event.workflow_run.display_title) || format('dedicated-ci-v2 pr={0} head={1} base={2} requested={3}', github.event.pull_request.number || 0, github.event.pull_request.head.sha || github.sha, github.event.pull_request.base.sha || 'manual', github.event_name == 'pull_request_target' && !(github.event_name == 'pull_request_target' && (((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.pull_request.draft == true) || (github.event.action == 'edited' && github.event.changes.base == null) || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ready-for-ci' && github.event.label.name != 'fast-ci') || (github.event.action == 'labeled' && !(contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && contains(github.event.pull_request.labels.*.name, 'fast-ci'))))) && (github.event.action == 'opened' || github.event.action == 'labeled' || github.event.action == 'ready_for_review' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'edited' && github.event.changes.base != null)) && 'true' || 'false') }}
+  ${{ github.event_name == 'workflow_dispatch' && inputs.controller_mode && format('dedicated-isolated-v1 mode={0} request={1} attempt={2}', inputs.controller_mode, inputs.requesting_run_id, inputs.requesting_run_attempt) || github.event_name == 'workflow_run' && format('dedicated-refresh-v2 execution={0} request={1} title={2}', ((vars.MATRIX_CI_ISOLATED_EXECUTION != 'true' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')) && (github.event.workflow_run.event != 'push' || (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && vars.MATRIX_CI_DEDICATED_MAIN == 'true')) && (((startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ') || startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ')) && ((github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1))) || (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.display_title == 'CI' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1))) && 'true' || 'false', github.event.workflow_run.id, github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && format('CI coverage-v1 · {0}', github.event.workflow_run.head_sha) || github.event.workflow_run.display_title) || format('dedicated-ci-v2 pr={0} head={1} base={2} requested={3}', github.event.pull_request.number || 0, github.event.pull_request.head.sha || github.sha, github.event.pull_request.base.sha || 'manual', github.event_name == 'pull_request_target' && !(github.event_name == 'pull_request_target' && (((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.pull_request.draft == true) || (github.event.action == 'edited' && github.event.changes.base == null) || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ready-for-ci' && github.event.label.name != 'fast-ci') || (github.event.action == 'labeled' && !(contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && contains(github.event.pull_request.labels.*.name, 'fast-ci'))))) && (github.event.action == 'opened' || github.event.action == 'labeled' || github.event.action == 'ready_for_review' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'edited' && github.event.changes.base != null)) && 'true' || 'false') }}
 
 # This controller comes from the default branch and never executes PR code.
 # Parent-only moves fail CI Source Qualification and dispatch fresh main-defined CI.
@@ -20,6 +20,24 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      controller_mode:
+        description: Authenticated isolated controller operation
+        type: choice
+        options: ['', qualification, reconcile, maintenance]
+        default: ''
+      requesting_run_id:
+        description: Exact authenticated original run ID
+        type: string
+      requesting_run_attempt:
+        description: Exact authenticated original run attempt
+        type: string
+      requesting_action:
+        description: Original authenticated event action
+        type: string
+      reconciliation_pr:
+        description: Queue hint revalidated against the authenticated requester (0 means full)
+        type: string
+        default: ''
       source_sha:
         description: Exact public commit to benchmark (blank uses this commit)
         required: false
@@ -48,9 +66,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  route_execution:
+    name: Route isolated controller work
+    if: github.ref == 'refs/heads/main' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && (github.event_name == 'workflow_run' || github.event_name == 'schedule' || github.event_name == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Dispatch authenticated isolated operation
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url'),{resolve}=require('node:path');
+            const {routeControllerEvent}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-execution-router.mjs')).href);
+            const result=await routeControllerEvent(github,context.repo,process.env.CONTROLLER_SHA,{...context,runAttempt:Number(process.env.CONTROLLER_ATTEMPT)},{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION});
+            await core.summary.addRaw(`Controller routing only: ${JSON.stringify(result)}. No candidate coverage is claimed.`).write();
+
   benchmark:
     # The main-delegation guard here must match the run-name execution flag; both are evaluated in tests.
-    if: (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && github.ref == 'refs/heads/main' && !(github.event_name == 'pull_request_target' && (((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.pull_request.draft == true) || (github.event.action == 'edited' && github.event.changes.base == null) || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ready-for-ci' && github.event.label.name != 'fast-ci') || (github.event.action == 'labeled' && !(contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && contains(github.event.pull_request.labels.*.name, 'fast-ci'))))) && ((github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'fast-ci')) || (github.event_name == 'workflow_run' && (github.event.workflow_run.event != 'push' || (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && vars.MATRIX_CI_DEDICATED_MAIN == 'true')) && (((startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ') || startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ')) && ((github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1))) || (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.display_title == 'CI' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1))))
+    if: (((vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && github.ref == 'refs/heads/main' && !(github.event_name == 'pull_request_target' && (((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.pull_request.draft == true) || (github.event.action == 'edited' && github.event.changes.base == null) || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ready-for-ci' && github.event.label.name != 'fast-ci') || (github.event.action == 'labeled' && !(contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && contains(github.event.pull_request.labels.*.name, 'fast-ci'))))) && ((github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'fast-ci')) || (github.event_name == 'workflow_run' && (github.event.workflow_run.event != 'push' || (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && vars.MATRIX_CI_DEDICATED_MAIN == 'true')) && (((startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ') || startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ')) && ((github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1))) || (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.display_title == 'CI' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1) || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.action == 'requested' && github.event.workflow_run.run_attempt == 1))))) && (vars.MATRIX_CI_ISOLATED_EXECUTION != 'true' || github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'))) || ((vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.event_name == 'workflow_dispatch' && inputs.controller_mode == 'qualification' && startsWith(github.ref, 'refs/heads/ci-execution/'))
     runs-on: ubuntu-latest
     environment: matrix-ci
     timeout-minutes: 70
@@ -60,18 +106,32 @@ jobs:
       RACE_LOST_ERRORS: '["A newer controller superseded this lease", "A newer requesting CI attempt superseded this lease", "Dedicated qualification revision or admission is stale", "Current parent ref has changed", "Current ordered merge parents are stale", "Current main source is stale", "Main moved during source attestation"]'
     steps:
       - name: Authenticate reviewed controller pin before helper or secret use
+        id: origin
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+          EXECUTION_WORKFLOW_PATH: .github/workflows/ci-dedicated.yml
+          EXECUTION_WORKFLOW_REF: ${{ github.workflow_ref }}
+          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
         with:
           script: |
-            const pin=process.env.CONTROLLER_SHA;
-            if(context.ref!=='refs/heads/main'||process.env.CONTROLLER_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`||!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Untrusted default controller origin or source pin');
-            const {data:main}=await github.rest.repos.getBranch({...context.repo,branch:'main',request:{timeout:10000}});
-            if(main.name!=='main'||!/^[a-f0-9]{40}$/.test(main.commit?.sha||''))throw new Error('Invalid current main branch identity');
-            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.commit.sha}`,request:{timeout:10000}});
-            if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed controller pin is not on main');
+            const pin=process.env.CONTROLLER_SHA,path=process.env.EXECUTION_WORKFLOW_PATH;
+            if(!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Reviewed controller pin is missing');
+            const main=context.ref==='refs/heads/main';
+            if(main){if(process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@refs/heads/main`)throw new Error('Untrusted Main workflow origin');const request={timeout:10000};const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});if(tip.name!=='main'||!/^[a-f0-9]{40}$/.test(tip.commit?.sha||''))throw new Error('Invalid current main branch identity');const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed helper pin is not on Main');core.setOutput('controller_sha',pin);core.setOutput('helper_sha',path.endsWith('/ci.yml')&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:pin);return;}
+            const ref=`refs/heads/ci-execution/${pin}`;
+            if(process.env.ISOLATED_EXECUTION!=='true'||context.ref!==ref||process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@${ref}`||process.env.EXECUTION_WORKFLOW_SHA!==context.sha||context.sha===pin)throw new Error('Untrusted isolated workflow origin');
+            const request={timeout:10000};
+            const {data:child}=await github.rest.git.getCommit({...context.repo,commit_sha:context.sha,request});
+            const {data:source}=await github.rest.git.getCommit({...context.repo,commit_sha:pin,request});
+            const {data:branch}=await github.rest.repos.getBranch({...context.repo,branch:`ci-execution/${pin}`,request});
+            const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});
+            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});
+            if(child.sha!==context.sha||source.sha!==pin||child.parents?.length!==1||child.parents[0].sha!==pin||!/^[a-f0-9]{40}$/.test(child.tree?.sha||'')||child.tree.sha!==source.tree?.sha||branch.commit?.sha!==context.sha||!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Isolated workflow does not match reviewed Main source');
+            core.setOutput('controller_sha',pin);core.setOutput('helper_sha',pin);
+            core.setOutput('execution_origin',JSON.stringify({schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:context.sha,executionWorkflowSha:context.sha,workflowPath:path,treeSha:child.tree.sha}));
       - name: Checkout reviewed default-controller helpers
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -86,6 +146,8 @@ jobs:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
+          EXECUTION_ORIGIN: ${{ steps.origin.outputs.execution_origin }}
+          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
           MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
           MATRIX_CI_DEDICATED_MAIN: ${{ vars.MATRIX_CI_DEDICATED_MAIN }}
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
@@ -109,22 +171,27 @@ jobs:
             if(requester&&await requesterInactive()){standDownInactive();return;}
             let admission;
             try{admission=await admitDedicatedSource(github,{
-              repo:context.repo, controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
-              eventName:context.eventName,payload:context.payload,inputSha:process.env.INPUT_SHA});}
+              repo:context.repo, controller:{sha:process.env.CONTROLLER_SHA,ref:process.env.EXECUTION_ORIGIN?'refs/heads/main':context.ref,workflowRef:process.env.EXECUTION_ORIGIN?`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`:process.env.CONTROLLER_WORKFLOW_REF,...(process.env.EXECUTION_ORIGIN?{executionOrigin:JSON.parse(process.env.EXECUTION_ORIGIN)}:{})},
+              eventName:context.eventName,payload:context.payload,inputSha:process.env.INPUT_SHA,executionContext:process.env.EXECUTION_ORIGIN?{ref:context.ref,sha:context.sha,workflowRef:process.env.CONTROLLER_WORKFLOW_REF,workflowSha:process.env.EXECUTION_WORKFLOW_SHA}:undefined});}
             catch(error){
+              if(context.eventName==='workflow_dispatch'&&context.payload.inputs?.controller_mode==='qualification'){
+                const {InactiveIsolatedRequester}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-isolated.mjs')).href);
+                if(error instanceof InactiveIsolatedRequester){core.notice('Standing down: authenticated isolated requester is no longer active');core.setOutput('admitted','false');return;}
+              }
               // The requester can finish between the lookup above and the helper's own read; confirm before standing down.
               if(requester&&error instanceof Error&&error.message==='Refresh requester is not currently admitted'&&await requesterInactive()){standDownInactive();return;}
               if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('admitted','false');return;
             }
             if (!admission) { core.setOutput('admitted','false'); return; }
+            const executionOrigin=process.env.EXECUTION_ORIGIN?JSON.parse(process.env.EXECUTION_ORIGIN):null;
             const {sourceSha:sha,headSha,baseSha,baseRef,prNumber}=admission;
             // The job condition admits main only when ENABLED and MAIN are both on, so main is always delegated here.
             const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow';
-            const requesting=prNumber>0||admission.sourceKind==='main'?await newestRequestingCiRun(github,context.repo,admission,mode):null;
-            const summary={schemaVersion:3,suite:context.payload.inputs?.suite || 'qualification',
+            const requesting=prNumber>0||admission.sourceKind==='main'?await newestRequestingCiRun(github,context.repo,{...admission,controllerSha:process.env.CONTROLLER_SHA},mode):null;
+            const summary={schemaVersion:executionOrigin?4:3,...(executionOrigin?{executionOrigin}:{}),suite:context.payload.inputs?.suite || 'qualification',
               ...(requesting?{requestingRunId:requesting.runId,requestingRunAttempt:requesting.runAttempt}:{}),
               mode,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
-              ...admission,controllerRunId:context.runId,controllerSha:process.env.CONTROLLER_SHA,controllerRef:context.ref,
+              ...admission,controllerRunId:context.runId,controllerSha:process.env.CONTROLLER_SHA,controllerRef:'refs/heads/main',
               controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT),controllerWorkflow:'.github/workflows/ci-dedicated.yml'};
             const {data:check}=await github.rest.checks.create({
               ...context.repo, name:prNumber>0||admission.sourceKind==='main' ? 'Dedicated CI Results' : 'Dedicated CI Benchmark',
@@ -173,6 +240,8 @@ jobs:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
+          EXECUTION_ORIGIN: ${{ steps.origin.outputs.execution_origin }}
+          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
           HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
           CI_SSH_KEY: ${{ secrets.CI_RUNNER_SSH_KEY }}
@@ -192,20 +261,20 @@ jobs:
               mergeParents:JSON.parse(data.merge_parents),...(data.source_kind==='main'?{sourceKind:'main'}:{}),requestingRunId:Number(data.requesting_run_id),
               requestingRunAttempt:Number(data.requesting_run_attempt),controllerRunId:context.runId,
               controllerRunAttempt:Number(process.env.CONTROLLER_ATTEMPT),controllerSha:process.env.CONTROLLER_SHA,
-              controllerRef:context.ref,controllerWorkflow:'.github/workflows/ci-dedicated.yml',
+              controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',
               imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
               mode:data.mode,suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,
                 workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
             const raceLost=error=>error instanceof Error&&JSON.parse(process.env.RACE_LOST_ERRORS).includes(error.message);
             let receipt;
             try{receipt=await dispatchDedicatedLease(configuration.github,{repo:context.repo,
-              controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},request,
+              controller:{sha:process.env.CONTROLLER_SHA,ref:process.env.EXECUTION_ORIGIN?'refs/heads/main':context.ref,workflowRef:process.env.EXECUTION_ORIGIN?`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`:process.env.CONTROLLER_WORKFLOW_REF,...(process.env.EXECUTION_ORIGIN?{executionOrigin:JSON.parse(process.env.EXECUTION_ORIGIN)}:{})},request,
               ssh:{host:process.env.CI_SSH_HOST,key:process.env.CI_SSH_KEY,knownHosts:process.env.CI_KNOWN_HOSTS}},
               {metrics:values=>core.info('Controller API polling: '+JSON.stringify(values))});}
             catch(error){if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('superseded','true');return;}
             finally{await configuration.close();}
             await mkdir('output/ci-dedicated',{recursive:true});
-            await writeFile('output/ci-dedicated/receipt.json',JSON.stringify(receipt),{flag:'wx'});
+            await writeFile('output/ci-dedicated/receipt.json',JSON.stringify(process.env.EXECUTION_ORIGIN?{schemaVersion:2,executionOrigin:JSON.parse(process.env.EXECUTION_ORIGIN),receipt}:receipt),{flag:'wx'});
             core.setOutput('request',JSON.stringify(request));
             core.setOutput('request_digest',receipt.requestDigest);
             core.setOutput('lease_id',receipt.leaseId);
@@ -250,6 +319,8 @@ jobs:
           SOURCE_SHA: ${{ steps.admit.outputs.sha }}
           SUITE: ${{ inputs.suite || 'qualification' }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
+          EXECUTION_ORIGIN: ${{ steps.origin.outputs.execution_origin }}
+          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
           SUPERSEDED: ${{ steps.current.outputs.superseded || steps.dispatch.outputs.superseded }}
         with:
           script: |
@@ -259,7 +330,7 @@ jobs:
             const settleSuperseded=()=>github.rest.checks.update({...context.repo,check_run_id:Number(process.env.CHECK_ID),request:{timeout:10000},
                 details_url:`${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
                 status:'completed',conclusion:'neutral',output:{title:'Superseded by a newer controller or source',
-                  summary:JSON.stringify({schemaVersion:3,...(main?{sourceKind:'main'}:{}),superseded:true,receiptVerified:false,
+                  summary:JSON.stringify({schemaVersion:process.env.EXECUTION_ORIGIN?4:3,...(process.env.EXECUTION_ORIGIN?{executionOrigin:JSON.parse(process.env.EXECUTION_ORIGIN)}:{}),...(main?{sourceKind:'main'}:{}),superseded:true,receiptVerified:false,
                     sourceSha:process.env.SOURCE_SHA,headSha:process.env.HEAD_SHA,prNumber:Number(process.env.PR_NUMBER),
                     controllerRunId:context.runId,controllerSha:process.env.CONTROLLER_SHA,controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT)})}});
             if(process.env.SUPERSEDED==='true'){await settleSuperseded();return;}
@@ -276,7 +347,7 @@ jobs:
               const {validInfrastructureProof}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-outcome.mjs')).href);
               proof=process.env.INFRASTRUCTURE_PROOF?JSON.parse(process.env.INFRASTRUCTURE_PROOF):{};infrastructure=process.env.DISPATCH_OUTCOME==='success'&&validInfrastructureProof(proof);
               if((success||infrastructure) && (Number(process.env.PR_NUMBER)>0||main))await verifyDedicatedLeaseGrant(configuration.github,context.repo,
-                {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},JSON.parse(process.env.LEASE_REQUEST));
+                {sha:process.env.CONTROLLER_SHA,ref:process.env.EXECUTION_ORIGIN?'refs/heads/main':context.ref,workflowRef:process.env.EXECUTION_ORIGIN?`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`:process.env.CONTROLLER_WORKFLOW_REF,...(process.env.EXECUTION_ORIGIN?{executionOrigin:JSON.parse(process.env.EXECUTION_ORIGIN)}:{})},JSON.parse(process.env.LEASE_REQUEST));
               await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:process.env.SOURCE_SHA,
                 headSha:process.env.HEAD_SHA,baseSha:process.env.BASE_SHA,baseRef:process.env.BASE_REF,
                 prNumber:Number(process.env.PR_NUMBER),...(main?{sourceKind:'main'}:{}),mergeParents:JSON.parse(process.env.MERGE_PARENTS||'[]')});
@@ -298,14 +369,14 @@ jobs:
               status: 'completed', conclusion: success ? 'success' : infrastructure ? 'neutral' : 'failure',
               output: {
                 title: success ? 'Isolated Linux suite passed' : infrastructure ? 'Linux infrastructure unavailable; full hosted coverage required' : 'Isolated Linux suite failed',
-                summary: JSON.stringify({schemaVersion: 3,...(main?{sourceKind:'main'}:{}),...(infrastructure?proof:{}), requestingRunId:Number(process.env.REQUESTING_RUN_ID),
+                summary: JSON.stringify({schemaVersion:process.env.EXECUTION_ORIGIN?4:3,...(process.env.EXECUTION_ORIGIN?{executionOrigin:JSON.parse(process.env.EXECUTION_ORIGIN)}:{}),...(main?{sourceKind:'main'}:{}),...(infrastructure?proof:{}), requestingRunId:Number(process.env.REQUESTING_RUN_ID),
                   requestingRunAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),
                   imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
                   mode:process.env.MODE,receiptVerified:success,requestDigest:process.env.REQUEST_DIGEST,
                   leaseId:process.env.LEASE_ID, suite: process.env.SUITE,
                   sourceSha: process.env.SOURCE_SHA, headSha: process.env.HEAD_SHA, mergeParents:JSON.parse(process.env.MERGE_PARENTS||'[]'),
                   baseSha: process.env.BASE_SHA, baseRef:process.env.BASE_REF, prNumber: Number(process.env.PR_NUMBER),
-                  controllerRunId:context.runId,controllerSha: process.env.CONTROLLER_SHA, controllerRef: context.ref,
+                  controllerRunId:context.runId,controllerSha: process.env.CONTROLLER_SHA, controllerRef:'refs/heads/main',
                   controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT),
                   controllerWorkflow: '.github/workflows/ci-dedicated.yml'})
               }
@@ -322,7 +393,7 @@ jobs:
 
   reconcile:
     name: Revoke stale stacked qualification
-    if: github.ref == 'refs/heads/main' && !(github.event_name == 'pull_request_target' && (((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.pull_request.draft == true) || (github.event.action == 'edited' && github.event.changes.base == null) || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ready-for-ci' && github.event.label.name != 'fast-ci') || (github.event.action == 'labeled' && !(contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && contains(github.event.pull_request.labels.*.name, 'fast-ci'))))) && (github.event_name != 'workflow_run' || github.event.action == 'completed')
+    if: ((github.ref == 'refs/heads/main' && !(github.event_name == 'pull_request_target' && (((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.pull_request.draft == true) || (github.event.action == 'edited' && github.event.changes.base == null) || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ready-for-ci' && github.event.label.name != 'fast-ci') || (github.event.action == 'labeled' && !(contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && contains(github.event.pull_request.labels.*.name, 'fast-ci'))))) && (github.event_name != 'workflow_run' || github.event.action == 'completed')) && (vars.MATRIX_CI_ISOLATED_EXECUTION != 'true' || github.event_name == 'pull_request_target')) || (vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.event_name == 'workflow_dispatch' && (inputs.controller_mode == 'reconcile' || inputs.controller_mode == 'maintenance') && startsWith(github.ref, 'refs/heads/ci-execution/'))
     environment: matrix-ci
     permissions:
       actions: write
@@ -334,7 +405,7 @@ jobs:
     concurrency:
       # One global queue serialized every PR's reconcile behind every other (40+ deep under load).
       # Queue per scope instead: a PR, a pushed PR with its direct children, or the full scan.
-      group: matrix-ci-reconcile-${{ github.event.pull_request && format('{0}-{1}', github.event.action == 'synchronize' && 'push' || 'pr', github.event.pull_request.number) || (github.event.workflow_run.pull_requests[0] && !github.event.workflow_run.pull_requests[1] && github.event.workflow_run.pull_requests[0].head.repo.id == github.event.repository.id && github.event.workflow_run.pull_requests[0].base.repo.id == github.event.repository.id) && format('pr-{0}', github.event.workflow_run.pull_requests[0].number) || 'full' }}
+      group: matrix-ci-reconcile-${{ github.event_name == 'workflow_dispatch' && inputs.controller_mode == 'reconcile' && inputs.reconciliation_pr != '' && inputs.reconciliation_pr != '0' && format('pr-{0}', inputs.reconciliation_pr) || github.event.pull_request && format('{0}-{1}', github.event.action == 'synchronize' && 'push' || 'pr', github.event.pull_request.number) || (github.event.workflow_run.pull_requests[0] && !github.event.workflow_run.pull_requests[1] && github.event.workflow_run.pull_requests[0].head.repo.id == github.event.repository.id && github.event.workflow_run.pull_requests[0].base.repo.id == github.event.repository.id) && format('pr-{0}', github.event.workflow_run.pull_requests[0].number) || 'full' }}
       queue: max
       cancel-in-progress: false
     steps:
@@ -344,20 +415,40 @@ jobs:
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+          EXECUTION_WORKFLOW_PATH: .github/workflows/ci-dedicated.yml
+          EXECUTION_WORKFLOW_REF: ${{ github.workflow_ref }}
+          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
         with:
           script: |
-            const pin=process.env.CONTROLLER_SHA || context.sha;
-            if(context.ref!=='refs/heads/main'||process.env.CONTROLLER_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`||!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Untrusted default controller origin or source pin');
-            const {data:main}=await github.rest.repos.getBranch({...context.repo,branch:'main',request:{timeout:10000}});
-            if(main.name!=='main'||!/^[a-f0-9]{40}$/.test(main.commit?.sha||''))throw new Error('Invalid current main branch identity');
-            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.commit.sha}`,request:{timeout:10000}});
-            if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed controller pin is not on main');
-            core.setOutput('controller_sha',pin);
+            const pin=process.env.CONTROLLER_SHA || (context.ref==='refs/heads/main'&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:''),path=process.env.EXECUTION_WORKFLOW_PATH;
+            if(!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Reviewed controller pin is missing');
+            const main=context.ref==='refs/heads/main';
+            if(main){if(process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@refs/heads/main`)throw new Error('Untrusted Main workflow origin');const request={timeout:10000};const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});if(tip.name!=='main'||!/^[a-f0-9]{40}$/.test(tip.commit?.sha||''))throw new Error('Invalid current main branch identity');const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed helper pin is not on Main');core.setOutput('controller_sha',pin);core.setOutput('helper_sha',path.endsWith('/ci.yml')&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:pin);return;}
+            const ref=`refs/heads/ci-execution/${pin}`;
+            if(process.env.ISOLATED_EXECUTION!=='true'||context.ref!==ref||process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@${ref}`||process.env.EXECUTION_WORKFLOW_SHA!==context.sha||context.sha===pin)throw new Error('Untrusted isolated workflow origin');
+            const request={timeout:10000};
+            const {data:child}=await github.rest.git.getCommit({...context.repo,commit_sha:context.sha,request});
+            const {data:source}=await github.rest.git.getCommit({...context.repo,commit_sha:pin,request});
+            const {data:branch}=await github.rest.repos.getBranch({...context.repo,branch:`ci-execution/${pin}`,request});
+            const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});
+            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});
+            if(child.sha!==context.sha||source.sha!==pin||child.parents?.length!==1||child.parents[0].sha!==pin||!/^[a-f0-9]{40}$/.test(child.tree?.sha||'')||child.tree.sha!==source.tree?.sha||branch.commit?.sha!==context.sha||!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Isolated workflow does not match reviewed Main source');
+            core.setOutput('controller_sha',pin);core.setOutput('helper_sha',pin);
+            core.setOutput('execution_origin',JSON.stringify({schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:context.sha,executionWorkflowSha:context.sha,workflowPath:path,treeSha:child.tree.sha}));
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ steps.origin.outputs.controller_sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
+      - name: Revalidate isolated queue scope before credentials
+        if: steps.origin.outputs.execution_origin != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url'),{resolve}=require('node:path');
+            const {validatedIsolatedReconciliationScope}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-isolated.mjs')).href);
+            await validatedIsolatedReconciliationScope(github,context.repo,context.payload.inputs);
       - name: Create repository-scoped configuration read token
         id: configuration-token
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
@@ -398,6 +489,8 @@ jobs:
           GATE_TOKEN: ${{ steps.gate-token.outputs.token }}
           GATE_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
+          EXECUTION_ORIGIN: ${{ steps.origin.outputs.execution_origin }}
+          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
           CONTROLLER_SHA: ${{ steps.origin.outputs.controller_sha }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
         with:
@@ -422,8 +515,15 @@ jobs:
                 :{prNumber:context.payload.pull_request.number})
               :ciPulls.length===1&&[ciPulls[0].base?.repo?.url,ciPulls[0].head?.repo?.url].every(url=>String(url).toLowerCase()===ownRepo)
                 ?{prNumber:ciPulls[0].number}:{};
+            let executionOrigin;
+            if(process.env.EXECUTION_ORIGIN){
+              const {verifiedSourceController,validatedIsolatedReconciliationScope}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-isolated.mjs')).href);
+              const verified=await verifiedSourceController(sourceGithub,context.repo,{sha:process.env.CONTROLLER_SHA},{ref:context.ref,sha:context.sha,workflowRef:process.env.CONTROLLER_WORKFLOW_REF,workflowSha:process.env.EXECUTION_WORKFLOW_SHA});
+              executionOrigin=verified.executionOrigin;
+              Object.assign(scope,await validatedIsolatedReconciliationScope(sourceGithub,context.repo,context.payload.inputs));
+            }
             const gate=await reconcileSourceQualification(sourceGithub,context.repo,
-              {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
+              {sha:process.env.CONTROLLER_SHA,ref:executionOrigin?'refs/heads/main':context.ref,workflowRef:executionOrigin?`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`:process.env.CONTROLLER_WORKFLOW_REF,...(executionOrigin?{executionOrigin}:{})},
               {gateGithub,gateAppId:Number(process.env.GATE_APP_ID),runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...(context.eventName==='pull_request_target'?{eventPull:context.payload.pull_request}:{}),...scope});
             core.info(`Examined ${gate.examined} source gates; refreshed ${gate.dispatched} exact-source requests.`);
 

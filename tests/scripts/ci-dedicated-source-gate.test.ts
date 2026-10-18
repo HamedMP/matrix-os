@@ -1,11 +1,12 @@
 import {pinArtifactFixture} from './helpers/dedicated-artifact-fixture';
 import {describe,expect,it,vi} from 'vitest';
 import * as gate from '../../scripts/ci/dedicated-source-gate.mjs';
+import {reconciliationCycle} from '../../scripts/ci/dedicated-source-gate-cycle.mjs';
 const head='a'.repeat(40),base='b'.repeat(40),merge='c'.repeat(40),main='d'.repeat(40);
 const repo={owner:'HamedMP',repo:'matrix-os'},origin={sha:main,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'};
 function fixture(){
  const pull={number:2454,state:'open',draft:false,labels:[] as {name:string}[],head:{sha:head,ref:'child',repo:{full_name:'HamedMP/matrix-os'}},base:{sha:base,ref:'stack/parent',repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
- const github={rest:{pulls:{get:vi.fn(async()=>({data:pull})),list:vi.fn(async()=>({data:[pull]}))},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:base}}})),getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[] as any[]}})),create:vi.fn(async(args:any)=>({data:{id:10,...args}})),update:vi.fn(async()=>({data:{}}))},actions:{getWorkflow:vi.fn(async(args:{workflow_id:string})=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+args.workflow_id}})),getRepoVariable:vi.fn(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?main:args.name.includes('IMAGE')?'sha256:'+'e'.repeat(64):args.name.includes('HARNESS')?'f'.repeat(64):args.name.includes('SHADOW')?'true':'false'}})),getWorkflowRun:vi.fn(async()=>({data:{id:123,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'schedule',head_sha:main,head_branch:'main',run_attempt:1,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}}})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[] as any[]}})),createWorkflowDispatch:vi.fn(async()=>({data:{}}))}}};
+ const github={rest:{pulls:{get:vi.fn(async()=>({data:pull})),list:vi.fn(async()=>({data:[pull]}))},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:base}}})),getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[] as any[]}})),create:vi.fn(async(args:any)=>({data:{id:10,...args}})),update:vi.fn(async()=>({data:{}}))},actions:{getWorkflow:vi.fn(async(args:{workflow_id:string})=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+args.workflow_id}})),getRepoVariable:vi.fn(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?main:args.name.includes('IMAGE')?'sha256:'+'e'.repeat(64):args.name.includes('HARNESS')?'f'.repeat(64):args.name.includes('SHADOW')?'true':'false'}})),getWorkflowRun:vi.fn(async()=>({data:{id:123,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'schedule',head_sha:main,head_branch:'main',run_attempt:1,created_at:'2026-10-18T00:00:00Z',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}}})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[] as any[]}})),createWorkflowDispatch:vi.fn(async()=>({data:{}}))}}};
  const reviewed={rest:{...github.rest,actions:{...github.rest.actions,listRepoVariables:vi.fn(async()=>({data:{total_count:5,variables:await Promise.all(['MATRIX_CI_CONTROLLER_SHA','MATRIX_CI_DEDICATED_ENABLED','MATRIX_CI_DEDICATED_SHADOW','MATRIX_CI_RUNNER_IMAGE_DIGEST','MATRIX_CI_RUNNER_HARNESS_DIGEST'].map(async name=>(await github.rest.actions.getRepoVariable({name})).data))}}))}}};
  const gateGithub={rest:{checks:{create:vi.fn(async(args:any)=>({data:{id:10,...args,app:{id:777}}})),update:vi.fn(async(args:any)=>({data:{id:args.check_run_id,name:'CI Source Qualification',head_sha:head,...args,app:{id:777}}}))}}};return{pull,github:reviewed,gateGithub};
 }
@@ -312,16 +313,16 @@ describe('scoped reconciliation after a PR push',()=>{
 
 
 describe('large repository reconciliation',()=>{
- it('qualifies all 306 open PRs without imposing the old 300-PR repository ceiling',async()=>{
+ it('enumerates all 306 open PRs while qualifying only its bounded maintenance batch',async()=>{
   const f=fixture();
   const pulls=Array.from({length:306},(_,index)=>({...structuredClone(f.pull),number:3000+index}));
   f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
   f.github.rest.pulls.list.mockImplementation(async(args:any)=>({data:pulls.slice((args.page-1)*100,args.page*100)}));
   f.github.rest.pulls.get.mockImplementation(async(args:any)=>({data:pulls.find(p=>p.number===args.pull_number)!}));
   const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
-  expect(result).toEqual({examined:306,dispatched:0});
+  expect(result).toMatchObject({examined:8,dispatched:0,deferred:298,budgetDeferred:false});
   expect(f.github.rest.pulls.list).toHaveBeenCalledTimes(4);
-  expect(f.gateGithub.rest.checks.create).toHaveBeenCalledTimes(306);
+  expect(f.gateGithub.rest.checks.create).toHaveBeenCalledTimes(8);
   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  });
  it('uses the API base filter for direct children and gets the pushed PR separately',async()=>{
@@ -377,7 +378,7 @@ it('keeps a successfully dispatched fresh requester pending, but fails closed if
  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
  await reconcile(f);expect(lastWrite(f)).toMatchObject({status:'in_progress'});expect(lastWrite(f)).not.toHaveProperty('conclusion');
  const rejected=fixture();rejected.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
- rejected.github.rest.actions.createWorkflowDispatch.mockRejectedValue(new Error('Dispatch denied'));
+ rejected.github.rest.actions.createWorkflowDispatch.mockRejectedValue(Object.assign(new Error('Dispatch denied'),{status:403}));
  await expect(reconcile(rejected)).rejects.toThrow('Dispatch denied');
  expect(lastWrite(rejected)).toMatchObject({status:'completed',conclusion:'failure',output:{title:'Fresh requesting CI could not be dispatched'}});
 });
@@ -385,7 +386,9 @@ it('keeps the full open-PR scan bounded and never silently truncates an oversize
  const f=fixture();f.github.rest.pulls.list.mockResolvedValue({data:Array.from({length:100},()=>({...f.pull,base:{...f.pull.base,repo:{full_name:'foreign/repository'}}}))});
  await expect(gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub})).rejects.toThrow('Open pull request scan exceeds bounded coverage');
  expect(f.github.rest.pulls.list).toHaveBeenCalledTimes(100);
- expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();
+ expect(f.gateGithub.rest.checks.create.mock.calls.filter(([args])=>JSON.parse(args.output.summary).prNumber>0)).toHaveLength(0);
+ expect(f.gateGithub.rest.checks.update.mock.calls.filter(([args])=>JSON.parse(args.output.summary).prNumber>0)).toHaveLength(0);
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
 });
 
 it('does not refresh an already active requester when a ready PR still has its draft N/A gate',async()=>{
@@ -397,11 +400,261 @@ it('does not refresh an already active requester when a ready PR still has its d
 });
 it('retries a denied dispatch instead of treating its failed timestamp as accepted work',async()=>{
  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
- f.github.rest.actions.createWorkflowDispatch.mockRejectedValueOnce(new Error('Dispatch denied'));
+ f.github.rest.actions.createWorkflowDispatch.mockRejectedValueOnce(Object.assign(new Error('Dispatch denied'),{status:403}));
  await expect(reconcile(f)).rejects.toThrow('Dispatch denied');
  const prior={id:10,name:'CI Source Qualification',head_sha:head,...lastWrite(f),app:{id:777,slug:'matrix-ci-gate'}};
  f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.check_name==='CI Source Qualification'?[prior]:[]}}));
  await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(2);
  expect(lastWrite(f)).toMatchObject({status:'in_progress'});
  expect(JSON.parse(lastWrite(f).output.summary)).not.toHaveProperty('refreshDispatchFailed');
+});
+
+
+describe('controller pin generation fencing',()=>{
+ const nextPin='9'.repeat(40);
+ function movingPin(f:ReturnType<typeof fixture>){
+  let selected=main;
+  const variables=f.github.rest.actions.getRepoVariable.getMockImplementation()!;
+  f.github.rest.actions.getRepoVariable.mockImplementation(async args=>args.name==='MATRIX_CI_CONTROLLER_SHA'?{data:{name:args.name,value:selected}}:variables(args));
+  const branch=f.github.rest.repos.getBranch.getMockImplementation()!;
+  f.github.rest.repos.getBranch.mockImplementation(async args=>args.branch==='main'?{data:{name:'main',commit:{sha:nextPin}}}:branch(args));
+  Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async({basehead}:{basehead:string})=>{
+   const [before,after]=basehead.split('...');
+   return{data:{status:before===after?'identical':'ahead',merge_base_commit:{sha:before}}};
+  })});
+  return()=>{selected=nextPin;};
+ }
+ it('does not publish or dispatch from a queued controller superseded by a reviewed main pin',async()=>{
+  const f=fixture(),move=movingPin(f);f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];move();
+  await reconcile(f);
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('does not publish pending coverage or dispatch if the pin changes during PR discovery',async()=>{
+  const f=fixture(),move=movingPin(f);f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+  const pull=f.github.rest.pulls.get.getMockImplementation()!;
+  f.github.rest.pulls.get.mockImplementation(async(...args)=>{const value=await pull(...args);move();return value;});
+  await reconcile(f);
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('still denies missing reviewed configuration instead of treating it as supersession',async()=>{
+  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+  const variables=f.github.rest.actions.getRepoVariable.getMockImplementation()!;
+  f.github.rest.actions.getRepoVariable.mockImplementation(async args=>args.name==='MATRIX_CI_CONTROLLER_SHA'?{data:{name:args.name,value:''}}:variables(args));
+  await reconcile(f);expect(lastWrite(f)).toMatchObject({conclusion:'failure',output:{title:'Reviewed execution configuration is incomplete'}});
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+});
+
+
+describe('bounded full-scope maintenance',()=>{
+ function maintenanceFixture(count:number,createdAt:string){
+  const f=fixture(),pulls=Array.from({length:count},(_,i)=>({...structuredClone(f.pull),number:3000+i}));
+  f.github.rest.pulls.list.mockImplementation(async()=>({data:pulls}));
+  f.github.rest.pulls.get.mockImplementation(async({pull_number}:{pull_number:number})=>({data:pulls.find(p=>p.number===pull_number)!}));
+  f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:{id:123,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'schedule',head_sha:main,head_branch:'main',run_attempt:1,created_at:createdAt,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}}} as any);
+  return f;
+ }
+ const run=(f:ReturnType<typeof fixture>)=>gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
+ const writtenPrs=(f:ReturnType<typeof fixture>)=>f.gateGithub.rest.checks.create.mock.calls.map(([args])=>JSON.parse(args.output.summary).prNumber).filter(number=>number>0);
+ it('reconciles an authenticated full-scope workflow dispatch using its bounded maintenance slot',async()=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');
+  const runInfo=(await f.github.rest.actions.getWorkflowRun()).data;
+  f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:{...runInfo,event:'workflow_dispatch'}} as any);
+  const result=await run(f);
+  expect(writtenPrs(f)).toHaveLength(8);expect(result).toMatchObject({examined:9,deferred:0});
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('accepts a manual main workflow definition newer than its authenticated reviewed checkout pin',async()=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');
+  const runInfo=(await f.github.rest.actions.getWorkflowRun()).data;
+  f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:{...runInfo,event:'workflow_dispatch',head_sha:'9'.repeat(40)}} as any);
+  await run(f);expect(writtenPrs(f)).toHaveLength(8);
+ });
+ it.each(['candidate-branch','malformed-head'])('denies manual maintenance with %s workflow origin',async kind=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');
+  const runInfo=(await f.github.rest.actions.getWorkflowRun()).data;
+  f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:{...runInfo,event:'workflow_dispatch',head_branch:kind==='candidate-branch'?'child':'main',head_sha:kind==='malformed-head'?'bad':head}} as any);
+  await expect(run(f)).rejects.toThrow('Untrusted manual maintenance checkout');
+  expect(writtenPrs(f)).toHaveLength(0);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('covers every PR in three bounded eight-PR scheduled batches without qualifying untouched PRs',async()=>{
+  const seen=new Set<number>();
+  for(let slot=0;slot<3;slot++){
+   const f=maintenanceFixture(24,new Date(Date.UTC(2026,9,18,0,slot*15)).toISOString());await run(f);
+   const numbers=writtenPrs(f);expect(numbers).toHaveLength(8);expect(new Set(numbers).size).toBe(8);numbers.forEach(number=>seen.add(number));
+   expect(f.github.rest.pulls.get.mock.calls.map(([args])=>args.pull_number)).toEqual(numbers);
+  }
+  expect([...seen].sort((a,b)=>a-b)).toEqual(Array.from({length:24},(_,i)=>3000+i));
+ });
+ it('rotates first position so a repeatedly expensive PR cannot starve the same batch',async()=>{
+  const first=new Set<number>();
+  for(let cycle=0;cycle<8;cycle++){
+   const f=maintenanceFixture(8,new Date(Date.UTC(2026,9,18,0,cycle*15)).toISOString());await run(f);first.add(writtenPrs(f)[0]);
+  }
+  expect([...first].sort((a,b)=>a-b)).toEqual(Array.from({length:8},(_,i)=>3000+i));
+ });
+ it('bounds actual API calls and defers unexamined PRs without writing a budget failure as evidence',async()=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');
+  const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub,maintenanceLimits:{maxApiCalls:12,maxMilliseconds:240000}});
+  const apiCalls=Object.entries(f.github.rest).flatMap(([namespace,methods])=>Object.entries(methods).filter(([name])=>namespace!=='actions'||name!=='getRepoVariable').map(([,method])=>(method as ReturnType<typeof vi.fn>).mock.calls.length)).reduce((a,b)=>a+b,0);
+  const writes=f.gateGithub.rest.checks.create.mock.calls.length+f.gateGithub.rest.checks.update.mock.calls.length;
+  expect(apiCalls+writes).toBeLessThanOrEqual(12);const processed=writtenPrs(f);expect(processed.length).toBeLessThan(8);
+  expect(result).toMatchObject({deferred:8-processed.length});
+  const published=f.gateGithub.rest.checks.create.mock.calls.map(([args])=>args).filter(args=>JSON.parse(args.output.summary).prNumber>0);
+  expect(published.every(args=>args.conclusion==='success'&&args.output.title==='Dedicated source qualification: not admitted')).toBe(true);
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('defers remaining PRs at the invocation deadline without emitting success for them',async()=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');let now=Date.UTC(2026,9,18);
+  const clock=vi.spyOn(Date,'now').mockImplementation(()=>now),create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+  f.gateGithub.rest.checks.create.mockImplementation(async args=>{const result=await create(args);if(JSON.parse(args.output.summary).prNumber>0)now+=240001;return result;});
+  try{
+   const result=await run(f);expect(writtenPrs(f)).toHaveLength(1);expect(result).toMatchObject({deferred:7});
+   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  }finally{clock.mockRestore();}
+ });
+});
+
+
+it.each(['off-main','rollback'])('denies a well-formed %s replacement controller instead of silently superseding',async kind=>{
+ const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];const replacement='9'.repeat(40);
+ const variables=f.github.rest.actions.getRepoVariable.getMockImplementation()!;
+ f.github.rest.actions.getRepoVariable.mockImplementation(async args=>args.name==='MATRIX_CI_CONTROLLER_SHA'?{data:{name:args.name,value:replacement}}:variables(args));
+ Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async({basehead}:{basehead:string})=>{
+  const [before]=basehead.split('...');
+  return{data:{status:kind==='off-main'?'diverged':before===main?'behind':'ahead',merge_base_commit:{sha:kind==='off-main'?base:before}}};
+ })});
+ await reconcile(f);expect(lastWrite(f)).toMatchObject({conclusion:'failure',output:{title:'Reviewed execution configuration is incomplete'}});
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+it.each(['current-source','requester','qualification'])('does not convert admitted-path %s deadline deferral into a failure check',async stage=>{
+ const f=completeFixture();let now=Date.UTC(2026,9,18);const clock=vi.spyOn(Date,'now').mockImplementation(()=>now);
+ const run={...f.controller,id:123,event:'schedule',head_sha:main,head_branch:'main',created_at:'2026-10-18T00:00:00Z'};
+ const history=f.github.rest.actions.getWorkflowRun.getMockImplementation()!;
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>args.run_id===123?{data:run}:history(args));
+ const commit=f.github.rest.repos.getCommit.getMockImplementation()!;
+ // The fixture's absent main commit fails closed separately; the PR still has genuine full evidence.
+ const branch=f.github.rest.repos.getBranch.getMockImplementation()!;
+ f.github.rest.repos.getBranch.mockImplementation(async args=>args.branch==='main'?{data:{name:'main',commit:{sha:main}}}:branch(args));
+ if(stage==='current-source')f.github.rest.repos.getCommit.mockImplementation(async(...args)=>{if((args[0] as any)?.ref===merge)now+=240001;return commit(...args);});
+ if(stage==='requester'||stage==='qualification'){
+  const original=f.github.rest.actions.listWorkflowRuns.getMockImplementation()!;let searches=0;
+  f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>{const value=await original(args);if(++searches===(stage==='requester'?1:3))now+=240001;return value;});
+ }
+ try{
+  const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
+  const writes=[...f.gateGithub.rest.checks.create.mock.calls,...f.gateGithub.rest.checks.update.mock.calls].map(([args])=>args).filter(args=>JSON.parse(args.output.summary).prNumber>0);
+  expect(result).toMatchObject({budgetDeferred:true,deferred:1});
+  expect(writes.every(args=>args.conclusion===undefined)).toBe(true);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ }finally{clock.mockRestore();}
+});
+
+
+it.each(['malformed','off-main','enabled'])('does not use hosted recovery to bypass %s dedicated configuration',async kind=>{
+ const f=fixture();const values:Record<string,string>={MATRIX_CI_CONTROLLER_SHA:main,MATRIX_CI_DEDICATED_ENABLED:'false',MATRIX_CI_DEDICATED_SHADOW:'false'};
+ if(kind==='malformed')values.MATRIX_CI_RUNNER_HARNESS_DIGEST='invalid';
+ if(kind==='enabled')values.MATRIX_CI_DEDICATED_ENABLED='true';
+ if(kind==='off-main'){values.MATRIX_CI_CONTROLLER_SHA='9'.repeat(40);values.MATRIX_CI_RUNNER_IMAGE_DIGEST='sha256:'+'e'.repeat(64);values.MATRIX_CI_RUNNER_HARNESS_DIGEST='f'.repeat(64);}
+ f.github.rest.actions.listRepoVariables.mockImplementation(async()=>({data:{total_count:Object.keys(values).length,variables:Object.entries(values).map(([name,value])=>({name,value}))}}));
+ Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'diverged',merge_base_commit:{sha:base}}}))});
+ const cycle=reconciliationCycle(f.github,f.gateGithub,repo,origin,{runId:123,runAttempt:1,prNumber:2454});
+ try{
+  await expect(cycle.beforeWrite('success',false,true)).rejects.toThrow('configuration changed');
+  await expect(cycle.beforeDispatch(true)).rejects.toThrow('configuration changed');
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ }finally{cycle.close();}
+});
+
+
+describe('reserved requester dispatch admission',()=>{
+ function dispatchFixture(){
+  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+  let prior:any,pendingApiCalls=0;
+  const calls=()=>Object.entries(f.github.rest).flatMap(([namespace,methods])=>Object.entries(methods).filter(([name])=>namespace!=='actions'||name!=='getRepoVariable').map(([,method])=>(method as ReturnType<typeof vi.fn>).mock.calls.length)).reduce((sum,n)=>sum+n,0)+f.gateGithub.rest.checks.create.mock.calls.length+f.gateGithub.rest.checks.update.mock.calls.length;
+  f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.ref===head&&args.check_name==='CI Source Qualification'&&prior?[prior]:[]}}));
+  const create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+  f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{
+   const result=await create(args);
+   if(JSON.parse(args.output.summary).prNumber===2454){prior=result.data;pendingApiCalls=calls();}
+   return result;
+  });
+  const update=f.gateGithub.rest.checks.update.getMockImplementation()!;
+  f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{
+   const result=await update(args);
+   if(args.check_run_id===prior?.id){Object.assign(prior,result.data);if(args.status!=='completed')delete prior.conclusion;return{data:prior};}
+   return result;
+  });
+  const run=(maxApiCalls=256)=>gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub,maintenanceLimits:{maxApiCalls,maxMilliseconds:240000}});
+  return{...f,run,pendingApiCalls:()=>pendingApiCalls};
+ }
+ it('retries on the next reconciliation when the API budget cannot admit the pending marker and requester dispatch together',async()=>{
+  const baseline=dispatchFixture();await baseline.run();
+  expect(baseline.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+  const pendingApiCalls=baseline.pendingApiCalls();expect(pendingApiCalls).toBeGreaterThan(0);expect(pendingApiCalls).toBeLessThan(256);
+  const f=dispatchFixture();const first=await f.run(pendingApiCalls);
+  expect(first).toMatchObject({budgetDeferred:true,deferred:1});expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ });
+ it.each(['network','timeout','server'])('does not duplicate an invoked requester dispatch with an ambiguous %s outcome',async kind=>{
+  const f=dispatchFixture(),error=kind==='timeout'?new DOMException('Request aborted','AbortError'):Object.assign(new Error('Outcome unknown'),kind==='server'?{status:503}:{});
+  f.github.rest.actions.createWorkflowDispatch.mockRejectedValueOnce(error);
+  await expect(f.run()).rejects.toThrow(error.message);
+  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(lastWrite(f).output.summary)).not.toHaveProperty('refreshDispatchFailed');
+  await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ });
+ it('retains duplicate suppression after a successful requester dispatch consumes the remaining deadline',async()=>{
+  const f=dispatchFixture();let now=Date.UTC(2026,9,18);const clock=vi.spyOn(Date,'now').mockImplementation(()=>now);
+  f.github.rest.actions.createWorkflowDispatch.mockImplementation(async()=>{now+=240001;return{data:{}};});
+  try{
+   await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+   await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+   const writes=[...f.gateGithub.rest.checks.create.mock.calls,...f.gateGithub.rest.checks.update.mock.calls].map(([args])=>args).filter(args=>JSON.parse(args.output.summary).prNumber===2454);
+   expect(writes.every(args=>args.conclusion===undefined)).toBe(true);
+  }finally{clock.mockRestore();}
+ });
+ it('retains the attempt marker when the reserved provider method receives an already-aborted absolute deadline',async()=>{
+  const f=dispatchFixture();let now=Date.UTC(2026,9,18),advance=true;
+  const clock=vi.spyOn(Date,'now').mockImplementation(()=>now),create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+  f.gateGithub.rest.checks.create.mockImplementation(async args=>{const value=await create(args);if(advance&&JSON.parse(args.output.summary).prNumber===2454){advance=false;now+=240001;}return value;});
+  f.github.rest.actions.createWorkflowDispatch.mockImplementation(async(args:any)=>{expect(args.request.signal.aborted).toBe(true);throw new DOMException('Request aborted','AbortError');});
+  try{
+   expect(await f.run()).toMatchObject({budgetDeferred:true,deferred:1});
+   expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+   await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+   const writes=[...f.gateGithub.rest.checks.create.mock.calls,...f.gateGithub.rest.checks.update.mock.calls].map(([args])=>args).filter(args=>JSON.parse(args.output.summary).prNumber===2454);
+   expect(writes.every(args=>args.conclusion===undefined)).toBe(true);
+  }finally{clock.mockRestore();}
+ });
+ it('does not invoke the requester method after an ambiguous marker write and preserves its possible durable marker',async()=>{
+  const f=dispatchFixture(),create=f.gateGithub.rest.checks.create.getMockImplementation()!;let ambiguous=true;
+  f.gateGithub.rest.checks.create.mockImplementation(async args=>{const value=await create(args);if(ambiguous&&JSON.parse(args.output.summary).prNumber===2454){ambiguous=false;throw new Error('Marker outcome unknown');}return value;});
+  await expect(f.run()).rejects.toThrow('Marker outcome unknown');expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  await f.run();expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it.each(['admission','marker-validation'])('retries corrected configuration after known pre-issuer %s failure without inventing an attempt timestamp',async phase=>{
+  const f=dispatchFixture();let broken=true,sourceSeen=false,reads=0;
+  const commit=f.github.rest.repos.getCommit.getMockImplementation()!,variables=f.github.rest.actions.listRepoVariables.getMockImplementation()!;
+  f.github.rest.repos.getCommit.mockImplementation(async(args:any)=>{const value=await commit(args);if(args.ref===merge)sourceSeen=true;return value;});
+  f.github.rest.actions.listRepoVariables.mockImplementation(async()=>{
+   const value=await variables();
+   if(broken&&sourceSeen&&++reads>=(phase==='admission'?1:2))return{data:{...value.data,variables:value.data.variables.map((entry:any)=>entry.name==='MATRIX_CI_CONTROLLER_SHA'?{...entry,value:'9'.repeat(40)}:entry)}};
+   return value;
+  });
+  Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'diverged',merge_base_commit:{sha:base}}}))});
+  await expect(f.run()).rejects.toThrow('Reviewed execution configuration changed');
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  expect(JSON.parse(lastWrite(f).output.summary)).not.toHaveProperty('refreshDispatchedAt');
+  broken=false;await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ });
+ it('does not discard an existing possible requester attempt after a marker issuer403 rejection',async()=>{
+  const f=dispatchFixture();await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+  const update=f.gateGithub.rest.checks.update.getMockImplementation()!;let denied=true;
+  f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{if(denied&&JSON.parse(args.output.summary).prNumber===2454){denied=false;throw Object.assign(new Error('Issuer denied'),{status:403});}return update(args);});
+  await expect(f.run()).rejects.toThrow('Issuer denied');
+  expect(JSON.parse(lastWrite(f).output.summary)).not.toHaveProperty('refreshDispatchFailed');
+  await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ });
 });

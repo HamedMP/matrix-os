@@ -24,8 +24,8 @@ label-triggered controllers; configure them while still a draft.
 Only open, non-draft, same-repository PRs with **both** labels run on Linux,
 and only when the change runs CI lanes at all: a docs-only change (only
 `docs/`, `specs/` or Markdown files) never gets `Dedicated CI Results`. Main CI
-runs on hosted runners (`MATRIX_CI_DEDICATED_MAIN=false`), so main never holds
-the Linux host.
+uses Linux first when `MATRIX_CI_DEDICATED_MAIN=true`; otherwise it uses
+hosted runners. Full hosted fallback still requires verified coverage.
 
 ## One host, one job at a time
 
@@ -49,7 +49,24 @@ with a 30-minute queue deadline. A job that waits longer fails with
 | `CI Backend Decision` | Waits for and verifies the Linux result, then tells `CI Results` whether hosted lanes must run. | Read it when `CI Results` failed. |
 | `Type Check`, `Unit Tests (${{ matrix.shard }}/4)`, `E2E Tests (${{ matrix.lane }})`, `Shell Production Build`, ... **Skipped** | The hosted copies of lanes that ran on Linux. GitHub only fills in matrix names for jobs that run, so skipped matrix jobs show the raw template. | No. |
 | `Verified Dedicated Linux Qualification` **Skipped** | Not used by the current routing; `CI Backend Decision` does that verification. | No. |
-| `CI Source Qualification` pending, red or "not admitted" | An internal freshness gate. Pending means exact-source coverage is queued, running, or being dispatched; it never grants qualification. The `main` ruleset does not currently require it (spec 605 intends to), so today it never blocks a merge. It also turns red after a PR merges, by design. | No, unless the ruleset starts requiring it. |
+| `CI Source Qualification` pending, red or "not admitted" | An internal freshness gate. Pending means exact-source coverage is queued, running, or being dispatched; it never grants qualification. The `main` ruleset does not currently require it (spec 605 intends to), so today it never blocks a merge. A red result needs investigation; it does not change the Actions-owned aggregate. | Inspect its failure evidence. |
+
+Scheduled source reconciliation qualifies main before PR maintenance. It then
+rotates through batches of at most eight open PRs, with a shared ceiling of 256
+API calls and four minutes per invocation. Deferred PRs retain their existing
+checks; deferral never grants qualification or turns missing coverage into
+success. PR-specific events still reconcile their scope immediately. The
+schedule is a trigger cadence, not a guaranteed refresh deadline.
+
+Manual full-scope reconciliation also requires an authenticated main workflow;
+its workflow-definition head may differ from the separately reviewed checkout pin.
+Requester dispatch reserves its API slot before recording the attempt; known
+pre-call deferral can retry, while ambiguous marker or dispatch outcomes retain
+duplicate suppression. Only an explicit rejected dispatch permits an immediate retry.
+
+A controller superseded by a later reviewed pin on main stops before writing
+checks or dispatching work. Invalid configuration and unauthenticated replacement
+pins still fail closed. An operator pin change requires the rollout steps below.
 
 The host is deliberately **not** a GitHub self-hosted runner, so it does not
 appear under Settings → Actions → Runners. A reviewed controller on a hosted
@@ -135,6 +152,14 @@ When a change takes effect depends on where it runs:
   procedure the target is a green `main` commit containing the change; the
   controller itself only checks that the pin is on `main`.
 
+Before activating a new pin, verify the host is idle and update its existing
+trusted-controller policy first, preserving the old entries and other limits.
+Drain obsolete reconciliation-only writers before changing the repository pin;
+preserve legitimate Linux work and unknown runs. After activation, let a genuine
+scheduled or completed-main-CI controller verify exact-source coverage. Do not
+clear checks by writing success, deleting failures, or rerunning workloads whose
+existing authenticated coverage still applies.
+
 ## Measuring Linux against hosted CI
 
 Compare the exact merge SHA, ordered parents and frozen lockfile, not unrelated
@@ -168,3 +193,66 @@ evidence still requires matching suite identity. A pending index never qualifies
 coverage: completion still requires that exact controller's immutable artifact,
 source/request tuple, reviewed execution inputs, complete phases and cleanup
 proof. A contradictory run ID is rejected even when its URL or suite matches.
+
+## Isolating auxiliary checks from Main
+
+GitHub attaches `workflow_dispatch` checks to the dispatched ref's commit, even
+when a later checkout tests a different PR. A branch alias at Main's existing
+SHA therefore does not isolate those checks.
+
+Auxiliary execution uses `ci-execution/<controller-sha>`. Its commit is a
+distinct, empty child of the reviewed controller: exactly one parent, the
+controller SHA, and exactly the same tree. The execution commit changes no
+source files. Protect these refs against creation, updates and deletion by
+untrusted writers; only the existing operator creates them from reviewed Main.
+Retain refs while historical receipts or active runs depend on them.
+
+The execution ref/SHA, workflow path and workflow SHA are authenticated before
+loading privileged helpers or admitting credentials. The reviewed controller
+must remain on Main. New admission and grant checks also require the current
+reviewed configuration. `controllerRef=refs/heads/main` in the host request
+continues to identify the approved **source authority**, not the actual
+execution ref. Isolated indexes record the actual execution origin separately;
+the versioned artifact envelope binds that origin to the unchanged host receipt.
+Consumers verify both against GitHub metadata. Historical Main receipts retain
+their existing schema and validation.
+
+With `MATRIX_CI_ISOLATED_EXECUTION=true`, Main handles routing for auxiliary
+requests; their actual tests, previews and maintenance execute on the isolated
+commit. A successful routing job proves only that routing succeeded. It never
+replaces source-bound PR checks, complete hosted coverage, or an authenticated
+Linux receipt. Genuine Main push CI and its Linux qualification still execute
+against Main and can make Main red when Main itself fails.
+
+Preview origin checks use the existing protected variable snapshot supplied to
+the job. They do not acquire an additional Variables-read credential. Immutable
+ref protection, exact tree/parent proof and fresh PR-head checks remain required;
+operators drain legacy jobs during rollout. CI grants retain their independent
+live configuration checks.
+
+### Staged activation
+
+1. Merge only after current-head Greptile 5/5 and genuine complete PR CI. Leave
+   the isolation flag false/unset while the new Main commit completes genuine
+   Main qualification through the existing route.
+2. Protect `ci-execution/*`, create its tree-identical execution commit, and
+   read back the exact parent, tree and ref. Add only that protected ref pattern
+   to the existing CI environment's allowed deployment branches when required.
+3. Follow the host-first controller procedure: genuine Main coverage, idle
+   host, preserved policy backup, one reviewed controller append, and exact
+   readback. Keep the approved image, harness, existing routing flags and Main
+   review/CI protections unchanged.
+4. Drain only proven legacy auxiliary writers before advancing the repository
+   pin. Preserve real qualification workloads, unknown work and immutable failure
+   evidence. Pause auxiliary trigger admission during the pin/flag transition if
+   needed to prevent a new legacy invocation racing that drain; Main CI remains
+   enabled. Enable `MATRIX_CI_ISOLATED_EXECUTION` last, then restore admission.
+   False/unset is the explicit temporary compatibility path, not the completed
+   isolation state.
+5. Verify real PR refresh, qualification and preview runs execute at the
+   isolated SHA and retain their actual outcomes. Check all pages of check runs
+   and commit statuses on the actual latest Main commit. Main's own successful
+   CI run alone is insufficient to call the commit green.
+
+Do not replace failures with synthetic passing checks, hide failing tests with
+`continue-on-error`, or delete diagnostic history to produce a green badge.

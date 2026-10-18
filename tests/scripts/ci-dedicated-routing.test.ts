@@ -170,3 +170,20 @@ describe('shadow Linux failures outside the verifier script',()=>{
   expect(failedJob('true',[linux,{...unit,conclusion:'failure'}])).toBe('Unit Tests (1/4) (failure)');
  });
 });
+
+
+it.each(['ci-backend','patterns','react-doctor','sync-client','funded-postgres','funded-host-root','dedicated-linux'])('admits %s after a skipped auxiliary router only for successful uncanceled real source detection',key=>{
+ const condition=ci.jobs[key].if;
+ // Explicit status functions prevent GitHub's implicit success() from inheriting
+ // a skipped routing ancestor; cancellation and failed detection still close admission.
+ expect(condition).toContain('always()');expect(condition).toContain('!cancelled()');
+ expect(condition).toContain("needs.changes.result == 'success'");
+ const expression=condition.replace(/^\$\{\{\s*|\s*\}\}$/g,'');
+ const evaluate=(changes:any,canceled=false)=>Function('needs','always','cancelled',`return (${expression});`)({redirect:{result:'skipped'},changes},()=>true,()=>canceled);
+ const changes={result:'success',outputs:{should_run:'true',dedicated_required:'true',dedicated_eligible:'false',dedicated_mode:'delegated'}};
+ expect(evaluate(changes)).toBe(true);
+ expect(evaluate({...changes,result:'failure'})).toBe(false);
+ expect(evaluate({...changes,outputs:{...changes.outputs,should_run:'false'}})).toBe(false);
+ expect(evaluate(changes,true)).toBe(false);
+ if(key==='dedicated-linux')expect(evaluate({...changes,outputs:{...changes.outputs,dedicated_eligible:'true'}})).toBe(false);
+});

@@ -130,6 +130,44 @@ function retainAppHistory(f:ReturnType<typeof fixture>){
  f.gateGithub.rest.checks.create.mockImplementation(save);f.gateGithub.rest.checks.update.mockImplementation(save);
  return{current:()=>prior};
 }
+function isolatedMainAppFixture(){
+ const f=docsFixture(),history=retainAppHistory(f),execution='f'.repeat(40);
+ const executionOrigin={schemaVersion:1,controllerSha,controllerRef:'refs/heads/main',executionRef:`refs/heads/ci-execution/${controllerSha}`,executionSha:execution,executionWorkflowSha:execution,workflowPath:'.github/workflows/ci-dedicated.yml',treeSha:tree};
+ const actual={...f.controller,id:123,event:'workflow_dispatch',head_sha:execution,head_branch:`ci-execution/${controllerSha}`};
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>({data:args.run_id===123?actual:f.controller}));
+ f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:args.branch===actual.head_branch?execution:source}}}));
+ const g:any=f.github;
+ g.rest.git={getCommit:vi.fn(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:tree},parents:commit_sha===execution?[{sha:controllerSha}]:[]}}))};
+ g.rest.repos.compareCommitsWithBasehead=vi.fn(async()=>({data:{status:'ahead',merge_base_commit:{sha:controllerSha}}}));
+ const run=()=>reconcileSourceQualification(f.github,repo,{...origin,executionOrigin},{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
+ return{f,history,executionOrigin,run};
+}
+it('retains a genuine Main push decision through an authenticated isolated reconciliation origin',async()=>{
+ const {f,history,executionOrigin,run}=isolatedMainAppFixture();
+ await run();expect(history.current()).toMatchObject({conclusion:'success',head_sha:source});
+ const first=JSON.parse(history.current().output.summary),proof=first.coverageProof;
+ expect(first).toMatchObject({sourceKind:'main',sourceSha:source,requestingRunId:321,executionOrigin});
+ expect(f.ci).toMatchObject({event:'push',head_branch:'main',head_sha:source});
+ f.artifact.expired=true;f.gateGithub.rest.checks.create.mockClear();
+ await run();expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();
+ expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:100,conclusion:'success'}));
+ expect(JSON.parse(history.current().output.summary)).toMatchObject({executionOrigin,coverageProof:proof});
+});
+it('never reuses a Main decision whose recorded isolated reconciliation origin was substituted',async()=>{
+ const {f,history,run}=isolatedMainAppFixture();await run();
+ const evidence=JSON.parse(history.current().output.summary);
+ expect(evidence.executionOrigin).toBeDefined();evidence.executionOrigin.executionSha=base;
+ history.current().output.summary=JSON.stringify(evidence);f.artifact.expired=true;
+ f.gateGithub.rest.checks.update.mockClear();await run();
+ expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+ expect(history.current().conclusion).toBe('failure');
+});
+it('does not turn an isolated reconciliation into genuine Main coverage for a manual requester',async()=>{
+ const {f,history,run}=isolatedMainAppFixture();f.ci.event='workflow_dispatch';
+ await run();expect(history.current()).toMatchObject({status:'in_progress'});
+ expect(history.current().conclusion).not.toBe('success');
+ expect(JSON.parse(history.current().output.summary).coverageProof).toBeUndefined();
+});
 it.each(['expired','deleted','transient-failure','source-api-failure'])('revalidates durable authenticated main decision after artifact %s',async kind=>{
  const f=docsFixture(),history=retainAppHistory(f);await reconcile(f);
  expect(history.current().conclusion).toBe('success');const proof=JSON.parse(history.current().output.summary).coverageProof;
@@ -246,7 +284,7 @@ it('wires the main-only immutable proof after the actual detector and route, wit
  expect(steps.indexOf(record)).toBeGreaterThan(steps.findIndex((step:any)=>step.name==='Select guarded Linux delegation'));expect(steps.indexOf(upload)).toBeGreaterThan(steps.indexOf(record));
  expect(record.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'");expect(upload.if).toBe(record.if);expect(record.run).toBe('node scripts/ci/main-ci-decision.mjs');
  expect(record.env).toEqual({COVERAGE_BASE_SHA:'${{ steps.changed.outputs.base_sha }}',COVERAGE_BOOTSTRAP:'${{ steps.changed.outputs.bootstrap }}',SHOULD_RUN:'${{ steps.changed.outputs.should_run }}',DOCS_CONTRACT_TESTS:'${{ steps.changed.outputs.docs_contract_tests }}',OS_VIEW_PARITY_TESTS:'${{ steps.changed.outputs.os_view_parity_tests }}',DEDICATED_ELIGIBLE:'${{ steps.route.outputs.eligible }}',DEDICATED_REQUIRED:'${{ steps.route.outputs.required }}'});
- expect(upload.uses).toBe('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a');expect(upload.with).toEqual({name:'main-ci-decision-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}',path:'${{ runner.temp }}/main-ci-decision/receipt.json','if-no-files-found':'error','retention-days':1});
+ const pinnedAction=/^actions\/upload-artifact@[a-f0-9]{40}$/;expect(upload.uses).toMatch(pinnedAction);expect('actions/upload-artifact@v7').not.toMatch(pinnedAction);expect('untrusted/upload-artifact@'+'a'.repeat(40)).not.toMatch(pinnedAction);expect(upload.with).toEqual({name:'main-ci-decision-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}',path:'${{ runner.temp }}/main-ci-decision/receipt.json','if-no-files-found':'error','retention-days':1});
  expect(cleanup.if).toBe("always() && github.event_name == 'push' && github.ref == 'refs/heads/main'");expect(cleanup.run).toBe('node scripts/ci/main-ci-decision.mjs --cleanup');
 });
 describe('shadow mode observes without blocking main',()=>{
@@ -312,5 +350,48 @@ describe('shadow mode observes without blocking main',()=>{
   const f=fixture();f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{total_count:0,artifacts:[]}} as any);
   const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
   try{await reconcile(f);expect(written(f)).toMatchObject({conclusion:'failure'});expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Main source qualification failed at decision: /));}finally{warn.mockRestore();}
+ });
+});
+
+
+it('settles exact-main qualification before an expensive full-scope PR scan fails',async()=>{
+ const f=fixture();f.github.rest.pulls.list.mockRejectedValue(new Error('Maintenance API budget exhausted'));
+ await expect(reconcile(f)).rejects.toThrow('Maintenance API budget exhausted');
+ expect(written(f)).toMatchObject({name:'CI Source Qualification',head_sha:source,conclusion:'success'});
+ expect(JSON.parse(written(f).output.summary)).toMatchObject({sourceKind:'main',requestingRunId:321,requestingRunAttempt:1});
+});
+
+describe('controller pin generation fencing',()=>{
+ const nextPin='9'.repeat(40);
+ async function movingPin(f:ReturnType<typeof fixture>){
+  const configuration=(await f.github.rest.actions.listRepoVariables()).data;
+  f.github.rest.actions.listRepoVariables.mockImplementation(async()=>({data:structuredClone(configuration)}));
+  Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async({basehead}:{basehead:string})=>{
+   const [before,after]=basehead.split('...');
+   return{data:{status:before===after?'identical':'ahead',merge_base_commit:{sha:before}}};
+  })});
+  return()=>{configuration.variables.find(value=>value.name==='MATRIX_CI_CONTROLLER_SHA')!.value=nextPin;};
+ }
+ it('does not turn passing exact-main CI red when an old queued controller sees the new pin',async()=>{
+  const f=fixture(),move=await movingPin(f);move();await reconcile(f);
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('preserves a qualified main check when the pin moves before a late failure write',async()=>{
+  const f=fixture(),history=retainAppHistory(f),move=await movingPin(f);await reconcile(f);
+  const previous=structuredClone({...history.current(),request:undefined});expect(previous.conclusion).toBe('success');
+  f.gateGithub.rest.checks.create.mockClear();f.gateGithub.rest.checks.update.mockClear();
+  const commit=f.github.rest.repos.getCommit.getMockImplementation()!;
+  f.github.rest.repos.getCommit.mockImplementation(async(...args)=>{const value=await commit(...args);move();return value;});
+  f.jobs[0].conclusion='failure';await reconcile(f);
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+  expect({...history.current(),request:undefined}).toEqual(previous);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('still fails closed on a malformed harness digest with the current pin',async()=>{
+  const f=fixture(),configuration=(await f.github.rest.actions.listRepoVariables()).data;
+  configuration.variables.find(value=>value.name==='MATRIX_CI_RUNNER_HARNESS_DIGEST')!.value='invalid';
+  f.github.rest.actions.listRepoVariables.mockResolvedValue({data:configuration});await reconcile(f);
+  expect(written(f)).toMatchObject({conclusion:'failure',output:{title:'Reviewed main execution configuration is incomplete'}});
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  });
 });

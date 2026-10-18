@@ -20,8 +20,8 @@ const mainPush: GitHubFixture = { event_name: 'push', ref: 'refs/heads/main', ev
 function evaluateJobExpression(value: string, needs: unknown, github: GitHubFixture) {
   const body = value.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.ci-backend', 'needs["ci-backend"]');
   // Evaluate the actual trusted workflow expression with explicit GHA contexts.
-  return Function('needs', 'github', 'inputs', 'vars', 'success', 'always', `return (${body});`)(
-    needs, github, {}, {}, () => true, () => true,
+  return Function('needs', 'github', 'inputs', 'vars', 'success', 'always', 'cancelled', `return (${body});`)(
+    needs, github, {}, {}, () => true, () => true, () => false,
   );
 }
 function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, parityChanges = false, github = mainPush) {
@@ -42,8 +42,9 @@ function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, p
 
 function aggregateStatus(docsResult: string) {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-ci-docs-'));
-  const step = workflow.jobs['ci-results'].steps.find((value: { run?: string }) => value.run);
+  const step = workflow.jobs['ci-results'].steps.find((value: { name?: string }) => value.name === 'Summarize required CI jobs');
   try {
+    if (!step?.run) throw new Error('Missing required CI aggregate script');
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       CI_TRIGGER_REQUESTED: 'true',
