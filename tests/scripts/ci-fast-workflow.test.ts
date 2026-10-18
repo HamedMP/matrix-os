@@ -35,7 +35,8 @@ describe('fast CI preserves validation while removing serialized work', () => {
   });
 
   it('starts independent hosted lanes after backend selection while sync starts after classification', () => {
-    expect(workflow.jobs['ci-backend'].needs).toBe('changes');
+    expect(workflow.jobs['isolated-ci-backend'].needs).toBe('changes');
+    expect(workflow.jobs['ci-backend'].needs).toEqual(['changes', 'isolated-ci-backend']);
     for (const id of ['unit', 'e2e', 'shell-production-build']) {
       // Backend admission chooses Linux or hosted recovery; workload lanes still
       // run in parallel rather than waiting for another workload's result.

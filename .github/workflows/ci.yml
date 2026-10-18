@@ -43,7 +43,7 @@ permissions:
 jobs:
   redirect:
     name: Route isolated PR refresh
-    if: github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && (github.ref == 'refs/heads/main' || github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA))
+    if: github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -53,32 +53,6 @@ jobs:
     outputs:
       routed: ${{ steps.isolate.outputs.routed }}
     steps:
-      - name: Authenticate isolated CI handoff before helper checkout
-        id: origin
-        if: github.ref != 'refs/heads/main'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
-        env:
-          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
-          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
-          EXECUTION_WORKFLOW_PATH: .github/workflows/ci.yml
-          EXECUTION_WORKFLOW_REF: ${{ github.workflow_ref }}
-          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
-        with:
-          script: |
-            const pin=process.env.CONTROLLER_SHA || (context.ref==='refs/heads/main'&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:''),path=process.env.EXECUTION_WORKFLOW_PATH;
-            if(!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Reviewed controller pin is missing');
-            const ref=`refs/heads/ci-execution/${pin}`;
-            if(process.env.ISOLATED_EXECUTION!=='true'||context.ref!==ref||process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@${ref}`||process.env.EXECUTION_WORKFLOW_SHA!==context.sha||context.sha===pin)throw new Error('Untrusted isolated workflow origin');
-            const request={timeout:10000};
-            const {data:child}=await github.rest.git.getCommit({...context.repo,commit_sha:context.sha,request});
-            const {data:source}=await github.rest.git.getCommit({...context.repo,commit_sha:pin,request});
-            const {data:branch}=await github.rest.repos.getBranch({...context.repo,branch:`ci-execution/${pin}`,request});
-            const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});
-            if(tip.name!=='main'||!/^[a-f0-9]{40}$/.test(tip.commit?.sha||''))throw new Error('Invalid current Main identity');
-            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});
-            if(child.sha!==context.sha||source.sha!==pin||child.parents?.length!==1||child.parents[0].sha!==pin||!/^[a-f0-9]{40}$/.test(child.tree?.sha||'')||child.tree.sha!==source.tree?.sha||branch.name!==`ci-execution/${pin}`||branch.commit?.sha!==context.sha||!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Isolated workflow does not match reviewed Main source');
-            core.setOutput('helper_sha',pin);
-            core.setOutput('execution_origin',JSON.stringify({schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:context.sha,executionWorkflowSha:context.sha,workflowPath:path,treeSha:child.tree.sha}));
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
@@ -98,21 +72,6 @@ jobs:
             const result=await routeManualCi(github,context.repo,process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION});
             core.setOutput('routed','true');
             await core.summary.addRaw(result.stale?'Superseded PR request skipped; no candidate coverage claimed.':'PR request routed to isolated execution; this Main run claims routing only.').write();
-
-      - name: Request isolated CI self qualification
-        if: github.ref != 'refs/heads/main'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
-        env:
-          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
-          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
-          CI_WORKFLOW_REF: ${{ github.workflow_ref }}
-          CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          REQUESTING_RUN_ATTEMPT: ${{ github.run_attempt }}
-        with:
-          script: |
-            const {pathToFileURL}=require('node:url'),{resolve}=require('node:path');
-            const {requestIsolatedCiQualification}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-ci-handoff.mjs')).href);
-            await requestIsolatedCiQualification(github,context.repo,{...context,runId:context.runId,runAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA},process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION});
 
   changes:
     needs: redirect
@@ -305,9 +264,83 @@ jobs:
         if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: node scripts/ci/main-ci-decision.mjs --cleanup
 
+  isolated-ci-backend:
+    name: Isolated CI Backend Decision
+    needs: changes
+    if: always() && !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      provider: ${{ steps.backend.outputs.provider }}
+      infrastructure_fallback: ${{ steps.backend.outputs.infrastructure_fallback }}
+      attempt: ${{ steps.backend.outputs.attempt }}
+    steps:
+      - name: Authenticate isolated backend before helper checkout
+        id: origin
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+          EXECUTION_WORKFLOW_PATH: .github/workflows/ci.yml
+          EXECUTION_WORKFLOW_REF: ${{ github.workflow_ref }}
+          EXECUTION_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        with:
+          script: |
+            const pin=process.env.CONTROLLER_SHA || (context.ref==='refs/heads/main'&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:''),path=process.env.EXECUTION_WORKFLOW_PATH;
+            if(!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Reviewed controller pin is missing');
+            const ref=`refs/heads/ci-execution/${pin}`;
+            if(process.env.ISOLATED_EXECUTION!=='true'||context.ref!==ref||process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@${ref}`||process.env.EXECUTION_WORKFLOW_SHA!==context.sha||context.sha===pin)throw new Error('Untrusted isolated workflow origin');
+            const request={timeout:10000};
+            const {data:child}=await github.rest.git.getCommit({...context.repo,commit_sha:context.sha,request});
+            const {data:source}=await github.rest.git.getCommit({...context.repo,commit_sha:pin,request});
+            const {data:branch}=await github.rest.repos.getBranch({...context.repo,branch:`ci-execution/${pin}`,request});
+            const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});
+            if(tip.name!=='main'||!/^[a-f0-9]{40}$/.test(tip.commit?.sha||''))throw new Error('Invalid current Main identity');
+            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});
+            if(child.sha!==context.sha||source.sha!==pin||child.parents?.length!==1||child.parents[0].sha!==pin||!/^[a-f0-9]{40}$/.test(child.tree?.sha||'')||child.tree.sha!==source.tree?.sha||branch.name!==`ci-execution/${pin}`||branch.commit?.sha!==context.sha||!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Isolated workflow does not match reviewed Main source');
+            core.setOutput('helper_sha',pin);
+            core.setOutput('execution_origin',JSON.stringify({schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:context.sha,executionWorkflowSha:context.sha,workflowPath:path,treeSha:child.tree.sha}));
+      - name: Checkout proved isolated backend helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.origin.outputs.helper_sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Qualify and verify current isolated backend
+        id: backend
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
+          REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+          CI_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          REQUESTING_ATTEMPT: ${{ github.run_attempt }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url'),{resolve}=require('node:path');
+            const {requestIsolatedCiQualification}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-ci-handoff.mjs')).href);
+            const {decideRequestingBackend}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
+            const self={...context,runId:context.runId,runAttempt:Number(process.env.REQUESTING_ATTEMPT),workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA};
+            await requestIsolatedCiQualification(github,context.repo,self,process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION,linuxRequired:process.env.DEDICATED_ELIGIBLE==='true'});
+            let result={provider:'hosted',infrastructureFallback:false};
+            if(process.env.DEDICATED_ELIGIBLE==='true'){
+              result=await decideRequestingBackend(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null,{requestingRunId:context.runId,requestingRunAttempt:self.runAttempt,controllerSha:process.env.CONTROLLER_SHA,mode:'delegated',imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl});
+            }
+            core.setOutput('provider',result.provider);core.setOutput('infrastructure_fallback',String(result.infrastructureFallback));
+            core.setOutput('attempt',String(self.runAttempt));
+
   ci-backend:
     name: CI Backend Decision
-    needs: changes
+    needs: [changes, isolated-ci-backend]
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 70
@@ -317,16 +350,32 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      provider: ${{ steps.backend.outputs.provider }}
-      infrastructure_fallback: ${{ steps.backend.outputs.infrastructure_fallback }}
+      provider: ${{ steps.isolated.outputs.provider || steps.backend.outputs.provider }}
+      infrastructure_fallback: ${{ steps.isolated.outputs.infrastructure_fallback || steps.backend.outputs.infrastructure_fallback }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        if: needs.changes.outputs.dedicated_eligible == 'true'
+        if: needs.changes.outputs.dedicated_eligible == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA))
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/ci-execution/') && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && vars.MATRIX_CI_CONTROLLER_SHA || needs.changes.outputs.source_sha }}
+          ref: ${{ needs.changes.outputs.source_sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
+      - name: Pass through verified isolated backend
+        id: isolated
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          ISOLATED_BACKEND_RESULT: ${{ needs.isolated-ci-backend.result }}
+          ISOLATED_BACKEND_ATTEMPT: ${{ needs.isolated-ci-backend.outputs.attempt }}
+          ISOLATED_BACKEND_PROVIDER: ${{ needs.isolated-ci-backend.outputs.provider }}
+          ISOLATED_BACKEND_FALLBACK: ${{ needs.isolated-ci-backend.outputs.infrastructure_fallback }}
+          REQUESTING_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const result=process.env.ISOLATED_BACKEND_RESULT,attempt=process.env.ISOLATED_BACKEND_ATTEMPT,current=process.env.REQUESTING_ATTEMPT,provider=process.env.ISOLATED_BACKEND_PROVIDER,fallback=process.env.ISOLATED_BACKEND_FALLBACK;
+            if(result!=='success'||!/^[1-9][0-9]*$/.test(current||'')||attempt!==current||!['linux','hosted'].includes(provider)||!['true','false'].includes(fallback)||(provider==='linux'&&fallback!=='false'))throw new Error('No verified current-attempt isolated backend');
+            core.setOutput('provider',provider);core.setOutput('infrastructure_fallback',fallback);
       - name: Decide exact-source execution backend
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)) }}
         id: backend
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
@@ -1204,14 +1253,17 @@ jobs:
 
   completion-handoff:
     name: Handoff isolated CI completion
-    needs: [redirect, changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
+    needs: [redirect, changes, isolated-ci-backend, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
     if: always() && !cancelled() && github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 70
     permissions:
       actions: write
+      checks: read
       contents: read
       pull-requests: read
+    outputs:
+      attempt: ${{ steps.handoff.outputs.attempt }}
     steps:
       - name: Authenticate isolated CI handoff before helper checkout
         id: origin
@@ -1246,6 +1298,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Request isolated CI completion reconciliation
+        id: handoff
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
@@ -1253,18 +1306,22 @@ jobs:
           CI_WORKFLOW_REF: ${{ github.workflow_ref }}
           CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
           REQUESTING_RUN_ATTEMPT: ${{ github.run_attempt }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
+          LINUX_REQUIRED: ${{ needs.changes.outputs.dedicated_eligible }}
         with:
           script: |
             const {pathToFileURL}=require('node:url'),{resolve}=require('node:path');
             const {requestIsolatedCiCompletion}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-ci-handoff.mjs')).href);
-            await requestIsolatedCiCompletion(github,context.repo,{...context,runId:context.runId,runAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA},process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION});
+            const result=await requestIsolatedCiCompletion(github,context.repo,{...context,runId:context.runId,runAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA},process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,linuxRequired:process.env.LINUX_REQUIRED==='true'});
+            core.setOutput('attempt',String(result.attempt));
 
   ci-results:
     # Every non-draft suite executes this stable required check. Metadata edits
     # verify earlier exact-source coverage instead of renaming/skipping the job:
     # GitHub's merge box only considers the latest suite for this workflow.
     name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft == true) && 'CI Draft (ignored)' || 'CI Results' }}
-    needs: [redirect, changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux, completion-handoff]
+    needs: [redirect, changes, isolated-ci-backend, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux, completion-handoff]
     if: always() && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true)
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1302,6 +1359,9 @@ jobs:
       - name: Summarize required CI jobs
         if: ${{ needs.redirect.outputs.routed != 'true' && !(github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) }}
         env:
+          CI_ISOLATED_REQUEST: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA) }}
+          CI_REQUESTING_ATTEMPT: ${{ github.run_attempt }}
+          CI_HANDOFF_ATTEMPT: ${{ needs.completion-handoff.outputs.attempt }}
           CI_HANDOFF_RESULT: ${{ needs.completion-handoff.result }}
           CI_REDIRECT_RESULT: ${{ needs.redirect.result }}
           CI_TRIGGER_REQUESTED: ${{ needs.changes.outputs.trigger_requested }}
@@ -1328,6 +1388,7 @@ jobs:
           E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           set -euo pipefail
+          CI_ISOLATED_REQUEST=${CI_ISOLATED_REQUEST:-false}
           CI_HANDOFF_RESULT=${CI_HANDOFF_RESULT:-skipped}
           CI_REDIRECT_RESULT=${CI_REDIRECT_RESULT:-skipped}
           DEDICATED_ELIGIBLE=${DEDICATED_ELIGIBLE:-false}
@@ -1363,6 +1424,13 @@ jobs:
           if [ "$CI_TRIGGER_REQUESTED" != "true" ]; then
             echo "Full CI was not requested for this commit. Mark the PR ready for review (not a draft) to run CI." >&2
             exit 1
+          fi
+
+          if [ "$CI_ISOLATED_REQUEST" = "true" ]; then
+            if [ "$CI_HANDOFF_RESULT" != "success" ] || [[ ! "${CI_REQUESTING_ATTEMPT:-}" =~ ^[1-9][0-9]*$ ]] || [ "${CI_HANDOFF_ATTEMPT:-}" != "${CI_REQUESTING_ATTEMPT:-}" ]; then
+              echo "Current-attempt completion proof is missing. Re-run completion and its dependencies, or re-run all jobs." >&2
+              exit 1
+            fi
           fi
 
           failed=false
