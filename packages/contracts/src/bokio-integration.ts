@@ -21,15 +21,17 @@ const BOKIO_READ_ACTIONS = Object.fromEntries(Object.entries(BOKIO_ACTION_SPECS)
 
 export const BOKIO_WRITE_SCOPES = ["customers:write", "invoices:write"] as const;
 const name = z.string().min(1).max(500).refine(value => value.trim().length > 0);
+const MAX_DRAFT_AMOUNT = 1000000000;
 const line = z.strictObject({ description: name, productType: z.enum(["goods", "services"]), unitType: z.enum(["unspecified", "piece", "hour", "day", "month"]).optional(),
-  quantity: z.number().finite().positive().max(1000000), unitPrice: z.number().finite().min(0).max(10000000), taxRate: z.union([z.literal(0), z.literal(6), z.literal(12), z.literal(25)]) });
+  quantity: z.number().finite().positive().max(1000000), unitPrice: z.number().finite().min(0).max(10000000), taxRate: z.union([z.literal(0), z.literal(6), z.literal(12), z.literal(25)]) })
+  .refine(value => value.quantity * value.unitPrice <= MAX_DRAFT_AMOUNT);
 const customer = z.strictObject({ name, type: z.enum(["company", "private"]), customerNumber: z.string().min(1).max(24).refine(value => value.trim().length > 0).optional(),
   vatNumber: z.string().max(50).optional(), orgNumber: z.string().max(50).optional(), language: z.enum(["sv", "en"]).optional(),
   contactsDetails: z.array(z.strictObject({ name: z.string().max(200).optional(), email: z.email().max(254).optional(), phone: z.string().max(50).optional(), isDefault: z.boolean().optional() })
     .refine(value => Object.values(value).some(field => field !== undefined))).min(1).max(10).optional() });
 const draft = z.strictObject({ customerId: BokioUuid, invoiceDate: z.iso.date(), dueDate: z.iso.date().optional(), lineItems: z.array(line).min(1).max(50) })
   .refine(value => value.dueDate === undefined || value.dueDate >= value.invoiceDate)
-  .refine(value => value.lineItems.reduce((total, item) => total + item.quantity * item.unitPrice, 0) <= 1000000000);
+  .refine(value => value.lineItems.reduce((total, item) => total + item.quantity * item.unitPrice, 0) <= MAX_DRAFT_AMOUNT);
 export const BOKIO_WRITE_ACTION_SPECS = {
   create_customer: { path: "customers", schema: customer, scope: "customers:write", id: undefined },
   create_draft_invoice: { path: "invoices", schema: draft, scope: "invoices:write", id: undefined },

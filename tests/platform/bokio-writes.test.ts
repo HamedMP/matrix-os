@@ -108,6 +108,29 @@ describe("Bokio explicitly scoped writes", () => {
     expect(fixture.fetcher.mock.calls.at(-1)![0]).toBe(`https://api.bokio.se/v1/companies/${companyId}/invoices/${invoiceId}/line-items`);
     expect(BOKIO_ACTIONS).not.toHaveProperty("publish_invoice"); expect(BOKIO_ACTIONS).not.toHaveProperty("record_payment"); expect(BOKIO_ACTIONS).not.toHaveProperty("update_invoice");
   });
+  it.each(["create_draft_invoice", "append_draft_line_item"])("accepts the line amount boundary for %s", actionId => {
+    const boundedLine = { ...lineItem, quantity: 1000, unitPrice: 1000000 };
+    const params = actionId === "create_draft_invoice"
+      ? { customerId, invoiceDate: "2026-10-18", lineItems: [boundedLine] }
+      : { invoiceId, lineItem: boundedLine };
+    expect(BOKIO_ACTIONS[actionId].paramsSchema.safeParse(params).success).toBe(true);
+    expect(() => planBokioWrite(actionId, params, companyId)).not.toThrow();
+  });
+  it.each(["create_draft_invoice", "append_draft_line_item"])("rejects oversized line amounts for %s before authorization", async actionId => {
+    const fixture = setup(); const resolve = vi.spyOn(fixture.oauth, "resolveAuthorization");
+    for (const oversizedLine of [
+      { ...lineItem, quantity: 1000, unitPrice: 1000000.001 },
+      { ...lineItem, quantity: 1000000, unitPrice: 10000000 },
+    ]) {
+      const params = actionId === "create_draft_invoice"
+        ? { customerId, invoiceDate: "2026-10-18", lineItems: [oversizedLine] }
+        : { invoiceId, lineItem: oversizedLine };
+      expect(BOKIO_ACTIONS[actionId].paramsSchema.safeParse(params).success).toBe(false);
+      expect(() => planBokioWrite(actionId, params, companyId)).toThrow();
+      await expect(fixture.broker.call({ userId: "owner", service: { id: "bokio" }, actionId, params } as never)).rejects.toThrow();
+    }
+    expect(resolve).not.toHaveBeenCalled(); expect(fixture.fetcher).not.toHaveBeenCalled();
+  });
   it.each([
     ["create_customer", { name: "Example", type: "company", companyId }],
     ["create_customer", { name: " ", type: "company" }],
