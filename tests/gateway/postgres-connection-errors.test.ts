@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events';
+import { observePostgresPoolErrors } from '@matrix-os/observability/postgres';
 import { Kysely, PostgresDialect, sql } from 'kysely';
 import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -121,7 +123,9 @@ describe.each(owners)('$name connection errors', ({ open }) => {
     owner = open();
     const client = await pool.connect();
     client.release();
+    vi.mocked(console.error).mockClear();
     expect(() => sockets[0].emit('error', timeout())).not.toThrow();
+    expect(console.error).toHaveBeenCalledTimes(1);
     expect(pool.totalCount).toBe(0);
     await expect(owner.run()).resolves.toBeDefined();
     expect(sockets).toHaveLength(2);
@@ -163,3 +167,33 @@ it.each(['unused', 'raw-only', 'Kysely-initialized'] as const)(
     expect(end).toHaveBeenCalledTimes(1);
   },
 );
+
+
+it('reports forwarded errors once, while preserving separate errors and later occurrences', async () => {
+  const emitter = new EventEmitter();
+  const client = new EventEmitter();
+  const report = vi.fn();
+  observePostgresPoolErrors(emitter, report);
+  emitter.emit('connect', client);
+  const error = timeout();
+  client.emit('error', error);
+  emitter.emit('error', error);
+  expect(report).toHaveBeenCalledTimes(1);
+  const separate = timeout();
+  client.emit('error', separate);
+  emitter.emit('error', separate);
+  expect(report).toHaveBeenCalledTimes(2);
+  await Promise.resolve();
+  client.emit('error', error);
+  emitter.emit('error', error);
+  expect(report).toHaveBeenCalledTimes(3);
+});
+
+it('passes non-object error events to the owner reporter without throwing', () => {
+  const emitter = new EventEmitter();
+  const report = vi.fn();
+  observePostgresPoolErrors(emitter, report);
+  expect(() => emitter.emit('error', 'failure')).not.toThrow();
+  expect(() => emitter.emit('error', null)).not.toThrow();
+  expect(report.mock.calls).toEqual([['failure'], [null]]);
+});

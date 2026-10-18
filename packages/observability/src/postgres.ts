@@ -14,8 +14,24 @@ interface PostgresPool {
 // pg retains responsibility for query rejection, invalidation, and eviction on
 // release. These observers never retry a query or close an owned connection.
 export function observePostgresPoolErrors(pool: PostgresPool, reportError: ErrorReporter): void {
-  pool.on('error', reportError);
-  pool.on('connect', (client) => observePostgresClientErrors(client, reportError));
+  // pg forwards an idle client's error to the pool synchronously. Count that
+  // error once; weak references retain no error objects, and one microtask
+  // resets the window so a later occurrence of the same object still reports.
+  let reported = new WeakSet<Error>();
+  let resetQueued = false;
+  const reportOnce: ErrorReporter = (error) => {
+    if (typeof error === 'object' && error !== null) {
+      if (reported.has(error)) return;
+      reported.add(error);
+      if (!resetQueued) {
+        resetQueued = true;
+        queueMicrotask(() => { reported = new WeakSet<Error>(); resetQueued = false; });
+      }
+    }
+    reportError(error);
+  };
+  pool.on('error', reportOnce);
+  pool.on('connect', (client) => observePostgresClientErrors(client, reportOnce));
 }
 
 export function observePostgresClientErrors(client: PostgresClient, reportError: ErrorReporter): void {
