@@ -1,6 +1,12 @@
 import { sql, type Kysely } from "kysely";
 import { runPlatformMigration } from "../migration-runner.js";
 
+// Keep generations monotonic and refresh this fingerprint when the DDL below changes.
+const SLACK_SCHEMA_REVISION = {
+  generation: 1,
+  fingerprint: "b0fcbe527a51a82caf122afb7cde80d6bb006d30592c534f6f1ce4d39e9ecc95",
+} as const;
+
 export interface SlackDatabase {
   slack_installations: { app_id: string; team_id: string; organization_id: string; installed_by: string; bot_user_id: string; encrypted_bot_token: string; generation: number; state: "active" | "revoked"; updated_at: Date | string };
   slack_oauth_states: { hash: string; app_id: string; actor_id: string; organization_id: string; installation_generations: Record<string, number> | null; expires_at: Date | string; consumed_at: Date | string | null };
@@ -67,5 +73,5 @@ export async function bootstrapSlackDatabase(db: Kysely<SlackDatabase>): Promise
     await sql`CREATE INDEX IF NOT EXISTS slack_receipt_expiry ON slack_event_receipts(expires_at)`.execute(trx);
     await sql`CREATE INDEX IF NOT EXISTS slack_oauth_expiry ON slack_oauth_states(expires_at)`.execute(trx);
     await sql`CREATE INDEX IF NOT EXISTS slack_challenge_expiry ON slack_link_challenges(expires_at)`.execute(trx);
-  });
+  }, { scope: "slack", revision: SLACK_SCHEMA_REVISION });
 }
