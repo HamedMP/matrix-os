@@ -15,6 +15,7 @@ export default function ListingEditor({
   onDirty: () => void;
   onSave: (value: AppStoreListingDraft) => Promise<void>;
 }) {
+  // Keep unsaved input for this draft revision; the parent keys a revised server result explicitly.
   const [value, setValue] = useState(listing),
     [invalid, setInvalid] = useState(false);
   const update = (key: keyof AppStoreListingDraft, text: string) => {

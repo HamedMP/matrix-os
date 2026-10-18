@@ -27,9 +27,13 @@ export default function DraftDetail({
   const [instructions, setInstructions] = useState(""),
     [diff, setDiff] = useState<AppStoreDraftDiff | null>(null),
     [license, setLicense] = useState(""),
-    [consent, setConsent] = useState(false);
+    [consentedDraft, setConsentedDraft] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false),
     [notice, setNotice] = useState("");
+  const consentKey = draft ? `${draft.id}:${draft.updatedAt}` : null;
+  const consent = consentKey !== null && consentedDraft === consentKey;
+  const setConsent = (value: boolean) =>
+    setConsentedDraft(value ? consentKey : null);
   const alive = useRef(true),
     lock = useRef(false),
     fileRequest = useRef(0);
@@ -134,7 +138,7 @@ export default function DraftDetail({
           <Needs capabilities={draft.capabilities} />
           {draft.listing && (
             <ListingEditor
-              key={`${draft.id}:${refresh}`}
+              key={`${draft.id}:${draft.updatedAt}`}
               listing={draft.listing}
               disabled={busy || processing || draft.status === "submitted"}
               onDirty={() => {
@@ -161,6 +165,8 @@ export default function DraftDetail({
                 onSubmit={(event) => {
                   event.preventDefault();
                   void perform(async () => {
+                    setConsent(false);
+                    setDiff(null);
                     await client.revise(id, instructions, accessSourceId);
                     if (alive.current) {
                       setInstructions("");
@@ -203,6 +209,7 @@ export default function DraftDetail({
                   License
                   <select
                     aria-label="Publishing license"
+                    disabled={busy || processing}
                     value={license}
                     onChange={(event) => {
                       setLicense(event.target.value);
@@ -219,6 +226,7 @@ export default function DraftDetail({
                   <input
                     type="checkbox"
                     checked={consent}
+                    disabled={busy || processing}
                     onChange={(event) => setConsent(event.target.checked)}
                   />
                   I reviewed the changes and listing, have rights to this code,

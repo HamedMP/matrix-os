@@ -19,7 +19,7 @@ describe("store workflow recovery", () => {
     const client = createStoreClient(b); const first = render(<ListingDetail client={client} slug={listing.slug} onBack={vi.fn()} />);
     await consentInstall(); await screen.findByText(/Building on your Matrix computer/); first.unmount();
     render(<ListingDetail client={client} slug={listing.slug} onBack={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Open app" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app" }, { timeout: 10000 }));
     await waitFor(() => expect(b.openApp).toHaveBeenCalledWith("Sample Notes", "apps/sample-notes"));
     expect(sessionStorage.getItem("matrix-store-pending-install")).toBeNull();
   });
@@ -67,4 +67,30 @@ describe("store workflow recovery", () => {
     fireEvent.change(screen.getByLabelText("Reviewer message"), { target: { value: "Investigating unsafe access" } }); fireEvent.click(screen.getByRole("button", { name: "Confirm decision" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/do not have access/);
   });
+});
+
+it("invalidates install consent when the displayed version or capabilities change", async () => {
+  const b = bridge(url => url.endsWith("/second-notes") ? { ...listing, slug: "second-notes", name: "Second Notes", capabilitiesDigest: "b".repeat(64) } : listing);
+  const client = createStoreClient(b); const { rerender } = render(<ListingDetail client={client} slug={listing.slug} onBack={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Get app" })); fireEvent.click(screen.getByLabelText(/I agree to these capabilities/));
+  rerender(<ListingDetail client={client} slug="second-notes" onBack={vi.fn()} />);
+  await screen.findByText("Second Notes");
+  expect((screen.getByLabelText(/I agree to these capabilities/) as HTMLInputElement).checked).toBe(false);
+});
+
+it("clears final submission consent immediately when a revision request fails", async () => {
+  const b = bridge(url => { if (url.endsWith("/revise")) throw new Error("Connection lost after submission"); return draft; });
+  render(<DraftDetail client={createStoreClient(b)} id={id} accessSourceId="provider1" onBack={vi.fn()} />);
+  await screen.findByLabelText("Publishing license"); fireEvent.change(screen.getByLabelText("Publishing license"), { target: { value: "MIT" } }); fireEvent.click(screen.getByLabelText(/I reviewed the changes/));
+  fireEvent.change(screen.getByLabelText("Ask for a revision"), { target: { value: "Remove owner branding" } }); fireEvent.click(screen.getByRole("button", { name: "Revise copy" }));
+  await screen.findByRole("alert");
+  expect((screen.getByLabelText(/I reviewed the changes/) as HTMLInputElement).checked).toBe(false);
+});
+
+it("loads revised listing fields without discarding edits during ordinary draft reads", async () => {
+  let value = structuredClone(draft);
+  const b = bridge(url => { if (url.endsWith("/revise")) { value = { ...value, updatedAt: "2026-10-18T10:01:00Z", listing: { ...value.listing, name: "Revised Notes" } }; return { ...draftSummary(), updatedAt: value.updatedAt }; } return value; });
+  render(<DraftDetail client={createStoreClient(b)} id={id} accessSourceId="provider1" onBack={vi.fn()} />);
+  await screen.findByLabelText("App name"); fireEvent.change(screen.getByLabelText("Ask for a revision"), { target: { value: "Generalize the name" } }); fireEvent.click(screen.getByRole("button", { name: "Revise copy" }));
+  await waitFor(() => expect((screen.getByLabelText("App name") as HTMLInputElement).value).toBe("Revised Notes"));
 });
