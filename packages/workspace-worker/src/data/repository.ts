@@ -1,3 +1,4 @@
+import { mergeDesktopDefaults, mergeDesktopPatch, type DesktopSettingsPatch } from "../../../gateway/src/desktop-settings.js";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
 import type { RuntimeLease } from "../runtime/contracts.js";
@@ -36,6 +37,7 @@ export interface WorkspaceRepository {
   saveLayout(ownerId: string, layout: { windows: unknown[] }, baseRevision: number): Promise<{ revision: number }>;
   settings(ownerId: string): Promise<Json>;
   settingsSnapshot(ownerId: string): Promise<WorkspaceSettingsSnapshot>;
+  patchDesktopSettings(ownerId: string, patch: DesktopSettingsPatch): Promise<{ config: Json; revision: number }>;
   saveSetting(ownerId: string, key: string, value: unknown, baseRevision: number): Promise<{ revision: number }>;
   listFiles(ownerId: string, prefix: string, limit: number): Promise<SharedFile[]>;
   file(ownerId: string, path: string): Promise<SharedFile | null>;
@@ -131,6 +133,27 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
   async settingsSnapshot(ownerId: string): Promise<WorkspaceSettingsSnapshot> {
     const row = await this.db.selectFrom("shared_workspaces").select(["settings", "revision"]).where("owner_id", "=", ownerId).executeTakeFirst();
     return row ?? { settings: {}, revision: 0 };
+  }
+  async patchDesktopSettings(ownerId: string, patch: DesktopSettingsPatch): Promise<{ config: Json; revision: number }> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await this.db.transaction().execute(async (trx) => {
+      await ensureWorkspace(trx, ownerId);
+      const snapshot = await trx.selectFrom("shared_workspaces").select(["settings", "revision"]).where("owner_id", "=", ownerId).forUpdate().executeTakeFirstOrThrow();
+      const stored = snapshot.settings.desktop;
+      const current = stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored as Json : {};
+      const next = mergeDesktopPatch(current, patch);
+      const updated = await trx.updateTable("shared_workspaces").set({
+        settings: sql`jsonb_set(settings, '{desktop}', ${JSON.stringify(next)}::jsonb, true)`, revision: sql`revision + 1`,
+      }).where("owner_id", "=", ownerId).where("revision", "=", snapshot.revision).returning("revision").executeTakeFirst();
+      if (!updated) throw new WorkspaceError("conflict");
+      return { config: mergeDesktopDefaults(next), revision: updated.revision };
+        });
+      } catch (error) {
+        if (!(error instanceof WorkspaceError) || error.code !== "conflict" || attempt === 2) throw error;
+      }
+    }
+    throw new WorkspaceError("conflict");
   }
   async saveSetting(ownerId: string, key: string, value: unknown, baseRevision: number) {
     return this.db.transaction().execute(async (trx) => {

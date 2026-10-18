@@ -1,3 +1,4 @@
+import { DesktopPatchSchema, mergeDesktopDefaults } from "../../gateway/src/desktop-settings.js";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -74,7 +75,9 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     if (!setting.success) return c.json({ error: "Not found" }, 404);
     const settings = await options.repository.settings(c.get("ownerId"));
     if (setting.data === "onboarding-status") return c.json({ complete: settings.onboardingComplete === true });
-    return c.json(settings[setting.data] ?? {});
+    const stored = settings[setting.data];
+    if (setting.data === "desktop") return c.json(mergeDesktopDefaults(typeof stored === "object" && stored !== null && !Array.isArray(stored) ? stored as Record<string, unknown> : {}));
+    return c.json(stored ?? {});
   });
   app.put("/api/settings/:setting", bounded, async (c) => {
     const setting = z.enum(["theme", "desktop"]).safeParse(c.req.param("setting"));
@@ -83,6 +86,12 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     const owner = c.get("ownerId");
     const current = await options.repository.bootstrap(owner);
     return c.json({ ok: true, ...await options.repository.saveSetting(owner, setting.data, value.data, current.revision) });
+  });
+  app.patch("/api/settings/desktop", bounded, async (c) => {
+    const patch = DesktopPatchSchema.safeParse(await c.req.json());
+    if (!patch.success) return c.json({ error: "Invalid desktop config patch" }, 400);
+    const saved = await options.repository.patchDesktopSettings(c.get("ownerId"), patch.data);
+    return c.json({ ok: true, config: saved.config });
   });
   app.get("/api/os-view-state", async (c) => {
     const owner = c.get("ownerId");
