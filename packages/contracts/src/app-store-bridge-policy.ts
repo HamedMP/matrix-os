@@ -87,3 +87,6 @@ export function appStoreBridgeTimeoutMs(url: string): number {
   if (/^\/api\/app-store\/drafts\/[0-9a-f-]{36}\/submit$/.test(url)) return 120_000;
   return 15_000;
 }
+
+/** A512KiB text file or two256KiB diff sides can expand sixfold in JSON. */
+export const MAX_APP_STORE_BRIDGE_REPLY_BYTES=4*1024*1024;

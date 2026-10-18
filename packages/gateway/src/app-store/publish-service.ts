@@ -49,10 +49,11 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
     await store.writeFiles(draft.id,'original',files);await store.writeFiles(draft.id,'prepared',files);await store.write(draft);start(draft,input.aiConsent);return AppStoreDraftSummarySchema.strip().parse(draft);
    });
   },
-  async revise(id:string,input:{instructions:string;aiConsent?:{accessSourceId:string}}){return exclusiveSubmit(id,async()=>{
+  async revise(id:string,input:{instructions:string;aiConsent?:{accessSourceId:string}}){return exclusiveSubmit(id,()=>withOwnerFileMutation(options.homePath,async()=>{
+   if(stop.signal.aborted)throw new StoreError('conflict');if(jobs.size>=2)throw new StoreError('limit');
    if(jobs.has(id))throw new StoreError('conflict');const current=await store.read(id);if(current.status==='submitted')throw new StoreError('conflict');
-   const draft={...current,status:'preparing' as const,stage:'generalize' as const,updatedAt:new Date().toISOString()};await store.write(draft);start(draft,input.aiConsent,input.instructions);return AppStoreDraftSummarySchema.strip().parse(draft);
-  });},
+   const draft={...current,status:'preparing' as const,stage:'generalize' as const,updatedAt:new Date().toISOString()};await store.write(draft);try{start(draft,input.aiConsent,input.instructions);}catch(error:unknown){await store.write({...draft,status:'needs_attention',failureCode:'interrupted',updatedAt:new Date().toISOString()});throw error;}return AppStoreDraftSummarySchema.strip().parse(draft);
+  }));},
   async listing(id:string,patch:unknown){return exclusiveSubmit(id,()=>withOwnerFileMutation(options.homePath,async()=>{
    if(jobs.has(id)||jobs.size>=2||stop.signal.aborted)throw new StoreError('conflict');
    const draft=await store.read(id);if(draft.status==='submitted'||!draft.listing)throw new StoreError('conflict');
@@ -65,7 +66,7 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
    files.set('matrix.json',Buffer.from(JSON.stringify({...manifest,slug:listing.slug,version:listing.version},null,2)+'\n'));
    result.status='preparing';result.stage='verify';delete result.failureCode;
    await store.write(result);
-   await store.writeFiles(id,'prepared',files);
+   try{await store.writeFiles(id,'prepared',files);}catch(error:unknown){await store.write({...result,status:'needs_attention',failureCode:'verify_failed',updatedAt:new Date().toISOString()});throw error;}
    const task=(async()=>{
     const findingsAfter=scanAppFiles(files,{ownerTerms:[...(options.ownerTerms??[])]});
     const changedFiles=[...draft.changedFiles.filter(file=>file.path!=='matrix.json'),{path:'matrix.json',change:'modified' as const}];
@@ -74,7 +75,7 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
     if(ready)try{await options.builder.build(files,stop.signal);}catch(error:unknown){console.warn('[app-store] Edited draft verification failed',error instanceof Error?error.name:'UnknownError');ready=false;failureCode='build_failed';}
     await store.write({...result,status:ready?'ready':'needs_attention',findingsAfter,changedFiles,
      blockingFindings:findingsAfter.findings.filter(f=>f.severity==='high').length,...(failureCode?{failureCode}:{}),updatedAt:new Date().toISOString()});
-   })();
+   })().catch(async(error:unknown)=>{console.warn('[app-store] Edited draft verification failed',error instanceof Error?error.name:'UnknownError');await store.write({...result,status:'needs_attention',failureCode:'verify_failed',updatedAt:new Date().toISOString()});});
    jobs.set(id,task);void task.catch((error:unknown)=>console.warn('[app-store] Edited draft job failed',error instanceof Error?error.name:'UnknownError')).finally(()=>jobs.delete(id));
    return result;
   }));},

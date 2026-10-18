@@ -1,7 +1,8 @@
+import {AppIdentitySchema,appRuntimeSlugFromIdentity} from '@matrix-os/contracts';
 /** Main-process authority; renderer and app manifests cannot select their trust tier. */
 export function createNativeAppTrustResolver(options:{getGatewayOrigin():string;getToken():string|null|undefined;fetchFn?:typeof fetch}){
  return async(identity:string):Promise<boolean>=>{
-  const slug=identity.replace(/^apps\//,'');if(!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug))return false;
+  const parsed=AppIdentitySchema.safeParse(identity.replace(/^apps\//,''));if(!parsed.success)return false;const slug=appRuntimeSlugFromIdentity(parsed.data);if(!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug))return false;
   const token=options.getToken();if(!token)return false;
   const origin=new URL(options.getGatewayOrigin());if(!['https:','http:'].includes(origin.protocol))return false;
   const response=await (options.fetchFn??fetch)(new URL(`/api/apps/${slug}/manifest`,origin).toString(),{headers:{authorization:`Bearer ${token}`},redirect:'error',signal:AbortSignal.timeout(10_000)});
