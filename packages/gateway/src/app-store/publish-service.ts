@@ -10,7 +10,7 @@ import {createStoreGeneralizer,type StoreGeneralizer} from './generalizer.js';im
 import {StoreError,type AppStorePlatformClient} from './platform-client.js';import type {LocalStoreBuilder} from './local-builder.js';
 export function createStorePublishService(options:{homePath:string;platform:AppStorePlatformClient;builder:LocalStoreBuilder;generalizer?:StoreGeneralizer;ownerTerms?:readonly string[]}){
  const store=createDraftStore(options.homePath);const generalizer=options.generalizer??createStoreGeneralizer(options.homePath);
- const jobs=new Map<string,Promise<void>>(); // Cap2, removed on settlement; drafts separately cap16/TTL7days.
+ const jobs=new Map<string,Promise<void>>(); // Cap2, removed on settlement; new drafts cap5/TTL7days.
  const stop=new AbortController();
  const submitting=new Map<string,Promise<unknown>>(); // Cap2, drained before close.
  const sweepTimer=setInterval(()=>{if(!stop.signal.aborted)void store.list().catch((error:unknown)=>console.warn('[app-store] Draft cleanup failed',error instanceof Error?error.name:'UnknownError'));},3600_000);sweepTimer.unref();
@@ -40,19 +40,19 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
   detail:store.read,
   async create(input:{app:string;aiConsent?:{accessSourceId:string}}){
    return withOwnerFileMutation(options.homePath,async()=>{
-    if(jobs.size>=2||(await store.list()).length>=16)throw new StoreError('limit');
+    if(jobs.size>=2||(await store.list()).length>=5)throw new StoreError('limit');
     const files=await snapshotOwnerApp(options.homePath,input.app);const manifest=JSON.parse(files.get('matrix.json')?.toString('utf8')??'null');
     if(!manifest||manifest.runtime!=='vite'||manifest.listingTrust==='community')throw new StoreError('invalid');
     const now=new Date().toISOString();const draft:AppStoreDraftDetail={id:store.id(),sourceSlug:input.app,sourceName:String(manifest.name??input.app).slice(0,120),status:'preparing',stage:'snapshot',ai:null,blockingFindings:0,createdAt:now,updatedAt:now,expiresAt:new Date(Date.now()+7*86400_000).toISOString(),findingsBefore:null,findingsAfter:null,report:null,listing:null,capabilities:null,changedFiles:[]};
     await store.writeFiles(draft.id,'original',files);await store.writeFiles(draft.id,'prepared',files);await store.write(draft);start(draft,input.aiConsent);return AppStoreDraftSummarySchema.strip().parse(draft);
    });
   },
-  async revise(id:string,input:{instructions:string;aiConsent?:{accessSourceId:string}}){
-   if(jobs.has(id)||submitting.has(id))throw new StoreError('conflict');const current=await store.read(id);if(current.status==='submitted')throw new StoreError('conflict');
+  async revise(id:string,input:{instructions:string;aiConsent?:{accessSourceId:string}}){return exclusiveSubmit(id,async()=>{
+   if(jobs.has(id))throw new StoreError('conflict');const current=await store.read(id);if(current.status==='submitted')throw new StoreError('conflict');
    const draft={...current,status:'preparing' as const,stage:'generalize' as const,updatedAt:new Date().toISOString()};await store.write(draft);start(draft,input.aiConsent,input.instructions);return AppStoreDraftSummarySchema.strip().parse(draft);
-  },
-  async listing(id:string,patch:unknown){return withOwnerFileMutation(options.homePath,async()=>{
-   if(jobs.has(id)||submitting.has(id)||jobs.size>=2||stop.signal.aborted)throw new StoreError('conflict');
+  });},
+  async listing(id:string,patch:unknown){return exclusiveSubmit(id,()=>withOwnerFileMutation(options.homePath,async()=>{
+   if(jobs.has(id)||jobs.size>=2||stop.signal.aborted)throw new StoreError('conflict');
    const draft=await store.read(id);if(draft.status==='submitted'||!draft.listing)throw new StoreError('conflict');
    const listing={...draft.listing,...AppStoreListingDraftPatchSchema.parse(patch)};
    const files=await store.files(id,'prepared');
@@ -75,7 +75,7 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
    })();
    jobs.set(id,task);void task.catch((error:unknown)=>console.warn('[app-store] Edited draft job failed',error instanceof Error?error.name:'UnknownError')).finally(()=>jobs.delete(id));
    return result;
-  });},
+  }));},
   async diff(id:string,path:string):Promise<AppStoreDraftDiff>{
    const [beforeFiles,afterFiles]=await Promise.all([store.files(id,'original'),store.files(id,'prepared')]);const before=beforeFiles.get(path),after=afterFiles.get(path);if(!before&&!after)throw new StoreError('not_found');
    const binary=Boolean(before?.includes(0)||after?.includes(0));const limit=256*1024;
@@ -96,7 +96,7 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
     const result={...draft,status:'submitted' as const,stage:'upload' as const,submission:{listingSlug:listing.slug,version,versionId:created.versionId,status:finalized.status},updatedAt:new Date().toISOString()};await store.write(result);return AppStoreDraftSummarySchema.strip().parse(result);
    }catch(error:unknown){await store.write({...draft,status:'ready',failureCode:'upload_failed',updatedAt:new Date().toISOString()});throw error;}
   });},
-  async delete(id:string){if(jobs.has(id)||submitting.has(id))throw new StoreError('conflict');await store.delete(id);return {deleted:true as const};},
+  async delete(id:string){return exclusiveSubmit(id,async()=>{if(jobs.has(id))throw new StoreError('conflict');await store.delete(id);return {deleted:true as const};});},
   async close(){clearInterval(sweepTimer);stop.abort();await Promise.allSettled([...jobs.values(),...submitting.values()]);},
  };
 }

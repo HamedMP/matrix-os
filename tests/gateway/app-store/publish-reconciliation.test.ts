@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ draft: null as any, prepared: new Map<string, Buffer>(), original: new Map<string, Buffer>() }));
+const state = vi.hoisted(() => ({ draft: null as any, prepared: new Map<string, Buffer>(), original: new Map<string, Buffer>(), beforeRead: undefined as undefined | (()=>Promise<void>) }));
 vi.mock('../../../packages/gateway/src/app-store/draft-store.js', () => ({ createDraftStore: () => ({
-  read: async () => structuredClone(state.draft),
+  list: async () => Array.from({length:5},()=>state.draft),
+  read: async () => { await state.beforeRead?.(); return structuredClone(state.draft); },
   write: async (draft: unknown) => { state.draft = structuredClone(draft); },
   files: async (_: string, which: string) => new Map(which === 'original' ? state.original : state.prepared),
   writeFiles: async (_: string, which: string, files: Map<string, Buffer>) => { if (which === 'prepared') state.prepared = new Map(files); },
@@ -13,6 +14,7 @@ const manifest = { name: 'Garden', slug: 'garden', description: 'A sample garden
 let service: ReturnType<typeof createStorePublishService>;
 afterEach(async () => { await service?.close(); });
 function fixture() {
+  state.beforeRead=undefined;
   state.original = new Map([['matrix.json', Buffer.from(JSON.stringify(manifest))], ['package.json', Buffer.from('{}')], ['pnpm-lock.yaml', Buffer.from('lockfileVersion: 9.0')], ['index.html', Buffer.from('sample')]]);
   state.prepared = new Map(state.original);
   state.draft = { id, sourceSlug: 'garden', sourceName: 'Garden', status: 'ready', stage: 'verify', ai: 'completed', blockingFindings: 0,
@@ -25,6 +27,17 @@ function fixture() {
   return { platform, builder };
 }
 describe('private publishing reconciliation', () => {
+  it('admits at most five private drafts',async()=>{
+    fixture();await expect(service.create({app:'garden'})).rejects.toMatchObject({code:'limit'});
+  });
+  it('reserves a draft before reading for revision so another revision or submit cannot race it',async()=>{
+    fixture();let release!:()=>void;const blocked=new Promise<void>(resolve=>{release=resolve;});state.beforeRead=()=>blocked;
+    const first=service.revise(id,{instructions:'Use neutral examples'});
+    try{
+      await expect(service.revise(id,{instructions:'Use other examples'})).rejects.toMatchObject({code:'conflict'});
+      await expect(service.submit(id,{consent:true,license:'MIT'})).rejects.toMatchObject({code:'conflict'});
+    }finally{release();await first;}
+  });
   it('rebuilds edited slug/version in the private source before allowing submission', async () => {
     const { builder } = fixture();
     const result = await service.listing(id, { slug: 'shared-garden', version: '1.1.0' });
