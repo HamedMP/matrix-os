@@ -314,3 +314,46 @@ describe('shadow mode observes without blocking main',()=>{
   try{await reconcile(f);expect(written(f)).toMatchObject({conclusion:'failure'});expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^Main source qualification failed at decision: /));}finally{warn.mockRestore();}
  });
 });
+
+
+it('settles exact-main qualification before an expensive full-scope PR scan fails',async()=>{
+ const f=fixture();f.github.rest.pulls.list.mockRejectedValue(new Error('Maintenance API budget exhausted'));
+ await expect(reconcile(f)).rejects.toThrow('Maintenance API budget exhausted');
+ expect(written(f)).toMatchObject({name:'CI Source Qualification',head_sha:source,conclusion:'success'});
+ expect(JSON.parse(written(f).output.summary)).toMatchObject({sourceKind:'main',requestingRunId:321,requestingRunAttempt:1});
+});
+
+describe('controller pin generation fencing',()=>{
+ const nextPin='9'.repeat(40);
+ async function movingPin(f:ReturnType<typeof fixture>){
+  const configuration=(await f.github.rest.actions.listRepoVariables()).data;
+  f.github.rest.actions.listRepoVariables.mockImplementation(async()=>({data:structuredClone(configuration)}));
+  Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async({basehead}:{basehead:string})=>{
+   const [before,after]=basehead.split('...');
+   return{data:{status:before===after?'identical':'ahead',merge_base_commit:{sha:before}}};
+  })});
+  return()=>{configuration.variables.find(value=>value.name==='MATRIX_CI_CONTROLLER_SHA')!.value=nextPin;};
+ }
+ it('does not turn passing exact-main CI red when an old queued controller sees the new pin',async()=>{
+  const f=fixture(),move=await movingPin(f);move();await reconcile(f);
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('preserves a qualified main check when the pin moves before a late failure write',async()=>{
+  const f=fixture(),history=retainAppHistory(f),move=await movingPin(f);await reconcile(f);
+  const previous=structuredClone(history.current());expect(previous.conclusion).toBe('success');
+  f.gateGithub.rest.checks.create.mockClear();f.gateGithub.rest.checks.update.mockClear();
+  const commit=f.github.rest.repos.getCommit.getMockImplementation()!;
+  f.github.rest.repos.getCommit.mockImplementation(async(...args)=>{const value=await commit(...args);move();return value;});
+  f.jobs[0].conclusion='failure';await reconcile(f);
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+  expect(history.current()).toEqual(previous);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('still fails closed on a malformed harness digest with the current pin',async()=>{
+  const f=fixture(),configuration=(await f.github.rest.actions.listRepoVariables()).data;
+  configuration.variables.find(value=>value.name==='MATRIX_CI_RUNNER_HARNESS_DIGEST')!.value='invalid';
+  f.github.rest.actions.listRepoVariables.mockResolvedValue({data:configuration});await reconcile(f);
+  expect(written(f)).toMatchObject({conclusion:'failure',output:{title:'Reviewed main execution configuration is incomplete'}});
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+});

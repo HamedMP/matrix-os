@@ -405,3 +405,90 @@ it('retries a denied dispatch instead of treating its failed timestamp as accept
  expect(lastWrite(f)).toMatchObject({status:'in_progress'});
  expect(JSON.parse(lastWrite(f).output.summary)).not.toHaveProperty('refreshDispatchFailed');
 });
+
+
+describe('controller pin generation fencing',()=>{
+ const nextPin='9'.repeat(40);
+ function movingPin(f:ReturnType<typeof fixture>){
+  let selected=main;
+  const variables=f.github.rest.actions.getRepoVariable.getMockImplementation()!;
+  f.github.rest.actions.getRepoVariable.mockImplementation(async args=>args.name==='MATRIX_CI_CONTROLLER_SHA'?{data:{name:args.name,value:selected}}:variables(args));
+  const branch=f.github.rest.repos.getBranch.getMockImplementation()!;
+  f.github.rest.repos.getBranch.mockImplementation(async args=>args.branch==='main'?{data:{name:'main',commit:{sha:nextPin}}}:branch(args));
+  Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async({basehead}:{basehead:string})=>{
+   const [before,after]=basehead.split('...');
+   return{data:{status:before===after?'identical':'ahead',merge_base_commit:{sha:before}}};
+  })});
+  return()=>{selected=nextPin;};
+ }
+ it('does not publish or dispatch from a queued controller superseded by a reviewed main pin',async()=>{
+  const f=fixture(),move=movingPin(f);f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];move();
+  await reconcile(f);
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('does not publish pending coverage or dispatch if the pin changes during PR discovery',async()=>{
+  const f=fixture(),move=movingPin(f);f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+  const pull=f.github.rest.pulls.get.getMockImplementation()!;
+  f.github.rest.pulls.get.mockImplementation(async(...args)=>{const value=await pull(...args);move();return value;});
+  await reconcile(f);
+  expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('still denies missing reviewed configuration instead of treating it as supersession',async()=>{
+  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+  const variables=f.github.rest.actions.getRepoVariable.getMockImplementation()!;
+  f.github.rest.actions.getRepoVariable.mockImplementation(async args=>args.name==='MATRIX_CI_CONTROLLER_SHA'?{data:{name:args.name,value:''}}:variables(args));
+  await reconcile(f);expect(lastWrite(f)).toMatchObject({conclusion:'failure',output:{title:'Reviewed execution configuration is incomplete'}});
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+});
+
+
+describe('bounded full-scope maintenance',()=>{
+ function maintenanceFixture(count:number,createdAt:string){
+  const f=fixture(),pulls=Array.from({length:count},(_,i)=>({...structuredClone(f.pull),number:3000+i}));
+  f.github.rest.pulls.list.mockImplementation(async()=>({data:pulls}));
+  f.github.rest.pulls.get.mockImplementation(async({pull_number}:{pull_number:number})=>({data:pulls.find(p=>p.number===pull_number)!}));
+  f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:{id:123,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'schedule',head_sha:main,head_branch:'main',run_attempt:1,created_at:createdAt,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}}} as any);
+  return f;
+ }
+ const run=(f:ReturnType<typeof fixture>)=>gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
+ const writtenPrs=(f:ReturnType<typeof fixture>)=>f.gateGithub.rest.checks.create.mock.calls.map(([args])=>JSON.parse(args.output.summary).prNumber).filter(number=>number>0);
+ it('covers every PR in three bounded eight-PR scheduled batches without qualifying untouched PRs',async()=>{
+  const seen=new Set<number>();
+  for(let slot=0;slot<3;slot++){
+   const f=maintenanceFixture(24,new Date(Date.UTC(2026,9,18,0,slot*15)).toISOString());await run(f);
+   const numbers=writtenPrs(f);expect(numbers).toHaveLength(8);expect(new Set(numbers).size).toBe(8);numbers.forEach(number=>seen.add(number));
+   expect(f.github.rest.pulls.get.mock.calls.map(([args])=>args.pull_number)).toEqual(numbers);
+  }
+  expect([...seen].sort((a,b)=>a-b)).toEqual(Array.from({length:24},(_,i)=>3000+i));
+ });
+ it('rotates first position so a repeatedly expensive PR cannot starve the same batch',async()=>{
+  const first=new Set<number>();
+  for(let cycle=0;cycle<8;cycle++){
+   const f=maintenanceFixture(8,new Date(Date.UTC(2026,9,18,0,cycle*15)).toISOString());await run(f);first.add(writtenPrs(f)[0]);
+  }
+  expect([...first].sort((a,b)=>a-b)).toEqual(Array.from({length:8},(_,i)=>3000+i));
+ });
+ it('bounds actual API calls and defers unexamined PRs without writing a budget failure as evidence',async()=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');
+  const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub,maintenanceLimits:{maxApiCalls:12,maxMilliseconds:240000}});
+  const apiCalls=Object.entries(f.github.rest).flatMap(([namespace,methods])=>Object.entries(methods).filter(([name])=>namespace!=='actions'||name!=='getRepoVariable').map(([,method])=>(method as ReturnType<typeof vi.fn>).mock.calls.length)).reduce((a,b)=>a+b,0);
+  const writes=f.gateGithub.rest.checks.create.mock.calls.length+f.gateGithub.rest.checks.update.mock.calls.length;
+  expect(apiCalls+writes).toBeLessThanOrEqual(12);const processed=writtenPrs(f);expect(processed.length).toBeLessThan(8);
+  expect(result).toMatchObject({deferred:8-processed.length});
+  const published=f.gateGithub.rest.checks.create.mock.calls.map(([args])=>args).filter(args=>JSON.parse(args.output.summary).prNumber>0);
+  expect(published.every(args=>args.conclusion==='success'&&args.output.title==='Dedicated source qualification: not admitted')).toBe(true);
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('defers remaining PRs at the invocation deadline without emitting success for them',async()=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');let now=Date.UTC(2026,9,18);
+  const clock=vi.spyOn(Date,'now').mockImplementation(()=>now),create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+  f.gateGithub.rest.checks.create.mockImplementation(async args=>{const result=await create(args);if(JSON.parse(args.output.summary).prNumber>0)now+=240001;return result;});
+  try{
+   const result=await run(f);expect(writtenPrs(f)).toHaveLength(1);expect(result).toMatchObject({deferred:7});
+   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  }finally{clock.mockRestore();}
+ });
+});
