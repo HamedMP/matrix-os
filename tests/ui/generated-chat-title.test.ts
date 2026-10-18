@@ -12,6 +12,7 @@ describe("generatedChatTitle", () => {
   it.each([
     ["Read [report](http://[::1]/x)", "Read report"],
     ["Read [report](https://example.com/[draft]/x)", "Read report"],
+    [String.raw`Read [literal \[ bracket](https://example.com/x)`, String.raw`Read literal \[ bracket`],
     ["Read [broken](prefix[the report title](https://example.com/x)", "Read [broken](prefixthe report title"],
   ])("preserves link text in %s", (prompt, expected) => {
     expect(generatedChatTitle(prompt)).toBe(expected);
