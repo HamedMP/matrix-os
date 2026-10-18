@@ -1,16 +1,8 @@
-# Native login completion and transient key verification (ENG-268)
+# Codex Terminal login completion (ENG-268)
 
 Restore normal Settings completion when an official native login finishes in a
 held Terminal pane. Preserve independent native/Matrix AI identity, consent,
-funding and revocation. This follow-up belongs to the existing #2545 stack.
-
-## Key verification
-
-The fixed, bounded provider metadata GET remains the preflight. HTTP429 and5xx
-mean temporary unavailability, not an invalid key. Explicit authentication/scope
-rejection remains rejected. Failed preflight never invokes persistence; no
-inference probe, automatic retry or fallback is added. Existing native saver
-transactions and generic safe errors remain authoritative.
+funding and revocation. This is the command-exit dependency of the native Codex Settings entry.
 
 ## Internal command result contract
 
@@ -27,16 +19,15 @@ returned. The existing `GetCommandState` coarse enum remains unchanged.
 | --- | --- | --- |
 | Internal command-result RPC | Existing owner Unix-socket permissions; exact incarnation | None |
 | Native login completion | Existing foreground receipt, source/account proof and current owner revision | Existing private coordinator only |
-| Key submission | Existing owner HTTP workflow authorization and payload schema | Existing saver after preflight only |
 
 No public HTTP/renderer completion proof, new persisted permission or credential
-store is introduced. A native Terminal workflow without command-result support
+store is introduced. A Codex Terminal login without command-result support
 fails before starting. An unavailable/mismatched runtime result cannot grant
 success. Matching gateway and Terminal runtime bundles are required.
 
 ## Workflow lifetime and races
 
-Each foreground login has one nonoverlapping local result observer within the
+Each foreground Codex login has one nonoverlapping local result observer within the
 existing ten-minute lifetime. Only explicit inner exit0 initiates existing fresh
 native identity and private revision/consent completion; nonzero rejects. A
 success banner, coarse `exited` state or attachment process exit is insufficient.
@@ -53,17 +44,9 @@ existing revision protections. Never enable an unrelated key/funded source.
 
 ## Validation and rollout
 
-Formal REDs cover transient key classification and actual TerminalRuntime with
-a retained attachment. Test exact/nonzero/unknown results, RPC validation and
+Tests cover actual TerminalRuntime with a retained attachment. Test exact/nonzero/unknown results, RPC validation and
 replacement, one-flight observation, cancellation/expiry, late reads, stream
 close races, real private-store commit/cancel and intervening owner Off.
 Synthetic identities/fake processes establish code behavior, not live OAuth.
 
-Custom CODEX_HOME asymmetry, Off/header labels and #2632 remain separate. Existing
-c835 host/Electron/private receipts are historical after this change. Freeze a
-new exact commit and qualify a matching host and Electron pair before authorized
-private update/live acceptance. Use the existing serialized GUI executor and
-normal independent client profile; never copy credentials. Public documentation
-assessment remains the original separate site deliverable; this fix adds no
-public authentication method. No new task/PR, automatic merge, paid inference or
-resource lifetime extension is part of this change.
+Main's non-Codex Terminal login and install/cancel behavior remain unchanged. API-key preflight classification and the earlier generic install drain-cancellation repair are excluded. Existing running clients, credentials and Private Preview behavior are not changed by source validation. Final publication requires independent exact-diff review and current-head checks.

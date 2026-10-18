@@ -478,3 +478,15 @@ it.each(['off', 'source'] as const)('does not complete foreground native login a
   await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'failed', safeFailure: 'unavailable' }));
   expect(f.store.completeCodexNativeLogin).not.toHaveBeenCalled();
 });
+
+it('keeps Main Claude Terminal admission independent of Codex command-result support', async () => {
+  const f = nativeFixture('claude'); f.row.installState = 'installed';
+  delete (f.terminal as Partial<TerminalRuntimeSocketClient>).getCommandResult;
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+    hostControl: { available: false, run: vi.fn() } });
+  const running = await adapter!.start({ request: { harnessInstanceId: f.row.id,
+    kind: 'login', method: 'terminal', idempotencyKey: 'main-claude-admission' },
+    publish: vi.fn(), registerCleanup: vi.fn() });
+  expect(running.terminalSessionId).toBe(`${ref.workspaceId}:${ref.tabId}`);
+  await running.cancel();
+});
