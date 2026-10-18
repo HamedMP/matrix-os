@@ -33,10 +33,14 @@ type PreviewDatabase = WorkspaceDatabase & ComputeBudgetDatabase & AdmissionData
 async function prepareSharedPreview(
   db: Kysely<PreviewDatabase>, policy: ComputePolicyInput, now: number,
 ): Promise<void> {
-  const repository = new PostgresWorkspaceRepository(db, false);
-  const budgets = new PostgresComputeBudgetStore(db);
-  const admission = new PostgresComputeAdmissionStore(db, admitWorkspaceChatMessage);
-  const runtime = new PostgresRuntimeStore(db, admission.runtimeHooks());
+  // These are typed views of the same connection, never separate pools.
+  const workspaceDb = db as unknown as Kysely<WorkspaceDatabase>;
+  const budgetDb = db as unknown as Kysely<ComputeBudgetDatabase>;
+  const repository = new PostgresWorkspaceRepository(workspaceDb, false);
+  const budgets = new PostgresComputeBudgetStore(budgetDb);
+  const admission = new PostgresComputeAdmissionStore(db, (trx, owner, input) =>
+    admitWorkspaceChatMessage(trx as unknown as Kysely<WorkspaceDatabase>, owner, input));
+  const runtime = new PostgresRuntimeStore(workspaceDb, admission.runtimeHooks());
 
   await repository.initialize();
   await runtime.initialize();
@@ -65,4 +69,4 @@ Deploy the Worker's minute cron as well as its Queue consumer. Scheduled recover
 
 Use the actual Matrix gateway and a low-cost real agent. Verify saved-data reads with compute asleep; admission rollback and idempotency; exact Queue payload authority; model/tool waits through browser disconnect; checkpoint, destruction and restored Chat continuation; exhausted allowance without a compute wake; and personal VPS routing regressions. Record the exact code/image revision, observed failures, hold/settlement values and measured timings separately from assumptions. Shared support covers task-scoped work; independent daemons and persistent terminals require additional durable leases.
 
-Keep raw credentials and private operator logs outside the public evidence. After measurements, stop and verify destruction of owned test compute, then remove only the isolated Worker and its secrets, Queues, R2 objects/bucket, Hyperdrive connection, disposable database/roles and test image artifacts. Close local database pools and stop temporary servers. Preserve customer resources, unfinished feature work and the main checkout. Unconfirmed termination remains quarantined and held until reconciliation confirms native destruction; resource cleanup must not be presented as a refund or a successful restore.
+Keep raw credentials and private operator logs outside the public evidence. After measurements, stop and verify destruction of owned test compute, then remove only the isolated Worker and its secrets, Durable Object/container application, Queues, R2 objects/bucket, Hyperdrive connection, disposable database/roles and test image artifacts. Close local database pools and stop temporary servers. Preserve customer resources, unfinished feature work and the main checkout. Unconfirmed termination remains quarantined and held until reconciliation confirms native destruction; resource cleanup must not be presented as a refund or a successful restore.
