@@ -14,6 +14,7 @@ These notes describe the implemented platform layer. They supplement the design 
 - Passing source is copied to the separate verified key before its review state is committed. Reviewers and installers never consume the publisher-writable upload key: a still-valid presigned PUT cannot replace approved bytes.
 - Staff approval signs the exact source length/digest, version identity, normalized manifest and capability digest using Ed25519. Publication, predecessor supersession, listing metadata/current pointer and moderation event commit in one transaction under the listing lock. Missing signing configuration fails approval closed.
 - Install and rating changes take the listing lock, then update the edge and counters in the same transaction. Repeated installs do not increase unique download counts. Ratings require an installation and publishers cannot rate their own listings.
+- Install receipts are authenticated owner telemetry, not proof that a local build ran. For a live listing, a first receipt may reference any historically signed published/superseded version so a download can finish building after a newer approval. No grant ledger or claim of build attestation is introduced. Fresh old-version grants remain denied unless that owner already has that version installed; suspended or deleted-publisher listings reject receipts.
 - There are no platform build jobs, builder routes or distributed `dist` artifacts. Source builds occur on each installer's VPS through the shared local isolation service.
 
 ## Platform configuration

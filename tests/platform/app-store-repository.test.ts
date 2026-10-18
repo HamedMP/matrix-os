@@ -101,6 +101,21 @@ describe('App Store repository', () => {
       const detail = await repository.detail('garden', consumer.userId); expect(detail.installCount).toBe(1); expect(detail.activeInstallCount).toBe(1); expect(detail.ratingCount).toBe(1); expect(detail.ratingAverage).toBe(detail.myRating);
     } finally { await concurrentDb?.destroy(); }
   });
+  it('accepts a first receipt for signed source superseded during the installer build without offering new old downloads', async () => {
+    const first = await published();
+    expect((await repository.downloadVersion('garden', consumer.userId, first.id)).id).toBe(first.id);
+    const second = await reviewed('1.1.0', 'submission:next');
+    await repository.decide('reviewer', second.id, { type: 'approve' });
+    // A previous grant can finish building, but fresh old-version grants stay denied.
+    await expect(repository.downloadVersion('garden', consumer.userId, first.id)).rejects.toMatchObject({ code: 'forbidden' });
+    expect(await repository.install(consumer.userId, 'garden', first.id)).toMatchObject({ installed: true, installCount: 1, activeInstallCount: 1 });
+    expect(await repository.install(consumer.userId, 'garden', first.id)).toMatchObject({ installCount: 1, activeInstallCount: 1 });
+    await expect(repository.downloadVersion('garden', 'user_new', first.id)).rejects.toMatchObject({ code: 'forbidden' });
+    const pending = await reviewed('1.2.0', 'submission:pending');
+    await expect(repository.install('user_new', 'garden', pending.id)).rejects.toMatchObject({ code: 'forbidden' });
+    await repository.listingAction('reviewer', first.listing_id, { type: 'suspend', message: 'Review' });
+    await expect(repository.install('user_new', 'garden', first.id)).rejects.toMatchObject({ code: 'forbidden' });
+  });
   it('counts first installs and active reactivation exactly once', async () => {
     const created = await published();
     for (let i = 0; i < 3; i++) await repository.install(consumer.userId, 'garden', created.id);
