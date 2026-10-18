@@ -136,3 +136,23 @@ describe('native Cloudflare runtime adapter', () => {
     await f.driver.cancel({ownerId:'owner',jobId:'job',generation:1,expiresAt:0,maxRunAt:0}); expect(f.container.destroy).toHaveBeenCalled();
   });
 });
+
+describe('native termination proof while stopped or starting',()=>{
+  it('awaits destroy even when running is false instead of inferring termination',async()=>{
+    const f=fixture();expect(f.container.running).toBe(false);
+    await f.driver.cancel({ownerId:'owner',jobId:'pending_start',generation:1,expiresAt:0,maxRunAt:0});
+    expect(f.container.destroy).toHaveBeenCalledOnce();
+  });
+  it('retains uncertainty if destroy rejects while running is false',async()=>{
+    const f=fixture();f.container.destroy.mockRejectedValueOnce(new Error('destroy unconfirmed'));
+    await expect(f.driver.cancel({ownerId:'owner',jobId:'pending_start',generation:1,expiresAt:0,maxRunAt:0})).rejects.toThrow('destroy unconfirmed');
+  });
+});
+
+describe('pooled task lifetime policy',()=>{
+  it('disables SDK detached and automatic background tasks for the pooled gateway',async()=>{
+    const f=fixture();await f.driver.start('owner',null,1);
+    const launch=f.commands.find(command=>command.operation==='start');
+    expect(launch?.options.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+  });
+});

@@ -41,6 +41,10 @@ export class NativeRuntimeDriver implements RuntimeDriver {
       HOME: '/workspace/home', MATRIX_HOME: '/workspace/home', NODE_ENV: 'production',
       MATRIX_AUTH_TOKEN:credentials.authToken, ANTHROPIC_API_KEY:credentials.inferenceKey,
       DATABASE_URL:credentials.databaseUrl,
+      // Shared compute leases cover one attached SDK task. Detached work needs
+      // its own durable lease before it can survive task completion and sleep.
+      // https://code.claude.com/docs/en/env-vars#variables
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS:'1',
     };
     if (!this.container.running) {
       this.container.start({
@@ -109,14 +113,14 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     try {await this.withPhase('stop',async()=>{
     // A fetch client exiting cannot abort gateway SDK descendants. Destroy the
     // isolated compute boundary to enforce the hard budget; saved work is in R2.
-    if (this.container.running) {
-      try { await this.container.destroy(); }
-      catch (error: unknown) {
-        // Keep the durable generation quarantined. If explicit destruction is
-        // unavailable, the main sleep process exits on the platform idle stop.
-        await this.container.setInactivityTimeout(1000);
-        throw error;
-      }
+    // running=false can also precede native startup completion. Only a resolved
+    // destroy call is positive termination proof for accounting and replacement.
+    try { await this.container.destroy(); }
+    catch (error: unknown) {
+      // Keep the durable generation quarantined if explicit destruction is
+      // unavailable; a platform timeout is never accounting proof.
+      await this.container.setInactivityTimeout(1000);
+      throw error;
     }
     });} finally {this.clearCredentials();}
   }
