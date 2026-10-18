@@ -3,6 +3,7 @@ import { CanonicalChatTransportFrameSchema, type CanonicalChatTransportFrame } f
 import { chatError, validateChatId, type ChatClient } from "./chat-client.js";
 
 const MAX_FRAME_CHARS = 512 * 1024;
+const HEALTHY_CONNECTION_MS = 30_000;
 export async function watchChat(client: ChatClient, id: string, input: {
   signal: AbortSignal;
   cursor?: number;
@@ -18,9 +19,11 @@ export async function watchChat(client: ChatClient, id: string, input: {
   }
   while (!input.signal.aborted) {
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let connectedAt: number | undefined;
     let progress = false;
     try {
       const response = await client.openEvents({ cursor, signal: input.signal });
+      connectedAt = Date.now();
       reader = response.body!.getReader();
       let buffer = ""; const decoder = new TextDecoder("utf-8", { fatal: true });
       while (!input.signal.aborted) {
@@ -65,6 +68,8 @@ export async function watchChat(client: ChatClient, id: string, input: {
       reader?.releaseLock();
     }
     if (input.signal.aborted) return;
+    // Quiet streams also expire at the request timeout; they are not repeated connection failures.
+    if (progress || (connectedAt !== undefined && Date.now() - connectedAt >= HEALTHY_CONNECTION_MS)) failures = 0;
     if (failures >= 5) throw chatError("chat_watch_disconnected");
     try { await delay(Math.min(5000, (input.retryDelayMs ?? 500) * 2 ** Math.max(0, failures - 1)), undefined, { signal: input.signal }); }
     catch (error: unknown) { if (input.signal.aborted) return; throw chatError("chat_unavailable"); }

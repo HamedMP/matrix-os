@@ -27,7 +27,8 @@ the exact payload for any internal retry. Sending may start a remote agent.
 
 Watch emits NDJSON with the selected Chat's content/events, resumes with the
 global event cursor, reconnects with a bounded consecutive-failure budget and
-backoff, reports replay gaps with a fresh snapshot, and cancels on SIGINT/SIGTERM.
+backoff, survives normal request timeouts on healthy quiet connections, reports
+replay gaps with a fresh snapshot, and cancels on SIGINT/SIGTERM.
 All requests reject redirects and have timeouts; bodies and stream frames are
 bounded. Errors use local safe copy. No credentials are written in exports.
 

@@ -87,6 +87,28 @@ describe("Chat ID client", () => {
 });
 
 describe("Chat watch", () => {
+  it("keeps reconnecting after healthy quiet connections time out", async () => {
+    const stop = new AbortController(); let now = 0; let calls = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => {
+      if (++calls === 7) { stop.abort(); throw new DOMException("aborted", "AbortError"); }
+      return new Response(new ReadableStream({ pull(controller) {
+        now += 300_001;
+        controller.error(new DOMException("request timed out", "TimeoutError"));
+      } }, { highWaterMark: 0 }), { headers: { "content-type": "text/event-stream" } });
+    });
+    try {
+      await watchChat(client(fetcher), id, { signal: stop.signal, onFrame: () => {}, retryDelayMs: 1 });
+      expect(calls).toBe(7);
+    } finally { clock.mockRestore(); }
+  });
+  it("bounds repeated connections that fail immediately", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("connection failed"));
+    await expect(watchChat(client(fetcher), id, {
+      signal: new AbortController().signal, onFrame: () => {}, retryDelayMs: 1,
+    })).rejects.toMatchObject({ code: "chat_watch_disconnected" });
+    expect(fetcher).toHaveBeenCalledTimes(5);
+  });
   it("handles split SSE frames, filters other Chats and preserves a resume cursor", async () => {
     const stop=new AbortController(); const frames: unknown[]=[];
     const events=[{type:"chat.event",event:{cursor:8,chatId:"chat_other",revision:4,eventType:"chat.updated",createdAt:time}},
