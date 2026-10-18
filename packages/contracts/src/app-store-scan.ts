@@ -126,12 +126,6 @@ function serviceArguments(source: string, open: number): string[] | null {
   return null;
 }
 
-function lineOf(source: string, index: number): number {
-  let line = 1;
-  for (let i = 0; i < index; i++) if (source.charCodeAt(i) === 10) line++;
-  return line;
-}
-
 export interface ScanOptions { ownerTerms?: readonly string[] }
 
 export function scanAppFiles(files: ReadonlyMap<string, Buffer>, options: ScanOptions = {}): AppStoreScanReport {
@@ -151,13 +145,19 @@ export function scanAppFiles(files: ReadonlyMap<string, Buffer>, options: ScanOp
   };
 
   for (const path of [...files.keys()].sort()) {
+    if (truncated) break;
     const data = files.get(path)!;
-    if (!isText(path, data)) continue;
+    const codeText = isText(path, data) && !LOCKFILES.has(path.split("/").pop() ?? "");
+    for (const pattern of ownerPatterns) {
+      pattern.lastIndex = 0;
+      if (pattern.test(path)) add("personal.owner_path", "personal", "high", path, 1, "Owner identity in file name");
+    }
     const source = data.toString("utf8");
     const lines = source.split("\n");
-    lines.forEach((text, index) => {
+    for (const [index, text] of lines.entries()) {
+      if (truncated) break;
       const line = index + 1;
-      for (const rule of (LOCKFILES.has(path.split("/").pop() ?? "") ? SECRET_RULES : [...SECRET_RULES, ...OTHER_RULES])) {
+      for (const rule of (codeText ? [...SECRET_RULES, ...OTHER_RULES] : SECRET_RULES)) {
         rule.pattern.lastIndex = 0;
         if (rule.pattern.test(text)) add(rule.rule, rule.category, rule.severity, path, line, rule.message);
       }
@@ -165,7 +165,7 @@ export function scanAppFiles(files: ReadonlyMap<string, Buffer>, options: ScanOp
       for (const match of text.matchAll(GENERIC_SECRET)) {
         if (looksSecret(match[1])) add("secret.generic", "secret", "high", path, line, "Hardcoded credential");
       }
-      if (LOCKFILES.has(path.split("/").pop() ?? "")) return;
+      if (!codeText) continue;
       for (const pattern of ownerPatterns) {
         pattern.lastIndex = 0;
         if (pattern.test(text)) add("personal.owner", "personal", "high", path, line, "Owner name, handle or email");
@@ -178,11 +178,18 @@ export function scanAppFiles(files: ReadonlyMap<string, Buffer>, options: ScanOp
       for (const match of text.matchAll(IMPORT_SPECIFIER)) {
         if (resolvesOutside(path, match[1])) add("unsafe_code.outside_import", "unsafe_code", "high", path, line, "Import outside the app folder");
       }
-    });
+    }
+    if (!codeText || truncated) continue;
+    let serviceLine = 1;
+    let serviceOffset = 0;
     for (const match of source.matchAll(/\bservice\s*\(/g)) {
+      if (truncated) break;
+      while (serviceOffset < match.index!) {
+        if (source.charCodeAt(serviceOffset++) === 10) serviceLine++;
+      }
       const args = serviceArguments(source, match.index! + match[0].length - 1);
       if (args && args.length === 4 && /^["'`]/.test(args[3])) {
-        add("owner_config.account_label", "owner_config", "medium", path, lineOf(source, match.index!), "Fixed integration account");
+        add("owner_config.account_label", "owner_config", "medium", path, serviceLine, "Fixed integration account");
       }
     }
   }

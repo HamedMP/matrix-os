@@ -20,4 +20,16 @@ describe("publishing privacy boundaries", () => {
     expect(report.blocking).toBe(true);
     expect(JSON.stringify(report)).not.toContain("PasswordVerySecret99");
   });
+  it("checks private keys without extensions and secrets in asset metadata", () => {
+    const report = scanAppFiles(new Map([
+      ["id_rsa", Buffer.from("-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----")],
+      ["public/photo.png", Buffer.from("\x89PNG\0metadata: sk-ant-abcdefghijklmnopqrstuvwxyz")],
+    ]));
+    expect(report.findings.filter(f => f.category === "secret")).toHaveLength(2);
+    expect(report.blocking).toBe(true);
+  });
+  it("finds owner identity in file names before publication", () => {
+    const report = scanAppFiles(new Map([["assets/alice-customer-list.csv", Buffer.from("example")]]), { ownerTerms: ["alice"] });
+    expect(report.blocking).toBe(true);
+  });
 });
