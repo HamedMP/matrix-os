@@ -11,6 +11,13 @@ const objectId: CatalogField = {
   schema: z.string().min(5).max(50).regex(/^[A-Za-z0-9_][A-Za-z0-9_:-]*$/),
   param: { type: "string", required: true, minLength: 5, maxLength: 50 },
 };
+// Existing Google-assigned IDs can be shorter than the 5-character minimum
+// for caller-created objects (for example an initial slide can have ID "p").
+// The end-of-input assertion also rejects trailing newlines.
+const existingPageId: CatalogField = {
+  schema: z.string().min(1).max(256).regex(/^[A-Za-z0-9_][A-Za-z0-9_:-]*(?![\s\S])/),
+  param: { type: "string", required: true, minLength: 1, maxLength: 256 },
+};
 const replacement: CatalogField = { schema: z.string().max(10000), param: { type: "string", required: true, maxLength: 10000 } };
 export const DOCUMENT_WRITE_ACTIONS: Record<string, Record<string, ServiceAction>> = {
   google_contacts: {
@@ -33,7 +40,7 @@ export const DOCUMENT_WRITE_ACTIONS: Record<string, Record<string, ServiceAction
       mapBody: p => ({ requests: [{ createSlide: { objectId: p.slideId, slideLayoutReference: { predefinedLayout: "BLANK" } } }] }),
     }),
     replace_slide_text: boundedWrite("Replace literal case-sensitive text on one slide after approval", {
-      presentationId: ID, pageId: objectId, findText: text(1000), replaceText: replacement,
+      presentationId: ID, pageId: existingPageId, findText: text(1000), replaceText: replacement,
     }, {
       method: "POST", url: p => `${slides}/${segment(p, "presentationId")}:batchUpdate`,
       mapBody: p => ({ requests: [{ replaceAllText: { containsText: { text: p.findText, matchCase: true }, replaceText: p.replaceText, pageObjectIds: [p.pageId] } }] }),

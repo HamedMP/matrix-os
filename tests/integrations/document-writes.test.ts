@@ -45,6 +45,19 @@ describe("bounded document, calendar, file and communication writes", () => {
     expect(proxyPost.mock.calls.length + proxyPut.mock.calls.length).toBe(1);
   });
 
+  it("replaces text on an existing short Google Slides page ID without relaxing new slide IDs", async () => {
+    const action = DOCUMENT_WRITE_ACTIONS.google_slides!.replace_slide_text!;
+    const params = { presentationId: "deck_1", pageId: "p", findText: "old", replaceText: "new" };
+    expect(action.paramsSchema!.safeParse(params).success).toBe(true);
+    const proxyPost = vi.fn(async () => ({ replies: [{ replaceAllText: { occurrencesChanged: 1 } }] }));
+    await executeIntegrationAction({ pipedream: { proxyPost } as unknown as PipedreamConnectClient, externalUserId: "owner", connection: { pipedream_account_id: "account" }, def: { id: "google_slides" } as ServiceDefinition, actionDef: action, serviceId: "google_slides", actionId: "replace_slide_text", params });
+    expect(proxyPost).toHaveBeenCalledWith({ externalUserId: "owner", accountId: "account", url: "https://slides.googleapis.com/v1/presentations/deck_1:batchUpdate", body: { requests: [{ replaceAllText: { containsText: { text: "old", matchCase: true }, replaceText: "new", pageObjectIds: ["p"] } }] } });
+    expect(DOCUMENT_WRITE_ACTIONS.google_slides!.add_slide!.paramsSchema!.safeParse({ presentationId: "deck_1", slideId: "p" }).success).toBe(false);
+    for (const pageId of ["", "../other", "p?query", "p\n", "p".repeat(257)]) {
+      expect(action.paramsSchema!.safeParse({ ...params, pageId }).success).toBe(false);
+    }
+  });
+
   it.each([
     ["google_contacts", "create_contact", { givenName: "A", email: "invalid" }],
     ["google_contacts", "create_contact", { givenName: " " }],
