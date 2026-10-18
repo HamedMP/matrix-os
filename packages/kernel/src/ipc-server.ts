@@ -1,3 +1,4 @@
+import {createPublishDraftToolHandler} from './tools/publish-draft.js';
 import { ownerDataImportToolDefinitions } from "./tools/data-imports.js";
 import { z } from "zod/v4";
 import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
@@ -85,6 +86,7 @@ export async function createIpcServer(
   ownerAudioTranscriber?: OwnerAudioTranscriber,
 ) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
+  const preparePublishDraft=createPublishDraftToolHandler();
   const transcribeOwnerAudio = homePath && ownerAudioTranscriber
     ? createTranscribeAudioToolHandler({ homePath, transcriber: ownerAudioTranscriber })
     : undefined;
@@ -844,53 +846,12 @@ export async function createIpcServer(
         },
       ),
 
-      tool(
+      ...(preparePublishDraft?[tool(
         "publish_app",
-        "Publish an app to the Matrix OS App Store. Validates the manifest, creates a registry entry, and returns the public URL.",
-        {
-          app_name: z.string().describe("Name of the app directory under ~/apps/"),
-          description: z.string().optional().describe("Override description for store listing"),
-          tags: z.array(z.string()).optional().describe("Tags for the app listing"),
-        },
-        async ({ app_name, description, tags }) => {
-          if (!homePath) {
-            return { content: [{ type: "text" as const, text: "Cannot publish (no home path)" }] };
-          }
-          try {
-            const { validateForPublish, preparePublishPayload } = await import("@matrix-os/gateway/app-publish");
-            const { loadHandle } = await import("./identity.js");
-            const appDir = join(homePath, "apps", app_name);
-            if (!existsSync(appDir)) {
-              return { content: [{ type: "text" as const, text: `App "${app_name}" not found in ~/apps/` }] };
-            }
-
-            const validation = validateForPublish(appDir);
-            if (!validation.valid) {
-              return { content: [{ type: "text" as const, text: `Publish validation failed: ${validation.error}` }] };
-            }
-
-            const handle = loadHandle(homePath);
-            const authorId = handle ? `@${handle.handle}` : "@local";
-            const payload = preparePublishPayload(appDir, authorId);
-            if (!payload) {
-              return { content: [{ type: "text" as const, text: "Failed to prepare publish payload" }] };
-            }
-
-            if (description) payload.description = description;
-            if (tags) payload.tags = JSON.stringify(tags);
-
-            const url = `matrix-os.com/store/${authorId}/${payload.slug}`;
-            return {
-              content: [{
-                type: "text" as const,
-                text: `App "${payload.name}" ready to publish!\nSlug: ${payload.slug}\nVersion: ${payload.version}\nURL: ${url}\n\nPayload: ${JSON.stringify(payload, null, 2)}`,
-              }],
-            };
-          } catch (e) {
-            return { content: [{ type: "text" as const, text: `Publish error: ${e instanceof Error ? e.message : String(e)}` }] };
-          }
-        },
-      ),
+        "Prepare a private publishing draft. The owner must review provider consent, changes, license and submission in Gallery. Never submits or publishes automatically.",
+        {app_name:z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)},
+        preparePublishDraft,
+      )]:[]),
 
       tool(
         "app_data",
