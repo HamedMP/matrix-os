@@ -793,6 +793,7 @@ jobs:
             tests/scripts/ci-dedicated-refresh.test.ts \
             tests/scripts/ci-dedicated-history.test.ts \
             tests/scripts/ci-dedicated-lease.test.ts \
+            tests/scripts/ci-dedicated-ssh.test.ts \
             tests/scripts/ci-metadata-result.test.ts \
             tests/scripts/ci-dedicated-artifact-proof.test.ts \
             tests/scripts/ci-execution-origin.test.ts \

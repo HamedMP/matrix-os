@@ -45,8 +45,11 @@ export async function routeControllerEvent(github,repo,controllerSha,context,sna
    throw new Error('Untrusted controller bridge requester');
   }
   const origin=await verifyRunExecution(github,repo,run,'.github/workflows/ci.yml');
-  // Explicit self/completion handoffs own P runs; automatic events are harmless duplicates.
-  if(origin)return{dispatched:false};
+  // Explicit handoffs own qualification; terminal events recover missing completion.
+  if(origin){
+   if(context.payload.action!=='completed')return{dispatched:false};
+   if(run.status!=='completed'||!['success','failure','cancelled','timed_out','action_required','stale','startup_failure','neutral','skipped'].includes(run.conclusion))throw new Error('Isolated fallback requester is not terminal');
+  }
   if(run.event==='workflow_dispatch'&&!parseRefreshMarker(run.display_title)){
    // Ordinary manual branch CI has no PR coverage authority to reconcile.
    if(/^CI (?:hosted-)?refresh-v1(?:\s|$)/.test(run.display_title||''))throw new Error('Malformed exact source refresh marker');
