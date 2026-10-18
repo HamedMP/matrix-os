@@ -507,7 +507,7 @@ export async function createSharedAiRuntime(options: {
         if (boundDriverKind !== null && boundDriverKind !== "matrix_bot") return null;
         if (!options.matrixBot || selection.model !== MATRIX_BOT_MODEL
           || !sharedAiEligibilitySupportsDriver(eligibility, "matrix_bot", MATRIX_BOT_INSTANCE_ID)
-          || await options.matrixBot.readiness?.(ownerId, selection) !== "ready") return null;
+          || await options.matrixBot.readiness?.(ownerId, selection, decision) !== "ready") return null;
         return { driverKind: "matrix_bot" as const, selection };
       }
       const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;

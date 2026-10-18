@@ -13,7 +13,7 @@ export interface SharedMatrixBotExtension {
   resolvePolicyDriver(execution: SharedMatrixBotExecution, run: SharedDispatchRun, context: AuthorizedCollaborationContext): Promise<"claude_code" | "codex">;
   /** Pins the exact owner decision and model to the canonical Run before returning its adapter. */
   prepareAdapter(execution: SharedMatrixBotExecution, run: SharedDispatchRun, context: AuthorizedCollaborationContext, decision: SharedRunOwnerSourceDecision): Promise<{ adapter: CanonicalChatProviderAdapter; modelId: string }>;
-  readiness?(ownerId: string, selection: CanonicalChatModelSelection | null): Promise<"ready" | "reconnect_required" | "unavailable">;
+  readiness?(ownerId: string, selection: CanonicalChatModelSelection | null, decision?: SharedRunOwnerSourceDecision): Promise<"ready" | "reconnect_required" | "unavailable">;
 }
 
 /** The first owner binding must use the company route, just as its later turns do. */

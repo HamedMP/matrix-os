@@ -33,7 +33,7 @@ import { createCanonicalCliEventQueue, type CanonicalCliEventQueue } from "../ch
 import type { ScopeRuntimeHostClient } from "../scope-runtime-host/index.js";
 import { BotAdmissionError, type PrivateBotAdmission, type GroupBotRunRequest } from "./admission.js";
 import { readTrustedBotRunLimits } from "./trusted-inference-limits.js";
-import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "./broker-actions.js";
+import { BotBrokerActionError, untilAborted, type BotEventSink, type BotRunSource } from "./broker-actions.js";
 import { BotRecipeCatalogError, type BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotBindingsRepository } from "./repositories/bindings.js";
 import type { BotStateTransactions } from "./events.js";
@@ -81,6 +81,7 @@ interface ActiveRun {
   chatId: string;
   inputs?: PreparedBotInputs;
   signal: AbortSignal;
+  prelaunch: AbortController;
   spec?: BotRunSpec;
   runtime?: { runtimeHandle: string; executionGeneration: string };
   queue: CanonicalCliEventQueue<BotTurnEvent>;
@@ -196,6 +197,7 @@ export function createBotTaskOrchestrator(deps: {
    */
   async function stopRuntime(run: ActiveRun, runId: string, reason: "cancelled" | "deadline"): Promise<void> {
     run.stopping ??= reason;
+    run.prelaunch.abort(new DOMException("Bot run stopped", "AbortError"));
     run.inputs?.dispose();
     const runtime = run.runtime;
     if (!runtime || run.finished) return;
@@ -217,6 +219,20 @@ export function createBotTaskOrchestrator(deps: {
     run.grace.unref?.();
   }
 
+  async function groupWait<T>(run: ActiveRun, work: () => Promise<T>): Promise<T> {
+    const signal = AbortSignal.any([run.signal, AbortSignal.timeout(10_000)]);
+    signal.throwIfAborted();
+    const value = await untilAborted(work(), signal);
+    signal.throwIfAborted();
+    return value;
+  }
+
+  function groupFailure(run: ActiveRun, error: unknown): BotTurnResult {
+    if (run.signal.aborted) return { status: "cancelled" };
+    if (error instanceof Error && error.name === "TimeoutError") return { status: "blocked", blockedReason: "deadline_reached" };
+    return { status: "failed" };
+  }
+
   async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
     const owner = { type: "personal" as const, ownerId: input.ownerId };
     const bindings = await deps.bindings.forChat({ ownerId: input.ownerId, chatId: input.chatId });
@@ -225,15 +241,16 @@ export function createBotTaskOrchestrator(deps: {
     const chatBinding = bindings[0]!;
     let group: GroupBotRunRequest | undefined;
     if (chatBinding.kind === "group") {
+      if (run.signal.aborted) return { status: "cancelled" };
       if (!deps.resolveGroupRun) return { status: "failed" };
-      try { group = await deps.resolveGroupRun(input); } catch (error: unknown) {
+      try { group = await groupWait(run, () => deps.resolveGroupRun!(input)); } catch (error: unknown) {
         console.warn("[bots] group run context unavailable:", error instanceof Error ? error.name : "UnknownError");
-        return { status: "failed" };
+        return groupFailure(run, error);
       }
       if (!group) return { status: "failed" };
-      try { await requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group }, deps.authorizeGroup); } catch (error: unknown) {
+      try { await groupWait(run, () => requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group: group! }, deps.authorizeGroup)); } catch (error: unknown) {
         console.warn("[bots] group turn denied:", error instanceof Error ? error.name : "UnknownError");
-        return { status: "failed" };
+        return groupFailure(run, error);
       }
     }
     const botId = chatBinding.botId;
@@ -346,10 +363,11 @@ export function createBotTaskOrchestrator(deps: {
         ...(isolatedModel ? { recipeRef: agent.recipeRef } : {}),
         ...(isManagedCustomBot(agent) ? { managedDefinitionRevision: agent.revision } : {}),
         route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: "interactive",
-        ...(group ? { group, expectedRootFingerprint: group.executionRootFingerprint } : {}),
+        ...(group ? { group, expectedRootFingerprint: group.executionRootFingerprint, signal: run.signal } : {}),
       });
     } catch (error: unknown) {
       if (!(error instanceof BotAdmissionError)) throw error;
+      if (group && run.signal.aborted) return settle(task, "cancelled");
       return settle(task, "blocked", error.code === "capacity_exceeded" ? "capacity_unavailable" : "root_unavailable");
     }
     const binding = deps.registry.lookupRun({ runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration, runId: input.runId });
@@ -441,7 +459,8 @@ export function createBotTaskOrchestrator(deps: {
     start(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }): BotTurnHandle {
       if (!input.text.trim() && !input.parts?.some(part => part.type === "attachment_reference")) throw new BotTurnError("invalid_request");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new BotTurnError("capacity_exceeded");
-      const run: ActiveRun = { ownerId: input.ownerId, chatId: input.chatId, signal: input.signal, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
+      const prelaunch = new AbortController();
+      const run: ActiveRun = { ownerId: input.ownerId, chatId: input.chatId, prelaunch, signal: AbortSignal.any([input.signal, prelaunch.signal]), queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
       active.set(input.runId, run);
       const result = execute(input, run).finally(() => {
         run.inputs?.dispose();
@@ -458,7 +477,7 @@ export function createBotTaskOrchestrator(deps: {
       const binding = deps.registry.lookupRun({ ...run.runtime, runId });
       if (!binding) return false;
       if (binding.group) {
-        try { await requireGroupBotAuthority({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, group: binding.group }, deps.authorizeGroup); } catch (error: unknown) {
+        try { await groupWait(run, () => requireGroupBotAuthority({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, group: binding.group! }, deps.authorizeGroup)); } catch (error: unknown) {
           console.warn("[bots] group steering denied:", error instanceof Error ? error.name : "UnknownError");
           return false;
         }

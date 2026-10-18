@@ -68,7 +68,14 @@ export function createCompanyBotRuntime(options:{ownerId:string;modelId?:string;
       await options.resolveModel(decision,options.modelId);
       return {adapter,modelId:options.modelId};
     },
-    async readiness(ownerId) {return ownerId===options.ownerId && options.modelId && options.getAdapter()?"ready":"unavailable";},
+    async readiness(ownerId, _selection, decision) {
+      if(ownerId!==options.ownerId || !options.modelId || !options.getAdapter())return "unavailable";
+      if(decision) {
+        try { await options.resolveModel(decision,options.modelId); }
+        catch(error:unknown) { if(error instanceof BotRouteError)return "unavailable"; throw error; }
+      }
+      return "ready";
+    },
   };
   return {authorizeGroup,resolveGroupRun,resolveGroupRoute,matrixBot,getGroupRevocation:()=>options.getGroupRevocation?.()};
 }

@@ -1,3 +1,4 @@
+import { untilAborted } from "./broker-actions.js";
 import type { CollaborationRevocationEnforcer, SandboxRuntimeRegistry } from "../collaboration/revocation-enforcer.js";
 /**
  * Private bot admission (spec 536, research R4). A private bot run needs no
@@ -73,6 +74,8 @@ export interface PrivateBotRunRequest {
   /** The fingerprint stored with the task; a drift blocks the run as `root_changed`. */
   expectedRootFingerprint?: string;
   group?: GroupBotRunRequest;
+  /** Internal lifecycle fence; never supplied by a client payload. */
+  signal?: AbortSignal;
 }
 
 export interface AdmittedBotRuntime {
@@ -115,6 +118,20 @@ export function createPrivateBotAdmission(deps: {
     }
   }
 
+  async function groupWait<T>(input: PrivateBotRunRequest, work: () => Promise<T>): Promise<T> {
+    if (!input.group) return work();
+    const signal = AbortSignal.any([AbortSignal.timeout(10_000), ...(input.signal ? [input.signal] : [])]);
+    try {
+      signal.throwIfAborted();
+      const value = await untilAborted(work(), signal);
+      signal.throwIfAborted();
+      return value;
+    } catch (error: unknown) {
+      if (signal.aborted) throw new BotAdmissionError("unavailable");
+      throw error;
+    }
+  }
+
   return {
     /**
      * Launches a sandboxed bot runtime for one run. On any failure after the
@@ -123,7 +140,7 @@ export function createPrivateBotAdmission(deps: {
      */
     async admit(input: PrivateBotRunRequest): Promise<AdmittedBotRuntime> {
       if (!deps.host.available) throw new BotAdmissionError("unavailable");
-      if (!await ownsChat(input)) throw new BotAdmissionError("not_found");
+      if (!await groupWait(input, () => ownsChat(input))) throw new BotAdmissionError("not_found");
       let group;
       let revocation: GroupBotRevocation | undefined;
       if (input.group) {
@@ -132,8 +149,9 @@ export function createPrivateBotAdmission(deps: {
         if (revocation.revocations.isRevoked(input.group.scopeId, input.group.actorId)) throw new BotAdmissionError("not_found");
         if (!deps.authorizeGroup) throw new BotAdmissionError("unavailable");
         try {
-          group = await requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group: input.group }, deps.authorizeGroup);
+          group = await groupWait(input, () => requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group: input.group! }, deps.authorizeGroup));
         } catch (error: unknown) {
+          if (error instanceof BotAdmissionError) throw error;
           console.warn("[bots] group admission denied:", error instanceof Error ? error.name : "UnknownError");
           throw new BotAdmissionError("not_found");
         }
@@ -175,6 +193,7 @@ export function createPrivateBotAdmission(deps: {
         worktree: { hostPath: root.primaryWorkspaceRoot, mode: "rw", fingerprint: root.fingerprint },
         network: "broker_only",
       };
+      if (input.group && input.signal?.aborted) throw new BotAdmissionError("unavailable");
       let runtime: { runtimeHandle: string; executionGeneration: string };
       try {
         runtime = await deps.host.client.createRuntime({
@@ -194,14 +213,15 @@ export function createPrivateBotAdmission(deps: {
       try {
         // Provisioning awaits external work; authority may have changed since preflight.
         // Refuse publication and stop the new workload through the existing cleanup path.
-        if (!await ownsChat(input)) throw new BotAdmissionError("not_found");
+        if (!await groupWait(input, () => ownsChat(input))) throw new BotAdmissionError("not_found");
         // Recheck after launch; membership can be revoked while runtime creation waits.
-        if (group) await requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group }, deps.authorizeGroup);
+        if (group) await groupWait(input, () => requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group: group! }, deps.authorizeGroup));
         if (group) {
           const current = deps.getGroupRevocation?.();
           if (!current || current.runtimes !== revocation?.runtimes || current.revocations !== revocation?.revocations) throw new BotAdmissionError("unavailable");
           if (current.revocations.isRevoked(group.scopeId, group.actorId)) throw new BotAdmissionError("not_found");
         }
+        if (input.group && input.signal?.aborted) throw new BotAdmissionError("unavailable");
         // No await from the final revocation guard through both registry bindings.
         deps.registry.bind({
           runtimeHandle: runtime.runtimeHandle,
