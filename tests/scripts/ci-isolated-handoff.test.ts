@@ -94,10 +94,11 @@ describe('explicit isolated CI handoff without workflow_run delivery',()=>{
   await expect((await module()).requestIsolatedCiQualification(f.github,repo,f.context,pin,inputs,configuration)).rejects.toThrow();
   expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
  });
- it('treats authenticated automatic P completion events as no-op duplicates',async()=>{
+ it('reconciles an authenticated automatic P completion when explicit completion is missing',async()=>{
   const f=fixture();f.run.status='completed';f.run.conclusion='success';
-  expect(await routeControllerEvent(f.github,repo,pin,{ref:'refs/heads/main',eventName:'workflow_run',payload:{action:'completed',workflow_run:f.run}},configuration)).toEqual({dispatched:false});
-  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  expect(await routeControllerEvent(f.github,repo,pin,{ref:'refs/heads/main',eventName:'workflow_run',payload:{action:'completed',workflow_run:f.run}},configuration)).toEqual({dispatched:true,mode:'reconcile'});
+  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({workflow_id:'ci-dedicated.yml',ref:branch,inputs:{controller_mode:'reconcile',requesting_run_id:'321',requesting_run_attempt:'1',requesting_action:'completed',reconciliation_pr:'2454'}}));
+  expect(f.github.rest.apps.createInstallationAccessToken).not.toHaveBeenCalled();
  });
 });
 

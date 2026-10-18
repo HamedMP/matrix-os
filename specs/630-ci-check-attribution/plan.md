@@ -35,6 +35,10 @@ receipt; proved infrastructure unavailability cannot replace that coverage.
 Completion polling has one absolute three-minute
 deadline across nested API reads. Controller history retains a lower time bound
 derived from the authenticated requester, including across cursor pages.
+Authenticated terminal events provide deduplicated reconciliation if explicit
+completion is missing; scheduled recovery handles absent events. Buffered SSH
+completion may drain after authenticated renewal without writing to a closed
+stream; full receipt, deadline, exit-zero and final source checks remain mandatory.
 
 Acceptance: remote tests first; current-head Greptile 5/5 and full CI; genuine
 new Main qualification; protected exact-tree child activation; automatic CI

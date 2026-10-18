@@ -264,8 +264,9 @@ a separate protected execution backend job on every attempt. It authenticates it
 attempt, workflow, protected execution origin and current PR source first.
 Main routing remains routing-only; the isolated self-handoff never suppresses
 its real workloads. Hosted-only refreshes retain their full hosted path.
-Automatic events for authenticated isolated requesters are duplicate no-ops;
-qualification does not depend on delivery of a recursive `workflow_run` event.
+Qualification does not depend on delivery of a recursive `workflow_run` event.
+Authenticated terminal events provide deduplicated reconciliation when an explicit
+completion handoff is missing; scheduled recovery covers runs without such an event.
 
 After the selected workloads settle, a separate completion job dispatches
 reconciliation before the required aggregate. The aggregate rejects a failed
@@ -285,6 +286,11 @@ requester to become terminal, before receiving App credentials; its actual
 success, failure or cancellation remains authoritative. The qualification
 controller never waits for completion of its requesting CI, avoiding a cycle.
 Dispatch transport ambiguity is not automatically retried.
+
+If SSH closes while an authenticated renewal is pending, the client drains a
+buffered completion without writing to the closed stream. This never grants an
+initial lock after closure or relaxes renewal deadlines: success still requires
+the complete receipt, final unconditional source checks, exit zero and no trailing data.
 
 Controller history searches start ten minutes before the independently
 authenticated requester's creation time. Pagination retains that lower bound,
