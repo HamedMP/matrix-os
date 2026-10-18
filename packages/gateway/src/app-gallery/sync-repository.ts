@@ -58,7 +58,9 @@ export class GallerySyncRepository {
   async claim(now: Date): Promise<GallerySyncLease | null> {
     return this.db.transaction().execute(async trx => {
       // An uncertain interrupted AI run requires an explicit retry, never an automatic replay.
-      await sql`UPDATE gallery_sync SET snapshot = snapshot || ${JSON.stringify({ status: "failed", error: "interrupted", nextCheckAt: null, updatedAt: now.toISOString() })}::jsonb,
+      await sql`UPDATE gallery_sync SET snapshot = snapshot || ${JSON.stringify({ status: "failed", stage: "finished", error: "interrupted", nextCheckAt: null, updatedAt: now.toISOString() })}::jsonb
+        || jsonb_build_object('sources', (SELECT jsonb_agg(CASE WHEN source->>'status' = 'running' THEN source || '{"status":"failed"}'::jsonb ELSE source END)
+          FROM jsonb_array_elements(snapshot->'sources') AS source)),
         lease_until = NULL, next_run_at = NULL WHERE snapshot->>'status' = 'running' AND lease_until <= ${now}`.execute(trx);
       const row = await trx.selectFrom(table).selectAll().where(eb => eb.or([
         sql<boolean>`snapshot->>'status' = 'queued'`,
@@ -100,7 +102,8 @@ export class GallerySyncRepository {
     return this.db.transaction().execute(async trx => {
       const row = await trx.selectFrom(table).selectAll().where("owner_id", "=", ownerId).where("app_id", "=", appId).forUpdate().executeTakeFirst();
       if (!row) throw new GallerySyncError("invalid");
-      const snapshot: GallerySyncSnapshot = { ...row.snapshot, runId: randomUUID(), status: "paused", keepUpdated: false, nextCheckAt: null, updatedAt: now.toISOString() };
+      const snapshot: GallerySyncSnapshot = { ...row.snapshot, runId: randomUUID(), status: "paused", keepUpdated: false, nextCheckAt: null, updatedAt: now.toISOString(),
+        sources: row.snapshot.sources.map((s: GallerySyncSnapshot["sources"][number]) => s.status === "running" ? { ...s, status: "pending" } : s) };
       await trx.updateTable(table).set({ selection: JSON.stringify({ ...row.selection, keepUpdated: false }), snapshot: JSON.stringify(snapshot), run_id: snapshot.runId, lease_until: null, next_run_at: null })
         .where("owner_id", "=", ownerId).where("app_id", "=", appId).execute();
       return snapshot;

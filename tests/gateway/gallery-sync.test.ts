@@ -109,10 +109,11 @@ describe("tracked Gallery sync", () => {
     expect((await service.status(owner, "people"))?.runId).toBe(queued.runId);
   });
   it("marks an interrupted run as failed instead of silently replaying AI work", async () => {
-    await service.start(owner, "people", input); await repository.claim(clock);
+    await service.start(owner, "people", input); const lease = (await repository.claim(clock))!;
+    await repository.progress(lease, { sources: lease.snapshot.sources.map(s => ({ ...s, status: "running" })) }, clock);
     clock = new Date(clock.getTime() + 20 * 60 * 1000);
     await service.tick();
-    expect(await service.status(owner, "people")).toMatchObject({ status: "failed", error: "interrupted", nextCheckAt: null });
+    expect(await service.status(owner, "people")).toMatchObject({ status: "failed", error: "interrupted", nextCheckAt: null, sources: [{ status: "failed" }] });
   });
   it("pauses updates durably and fences late worker writes", async () => {
     await service.start(owner, "people", input);
