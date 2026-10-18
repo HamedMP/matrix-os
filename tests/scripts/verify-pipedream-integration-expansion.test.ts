@@ -5,40 +5,42 @@ import { bindDiscoveredComponentKey } from "../../scripts/lib/pipedream-integrat
 
 describe("Pipedream integration expansion verification", () => {
   const discovered: DiscoveredAction[] = [
-    { key: "posthog-list-projects", name: "List Projects" },
-    { key: "posthog-get-project", name: "Get Project" },
+    { key: "jira-list-projects", name: "List Projects" },
+    { key: "jira-get-issue", name: "Get Issue" },
   ];
 
   it("binds only an exact live-discovered component key for one verification invocation", () => {
-    const registryAction = getAction("posthog", "list_projects")!;
+    const registryAction = getAction("jira", "list_projects")!;
+    expect(registryAction.directApi).toBeUndefined();
 
     const verifiedAction = bindDiscoveredComponentKey({
-      serviceId: "posthog",
+      serviceId: "jira",
       actionId: "list_projects",
       action: registryAction,
       discovered,
-      componentKey: "posthog-list-projects",
+      componentKey: "jira-list-projects",
     });
 
     expect(verifiedAction).toEqual({
       ...registryAction,
-      componentKey: "posthog-list-projects",
+      componentKey: "jira-list-projects",
     });
     expect(registryAction.componentKey).toBeUndefined();
   });
 
   it("rejects missing or non-discovered component keys for component-backed actions", () => {
-    const action = getAction("posthog", "list_projects")!;
+    const action = getAction("jira", "list_projects")!;
+    expect(action.directApi).toBeUndefined();
 
     expect(() => bindDiscoveredComponentKey({
-      serviceId: "posthog",
+      serviceId: "jira",
       actionId: "list_projects",
       action,
       discovered,
     })).toThrow("componentKey is required");
 
     expect(() => bindDiscoveredComponentKey({
-      serviceId: "posthog",
+      serviceId: "jira",
       actionId: "list_projects",
       action,
       discovered,
@@ -46,11 +48,15 @@ describe("Pipedream integration expansion verification", () => {
     })).toThrow("was not returned by live discovery");
   });
 
-  it("leaves reviewed direct API actions unchanged", () => {
-    const action = getAction("figma", "get_file")!;
+  it.each([
+    ["figma", "get_file"],
+    ["posthog", "list_projects"],
+  ])("admits %s/%s without a component key and preserves its direct API identity", (serviceId, actionId) => {
+    const action = getAction(serviceId, actionId)!;
+    expect(action.directApi?.method).toBe("GET");
     expect(bindDiscoveredComponentKey({
-      serviceId: "figma",
-      actionId: "get_file",
+      serviceId,
+      actionId,
       action,
       discovered: [],
     })).toBe(action);

@@ -1,5 +1,6 @@
 import { NOTION_DEPTH_ACTIONS, STRIPE_DEPTH_ACTIONS, NOTION_SEARCH_SCHEMA, NOTION_DATABASE_QUERY_SCHEMA } from "./finance-notion-depth.js";
 import type { IntegrationActionRisk, ServiceAction, ServiceDefinition } from "./types.js";
+import { POSTHOG_LIST_PROJECTS_ACTION } from "./posthog-projects.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
 const NOTION_HEADERS = Object.freeze({ "Notion-Version": "2022-06-28" });
@@ -213,7 +214,7 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
     icon: "chart",
     logoUrl: `${LOGO_BASE}/posthog/logo/48`,
     actions: {
-      list_projects: { description: "List PostHog projects", risk: "read", params: {} },
+      list_projects: POSTHOG_LIST_PROJECTS_ACTION,
       list_insights: { description: "List insights in a PostHog project", risk: "read", params: { projectId: { type: "number", required: true }, limit: { type: "number" } } },
       get_insight: { description: "Get a PostHog insight", risk: "read", params: { projectId: { type: "number", required: true }, insightId: { type: "number", required: true } } },
       query: { description: "Run a read-only PostHog query", risk: "read", params: { projectId: { type: "number", required: true }, query: { type: "object", required: true } } },
