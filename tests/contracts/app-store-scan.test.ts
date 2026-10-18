@@ -21,6 +21,12 @@ const SECRETS = {
 };
 
 describe("scanAppFiles", () => {
+  it('bounds work on long email-like lines with no valid address',()=>{
+    const source='a'.repeat(80_000)+'@invalid';
+    const started=performance.now();
+    scanAppFiles(files({'src/long.ts':source}));
+    expect(performance.now()-started).toBeLessThan(1000);
+  });
   it.each(Object.entries(SECRETS))("flags %s secrets as high severity without echoing them", (_name, secret) => {
     const report = scanAppFiles(files({ "src/config.ts": `export const value = "${secret}";` }));
     expect(report.blocking).toBe(true);
