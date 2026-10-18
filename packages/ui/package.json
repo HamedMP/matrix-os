@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./collaboration-direct-client": "./src/collaboration/direct-client.ts",
     "./default-organization": "./src/collaboration/default-organization.ts",
+    "./messaging": "./src/messaging/index.ts",
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./browser.css": "./src/browser/browser.css",
@@ -16,8 +17,7 @@
     "./appearance": "./src/appearance/index.ts",
     "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css",
     "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css",
-    "./chat-import.css": "./src/chat-import/chat-import.css",
-    "./messaging": "./src/messaging/index.ts"
+    "./chat-import.css": "./src/chat-import/chat-import.css"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",
