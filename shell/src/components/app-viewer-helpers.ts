@@ -78,7 +78,7 @@ export function injectBridgeIntoAppHtml(
   const escapedBaseHref = baseHref.replace(/"/g, "&quot;");
   const injection = [
     `<base href="${escapedBaseHref}">`,
-    `<meta http-equiv="Content-Security-Policy" content="${(APP_IFRAME_CSP+(authority?.community?"; "+communityDocumentPolicy:"")).replace(/"/g, "&quot;")}">`,
+    `<meta http-equiv="Content-Security-Policy" content="${(authority?.community?communityDocumentPolicy(baseHref):APP_IFRAME_CSP).replace(/"/g, "&quot;")}">`,
     `<script>${bridgeScript}</script>`,
   ].join("");
 
