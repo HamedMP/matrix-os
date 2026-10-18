@@ -117,8 +117,12 @@ describe('actual isolated CI handoff workflow graph',()=>{
   // GitHub may clone retained successes into current-attempt job rows with new IDs.
   // This protected output is written only after the backend's real verifier succeeds.
   expect(step.env.BACKEND_ATTEMPT).toBe('${{ needs.isolated-ci-backend.outputs.attempt }}');
+  expect(step.env.BACKEND_PROVIDER).toBe('${{ needs.isolated-ci-backend.outputs.provider }}');
+  expect(step.env.BACKEND_FALLBACK).toBe('${{ needs.isolated-ci-backend.outputs.infrastructure_fallback }}');
   expect(script(step)).toMatch(/backendAttempt:\s*Number\(process\.env\.BACKEND_ATTEMPT\)/);
   expect(script(step)).not.toMatch(/backendAttempt:[^,}]*\|\|/);
+  expect(script(step)).toMatch(/backendProvider:\s*process\.env\.BACKEND_PROVIDER/);
+  expect(script(step)).toMatch(/backendInfrastructureFallback:\s*process\.env\.BACKEND_FALLBACK\s*===\s*['"]true['"]/);
  });
  it.each(['handoff','redirect'].flatMap(kind=>['success','skipped','failure','cancelled'].map(result=>({kind,result}))))('the actual aggregate handles $kind $result truthfully',({kind,result})=>{
   const {id}=completion();
