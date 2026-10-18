@@ -37,6 +37,7 @@ export interface CustomMcpCredential {
     clientIssuer?: string;
     /** Retained only in the owner/server encrypted credential envelope. */
     clientSecret?: string;
+    clientSecretExpiresAt?: number;
     tokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
     redirectUri?: string;
     scopes?: string[];

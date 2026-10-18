@@ -34,6 +34,14 @@ describe("OAuth client registration trust boundary", () => {
     const request = vi.fn().mockResolvedValue({ status: 201, body: { client_id: "client", client_secret } });
     await expect(registerOAuthClient({ endpoint: "https://auth.example/register", methods: ["client_secret_basic"], redirectUri: "https://matrix.example/callback", request })).rejects.toMatchObject({ code: "upstream" });
   });
+  it.each([-1, 1.5, "123", Number.MAX_SAFE_INTEGER])("rejects invalid client secret expiry (%#)", async client_secret_expires_at => {
+    const request = vi.fn().mockResolvedValue({ status: 201, body: { client_id: "client", client_secret: "secret", client_secret_expires_at } });
+    await expect(registerOAuthClient({ endpoint: "https://auth.example/register", methods: ["client_secret_basic"], redirectUri: "https://matrix.example/callback", request })).rejects.toMatchObject({ code: "upstream" });
+  });
+  it.each([0, 1891388800])("retains a validated encrypted-secret expiry (%i)", async client_secret_expires_at => {
+    const request = vi.fn().mockResolvedValue({ status: 201, body: { client_id: "client", client_secret: "secret", client_secret_expires_at } });
+    expect(await registerOAuthClient({ endpoint: "https://auth.example/register", methods: ["client_secret_basic"], redirectUri: "https://matrix.example/callback", request })).toMatchObject({ clientSecretExpiresAt: client_secret_expires_at });
+  });
   it("accepts a public registration without a secret", async () => {
     const request = vi.fn().mockResolvedValue({ status: 201, body: { client_id: "client", token_endpoint_auth_method: "none" } });
     expect(await registerOAuthClient({ endpoint: "https://auth.example/register", redirectUri: "https://matrix.example/callback", request })).toEqual({ clientId: "client" });

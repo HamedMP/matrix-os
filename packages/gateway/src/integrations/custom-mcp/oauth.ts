@@ -204,9 +204,12 @@ export class CustomMcpOAuthManager {
       throw new CustomMcpBrokerError("upstream");
     }
     const sameIssuer = existingCredential.oauth?.clientIssuer === clientIssuer;
-    const existingClient = sameIssuer && existingCredential.oauth?.clientId ? {
+    const secretExpiry = existingCredential.oauth?.clientSecretExpiresAt;
+    const secretExpired = secretExpiry !== undefined && secretExpiry !== 0 && secretExpiry <= now.getTime() / 1000;
+    const existingClient = sameIssuer && !secretExpired && existingCredential.oauth?.clientId ? {
       clientId: existingCredential.oauth.clientId,
       clientSecret: existingCredential.oauth.clientSecret,
+      clientSecretExpiresAt: existingCredential.oauth.clientSecretExpiresAt,
       tokenEndpointAuthMethod: existingCredential.oauth.tokenEndpointAuthMethod,
     } : undefined;
     const configuredClientId = this.configuredClientId
@@ -230,6 +233,7 @@ export class CustomMcpOAuthManager {
         revocationEndpoint: metadata.revocation_endpoint,
         clientId,
         clientSecret: client.clientSecret,
+        clientSecretExpiresAt: client.clientSecretExpiresAt,
         tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
         clientIssuer,
         redirectUri: this.options.redirectUri,

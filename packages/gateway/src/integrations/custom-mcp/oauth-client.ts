@@ -5,6 +5,8 @@ export type OAuthClientAuthMethod = "none" | "client_secret_basic" | "client_sec
 export interface OAuthClientRegistration {
   clientId: string;
   clientSecret?: string;
+  /** OAuth registration epoch seconds; zero means no expiry. */
+  clientSecretExpiresAt?: number;
   tokenEndpointAuthMethod?: OAuthClientAuthMethod;
 }
 
@@ -42,11 +44,15 @@ export async function registerOAuthClient(options: {
   }
   const body = response.body as Record<string, unknown>;
   const returnedMethod = body.token_endpoint_auth_method ?? method;
+  const expiry = body.client_secret_expires_at;
+  if (expiry !== undefined && (typeof expiry !== "number" || !Number.isSafeInteger(expiry) || expiry < 0 || expiry > 8_640_000_000_000)) {
+    throw new CustomMcpBrokerError("upstream");
+  }
   if (!boundedToken(body.client_id, 2048) || returnedMethod !== method
     || (method === "none" ? body.client_secret !== undefined : !boundedToken(body.client_secret, 8192))) {
     throw new CustomMcpBrokerError("upstream");
   }
-  return { clientId: body.client_id, ...(method !== "none" ? { clientSecret: body.client_secret as string, tokenEndpointAuthMethod: method } : {}) };
+  return { clientId: body.client_id, ...(method !== "none" ? { clientSecret: body.client_secret as string, ...(expiry !== undefined ? { clientSecretExpiresAt: expiry as number } : {}), tokenEndpointAuthMethod: method } : {}) };
 }
 
 /** Secret-bearing data is used only for the issuer's pinned token/revocation endpoint. */
