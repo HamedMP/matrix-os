@@ -83,6 +83,7 @@ describe('authenticated requester lower bound for result discovery',()=>{
   const f=fixture(kind);
   await expect(waitForDedicatedResult(f.github,f.expected,options)).resolves.toEqual({runId:f.controller.id,sourceSha:source});
   expect(f.github.rest.actions.getWorkflowRun).toHaveBeenCalledWith(expect.objectContaining({run_id:f.requester.id}));
+  expect(f.github.rest.actions.getWorkflowRun.mock.calls.filter(([args])=>args.run_id===f.requester.id)).toHaveLength(2);
   expect(f.github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalled();
   const controllerCalls=f.github.rest.actions.listWorkflowRuns.mock.calls.filter(([args])=>args.workflow_id===99);
   expect(controllerCalls.every(([args])=>creationBounds(args.created).start===Date.parse(floor))).toBe(true);
@@ -111,4 +112,31 @@ describe('authenticated requester lower bound for result discovery',()=>{
    await expect(waitForDedicatedResult(f.github,f.expected,options)).rejects.toThrow();
    expect(f.github.rest.actions.listWorkflowRunArtifacts).not.toHaveBeenCalled();
   });
+ it.each([{run_attempt:2},{created_at:'2026-10-18T12:00:01Z'},{repository:{full_name:'other/repo'}}])(
+  'revalidates actual requester identity and its creation floor after receipt download (%j)',async change=>{
+   const f=fixture(),download=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
+   f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async()=>{
+    Object.assign(f.requesterApi,change);return download();
+   });
+   await expect(waitForDedicatedResult(f.github,f.expected,options)).rejects.toThrow();
+   expect(f.github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalled();
+   expect(f.github.rest.actions.getWorkflowRun.mock.calls.filter(([args])=>args.run_id===f.requester.id)).toHaveLength(2);
+  });
+ it('revalidates the actual isolated requester origin before accepting its completed receipt',async()=>{
+  const f=fixture(),execution='6'.repeat(40),tree='9'.repeat(40);
+  const isolated={event:'workflow_dispatch',head_branch:`ci-execution/${pin}`,head_sha:execution,
+   display_title:`CI refresh-v1 pr=2440 head=${head} base=${base} merge=${source}`};
+  Object.assign(f.requester,isolated);Object.assign(f.requesterApi,isolated);
+  f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:args.branch===`ci-execution/${pin}`?execution:pin}}}));
+  Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async({basehead}:any)=>({data:{
+   status:basehead.split('...')[0]===basehead.split('...')[1]?'identical':'ahead',merge_base_commit:{sha:basehead.split('...')[0]}}}))});
+  Object.assign(f.github.rest,{git:{getCommit:vi.fn(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:tree},parents:[{sha:commit_sha===execution?pin:base}]}}))}});
+  const download=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
+  f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async()=>{
+   f.requesterApi.head_sha='0'.repeat(40);return download();
+  });
+  await expect(waitForDedicatedResult(f.github,{...f.expected,controllerSha:pin},options)).rejects.toThrow(/isolated/i);
+  expect(f.github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalled();
+  expect(f.github.rest.actions.getWorkflowRun.mock.calls.filter(([args])=>args.run_id===f.requester.id)).toHaveLength(2);
+ });
 });

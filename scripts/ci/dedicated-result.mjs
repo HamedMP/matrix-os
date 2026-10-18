@@ -4,9 +4,9 @@ import {downloadControllerReceipt} from './dedicated-artifact.mjs';
 import {verifyControllerArtifact} from './dedicated-artifact-proof.mjs';
 import {validInfrastructureProof} from './dedicated-outcome.mjs';
 import {verifyCurrentDedicatedSource} from './dedicated-admission.mjs';
-import {authenticatedControllerRun} from './dedicated-refresh.mjs';
+import {authenticatedControllerRun,verifiedRequestingRun} from './dedicated-refresh.mjs';
 import {createConditionalGithub} from './dedicated-api.mjs';
-import {newestWorkflowRun} from './dedicated-history.mjs';
+import {newestWorkflowRun,requesterHistoryFloor} from './dedicated-history.mjs';
 import {mainPrRequest} from './dedicated-main-pr.mjs';
 const workflowPath = '.github/workflows/ci-dedicated.yml';
 const trustedRunPath = value => [workflowPath, `${workflowPath}@main`, `${workflowPath}@refs/heads/main`].includes(value);
@@ -74,7 +74,7 @@ async function newestRequest(github,repo,expected,workflow,beforeId){
    await verifyRunExecution(github,repo,run,workflowPath,pin);
   }
   return true;
- },{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef,controllerShas:expected.controllerHistoryPins});
+ },{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef,controllerShas:expected.controllerHistoryPins,notBefore:expected.controllerHistoryNotBefore});
 }
 
 async function newestController(github, repo, expected, workflow, latest) {
@@ -154,6 +154,20 @@ async function waitWithinDeadline(github, expected, options={}) {
     expected={...expected,controllerHistoryPins:pins};
   }
   let ciWorkflow;
+  const verifyRequester=async()=>{
+    if(!ciWorkflow){
+      ({data:ciWorkflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request}));
+      if(!positiveId(ciWorkflow.id)||ciWorkflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected requesting CI definition');
+    }
+    const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:expected.requestingRunId,request});
+    if(run.id!==expected.requestingRunId||run.run_attempt!==expected.requestingRunAttempt||
+        (run.event==='pull_request'&&run.head_branch!==expected.headRef)||
+        !['queued','requested','waiting','pending','in_progress','completed'].includes(run.status)||
+        (run.status==='completed'&&run.conclusion!=='success')||
+        !await verifiedRequestingRun(github,repo,run,expected,ciWorkflow))throw new Error('No verified current requesting CI identity');
+    return requesterHistoryFloor(run.created_at);
+  };
+  let requesterNotBefore;
   const verifyMainRequester=async source=>{
     if(expected.baseRef!=='main'||expected.sourceKind!==undefined)return;
     if(!ciWorkflow){
@@ -165,6 +179,10 @@ async function waitWithinDeadline(github, expected, options={}) {
   };
   for(let attempt=0;attempt<maxAttempts;attempt++) {
     const currentSource=await verifyCurrentDedicatedSource(github,repo,expected);
+    if(requesterNotBefore===undefined){
+      requesterNotBefore=await verifyRequester();
+      expected={...expected,controllerHistoryNotBefore:requesterNotBefore};
+    }
     await verifyMainRequester(currentSource);
     const {latest,selected}=await newestResultController(github,repo,expected,workflow);
     if(latest?.status==='completed' && latest.conclusion!=='success') {
@@ -195,6 +213,7 @@ async function waitWithinDeadline(github, expected, options={}) {
             // A retry may have been queued while artifacts/jobs were fetched.
             if(currentSelected?.run.id===run.id && current?.id===run.id && current.run_attempt===run.run_attempt &&
                 current.head_sha===run.head_sha && current.status==='completed' && current.conclusion==='success') {
+              if(await verifyRequester()!==requesterNotBefore)throw new Error('Requesting CI creation time changed');
               await verifyMainRequester(await verifyCurrentDedicatedSource(github,repo,expected));
               options.metrics?.(api.metrics());
               if(infrastructure){if(options.allowInfrastructureFallback!==true)throw new Error('Linux infrastructure unavailable; hosted coverage required');return {runId:evidence.runId,sourceSha:expected.sourceSha,infrastructure};}
