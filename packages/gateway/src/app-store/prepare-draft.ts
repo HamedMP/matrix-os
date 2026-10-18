@@ -3,7 +3,7 @@ import type {AppStoreDraftDetail,AppStoreListingDraft} from '@matrix-os/contract
 import {scanAppFiles} from '@matrix-os/contracts/app-store-scan';
 import {scrubSource} from './scrub.js';
 type Generalization={files:Map<string,Buffer>;report:AppStoreGeneralizationReport;listing:AppStoreListingDraft};
-export async function preparePublishDraft(options:{files:ReadonlyMap<string,Buffer>;ownerTerms:readonly string[];aiConsent?:{accessSourceId:string};instructions?:string;signal:AbortSignal;generalizer:{generalize(files:ReadonlyMap<string,Buffer>,consent:{accessSourceId:string}|undefined,instructions:string,signal:AbortSignal):Promise<Generalization|null>};builder:{build(files:ReadonlyMap<string,Buffer>,signal?:AbortSignal):Promise<Map<string,Buffer>>}}){
+export async function preparePublishDraft(options:{files:ReadonlyMap<string,Buffer>;ownerTerms:readonly string[];aiConsent?:{accessSourceId:string};instructions?:string;signal:AbortSignal;generalizer:{generalize(files:ReadonlyMap<string,Buffer>,consent:{accessSourceId:string}|undefined,instructions:string,signal:AbortSignal):Promise<Generalization|null>};builder:{build(files:ReadonlyMap<string,Buffer>,signal?:AbortSignal):Promise<unknown>}}){
  const findingsBefore=scanAppFiles(options.files,{ownerTerms:[...options.ownerTerms]});
  const scrubbed=scrubSource(options.files,options.ownerTerms);let files=scrubbed.files;
  let report:AppStoreGeneralizationReport={ai:'unavailable',changes:scrubbed.changes};let listing:AppStoreListingDraft|null=null;

@@ -1,3 +1,4 @@
+import {communityRecord} from '../app-store/provenance.js';
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { join, sep } from "node:path";
@@ -146,6 +147,8 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
     }
 
     const manifest = result.manifest;
+    const community=await communityRecord(homeDir,slug);
+    if(community&&manifest.runtime!=='vite')return c.json({error:'App runtime unavailable'},403);
 
     // Check for WebSocket upgrade
     const upgradeHeader = c.req.header("upgrade");
@@ -186,7 +189,9 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
         if (!distStat || !distStat.isDirectory()) {
           return c.json({ error: "needs_build", status: "needs_build" }, 503);
         }
-        return await serveStaticFileWithin(distDir, subPath, c);
+        const response=await serveStaticFileWithin(distDir, subPath, c);
+        if(community){response.headers.set('x-matrix-app-distribution','community');response.headers.set('content-security-policy',(response.headers.get('content-security-policy')??"default-src 'self'")+";form-action 'none';frame-src 'none'");}
+        return response;
       }
 
       case "node": {

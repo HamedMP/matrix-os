@@ -57,14 +57,14 @@ export async function readBoundedResponse(response: Response, maximum: number): 
 }
 /** Only trusted registry URLs derived above cross the network. Submitted code never runs here. */
 export async function fetchDependencies(plan: ReturnType<typeof dependencyPlan>, directory: string, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<void> {
-  let bytes = 0;
+  let bytes = 0;const completed=new Set<string>(); // Bounded by max512 packages.
   for (const dependency of plan.dependencies) {
-    signal.throwIfAborted();
+    signal.throwIfAborted();if(completed.has(dependency.filename))continue;
     const response = await fetcher(dependency.url, { redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
     if (!response.ok) throw new Error('Dependency unavailable');
     const content = await readBoundedResponse(response, Math.min(MAX_TARBALL, MAX_DEPENDENCIES_BYTES - bytes));
     if (!verifyDependencyBytes(dependency, content)) throw new Error('Dependency integrity failed');
     bytes += content.length;
-    await writeFile(join(directory, dependency.filename), content, { flag: 'wx', mode: 0o600 });
+    await writeFile(join(directory, dependency.filename), content, { flag: 'wx', mode: 0o600 });completed.add(dependency.filename);
   }
 }
