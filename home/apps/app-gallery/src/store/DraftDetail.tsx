@@ -142,6 +142,7 @@ export default function DraftDetail({
               Preparation needs attention (
               {draft.failureCode.replaceAll("_", " ")}). Your original app is
               kept.
+              {draft.failureCode === "limits_exceeded" && " Split large text files, reduce the app size or shorten revision instructions, then prepare a new copy."}
             </p>
           )}
           {draft.ai !== "completed" && (

@@ -1,8 +1,8 @@
 import {encodeAppBundle} from '@matrix-os/contracts/app-store-bundle';
 export const GENERALIZATION_LIMITS=Object.freeze({fileJsonBytes:48*1024,batchJsonBytes:48*1024,promptBytes:256*1024,maxCalls:16,totalMs:180_000,instructionBytes:4096,newFiles:8,newFileJsonBytes:16*1024,newFilesTotalBytes:64*1024});
-/** Public callers may map this safe reason to limits_exceeded and offer manual preparation. */
+/** Public callers may map this safe reason to limits_exceeded and explain source splitting. */
 export class StoreGeneralizationLimitError extends Error{
- constructor(readonly reason:'file_size'|'batch_count'|'context_size'|'instructions_size'|'new_files'){super('Split oversized source files or prepare the draft manually before retrying.');this.name='StoreGeneralizationLimitError';}
+ constructor(readonly reason:'file_size'|'batch_count'|'context_size'|'instructions_size'|'new_files'){super('Split large text files, reduce draft size or shorten revision instructions before retrying.');this.name='StoreGeneralizationLimitError';}
 }
 export interface GeneralizationTextFile{path:string;contents:string}
 export function sourceText(bytes:Buffer):string|null{
