@@ -73,7 +73,12 @@ chat-only handoff, upload it to a unique owner-private Files path. Do not submit
 it as a new AI turn or launch an agent unless continuing execution was requested.
 
 Verify destination files against the manifest, open each imported Chat, and
-check project association. Report **verified**, **partial**, or **blocked** with:
+check project association. In each Chat, check the original human request, the
+last saved assistant answer, and a saved tool call with its result. Follow
+**Load earlier messages** when history is paginated. A row in Chats or a successful
+archive upload alone does not verify readable history. If rendering is broken
+or earlier messages are inaccessible, report the move as **partial**.
+Report **verified**, **partial**, or **blocked** with:
 
 - Matrix computer, project ID/path, and imported Chat IDs;
 - transferred file/chat counts, original archive IDs, and brief location;

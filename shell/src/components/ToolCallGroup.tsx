@@ -1,6 +1,6 @@
 "use client";
 
-import { ConversationSubagentActivity } from "@matrix-os/ui";
+import { ConversationSubagentActivity, ChatAttachments } from "@matrix-os/ui";
 import type { ChatMessage } from "@/lib/chat";
 import {
   Collapsible,
@@ -40,6 +40,7 @@ function toolContext(msg: ChatMessage): string | undefined {
 
 interface ToolCallGroupProps {
   tools: ChatMessage[];
+  openImportedAsset?: (ref: import("@matrix-os/contracts").ImportedChatAssetRef) => Promise<void>;
 }
 
 function ToolStatus({ tool }: { tool: ChatMessage }) {
@@ -50,7 +51,7 @@ function ToolStatus({ tool }: { tool: ChatMessage }) {
   return <CheckCircleIcon aria-label="Completed" className="size-4 shrink-0 text-green-600" />;
 }
 
-export function ToolCallGroup({ tools }: ToolCallGroupProps) {
+export function ToolCallGroup({ tools, openImportedAsset }: ToolCallGroupProps) {
   const imageGeneration = tools.find((tool) => (
     tool.toolDisplay?.kind === "image_generation" && tool.toolDisplay.state === "running"
   ));
@@ -65,7 +66,7 @@ export function ToolCallGroup({ tools }: ToolCallGroupProps) {
       <span className="text-sm font-medium text-muted-foreground">{imageGeneration.toolDisplay?.label ?? "Generating image"}…</span>
     </div>;
   }
-  if (!tools.some((tool) => tool.toolDisplay?.subagent)) return <OrdinaryToolCallGroup tools={tools} />;
+  if (!tools.some((tool) => tool.toolDisplay?.subagent)) return <OrdinaryToolCallGroup tools={tools} openImportedAsset={openImportedAsset} />;
   const sections: ChatMessage[][] = [];
   for (const tool of tools) {
     const previous = sections.at(-1);
@@ -75,13 +76,14 @@ export function ToolCallGroup({ tools }: ToolCallGroupProps) {
   return <div className="flex min-w-0 flex-col gap-1.5">
     {sections.map((section) => section[0].toolDisplay?.subagent
       ? <ConversationSubagentActivity key={section[0].id} agent={section[0].toolDisplay.subagent} />
-      : <OrdinaryToolCallGroup key={section[0].id} tools={section} />)}
+      : <OrdinaryToolCallGroup key={section[0].id} tools={section} openImportedAsset={openImportedAsset} />)}
   </div>;
 }
 
-function OrdinaryToolCallGroup({ tools }: ToolCallGroupProps) {
+function OrdinaryToolCallGroup({ tools, openImportedAsset }: ToolCallGroupProps) {
   const statusTool = tools.find((tool) => tool.toolDisplay?.state === "running" || (!tool.toolDisplay && tool.content.startsWith("Using ")))
-    ?? tools.find((tool) => tool.toolDisplay?.state === "failed") ?? tools[0];
+    ?? tools.find((tool) => tool.toolDisplay?.state === "failed")
+    ?? tools.find((tool) => tool.toolDisplay?.state === "partial" || tool.toolDisplay?.state === "stopped") ?? tools[0];
   if (!statusTool) return null;
   const count = tools.length;
   const singleContext = count === 1 ? toolContext(tools[0]) : undefined;
@@ -101,11 +103,11 @@ function OrdinaryToolCallGroup({ tools }: ToolCallGroupProps) {
           )}
           <ToolStatus tool={statusTool} />
         </div>
-        {(count > 1 || tools.some((tool) => tool.toolDisplay?.detail || tool.toolDisplay?.preview)) && (
+        {(count > 1 || tools.some((tool) => tool.toolDisplay?.detail || tool.toolDisplay?.preview || tool.attachments?.length)) && (
           <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
         )}
       </CollapsibleTrigger>
-      {(count > 1 || tools.some((tool) => tool.toolDisplay?.detail || tool.toolDisplay?.preview)) && (
+      {(count > 1 || tools.some((tool) => tool.toolDisplay?.detail || tool.toolDisplay?.preview || tool.attachments?.length)) && (
         <CollapsibleContent className="border-t px-3 py-2 space-y-1">
           {tools.map((t) => {
             const ctx = toolContext(t);
@@ -117,6 +119,7 @@ function OrdinaryToolCallGroup({ tools }: ToolCallGroupProps) {
                   {ctx && <span className="break-all font-mono">{ctx}</span>}
                 </div>
                 {t.toolDisplay?.detail && <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono">{t.toolDisplay.detail}</pre>}
+                {t.attachments?.length ? <ChatAttachments align="start" attachments={t.attachments} openImportedAsset={openImportedAsset} /> : null}
               </div>
             );
           })}

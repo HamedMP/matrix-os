@@ -79,6 +79,7 @@ import { desktopComposerDraftIdentity, useChatComposerDrafts } from "./use-chat-
 import { useChatAgentDraftRequest } from "./use-chat-agent-draft-request";
 import { QueuedTurnEditContext } from "./QueuedTurnEditContext";
 import { useImportedChatAssets } from "./use-imported-chat-assets";
+import { ChatHistoryControl } from "@matrix-os/ui";
 import { useChatArtifactActions } from "./use-chat-artifact-actions";
 import { useChatCredentialDisclosure } from "./use-chat-credential-disclosure";
 import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
@@ -963,6 +964,7 @@ export function CanonicalChatWorkspace({
               onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision}>
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
+            <ChatHistoryControl history={controller.history} />
             <ConversationTranscript turns={transcript} callbacks={{
               ...artifactActions,
               renderCredentialMarker: (message, offset, marker, number) => {

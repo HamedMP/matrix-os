@@ -71,6 +71,8 @@ export type {
 } from "./agents-providers/provider-settings-controller.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
+export { mergeLoadedChatHistory, useCanonicalChatHistory, type CanonicalChatHistoryControls } from "./chat/use-canonical-chat-history.js";
+export { ChatHistoryControl } from "./chat/ChatHistoryControl.js";
 export { usePlatformSpeechDraft } from "./speech/use-platform-speech-draft.js";
 export { SpeechInputWaveform } from "./speech/SpeechInputWaveform.js";
 export type {

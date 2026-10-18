@@ -21,6 +21,12 @@ const record = {
 };
 
 describe("canonical shell Chat client", () => {
+  it("passes the opaque earlier-message cursor to the canonical detail route", async () => {
+    const fetchFn = vi.fn(async () => Response.json({ record, messages: [], turns: [], runs: [], activities: [] }));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+    await client.detail("chat_shell_test", "opaque+cursor/with=padding");
+    expect(String(fetchFn.mock.calls[0]?.[0])).toContain("cursor=opaque%2Bcursor%2Fwith%3Dpadding");
+  });
   it("opens the canonical HTTP event stream with lifecycle cancellation and resume cursor", async () => {
     const response = new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } });
     const fetchFn = vi.fn(async () => response);

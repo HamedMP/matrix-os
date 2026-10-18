@@ -25,6 +25,7 @@ interface QueuedMessage {
 const MAX_SEEN_REPLAY_EVENTS = 2_000;
 
 export interface ChatState {
+  history?: import("@matrix-os/ui").CanonicalChatHistoryControls;
   navigationFresh?:boolean;
   navigationClassifications?:readonly {chatId:string;classification:import("@matrix-os/contracts").CanonicalChatNavigationItem["classification"]}[];
   collaborationView?: ChatCollaborationView;

@@ -7,6 +7,7 @@ import {
   type ChatNavigationRecord,
   mergeChatReadState,
   sharedChatMembershipFromProjection,
+  mergeLoadedChatHistory, useCanonicalChatHistory,
   type ChatCollaborationView,
 } from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -153,6 +154,15 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const sameAuthority = previousNavigationIdentity.current === navigationIdentity && isCurrent();
   detailRef.current = sameAuthority && detail?.record.chat.id === activeChatId ? detail : null;
   activeChatIdRef.current = activeChatId;
+  const updateHistoryDetail = useCallback((apply: (current: CanonicalChatDetailResponse | null) => CanonicalChatDetailResponse | null) => {
+    if (!isCurrent()) return;
+    const next = apply(detailRef.current);
+    detailRef.current = next;
+    setDetail(next);
+  }, [isCurrent]);
+  const loadHistoryPage = useCallback((chatId: string, cursor: string) => client.detail(chatId, cursor), [client]);
+  const history = useCanonicalChatHistory({ detail: sameAuthority ? detail : null, activeChatId: sameAuthority ? activeChatId : undefined,
+    loadPage: loadHistoryPage, update: updateHistoryDetail });
 
   useEffect(() => {
     if (previousNavigationIdentity.current === navigationIdentity) return;
@@ -212,6 +222,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         return null;
       }
       const current = detailRef.current;
+      value = mergeLoadedChatHistory(value, current);
       if (current?.record.chat.id === chatId
         && current.record.chat.revision > value.record.chat.revision) {
         return current;
@@ -726,6 +737,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       ? { kind: "canonical-chat" as const, chatId: activeRecord.chat.id }
       : undefined);
   return {
+    history,
     collaborationView,
     openSharedChat,
     openSharedProject,

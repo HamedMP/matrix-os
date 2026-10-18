@@ -1,4 +1,4 @@
-import type { CanonicalChatMessage } from "@matrix-os/contracts";
+import { isImportedChatContext, type CanonicalChatMessage } from "@matrix-os/contracts";
 import type { ConversationTurnPresentation, ConversationWorkPresentation } from "../../components/conversation/presentation";
 import { messagePresentation, messageWork, hasDisplayableMessageContent, type HistoricalToolContext } from "./canonical-chat-message-presentation";
 const MAX_TOOL_LINKS = 500;
@@ -37,14 +37,19 @@ function toolLinks(messages: CanonicalChatMessage[]): ReadonlyMap<string, Histor
 export function historicalChatPresentation(input: CanonicalChatMessage[], id: string, inputMessageId?: string): ConversationTurnPresentation {
   const ordered = input.slice().sort((a, b) => a.seq - b.seq);
   const context = toolLinks(ordered); const messages = responseFragments(ordered);
-  const user = messages.find(message => message.id === inputMessageId && message.role === "user");
+  const isContext = (message: CanonicalChatMessage) => message.role === "user" && isImportedChatContext(message.parts.flatMap(part => part.type === "text" ? [part.text] : []).join("\n"));
+  const user = messages.find(message => message.id === inputMessageId && message.role === "user" && !isContext(message));
   const last = messages.at(-1)!;
   const final = last.role === "assistant" && last.parts.some(part => part.type === "import_provenance" && part.phase === "final") && hasDisplayableMessageContent(last) ? last : undefined;
   const work: ConversationWorkPresentation[] = [];
-  const userFollowups = messages.filter(message => message.role === "user" && message.id !== user?.id).map(message => messagePresentation(message, "commentary"));
+  const userFollowups = messages.filter(message => message.role === "user" && message.id !== user?.id && !isContext(message)).map(message => messagePresentation(message, "commentary"));
   const timeline: NonNullable<ConversationTurnPresentation["timeline"]> = [];
   for (const message of messages) {
     if (message.id === user?.id || message.id === final?.id) continue;
+    if (isContext(message)) {
+      const item: ConversationWorkPresentation = { kind: "activity-group", id: `${message.id}:context`, activities: [{ id: message.id, kind: "context", state: "completed", label: "Imported instructions", detail: messagePresentation(message, "commentary").markdown }] };
+      work.push(item); timeline.push({ kind: "work", item }); continue;
+    }
     if (message.role === "user") { timeline.push({ kind: "user-followup", message: messagePresentation(message, "commentary") }); continue; }
     const activity = [...messageWork(message, context), ...(hasDisplayableMessageContent(message) ? [messagePresentation(message, "commentary")] : [])];
     work.push(...activity); timeline.push(...activity.map(item => ({ kind: "work" as const, item })));

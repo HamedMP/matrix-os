@@ -25,7 +25,7 @@ function frame(revision: number, offset: number, text: string) {
   };
 }
 describe("canonical Chat content reducer", () => {
-  it("slides a full projection window instead of forcing a snapshot for every new item", () => {
+  it("retains the loaded history and server cursor while new items arrive", () => {
     const full = { ...initial,
       runs: [{ ...createCanonicalChatFixture("running").snapshot.runs[0]!, id: "run_test", chatId: "chat_content" }],
       messages: Array.from({ length: 200 }, (_, i) => ({ ...message, id: `msg_${i}`, seq: i + 1, runId: "run_test" })),
@@ -39,14 +39,14 @@ describe("canonical Chat content reducer", () => {
       activities: [{ ...full.activities[0]!, id: "activity_next", sequence: 501 }],
     } })!;
     expect(next).not.toBeNull();
-    expect(next.messages).toHaveLength(200);
-    expect(next.messages[0]?.seq).toBe(2);
-    expect(next.nextBeforeSeq).toBe(2);
+    expect(next.messages).toHaveLength(201);
+    expect(next.messages[0]?.seq).toBe(1);
+    expect(next.nextCursor).toBeUndefined();
     expect(next.activities).toHaveLength(500);
     expect(next.activities.at(-1)?.id).toBe("activity_next");
     expect(full.messages[0]?.seq).toBe(1);
   });
-  it("removes activities whose last associated message leaves the visible window", () => {
+  it("keeps activities for messages in the expanded history window", () => {
     const full = { ...initial,
       runs: ["run_old", "run_test"].map((id) => ({ ...createCanonicalChatFixture("running").snapshot.runs[0]!, id, chatId: "chat_content" })),
       messages: Array.from({ length: 200 }, (_, i) => ({ ...message, id: `msg_${i}`, seq: i + 1,
@@ -56,7 +56,7 @@ describe("canonical Chat content reducer", () => {
     };
     const update = frame(2, 0, "next");
     update.content.messageDelta.message.seq = 201;
-    expect(applyCanonicalChatContent(full, update)?.activities).toEqual([]);
+    expect(applyCanonicalChatContent(full, update)?.activities).toEqual(full.activities);
   });
   it("applies and deduplicates streamed text without a snapshot request or mutating existing state", () => {
     const first = applyCanonicalChatContent(initial, frame(2, 0, "hello"))!;

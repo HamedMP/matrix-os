@@ -483,6 +483,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
                 active={isFocused && !win.minimized}
                 visible={!win.minimized}
                 readState={chatState.readState}
+                history={chatState.history}
                 displayedThroughSeq={chatState.displayedThroughSeq}
                 onUpdateReadState={chatState.updateReadState}
               messages={chatState.messages}
