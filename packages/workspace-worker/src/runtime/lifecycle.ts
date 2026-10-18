@@ -12,7 +12,7 @@ export class RuntimeLifecycle {
     private readonly schedule: (at: number) => Promise<void>,
     private readonly now: () => number = Date.now,
     private readonly policy: RuntimePolicy = DEFAULT_RUNTIME_POLICY,
-    private readonly withTermination: (operation:()=>Promise<void>)=>Promise<void> = operation=>operation(),
+    private readonly withControl: (operation:()=>Promise<void>)=>Promise<void> = operation=>operation(),
   ) {
     if (policy.heartbeatMs <= 0 || policy.leaseMs < policy.heartbeatMs * 2
       || policy.maxRunMs > 30 * 60_000 || policy.maxRunMs <= 0 || policy.idleGraceMs < 0) {
@@ -26,10 +26,15 @@ export class RuntimeLifecycle {
     if (!lease) return { accepted: false };
     await this.schedule(this.now() + this.policy.heartbeatMs);
     try {
-      await this.driver.start(job.ownerId, await this.store.latestCheckpoint(job.ownerId), lease.generation);
-      await this.driver.execute(job, lease);
-      const finished = await this.store.finish(lease, 'completed', this.now());
-      if (!finished) throw new Error('Runtime lease is no longer current');
+      await this.withControl(async()=>{
+        if(!await this.store.heartbeat(lease,this.now(),this.policy.leaseMs)) throw new Error('Runtime lease is no longer current');
+        await this.driver.start(job.ownerId, await this.store.latestCheckpoint(job.ownerId), lease.generation);
+        // Revocation may fence the owner while native startup is draining.
+        if(!await this.store.heartbeat(lease,this.now(),this.policy.leaseMs)) throw new Error('Runtime lease is no longer current');
+        await this.driver.execute(job, lease);
+        const finished = await this.store.finish(lease, 'completed', this.now());
+        if (!finished) throw new Error('Runtime lease is no longer current');
+      });
       return { accepted: true };
     } catch (error: unknown) {
       console.error('[workspace-runtime] Execution interrupted', safeRuntimeDiagnostic(error));
@@ -47,9 +52,9 @@ export class RuntimeLifecycle {
   }
 
   private async terminate(ownerId:string,generation:number,lease?:RuntimeLease):Promise<void> {
-    await this.withTermination(async()=>{
+    await this.withControl(async()=>{
       // A previous callback may already have released this generation. Recheck
-      // under the DO's shared termination gate before touching native compute.
+      // under the DO's shared native-control gate before touching native compute.
       const current=await this.store.status(ownerId);
       if(current.placement !== 'pooled' || current.state !== 'interrupting' || current.generation !== generation) return;
       const now=this.now();
@@ -102,10 +107,14 @@ export class RuntimeLifecycle {
       return;
     }
     try {
-      const checkpoint = await this.driver.checkpoint(ownerId, generation);
-      if (!await this.store.saveCheckpoint(ownerId, checkpoint)) throw new Error('Checkpoint fence rejected');
-      await this.driver.stop();
-      if (!await this.store.markSleeping(ownerId, generation)) throw new Error('Sleep fence rejected');
+      await this.withControl(async()=>{
+        const current=await this.store.status(ownerId);
+        if(current.placement !== 'pooled' || current.generation !== generation || current.state !== 'checkpointing') return;
+        const checkpoint = await this.driver.checkpoint(ownerId, generation);
+        if (!await this.store.saveCheckpoint(ownerId, checkpoint)) throw new Error('Checkpoint fence rejected');
+        await this.driver.stop();
+        if (!await this.store.markSleeping(ownerId, generation)) throw new Error('Sleep fence rejected');
+      });
     } catch (error: unknown) {
       console.error('[workspace-runtime] Checkpoint failed', error instanceof Error ? error.name : 'UnknownError');
       await this.store.fail(ownerId, generation);

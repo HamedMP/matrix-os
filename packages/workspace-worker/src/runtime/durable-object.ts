@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { DirectoryBackup } from '@cloudflare/sandbox';
+import { RuntimeControlGate } from './control-gate.js';
 import { RuntimeLifecycle } from './lifecycle.js';
 import { NativeRuntimeDriver, type NativeRuntimeEnvironment, type RuntimeOutput } from './native-driver.js';
 import { runtimePolicyFromEnvironment, type RuntimeJob, type RuntimeLease, type RuntimeStore } from './contracts.js';
@@ -23,7 +24,7 @@ export interface WorkspaceRuntimeEnvironment extends NativeRuntimeEnvironment {
 
 /** Parent composes Postgres/R2; no application state is persisted in DO storage. */
 export abstract class WorkspaceRuntime extends DurableObject<WorkspaceRuntimeEnvironment> {
-  private termination: Promise<void> | null = null;
+  private readonly control=new RuntimeControlGate();
   protected abstract openRuntimeConnection(): Promise<RuntimeConnection>;
   constructor(ctx: DurableObjectState, env: WorkspaceRuntimeEnvironment) {
     super(ctx, env);
@@ -81,12 +82,7 @@ export abstract class WorkspaceRuntime extends DurableObject<WorkspaceRuntimeEnv
         if (!ownerId || !await connection.store.saveCheckpoint(ownerId, checkpoint)) throw new Error('Checkpoint fence rejected');
       }, (ownerId) => connection.hydrate?.(ownerId) ?? Promise.resolve([]), connection.resolveCredentials);
     const policy = runtimePolicyFromEnvironment(this.env);
-    const runtime = new RuntimeLifecycle(connection.store, driver, (at) => this.ctx.storage.setAlarm(at), Date.now, policy, async operation=>{
-      // One in-flight native destroy per DO, shared by run and alarm controllers.
-      if(this.termination) return this.termination;
-      const pending=operation();this.termination=pending;
-      try {await pending;} finally {if(this.termination===pending)this.termination=null;}
-    });
+    const runtime = new RuntimeLifecycle(connection.store, driver, (at) => this.ctx.storage.setAlarm(at), Date.now, policy, operation=>this.control.run(operation));
     return {runtime,connection};
   }
 }

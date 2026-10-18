@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ComputeBudgetError } from "../../packages/workspace-worker/src/data/compute-budget.js";
 import { createWorkspaceRoutes } from "../../packages/workspace-worker/src/routes.js";
 import type { WorkspaceRepository } from "../../packages/workspace-worker/src/data/repository.js";
 
@@ -64,5 +65,15 @@ describe("durable chat admission", () => {
     expect(result.status).toBe(202); expect(await result.json()).toMatchObject({chatId:'chat_server'});
     expect(enqueue).toHaveBeenCalledWith('fixed_preview_owner',action);
     expect(admitChatMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('compute allowance denial',()=>{
+  it('returns a safe quota error and leaves saved data readable without retrying compute',async()=>{
+    const enqueue=vi.fn(async()=>{throw new ComputeBudgetError('exhausted');});
+    const app=createWorkspaceRoutes({repository,files,runtime:{...runtime,enqueue},auth,previewEnabled:true});
+    const denied=await app.fetch(request('/api/workspace/actions',{method:'POST',body:JSON.stringify({type:'wake'})}));
+    expect(denied.status).toBe(429);expect(await denied.json()).toEqual({error:'Compute allowance unavailable'});
+    expect((await app.fetch(request('/api/shell/bootstrap'))).status).toBe(200);expect(enqueue).toHaveBeenCalledOnce();
   });
 });

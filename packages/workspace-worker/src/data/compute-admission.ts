@@ -60,7 +60,7 @@ export class PostgresComputeAdmissionStore {
   async configureAccount(raw: z.infer<typeof accountSchema>, now: number): Promise<{ needsStop: boolean }> {
     const input = parse(accountSchema, raw); parse(time, now);
     return this.db.transaction().execute(async (trx) => {
-      await this.lock(trx, input.ownerId, true);
+      const workspace=await this.lock(trx, input.ownerId, true);
       const previous = await trx.selectFrom('shared_compute_accounts').selectAll().where('owner_id', '=', input.ownerId).executeTakeFirst();
       if (previous?.state === 'deleted' && input.state !== 'deleted') throw new ComputeBudgetError('policy_unavailable');
       const policy = await trx.selectFrom('shared_compute_policies').select('owner_id').where('owner_id', '=', input.ownerId).where('period_id', '=', input.periodId).executeTakeFirst();
@@ -74,7 +74,14 @@ export class PostgresComputeAdmissionStore {
         for (const row of active) await this.markUncertain(trx, row);
       }
       const running = await trx.selectFrom('shared_compute_outbox').select('job_id').where('owner_id', '=', input.ownerId).where('state', 'in', ['running', 'uncertain']).executeTakeFirst();
-      return { needsStop: input.state !== 'active' && !!running };
+      const needsStop=input.state !== 'active' && !!running && workspace?.placement === 'pooled';
+      if(needsStop && workspace.runtime_state !== 'interrupting') {
+        // Revocation and output publication serialize on the same owner row.
+        // Fence immediately, before returning; heartbeat is only recovery delivery.
+        await trx.updateTable('shared_runtime_jobs').set({state:'interrupted'}).where('owner_id','=',input.ownerId).where('state','=','running').execute();
+        await trx.updateTable('shared_workspaces').set({generation:workspace.generation+1,runtime_state:'interrupting',idle_since:now}).where('owner_id','=',input.ownerId).execute();
+      }
+      return { needsStop };
     });
   }
   async admit(ownerId: string, raw: WorkspaceAction, amountMs: number, now: number): Promise<ComputeAdmission> {
@@ -196,11 +203,19 @@ export class PostgresComputeAdmissionStore {
   /** Rotate bounded reconciliation candidates so a failed owner cannot starve other owners. */
   async reconcileOwners(now: number, limit = 100): Promise<string[]> {
     parse(time, now); parse(limitSchema, limit);
-    const candidates = await this.db.selectFrom('shared_compute_outbox').select('owner_id').select((eb) => eb.fn.min<number>('reconcile_at').as('oldest'))
-      .where('state', 'in', ['running', 'uncertain']).groupBy('owner_id').orderBy('oldest').orderBy('owner_id').limit(limit).execute();
+    const candidates = await this.db.selectFrom('shared_compute_outbox as outbox')
+      .innerJoin('shared_workspaces as workspace','workspace.owner_id','outbox.owner_id')
+      .select('outbox.owner_id as owner_id').select((eb) => eb.fn.min<number>('outbox.reconcile_at').as('oldest'))
+      .where('workspace.placement','=','pooled')
+      .where(eb=>eb.or([
+        eb('outbox.state','in',['running','uncertain']),
+        eb('workspace.runtime_state','in',['running','ready','checkpointing','interrupting']),
+        eb.and([eb('workspace.runtime_state','=','failed'),eb('workspace.idle_since','is not',null)]),
+      ]))
+      .groupBy('outbox.owner_id').orderBy('oldest').orderBy('outbox.owner_id').limit(limit).execute();
     for (const candidate of candidates) await this.db.transaction().execute(async (trx) => {
       await this.lock(trx, candidate.owner_id);
-      await trx.updateTable('shared_compute_outbox').set({ reconcile_at: now }).where('owner_id', '=', candidate.owner_id).where('state', 'in', ['running', 'uncertain']).execute();
+      await trx.updateTable('shared_compute_outbox').set({ reconcile_at: now }).where('owner_id', '=', candidate.owner_id).execute();
     });
     return candidates.map((row) => row.owner_id);
   }

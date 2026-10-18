@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RuntimeControlGate } from '../../packages/workspace-worker/src/runtime/control-gate.js';
 import { RuntimeLifecycle } from '../../packages/workspace-worker/src/runtime/lifecycle.js';
 import { runtimeDiagnostic } from '../../packages/workspace-worker/src/runtime/diagnostic.js';
 import type { RuntimeDriver, RuntimeLease, RuntimeStore, RuntimeSummary } from '../../packages/workspace-worker/src/runtime/contracts.js';
 
-function fixture() {
+function fixture(control?: (operation:()=>Promise<void>)=>Promise<void>) {
   let now = 0;
   let summary: RuntimeSummary = { state: 'running', placement: 'pooled', activeRuns: 0, generation: 1, idleSince: 0 };
   const leases: RuntimeLease[] = [];
@@ -16,11 +17,11 @@ function fixture() {
     }),
     active: vi.fn(async () => leases.filter((l) => l.expiresAt > now)),
     beginIdleInterrupt: vi.fn(async () => {summary={...summary,state:"interrupting",generation:2};return 2;}),
-    beginInterrupt: vi.fn(async () => {summary={...summary,state:"interrupting",generation:2};return 2;}),
+    beginInterrupt: vi.fn(async (lease) => {if(summary.generation!==lease.generation)return null;summary={...summary,state:"interrupting",generation:2};return 2;}),
     heartbeat: vi.fn(async (lease, time, duration) => { lease.expiresAt = time + duration; return true; }),
     finish: vi.fn(async (lease) => { leases.splice(leases.indexOf(lease), 1); summary.activeRuns--; return true; }),
     recoverExpired: vi.fn(async () => undefined),
-    beginCheckpoint: vi.fn(async () => leases.length ? null : 1),
+    beginCheckpoint: vi.fn(async () => {if(leases.length)return null;summary={...summary,state:"checkpointing"};return 1;}),
     saveCheckpoint: vi.fn(async () => true), latestCheckpoint: vi.fn(async () => null),
     markSleeping: vi.fn(async () => true), confirmStopped: vi.fn(async () => true), fail: vi.fn(async () => undefined),
   } as unknown as RuntimeStore;
@@ -31,7 +32,7 @@ function fixture() {
   };
   const schedule = vi.fn(async () => undefined);
   const lifecycle = new RuntimeLifecycle(store, driver, schedule, () => now,
-    { leaseMs: 100, heartbeatMs: 20, idleGraceMs: 30, maxRunMs: 500 });
+    { leaseMs: 100, heartbeatMs: 20, idleGraceMs: 30, maxRunMs: 500 },control);
   return { lifecycle, store, driver, schedule, leases, tick: (n: number) => { now = n; }, personal: () => { summary = { ...summary, placement: 'personal' }; } };
 }
 
@@ -132,5 +133,20 @@ describe('overlapping termination recovery',()=>{
   const create=()=>new RuntimeLifecycle(f.store,f.driver,f.schedule,()=>0,{leaseMs:100,heartbeatMs:20,idleGraceMs:30,maxRunMs:500},gate);
   await Promise.all([create().alarm('owner'),create().alarm('owner')]);
   expect(f.driver.cancel).toHaveBeenCalledOnce();expect(f.store.fail).not.toHaveBeenCalled();
+ });
+});
+
+describe('native startup drain before replacement',()=>{
+ it('fences a deferred startup, drains it, then destroys without executing the agent',async()=>{
+  const gate=new RuntimeControlGate();const f=fixture(operation=>gate.run(operation));let release!:()=>void;
+  vi.mocked(f.driver.start).mockImplementation(()=>new Promise<void>(resolve=>{release=resolve;}));
+  const run=f.lifecycle.run({ownerId:'owner',jobId:'startup',type:'wake'}).catch(error=>error);
+  await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
+  f.leases[0].expiresAt=1000;f.tick(501);
+  const alarm=f.lifecycle.alarm('owner');await vi.waitFor(()=>expect(f.store.beginInterrupt).toHaveBeenCalled());
+  expect(f.driver.cancel).not.toHaveBeenCalled();expect(f.store.confirmStopped).not.toHaveBeenCalled();
+  vi.mocked(f.store.heartbeat).mockResolvedValueOnce(false);release();
+  await alarm;expect(await run).toBeInstanceOf(Error);
+  expect(f.driver.execute).not.toHaveBeenCalled();expect(f.driver.cancel).toHaveBeenCalledOnce();expect(f.store.confirmStopped).toHaveBeenCalledOnce();
  });
 });

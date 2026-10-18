@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
-import { PostgresWorkspaceRepository, type SharedChat } from '../../packages/workspace-worker/src/data/repository.js';
+import { admitWorkspaceChatMessage, PostgresWorkspaceRepository, type WorkspaceDatabase, type SharedChat } from '../../packages/workspace-worker/src/data/repository.js';
 import { PostgresComputeBudgetStore } from '../../packages/workspace-worker/src/data/compute-budget.js';
 import { PostgresComputeAdmissionStore, type AdmissionData, type AdmissionTransaction } from '../../packages/workspace-worker/src/data/compute-admission.js';
+import { PostgresRuntimeStore } from '../../packages/workspace-worker/src/data/runtime-store.js';
 import type { RuntimeJob, RuntimeLease } from '../../packages/workspace-worker/src/runtime/contracts.js';
 
 const file = process.env.MATRIX_SHARED_WORKSPACE_TEST_DATABASE_FILE;
@@ -42,13 +43,14 @@ describe.skipIf(file === undefined && url === undefined)('Postgres compute admis
     budgets = dbs.map((db) => new PostgresComputeBudgetStore(db));
     stores = dbs.map((db) => new PostgresComputeAdmissionStore(db, input));
     await new PostgresWorkspaceRepository(dbs[0], false).initialize();
+    await new PostgresRuntimeStore(dbs[0] as unknown as Kysely<WorkspaceDatabase>).initialize();
     await budgets[0].initialize();
     await stores[0].initialize();
     await stores[0].initialize();
   });
   afterAll(async () => {
     try { if (dbs[0]) await dbs[0].transaction().execute(async (trx) => {
-      for (const table of ['shared_compute_outbox', 'shared_compute_accounts', 'shared_compute_reservations', 'shared_compute_policies', 'shared_chat_messages', 'shared_chats', 'shared_workspaces'] as const) await trx.deleteFrom(table).where('owner_id', 'in', owners).execute();
+      for (const table of ['shared_runtime_jobs', 'shared_compute_outbox', 'shared_compute_accounts', 'shared_compute_reservations', 'shared_compute_policies', 'shared_chat_messages', 'shared_chats', 'shared_workspaces'] as const) await trx.deleteFrom(table).where('owner_id', 'in', owners).execute();
     }); } finally { await Promise.all(dbs.map((db) => db.destroy())); }
   });
   it('fails closed without authority, rejects personal placement and invalid boundaries', async () => {
@@ -197,4 +199,58 @@ describe.skipIf(file === undefined && url === undefined)('Postgres compute admis
     expect(await claim(pending.job, 1000100)).toBe(false);
     expect(await snapshot(id)).toMatchObject({ heldMs: 200 });
   });
+  it('wires canonical Chat, runtime claim, revocation and settlement in actual shared transactions',async()=>{
+    const id=owner();await setup(id);
+    const compute=new PostgresComputeAdmissionStore(dbs[0],(trx,owner,input)=>admitWorkspaceChatMessage(trx as unknown as Kysely<WorkspaceDatabase>,owner,input));
+    const runtime=new PostgresRuntimeStore(dbs[0] as unknown as Kysely<WorkspaceDatabase>,compute.runtimeHooks());
+    const first=await compute.admit(id,chat,200,100);
+    const active=(await runtime.claim(first.job,200,100,200))!;
+    expect(await runtime.finish(active,'completed',250)).toBe(true);
+    expect(await snapshot(id)).toMatchObject({heldMs:0,settledMs:50});
+    const next=await compute.admit(id,{...chat,chatId:first.chatId!,idempotencyKey:'revoked'},200,260);
+    const revoked=(await runtime.claim(next.job,270,100,200))!;
+    await compute.configureAccount({ownerId:id,periodId:'october',state:'suspended'},280);
+    expect(await runtime.status(id)).toMatchObject({state:'interrupting',generation:2});
+    await compute.configureAccount({ownerId:id,periodId:'october',state:'active'},281);
+    expect(await runtime.heartbeat(revoked,290,100)).toBe(false);
+    expect(await runtime.finish(revoked,'completed',295)).toBe(false);
+    expect(await runtime.active(id,295)).toHaveLength(0);
+    expect(await runtime.beginInterrupt(revoked,300)).toBeNull();
+    const repository=new PostgresWorkspaceRepository(dbs[0] as unknown as Kysely<WorkspaceDatabase>,false);
+    await expect(repository.publishOutput(revoked,{text:'late output',files:[]},295)).rejects.toMatchObject({code:'conflict'});
+    expect(await snapshot(id)).toMatchObject({heldMs:200,settledMs:50});
+    expect(await runtime.confirmStopped(id,2,310)).toBe(true);
+    expect(await snapshot(id)).toMatchObject({heldMs:0,settledMs:250});
+    expect((await runtime.status(id)).state).toBe('failed');
+  });
+  it('quarantines crash-expired work before releasing any uncertain hold',async()=>{
+    const id=owner();await setup(id);
+    const compute=new PostgresComputeAdmissionStore(dbs[0],input);
+    const runtime=new PostgresRuntimeStore(dbs[0] as unknown as Kysely<WorkspaceDatabase>,compute.runtimeHooks());
+    const admitted=await compute.admit(id,chat,200,100);
+    await runtime.claim(admitted.job,200,100,200);
+    await runtime.recoverExpired(id,301);
+    expect(await runtime.status(id)).toMatchObject({state:'interrupting',generation:2});
+    expect(await snapshot(id)).toMatchObject({heldMs:200,settledMs:0});
+    expect(await runtime.confirmStopped(id,1,310)).toBe(false);
+    expect(await snapshot(id)).toMatchObject({heldMs:200});
+    expect(await runtime.confirmStopped(id,2,320)).toBe(true);
+    expect(await snapshot(id)).toMatchObject({heldMs:0,settledMs:200});
+  });
+
+  it('reconciles a completed warm runtime after a lost idle alarm, then stops scanning confirmed termination',async()=>{
+    const id=owner();await setup(id);
+    const compute=new PostgresComputeAdmissionStore(dbs[0],input);
+    const runtime=new PostgresRuntimeStore(dbs[0] as unknown as Kysely<WorkspaceDatabase>,compute.runtimeHooks());
+    const admitted=await compute.admit(id,chat,200,100);
+    const active=(await runtime.claim(admitted.job,200,100,200))!;
+    await runtime.finish(active,'completed',250);
+    expect(await compute.reconcileOwners(300,100)).toContain(id);
+    await runtime.beginCheckpoint(id,400,100);await runtime.fail(id,1);
+    expect(await compute.reconcileOwners(450,100)).toContain(id);
+    const generation=(await runtime.beginIdleInterrupt(id,1,500))!;
+    await runtime.confirmStopped(id,generation,510);
+    expect(await compute.reconcileOwners(550,100)).not.toContain(id);
+  });
+
 });

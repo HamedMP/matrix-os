@@ -161,7 +161,7 @@ export class PostgresRuntimeStore implements RuntimeStore {
       const row = await trx.selectFrom("shared_workspaces").selectAll().where("owner_id", "=", ownerId).forUpdate().executeTakeFirst();
       if (!row || row.placement !== "pooled" || row.generation !== generation || row.runtime_state !== "interrupting") return false;
       await this.compute?.confirmStopped(trx, ownerId, generation, now);
-      await trx.updateTable("shared_workspaces").set({runtime_state:"failed"}).where("owner_id","=",ownerId).where("generation","=",generation).execute();
+      await trx.updateTable("shared_workspaces").set({runtime_state:"failed",idle_since:null}).where("owner_id","=",ownerId).where("generation","=",generation).execute();
       return true;
     });
   }
