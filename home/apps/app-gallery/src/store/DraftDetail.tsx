@@ -170,6 +170,7 @@ export default function DraftDetail({
                     setDirty(false);
                     setConsent(false);
                     setNotice("Listing saved. Review it before submitting.");
+                    setRefresh((value) => value + 1);
                   }
                 })
               }

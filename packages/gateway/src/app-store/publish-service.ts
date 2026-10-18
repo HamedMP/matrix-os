@@ -8,6 +8,7 @@ import {withOwnerFileMutation} from '../owner-file-mutations.js';
 import {snapshotOwnerApp} from './snapshot.js';import {createDraftStore} from './draft-store.js';
 import {createStoreGeneralizer,type StoreGeneralizer} from './generalizer.js';import {preparePublishDraft} from './prepare-draft.js';
 import {StoreError,type AppStorePlatformClient} from './platform-client.js';import type {LocalStoreBuilder} from './local-builder.js';
+import {draftSourceIndex} from './draft-source-index.js';
 import {rememberSubmissionObservation} from './submission-poller.js';
 export function createStorePublishService(options:{homePath:string;platform:AppStorePlatformClient;builder:LocalStoreBuilder;generalizer?:StoreGeneralizer;ownerTerms?:readonly string[]}){
  const store=createDraftStore(options.homePath);const generalizer=options.generalizer??createStoreGeneralizer(options.homePath);
@@ -38,7 +39,12 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
   async recover(){for(const draft of await store.list())if(['preparing','submitting'].includes(draft.status))await store.write({...draft,status:'needs_attention',failureCode:'interrupted',updatedAt:new Date().toISOString()});},
   async publishableApps(){return publishableStoreApps(options.homePath);},
   async list(){return (await store.list()).map(d=>AppStoreDraftSummarySchema.strip().parse(d));},
-  detail:store.read,
+  async detail(id:string){return exclusiveSubmit(id,async()=>{
+   const draft=await store.read(id);
+   if(jobs.has(id)||['preparing','submitting'].includes(draft.status))return {...draft,sourceFiles:[]};
+   const [before,after]=await Promise.all([store.files(id,'original'),store.files(id,'prepared')]);
+   return {...draft,sourceFiles:draftSourceIndex(before,after)};
+  });},
   async create(input:{app:string;aiConsent?:{accessSourceId:string}}){
    return withOwnerFileMutation(options.homePath,async()=>{
     if(jobs.size>=2||(await store.list()).length>=5)throw new StoreError('limit');

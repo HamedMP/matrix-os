@@ -89,6 +89,8 @@ export const AppStoreDraftDetailSchema = AppStoreDraftSummarySchema.extend({
   listing: AppStoreListingDraftSchema.nullable(),
   capabilities: AppStoreCapabilitiesSchema.nullable(),
   changedFiles: z.array(z.strictObject({ path: BundlePath, change: z.enum(["added", "removed", "modified"]) })).max(512),
+  /** Complete original/prepared source union; file contents require an explicit diff read. */
+  sourceFiles: z.array(z.strictObject({ path: BundlePath, change: z.enum(["added", "removed", "modified", "unchanged"]) })).max(1024).optional(),
 });
 export type AppStoreDraftDetail = z.infer<typeof AppStoreDraftDetailSchema>;
 
