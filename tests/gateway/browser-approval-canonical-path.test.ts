@@ -16,7 +16,8 @@ import { mintBrowserApprovalProof, verifyBrowserDecisionProof, verifyBrowserRevo
 
 /** PostgreSQL-compatible functional path; concurrent transaction acceptance is
  * separately required on the real disposable PostgreSQL CI service. */
-it.each(["codex", "claude_code"].flatMap(harness => [false, true].map(lostConfirmation => ({ harness: harness as "codex" | "claude_code", lostConfirmation }))))("binds $harness's supervised browser call and retains revocation after lost confirmation=$lostConfirmation", async ({ harness, lostConfirmation }) => {
+it.each(["codex", "claude_code", "pi"].flatMap(harness => [false, true].map(lostConfirmation => ({ harness: harness as "codex" | "claude_code" | "pi", lostConfirmation }))))("binds $harness's supervised browser call and retains revocation after lost confirmation=$lostConfirmation", async ({ harness, lostConfirmation }) => {
+  const driverKind = harness === "pi" ? "matrix_pi" : harness;
   const owner = { type: "personal" as const, ownerId: "owner_browser" };
   const principal = { userId: owner.ownerId, source: "jwt" as const };
   const secret = "synthetic-platform-only-test-secret", handle = "pv-browser-test";
@@ -35,16 +36,17 @@ it.each(["codex", "claude_code"].flatMap(harness => [false, true].map(lostConfir
   const driver = { execute: vi.fn(async () => ({ success: true, observationId: "fresh", title: "Example Domain" })), invalidateObservation: vi.fn(), detach: vi.fn(async () => {}) };
   const broker = createSharedBrowserBroker({ ownerId: owner.ownerId, driver, setHumanControl: async () => {}, authorizeAction: control.authorizeAction });
   const catalog = CanonicalProviderCatalogSchema.parse({ revision: "browser_catalog",
-    drivers: [{ kind: harness, displayName: harness, adapterVersion: "1.0.0", capabilityClass: "coding_agent" }],
-    instances: [{ id: "browser_fixture", driverKind: harness, displayName: harness, availability: "available", workspaceRequirement: "project_optional",
+    drivers: [{ kind: driverKind, displayName: harness, adapterVersion: "1.0.0", capabilityClass: "coding_agent" }],
+    instances: [{ id: "browser_fixture", driverKind, displayName: harness, availability: "available", workspaceRequirement: "project_optional",
       catalogRevision: "browser_catalog", models: [{ id: "fixture-model", displayName: "Fixture", availability: "available", capabilities: ["tools"], supportsVision: false, supportsToolUse: true }],
       options: [], skills: [], commands: [], setupActions: [], supports: { rootChat: true, resume: false, cancellation: true, steering: "none",
         attachments: ["file"], tools: [], approvals: true, userInput: false, worktrees: "none", resources: [], interactionModes: ["default"], permissionModes: ["supervised"] } }],
   });
-  const adapter: CanonicalChatProviderAdapter<{ sessionId: string }> = { driverKind: harness, stateSchemaVersion: 1,
+  const adapter: CanonicalChatProviderAdapter<{ sessionId: string }> = { driverKind, stateSchemaVersion: 1,
     parseState: value => value as { sessionId: string }, serializeState: value => value,
     async *start(input) {
-      const lease = openNativeSharedBrowserRun({ broker, gatewayPort: 4000, harness }, input)!;
+      const lease = harness === "pi" ? broker.openRun({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, harness }, input.signal, { mode: "supervised", authorizeAction: control.authorizeAction })
+        : openNativeSharedBrowserRun({ broker, gatewayPort: 4000, harness }, input)!;
       try {
         yield { type: "state.updated", state: { sessionId: "browser_fixture" } };
         await broker.execute(broker.resolveCapability(lease.token)!, { action: "tab_new", url: "https://example.com" }, input.signal);

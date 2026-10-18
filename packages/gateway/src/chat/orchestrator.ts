@@ -1,3 +1,4 @@
+import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
 import type { BrowserApprovalControl } from "./browser-approval-control.js";
 import { submitCanonicalApproval, type ApprovalProvenance } from "./approval-submission.js";
 import { contextForChatSession } from "./session-history.js";
@@ -544,13 +545,8 @@ export class CanonicalChatOrchestrator {
         onCleanupUnconfirmed: () => { cleanupUnconfirmed = true; },
         onCleanupConfirmed: () => { cleanupUnconfirmed = false; },
       };
-      if(this.options.browserApprovals && !sharedScopeId && owner.type==="personal" && run.permissionMode==="supervised"
-        && run.interactionMode==="default" && (run.driverKind==="codex" || run.driverKind==="claude_code")) {
-        browserRegistration=this.options.browserApprovals.registerRun({
-          binding:{ownerId:owner.ownerId,chatId:run.chatId,runId:run.id,harness:run.driverKind},signal:controller.signal,
-          publish:async event=>{await this.persistActivities(owner,run,[CanonicalProviderRunEventSchema.parse(event)]);},
-        });
-      }
+      browserRegistration = registerBrowserApprovalRun(this.options.browserApprovals, input, run.driverKind,
+        async event => { await this.persistActivities(owner, run, [CanonicalProviderRunEventSchema.parse(event)]); });
       let text = "";
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       failureStage = "provider";

@@ -16,6 +16,7 @@ export function createManagedPiAdmission(deps: {
   chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   toolCapabilities?: readonly BotToolCapability[];
+  supervisedBrowser?: boolean;
   roots: Pick<ChatExecutionRootResolver, "resolve">;
 }) {
   async function authority(input: { ownerId: string; chatId: string; runId: string }, allowPending = false) {
@@ -101,7 +102,9 @@ export function createManagedPiAdmission(deps: {
         workspaceRef = { kind: "chat_workspace" };
       }
       const capabilities: BotToolCapability[] = row.permission_mode === "full_access" ? ["artifact.read", "artifact.write"] : row.permission_mode === "supervised" ? ["artifact.read"] : [];
-      if (capabilities.length) capabilities.push(...(deps.toolCapabilities ?? []).filter(capability => row.permission_mode === "full_access" || !["mcp.call", "browser.action"].includes(capability)));
+      if (capabilities.length) capabilities.push(...(deps.toolCapabilities ?? []).filter(capability =>
+        row.permission_mode === "full_access"
+        || (capability !== "mcp.call" && (capability !== "browser.action" || deps.supervisedBrowser === true))));
       if (!capabilities.length) throw new BotAdmissionError("not_found");
       const scopeHandle = `scope_${createHash("sha256").update(`managed-chat:${input.ownerId}:${input.chatId}`).digest("hex").slice(0, 32)}`;
       const runtime = await deps.host.client.createRuntime({ scopeHandle, profileId: SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID, workload: "bot_agent",

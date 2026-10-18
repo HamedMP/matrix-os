@@ -34,7 +34,7 @@ export function createBrowserApprovalControl(options: { ownerId: string; handle:
   }
   function registerRun(input: { binding: SharedBrowserBinding; signal: AbortSignal; publish: Run["publish"] }) {
     if (closed || input.signal.aborted || input.binding.ownerId !== options.ownerId
-      || !["codex", "claude_code"].includes(input.binding.harness) || runs.has(input.binding.runId) || runs.size >= 64) throw unavailable();
+      || !["codex", "claude_code", "pi"].includes(input.binding.harness) || runs.has(input.binding.runId) || runs.size >= 64) throw unavailable();
     const controller = new AbortController();
     let closing: Promise<void> | undefined;
     const row: Run = { binding: Object.freeze({ ...input.binding }), epoch: randomUUID(), controller,

@@ -31,6 +31,7 @@ interface Run {
   revoking?: Promise<boolean>;
   generation?: number;
   browserRegistered?: boolean;
+  browserPermissionMode?: string;
 }
 function text(value: unknown): BotToolResult {
   const encoded = JSON.stringify(value);
@@ -135,7 +136,7 @@ export function createManagedPiOwnerTools(deps: {
     run.seen.add(request.toolCallId);
     const prepared: Prepared = { args: JSON.stringify(request.args) };
     if (request.capability === "browser.action") {
-      if (permissionMode !== "full_access" || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
+      if (permissionMode !== run.browserPermissionMode || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
     } else if (request.capability === "integration.call") {
       const action = await actionFor(binding, request.args, permissionMode, signal);
       if (action.risk !== "read" && permissionMode !== "full_access") throw new BotBrokerActionError("denied");
@@ -169,8 +170,14 @@ export function createManagedPiOwnerTools(deps: {
       if (binding.capabilities.includes("browser.action")) {
         try {
           const current = await live(binding, run.controller.signal);
-          if (!deps.sharedBrowser || current.permissionMode !== "full_access") throw new BotBrokerActionError("not_granted");
-          deps.sharedBrowser.openRun(browserBinding(binding), current.signal);
+          if (!deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
+          if (current.permissionMode === "supervised") {
+            if (!deps.sharedBrowser.authorizeAction) throw new BotBrokerActionError("not_granted");
+            deps.sharedBrowser.openRun(browserBinding(binding), current.signal, { mode: "supervised", authorizeAction: deps.sharedBrowser.authorizeAction });
+          } else {
+            deps.sharedBrowser.openRun(browserBinding(binding), current.signal);
+          }
+          run.browserPermissionMode = current.permissionMode;
           run.browserRegistered = true;
         } catch (error: unknown) {
           if (runs.get(binding.runId) === run) runs.delete(binding.runId);
@@ -190,7 +197,7 @@ export function createManagedPiOwnerTools(deps: {
       run.prepared.delete(request.toolCallId);
       if (!prepared || prepared.args !== JSON.stringify(request.args)) throw new BotBrokerActionError("denied");
       if (request.capability === "browser.action") {
-        if (permissionMode !== "full_access" || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
+        if (permissionMode !== run.browserPermissionMode || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
         try { return text(await deps.sharedBrowser.execute(browserBinding(binding), request.args, signal)); }
         catch (error: unknown) {
           if (error instanceof SharedBrowserError && !error.dispatched && ["observe_again", "browser_changed", "browser_busy"].includes(error.code)) {
