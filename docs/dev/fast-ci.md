@@ -260,7 +260,7 @@ Do not replace failures with synthetic passing checks, hide failing tests with
 ### Explicit isolated CI handoff
 
 An isolated PR refresh explicitly dispatches its own Linux qualification from
-its existing dispatch-capable routing job. It authenticates its actual run,
+a separate protected execution backend job on every attempt. It authenticates its actual run,
 attempt, workflow, protected execution origin and current PR source first.
 Main routing remains routing-only; the isolated self-handoff never suppresses
 its real workloads. Hosted-only refreshes retain their full hosted path.
@@ -269,7 +269,14 @@ qualification does not depend on delivery of a recursive `workflow_run` event.
 
 After the selected workloads settle, a separate completion job dispatches
 reconciliation before the required aggregate. The aggregate rejects a failed
-or cancelled handoff. Reconciliation waits at most three minutes for the real
+or cancelled handoff and requires completion proof for the current attempt. A
+failed-only retry may retain an older successful backend job; completion then
+requests fresh Linux qualification and verifies its immutable current-attempt
+receipt before reconciling. Infrastructure unavailability is not full coverage
+for that retained job; use a full rerun to select hosted recovery. An aggregate-only
+retry without fresh completion fails with explicit rerun guidance.
+
+Reconciliation waits at most three minutes for the real
 requester to become terminal, before receiving App credentials; its actual
 success, failure or cancellation remains authoritative. The qualification
 controller never waits for completion of its requesting CI, avoiding a cycle.

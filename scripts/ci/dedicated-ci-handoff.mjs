@@ -26,16 +26,36 @@ async function self(github,repo,context,pin,inputs,configuration){
 }
 export async function requestIsolatedCiQualification(github,repo,context,pin,inputs,configuration){
  const value=await self(github,repo,context,pin,inputs,configuration);
- if(value.source.executionMode==='hosted-only')return{dispatched:false};
+ if(typeof configuration.linuxRequired!=='boolean')throw new Error('Invalid isolated CI backend configuration');
+ if(!configuration.linuxRequired||value.source.executionMode==='hosted-only')return{dispatched:false};
  configured(pin,configuration);
  await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci-dedicated.yml',ref:value.origin.executionRef.slice('refs/heads/'.length),inputs:{controller_mode:'qualification',requesting_run_id:String(context.runId),requesting_run_attempt:String(context.runAttempt),requesting_action:context.runAttempt===1?'requested':'in_progress'},request});
  return{dispatched:true};
 }
 export async function requestIsolatedCiCompletion(github,repo,context,pin,inputs,configuration){
- const value=await self(github,repo,context,pin,inputs,configuration);
- configured(pin,configuration);
+ let value=await self(github,repo,context,pin,inputs,configuration);
+ if(typeof configuration.linuxRequired!=='boolean')throw new Error('Invalid isolated CI backend configuration');
+ let qualificationDispatched=false;
+ if(configuration.linuxRequired&&value.source.executionMode!=='hosted-only'){
+  if(!/^sha256:[a-f0-9]{64}$/.test(configuration.imageDigest||'')||!/^[a-f0-9]{64}$/.test(configuration.harnessDigest||''))throw new Error('Invalid isolated CI qualification inputs');
+  const {data}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:context.runId,filter:'latest',per_page:100,request});
+  if(!Array.isArray(data.jobs)||data.total_count!==data.jobs.length||data.jobs.length>100)throw new Error('Incomplete isolated CI backend inventory');
+  const matches=data.jobs.filter(job=>job.name==='Isolated CI Backend Decision'),backend=matches[0];
+  if(matches.length!==1||!id(backend.id)||backend.run_id!==context.runId||!id(backend.run_attempt)||backend.run_attempt>context.runAttempt||backend.head_sha!==value.run.head_sha||backend.head_branch!==value.run.head_branch||backend.status!=='completed'||!['success','failure','cancelled','timed_out','action_required','startup_failure'].includes(backend.conclusion))throw new Error('Invalid isolated CI backend ownership');
+  if(backend.run_attempt<context.runAttempt){
+   if(backend.conclusion!=='success')throw new Error('Retained isolated CI backend did not succeed');
+   // A failed-only retry can retain the earlier backend job. Its old receipt
+   // never qualifies this attempt: dispatch and verify a new immutable receipt.
+   await requestIsolatedCiQualification(github,repo,context,pin,inputs,configuration);
+   qualificationDispatched=true;
+   const {waitForDedicatedResult}=await import('./dedicated-result.mjs');
+   await waitForDedicatedResult(github,{...repo,...value.source,requestingRunId:context.runId,requestingRunAttempt:context.runAttempt,controllerSha:pin,mode:'delegated',imageDigest:configuration.imageDigest,harnessDigest:configuration.harnessDigest,serverUrl:context.serverUrl??'https://github.com'});
+  }
+ }
+ // Reauthenticate after any long qualification wait before posting completion.
+ value=await self(github,repo,context,pin,inputs,configuration);
  await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci-dedicated.yml',ref:value.origin.executionRef.slice('refs/heads/'.length),inputs:{controller_mode:'reconcile',requesting_run_id:String(context.runId),requesting_run_attempt:String(context.runAttempt),requesting_action:'settling',reconciliation_pr:String(value.source.prNumber)},request});
- return{dispatched:true};
+ return{dispatched:true,attempt:context.runAttempt,qualificationDispatched};
 }
 export async function awaitTerminalIsolatedRequester(github,repo,inputs,options={}){
  if(inputs.controller_mode!=='reconcile'||inputs.requesting_action!=='settling'||inputs.source_sha||inputs.suite&&inputs.suite!=='qualification')throw new Error('Invalid CI completion handoff');

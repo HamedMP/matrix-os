@@ -25,10 +25,14 @@ Internal CI infrastructure has no product UI surface. Operator documentation: [f
 ## Explicit CI handoff follow-up
 
 [PR #2707](https://github.com/HamedMP/matrix-os/pull/2707) makes isolated CI
-explicitly enqueue qualification and terminal reconciliation, with the actual
+explicitly enqueue qualification on every protected backend attempt and terminal
+reconciliation, with the actual
 requester authenticated before dispatch or App credentials. A separate late
 handoff job avoids waiting for CI inside its qualification controller; failed
-handoffs fail the aggregate. Completion polling has one absolute three-minute
+handoffs and stale-attempt completion fail the aggregate. Failed-only retries
+that retain a successful backend require a newly verified immutable qualification
+receipt; proved infrastructure unavailability cannot replace that coverage.
+Completion polling has one absolute three-minute
 deadline across nested API reads. Controller history retains a lower time bound
 derived from the authenticated requester, including across cursor pages.
 
