@@ -340,7 +340,36 @@
         "peakAggregateRssMiB": 4976.8,
         "peakProcesses": 3,
         "exitCode": -15,
-        "timedOut": true
+        "timedOut": true,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {
+          "E2E_TEST_BYPASS": "1",
+          "NEXT_PUBLIC_E2E_TEST_BYPASS": "1",
+          "NEXT_TELEMETRY_DISABLED": "1"
+        },
+        "argv": [
+          "pnpm",
+          "--filter",
+          "shell",
+          "exec",
+          "next",
+          "dev",
+          "--webpack",
+          "--hostname",
+          "127.0.0.1",
+          "--port",
+          "55440"
+        ],
+        "timeoutSeconds": 55,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; prerequisites-warm overlapped this startup. No gateway or API proxy was launched.",
+        "stimulus": {
+          "url": "http://127.0.0.1:55440/",
+          "clientCall": "urllib.request.urlopen('http://127.0.0.1:55440/', timeout=45)",
+          "responseReadBytes": 1024,
+          "requestCount": 1,
+          "firstPageSeconds": 27.38,
+          "responseStatus": 200
+        }
       },
       "proxy-fallback-repeat": {
         "name": "proxy-fallback-repeat",
@@ -352,7 +381,25 @@
         "passed": 135,
         "failed": 0,
         "skipped": 0,
-        "files": 1
+        "files": 1,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {},
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "--maxWorkers=1",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/proxy-fallback-repeat-vitest.json"
+        ],
+        "timeoutSeconds": 180,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "environmentUnset": [
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL"
+        ],
+        "databasePrerequisites": "Native fixture URL was not set; existing test helpers selected their default PGlite fallback."
       },
       "proxy-fallback-one": {
         "name": "proxy-fallback-one",
@@ -364,7 +411,25 @@
         "passed": 135,
         "failed": 0,
         "skipped": 0,
-        "files": 1
+        "files": 1,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {},
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "--maxWorkers=1",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/proxy-fallback-one-vitest.json"
+        ],
+        "timeoutSeconds": 180,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "environmentUnset": [
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL"
+        ],
+        "databasePrerequisites": "Native fixture URL was not set; existing test helpers selected their default PGlite fallback."
       },
       "proxy-native-one": {
         "name": "proxy-native-one",
@@ -376,7 +441,33 @@
         "passed": 135,
         "failed": 0,
         "skipped": 0,
-        "files": 1
+        "files": 1,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL": "postgresql://matrix_profile@127.0.0.1:55438/matrix_ci_platform_fixture_admin"
+        },
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "--maxWorkers=1",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/proxy-native-one-vitest.json"
+        ],
+        "timeoutSeconds": 180,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "databasePrerequisites": {
+          "version": "PostgreSQL 17.10",
+          "host": "127.0.0.1",
+          "port": 55438,
+          "role": "matrix_profile",
+          "database": "matrix_ci_platform_fixture_admin",
+          "authentication": "Dedicated local test cluster; synthetic test identifiers, no production credentials.",
+          "permissions": "Role must be able to create/drop isolated fixture databases. Server must already be running before sampling.",
+          "measurementBoundary": "PostgreSQL server process is outside the sampled child process tree."
+        }
       },
       "focused-default": {
         "name": "focused-default",
@@ -388,7 +479,29 @@
         "passed": 303,
         "failed": 0,
         "skipped": 0,
-        "files": 5
+        "files": 5,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {},
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "tests/platform/customer-vps.test.ts",
+          "tests/platform/customer-vps-runtime-loader.test.ts",
+          "tests/gateway/chat-repository.test.ts",
+          "tests/contracts/chat-subagent.test.ts",
+          "--maxWorkers=2",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/focused-default-vitest.json"
+        ],
+        "timeoutSeconds": 240,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "environmentUnset": [
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL"
+        ],
+        "databasePrerequisites": "Native fixture URL was not set; existing test helpers selected their default PGlite fallback."
       },
       "prerequisites-warm": {
         "name": "prerequisites-warm",
@@ -396,7 +509,16 @@
         "peakAggregateRssMiB": 879.5,
         "peakProcesses": 6,
         "exitCode": 0,
-        "timedOut": false
+        "timedOut": false,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {},
+        "argv": [
+          "pnpm",
+          "run",
+          "test:prepare"
+        ],
+        "timeoutSeconds": 120,
+        "prerequisiteState": "Warm incremental build with existing outputs from initial test:prepare; overlapped Web Desktop startup."
       },
       "proxy-native-repeat": {
         "name": "proxy-native-repeat",
@@ -408,7 +530,33 @@
         "passed": 135,
         "failed": 0,
         "skipped": 0,
-        "files": 1
+        "files": 1,
+        "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+        "environmentOverrides": {
+          "MATRIX_PLATFORM_FIXTURE_POSTGRES_URL": "postgresql://matrix_profile@127.0.0.1:55438/matrix_ci_platform_fixture_admin"
+        },
+        "argv": [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "tests/platform/proxy-routing.test.ts",
+          "--maxWorkers=1",
+          "--reporter=json",
+          "--outputFile=/tmp/matrix-local-profile/proxy-native-repeat-vitest.json"
+        ],
+        "timeoutSeconds": 180,
+        "prerequisiteState": "Dependencies installed and initial test:prepare completed; direct Vitest execution does not rerun test:prepare.",
+        "databasePrerequisites": {
+          "version": "PostgreSQL 17.10",
+          "host": "127.0.0.1",
+          "port": 55438,
+          "role": "matrix_profile",
+          "database": "matrix_ci_platform_fixture_admin",
+          "authentication": "Dedicated local test cluster; synthetic test identifiers, no production credentials.",
+          "permissions": "Role must be able to create/drop isolated fixture databases. Server must already be running before sampling.",
+          "measurementBoundary": "PostgreSQL server process is outside the sampled child process tree."
+        }
       }
     },
     "notes": [
@@ -417,7 +565,57 @@
       "Web development probe used test auth bypass, requested one page, and intentionally stopped after 55 seconds. A 4.33-second warm prerequisite probe overlapped its startup; this is not an isolated timing comparison.",
       "No full local unit, coverage, SDK integration, or complete application-stack run was performed.",
       "Root node_modules links were 2 MiB with the existing global virtual store; this excludes shared-store and package-local/build bytes."
-    ]
+    ],
+    "reproduction": {
+      "sourceCommit": "101fbd5f48613db404b6deede191975971f9cd73",
+      "workingDirectory": "repository root",
+      "sourceState": "Tracked source was clean at the source commit before probes. During web-desktop-dev, Next.js regenerated the route-types import in shell/next-env.d.ts; that generated tracked-file change was restored after the probe. No implementation edits were used.",
+      "runtimeSelection": {
+        "node": "24.13.1",
+        "pnpm": "10.33.4",
+        "pathOverride": "${NODE24_BIN}:${PATH}",
+        "pathOverrideMeaning": "Prepend the bin directory of the installed Node.js 24.13.1 distribution; do not use ambient Node.js 22.22.3."
+      },
+      "environmentApplication": "Apply runtimeSelection.pathOverride and commonEnvironmentOverrides to every probe, then each probe environmentOverrides; environmentUnset records variables absent for fallback selection. argv is the exact child argument vector without shell prefix env assignments.",
+      "commonEnvironmentOverrides": {
+        "MATRIX_NO_TELEMETRY": "1"
+      },
+      "environmentPolicy": "Other process environment variables were inherited. The metadata records intentional overrides; it is not a hermetic environment capture. No Clerk keys or generated key-claim tokens were supplied to the Web Desktop probe.",
+      "prerequisites": [
+        {
+          "argv": [
+            "pnpm",
+            "install",
+            "--offline",
+            "--frozen-lockfile"
+          ],
+          "condition": "Existing pnpm store populated; run from repository root with Node.js 24.13.1 selected. Elapsed install measurement is frozenOfflineInstallSeconds."
+        },
+        {
+          "argv": [
+            "pnpm",
+            "run",
+            "test:prepare"
+          ],
+          "condition": "Completed before the test probes using the existing installed dependencies. This initial prerequisite run was not resource-sampled; no cold prerequisite duration is claimed."
+        }
+      ],
+      "sampling": {
+        "implementationSha256": "7ea4aeedc40eed9399c628ed02bf235f30280dec54a3be7cfae8fd2e552bea05",
+        "intervalSeconds": 0.5,
+        "processInventoryArgv": [
+          "/bin/ps",
+          "-axo",
+          "pid=,ppid=,pgid=,rss="
+        ],
+        "membership": "Child PID plus descendants discovered through parent PIDs or the child process-group ID, expanded at most 32 times per sample. Child starts a new process session.",
+        "rssMetric": "Sum RSS KiB of matching processes at each sample, divided by 1024 for peakAggregateRssMiB; shared pages may be counted repeatedly and sub-interval peaks may be missed.",
+        "durationMetric": "Monotonic wall time from before child launch until child exit and final sampling cleanup; includes sampler overhead.",
+        "timeoutPolicy": "At the configured timeout send SIGTERM to the child process group; allow five seconds, then SIGKILL if still running.",
+        "limits": "Wall-time limits only; no CPU or memory cap was imposed. maxWorkers is an explicit Vitest argument, not a cross-worktree resource budget.",
+        "outputs": "Each probe wrote a .log and a resource .json under /tmp/matrix-local-profile; test probes also wrote the Vitest JSON named in argv. Temporary outputs were not committed."
+      }
+    }
   },
   "remoteDevelopmentReadiness": {
     "logicalCpus": 8,
