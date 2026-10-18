@@ -39,6 +39,13 @@ describe("marketing attribution", () => {
     expect(captureMarketingAttribution()).toEqual({});
   });
 
+  it("removes legacy indefinite data even when storing a nonempty new campaign", () => {
+    window.localStorage.setItem("matrix_marketing_attribution_v1", JSON.stringify({ rdt_cid: "old-click" }));
+    window.history.replaceState({}, "", "/?rdt_cid=new-click");
+    expect(captureMarketingAttribution().rdt_cid).toBe("new-click");
+    expect(window.localStorage.getItem("matrix_marketing_attribution_v1")).toBeNull();
+  });
+
   it("passes acceptance expiry to checkout without adding it to analytics properties", () => {
     window.history.replaceState({}, "", "/?rdt_cid=reddit-click");
     expect(getCheckoutAttribution()).toMatchObject({ marketing_consent: "accepted", consent_expires_at: expect.any(Number), rdt_cid: "reddit-click" });

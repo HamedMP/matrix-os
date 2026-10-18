@@ -14,12 +14,12 @@ Existing website capture waits for explicit marketing acceptance and forwards al
 - Preserve exact bounded Reddit click IDs; reject oversized IDs rather than truncating into a different identifier.
 - Persist the app campaign for at most 30 days and no longer than the consent's expiry. New campaigns replace previous campaigns atomically. Do not migrate old indefinite snapshots.
 - Carry acceptance plus expiry into Checkout and Stripe metadata. CAPI ignores events without currently valid consent proof. Historical checkouts without proof are intentionally skipped; missing ad attribution never means no real purchase.
-- Keep existing conversion IDs and revenue semantics. Do not introduce browser conversion events, so no new Pixel/CAPI duplicates.
+- Expired or rejected optional consent metadata is dropped without blocking payment. Keep existing conversion IDs and revenue semantics. Do not introduce browser conversion events, so no new Pixel/CAPI duplicates.
 - Sanitize conversion source URLs to marketing allowlisted query keys; a metadata click ID is the exact source of truth for rdt_cid.
 
 ## Auth, data and boundaries
 
-No new routes, credentials or permissions. Checkout retains existing authenticated Clerk identity and body/schema validation; Stripe webhooks retain signature verification. Consent fields are client assertions bounded by checkout validation, never authentication. No database schema changes or new persistence system. Metadata writes remain part of the existing idempotent Checkout creation. CAPI's outbound timeout remains 10 seconds.
+No new routes, credentials or permissions. Checkout retains existing authenticated Clerk identity and body/schema validation; Stripe webhooks retain signature verification. Consent fields are client assertions bounded by checkout validation, never authentication. A dedicated Postgres snapshot table binds the original marketing payload (including absence) to its authenticated owner and Checkout attempt. Insert-on-conflict/select occurs in one transaction. The snapshot is immutable across ambiguous Stripe retries, purged after seven days by the existing periodic tracking-retention worker, cascades with attempt deletion and participates in account erasure. No new persistence system. Metadata writes remain part of the existing idempotent Checkout creation. CAPI's outbound timeout remains 10 seconds.
 
 No new email, phone, IP, user-agent or UUID sharing. No live Reddit switches, tags, tokens, account access, campaigns or production runtime changes. No replaying historical events. Revoking the shared browser choice stops future app capture; deletion of previously sent Reddit data is a separate existing data-subject process. A consent snapshot in Stripe cannot observe later revocation while an offline invoice webhook runs; server-authoritative revocation is required before expanding signals.
 
@@ -30,6 +30,10 @@ No new email, phone, IP, user-agent or UUID sharing. No live Reddit switches, ta
 3. If approved, collect the real client IP from a verified ingress boundary and the browser UA at the actual conversion request. Never use a webhook server IP or blindly trust forwarded headers.
 4. If approved, share the Pixel's existing UUID through the same consented handoff; do not manufacture a parallel identifier. Use a single per-event conversion ID when the same event is sent through Pixel and CAPI.
 5. If approved, use the owner's verified email and Reddit's current canonicalization plus SHA-256. Hashing is pseudonymization, not anonymization. Do not collect phone numbers to chase a score.
+
+## Review fixes and extraction boundary
+
+Regression cases cover changing, absent and expired consent during an ambiguous Stripe response; legacy local-storage cleanup with a new campaign; and normalized double-slash paths retaining the checked source origin. The existing large billing route receives only the snapshot-helper orchestration call. Before adding further Checkout behavior, extract the claim/recovery/Stripe orchestration into a focused service and move its retry cases into a dedicated integration suite; do not continue growing the route container. The new persistence helper is already isolated.
 
 ## Validation and delivery
 

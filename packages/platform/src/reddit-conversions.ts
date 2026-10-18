@@ -142,7 +142,9 @@ function sanitizeEventSourceUrl(value: string | undefined): string | undefined {
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" || url.origin !== "https://matrix-os.com" || url.username || url.password) return undefined;
-    const clean = new URL(url.pathname, url.origin);
+    const clean = new URL(url.toString());
+    clean.search = "";
+    clean.hash = "";
     for (const key of ["rdt_cid", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"]) {
       const item = url.searchParams.get(key);
       if (item && item.length <= 256 && (key !== "rdt_cid" || isValidRedditClickId(item))) clean.searchParams.set(key, item);

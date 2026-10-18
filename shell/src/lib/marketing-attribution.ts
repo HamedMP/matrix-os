@@ -69,6 +69,8 @@ function readStored(): { attribution: MarketingAttribution; capturedAt: number; 
 
 export function captureMarketingAttribution(): MarketingAttribution {
   if (typeof window === "undefined") return {};
+  try { window.localStorage.removeItem("matrix_marketing_attribution_v1"); }
+  catch (error: unknown) { console.warn("[attribution] Legacy cleanup unavailable:", error instanceof Error ? error.name : typeof error); }
   const consent = readAcceptedMarketingConsent();
   if (!consent) { clearStored(); return {}; }
   const url = new URL(window.location.href);

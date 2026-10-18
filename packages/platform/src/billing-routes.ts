@@ -1,3 +1,4 @@
+import { rememberMarketingAttribution } from './billing/marketing-attribution-store.js';
 import { rememberGoogleAttribution } from './billing/google-attribution-store.js';
 import { createStripeWebhookHandler } from './billing/webhook-handler.js';
 import { createBillingTrackingRoutes } from './billing/tracking-routes.js';
@@ -458,6 +459,8 @@ export function createBillingRoutes(options: {
       }
       const googleAnalytics = await rememberGoogleAttribution(options.db, attempt.attempt.id, clerkUserId,
         parsed.data.googleAnalytics, currentTime.toISOString());
+      const attribution = await rememberMarketingAttribution(options.db, attempt.attempt.id, clerkUserId,
+        parsed.data.attribution, currentTime.toISOString());
       const session = await options.stripe.createCheckoutSession({
         idempotencyKey: attempt.attempt.id,
         clerkUserId,
@@ -478,7 +481,7 @@ export function createBillingRoutes(options: {
           prebillingIntentId: preparation.intentId,
           expiresAt: preparation.expiresAt,
         } : {}),
-        attribution: parsed.data.attribution,
+        attribution,
         googleAnalytics,
         planSlug: parsed.data.planSlug,
         interval: parsed.data.interval,

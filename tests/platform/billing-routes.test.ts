@@ -847,6 +847,26 @@ describe('platform billing routes', () => {
     });
   });
 
+  it.each(['rejected', 'renewed', 'expired'])('keeps original consent metadata across ambiguous Checkout retry after %s', async change => {
+    const first = { rdt_cid: 'first-click', marketing_consent: 'accepted', consent_expires_at: Date.now() + 60000 };
+    vi.mocked(stripe.createCheckoutSession).mockRejectedValueOnce(new Error('stripe response timeout'))
+      .mockResolvedValueOnce({ url: 'https://checkout.stripe.test/recovered', id: 'cs_recovered' });
+    const app = createApp();
+    const request = (attribution: unknown) => app.request('/billing/checkout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly', regionSlug: 'region_fsn1', runtimeSlot: 'studio', attribution }) });
+    expect((await request(first)).status).toBe(503);
+    const next = change === 'rejected' ? undefined : { ...first, consent_expires_at: change === 'expired' ? 1 : Date.now() + 120000 };
+    expect((await request(next)).status).toBe(200);
+    const calls = vi.mocked(stripe.createCheckoutSession).mock.calls;
+    expect(calls[1][0]).toEqual(calls[0][0]);
+  });
+
+  it('does not block payment when optional consent expired in transit', async () => {
+    const app = createApp();
+    const response = await app.request('/billing/checkout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly', regionSlug: 'region_fsn1', runtimeSlot: 'studio', attribution: { rdt_cid: 'old-click', marketing_consent: 'accepted', consent_expires_at: 1 } }) });
+    expect(response.status).toBe(200);
+    expect(vi.mocked(stripe.createCheckoutSession).mock.calls[0][0].attribution).toBeUndefined();
+  });
+
   it('does not replace a payable open Checkout with a different selection', async () => {
     const app = createApp();
     const first = await app.request('/billing/checkout', {

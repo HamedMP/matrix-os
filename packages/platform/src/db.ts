@@ -808,7 +808,10 @@ export interface AccountDeletionJobsTable {
 
 import type { GooglePurchaseTable, GoogleCheckoutAttributionTable } from './billing/google-tracking-migration.js';
 
+import type { MarketingCheckoutAttributionTable } from './billing/marketing-attribution-store.js';
+
 export interface PlatformDatabase {
+  billing_marketing_checkout_attribution: MarketingCheckoutAttributionTable;
   billing_google_purchases: GooglePurchaseTable;
   billing_google_checkout_attribution: GoogleCheckoutAttributionTable;
   preview_drive_grants: PreviewDriveGrantsTable;
