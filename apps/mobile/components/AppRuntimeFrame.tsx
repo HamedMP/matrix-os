@@ -15,12 +15,13 @@ interface AppRuntimeFrameProps {
   /** Verified against the authenticated owner catalog before creating this session. */
   runtimeSlug?: string;
   requestAppBridge?: MobileAppBridgeRequest;
+  openApp?: (name: string, path: string, signal?: AbortSignal) => Promise<void>;
   /** Host-reviewed web destinations only; this does not grant payment permission. */
   canOpenExternalUrl?: (url: string) => boolean;
 }
 
 export default function AppRuntimeFrame(props: AppRuntimeFrameProps) {
-  const launchId = useMemo(() => Math.random().toString(36).slice(2) + Date.now().toString(36), [props.url, props.app, props.runtimeSlug, props.requestAppBridge]);
+  const launchId = useMemo(() => Math.random().toString(36).slice(2) + Date.now().toString(36), [props.url, props.app, props.runtimeSlug, props.requestAppBridge, props.openApp]);
   // Android does not consult onShouldStartLoadWithRequest for the first load.
   if (appRuntimeNavigation(props.url, props.url) !== "internal") {
     return <AppRuntimeUnavailable title={props.title} />;
@@ -29,7 +30,7 @@ export default function AppRuntimeFrame(props: AppRuntimeFrameProps) {
   return <AppRuntimeFrameContent key={launchId} {...props} launchId={launchId} />;
 }
 
-function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, runtimeSlug, requestAppBridge, launchId }: AppRuntimeFrameProps & { launchId: string }) {
+function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, runtimeSlug, requestAppBridge, openApp, launchId }: AppRuntimeFrameProps & { launchId: string }) {
   const [linkBlocked, setLinkBlocked] = useState(false);
   const webViewRef = useRef<WebView>(null);
   const brokerRef = useRef<ReturnType<typeof createMobileAppCapabilityBroker> | null>(null);
@@ -37,14 +38,14 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, 
   useEffect(() => {
     if (!app || !requestAppBridge) return;
     try {
-      const broker = createMobileAppCapabilityBroker({ app, runtimeSlug, runtimeUrl: url, launchId, request: requestAppBridge,
+      const broker = createMobileAppCapabilityBroker({ app, runtimeSlug, runtimeUrl: url, launchId, request: requestAppBridge, openApp,
         reply: (script) => webViewRef.current?.injectJavaScript(script) });
       brokerRef.current = broker;
       return () => { broker.dispose(); brokerRef.current = null; };
     } catch (error) {
       console.warn("[mobile] app bridge unavailable", error instanceof Error ? error.name : "UnknownError");
     }
-  }, [app, runtimeSlug, requestAppBridge, url, launchId]);
+  }, [app, runtimeSlug, requestAppBridge, openApp, url, launchId]);
 
   const shouldStartLoad = useCallback(
     (request: { url?: string; isTopFrame?: boolean }) => {
