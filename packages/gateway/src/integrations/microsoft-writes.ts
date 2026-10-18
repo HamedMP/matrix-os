@@ -9,6 +9,12 @@ import type { ServiceAction } from "./types.js";
 // https://learn.microsoft.com/graph/api/driveitem-post-children
 // https://learn.microsoft.com/graph/api/channel-post
 const graph = "https://graph.microsoft.com/v1.0";
+// Match the OneDrive read catalog's bounded item-ID alphabet, including
+// personal-drive IDs such as A1B2C3!123. Require the actual end of input.
+const oneDriveItemId: CatalogField = {
+  schema: z.string().min(1).max(128).regex(/^[A-Za-z0-9_!:-]+(?![\s\S])/),
+  param: { type: "string", required: true, minLength: 1, maxLength: 128 },
+};
 const eventFields = { calendarId: GRAPH_ID, subject: nonblank(255), startDateTime: utcDateTime, endDateTime: utcDateTime };
 const eventSchema = strictFields(eventFields).refine(p => {
   const duration = Date.parse(String(p.endDateTime)) - Date.parse(String(p.startDateTime));
@@ -36,8 +42,8 @@ export const MICROSOFT_WRITE_ACTIONS: Record<string, Record<string, ServiceActio
     }, eventSchema),
   },
   microsoft_onedrive: {
-    create_folder: boundedWrite("Create a folder under one selected parent after approval; fail on name conflict", { parentFolderId: GRAPH_ID, name: folderName }, {
-      method: "POST", url: p => `${graph}/me/drive/items/${segment(p, "parentFolderId", GRAPH_ID)}/children`,
+    create_folder: boundedWrite("Create a folder under one selected parent after approval; fail on name conflict", { parentFolderId: oneDriveItemId, name: folderName }, {
+      method: "POST", url: p => `${graph}/me/drive/items/${segment(p, "parentFolderId", oneDriveItemId)}/children`,
       mapBody: p => ({ name: p.name, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
     }),
   },

@@ -15,7 +15,7 @@ const cases: [string, string, Record<string, unknown>, string, string, Record<st
   ["google_slides", "replace_slide_text", { presentationId: "deck_1", pageId: "slide_1", findText: "old", replaceText: "new" }, "POST", "https://slides.googleapis.com/v1/presentations/deck_1:batchUpdate", { requests: [{ replaceAllText: { containsText: { text: "old", matchCase: true }, replaceText: "new", pageObjectIds: ["slide_1"] } }] }],
   ["microsoft_outlook", "create_draft", { subject: "Review", body: "Please review" }, "POST", "https://graph.microsoft.com/v1.0/me/messages", { subject: "Review", body: { contentType: "Text", content: "Please review" } }],
   ["microsoft_outlook_calendar", "create_event", { calendarId: "calendar+=", subject: "Focus", startDateTime: "2026-10-19T10:00:00Z", endDateTime: "2026-10-19T11:00:00Z" }, "POST", "https://graph.microsoft.com/v1.0/me/calendars/calendar%2B%3D/events", { subject: "Focus", start: { dateTime: "2026-10-19T10:00:00", timeZone: "UTC" }, end: { dateTime: "2026-10-19T11:00:00", timeZone: "UTC" } }],
-  ["microsoft_onedrive", "create_folder", { parentFolderId: "folder+=", name: "Drafts" }, "POST", "https://graph.microsoft.com/v1.0/me/drive/items/folder%2B%3D/children", { name: "Drafts", folder: {}, "@microsoft.graph.conflictBehavior": "fail" }],
+  ["microsoft_onedrive", "create_folder", { parentFolderId: "folder:123", name: "Drafts" }, "POST", "https://graph.microsoft.com/v1.0/me/drive/items/folder%3A123/children", { name: "Drafts", folder: {}, "@microsoft.graph.conflictBehavior": "fail" }],
   ["microsoft_teams", "create_channel", { teamId: "a6e3e874-cfe7-4fdb-b140-915f0b13c522", displayName: "Planning", description: "Roadmap" }, "POST", "https://graph.microsoft.com/v1.0/teams/a6e3e874-cfe7-4fdb-b140-915f0b13c522/channels", { displayName: "Planning", description: "Roadmap", membershipType: "standard" }],
   ["dropbox", "create_folder", { path: "/Projects/Drafts" }, "POST", "https://api.dropboxapi.com/2/files/create_folder_v2", { path: "/Projects/Drafts", autorename: false }],
   ["box", "create_folder", { parentFolderId: "0", name: "Drafts" }, "POST", "https://api.box.com/2.0/folders", { name: "Drafts", parent: { id: "0" } }],
@@ -43,6 +43,20 @@ describe("bounded document, calendar, file and communication writes", () => {
     expect(method === "PUT" ? proxyPut : proxyPost).toHaveBeenCalledWith(expected);
     await expect(executeIntegrationAction({ pipedream, externalUserId: "owner", connection: { pipedream_account_id: "account" }, def, actionDef: action, serviceId, actionId, params: { ...params, arbitraryUrl: "https://evil.example" } })).rejects.toThrow("Invalid action parameters");
     expect(proxyPost.mock.calls.length + proxyPut.mock.calls.length).toBe(1);
+  });
+
+  it("creates a OneDrive folder using a personal drive item ID and rejects unsafe IDs at both boundaries", async () => {
+    const action = MICROSOFT_WRITE_ACTIONS.microsoft_onedrive!.create_folder!;
+    const params = { parentFolderId: "A1B2C3!123", name: "Drafts" };
+    expect(action.paramsSchema!.safeParse(params).success).toBe(true);
+    const proxyPost = vi.fn(async () => ({ id: "created" }));
+    await executeIntegrationAction({ pipedream: { proxyPost } as unknown as PipedreamConnectClient, externalUserId: "owner", connection: { pipedream_account_id: "account" }, def: { id: "microsoft_onedrive" } as ServiceDefinition, actionDef: action, serviceId: "microsoft_onedrive", actionId: "create_folder", params });
+    expect(proxyPost).toHaveBeenCalledWith({ externalUserId: "owner", accountId: "account", url: "https://graph.microsoft.com/v1.0/me/drive/items/A1B2C3!123/children", body: { name: "Drafts", folder: {}, "@microsoft.graph.conflictBehavior": "fail" } });
+    const url = action.directApi!.url as (params: Record<string, unknown>) => string;
+    for (const parentFolderId of ["", "../other", "A1B2C3!123?query", "A1B2C3!123#fragment", "A1B2C3!123\n", "A1B2C3!123\u0000", "a".repeat(129)]) {
+      expect(action.paramsSchema!.safeParse({ ...params, parentFolderId }).success).toBe(false);
+      expect(() => url({ ...params, parentFolderId })).toThrow();
+    }
   });
 
   it("replaces text on an existing short Google Slides page ID without relaxing new slide IDs", async () => {
