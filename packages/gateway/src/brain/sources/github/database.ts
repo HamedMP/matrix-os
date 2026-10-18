@@ -73,15 +73,19 @@ export async function bootstrapBrainGithubDatabase(db: Kysely<BrainDatabase>): P
   });
 }
 
-/** One transaction on this feature's per-scope lock (never the core brain:<scopeId> lock). */
+/**
+ * This feature's per-scope lock (never the core brain:<scopeId> lock), in `db` when it is already a transaction (a
+ * source update's), else in a transaction of its own.
+ */
 async function withScopeLock<T>(db: Kysely<BrainDatabase>, scope: BrainScopeKey, work: (trx: GithubDb) => Promise<T>): Promise<T> {
-  return githubDb(db).transaction().execute(async (trx) => {
+  const locked = async (trx: GithubDb) => {
     await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
     await sql`SET LOCAL statement_timeout = '15s'`.execute(trx);
     const lockKey = `${BRAIN_FEATURE_SCOPE_LOCK_PREFIXES.github}${scope.scopeId}`;
     await sql`SELECT pg_advisory_xact_lock(hashtext(${scope.ownerId}), hashtext(${lockKey}))`.execute(trx);
     return work(trx);
-  });
+  };
+  return db.isTransaction ? locked(githubDb(db)) : githubDb(db).transaction().execute(locked);
 }
 
 export async function saveGithubConfig(

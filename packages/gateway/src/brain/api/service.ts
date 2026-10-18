@@ -129,10 +129,12 @@ export function createBrainProjectService(deps: BrainProjectServiceDeps): BrainP
       return { source: toSourceView(result.source), created: result.created };
     },
 
-    async sync(ownerId, projectRef) {
+    async sync(ownerId, projectRef, run = {}) {
       const { project, scope } = await resolveProject(ownerId, projectRef);
       const source = await findGitSource(scope);
       if (source === null) throw new BrainApiError("git_source_missing");
+      // Never another source under the id the caller named (a race may have removed that one since it looked).
+      if (run.sourceId !== undefined && run.sourceId !== source.sourceId) throw new BrainApiError("git_source_conflict");
       const repoPath = await deps.projects.resolveProjectWorkingDirectory(project);
       if (repoPath === null) throw new BrainApiError("checkout_unavailable");
       // One run per request, same config on every run (spec 552); the client repeats on run_again.
@@ -144,6 +146,7 @@ export function createBrainProjectService(deps: BrainProjectServiceDeps): BrainP
         homePath: deps.homePath,
         config: {},
         limits: syncLimits,
+        ...(run.signal === undefined ? {} : { signal: run.signal }),
       });
       if (result.receipt === null && result.status === "failed") throw receiptlessFailure(result);
       return toSyncView(result);
