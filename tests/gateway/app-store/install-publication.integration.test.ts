@@ -1,4 +1,4 @@
-import {describe,it,expect} from 'vitest';import {mkdtemp,mkdir,writeFile,readFile,rm,rename,cp} from 'node:fs/promises';import {join} from 'node:path';import {tmpdir} from 'node:os';
+import {describe,it,expect} from 'vitest';import {mkdtemp,mkdir,writeFile,readFile,rm,rename,cp,stat,utimes} from 'node:fs/promises';import {join} from 'node:path';import {tmpdir} from 'node:os';
 import {publishCommunityInstall} from '../../../packages/gateway/src/app-store/install-publication.js';
 import {installedMatches,recoverInstallPublications} from '../../../packages/gateway/src/app-store/install-recovery.js';
 import {readStoreProvenance,writeStoreProvenance} from '../../../packages/gateway/src/app-store/provenance.js';
@@ -20,11 +20,17 @@ describe.skipIf(process.platform!=='linux')('actual filesystem install recovery'
  const jobDirectory=join(home,`data/app-store/install-jobs/${id(2)}`);await mkdir(jobDirectory,{recursive:true,mode:0o700});await writeFile(join(jobDirectory,'job.json'),JSON.stringify({job:{id:id(2),status:'building'},listingSlug:'fixture',versionId:intended.versionId,consentDigest:'0'.repeat(64),updatedAt:Date.now(),receiptPending:true}));
  await writeStoreProvenance(home,{version:1,installs:[intended,otherIntended]});
  await expect(recoverInstallPublications(home)).resolves.toBeUndefined();
- expect(await readFile(join(home,'apps/fixture/index.html'),'utf8')).toBe('owner customization');expect(await readFile(join(conflict,'backup/index.html'),'utf8')).toBe('source');
- expect(JSON.parse(await readFile(join(conflict,'conflict.json'),'utf8')).listingSlug).toBe('fixture');
+ const quarantine=join(home,`data/app-store/install-conflicts/${id(2)}`);
+ expect(await readFile(join(home,'apps/fixture/index.html'),'utf8')).toBe('owner customization');expect(await readFile(join(quarantine,'backup/index.html'),'utf8')).toBe('source');
+ expect(JSON.parse(await readFile(join(quarantine,'conflict.json'),'utf8')).listingSlug).toBe('fixture');
  expect(JSON.parse(await readFile(join(jobDirectory,'job.json'),'utf8'))).toMatchObject({job:{status:'failed',error:'unavailable'},receiptPending:false});
  expect(await readFile(join(home,'apps/other/index.html'),'utf8')).toBe('source');expect((await readStoreProvenance(home)).installs.find(row=>row.listingSlug==='other')?.versionId).toBe(previous.versionId);
- await expect(recoverInstallPublications(home)).resolves.toBeUndefined();expect(await readFile(join(conflict,'backup/index.html'),'utf8')).toBe('source');
+ const savedJob=await readFile(join(jobDirectory,'job.json'),'utf8');const old=new Date(Date.now()-8*86400_000);await utimes(jobDirectory,old,old);
+ // Preserved owner backups live outside the normal 64-stage recovery budget.
+ for(let n=0;n<65;n++)await mkdir(join(home,`data/app-store/install-conflicts/retained-${n}`),{mode:0o700});
+ await expect(recoverInstallPublications(home)).resolves.toBeUndefined();expect(await readFile(join(quarantine,'backup/index.html'),'utf8')).toBe('source');
+ expect(await readFile(join(jobDirectory,'job.json'),'utf8')).toBe(savedJob);expect((await stat(jobDirectory)).mtimeMs).toBeLessThan(Date.now()-7*86400_000);
+ await expect(stat(conflict)).rejects.toMatchObject({code:'ENOENT'});
  }finally{await rm(home,{recursive:true,force:true});}
  });
  it('verifies published bytes, preserves edits, reinstalls after deletion, restores interrupted publication',async()=>{
