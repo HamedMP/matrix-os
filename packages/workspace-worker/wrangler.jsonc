@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "matrix-workspace-spike-20261018",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "triggers": {"crons":["17 * * * *"]},
+  "vars": {
+    "PREVIEW_ENABLED": "1",
+    "PREVIEW_OWNER_ID": "shared-spike-owner",
+    "RUNTIME_HEARTBEAT_MS": "5000",
+    "RUNTIME_IDLE_GRACE_MS": "15000",
+    "RUNTIME_MAX_RUN_MS": "300000",
+    "RUNTIME_INSTANCE": "standard-2"
+  },
+  "r2_buckets": [{"binding":"WORKSPACE_FILES","bucket_name":"matrix-workspace-spike-20261018"}],
+  "queues": {
+    "producers": [{"binding":"WORKSPACE_JOBS","queue":"matrix-workspace-spike-20261018"}],
+    "consumers": [{"queue":"matrix-workspace-spike-20261018","max_batch_size":1,"max_batch_timeout":1,"max_retries":12,"max_concurrency":1,"dead_letter_queue":"matrix-workspace-spike-20261018-dlq"}]
+  },
+  "durable_objects": {"bindings":[{"name":"WORKSPACE_RUNTIME","class_name":"MatrixWorkspaceRuntime"}]},
+  "migrations": [{"tag":"v1","new_sqlite_classes":["MatrixWorkspaceRuntime"]}],
+  "containers": [{"class_name":"MatrixWorkspaceRuntime","scheduling_policy":"durable_object","images":{"workspace":{"dockerfile":"./Dockerfile","build_context":"../.."}}}],
+  "observability": {"enabled":true,"head_sampling_rate":1}
+}
