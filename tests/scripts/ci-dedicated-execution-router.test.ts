@@ -266,56 +266,34 @@ function isolatedRerunFixture(hosted=false){
  return{...f,github,branch,execution,tree,rows,child};
 }
 
-describe('isolated reruns with retained successful handoff jobs',()=>{
- it('qualifies attempt two from authenticated in_progress when failed-only rerun retains successful redirect',async()=>{
-  const f=isolatedRerunFixture();
-  // Only the event router executes: GitHub retained the successful redirect job.
-  expect(await routeControllerEvent(f.github,repo,pin,f.context,snapshot)).toEqual({dispatched:true,mode:'qualification'});
-  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({workflow_id:'ci-dedicated.yml',ref:f.branch,inputs:{controller_mode:'qualification',requesting_run_id:'321',requesting_run_attempt:'2',requesting_action:'in_progress'}}));
-  expect(f.github.rest.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({commit_sha:f.execution}));
- });
- it.each(['success','failure','cancelled'])('reconciles actual attempt-two %s when failed-only rerun retains completion handoff',async conclusion=>{
-  const f=isolatedRerunFixture();Object.assign(f.run,{status:'completed',conclusion});f.context.payload.action='completed';
-  expect(await routeControllerEvent(f.github,repo,pin,f.context,snapshot)).toEqual({dispatched:true,mode:'reconcile'});
-  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({inputs:{controller_mode:'reconcile',requesting_run_id:'321',requesting_run_attempt:'2',requesting_action:'completed',reconciliation_pr:'2454'}}));
-  expect(f.run.conclusion).toBe(conclusion);
- });
- it('does not qualify hosted-only reruns but reconciles their actual completion',async()=>{
-  const f=isolatedRerunFixture(true);
+describe('automatic isolated events never replace explicit backend handoffs',()=>{
+ it.each([1,2].flatMap(attempt=>['in_progress','completed'].flatMap(action=>[false,true].map(hosted=>({attempt,action,hosted})))))('authenticates then ignores P attempt $attempt $action (hosted=$hosted)',async({attempt,action,hosted})=>{
+  const f=isolatedRerunFixture(hosted);f.run.run_attempt=attempt;f.context.payload.action=action;
+  if(action==='completed')Object.assign(f.run,{status:'completed',conclusion:'success'});
   expect(await routeControllerEvent(f.github,repo,pin,f.context,snapshot)).toEqual({dispatched:false});
+  expect(f.github.rest.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({commit_sha:f.execution}));
+  expect(f.github.rest.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({commit_sha:pin}));
   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
-  Object.assign(f.run,{status:'completed',conclusion:'success'});f.context.payload.action='completed';
-  expect(await routeControllerEvent(f.github,repo,pin,f.context,snapshot)).toEqual({dispatched:true,mode:'reconcile'});
-  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({inputs:expect.objectContaining({controller_mode:'reconcile',requesting_run_attempt:'2'})}));
  });
- it.each(['in_progress','completed'])('deduplicates serialized %s rerun events by exact child request and attempt',async action=>{
-  const f=isolatedRerunFixture(),mode=action==='completed'?'reconcile':'qualification';
-  f.context.payload.action=action;if(action==='completed')Object.assign(f.run,{status:'completed',conclusion:'success'});
-  expect(await routeControllerEvent(f.github,repo,pin,f.context,snapshot)).toMatchObject({dispatched:true,mode});
-  // The first serialized route has admitted its child before the next route reads inventory.
-  f.rows.unshift(f.child(mode,2));
-  expect(await routeControllerEvent(f.github,repo,pin,f.context,snapshot)).toMatchObject({dispatched:false,runId:902,runAttempt:1});
-  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
- });
- it.each(['repository','workflow','path','foreign-head','tree','parent','invalid-attempt','malformed-marker'])('cannot dispatch rerun qualification for spoofed %s',async kind=>{
+ it.each(['repository','workflow','path','foreign-head','tree','parent','invalid-attempt'])('cannot hide spoofed %s behind automatic P no-op',async kind=>{
   const f=isolatedRerunFixture();
   if(kind==='repository')f.run.repository.full_name='attacker/matrix-os';
   if(kind==='workflow')f.run.workflow_id=99;if(kind==='path')f.run.path='.github/workflows/other.yml';
   if(kind==='foreign-head')f.run.head_repository.full_name='attacker/matrix-os';
   if(kind==='tree')f.github.rest.git.getCommit.mockImplementation(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:commit_sha===f.execution?'0'.repeat(40):f.tree},parents:[{sha:pin}]}}));
   if(kind==='parent')f.github.rest.git.getCommit.mockImplementation(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:f.tree},parents:[{sha:base}]}}));
-  if(kind==='invalid-attempt')f.run.run_attempt=0;if(kind==='malformed-marker')f.run.display_title='CI refresh-v1 pr=2454';
+  if(kind==='invalid-attempt')f.run.run_attempt=0;
   await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).rejects.toThrow();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it('does not turn a malformed source marker in an automatic event into qualification authority',async()=>{
+  const f=isolatedRerunFixture();f.run.display_title='CI refresh-v1 pr=2454';
+  expect(await routeControllerEvent(f.github,repo,pin,f.context,snapshot)).toEqual({dispatched:false});
   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  });
  it('stands down an older event after actual requester attempt advances',async()=>{
   const f=isolatedRerunFixture();f.context.payload.workflow_run={...f.run,run_attempt:1};
   expect(await routeControllerEvent(f.github,repo,pin,f.context,snapshot)).toEqual({dispatched:false,stale:true});
-  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
- });
- it('keeps initial attempt automatic events out of explicit handoff ownership',async()=>{
-  const f=isolatedRerunFixture();f.run.run_attempt=1;
-  expect(await routeControllerEvent(f.github,repo,pin,f.context,snapshot)).toEqual({dispatched:false});
   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  });
 });
