@@ -234,3 +234,26 @@ it.each([
   if(accepted)expect(run).not.toThrow();else expect(run).toThrow();
  }finally{rmSync(directory,{recursive:true,force:true});}
 });
+
+it('binds the routing-only aggregate to actual redirect and detector job outcomes',()=>{
+ const step=ci.jobs['ci-results'].steps.find((value:any)=>value.name==='Summarize isolated CI routing');
+ expect(step.if).toContain("needs.redirect.outputs.routed == 'true'");
+ expect(step.env?.CI_REDIRECT_RESULT).toBe('${{ needs.redirect.result }}');
+ expect(step.env?.CHANGES_RESULT).toBe('${{ needs.changes.result }}');
+});
+
+it.each([
+ {redirect:'success',changes:'success',accepted:true},
+ {redirect:'failure',changes:'success',accepted:false},
+ {redirect:'cancelled',changes:'success',accepted:false},
+ {redirect:'success',changes:'failure',accepted:false},
+])('the actual routing summary preserves failure after routed output: $redirect/$changes',({redirect,changes,accepted})=>{
+ const step=ci.jobs['ci-results'].steps.find((value:any)=>value.name==='Summarize isolated CI routing');
+ const directory=mkdtempSync(join(tmpdir(),'matrix-routing-outcome-'));
+ try{
+  // routed=true may already have been written before a later summary operation fails.
+  const env={PATH:process.env.PATH,GITHUB_STEP_SUMMARY:join(directory,'summary.md'),CI_REDIRECT_RESULT:redirect,CHANGES_RESULT:changes};
+  const run=()=>execFileSync('bash',['-c',step.run],{env,timeout:5000,maxBuffer:65536,stdio:'pipe'});
+  if(accepted)expect(run).not.toThrow();else expect(run).toThrow();
+ }finally{rmSync(directory,{recursive:true,force:true});}
+});
