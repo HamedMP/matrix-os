@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { BOKIO_ACTIONS, BOKIO_WRITE_SCOPES } from "../../packages/contracts/src/bokio-integration.js";
 import { BokioOAuthManager } from "../../packages/platform/src/bokio-oauth.js";
 import { createBokioPresetBroker } from "../../packages/platform/src/bokio-preset-broker.js";
-import { planBokioWrite } from "../../packages/platform/src/bokio-integration.js";
+import { BokioIntegrationError, planBokioWrite } from "../../packages/platform/src/bokio-integration.js";
+import { createManagedPresetRouter } from "../../packages/platform/src/managed-preset-router.js";
 import * as credentialCrypto from "../../packages/gateway/src/integrations/custom-mcp/crypto.js";
 import type { BokioCredentialRow, BokioCredentialStore } from "../../packages/platform/src/bokio-oauth.js";
 
@@ -35,6 +36,39 @@ function setup(scope?: string) {
 }
 
 describe("Bokio explicitly scoped writes", () => {
+  it("isolates unreadable Bokio credentials from unrelated managed connections", async () => {
+    const fixture = setup("customers:read customers:write"); await fixture.connect();
+    const row = fixture.row();
+    await fixture.db.updateCustomMcpServer(row.id, row.user_id, row.revision, { encryptedCredentials: "unreadable" });
+    const otherConnection = { id: "other", service: "granola", account_label: "Granola", account_email: null,
+      scopes: [], status: "active", connected_at: now, last_used_at: null } as const;
+    const other = { ...fixture.broker, listConnections: vi.fn(async () => [{ ...otherConnection, scopes: [] }]),
+      call: vi.fn(async () => ({ ok: true })) };
+    const router = createManagedPresetRouter({ bokio: fixture.broker, granola: other });
+    await expect(router.listConnections("owner")).resolves.toEqual([
+      expect.objectContaining({ service: "bokio", status: "action_required", scopes: [] }), otherConnection,
+    ]);
+    await expect(fixture.broker.listAvailableActions!("owner", "bokio")).resolves.toEqual([]);
+    await expect(fixture.broker.listAvailableActionParams!("owner", "bokio")).resolves.toEqual({});
+    await expect(router.call({ userId: "owner", service: { id: "granola" }, actionId: "get_account" })).resolves.toEqual({ ok: true });
+    await expect(fixture.broker.call({ userId: "owner", service: { id: "bokio" }, actionId: "create_customer",
+      params: { name: "Example", type: "company" } })).rejects.toMatchObject({ code: "action_required" });
+    expect(fixture.fetcher).toHaveBeenCalledTimes(1);
+  });
+  it.each([new Error("database unavailable"), new BokioIntegrationError("upstream")])("propagates unexpected grant lookup failures", async error => {
+    const fixture = setup(); await fixture.connect();
+    vi.spyOn(fixture.oauth, "grantedScopes").mockRejectedValue(error);
+    await expect(fixture.broker.listConnections("owner")).rejects.toBe(error);
+    await expect(fixture.broker.listAvailableActions!("owner", "bokio")).rejects.toBe(error);
+  });
+  it.each(["disabled", "auth_required", "action_required"])("does not inspect grants for a passive %s connection", async status => {
+    const fixture = setup(); await fixture.connect();
+    const row = fixture.row(); Object.assign(row, { status, encrypted_credentials: "unreadable" });
+    const scopes = vi.spyOn(fixture.oauth, "grantedScopes");
+    await expect(fixture.broker.listConnections("owner")).resolves.toEqual([expect.objectContaining({ status, scopes: [] })]);
+    await expect(fixture.broker.listAvailableActions!("owner", "bokio")).resolves.toEqual([]);
+    expect(scopes).not.toHaveBeenCalled();
+  });
   it("requests reviewed customer/draft scopes only on a new explicit sign-in", async () => {
     const fixture = setup();
     expect(fixture.fetcher).not.toHaveBeenCalled();

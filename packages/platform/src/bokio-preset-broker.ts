@@ -7,14 +7,27 @@ import { BOKIO_ACTION_SCOPES } from "@matrix-os/contracts/bokio-integration";
 export function createBokioPresetBroker(options: { db: BokioCredentialStore; oauth: BokioOAuthManager; fetcher?: typeof fetch }): ManagedMcpPresetBroker {
   const { db, oauth } = options;
   const matches = (service: unknown) => typeof service === "object" && service !== null && "id" in service && service.id === BOKIO_PRESET.id;
+  const readGrant = async (userId: string, row: Awaited<ReturnType<BokioCredentialStore["getCustomMcpPresetForBroker"]>>) => {
+    if (row?.status !== "ready" || !oauth.configured) return { scopes: [] as string[], actionRequired: row?.status === "ready" };
+    try {
+      return { scopes: await oauth.grantedScopes(userId, row), actionRequired: false };
+    } catch (error: unknown) {
+      if (!(error instanceof BokioIntegrationError) || error.code !== "action_required") throw error;
+      console.warn("[bokio] connection requires authorization");
+      return { scopes: [] as string[], actionRequired: true };
+    }
+  };
   const available = async (userId: string, row: Awaited<ReturnType<BokioCredentialStore["getCustomMcpPresetForBroker"]>>) => {
-    const scopes = row?.status === "ready" && oauth.configured ? await oauth.grantedScopes(userId, row) : [];
+    const { scopes } = await readGrant(userId, row);
     return Object.keys(BOKIO_ACTIONS).filter(id => scopes.includes(BOKIO_ACTION_SCOPES[id]));
   };
   return {
     listConnections: async (userId) => {
       const row = await db.getCustomMcpPresetForBroker(BOKIO_PRESET.id, userId); if (!row) return [];
-      return [{ id: row.id, service: BOKIO_PRESET.id, account_label: BOKIO_PRESET.name, account_email: null, scopes: oauth.configured ? await oauth.grantedScopes(userId, row) : [], status: row.status === "ready" && oauth.configured ? "active" : row.status === "ready" ? "action_required" : row.status, connected_at: row.created_at, last_used_at: null }];
+      const { scopes, actionRequired } = await readGrant(userId, row);
+      return [{ id: row.id, service: BOKIO_PRESET.id, account_label: BOKIO_PRESET.name, account_email: null, scopes,
+        status: row.status === "ready" ? actionRequired ? "action_required" : "active" : row.status,
+        connected_at: row.created_at, last_used_at: null }];
     },
     listAvailableActions: async (userId, serviceId) => {
       if (serviceId !== BOKIO_PRESET.id) return null;
