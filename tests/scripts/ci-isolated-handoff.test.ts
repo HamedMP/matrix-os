@@ -28,13 +28,26 @@ function fixture(){
 }
 
 describe('explicit isolated CI handoff without workflow_run delivery',()=>{
- it.each([1,2])('dispatches qualification for the authenticated self attempt %s without waiting for CI completion',async attempt=>{
+ it.each([1])('dispatches qualification for the authenticated self attempt %s without waiting for CI completion',async attempt=>{
   const f=fixture();f.run.run_attempt=attempt;f.context.runAttempt=attempt;
   const result=await(await module()).requestIsolatedCiQualification(f.github,repo,f.context,pin,inputs,configuration);
   expect(result).toMatchObject({dispatched:true});
   expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
   expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({workflow_id:'ci-dedicated.yml',ref:branch,inputs:expect.objectContaining({controller_mode:'qualification',requesting_run_id:'321',requesting_run_attempt:String(attempt),requesting_action:attempt===1?'requested':'in_progress'})}));
   expect(f.run.status).toBe('in_progress');expect(f.github.rest.apps.createInstallationAccessToken).not.toHaveBeenCalled();
+ });
+ it.each(['requestIsolatedCiQualification','requestIsolatedCiCompletion'] as const)('leaves retry attempts to their sole authenticated rerun owner: %s',async name=>{
+  const f=fixture();f.run.run_attempt=2;f.context.runAttempt=2;
+  const result=await(await module())[name](f.github,repo,f.context,pin,inputs,configuration);
+  expect(result).toEqual({dispatched:false});
+  expect(f.github.rest.actions.getWorkflowRun).toHaveBeenCalledWith(expect.objectContaining({run_id:321}));
+  expect(f.github.rest.pulls.get).toHaveBeenCalled();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it.each(['requestIsolatedCiQualification','requestIsolatedCiCompletion'] as const)('still rejects stale retry source before owner stand-down: %s',async name=>{
+  const f=fixture();f.run.run_attempt=2;f.context.runAttempt=2;f.pull.head.sha='0'.repeat(40);
+  await expect((await module())[name](f.github,repo,f.context,pin,inputs,configuration)).rejects.toThrow();
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  });
  it.each(['repository','workflow-id','workflow-path','run-id','attempt','event','execution-sha','workflow-sha','workflow-ref','tree','parent','branch','source','disabled','pin'])('does not dispatch qualification for spoofed %s',async kind=>{
   const f=fixture(),actualInputs={...inputs},config={...configuration};
