@@ -29,6 +29,13 @@ function cssColor(value: string): string {
   return sample.style.color;
 }
 
+// Read the emitted inline declaration; jsdom's background shorthand getter can be empty.
+function renderedColor(element: Element, property: 'background' | 'color'): string {
+  const declaration = element.getAttribute('style')?.split(';').find(value => value.trim().startsWith(`${property}:`));
+  expect(declaration, `Missing rendered ${property} declaration`).toBeDefined();
+  return cssColor(declaration!.trim().slice(property.length + 1).trim());
+}
+
 describe('theme review gallery matches app hover colors', () => {
   for (const theme of unifiedThemes) for (const mode of ['light', 'dark'] as const) {
     it(`${theme.id} ${mode}: Action hover matches Web and Electron`, async () => {
@@ -45,10 +52,12 @@ describe('theme review gallery matches app hover colors', () => {
       expect(hover).toBeDefined();
       const web = buildWebTheme({ ...DEFAULT_APPEARANCE, themeId: theme.id, mode });
       const electron = chromeToSemanticVars(getThemeVariant(theme.id, mode).chrome, theme.id);
-      expect(hover!.style.background).toBe(cssColor(web.colors['primary-hover']));
-      expect(hover!.style.color).toBe(cssColor(web.colors['primary-hover-foreground']));
-      expect(hover!.style.background).toBe(cssColor(electron['--accent-hover']!));
-      expect(hover!.style.color).toBe(cssColor(electron['--text-on-accent-hover']!));
+      const fill = renderedColor(hover!, 'background');
+      const ink = renderedColor(hover!, 'color');
+      expect(fill).toBe(cssColor(web.colors['primary-hover']));
+      expect(ink).toBe(cssColor(web.colors['primary-hover-foreground']));
+      expect(fill).toBe(cssColor(electron['--accent-hover']!));
+      expect(ink).toBe(cssColor(electron['--text-on-accent-hover']!));
     });
   }
 });
