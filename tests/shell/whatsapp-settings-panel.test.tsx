@@ -76,6 +76,57 @@ describe("WhatsApp settings", () => {
     expect(load).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Connected")).toBeTruthy();
   });
+  it.each(["disconnected", "failed check"] as const)("clears a failed Chat retry while refreshing to %s", async (result) => {
+    let resolveRefresh!: (value: unknown) => void;
+    let rejectRefresh!: (error: unknown) => void;
+    const load = vi.fn().mockResolvedValueOnce({ connected: true, maskedSender: "your WhatsApp account", admission: "public", chatId: "chat_old" })
+      .mockImplementationOnce(() => new Promise((resolve, reject) => { resolveRefresh = resolve; rejectRefresh = reject; }));
+    const onOpen = vi.fn().mockRejectedValueOnce(new Error("Browser unavailable"));
+    render(<WhatsAppSettingsPanel scope="owner" load={load} onOpen={onOpen} />);
+    await screen.findByText("Connected");
+    fireEvent.click(screen.getByRole("link", { name: "Open Matrix Chat" }));
+    await screen.findByRole("button", { name: "Retry link" });
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: "Retry link" })).toBeNull();
+    await act(async () => {
+      if (result === "disconnected") resolveRefresh({ connected: false, admission: "public" });
+      else rejectRefresh(new Error("Connection unavailable"));
+    });
+    if (result === "disconnected") await screen.findByText("Not connected");
+    else await screen.findByRole("button", { name: "Try again" });
+    expect(screen.queryByRole("link", { name: "Open Matrix Chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry link" })).toBeNull();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+  it("ignores a pending old Chat open failure after connection refresh", async () => {
+    let rejectOpen!: (error: unknown) => void;
+    const onOpen = vi.fn(() => new Promise<void>((_, reject) => { rejectOpen = reject; }));
+    const load = vi.fn().mockResolvedValueOnce({ connected: true, maskedSender: "your WhatsApp account", admission: "public", chatId: "chat_old" })
+      .mockResolvedValue({ connected: false, admission: "public" });
+    render(<WhatsAppSettingsPanel scope="owner" load={load} onOpen={onOpen} />);
+    await screen.findByText("Connected");
+    fireEvent.click(screen.getByRole("link", { name: "Open Matrix Chat" }));
+    fireEvent(window, new Event("focus"));
+    await screen.findByText("Not connected");
+    await act(async () => { rejectOpen(new Error("Old browser failure")); });
+    expect(screen.queryByRole("button", { name: "Retry link" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open Matrix Chat" })).toBeNull();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+  it("does not offer a failed link from a previous configured platform authority", async () => {
+    const load = vi.fn().mockResolvedValue({ connected: true, maskedSender: "your WhatsApp account", admission: "public", chatId: "chat_owner" });
+    const onOpen = vi.fn().mockRejectedValueOnce(new Error("Browser unavailable"));
+    const view = render(<WhatsAppSettingsPanel platformOrigin="https://first.example.com" scope="owner" load={load} onOpen={onOpen} />);
+    await screen.findByText("Connected");
+    fireEvent.click(screen.getByRole("link", { name: "Open Matrix Chat" }));
+    await screen.findByRole("button", { name: "Retry link" });
+    view.rerender(<WhatsAppSettingsPanel platformOrigin="https://second.example.com" scope="owner" load={load} onOpen={onOpen} />);
+    await waitFor(() => expect(screen.getByRole("link", { name: "Open Matrix Chat" }).getAttribute("href"))
+      .toBe("https://second.example.com/open?chat=chat_owner"));
+    expect(screen.queryByRole("button", { name: "Retry link" })).toBeNull();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
   it("ignores a stale account response and refreshes on return", async () => {
     let resolve!: (value: unknown) => void;
     const load = vi
