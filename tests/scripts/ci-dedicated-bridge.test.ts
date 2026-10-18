@@ -217,7 +217,7 @@ it('restricts App keys to authenticated main helpers and creates a checks-only s
 it.each(['Authenticate reviewed controller pin before helper or secret use','Authenticate default-main reconciliation source'])('rejects renamed branch in workflow bootstrap %s',async name=>{
  const all=Object.values(workflow().jobs).flatMap((job:any)=>job.steps);
  const step:any=all.find((step:any)=>step.name===name);
- vi.stubEnv('CONTROLLER_SHA',controller);vi.stubEnv('CONTROLLER_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');
+ vi.stubEnv('CONTROLLER_SHA',controller);vi.stubEnv('CONTROLLER_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');vi.stubEnv('EXECUTION_WORKFLOW_PATH','.github/workflows/ci-dedicated.yml');vi.stubEnv('EXECUTION_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');
  const github={rest:{repos:{getBranch:vi.fn(async()=>({data:{name:'renamed',commit:{sha:controller}}})),compareCommitsWithBasehead:vi.fn()}}};
  const context={repo:{owner:'HamedMP',repo:'matrix-os'},ref:'refs/heads/main',sha:controller},core={setOutput:vi.fn()};
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;

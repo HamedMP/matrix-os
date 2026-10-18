@@ -1,5 +1,9 @@
 import {describe,expect,it,vi} from 'vitest';
 import {routeControllerEvent,routeManualCi} from '../../scripts/ci/dedicated-execution-router.mjs';
+import {InactiveIsolatedRequester,isolatedTrigger,validatedIsolatedReconciliationScope} from '../../scripts/ci/dedicated-isolated.mjs';
+import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {parse} from 'yaml';
 const pin='a'.repeat(40),head='b'.repeat(40),base='c'.repeat(40),merge='d'.repeat(40);
 const repo={owner:'HamedMP',repo:'matrix-os'},snapshot={pin,flag:'true'};
 function fixture(title:string){
@@ -77,4 +81,95 @@ it.each(['base-repository','workflow-id','workflow-path','manual-event','push-ev
  if(kind==='malformed-head')f.run.head_repository.full_name='not-a-repository';
  await expect(routeControllerEvent(f.github,repo,pin,f.context,snapshot)).rejects.toThrow('Untrusted controller bridge requester');
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+
+const isolatedInputs={controller_mode:'qualification',requesting_run_id:'321',requesting_run_attempt:'1',requesting_action:'requested'};
+it.each(['finished','rerun'])('identifies an authenticated %s isolated qualification requester as inactive',async kind=>{
+ const f=fixture(`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`);
+ if(kind==='rerun'){f.run.run_attempt=2;f.run.status='queued';}
+ await expect(isolatedTrigger(f.github,repo,isolatedInputs,'qualification')).rejects.toBeInstanceOf(InactiveIsolatedRequester);
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+it.each(['future-attempt','repository','workflow','run-id','invalid-attempt'])('does not classify unauthenticated %s as an inactive requester',async kind=>{
+ const f=fixture(`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`);
+ const inputs={...isolatedInputs};
+ if(kind==='future-attempt'){inputs.requesting_run_attempt='2';inputs.requesting_action='in_progress';}
+ if(kind==='repository')f.run.repository.full_name='attacker/matrix-os';
+ if(kind==='workflow')f.run.workflow_id=99;if(kind==='run-id')f.run.id=322;if(kind==='invalid-attempt')f.run.run_attempt=0;
+ let error:unknown;try{await isolatedTrigger(f.github,repo,inputs,'qualification');}catch(caught){error=caught;}
+ expect(error).toBeInstanceOf(Error);expect(error).not.toBeInstanceOf(InactiveIsolatedRequester);
+});
+it('retains exact active qualification requester identity without changing its source',async()=>{
+ const f=fixture(`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`);f.run.status='queued';
+ expect(await isolatedTrigger(f.github,repo,isolatedInputs,'qualification')).toEqual({action:'requested',workflow_run:f.run});
+});
+
+function scopeFixture(prNumber:number){
+ const f=fixture(`CI coverage-v1 · ${merge}`),url='https://api.github.com/repos/HamedMP/matrix-os';
+ Object.assign(f.run,{event:'pull_request',pull_requests:[{number:prNumber,head:{repo:{url}},base:{repo:{url}}}]});
+ const inputs={controller_mode:'reconcile',requesting_run_id:'321',requesting_run_attempt:'1',requesting_action:'completed',reconciliation_pr:String(prNumber)};
+ return{...f,inputs};
+}
+it.each([2454,2455])('derives reconciliation queue scope %s from authenticated requester data',async prNumber=>{
+ const f=scopeFixture(prNumber);
+ expect(await validatedIsolatedReconciliationScope(f.github,repo,f.inputs)).toEqual({prNumber});
+});
+it.each([2454,2455])('the actual router carries authenticated PR %s into its isolated queue hint',async prNumber=>{
+ const f=scopeFixture(prNumber),execution='e'.repeat(40),tree='f'.repeat(40),branch=`ci-execution/${pin}`,github:any=f.github;
+ github.rest.repos={getBranch:vi.fn(async({branch:requested}:any)=>({data:{name:requested,commit:{sha:requested===branch?execution:pin}}})),compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'identical',merge_base_commit:{sha:pin}}}))};
+ github.rest.git={getCommit:vi.fn(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:tree},parents:[{sha:pin}]}}))};
+ github.rest.actions.getWorkflow.mockImplementation(async({workflow_id}:any)=>({data:{id:workflow_id==='ci.yml'?98:99,path:`.github/workflows/${workflow_id}`}}));
+ github.rest.actions.listWorkflowRuns=vi.fn(async()=>({data:{workflow_runs:[]}}));
+ github.rest.actions.listJobsForWorkflowRun.mockResolvedValue({data:{total_count:0,jobs:[]}});
+ await expect(routeControllerEvent(github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:true,mode:'reconcile'});
+ expect(github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({ref:branch,inputs:expect.objectContaining({controller_mode:'reconcile',requesting_run_id:'321',requesting_run_attempt:'1',reconciliation_pr:String(prNumber)})}));
+});
+it.each(['','0','2455','02454','bad','1000000'])('rejects an unbound reconciliation queue hint %j before work',async hint=>{
+ const f=scopeFixture(2454);f.inputs.reconciliation_pr=hint;
+ await expect(validatedIsolatedReconciliationScope(f.github,repo,f.inputs)).rejects.toThrow('Invalid isolated reconciliation scope hint');
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+it('keeps authenticated Main completion in the full maintenance scope',async()=>{
+ const f=scopeFixture(2454);Object.assign(f.run,{event:'push',head_branch:'main'});f.inputs.reconciliation_pr='0';
+ expect(await validatedIsolatedReconciliationScope(f.github,repo,f.inputs)).toEqual({});
+ f.inputs.reconciliation_pr='2454';await expect(validatedIsolatedReconciliationScope(f.github,repo,f.inputs)).rejects.toThrow('Invalid isolated reconciliation scope hint');
+});
+
+it('uses independent PR queue keys and revalidates hints before App credentials',()=>{
+ const job=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8')).jobs.reconcile;
+ const expression=job.concurrency.group.match(/\$\{\{([\s\S]*?)\}\}/)[1];
+ const key=(pr:string,mode='reconcile')=>new Function('github','inputs','format',`return (${expression});`)(
+  {event_name:'workflow_dispatch',event:{workflow_run:{pull_requests:[]}}},{controller_mode:mode,reconciliation_pr:pr},
+  (value:string,...args:unknown[])=>value.replace(/\{(\d+)\}/g,(_match:string,index:string)=>String(args[Number(index)])));
+ expect(key('2454')).toBe('pr-2454');expect(key('2455')).toBe('pr-2455');expect(key('0')).toBe('full');expect(key('0','maintenance')).toBe('full');
+ const names=job.steps.map((step:any)=>step.name),guard=names.indexOf('Revalidate isolated queue scope before credentials');
+ expect(guard).toBeGreaterThan(names.indexOf('Authenticate default-main reconciliation source'));
+ expect(guard).toBeGreaterThan(job.steps.findIndex((step:any)=>step.uses?.startsWith('actions/checkout@')));
+ expect(guard).toBeLessThan(names.indexOf('Create repository-scoped configuration read token'));
+ expect(guard).toBeLessThan(names.indexOf('Create repository-scoped checks-only gate token'));
+ expect(job.steps[guard].with.script).toContain('validatedIsolatedReconciliationScope');
+ expect(job.concurrency['cancel-in-progress']).toBe(false);
+});
+
+it('the actual admission script stands down authenticated inactive requesters but rejects a future attempt',()=>{
+ const workflow=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
+ const script=workflow.jobs.benchmark.steps.find((step:any)=>step.name==='Admit current source head').with.script;
+ const program=`
+ import {createRequire} from 'node:module';import assert from 'node:assert/strict';
+ const pin=${JSON.stringify(pin)},execution='e'.repeat(40),tree='f'.repeat(40),ref='refs/heads/ci-execution/'+pin;
+ const event={id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:pin,head_branch:'main',status:'completed',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}};
+ const github={rest:{actions:{getWorkflow:async()=>({data:{id:98,path:'.github/workflows/ci.yml'}}),getWorkflowRun:async()=>({data:event})},
+ repos:{getBranch:async({branch})=>({data:{name:branch,commit:{sha:branch==='main'?pin:execution}}}),compareCommitsWithBasehead:async()=>({data:{status:'identical',merge_base_commit:{sha:pin}}})},
+ git:{getCommit:async({commit_sha})=>({data:{sha:commit_sha,tree:{sha:tree},parents:[{sha:pin}]}})}}};
+ const origin={schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:execution,executionWorkflowSha:execution,workflowPath:'.github/workflows/ci-dedicated.yml',treeSha:tree};
+ const inputs=${JSON.stringify(isolatedInputs)},context={repo:${JSON.stringify(repo)},eventName:'workflow_dispatch',ref,sha:execution,payload:{inputs},runId:999};
+ const env={GITHUB_WORKSPACE:process.cwd(),CONTROLLER_SHA:pin,CONTROLLER_WORKFLOW_REF:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@'+ref,EXECUTION_WORKFLOW_SHA:execution,EXECUTION_ORIGIN:JSON.stringify(origin),RACE_LOST_ERRORS:'[]'};
+ const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor,body=${JSON.stringify(script)},outputs={};
+ const run=()=>new AsyncFunction('github','context','core','require','process',body)(github,context,{notice(){},setOutput(key,value){outputs[key]=value;}},createRequire(import.meta.url),{env});
+ await run();assert.equal(outputs.admitted,'false');delete outputs.admitted;
+ event.run_attempt=2;event.status='queued';await run();assert.equal(outputs.admitted,'false');delete outputs.admitted;
+ event.run_attempt=1;inputs.requesting_run_attempt='2';inputs.requesting_action='in_progress';await assert.rejects(run());assert.equal(outputs.admitted,undefined);
+ `;
+ const result=spawnSync(process.execPath,['--input-type=module','-e',program],{encoding:'utf8',timeout:10000,env:{...process.env,GITHUB_WORKSPACE:process.cwd()}});
+ expect(result.status,result.stderr).toBe(0);
 });

@@ -1,5 +1,5 @@
 // Trusted Main bridges route work; they never manufacture candidate coverage.
-import {dispatchExecutionRef,verifyRunExecution,isolatedControllerMarker} from './dedicated-isolated.mjs';
+import {dispatchExecutionRef,verifyRunExecution,isolatedControllerMarker,isolatedReconciliationScope} from './dedicated-isolated.mjs';
 import {resolveRequestingSource,refreshMarker,refreshExecutionRequested,parseRefreshMarker} from './dedicated-refresh.mjs';
 const request={timeout:10_000},sha=/^[a-f0-9]{40}$/;
 const same=(name,repo)=>typeof name==='string'&&name.toLowerCase()===`${repo.owner}/${repo.repo}`.toLowerCase();
@@ -64,7 +64,13 @@ export async function routeControllerEvent(github,repo,controllerSha,context,sna
  const title=mode==='qualification'?isolatedControllerMarker({requestingRunId:runId,requestingRunAttempt:attempt}):`dedicated-isolated-v1 mode=${mode} request=${runId} attempt=${attempt}`;
  const prior=await existing(github,repo,'ci-dedicated.yml',ref,title);
  if(prior)return{dispatched:false,runId:prior.id,runAttempt:prior.run_attempt};
+ const inputs={controller_mode:mode,requesting_run_id:String(runId),requesting_run_attempt:String(attempt),requesting_action:action};
+ if(mode!=='qualification'){
+  const scope=await isolatedReconciliationScope(github,repo,inputs);
+  if(scope.prNumber!==undefined&&(!Number.isSafeInteger(scope.prNumber)||scope.prNumber<1||scope.prNumber>999999))throw new Error('Invalid isolated reconciliation scope');
+  inputs.reconciliation_pr=String(scope.prNumber??0);
+ }
  configuration(controllerSha,snapshot);
- await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci-dedicated.yml',ref,inputs:{controller_mode:mode,requesting_run_id:String(runId),requesting_run_attempt:String(attempt),requesting_action:action},request});
+ await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci-dedicated.yml',ref,inputs,request});
  return{dispatched:true,mode};
 }

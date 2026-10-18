@@ -112,7 +112,7 @@ jobs:
             const pin=process.env.CONTROLLER_SHA || (context.ref==='refs/heads/main'&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:''),path=process.env.EXECUTION_WORKFLOW_PATH;
             if(!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Reviewed controller pin is missing');
             const main=context.ref==='refs/heads/main';
-            if(main){if(process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@refs/heads/main`)throw new Error('Untrusted Main workflow origin');const request={timeout:10000};const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed helper pin is not on Main');core.setOutput('helper_sha',path.endsWith('/ci.yml')&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:pin);return;}
+            if(main){if(process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@refs/heads/main`)throw new Error('Untrusted Main workflow origin');const request={timeout:10000};const {data:tip}=await github.rest.repos.getBranch({...context.repo,branch:'main',request});if(tip.name!=='main'||!/^[a-f0-9]{40}$/.test(tip.commit?.sha||''))throw new Error('Invalid current main branch identity');const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${tip.commit.sha}`,request});if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed helper pin is not on Main');core.setOutput('helper_sha',path.endsWith('/ci.yml')&&process.env.ISOLATED_EXECUTION!=='true'?context.sha:pin);return;}
             const ref=`refs/heads/ci-execution/${pin}`;
             if(process.env.ISOLATED_EXECUTION!=='true'||context.ref!==ref||process.env.EXECUTION_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/${path}@${ref}`||process.env.EXECUTION_WORKFLOW_SHA!==context.sha||context.sha===pin)throw new Error('Untrusted isolated workflow origin');
             const request={timeout:10000};
@@ -188,7 +188,7 @@ jobs:
           done
       - name: Skip superseded PR heads
         id: superseded
-        if: needs.redirect.outputs.routed != 'true' && (github.event_name == 'pull_request')
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
@@ -676,6 +676,10 @@ jobs:
             tests/scripts/ci-dedicated-bridge.test.ts \
             tests/scripts/ci-dedicated-metadata.test.ts \
             tests/scripts/ci-superseded-pr-heads.test.ts \
+            tests/platform/ci-docs-only-jobs.test.ts \
+            tests/platform/ci-workflows.test.ts \
+            tests/platform/customer-vps-host-bundle.test.ts \
+            tests/scripts/os-view-parity-plan.test.ts \
             tests/scripts/ci-dedicated-main-admission.test.ts \
             tests/scripts/ci-dedicated-main-fallback.test.ts \
             tests/scripts/ci-dedicated-main-source-gate.test.ts \

@@ -343,7 +343,7 @@ describe('CI workflows', () => {
     const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
     expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]');
+    expect(workflow).toContain('needs: [redirect, changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -428,7 +428,7 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('docs-contract:');
     expect(workflow).toContain('name: Docs Contract Tests');
-    expect(workflow).toContain("docs_contract_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests }}");
+    expect(workflow).toContain("docs_contract_tests: ${{ needs.redirect.outputs.routed == 'true' && 'false' || (steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests) }}");
     expect(workflow).toContain("if: needs.changes.outputs.docs_contract_tests == 'true'");
     expect(workflow).toContain('pnpm exec vitest run tests/repository/site-extraction.test.ts');
     expect(workflow).toContain('| Docs Contract Tests | $DOCS_CONTRACT_RESULT |');

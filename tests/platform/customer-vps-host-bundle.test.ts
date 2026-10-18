@@ -1032,7 +1032,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('action="teardown"');
     expect(workflow.indexOf('if [ "$TEARDOWN_PREVIEW" = "true" ]; then'))
       .toBeLessThan(workflow.indexOf('if [ "$VERIFY_INVENTORY" = "true" ]; then'));
-    expect(workflow).toContain("if: needs.gate.outputs.action == 'teardown'");
+    expect(workflow).toContain("if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && needs.gate.outputs.action == 'teardown'");
     expect(workflow).toContain(
       'select(.handle == $h and .status != "deleted" and .deletedAt == null)',
     );
@@ -1063,7 +1063,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(workflow).toContain('action="deploy_existing"');
     expect(workflow).toContain("if: needs.gate.outputs.action == 'deploy'");
-    expect(workflow).toContain("if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')");
+    expect(workflow).toContain("if: always() && needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')");
     expect(workflow).toContain("if: needs.gate.outputs.action == 'deploy'");
     expect(workflow).toContain("VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}");
   });

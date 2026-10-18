@@ -6,6 +6,7 @@ const id=value=>Number.isSafeInteger(value)&&value>0;
 const same=(value,repo)=>typeof value==='string'&&value.toLowerCase()===`${repo.owner}/${repo.repo}`.toLowerCase();
 export const isolatedRunPin=run=>executionControllerSha(`refs/heads/${run?.head_branch??''}`);
 export const isolatedControllerMarker=value=>`dedicated-isolated-v1 mode=qualification request=${value.requestingRunId} attempt=${value.requestingRunAttempt}`;
+export class InactiveIsolatedRequester extends Error {}
 export async function verifyRunExecution(github,repo,run,workflowPath,controllerSha){
  const pin=isolatedRunPin(run);
  if(!pin){if(String(run?.head_branch??'').startsWith('ci-execution/'))throw new Error('Malformed isolated execution branch');return null;}
@@ -24,12 +25,14 @@ export async function isolatedTrigger(github,repo,inputs,mode){
  const path=mode==='maintenance'?'ci-dedicated.yml':'ci.yml';
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:path,request});
  const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:runId,request});
- if(!id(workflow.id)||workflow.path!==`.github/workflows/${path}`||run.id!==runId||run.run_attempt!==attempt||run.workflow_id!==workflow.id||run.path!==workflow.path||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))throw new Error('Isolated requester is not authenticated');
+ if(!id(workflow.id)||workflow.path!==`.github/workflows/${path}`||run.id!==runId||!id(run.run_attempt)||run.workflow_id!==workflow.id||run.path!==workflow.path||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))throw new Error('Isolated requester is not authenticated');
  if(mode==='qualification'){
-  if(!['requested','in_progress'].includes(action)||(action==='requested'?attempt!==1:attempt<=1)||!['queued','requested','waiting','pending','in_progress'].includes(run.status)||run.event==='push')throw new Error('Isolated qualification requester is stale or unsupported');
+  if(!['requested','in_progress'].includes(action)||(action==='requested'?attempt!==1:attempt<=1)||run.run_attempt<attempt||run.event==='push')throw new Error('Isolated qualification requester is stale or unsupported');
+  if(run.run_attempt>attempt||run.status==='completed')throw new InactiveIsolatedRequester('Isolated qualification requester is no longer active');
+  if(!['queued','requested','waiting','pending','in_progress'].includes(run.status))throw new Error('Isolated qualification requester is stale or unsupported');
  }else if(mode==='reconcile'){
-  if(action!=='completed'||run.status!=='completed'||!['pull_request','workflow_dispatch','push'].includes(run.event))throw new Error('Isolated completion requester is not terminal');
- }else if(action!=='requested'||!['schedule','push'].includes(run.event)||run.head_branch!=='main'||!sha.test(run.head_sha||''))throw new Error('Isolated maintenance needs an authenticated Main scheduler');
+  if(run.run_attempt!==attempt||action!=='completed'||run.status!=='completed'||!['pull_request','workflow_dispatch','push'].includes(run.event))throw new Error('Isolated completion requester is not terminal');
+ }else if(run.run_attempt!==attempt||action!=='requested'||!['schedule','push'].includes(run.event)||run.head_branch!=='main'||!sha.test(run.head_sha||''))throw new Error('Isolated maintenance needs an authenticated Main scheduler');
  return{action,workflow_run:run};
 }
 export async function isolatedReconciliationScope(github,repo,inputs){
@@ -44,6 +47,11 @@ export async function isolatedReconciliationScope(github,repo,inputs){
  const rows=run.pull_requests;
  if(!Array.isArray(rows)||rows.length!==1||!id(rows[0].number)||![rows[0].head?.repo?.url,rows[0].base?.repo?.url].every(url=>String(url).toLowerCase()===`https://api.github.com/repos/${repo.owner}/${repo.repo}`.toLowerCase()))throw new Error('Completed requester has no authenticated PR scope');
  return{prNumber:rows[0].number};
+}
+export async function validatedIsolatedReconciliationScope(github,repo,inputs){
+ const scope=await isolatedReconciliationScope(github,repo,inputs),hint=inputs.reconciliation_pr;
+ if(typeof hint!=='string'||!/^(?:0|[1-9][0-9]{0,5})$/.test(hint)||hint!==String(scope.prNumber??0))throw new Error('Invalid isolated reconciliation scope hint');
+ return scope;
 }
 export {executionBranch};
 export async function dispatchExecutionRef(github,repo,controllerSha,workflowPath){
