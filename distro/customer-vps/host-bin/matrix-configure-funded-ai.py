@@ -1,9 +1,11 @@
 #!/usr/bin/python3 -I
 """Install only current, identity-bound managed AI configuration. Owner data is untouched."""
 import datetime
+from contextlib import contextmanager
 import fcntl
 import json
 import os
+import pwd
 import re
 import stat
 import sys
@@ -13,9 +15,10 @@ import uuid
 
 ENV_PATH = '/opt/matrix/env/host.env'
 MARKERS = ('/opt/matrix/staging/update-phase', '/opt/matrix/staging/update-transaction',
-           '/opt/matrix/app/.update-now', '/opt/matrix/app/.rollback-now',
+           '/opt/matrix/app/.update-now', '/opt/matrix/app/.update-repair-now', '/opt/matrix/app/.rollback-now',
            '/opt/matrix/env/runtime-token-rotation.pending', '/var/lib/matrix-funded-host-config/install-pending.json',
-           '/var/lib/matrix-funded-host-config/resume.json', '/var/lib/matrix-funded-host-config/applied.json')
+           '/var/lib/matrix-funded-host-config/resume.json', '/var/lib/matrix-funded-host-config/invocation.json',
+           '/var/lib/matrix-funded-host-config/applied.json')
 KEYS = ('MATRIX_FUNDED_AI_ENABLED', 'MATRIX_FUNDED_AI_PLATFORM_URL', 'MATRIX_FUNDED_AI_RELAY_URL',
         'MATRIX_FUNDED_AI_RUNTIME_TOKEN', 'MATRIX_RUNTIME_TOKEN_EPOCH')
 IDENTITY_KEYS = ('MATRIX_HANDLE', 'MATRIX_MACHINE_ID', 'MATRIX_CLERK_USER_ID', 'MATRIX_RUNTIME_SLOT')
@@ -51,15 +54,15 @@ def validate_config(value):
     return identity, config
 
 
-def read_regular(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+def read_regular(path, maximum=65536, dir_fd=None, root_owned=True, allowed_owners=(0,)):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
     try:
         info = os.fstat(fd)
         require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and not info.st_mode & 0o022
-                and (os.geteuid() != 0 or info.st_uid == 0) and info.st_size <= 65536)
-        data = os.read(fd, 65537)
-        require(len(data) <= 65536)
-        current = os.stat(path, follow_symlinks=False)
+                and (not root_owned or os.geteuid() != 0 or info.st_uid in allowed_owners) and info.st_size <= maximum)
+        data = os.read(fd, maximum + 1)
+        require(len(data) <= maximum)
+        current = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
         require((current.st_dev, current.st_ino) == (info.st_dev, info.st_ino))
         return data, info
     finally:
@@ -91,11 +94,104 @@ def write_backup(env_path, data, info):
         os.unlink(candidate)
 
 
-def ensure_quiet(markers):
-    require(not any(os.path.lexists(marker) for marker in markers))
+def safe_directory(path, allowed_owners=(0,)):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        require(not info.st_mode & 0o022 and (os.geteuid() != 0 or info.st_uid in allowed_owners))
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+@contextmanager
+def maintenance_guards(markers):
+    # Protected installs/repairs take resume.lock before writing their pending
+    # records. Hold a shared lock for this entire mutation, including that gap.
+    locks = []
+    directories = {os.path.dirname(path) for path in markers if os.path.basename(path) in
+                   ('applied.json', 'resume.json', 'invocation.json', 'install-pending.json')}
+    try:
+        for directory in sorted(directories):
+            try:
+                anchor = safe_directory(directory)
+            except FileNotFoundError:
+                continue
+            try:
+                try:
+                    lock = os.open('resume.lock', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=anchor)
+                except FileNotFoundError:
+                    continue
+                locks.append(lock)
+                info = os.fstat(lock)
+                require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and stat.S_IMODE(info.st_mode) == 0o600
+                        and (os.geteuid() != 0 or info.st_uid == 0))
+                fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            finally:
+                os.close(anchor)
+        yield
+    finally:
+        for lock in locks:
+            os.close(lock)
+
+
+def completed_update_transaction(path):
+    # Older Sync agents write journals as their fixed system runtime account;
+    # newer agents seal them as root. Neither form is an active-operation marker.
+    owners = (0, pwd.getpwnam('matrix').pw_uid) if os.geteuid() == 0 else (0,)
+    transaction = safe_directory(path, allowed_owners=owners)
+    try:
+        require(not os.path.lexists(os.path.join(path, 'same-version-repair.json')))
+        require(read_regular('state', 64, transaction, allowed_owners=owners)[0] == b'mutating\n')
+        candidate = read_regular('candidate-version', 129, transaction, allowed_owners=owners)[0]
+        require(re.fullmatch(rb'[A-Za-z0-9][A-Za-z0-9._-]{0,127}\n', candidate))
+        version = candidate.decode('ascii').strip()
+        base = os.path.dirname(os.path.dirname(path))
+        committed = json.loads(read_regular(os.path.join(base, 'release.json'))[0])
+        require(isinstance(committed, dict) and committed.get('version') == version)
+        # App files retain the existing owner-admin trust model; root-owned
+        # committed release metadata independently anchors the installed version.
+        installed = read_regular(os.path.join(base, 'app', 'BUNDLE_VERSION'), 129, root_owned=False)[0]
+        require(installed in (candidate, candidate.rstrip(b'\n')))
+    finally:
+        os.close(transaction)
+
+
+def completed_funded_repair(path, identity):
+    applied = json.loads(read_regular(path, 4096)[0])
+    stable_keys = ('handle', 'machineId', 'ownerId', 'runtimeSlot')
+    require(isinstance(applied, dict) and set(applied) == {'rolloutId', 'identity', 'afterSha256'}
+            and isinstance(applied['rolloutId'], str) and re.fullmatch(r'(?:repair|epoch)-[a-f0-9]{32}', applied['rolloutId'])
+            and isinstance(applied['identity'], dict) and set(applied['identity']) == set(stable_keys) | {'epoch'}
+            and all(applied['identity'][key] == identity[key] for key in stable_keys)
+            and type(applied['identity']['epoch']) is int
+            and 1 <= applied['identity']['epoch'] <= identity['runtimeTokenEpoch']
+            and isinstance(applied['afterSha256'], str) and re.fullmatch(r'[a-f0-9]{64}', applied['afterSha256']))
+    # This is retained rollback history, not a live writer marker. Later speech
+    # updates or epoch rotation legitimately change host.env; active maintenance
+    # is excluded by the held resume.lock and explicit pending records instead.
+
+
+def ensure_quiet(markers, identity):
+    for marker in markers:
+        if not os.path.lexists(marker):
+            continue
+        if os.path.basename(marker) == 'update-transaction':
+            completed_update_transaction(marker)
+        elif os.path.basename(marker) == 'applied.json':
+            completed_funded_repair(marker, identity)
+        else:
+            require(False)
 
 
 def apply_config(env_path, value, markers=MARKERS):
+    validate_config(value)
+    with maintenance_guards(markers):
+        return _apply_config(env_path, value, markers)
+
+
+def _apply_config(env_path, value, markers):
     identity, config = validate_config(value)
     directory = os.path.dirname(os.path.abspath(env_path))
     lock = os.open(os.path.join(directory, '.host.env.funded-repair.lock'),
@@ -106,8 +202,8 @@ def apply_config(env_path, value, markers=MARKERS):
         require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and stat.S_IMODE(info.st_mode) == 0o600
                 and (os.geteuid() != 0 or info.st_uid == 0))
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        ensure_quiet(markers)
         data, original = read_regular(env_path)
+        ensure_quiet(markers, identity)
         lines = data.decode('utf-8').splitlines(keepends=True)
         values = {}
         for line in lines:
@@ -149,7 +245,7 @@ def apply_config(env_path, value, markers=MARKERS):
             out.flush()
             os.fsync(out.fileno())
         validate_config(value)
-        ensure_quiet(markers)
+        ensure_quiet(markers, identity)
         current, current_info = read_regular(env_path)
         require(current == data and snapshot(current_info) == snapshot(original))
         os.replace(temporary, env_path)

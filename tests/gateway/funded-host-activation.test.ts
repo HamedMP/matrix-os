@@ -114,6 +114,13 @@ describe('funded host activation gateway', () => {
     finish();
     expect((await first).status).toBe(202);
   });
+  it('recognizes the runtime platform fallback on newly provisioned computers without restarting', async () => {
+    const loaded = { ...env, PLATFORM_INTERNAL_URL: request.configuration.platformOrigin, MATRIX_RUNTIME_TOKEN_EPOCH: '1', MATRIX_FUNDED_AI_ENABLED: 'true', MATRIX_FUNDED_AI_RELAY_URL: request.configuration.relayOrigin, MATRIX_FUNDED_AI_RUNTIME_TOKEN: request.configuration.runtimeToken };
+    const f = fixture({ env: loaded });
+    expect(await (await f.app.request('/config', { headers })).json()).toMatchObject({ configured: true });
+    expect((await f.post()).status).toBe(200);
+    expect(f.applyConfig).not.toHaveBeenCalled(); expect(f.scheduleRestart).not.toHaveBeenCalled();
+  });
   it('hashes loaded identity and settings, and never restarts unchanged configuration', async () => {
     const loaded = { ...env, MATRIX_RUNTIME_TOKEN_EPOCH: '1', MATRIX_FUNDED_AI_ENABLED: 'true', MATRIX_FUNDED_AI_PLATFORM_URL: request.configuration.platformOrigin, MATRIX_FUNDED_AI_RELAY_URL: request.configuration.relayOrigin, MATRIX_FUNDED_AI_RUNTIME_TOKEN: request.configuration.runtimeToken };
     const f = fixture({ env: loaded });

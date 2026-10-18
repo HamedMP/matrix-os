@@ -8,6 +8,7 @@ import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orche
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CanonicalChatProviderRegistry, type CanonicalChatProviderAdapter } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { SharedChatExecutionCoordinator, type SharedChatExecutionCoordinatorOptions } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
+import { createManagedFeatureRestartCoordinator } from "../../packages/gateway/src/managed-feature-restart.js";
 import { createExecutionAdmissionFence } from "../../packages/gateway/src/execution-admission-fence.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 
@@ -67,5 +68,75 @@ describe("shared execution admission fence",()=>{
     const f=await canonicalFixture();const admitted=await f.admit();await f.orchestrator.drain();f.start.mockClear();
     f.fence.tryAcquire();expect(()=>f.shared.startDispatch({owner,message:admitted.message,run:admitted.run,adapter:f.provider,scopeId:"scope_fenced",onComplete:async()=>{}})).toThrow("temporarily unavailable");
     expect(f.start).not.toHaveBeenCalled();expect(f.orchestrator.activeCount).toBe(0);
+  });
+});
+
+
+describe("restart admission preparation accounting", () => {
+  it("defers restart while a personal admission is committing its run", async () => {
+    const f = await canonicalFixture();
+    let release!: () => void, committed = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = f.repository.admitTurn.bind(f.repository);
+    vi.spyOn(f.repository, "admitTurn").mockImplementation(async (...args) => {
+      const admitted = await original(...args); committed = true; await gate; return admitted;
+    });
+    const admission = f.admit();
+    cleanups.push(async () => {
+      release(); vi.useRealTimers();
+      await admission.catch(error => { if (!(error instanceof Error)) throw error; });
+    });
+    await vi.waitFor(() => expect(committed).toBe(true));
+    expect(f.orchestrator.activeCount).toBe(0);
+    expect(f.orchestrator.pendingCount).toBe(1);
+    vi.useFakeTimers(); const restart = vi.fn().mockResolvedValue(undefined);
+    const coordinator = createManagedFeatureRestartCoordinator({ fence: f.fence,
+      isIdle: () => f.orchestrator.activeCount === 0 && f.orchestrator.pendingCount === 0, restart });
+    coordinator.schedule(); await vi.advanceTimersByTimeAsync(2_000);
+    expect(restart).not.toHaveBeenCalled(); vi.useRealTimers();
+    release(); await admission; await f.orchestrator.drain();
+    expect(f.orchestrator.pendingCount).toBe(0);
+    expect(f.start).toHaveBeenCalledOnce(); await coordinator.close();
+  });
+  it.each(["defer_restart", "shutdown"])("accounts for a claimed personal queued turn during resume preparation: %s", async mode => {
+    const f = await canonicalFixture();
+    let releaseProvider!: () => void, releasePreparation!: () => void, preparing = false;
+    const providerGate = new Promise<void>(resolve => { releaseProvider = resolve; });
+    const preparationGate = new Promise<void>(resolve => { releasePreparation = resolve; });
+    cleanups.push(async () => { releaseProvider(); releasePreparation(); vi.useRealTimers(); });
+    f.start.mockImplementation(async function* () { await providerGate; yield { type: "run.completed", outcome: "completed" }; });
+    f.provider.resume = f.provider.start;
+    await f.admit();
+    await vi.waitFor(async () => expect((await f.repository.get(owner, "chat_fenced"))?.activeRun?.status).toBe("running"));
+    const record = await f.repository.get(owner, "chat_fenced");
+    await f.orchestrator.enqueueQueuedTurn(principal, owner, "chat_fenced", {
+      clientRequestId: "req_queue_fenced", baseRevision: record!.chat.revision,
+      parts: [{ type: "text", text: "Queued" }], selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default", permissionMode: "supervised",
+    });
+    vi.spyOn(f.repository, "getLatestAdapterStateForChat").mockImplementation(async () => {
+      preparing = true; await preparationGate; return null;
+    });
+    releaseProvider(); await vi.waitFor(() => expect(preparing).toBe(true));
+    expect(f.orchestrator.activeCount).toBe(0);
+    expect(f.orchestrator.pendingCount).toBe(1);
+    const claimed = await f.repository.exportChat(owner, "chat_fenced");
+    expect(claimed?.runs.some(run => run.status === "accepted")).toBe(true);
+    if (mode === "shutdown") f.fence.close();
+    else {
+      vi.useFakeTimers(); const restart = vi.fn().mockResolvedValue(undefined);
+      const coordinator = createManagedFeatureRestartCoordinator({ fence: f.fence,
+        isIdle: () => f.orchestrator.activeCount === 0 && f.orchestrator.pendingCount === 0, restart });
+      coordinator.schedule(); await vi.advanceTimersByTimeAsync(2_000);
+      expect(restart).not.toHaveBeenCalled(); vi.useRealTimers();
+    }
+    releasePreparation();
+    await vi.waitFor(() => expect(f.orchestrator.pendingCount).toBe(0));
+    await f.orchestrator.drain();
+    expect(f.orchestrator.pendingCount).toBe(0);
+    const finished = await f.repository.exportChat(owner, "chat_fenced");
+    expect(finished?.runs.some(run => run.status === "accepted")).toBe(false);
+    expect(finished?.runs.map(run => run.status)).toContain(mode === "shutdown" ? "failed" : "completed");
+    expect(f.start).toHaveBeenCalledTimes(mode === "shutdown" ? 1 : 2);
   });
 });

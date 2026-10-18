@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm, symlink, readdir, stat, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,10 +11,10 @@ afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { re
 const request = { contractVersion: 1, identity: { handle: 'alice', machineId: 'machine-1', ownerId: 'user_1', runtimeSlot: 'primary', runtimeTokenEpoch: 2 }, configuration: { enabled: true, platformOrigin: 'https://app.matrix-os.com', relayOrigin: 'https://matrix-ai-relay-production-jqxkjdhtkq-ey.a.run.app', runtimeToken: 'a'.repeat(64) } };
 const original = '# preserve bytes\r\nMATRIX_HANDLE=alice\nMATRIX_MACHINE_ID=machine-1\nMATRIX_CLERK_USER_ID=user_1\nMATRIX_RUNTIME_SLOT=primary\nOTHER_SETTING="keep exact"\nMATRIX_FUNDED_AI_ENABLED=false\n';
 async function fixture() { const dir = await mkdtemp(join(tmpdir(), 'matrix-funded-activation-')); dirs.push(dir); const envPath = join(dir, 'host.env'); await writeFile(envPath, original, { mode: 0o640 }); return { dir, envPath }; }
-function apply(envPath: string, body: unknown = request, extra = '') {
+function apply(envPath: string, body: unknown = request, extra = '', markers: string[] = []) {
   const now = new Date();
   const proof = { ...body as object, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30000).toISOString() };
-  return spawnSync('python3', ['-c', `import json,runpy,sys,os\nm=runpy.run_path(sys.argv[1],run_name='test_helper')\n${extra}\nm['apply_config'](sys.argv[2],json.loads(sys.stdin.read()),markers=())`, helper, envPath], { encoding: 'utf8', input: JSON.stringify(proof) });
+  return spawnSync('python3', ['-c', `import json,runpy,sys,os\nm=runpy.run_path(sys.argv[1],run_name='test_helper')\n${extra}\nm['apply_config'](sys.argv[2],json.loads(sys.stdin.read()),markers=json.loads(sys.argv[3]))`, helper, envPath, JSON.stringify(markers)], { encoding: 'utf8', input: JSON.stringify(proof) });
 }
 describe('funded AI host configuration primitive', () => {
   it('activates trailing-hyphen handles accepted by platform provisioning', async () => {
@@ -113,4 +114,105 @@ describe('shared host environment writer serialization', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(await readFile(f.envPath, 'utf8')).toBe(original);
   });
+});
+
+
+async function retainedUpdateFixture() {
+  const f = await fixture(), transaction = join(f.dir, 'staging', 'update-transaction');
+  await mkdir(transaction, { recursive: true }); await mkdir(join(f.dir, 'app'));
+  await writeFile(join(transaction, 'state'), 'mutating\n', { mode: 0o644 });
+  await writeFile(join(transaction, 'candidate-version'), 'v2026.10.18-1\n', { mode: 0o644 });
+  await writeFile(join(f.dir, 'release.json'), JSON.stringify({ version: 'v2026.10.18-1' }), { mode: 0o644 });
+  await writeFile(join(f.dir, 'app', 'BUNDLE_VERSION'), 'v2026.10.18-1\n', { mode: 0o644 });
+  return { ...f, transaction };
+}
+describe('completed host maintenance records', () => {
+  it('allows retained successful updater rollback state and preserves it byte-for-byte', async () => {
+    const f = await retainedUpdateFixture();
+    const result = apply(f.envPath, request, '', [f.transaction]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(await readFile(join(f.transaction, 'state'), 'utf8')).toBe('mutating\n');
+    expect(await readFile(join(f.transaction, 'candidate-version'), 'utf8')).toBe('v2026.10.18-1\n');
+  });
+  it.each(['prepared', 'unknown', 'wrong_version', 'same_version_repair', 'symlink_state', 'symlink_directory', 'active_phase'])(
+    'rejects unfinished or unsafe updater state: %s', async state => {
+      const f = await retainedUpdateFixture();
+      let marker = f.transaction;
+      if (state === 'prepared' || state === 'unknown') await writeFile(join(marker, 'state'), state + '\n');
+      if (state === 'wrong_version') await writeFile(join(f.dir, 'release.json'), JSON.stringify({ version: 'older' }));
+      if (state === 'same_version_repair') await writeFile(join(marker, 'same-version-repair.json'), '{}');
+      if (state === 'symlink_state') { await rm(join(marker, 'state')); await symlink(f.envPath, join(marker, 'state')); }
+      if (state === 'symlink_directory') { marker = join(f.dir, 'update-transaction'); await symlink(f.transaction, marker); }
+      const markers = [marker];
+      if (state === 'active_phase') { const phase = join(f.dir, 'staging', 'update-phase'); await writeFile(phase, 'health\n'); markers.push(phase); }
+      expect(apply(f.envPath, request, '', markers).status).not.toBe(0);
+      expect(await readFile(f.envPath, 'utf8')).toBe(original);
+    });
+  it('allows a retained completed funded repair after-image without rewriting its record', async () => {
+    const f = await fixture(); expect(apply(f.envPath).status).toBe(0);
+    const after = await readFile(f.envPath); const applied = join(f.dir, 'applied.json');
+    const record = JSON.stringify({ rolloutId: 'repair-' + 'a'.repeat(32), identity: { handle: 'alice', machineId: 'machine-1', ownerId: 'user_1', runtimeSlot: 'primary', epoch: 2 }, afterSha256: createHash('sha256').update(after).digest('hex') });
+    await writeFile(applied, record, { mode: 0o600 });
+    expect(apply(f.envPath, request, '', [applied]).status).toBe(0);
+    expect(await readFile(applied, 'utf8')).toBe(record); expect(await readFile(f.envPath)).toEqual(after);
+  });
+  it.each(['speech', 'rotation'])('allows completed repair history after later legitimate %s configuration changes', async change => {
+    const f = await fixture(); expect(apply(f.envPath).status).toBe(0);
+    const before = await readFile(f.envPath, 'utf8'); const applied = join(f.dir, 'applied.json');
+    const record = JSON.stringify({ rolloutId: 'repair-' + 'a'.repeat(32), identity: { handle: 'alice', machineId: 'machine-1', ownerId: 'user_1', runtimeSlot: 'primary', epoch: 2 }, afterSha256: createHash('sha256').update(before).digest('hex') });
+    await writeFile(applied, record, { mode: 0o600 });
+    const next = change === 'speech' ? before + 'MATRIX_PLATFORM_SPEECH_ENABLED=true\n' : before.replace('MATRIX_RUNTIME_TOKEN_EPOCH=2', 'MATRIX_RUNTIME_TOKEN_EPOCH=3').replace('MATRIX_FUNDED_AI_RUNTIME_TOKEN=' + 'a'.repeat(64), 'MATRIX_FUNDED_AI_RUNTIME_TOKEN=' + 'b'.repeat(64));
+    await writeFile(f.envPath, next);
+    const body = change === 'speech' ? request : { ...request, identity: { ...request.identity, runtimeTokenEpoch: 3 }, configuration: { ...request.configuration, runtimeToken: 'b'.repeat(64) } };
+    const result = apply(f.envPath, body, '', [applied]); expect(result.status, result.stderr).toBe(0);
+    expect(await readFile(applied, 'utf8')).toBe(record); expect(await readFile(f.envPath, 'utf8')).toBe(next);
+  });
+  it.each(['incomplete', 'invalid_hash', 'wrong_identity', 'future_epoch', 'malformed', 'symlink'])(
+    'rejects unfinished or unsafe funded repair records: %s', async state => {
+      const f = await fixture(); const applied = join(f.dir, 'applied.json');
+      const record = { rolloutId: 'repair-' + 'a'.repeat(32), identity: { handle: 'alice', machineId: 'machine-1', ownerId: 'user_1', runtimeSlot: 'primary', epoch: 2 }, afterSha256: createHash('sha256').update(original).digest('hex') };
+      let value: unknown = record;
+      if (state === 'incomplete') value = { rolloutId: record.rolloutId, identity: record.identity, beforeSha256: record.afterSha256 };
+      if (state === 'invalid_hash') value = { ...record, afterSha256: 'invalid' };
+      if (state === 'future_epoch') value = { ...record, identity: { ...record.identity, epoch: 3 } };
+      if (state === 'wrong_identity') value = { ...record, identity: { ...record.identity, machineId: 'other' } };
+      if (state === 'symlink') await symlink(f.envPath, applied);
+      else await writeFile(applied, state === 'malformed' ? '{' : JSON.stringify(value), { mode: 0o600 });
+      expect(apply(f.envPath, request, '', [applied]).status).not.toBe(0);
+      expect(await readFile(f.envPath, 'utf8')).toBe(original);
+    });
+  it('rejects a currently active protected component even before its pending marker is written', async () => {
+    const f = await fixture(); const applied = join(f.dir, 'applied.json');
+    const extra = "import fcntl\nheld=os.open(os.path.join(os.path.dirname(sys.argv[2]),'resume.lock'),os.O_RDWR|os.O_CREAT,0o600)\nfcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)";
+    expect(apply(f.envPath, request, extra, [applied]).status).not.toBe(0);
+    expect(await readFile(f.envPath, 'utf8')).toBe(original);
+  });
+});
+
+describe('retained updater journal ownership under root activation', () => {
+  it.each(['matrix', 'root', 'wrong_directory', 'wrong_file', 'wrong_release'])(
+    'validates the trusted runtime account while preserving the root release anchor: %s', async ownerCase => {
+      const f = await retainedUpdateFixture();
+      const code = `import os,runpy,sys,types
+m=runpy.run_path(sys.argv[1],run_name='ownership_test')
+real_open,real_fstat=os.open,os.fstat
+paths={}
+def tracked_open(path,*args,**kwargs):
+ fd=real_open(path,*args,**kwargs)
+ paths[fd]=os.path.join(paths[kwargs['dir_fd']],path) if kwargs.get('dir_fd') is not None else os.fspath(path)
+ return fd
+def trusted_metadata(fd):
+ value=list(real_fstat(fd));path=paths.get(fd,'');case=sys.argv[3]
+ if path.endswith('release.json'):value[4]=4242 if case=='wrong_release' else 0
+ elif path.endswith('update-transaction'):value[4]=4343 if case=='wrong_directory' else 0 if case=='root' else 4242
+ elif path.endswith('/state') or path.endswith('/candidate-version'):value[4]=4343 if case=='wrong_file' else 0 if case=='root' else 4242
+ return os.stat_result(value)
+os.open=tracked_open;os.fstat=trusted_metadata;os.geteuid=lambda:0
+m['completed_update_transaction'].__globals__['pwd']=types.SimpleNamespace(getpwnam=lambda name:types.SimpleNamespace(pw_uid=4242))
+m['completed_update_transaction'](sys.argv[2])`;
+      const result = spawnSync('python3', ['-c', code, helper, f.transaction, ownerCase], { encoding: 'utf8' });
+      if (ownerCase === 'matrix' || ownerCase === 'root') expect(result.status, result.stderr).toBe(0);
+      else expect(result.status).not.toBe(0);
+      expect(await readFile(f.envPath, 'utf8')).toBe(original);
+    });
 });

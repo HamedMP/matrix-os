@@ -24,7 +24,7 @@ function loadedConfiguration(env: NodeJS.ProcessEnv): FundedHostActivationReques
     },
     configuration: {
       enabled: true,
-      platformOrigin: env.MATRIX_FUNDED_AI_PLATFORM_URL,
+      platformOrigin: env.MATRIX_FUNDED_AI_PLATFORM_URL ?? env.PLATFORM_INTERNAL_URL,
       relayOrigin: env.MATRIX_FUNDED_AI_RELAY_URL,
       runtimeToken: env.MATRIX_FUNDED_AI_RUNTIME_TOKEN,
     },

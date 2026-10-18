@@ -81,6 +81,28 @@ describe("platform speech fleet activation", () => {
   });
 });
 
+describe('speech activation cancellation', () => {
+  it('aborts a slow host request with its parent page and awaits all work', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true });
+    }));
+    const pending = activatePlatformSpeechFleet({ machines: [machine], platformOrigin: 'https://app.matrix-os.com', platformSecret: 'p'.repeat(32), fetchImpl: fetchImpl as typeof fetch, signal: controller.signal });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
+    controller.abort();
+    expect(fetchImpl.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    expect(await pending).toMatchObject({ activated: 0, failed: 1 });
+    expect(fetchImpl.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  });
+  it('stops between probes without starting a request after page cancellation', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn(async () => Response.json({ status: 'restarting' }, { status: 202 }));
+    const result = await activatePlatformSpeechFleet({ machines: [machine], platformOrigin: 'https://app.matrix-os.com', platformSecret: 'p'.repeat(32), fetchImpl, signal: controller.signal, wait: async () => { controller.abort(); } });
+    expect(result).toMatchObject({ activated: 0, failed: 1 });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+});
+
 describe('already-working speech on a pinned platform origin', () => {
   const capabilities = {
     contractVersion: 1,

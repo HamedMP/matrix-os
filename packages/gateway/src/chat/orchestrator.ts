@@ -253,6 +253,11 @@ export class CanonicalChatOrchestrator {
     return this.active.size;
   }
 
+  /** Accepted admissions and claimed queue preparation have not registered active Runs yet. */
+  get pendingCount(): number {
+    return this.pendingDispatch.size + this.queueDispatches.size + this.sharedExecution.pendingCount;
+  }
+
   private atCapacity(owner: ChatOwner): boolean {
     if (this.options.executionAdmissionFence?.blocked) return true;
     if (this.active.size >= MAX_ACTIVE_RUNS_GLOBAL) return true;
@@ -465,6 +470,15 @@ export class CanonicalChatOrchestrator {
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
             mode: "follow_up",
           });
+          this.startDispatch(
+            owner,
+            claimed.message,
+            { ...claimed.run, context: contextForChatSession(claimed.run.context, resumeState) },
+            adapter,
+            resolvedRoot,
+            resumeState,
+          );
+          return;
         } catch (error: unknown) {
           console.warn(
             "[chat/orchestrator] Queued Run preparation failed:",
@@ -479,15 +493,6 @@ export class CanonicalChatOrchestrator {
           });
           continue;
         }
-        this.startDispatch(
-          owner,
-          claimed.message,
-          { ...claimed.run, context: contextForChatSession(claimed.run.context, resumeState) },
-          adapter,
-          resolvedRoot,
-          resumeState,
-        );
-        return;
       }
     } finally {
       this.queueDispatches.delete(key);

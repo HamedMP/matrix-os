@@ -1258,7 +1258,8 @@ export async function createGateway(config: GatewayConfig) {
     : undefined;
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
-    && (canonicalChatOrchestrator?.activeCount ?? 0) === 0;
+    && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
+    && (canonicalChatOrchestrator?.pendingCount ?? 0) === 0;
   const managedFeatureRestart = createManagedFeatureRestartCoordinator({
     fence: executionAdmissionFence, isIdle: isManagedFeatureRestartIdle,
   });
