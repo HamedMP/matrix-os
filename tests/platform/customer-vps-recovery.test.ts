@@ -7,7 +7,6 @@ import { createTestConfig, activeEntitlement, useCustomerVpsFixture } from './cu
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture(value => { db = value!; });
-
   it('refuses recovery without an R2 latest pointer unless allowEmpty is set', async () => {
     const hetzner = createMockHetznerClient();
     const systemStore = createMockCustomerVpsSystemStore({
@@ -22,7 +21,6 @@ describe('platform/customer-vps', () => {
     });
     expect(hetzner.deleteServer).not.toHaveBeenCalled();
   });
-
   it('keeps the old server until the replacement from R2 preflight registers healthy', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
@@ -100,7 +98,6 @@ describe('platform/customer-vps', () => {
     });
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
   });
-
   it('does not create a recovery replacement when snapshot mode cannot prove the target digest', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -125,7 +122,6 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).not.toHaveBeenCalled();
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({ status: 'running' });
   });
-
   it('recovers a legacy machine with no stored server type using the first allowed billing type', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
@@ -162,7 +158,6 @@ describe('platform/customer-vps', () => {
       serverType: 'cpx22',
     });
   });
-
   it('recovers the requested runtime slot without touching primary', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
@@ -213,7 +208,6 @@ describe('platform/customer-vps', () => {
       status: 'recovering',
     });
   });
-
   it('queues failed old-server cleanup after recovery and retries it during reconciliation', async () => {
     let currentNow = new Date('2026-04-26T12:00:00.000Z');
     const machineIds = [
@@ -279,7 +273,6 @@ describe('platform/customer-vps', () => {
     expect(deleteServer).toHaveBeenCalledTimes(2);
     expect(await listPendingProviderDeletions(db, currentNow.toISOString(), 10)).toHaveLength(0);
   });
-
   it('rejects concurrent recover calls before creating a second replacement server', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
@@ -316,7 +309,6 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
     expect(await getUserMachine(db, 'aaaaaaaa-2538-4f9f-a10d-1be5920a7bf7')).toBeUndefined();
   });
-
   it('deletes a replacement server when recovery cannot record it in the DB', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',

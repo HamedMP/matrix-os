@@ -7,7 +7,6 @@ import { activeEntitlement, useCustomerVpsFixture } from './customer-vps-service
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture(value => { db = value!; });
-
   it('resizes a running machine in place without deleting or recreating owner data', async () => {
     const getServer = vi.fn()
       .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx22', publicIPv4: '203.0.113.10' })
@@ -63,7 +62,6 @@ describe('platform/customer-vps', () => {
       deletedAt: null,
     });
   });
-
   it('falls back to hard poweroff when graceful resize shutdown is rejected', async () => {
     const getServer = vi.fn()
       .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx22', publicIPv4: '203.0.113.10' })
@@ -107,7 +105,6 @@ describe('platform/customer-vps', () => {
       vi.mocked(hetzner.resizeServer).mock.invocationCallOrder[0],
     );
   });
-
   it('keeps resize claimed when hard poweroff is accepted but off state is not confirmed', async () => {
     vi.useFakeTimers();
     const getServer = vi.fn().mockResolvedValue({
@@ -152,7 +149,6 @@ describe('platform/customer-vps', () => {
       resizeTargetServerType: 'cpx32',
     });
   });
-
   it('keeps resize claimed when provider change_type is accepted but does not settle', async () => {
     vi.useFakeTimers();
     const getServer = vi.fn()
@@ -192,7 +188,6 @@ describe('platform/customer-vps', () => {
       resizeTargetServerType: 'cpx32',
     });
   });
-
   it('keeps waiting on graceful shutdown after a transient provider read failure', async () => {
     vi.useFakeTimers();
     const getServer = vi.fn()
@@ -226,7 +221,6 @@ describe('platform/customer-vps', () => {
     expect(hetzner.shutdownServer).toHaveBeenCalledWith(123456);
     expect(hetzner.powerOffServer).not.toHaveBeenCalled();
   });
-
   it('does not issue duplicate poweron when the resize poweron wait times out', async () => {
     vi.useFakeTimers();
     const getServer = vi.fn()
@@ -263,7 +257,6 @@ describe('platform/customer-vps', () => {
       resizeTargetServerType: 'cpx32',
     });
   });
-
   it('keeps resize claimed when rollback poweron is accepted but not confirmed', async () => {
     vi.useFakeTimers();
     const getServer = vi.fn()
@@ -306,7 +299,6 @@ describe('platform/customer-vps', () => {
       resizeTargetServerType: 'cpx32',
     });
   });
-
   it('returns running without provider work when the machine is already on the requested type', async () => {
     const { service, hetzner } = createService({
       resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
@@ -333,7 +325,6 @@ describe('platform/customer-vps', () => {
     expect(hetzner.resizeServer).not.toHaveBeenCalled();
     expect(hetzner.powerOnServer).not.toHaveBeenCalled();
   });
-
   it('rejects a second resize while the first resize has claimed the machine', async () => {
     let markResizeStarted!: () => void;
     let releaseResize!: () => void;
@@ -384,7 +375,6 @@ describe('platform/customer-vps', () => {
     releaseResize();
     await firstResize;
   });
-
   it('rejects machine resize requests outside the active entitlement without provider mutation', async () => {
     const { service, hetzner } = createService({
       resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({

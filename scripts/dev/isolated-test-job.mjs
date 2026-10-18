@@ -35,6 +35,28 @@ export function isolatedTestJob(host, command, env) {
   return { unit, args, preserve, directory, memoryMiB };
 }
 
+export async function waitForTestJob(child, stop, signals = process) {
+  let signalExit, timer;
+  const cancel = signal => {
+    signalExit ??= signal === 'SIGINT' ? 130 : 143;
+    stop(false);
+    // The first stop may precede unit creation. Keep draining until the starter closes.
+    timer ??= setInterval(() => stop(false), 250);
+  };
+  const interrupt=()=>cancel('SIGINT'),terminate=()=>cancel('SIGTERM');
+  signals.on('SIGINT',interrupt);signals.on('SIGTERM',terminate);
+  try {
+    return await new Promise((resolve,reject)=>{
+      child.once('error',reject);
+      child.once('close',(code,signal)=>resolve(signalExit??code??(signal?128:1)));
+    });
+  } finally {
+    clearInterval(timer);
+    signals.off('SIGINT',interrupt);signals.off('SIGTERM',terminate);
+    if (signalExit) stop(true);
+  }
+}
+
 export async function runIsolatedTestJob(command) {
   const owner = userInfo();
   const host = { platform:process.platform,uid:owner.uid,gid:owner.gid,home:owner.homedir,
@@ -51,21 +73,10 @@ export async function runIsolatedTestJob(command) {
   console.error(`Isolated test job: ${job.unit}; memory limit ${job.memoryMiB} MiB. Other worktrees queue on the owner admission lock.`);
   const args = ['-n',...(job.preserve.length?[`--preserve-env=${job.preserve.join(',')}`]:[]),'/usr/bin/systemd-run',...job.args];
   const child = spawn('sudo',args,{stdio:'inherit'});
-  let signalExit;
-  const cancel = signal => {
-    if (signalExit) return;
-    signalExit = signal === 'SIGINT' ? 130 : 143;
+  return waitForTestJob(child, final => {
     const stopped = spawnSync('sudo',['-n','/usr/bin/systemctl','stop',job.unit],{stdio:'ignore',timeout:15000});
-    if (stopped.status !== 0) console.error('Test job stop was not confirmed; its runtime limit remains active.');
-  };
-  const interrupt=()=>cancel('SIGINT'),terminate=()=>cancel('SIGTERM');
-  process.on('SIGINT',interrupt);process.on('SIGTERM',terminate);
-  try {
-    return await new Promise((resolve,reject)=>{
-      child.once('error',reject);
-      child.once('close',(code,signal)=>resolve(signalExit??code??(signal?128:1)));
-    });
-  } finally { process.off('SIGINT',interrupt);process.off('SIGTERM',terminate); }
+    if (final && stopped.status !== 0) console.error('Test job stop was not confirmed; its runtime limit remains active.');
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

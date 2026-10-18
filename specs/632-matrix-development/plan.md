@@ -10,14 +10,14 @@ Prerequisites: systemd with cgroup accounting, passwordless sudo for this owner,
 
 Each job gets at most 6 GiB or 45% of host RAM, four CPU equivalents while reserving one core, no swap, bounded processes and a three-hour lifetime. One owner-wide lock serializes heavy jobs across worktrees; queued jobs wait at most two hours within that lifetime. SIGINT/SIGTERM stops the owned unit; systemd collects it and drains descendants. Admission does not promise parallel full suites on a 16 GiB host.
 
-Split the 95 customer-VPS cases into responsibility-focused files. Preserve every test body; only eight pure cases avoid unnecessary DB setup. Every DB case still receives a fresh fixture and closes it. Preserve the golden-snapshot gate's original selection by explicitly adding moved files.
+Split all 97 customer-VPS cases (including both parameterized US-location cases) into responsibility-focused files. Preserve every test body; only eight pure cases avoid unnecessary DB setup. Every DB case still receives a fresh fixture and closes it. Preserve the golden-snapshot gate's original selection by explicitly adding moved files. Compare all test declarations, including `it.each`, against the immutable baseline.
 
 ## Measured evidence
 
 Same Matrix host, Node 24, frozen lockfile, one worker and 6 GiB cgroup budget; source base `ad509ef16352fcd58e70c835abb488f0fa738604` plus the recorded implementation patch. Measurements include a per-case memory hook; they are diagnostic, not qualification receipts.
 
 - Original: stopped after 321.887 seconds and 36 completed cases; process-tree peak 5,354,135,552 bytes. Last sample showed 5,091,896,630 external-memory bytes. The baseline did not finish.
-- Split: all 95 passed in 78.138 seconds; process-tree peak 3,389,378,560 bytes. Eight pure cases took 13 ms. No assertion or fixture-backend changes.
+- Initial split prototype: 95 passed in 78.138 seconds; process-tree peak 3,389,378,560 bytes. Review caught two omitted parameterized cases; this incomplete extraction is superseded and cannot qualify the change. Corrected 97-case and full-suite measurements must replace it before readiness.
 - Live launcher probe ran under a separate `matrix-test-999-*.service`, retained UID/GID and propagated exit 7. This does not establish cancellation or machine-fleet qualification.
 - Completion requires the unfiltered full suite, exact source inventory, source/runtime/lock hashes, all failures retained, and gateway/shell/sync health verification. Do not report a ten-minute qualification win from this focused benchmark.
 

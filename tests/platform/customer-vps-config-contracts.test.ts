@@ -6,7 +6,6 @@ import { isPreviewMachine } from '../../packages/platform/src/customer-vps-previ
 import { validateDbLatestPointer } from '../../packages/platform/src/customer-vps-r2.js';
 
 describe('platform/customer-vps', () => {
-
   it('defaults new customer VPS provisioning to the stable host bundle channel', () => {
     const config = loadCustomerVpsConfig({
       PLATFORM_PUBLIC_URL: 'https://app.matrix-os.com',
@@ -15,7 +14,6 @@ describe('platform/customer-vps', () => {
     expect(config.imageVersion).toBe('stable');
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
   });
-
   it('does not use the private PostHog ingest host as the public browser host', () => {
     const config = loadCustomerVpsConfig({
       POSTHOG_HOST: 'https://eu.i.posthog.com',
@@ -25,7 +23,6 @@ describe('platform/customer-vps', () => {
     expect(config.posthogHost).toBe('https://eu.i.posthog.com');
     expect(config.posthogPublicHost).toBe('https://eu.posthog.com');
   });
-
   it('keeps the preview provisioning limit bounded for missing or invalid configuration', () => {
     expect(loadCustomerVpsConfig({}).previewProvisioningLimit).toBe(8);
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '4' }).previewProvisioningLimit).toBe(4);
@@ -33,7 +30,6 @@ describe('platform/customer-vps', () => {
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '17' }).previewProvisioningLimit).toBe(8);
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(8);
   });
-
   it('keeps golden snapshots disabled by default and bounds every control-plane budget', () => {
     expect(loadCustomerVpsConfig({}).goldenSnapshots).toMatchObject({
       enabled: false,
@@ -113,7 +109,6 @@ describe('platform/customer-vps', () => {
       HETZNER_IMAGE: 'ubuntu-24.04',
     }).goldenSnapshots.compatibility.baseImage).toBe('ubuntu-24.04');
   });
-
   it('classifies only server-marked dedicated and legacy preview runtime slots as previews', () => {
     expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'pr-897', provisioningClass: 'preview' })).toBe(true);
     expect(isPreviewMachine({ handle: 'pr-703', runtimeSlot: 'preview', provisioningClass: 'preview' })).toBe(true);
@@ -121,7 +116,6 @@ describe('platform/customer-vps', () => {
     expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'primary', provisioningClass: 'preview' })).toBe(false);
     expect(isPreviewMachine({ handle: 'alice', runtimeSlot: 'pr-897', provisioningClass: 'preview' })).toBe(false);
   });
-
   it('accepts only supported Hetzner locations at the provisioning boundary', () => {
     for (const location of ['fsn1', 'nbg1', 'ash', 'hil']) {
       expect(ProvisionRequestSchema.safeParse({
@@ -136,7 +130,6 @@ describe('platform/customer-vps', () => {
       location: 'untrusted-region',
     }).success).toBe(false);
   });
-
   it('validates R2 latest pointers without accepting paths or URLs', () => {
     expect(validateDbLatestPointer('system/db/snapshots/2026-04-26T1800Z.dump')).toBe(true);
     expect(validateDbLatestPointer('system/runtime-slots/staging/db/snapshots/2026-04-26T1800Z.dump')).toBe(true);
@@ -145,7 +138,6 @@ describe('platform/customer-vps', () => {
     expect(validateDbLatestPointer('system/db/snapshots/not-a-date.dump')).toBe(false);
     expect(validateDbLatestPointer('system/runtime-slots/staging-/db/snapshots/2026-04-26T1800Z.dump')).toBe(false);
   });
-
   it('documents first-customer rollout checks and recovery expectations', () => {
     const quickstart = readFileSync('specs/070-vps-per-user/quickstart.md', 'utf8');
 

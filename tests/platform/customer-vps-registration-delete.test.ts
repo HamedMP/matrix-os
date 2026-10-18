@@ -7,7 +7,6 @@ import { activeEntitlement, useCustomerVpsFixture } from './customer-vps-service
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture(value => { db = value!; });
-
   it('registers a provisioned machine and consumes the registration token', async () => {
     const { service, systemStore } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -27,7 +26,6 @@ describe('platform/customer-vps', () => {
     expect(row?.registrationTokenExpiresAt).toBeNull();
     expect(systemStore.writtenMeta).toHaveLength(1);
   });
-
   it('distinguishes a completed registration from other invalid states', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -45,7 +43,6 @@ describe('platform/customer-vps', () => {
       code: 'already_registered',
     });
   });
-
   it('completes registration after an already-authorized create when entitlement later changes', async () => {
     const resolveBillingEntitlement = vi.fn().mockResolvedValue(activeEntitlement());
     const { service } = createService({ resolveBillingEntitlement });
@@ -60,7 +57,6 @@ describe('platform/customer-vps', () => {
       healthy: true,
     })).resolves.toMatchObject({ registered: true, status: 'running' });
   });
-
   it('returns a warning when registration metadata cannot be persisted', async () => {
     const { service } = createService({
       systemStore: createMockCustomerVpsSystemStore({
@@ -80,7 +76,6 @@ describe('platform/customer-vps', () => {
       warnings: ['vps_meta_persistence_failed'],
     });
   });
-
   it('retries metadata persistence for running machines during reconciliation', async () => {
     const writeVpsMeta = vi.fn()
       .mockRejectedValueOnce(new Error('r2 unavailable'))
@@ -100,7 +95,6 @@ describe('platform/customer-vps', () => {
 
     expect(writeVpsMeta).toHaveBeenCalledTimes(2);
   });
-
   it('rejects invalid registration tokens without changing machine state', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -114,7 +108,6 @@ describe('platform/customer-vps', () => {
 
     expect((await getUserMachine(db, provisioned.machineId))?.status).toBe('provisioning');
   });
-
   it('rejects registration with a private IPv4 address', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -131,7 +124,6 @@ describe('platform/customer-vps', () => {
 
     expect((await getUserMachine(db, provisioned.machineId))?.status).toBe('provisioning');
   });
-
   it('does not complete registration after the machine leaves a registerable state', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -163,7 +155,6 @@ describe('platform/customer-vps', () => {
       failureCode: 'not_found',
     });
   });
-
   it('builds valid R2 VPS metadata from a running machine row', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -183,7 +174,6 @@ describe('platform/customer-vps', () => {
       publicIPv4: '203.0.113.10',
     });
   });
-
   it('normalizes Postgres timestamp text when building VPS metadata', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -206,7 +196,6 @@ describe('platform/customer-vps', () => {
     expect(meta.provisionedAt).toBe('2026-04-26T12:00:00.000Z');
     expect(meta.lastSyncAt).toBe('2026-05-04T10:31:31.812Z');
   });
-
   it('writes VPS metadata to the scoped user R2 key', async () => {
     const writes: Array<{ key: string; body: string; signal?: AbortSignal }> = [];
     const reads: Array<{ key: string; signal?: AbortSignal }> = [];
@@ -253,7 +242,6 @@ describe('platform/customer-vps', () => {
       'Invalid customer VPS system key',
     );
   });
-
   it('soft-deletes the DB row before deleting the Hetzner server', async () => {
     let deletedAtDuringProviderDelete: string | null | undefined;
     const { service, hetzner } = createService({
@@ -276,7 +264,6 @@ describe('platform/customer-vps', () => {
     expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
     expect(deletedAtDuringProviderDelete).toBe('2026-04-26T12:00:00.000Z');
   });
-
   it('claims a VPS delete only once', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -292,7 +279,6 @@ describe('platform/customer-vps', () => {
     expect(second).toBeUndefined();
     expect((await getUserMachine(db, provisioned.machineId))?.deletedAt).toBe('2026-04-26T12:00:00.000Z');
   });
-
   it('returns deleted when Hetzner cleanup fails after the DB soft-delete', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { service, hetzner } = createService({
@@ -318,7 +304,6 @@ describe('platform/customer-vps', () => {
     expect(errorSpy).toHaveBeenCalledWith('[customer-vps] delete server cleanup failed: hetzner timeout');
     errorSpy.mockRestore();
   });
-
   it('queues failed delete cleanup and retries it during reconciliation', async () => {
     const deleteServer = vi.fn()
       .mockRejectedValueOnce(new Error('hetzner timeout'))
@@ -344,7 +329,6 @@ describe('platform/customer-vps', () => {
     expect(deleteServer).toHaveBeenCalledTimes(2);
     expect(await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10)).toHaveLength(0);
   });
-
   it('cleans up stale provider servers labeled for a machine that never recorded a Hetzner ID', async () => {
     const deleteServer = vi.fn().mockResolvedValue(undefined);
     const listServersByLabel = vi.fn().mockResolvedValue([
@@ -367,7 +351,6 @@ describe('platform/customer-vps', () => {
     expect(listServersByLabel).toHaveBeenCalledWith(`machine_id=${provisioned.machineId}`);
     expect(deleteServer).toHaveBeenCalledWith(999999);
   });
-
   it('can provision the same Clerk user after a soft-deleted VPS row', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',

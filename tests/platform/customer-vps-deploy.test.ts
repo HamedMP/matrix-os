@@ -6,7 +6,6 @@ import { createTestConfig, useCustomerVpsFixture } from './customer-vps-service-
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture(value => { db = value!; });
-
   it('sends channel deploy targets to the VPS system updater endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }));
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
@@ -37,7 +36,6 @@ describe('platform/customer-vps', () => {
       vi.unstubAllGlobals();
     }
   });
-
   it('activates speech only on running authorized customer computers', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff140',
@@ -108,7 +106,6 @@ describe('platform/customer-vps', () => {
       vi.unstubAllGlobals();
     }
   });
-
   it('continues speech activation after one request-bounded machine page', async () => {
     const machineIds: string[] = [];
     for (let index = 0; index < 33; index += 1) {
@@ -173,7 +170,6 @@ describe('platform/customer-vps', () => {
       vi.unstubAllGlobals();
     }
   });
-
   it('filters deploy candidates before applying the running-machine limit', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff120',
@@ -201,7 +197,6 @@ describe('platform/customer-vps', () => {
 
     expect(candidates.map((machine) => machine.handle)).toEqual(['alice']);
   });
-
   it('only deploys to the requested VPS handle when provided', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);

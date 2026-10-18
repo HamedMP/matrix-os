@@ -1,12 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { getActiveUserMachineByHandle, getRunningUserMachineByHandle, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { getActiveUserMachineByClerkId, getActiveUserMachineByHandle, getRunningUserMachineByHandle, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { buildPlatformRuntimeVerificationToken, buildPlatformSpeechRuntimeVerificationToken, timingSafeTokenEquals, buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
-import { createTestConfig, useCustomerVpsFixture } from './customer-vps-service-test-helper.js';
+import { activeEntitlement, createTestConfig, useCustomerVpsFixture } from './customer-vps-service-test-helper.js';
 
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture(value => { db = value!; });
-
   it('resolves staging machines by distinct handle for auth and sync fallback paths', async () => {
     let nextId = 0;
     const ids = [
@@ -41,7 +40,6 @@ describe('platform/customer-vps', () => {
     });
     await expect(getRunningUserMachineByHandle(db, 'alice-staging', 'primary')).resolves.toBeUndefined();
   });
-
   it('templates legacy and exact runtime-bound verification tokens into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 
@@ -72,7 +70,6 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('PLATFORM_INTERNAL_URL=http://localhost:9000');
     expect(createInput?.userData).not.toContain('PIPEDREAM_CLIENT_SECRET');
   });
-
   it('templates only the funded runtime flag and relay URL into customer hosts', async () => {
     const { service, hetzner } = createService({
       config: createTestConfig({
@@ -97,7 +94,6 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).not.toContain('AI_RELAY_CONTROL_TOKEN');
     expect(createInput?.userData).not.toContain('CF_AIG_AUTHORIZATION');
   });
-
   it('templates managed speech runtime routing without provider credentials', async () => {
     const { service, hetzner } = createService({
       config: createTestConfig({ platformSpeechEnabled: true }),
@@ -116,7 +112,6 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain(`MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN=${runtimeToken}`);
     expect(createInput?.userData).not.toContain('PLATFORM_SPEECH_OPENAI_API_KEY');
   });
-
   it('never templates platform R2 credentials into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 
@@ -128,7 +123,6 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).not.toContain('R2_ENDPOINT');
     expect(createInput?.userData).not.toContain('/opt/matrix/env/r2.env');
   });
-
   it('templates public PostHog telemetry into provisioned customer hosts', async () => {
     const { service, hetzner } = createService();
 
@@ -143,5 +137,30 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.posthog.com');
     expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/relay');
   });
+  it.each(['ash', 'hil'] as const)(
+    'continues to provision an existing US machine in %s',
+    async (location) => {
+      const { service, hetzner } = createService({
+        config: createTestConfig({ location: 'nbg1' }),
+        resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
+      });
+
+      await service.provision({
+        clerkUserId: 'user_123',
+        handle: 'alice',
+        serverType: 'cpx22',
+        location,
+      });
+
+      expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
+        serverType: 'cpx22',
+        location,
+      });
+      await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+        serverType: 'cpx22',
+        location,
+      });
+    },
+  );
 
 });

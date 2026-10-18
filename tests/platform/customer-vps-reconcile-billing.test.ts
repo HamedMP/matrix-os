@@ -6,7 +6,6 @@ import { createTestConfig, activeEntitlement, useCustomerVpsFixture } from './cu
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture(value => { db = value!; });
-
   it('suspends a running machine with graceful-shutdown fallback and retains its data', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff130',
@@ -51,7 +50,6 @@ describe('platform/customer-vps', () => {
       publicIPv4: '203.0.113.10',
     });
   });
-
   it('does not start a billing suspension after its durable action is superseded', async () => {
     const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff133';
     await insertUserMachine(db, {
@@ -69,7 +67,6 @@ describe('platform/customer-vps', () => {
     expect(hetzner.powerOffServer).not.toHaveBeenCalled();
     await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'running' });
   });
-
   it('suspends a delinquent machine left resuming by a superseded action', async () => {
     const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff135';
     await insertUserMachine(db, {
@@ -96,7 +93,6 @@ describe('platform/customer-vps', () => {
     expect(hetzner.shutdownServer).toHaveBeenCalledWith(123456);
     await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'suspended' });
   });
-
   it('resumes a suspended machine only after provider and runtime health recover', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff131',
@@ -147,7 +143,6 @@ describe('platform/customer-vps', () => {
       vi.unstubAllGlobals();
     }
   });
-
   it('does not start a billing resume after its durable action is superseded', async () => {
     const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff134';
     await insertUserMachine(db, {
@@ -164,7 +159,6 @@ describe('platform/customer-vps', () => {
     expect(hetzner.powerOnServer).not.toHaveBeenCalled();
     await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'suspended' });
   });
-
   it('recovers a paid machine left suspending after an interrupted shutdown', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff132',
@@ -195,7 +189,6 @@ describe('platform/customer-vps', () => {
       vi.unstubAllGlobals();
     }
   });
-
   it('reconciles stale resizing machines even when other stale rows fill the batch', async () => {
     const serverReads = new Map<number, number>();
     const getServer = vi.fn(async (serverId: number) => {
@@ -263,7 +256,6 @@ describe('platform/customer-vps', () => {
       resizeTargetServerType: null,
     });
   });
-
   it('reconciles stale resizing machines back to running from provider state', async () => {
     const getServer = vi.fn()
       .mockResolvedValueOnce({
@@ -318,7 +310,6 @@ describe('platform/customer-vps', () => {
       publicIPv6: '2001:db8::/64',
     });
   });
-
   it('continues stale resize reconciliation when a provider refresh fails after poweron', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const serverReads = new Map<number, number>();
@@ -411,7 +402,6 @@ describe('platform/customer-vps', () => {
     );
     errorSpy.mockRestore();
   });
-
   it('surfaces stale resizing machines that never reached the target server type', async () => {
     const getServer = vi.fn()
       .mockResolvedValueOnce({

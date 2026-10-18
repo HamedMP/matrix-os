@@ -6,7 +6,6 @@ import { createTestConfig, activeEntitlement, useCustomerVpsFixture } from './cu
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture(value => { db = value!; });
-
   it('provisions operator previews outside customer billing slots while enforcing the preview cap', async () => {
     let nextId = 0;
     const ids = [
@@ -58,7 +57,6 @@ describe('platform/customer-vps', () => {
       accessClerkUserIds: ['user_789'],
     });
   });
-
   it('keeps operator preview creation outside customer billing authorization', async () => {
     const resolveBillingEntitlement = vi.fn().mockResolvedValue(null);
     const { service, hetzner } = createService({
@@ -78,7 +76,6 @@ describe('platform/customer-vps', () => {
       handle: 'pr-899', provisioningClass: 'preview',
     });
   });
-
   it('does not let an existing preview consume a customer billing slot', async () => {
     let nextId = 0;
     const ids = [
@@ -99,7 +96,6 @@ describe('platform/customer-vps', () => {
 
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
-
   it('requires an exact subscription even for customer-provisioned preview-shaped slots', async () => {
     let nextId = 0;
     const ids = [
@@ -128,7 +124,6 @@ describe('platform/customer-vps', () => {
 
     expect(hetzner.createServer).toHaveBeenCalledOnce();
   });
-
   it('lets the operator path adopt a legacy preview slot without creating a second server', async () => {
     let nextId = 0;
     const ids = [
@@ -162,7 +157,6 @@ describe('platform/customer-vps', () => {
 
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
-
   it('does not adopt a legacy preview slot owned by another preview handle', async () => {
     let nextId = 0;
     const ids = [
@@ -195,7 +189,6 @@ describe('platform/customer-vps', () => {
     });
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
-
   it('rejects an exact preview slot owned by another handle without reclassifying it', async () => {
     const { service, hetzner } = createService();
 
@@ -220,7 +213,6 @@ describe('platform/customer-vps', () => {
     });
     expect(hetzner.createServer).toHaveBeenCalledOnce();
   });
-
   it('prefers a live matching legacy preview over a failed exact slot', async () => {
     let nextId = 0;
     const ids = [
@@ -264,7 +256,6 @@ describe('platform/customer-vps', () => {
     });
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
-
   it('retires a failed exact slot when the matching legacy preview was already adopted', async () => {
     let nextId = 0;
     const ids = [
@@ -302,7 +293,6 @@ describe('platform/customer-vps', () => {
     });
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
-
   it('retires failed exact and legacy previews before retry capacity checks', async () => {
     let nextId = 0;
     let nextProviderId = 123455;
@@ -365,7 +355,6 @@ describe('platform/customer-vps', () => {
     )).resolves.toHaveLength(2);
     expect(hetzner.createServer).toHaveBeenCalledTimes(3);
   });
-
   it('counts failed distinct previews until they are retried or deleted', async () => {
     let nextId = 0;
     const ids = [

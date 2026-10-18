@@ -1,10 +1,32 @@
-import { describe, expect, it } from 'vitest';
-import { isolatedTestJob } from '../../scripts/dev/isolated-test-job.mjs';
+import { EventEmitter } from 'node:events';
+import { describe, expect, it, vi } from 'vitest';
+import { isolatedTestJob, waitForTestJob } from '../../scripts/dev/isolated-test-job.mjs';
 
 const host = { platform: 'linux', uid: 999, gid: 1000, totalMemory: 16 * 1024 ** 3, cpus: 8,
   home: '/home/matrix', cwd: '/work/tree', unitId: 'a'.repeat(24) };
 
 describe('bounded Matrix test jobs', () => {
+  it('keeps stopping a canceled launch until a late-created service closes', async () => {
+    vi.useFakeTimers();
+    const child = new EventEmitter(), signals = new EventEmitter();
+    let unitReady = false;
+    const stop = vi.fn(() => { if (unitReady) child.emit('close', 0, null); });
+    try {
+      const done = waitForTestJob(child, stop, signals);
+      signals.emit('SIGTERM'); expect(stop).toHaveBeenCalledOnce();
+      unitReady = true; await vi.advanceTimersByTimeAsync(250);
+      await expect(done).resolves.toBe(143);
+      expect(stop.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(signals.listenerCount('SIGTERM')).toBe(0); expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+  it('drains cancellation once more if the starter closes during a stop attempt', async () => {
+    const child = new EventEmitter(), signals = new EventEmitter(), stop = vi.fn();
+    const done = waitForTestJob(child, stop, signals);
+    signals.emit('SIGINT'); child.emit('close', 1, null);
+    await expect(done).resolves.toBe(130); expect(stop).toHaveBeenLastCalledWith(true);
+    expect(signals.listenerCount('SIGINT')).toBe(0);
+  });
   it('uses a system service with the caller identity and a shared worktree admission lock', () => {
     const job = isolatedTestJob(host, ['bun', 'run', 'test'], { PATH: '/tools/bin:/usr/bin', MATRIX_TEST_WORKERS: '2' });
     expect(job.unit).toBe(`matrix-test-999-${host.unitId}.service`);
