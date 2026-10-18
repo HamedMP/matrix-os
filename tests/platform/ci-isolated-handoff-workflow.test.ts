@@ -110,3 +110,15 @@ describe('actual isolated CI handoff workflow graph',()=>{
   expect(evaluates(dedicated.jobs.reconcile.if,{mode:'reconcile'})).toBe(true);
  });
 });
+
+it('serializes Main routing for one authenticated requester attempt across progress and completion events',()=>{
+ const job=dedicated.jobs.route_execution,concurrency=job.concurrency;
+ expect(concurrency,'repeated automatic rerun events must queue rather than race dispatch').toBeDefined();
+ expect(concurrency['cancel-in-progress']).toBe(false);expect(concurrency.queue).toBe('max');
+ const group=(id:number,attempt:number,action:string)=>String(concurrency.group).replace(/\$\{\{([\s\S]*?)\}\}/g,(_match:string,body:string)=>String(
+  Function('github',`return (${body});`)({run_id:999,run_attempt:1,event:{action,workflow_run:{id,run_attempt:attempt}}})));
+ expect(group(321,2,'in_progress')).toBe(group(321,2,'completed'));
+ expect(group(321,2,'in_progress')).not.toBe(group(321,1,'in_progress'));
+ expect(group(321,2,'in_progress')).not.toBe(group(322,2,'in_progress'));
+ expect(job.permissions).toEqual({actions:'write',contents:'read','pull-requests':'read'});
+});
