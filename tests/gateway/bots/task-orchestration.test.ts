@@ -656,6 +656,41 @@ describe("group Pi run isolation", () => {
     expect(service.admission.admit, stop).not.toHaveBeenCalled();
     expect(service.commands, stop).not.toContainEqual(expect.objectContaining({ kind: "bot.run" }));
   });
+  it.each(["cancel", "deadline"] as const)("bounds group steering authorization on %s without a late command", async stop => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    let releaseAuthority!: () => void, finishWorker!: () => void;
+    const gate = new Promise<void>(resolve => { releaseAuthority = resolve; });
+    let calls = 0;
+    const service = setup({
+      resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
+      authorizeGroup: async () => {
+        if (++calls === 2) await gate;
+        return { scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" };
+      },
+      worker: input => new Promise(resolve => { finishWorker = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 }); }),
+    });
+    const deadline = new AbortController(), originalTimeout = AbortSignal.timeout;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 10_000 ? deadline.signal : originalTimeout(ms));
+    const runId = `run_steer_${stop}`;
+    const running = service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId, text: "Synthetic group turn", signal: new AbortController().signal });
+    let pending: Promise<boolean> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+    let observed: boolean | "still_waiting";
+    try {
+      await vi.waitFor(() => expect(service.commands).toContainEqual(expect.objectContaining({ kind: "bot.run" })));
+      pending = service.orchestrator.steer(runId, "Synthetic steering");
+      await vi.waitFor(() => expect(calls).toBe(2));
+      if (stop === "cancel") await service.orchestrator.cancel(runId);
+      else deadline.abort(new DOMException("Synthetic authorization deadline", "TimeoutError"));
+      observed = await Promise.race([pending, new Promise<"still_waiting">(resolve => { timer = setTimeout(() => resolve("still_waiting"), 750); })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      releaseAuthority(); if (pending) await pending;
+      finishWorker?.(); await running.result; timeout.mockRestore();
+    }
+    expect(observed!).toBe(false);
+    expect(service.commands).not.toContainEqual(expect.objectContaining({ kind: "bot.steer" }));
+  });
   it.each(["text", "image", "file"] as const)("never calls owner history or upload resolution for a group %s turn", async kind => {
     const fs = await import("node:fs/promises");
     const { join } = await import("node:path"); const { tmpdir } = await import("node:os");
