@@ -126,13 +126,14 @@ function SiteDeploymentActions({ appSlug, client, state, disabled, invalid, revi
 }
 
 function SitePublicationManagement({ appSlug, client, state, disabled }: SiteSectionProps) {
+  const submissionsId = useId();
   const [showSubmissions, setShowSubmissions] = useState(false);
   if (!state.site) return null;
   const published = state.site.status === "published";
   return <>
       <SiteVersionHistory {...{ appSlug, client, state }} disabled={disabled || state.conflict} />
-      <Button variant="secondary" disabled={disabled} onClick={() => { setShowSubmissions(true); void state.loadSubmissions(); }}>Visitor submissions</Button>
-      {showSubmissions ? <SiteSubmissions appSlug={appSlug} client={client} state={state} /> : null}
+      <Button variant="secondary" disabled={disabled} aria-expanded={showSubmissions} aria-controls={submissionsId} onClick={() => { setShowSubmissions(!showSubmissions); if (!showSubmissions) void state.loadSubmissions(); }}>Visitor submissions</Button>
+      {showSubmissions ? <SiteSubmissions id={submissionsId} appSlug={appSlug} client={client} state={state} /> : null}
       {published ? <SiteUnpublish {...{ appSlug, client, state }} disabled={disabled || state.conflict} /> : null}
 </>;
 }

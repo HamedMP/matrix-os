@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { Inbox } from "lucide-react";
 import { Button } from "@matrix-os/ui";
 import { SiteClientError, type SiteClient } from "../../lib/site-client";
 import { formatSiteDate } from "./format-site-date";
 import type { useAppSite } from "./use-app-site";
 
-type SiteSubmissionsProps = { appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite> };
+type SiteSubmissionsProps = { id?: string; appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite> };
 export function SiteSubmissions(props: SiteSubmissionsProps) {
   // A confirmed deletion invalidates the page before its reload. Remounting
   // drops any cached bytes even if that reload fails or returns another page.
@@ -12,7 +13,7 @@ export function SiteSubmissions(props: SiteSubmissionsProps) {
     props.state.submissions?.submissions.map(row => row.id) ?? null]);
   return <SiteSubmissionsPage key={pageKey} {...props} />;
 }
-function SiteSubmissionsPage({ appSlug, client, state }: SiteSubmissionsProps) {
+function SiteSubmissionsPage({ id, appSlug, client, state }: SiteSubmissionsProps) {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [download, setDownload] = useState<Blob | null>(null);
   const mounted = useRef(true);
@@ -33,12 +34,12 @@ function SiteSubmissionsPage({ appSlug, client, state }: SiteSubmissionsProps) {
       setDownload(blob); downloadSubmissionExport(appSlug, blob);
     }, "This page of submissions was exported.");
   }
-  return <section aria-label="Visitor submissions" className="ph-no-capture space-y-3 rounded-lg border p-3">
+  return <section id={id} aria-label="Visitor submissions" className="ph-no-capture space-y-3 rounded-lg border p-3">
     <h3 className="font-medium">Visitor submissions</h3>
     <p className="text-xs">Visitor details are private. Updating or restoring a version keeps these records.</p>
     <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" disabled={state.pending} onClick={() => { invalidateExport(); void state.loadSubmissions(); }}>Refresh submissions</Button><Button variant="secondary" size="sm" disabled={state.pending || !state.submissions} onClick={exportPage}>Export this page</Button></div>
     {download ? <p className="text-xs">Export ready. <Button size="sm" variant="ghost" disabled={state.pending} onClick={() => void state.action(async () => downloadSubmissionExport(appSlug, download), () => {})}>Download again</Button></p> : null}
-    {!state.submissions ? <p className="text-sm">{state.pending ? "Loading submissions…" : "Load submissions to view visitor responses."}</p> : !state.submissions.submissions.length ? <p className="text-sm">No visitor submissions yet.</p> : <ul className="space-y-3">
+    {!state.submissions ? <p className="text-sm">{state.pending ? "Loading submissions…" : "Load submissions to view visitor responses."}</p> : !state.submissions.submissions.length ? <div role="status" aria-label="No visitor submissions yet" className="space-y-2 py-4 text-center"><Inbox aria-hidden="true" className="mx-auto size-6 opacity-60" /><h4 className="text-sm font-medium">No visitor submissions yet.</h4><p className="text-sm">Responses from your published forms will appear here.</p><p className="text-xs">Share the public app link and ask visitors to submit a form.</p></div> : <ul className="space-y-3">
       {state.submissions.submissions.map(row => <li key={row.id} className="space-y-2 border-t pt-2">
         <p className="text-xs">{row.formId} · {formatSiteDate(row.createdAt)}</p>
         <dl className="space-y-1 text-sm">{Object.entries(row.fields).map(([key, value]) => <div key={key}><dt className="font-medium">{key}</dt><dd className="break-words whitespace-pre-wrap">{typeof value === "string" ? value : JSON.stringify(value)}</dd></div>)}</dl>
