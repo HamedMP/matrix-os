@@ -73,7 +73,7 @@ function setup(options: {
   const registry = new BotRuntimeRegistry();
   const admission = {
     admit: fixtureMock(options.admit ?? (async (request: Parameters<typeof registry.bind>[0]) => {
-      const { expectedRootFingerprint: _fingerprint, ...runtimeRequest } = request as typeof request & { expectedRootFingerprint?: string };
+      const { expectedRootFingerprint: _fingerprint, signal: _signal, ...runtimeRequest } = request as typeof request & { expectedRootFingerprint?: string; signal?: AbortSignal };
       registry.bind({ ...runtimeRequest, ...(request.group ? { group: { scopeId: "scope-company", actorId: "user_member", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime" } } : {}), runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) });
       return { runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) };
     }) as never),
