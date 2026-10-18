@@ -1,5 +1,8 @@
 ---
 name: matrix-move
+triggers: ["move to Matrix", "move this chat", "move this project", "import chat history"]
+author: Matrix OS
+version: 1.0.0
 description: Transfer the current chat or project from Codex, Claude Code, or an accessible cloud workspace into a private Matrix project and Chats. Use for moving work to Matrix, including files, saved history, and continuation context.
 ---
 
