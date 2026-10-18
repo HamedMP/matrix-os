@@ -1,5 +1,5 @@
 import { DirectoryBackup, type DirectoryBackupRecord } from '@cloudflare/sandbox';
-import type { RuntimeCheckpoint, RuntimeDriver, RuntimeJob, RuntimeLease } from './contracts.js';
+import type { RuntimeCheckpoint, RuntimeDriver, RuntimeJob, RuntimeLease, RuntimeExecutionControl } from './contracts.js';
 import { runtimeDiagnostic } from './diagnostic.js';
 import { resolveRuntimeCredentials, type RuntimeCredentialResolver, type RuntimeCredentials } from './credentials.js';
 
@@ -68,20 +68,22 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     }).catch(error=>{this.clearCredentials();throw error;});
   }
 
-  async execute(job: RuntimeJob, lease: RuntimeLease): Promise<void> {
+  async execute(job: RuntimeJob, lease: RuntimeLease, control:RuntimeExecutionControl = operation=>operation()): Promise<void> {
     try {
     if (!this.credentials || this.credentials.ownerId!==job.ownerId || lease.ownerId!==job.ownerId
       || lease.jobId!==job.jobId
       || this.credentials.generation!==lease.generation || this.credentials.expiresAt<lease.maxRunAt
       || this.credentials.expiresAt<=Date.now() || lease.maxRunAt<=Date.now()) throw new Error('Runtime credentials unavailable');
-    await this.command('execute', JSON.stringify(job), Math.max(1000, lease.maxRunAt - Date.now()));
+    await this.command('execute', JSON.stringify(job), Math.max(1000, lease.maxRunAt - Date.now()),control);
     if (job.type === 'wake') return;
+    await control(async()=>{
     // The spike admits one task per workspace. Stop writers before archiving.
     const checkpoint = await this.checkpoint(job.ownerId, lease.generation);
     await this.withPhase('checkpoint-publish',()=>this.checkpointSaved(checkpoint));
     const raw = await this.command('export');
     const output = await this.withPhase('export',async()=>JSON.parse(raw) as RuntimeOutput);
     await this.withPhase('publish',()=>this.publish(lease, output));
+    });
     } finally {this.clearCredentials();}
   }
   async keepAlive(): Promise<void> {
@@ -153,14 +155,15 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     catch(error:unknown) {throw this.diagnostic(phase,error);}
   }
 
-  private async command(operation: string, input?: string, timeoutMs = 10_000): Promise<string> {
+  private async command(operation: string, input?: string, timeoutMs = 10_000, launch?:RuntimeExecutionControl): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const process = await this.container.exec(['node', CONTROL, operation], {
+      const start=()=>{controller.signal.throwIfAborted();return this.container.exec(['node', CONTROL, operation], {
         cwd:ROOT, env:this.executionEnv, user:'1000:1000', signal:controller.signal,
         ...(input ? { stdin: new Blob([input]).stream() } : {}),
-      });
+      });};
+      const process=launch ? await launch(start) : await start();
       void process.exitCode.then(() => clearTimeout(timer), () => clearTimeout(timer));
       const result = await process.output();
       if (result.exitCode !== 0) {

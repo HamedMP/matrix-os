@@ -51,10 +51,12 @@ export interface RuntimeStore {
   confirmStopped?(ownerId: string, generation: number, now: number): Promise<boolean>;
   fail(ownerId: string, generation: number): Promise<void>;
 }
+/** Fenced native launch/publication; never holds a gate while model/tool output is awaited. */
+export type RuntimeExecutionControl = <T>(operation:()=>Promise<T>)=>Promise<T>;
 export interface RuntimeDriver {
   readonly running: boolean;
   start(ownerId: string, checkpoint: RuntimeCheckpoint | null, generation: number): Promise<void>;
-  execute(job: RuntimeJob, lease: RuntimeLease): Promise<void>;
+  execute(job: RuntimeJob, lease: RuntimeLease, control?: RuntimeExecutionControl): Promise<void>;
   keepAlive(): Promise<void>;
   checkpoint(ownerId: string, generation: number): Promise<RuntimeCheckpoint>;
   stop(): Promise<void>;

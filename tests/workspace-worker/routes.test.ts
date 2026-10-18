@@ -77,3 +77,12 @@ describe('compute allowance denial',()=>{
     expect((await app.fetch(request('/api/shell/bootstrap'))).status).toBe(200);expect(enqueue).toHaveBeenCalledOnce();
   });
 });
+
+describe('completed action replay',()=>{
+ it('returns the stored completed outcome without claiming new queue acceptance',async()=>{
+  const enqueue=vi.fn(async()=>({state:'completed',jobId:'existing',chatId:'chat_existing'}));
+  const app=createWorkspaceRoutes({repository,files,runtime:{...runtime,enqueue},auth,previewEnabled:true});
+  const response=await app.fetch(request('/api/workspace/actions',{method:'POST',body:JSON.stringify({type:'chat',chatId:'chat_existing',idempotencyKey:'existing',message:'already done'})}));
+  expect(response.status).toBe(200);expect(await response.json()).toMatchObject({state:'completed'});
+ });
+});

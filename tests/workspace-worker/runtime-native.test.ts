@@ -152,7 +152,33 @@ describe('native termination proof while stopped or starting',()=>{
 describe('pooled task lifetime policy',()=>{
   it('disables SDK detached and automatic background tasks for the pooled gateway',async()=>{
     const f=fixture();await f.driver.start('owner',null,1);
-    const launch=f.commands.find(command=>command.operation==='start');
+    const launch=f.commands.find(command=>command.args.at(-1)==='start');
     expect(launch?.options.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+  });
+});
+
+describe('native execution control phases',()=>{
+  it('releases the control gate while the agent command runs, then gates checkpoint publication',async()=>{
+    const f=fixture();await f.driver.start('owner',null,1);let done!:()=>void;
+    const pending=new Promise<void>(resolve=>{done=resolve;});const exec=f.container.exec.getMockImplementation()!;
+    f.container.exec.mockImplementation(async(args,options)=>args.at(-1)==='execute'
+      ? {exitCode:pending.then(()=>0),output:async()=>{await pending;return {exitCode:0,stdout:new TextEncoder().encode('{}'),stderr:new Uint8Array()};}}
+      : exec(args,options));
+    let held=false;const control=vi.fn(async(operation:()=>Promise<unknown>)=>{held=true;try{return await operation();}finally{held=false;}});
+    const run=f.driver.execute({ownerId:'owner',jobId:'job',type:'chat',chatId:'chat_one',message:'work'},
+      {ownerId:'owner',jobId:'job',generation:1,expiresAt:Date.now()+60000,maxRunAt:Date.now()+60000},control);
+    try {await vi.waitFor(()=>expect(control).toHaveBeenCalledOnce());expect(held).toBe(false);}
+    finally {done();await run;}
+    expect(control).toHaveBeenCalledTimes(2);expect(f.publish).toHaveBeenCalledOnce();
+  });
+});
+
+describe('late native command completion',()=>{
+  it('cannot checkpoint or publish after the execution authority is revoked',async()=>{
+    const f=fixture();await f.driver.start('owner',null,1);let calls=0;
+    const control=async<T>(operation:()=>Promise<T>):Promise<T>=>{if(++calls>1)throw new Error('Lease revoked');return operation();};
+    await expect(f.driver.execute({ownerId:'owner',jobId:'job',type:'chat',chatId:'chat_one',message:'work'},
+      {ownerId:'owner',jobId:'job',generation:1,expiresAt:Date.now()+60000,maxRunAt:Date.now()+60000},control)).rejects.toThrow('Lease revoked');
+    expect(f.backups.backup).not.toHaveBeenCalled();expect(f.publish).not.toHaveBeenCalled();
   });
 });

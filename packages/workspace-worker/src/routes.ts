@@ -189,7 +189,9 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     const input = actionSchema.safeParse(await c.req.json());
     if (!input.success) return c.json({ error: "Invalid action" }, 400);
     const owner = c.get("ownerId");
-    return c.json(await options.runtime.enqueue(owner, input.data), 202);
+    const admitted=await options.runtime.enqueue(owner,input.data);
+    const completed=typeof admitted === 'object' && admitted !== null && 'state' in admitted && admitted.state === 'completed';
+    return c.json(admitted,completed ? 200 : 202);
   });
   return app;
 }

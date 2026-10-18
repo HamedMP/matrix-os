@@ -234,3 +234,5 @@ operator logs. Regression tests cover auth, input bounds, spoofed owner rejectio
 no compute admission, and native socket suppression. Live browser confirmation
 remains required; removing unsupported requests alone does not prove the reported
 shell crash is resolved.
+
+For the budgeted runtime stack, follow the ordered [U4 qualification setup](../630-shared-workspace-production/qualification.md). The original two-schema setup above is insufficient after compute admission is enabled.

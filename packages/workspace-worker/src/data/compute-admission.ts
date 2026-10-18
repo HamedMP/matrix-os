@@ -25,10 +25,11 @@ function parse<T extends z.ZodType>(schema: T, raw: unknown): z.output<T> {
   return result.data;
 }
 type Outbox = AdmissionDatabase['shared_compute_outbox'];
-export interface ComputeAdmission { job: RuntimeJob; jobId: string; state: 'queued'; chatId?: string }
+export interface ComputeAdmission { job: RuntimeJob; jobId: string; state: 'queued'|'running'|'completed'; chatId?: string }
 const result = (row: Outbox): ComputeAdmission => {
+  if(row.state === 'cancelled' || row.state === 'uncertain') throw new ComputeBudgetError('conflict');
   const job = parseQueuedJob(row.payload);
-  return { job, jobId: job.jobId, state: 'queued', ...(job.type === 'chat' ? { chatId: job.chatId } : {}) };
+  return { job, jobId: job.jobId, state: row.state === 'pending' ? 'queued' : row.state, ...(job.type === 'chat' ? { chatId: job.chatId } : {}) };
 };
 const sameJob = (row: Outbox, job: RuntimeJob): boolean => {
   const stored = parseQueuedJob(row.payload);

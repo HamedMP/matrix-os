@@ -71,7 +71,7 @@ describe.skipIf(file === undefined && url === undefined)('Postgres compute admis
     expect(await snapshot(id)).toMatchObject({ heldMs: 200 });
     expect(await dbs[0].selectFrom('shared_chat_messages').selectAll().where('owner_id', '=', id).execute()).toHaveLength(1);
     await setup(id, 500, 'november', 10000, 20000);
-    expect(await stores[1].admit(id, chat, 200, 10100)).toEqual(results[0]);
+    await expect(stores[1].admit(id, chat, 200, 10100)).rejects.toMatchObject({code:'conflict'});
     await expect(stores[0].admit(id, { ...chat, message: 'changed' }, 200, 10100)).rejects.toMatchObject({ code: 'conflict' });
     await expect(stores[0].admit(id, chat, 201, 10100)).rejects.toMatchObject({ code: 'conflict' });
     expect(await snapshot(id, 'november')).toMatchObject({ heldMs: 0 });
@@ -113,6 +113,7 @@ describe.skipIf(file === undefined && url === undefined)('Postgres compute admis
     await transaction((trx) => stores[0].completion(trx, lease(job), 260));
     await transaction((trx) => stores[0].completion(trx, lease(job), 390));
     expect(await snapshot(id)).toMatchObject({ heldMs: 0, settledMs: 60 });
+    expect(await stores[0].admit(id,chat,200,400)).toMatchObject({state:'completed',jobId:job.jobId});
     expect(await stores[0].validate(job)).toBeNull();
   });
   it('keeps uncertain holds until confirmed old-generation destruction; newer work is protected', async () => {

@@ -1,6 +1,6 @@
 import {
   DEFAULT_RUNTIME_POLICY,
-  type RuntimeDriver, type RuntimeJob, type RuntimeLease, type RuntimePolicy, type RuntimeStore,
+  type RuntimeDriver, type RuntimeJob, type RuntimeLease, type RuntimePolicy, type RuntimeStore, type RuntimeExecutionControl,
 } from './contracts.js';
 import { runtimeDiagnostic, safeRuntimeDiagnostic } from './diagnostic.js';
 
@@ -31,7 +31,17 @@ export class RuntimeLifecycle {
         await this.driver.start(job.ownerId, await this.store.latestCheckpoint(job.ownerId), lease.generation);
         // Revocation may fence the owner while native startup is draining.
         if(!await this.store.heartbeat(lease,this.now(),this.policy.leaseMs)) throw new Error('Runtime lease is no longer current');
-        await this.driver.execute(job, lease);
+      });
+      const control:RuntimeExecutionControl=async operation=>{
+        let result!:Awaited<ReturnType<typeof operation>>;
+        await this.withControl(async()=>{
+          if(!await this.store.heartbeat(lease,this.now(),this.policy.leaseMs)) throw new Error('Runtime lease is no longer current');
+          result=await operation();
+        });
+        return result;
+      };
+      await this.driver.execute(job,lease,control);
+      await control(async()=>{
         const finished = await this.store.finish(lease, 'completed', this.now());
         if (!finished) throw new Error('Runtime lease is no longer current');
       });

@@ -150,3 +150,15 @@ describe('native startup drain before replacement',()=>{
   expect(f.driver.execute).not.toHaveBeenCalled();expect(f.driver.cancel).toHaveBeenCalledOnce();expect(f.store.confirmStopped).toHaveBeenCalledOnce();
  });
 });
+
+describe('interruptible agent execution',()=>{
+ it('destroys a revoked running agent without waiting for its execute promise',async()=>{
+  const gate=new RuntimeControlGate();const f=fixture(operation=>gate.run(operation));let release!:()=>void;
+  vi.mocked(f.driver.execute).mockImplementation(()=>new Promise<void>(resolve=>{release=resolve;}));
+  const run=f.lifecycle.run({ownerId:'owner',jobId:'agent',type:'wake'}).catch(error=>error);
+  await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
+  f.leases[0].expiresAt=1000;f.tick(501);const alarm=f.lifecycle.alarm('owner');
+  try {await vi.waitFor(()=>expect(f.driver.cancel).toHaveBeenCalledOnce(),{timeout:200});}
+  finally {vi.mocked(f.store.heartbeat).mockResolvedValue(false);release();await alarm;await run;}
+ });
+});
