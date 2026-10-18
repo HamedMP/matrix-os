@@ -93,13 +93,13 @@ describe('completion ownership under whole and failed-job retries',()=>{
   await expect(complete(f,{...configuration,backendAttempt:value})).rejects.toThrow();
   expect(modes(f)).toEqual([]);expect(f.github.rest.actions.downloadArtifact).not.toHaveBeenCalled();
  });
- it.each(['missing','duplicate','id','run-id','future-attempt','invalid-attempt','head-sha','head-branch','running','old-failure','old-cancelled','truncated','oversized'])(
+ it.each(['missing','duplicate','id','run-id','future-attempt','old-api-attempt','invalid-attempt','head-sha','head-branch','running','old-failure','old-cancelled','truncated','oversized'])(
   'rejects %s backend ownership metadata before any new dispatch',async kind=>{
    const f=retainedSuccess();
    if(kind==='missing')f.state.jobs=[];
    if(kind==='duplicate')f.state.jobs.push({...f.backend,id:402});
    if(kind==='id')f.backend.id=0;if(kind==='run-id')f.backend.run_id=322;
-   if(kind==='future-attempt')f.backend.run_attempt=3;if(kind==='invalid-attempt')f.backend.run_attempt=0;
+   if(kind==='future-attempt')f.backend.run_attempt=3;if(kind==='old-api-attempt')f.backend.run_attempt=1;if(kind==='invalid-attempt')f.backend.run_attempt=0;
    if(kind==='head-sha')f.backend.head_sha=pin;if(kind==='head-branch')f.backend.head_branch='main';
    if(kind==='running')f.backend.status='in_progress';if(kind==='old-failure')f.backend.conclusion='failure';if(kind==='old-cancelled')f.backend.conclusion='cancelled';
    if(kind==='truncated')f.github.rest.actions.listJobsForWorkflowRun.mockResolvedValue({data:{total_count:2,jobs:[f.backend]}});
