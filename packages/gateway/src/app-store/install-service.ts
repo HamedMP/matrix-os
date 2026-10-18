@@ -78,8 +78,10 @@ export function createStoreInstallService(options:{homePath:string;platform:AppS
    const detail=await options.platform.detail(slug);
    const state=await local((await readStoreProvenance(options.homePath)).installs.find(row=>row.listingSlug===slug),detail.currentVersion?.version);
    // Private records are capped/TTL-swept; this read never downloads or rebuilds source.
-   const matching=(await records()).filter(row=>row.listingSlug===slug&&row.versionId===detail.currentVersion?.id).sort((a,b)=>b.updatedAt-a.updatedAt);
-   const latest=matching.find(row=>row.job.status==='queued'||row.job.status==='building')??matching[0];
+   const matching=(await records()).filter(row=>row.listingSlug===slug).sort((a,b)=>b.updatedAt-a.updatedAt);
+   // A running install still occupies this listing after a newer source is approved.
+   // Terminal results are relevant only to the currently approved version.
+   const latest=matching.find(row=>row.job.status==='queued'||row.job.status==='building')??matching.find(row=>row.versionId===detail.currentVersion?.id);
    const installJob=latest&&(latest.job.status!=='installed'||state.installed&&state.versionId===latest.versionId)?latest.job:null;
    return {...detail,local:state,installJob};
   },

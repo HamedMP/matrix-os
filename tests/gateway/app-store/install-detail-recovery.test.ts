@@ -105,15 +105,44 @@ describe("durable listing build recovery", () => {
       error: "build_failed",
     });
   });
-  it("excludes another listing and old-version jobs", async () => {
+  it("excludes another listing and completed old-version jobs", async () => {
     state.rows = [
       record("building", { listingSlug: "other" }),
-      record("building", {
-        job: { id: otherId, status: "building" },
+      record("installed", {
+        job: { id: otherId, status: "installed" },
         versionId: otherId,
       }),
     ];
     expect((await service.detail("notes")).installJob).toBeNull();
+  });
+  it.each(["queued", "building"])(
+    "keeps an active %s build visible after the approved version advances",
+    async (status) => {
+      state.rows = [record(status, { versionId: otherId })];
+      const detail = await service.detail("notes");
+      expect(detail.currentVersion?.id).toBe(versionId);
+      expect(detail.installJob).toEqual({ id: jobId, status });
+      expect(platform.download).not.toHaveBeenCalled();
+    },
+  );
+  it("prefers an older active build but drops its terminal result after the version advances", async () => {
+    state.rows = [
+      record("building", { versionId: otherId }),
+      record("failed", {
+        job: { id: otherId, status: "failed", error: "build_failed" },
+        updatedAt: 100,
+      }),
+    ];
+    expect((await service.detail("notes")).installJob).toEqual({
+      id: jobId,
+      status: "building",
+    });
+    state.rows[0].job = { id: jobId, status: "failed", error: "unavailable" };
+    expect((await service.detail("notes")).installJob).toEqual({
+      id: otherId,
+      status: "failed",
+      error: "build_failed",
+    });
   });
   it("keeps the bounded private record cap for listing reads", async () => {
     state.rows = Array.from({ length: 33 }, () => record("building"));
