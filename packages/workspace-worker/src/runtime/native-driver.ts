@@ -54,8 +54,10 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     }
     const files = await this.withPhase('hydrate',()=>this.hydrate(ownerId));
     if (files.length > 100 || new TextEncoder().encode(JSON.stringify(files)).byteLength > 1_000_000) throw new Error('Workspace hydration limit exceeded');
+    // A warm gateway still owns its previous process environment. Drain it
+    // before every start so newly resolved credentials always take effect.
+    await this.command('stop', undefined, 35_000);
     if (files.length) {
-      await this.command('stop', undefined, 35_000);
       await this.command('hydrate', JSON.stringify(files));
     }
     await this.command('start', undefined, 100_000);

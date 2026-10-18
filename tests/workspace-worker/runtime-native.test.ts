@@ -69,6 +69,22 @@ describe('native Cloudflare runtime adapter', () => {
     await f.driver.execute({ownerId:'owner',jobId:'job',type:'wake'},{ownerId:'owner',jobId:'job',generation:1,expiresAt:Date.now()+1000,maxRunAt:Date.now()+1000});
     expect((f.driver as any).executionEnv).toEqual({}); expect((f.driver as any).credentials).toBeUndefined();
   });
+  it('drains the warm gateway before replacing credentials even when hydration is empty',async()=>{
+    const f=fixture(); f.hydrate.mockResolvedValue([]);
+    await f.driver.start('owner',null,1);
+    await f.driver.execute({ownerId:'owner',jobId:'job',type:'wake'},{ownerId:'owner',jobId:'job',generation:1,expiresAt:Date.now()+1000,maxRunAt:Date.now()+1000});
+    f.resolveCredentials.mockImplementation(async ({ownerId,generation})=>({ownerId,generation,expiresAt:Date.now()+30*60_000,
+      inferenceKey:'rotated-inference-secret',authToken:'rotated-runtime-secret',databaseUrl:'postgres://owner@db/rotated'}));
+    await f.driver.start('owner',null,1);
+    expect(f.commands.map(command=>command.args.at(-1))).toEqual(['stop','start','execute','stop','start']);
+    const starts=f.commands.filter(command=>command.args.at(-1)==='start');
+    expect(starts[0].options.env.MATRIX_AUTH_TOKEN).toBe('runtime-secret');
+    expect(starts[1].options.env).toMatchObject({MATRIX_AUTH_TOKEN:'rotated-runtime-secret',ANTHROPIC_API_KEY:'rotated-inference-secret',DATABASE_URL:'postgres://owner@db/rotated'});
+    expect(f.container.start).toHaveBeenCalledOnce();
+    f.resolveCredentials.mockRejectedValue(new Error('denied'));
+    await expect(f.driver.start('owner',null,1)).rejects.toThrow('Runtime credentials unavailable');
+    expect(f.commands).toHaveLength(5);
+  });
   it('restores and overlays shared files before starting the actual gateway', async () => {
     const f=fixture(); await f.driver.start('owner',{generation:1,createdAt:0,backup:{id:'old'}},2);
     expect(f.backups.restore).toHaveBeenCalledWith({id:'old'},expect.objectContaining({signal:expect.any(AbortSignal)}));
