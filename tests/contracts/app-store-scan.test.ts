@@ -27,6 +27,12 @@ describe("scanAppFiles", () => {
     scanAppFiles(files({'src/long.ts':source}));
     expect(performance.now()-started).toBeLessThan(1000);
   });
+  it('bounds credential URL near-matches for both scanning and redaction',()=>{
+    const source='https://'+'a:'.repeat(40_000)+'a';
+    const started=performance.now();
+    scanAppFiles(files({'src/long.ts':source}));redactSecrets(source);
+    expect(performance.now()-started).toBeLessThan(1000);
+  });
   it.each(Object.entries(SECRETS))("flags %s secrets as high severity without echoing them", (_name, secret) => {
     const report = scanAppFiles(files({ "src/config.ts": `export const value = "${secret}";` }));
     expect(report.blocking).toBe(true);

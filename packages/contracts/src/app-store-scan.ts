@@ -18,7 +18,7 @@ type Severity = AppStoreScanFinding["severity"];
 interface LineRule { rule: string; category: Category; severity: Severity; message: string; pattern: RegExp }
 
 const SECRET_RULES: LineRule[] = [
-  { rule: "secret.url_credentials", pattern: /https?:\/\/[^\s/"']+:[^\s/@"']+@/g, message: "Credential-bearing URL" },
+  { rule: "secret.url_credentials", pattern: /https?:\/\/[^\s/:@"']+:[^\s/@"']+@/g, message: "Credential-bearing URL" },
   { rule: "secret.anthropic", pattern: /sk-ant-[A-Za-z0-9_-]{20,}/g, message: "Anthropic API key" },
   { rule: "secret.openai", pattern: /sk-(?!ant-)(?:proj-)?[A-Za-z0-9_-]{20,}/g, message: "OpenAI-style API key" },
   { rule: "secret.aws", pattern: /\bAKIA[0-9A-Z]{16}\b/g, message: "AWS access key" },

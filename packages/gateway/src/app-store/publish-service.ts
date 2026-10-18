@@ -3,7 +3,7 @@ import {AppStoreManifestSchema,AppStoreCreateSubmissionSchema} from '@matrix-os/
 import {AppStoreDraftSummarySchema,AppStoreListingDraftPatchSchema,type AppStoreDraftDetail,AppStoreSubmitDraftSchema,type AppStoreDraftDiff} from '@matrix-os/contracts/app-store-gateway';
 import {encodeAppBundle,bundleDigest} from '@matrix-os/contracts/app-store-bundle';
 import {redactSecrets,scanAppFiles} from '@matrix-os/contracts/app-store-scan';
-import {listApps} from '../apps.js';
+import {publishableStoreApps} from './publishable-apps.js';
 import {withOwnerFileMutation} from '../owner-file-mutations.js';
 import {snapshotOwnerApp} from './snapshot.js';import {createDraftStore} from './draft-store.js';
 import {createStoreGeneralizer,type StoreGeneralizer} from './generalizer.js';import {preparePublishDraft} from './prepare-draft.js';
@@ -35,12 +35,13 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
  return {
   generalizerStatus:generalizer.status,
   async recover(){for(const draft of await store.list())if(['preparing','submitting'].includes(draft.status))await store.write({...draft,status:'needs_attention',failureCode:'interrupted',updatedAt:new Date().toISOString()});},
-  async publishableApps(){return (await listApps(options.homePath)).map(app=>({slug:app.slug??app.name,name:app.name,description:app.description,eligible:app.runtime==='vite',...(app.runtime==='vite'?{}:{reason:'unsupported_runtime' as const})}));},
+  async publishableApps(){return publishableStoreApps(options.homePath);},
   async list(){return (await store.list()).map(d=>AppStoreDraftSummarySchema.strip().parse(d));},
   detail:store.read,
   async create(input:{app:string;aiConsent?:{accessSourceId:string}}){
    return withOwnerFileMutation(options.homePath,async()=>{
     if(jobs.size>=2||(await store.list()).length>=5)throw new StoreError('limit');
+    if(!(await publishableStoreApps(options.homePath)).some(app=>app.slug===input.app&&app.eligible))throw new StoreError('invalid');
     const files=await snapshotOwnerApp(options.homePath,input.app);const manifest=JSON.parse(files.get('matrix.json')?.toString('utf8')??'null');
     if(!manifest||manifest.runtime!=='vite'||manifest.listingTrust==='community')throw new StoreError('invalid');
     const now=new Date().toISOString();const draft:AppStoreDraftDetail={id:store.id(),sourceSlug:input.app,sourceName:String(manifest.name??input.app).slice(0,120),status:'preparing',stage:'snapshot',ai:null,blockingFindings:0,createdAt:now,updatedAt:now,expiresAt:new Date(Date.now()+7*86400_000).toISOString(),findingsBefore:null,findingsAfter:null,report:null,listing:null,capabilities:null,changedFiles:[]};
