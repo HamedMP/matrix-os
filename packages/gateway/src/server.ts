@@ -1,7 +1,6 @@
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
-import { resolveTerminalRuntimeOwners } from "./server/terminal-runtime-owners.js";
 import { codexNativeEnvironment } from "./ai-providers/codex-native-environment.js";
 import { createNativeCodexRuntime } from "./server/native-codex-runtime.js";
 import { registerAppIntegrationCapabilities, registerAppAiCapabilities, createAppAiSubscriptionObservation, closeAppAiCapabilities } from "./server/app-capabilities.js";
@@ -516,7 +515,9 @@ export async function createGateway(config: GatewayConfig) {
   // canonical when present; MATRIX_CLERK_USER_ID supports VPS-native hosts
   // provisioned before the canonical variable was added.
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
-  const terminalRuntimeOwnerIds = resolveTerminalRuntimeOwners(terminalRuntimeOwnerId, process.env.NODE_ENV);
+  const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
+    ? [terminalRuntimeOwnerId]
+    : process.env.NODE_ENV === "production" ? [] : ["default"];
   const toolOutputKey = await tryLoadToolOutputKey(homePath);
   const projectOwnerToolOutput = createOwnerToolOutputProjection(toolOutputKey, terminalRuntimeOwnerIds);
   const codingAgentProjectManager = createProjectManager({ homePath });

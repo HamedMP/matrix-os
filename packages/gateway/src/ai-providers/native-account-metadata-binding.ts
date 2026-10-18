@@ -1,12 +1,19 @@
 import { createHash } from "node:crypto";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 
+/** Server-only foreground proof; never part of a public mutation or DTO. */
+export type NativeAccountCompletionProof = (current: CodexNativeAccountMetadata) => Promise<boolean>;
+
 // Observation lifetime only. Neither principal evidence nor verification functions
 // are part of the public metadata object, persistence, contracts, or logs.
-const bindings = new WeakMap<CodexNativeAccountMetadata, { verify: () => Promise<boolean>; principal?: string }>();
-export function bindNativeAccountMetadata(value: CodexNativeAccountMetadata, verifyCurrent: () => Promise<boolean>, principal?: string): CodexNativeAccountMetadata {
-  bindings.set(value, { verify: verifyCurrent, ...(principal ? { principal } : {}) });
+const bindings = new WeakMap<CodexNativeAccountMetadata, { verify: () => Promise<boolean>; principal?: string; credentialIdentityBound: boolean }>();
+export function bindNativeAccountMetadata(value: CodexNativeAccountMetadata, verifyCurrent: () => Promise<boolean>, principal?: string, options: { credentialIdentityBound?: boolean } = {}): CodexNativeAccountMetadata {
+  bindings.set(value, { verify: verifyCurrent, ...(principal ? { principal } : {}), credentialIdentityBound: Boolean(principal && options.credentialIdentityBound) });
   return value;
+}
+/** An API-key type alone cannot identify which credential a destructive action targets. */
+export function hasNativeAccountCredentialIdentity(value: CodexNativeAccountMetadata | null | undefined): boolean {
+  return Boolean(value && bindings.get(value)?.credentialIdentityBound);
 }
 export async function verifyNativeAccountMetadata<T extends CodexNativeAccountMetadata>(value: T | null | undefined): Promise<T | null> {
   if (!value) return null;

@@ -42,6 +42,16 @@ describe("native Codex runtime wiring", () => {
     expect(guard.assertReadable.mock.invocationCallOrder[0]).toBeLessThan(mocks.reader.mock.invocationCallOrder[0]!);
     expect(guard.assertReadable.mock.invocationCallOrder[1]).toBeGreaterThan(mocks.reader.mock.invocationCallOrder[0]!);
   });
+  it("forwards forced-fresh completion reads without changing ordinary observation", async () => {
+    const { runtime, guard } = fixture();
+    mocks.reader.mockResolvedValue(null);
+    await runtime.readAccount();
+    await runtime.readAccount({ purpose: "native_completion" });
+    expect(mocks.reader).toHaveBeenNthCalledWith(1, undefined);
+    expect(mocks.reader).toHaveBeenNthCalledWith(2, { purpose: "native_completion" });
+    expect(mocks.createReader).toHaveBeenCalledTimes(1);
+    expect(guard.assertReadable).toHaveBeenCalledTimes(4);
+  });
   it("discards an observation when the profile becomes unavailable", async () => {
     const { runtime, guard } = fixture();
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);

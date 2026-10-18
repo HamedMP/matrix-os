@@ -6,7 +6,7 @@ import { resolveClaudeNativeExecutable } from "./claude-native-executable.js";
 import { isBoundClaudeNativeSignedOut, verifyClaudeNativeSignedOut } from "./claude-native-signed-out.js";
 import { createClaudeAccountReaderUnderLease, assertClaudeLifecyclePrincipal, assertClaudeLifecycleSignedOut, type ClaudeAccountReaderUnderLease } from "./claude-account-lifecycle-proof.js";
 import { isNativeClaudeLifecycleAccount } from "./provider-lifecycle-credential-identity.js";
-import { sameBoundNativeAccountPrincipal, verifyNativeAccountMetadata } from "./native-account-metadata-binding.js";
+import { hasNativeAccountCredentialIdentity, sameBoundNativeAccountPrincipal, verifyNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { revokeOwnerAnthropicKey } from "./owner-anthropic-key.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import { createHash } from "node:crypto";
@@ -173,8 +173,11 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
 
   function supported(account: ProviderLifecycleAccount): boolean {
     const driver = accountDriver(account);
+    const nativeKey = account.id === "owner_codex" && account.accessSourceId === "owner_openai_profile"
+      && (account.authMethod === "api_key" || account.nativeCodexAccount?.authMethod === "api_key");
     return driver !== null && enabled.has(driver)
       && account.installState === "installed" && account.driverAccountCount === 1
+      && (!nativeKey || Boolean(options.profileGuard && hasNativeAccountCredentialIdentity(account.nativeCodexAccount)))
       && (!isNativeClaudeLifecycleAccount(account) || Boolean(options.profileGuard && (account.authenticated
         ? account.nativeClaudeAccount && sameBoundNativeAccountPrincipal(account.nativeClaudeAccount, account.nativeClaudeAccount)
         : isBoundClaudeNativeSignedOut(account.nativeClaudeSignedOut, homePath))));
@@ -205,8 +208,10 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
         || action === "logout_account" && !input.account.authenticated) {
         throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
       }
-      const nativeCodex = driver === "codex" && input.account.authMethod === "terminal";
+      const nativeCodex = driver === "codex" && (input.account.authMethod === "terminal"
+        || input.account.id === "owner_codex" && input.account.accessSourceId === "owner_openai_profile");
       if (nativeCodex && (!options.profileGuard || input.account.id !== "owner_codex" || input.account.accessSourceId !== "owner_openai_profile"
+        || (input.account.nativeCodexAccount?.authMethod === "api_key" && !hasNativeAccountCredentialIdentity(input.account.nativeCodexAccount))
         || (input.account.authenticated ? !await verifyNativeAccountMetadata(input.account.nativeCodexAccount) : action !== "remove_account"))) throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
       const nativeClaude = isNativeClaudeLifecycleAccount(input.account);
       if (nativeClaude && (!options.profileGuard
@@ -220,6 +225,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
           if (input.account.authenticated) {
             const current = await readCodexUnderLease();
             if (!current || !input.account.nativeCodexAccount || !sameBoundNativeAccountPrincipal(current, input.account.nativeCodexAccount)
+              || current.authMethod === "api_key" && !hasNativeAccountCredentialIdentity(current)
               || !await verifyNativeAccountMetadata(current)) throw new NativeProviderWriteNotStartedError();
           } else {
             const env = codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME);

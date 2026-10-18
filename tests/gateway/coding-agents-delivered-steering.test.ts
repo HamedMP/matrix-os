@@ -22,6 +22,25 @@ describe("steering a delivered background provider turn", () => {
       await expect(harness.threads.getThread(ownerPrincipal, harness.threadId)).resolves.toBeDefined();
     } finally { await harness.cleanup(); }
   });
+  it.each(["claude", "pi", "opencode"] as const)("preserves Main %s steering after provider settings change", async providerId => {
+    let enabled = true;
+    const steerTurn = vi.fn(async () => undefined);
+    const harness = await createTurnHarness({
+      providerAdmission: { isProviderEnabled: async () => enabled },
+      provider: { providerId, startThread: ({ thread, nextEventId }) => ({
+        events: [{ type: "thread.status", eventId: nextEventId(), threadId: thread.id,
+          occurredAt: turnNow.toISOString(), status: "running" }],
+        resumeState: { conversationId: "conversation_main_steer" },
+      }), steerTurn },
+    });
+    try {
+      enabled = false;
+      await expect(harness.threads.steerTurn(ownerPrincipal, harness.threadId, {
+        message: "Do more", clientRequestId: "req_main_steer",
+      })).resolves.toBeUndefined();
+      expect(steerTurn).toHaveBeenCalledOnce();
+    } finally { await harness.cleanup(); }
+  });
   it("retains the exact steering target after dispatch settles and fences older turns", async () => {
     const steerTurn = vi.fn(async () => undefined);
     const harness = await createTurnHarness({

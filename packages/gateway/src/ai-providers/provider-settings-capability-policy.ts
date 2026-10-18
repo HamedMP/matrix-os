@@ -1,4 +1,5 @@
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
+import { hasNativeAccountCredentialIdentity } from "./native-account-metadata-binding.js";
 import type {
   AiProviderSnapshotV3,
   ProviderHarnessInstallState,
@@ -89,8 +90,11 @@ export function coordinatorLifecycleAccounts(input: {
     const source = input.canonical.accessSources.find(row => row.id === account.accessSourceId);
     const canonicalAccount = input.canonical.accounts.find(row => row.id === account.id);
     if (account.driverId === "codex" && account.id === "owner_codex" && account.accessSourceId === "owner_openai_profile"
-      && account.authMethod === "terminal" && canonicalAccount?.vendor === "openai" && source?.vendor === "openai"
-      && source.fundingKind === "owner_account" && input.codexNativeAccountMetadata?.authMethod === "terminal") {
+      && (account.authMethod === "terminal" || account.authMethod === "api_key")
+      && canonicalAccount?.vendor === "openai" && source?.vendor === "openai"
+      && (source.fundingKind === "owner_account" || source.fundingKind === "owner_api_key")
+      && input.codexNativeAccountMetadata
+      && (input.codexNativeAccountMetadata.authMethod !== "api_key" || hasNativeAccountCredentialIdentity(input.codexNativeAccountMetadata))) {
       return { ...account, authenticated: true, nativeCodexAccount: input.codexNativeAccountMetadata };
     }
     return isNativeClaudeLifecycleAccount(account)

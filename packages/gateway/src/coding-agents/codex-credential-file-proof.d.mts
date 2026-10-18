@@ -1,1 +1,1 @@
-export function createCodexCredentialFileProofReader(input: { homePath: string; codexHome?: string }): () => Promise<string | null>;
+export function createCodexCredentialFileProofReader(input: { homePath: string; codexHome?: string; allowApiKey?: boolean }): () => Promise<string | null>;

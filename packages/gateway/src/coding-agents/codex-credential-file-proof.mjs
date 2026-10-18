@@ -5,14 +5,22 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 
 const MAX_BYTES = 256 * 1024;
-const AuthSchema = z.object({ auth_mode: z.literal("chatgpt").optional(), tokens: z.object({
+const ChatgptAuthSchema = z.object({ auth_mode: z.literal("chatgpt").optional(), tokens: z.object({
   access_token: z.string().min(1).max(64 * 1024),
   refresh_token: z.string().min(1).max(64 * 1024),
 }) });
 
-/** Private equality evidence only; bind solely after effective file-backend confirmation. */
+const ApiKeyAuthSchema = z.object({
+  auth_mode: z.literal("apikey").optional(),
+  OPENAI_API_KEY: z.string().min(8).max(4096).refine(value => value.trim().length > 0),
+  tokens: z.null().optional(),
+});
+
+/** Private equality evidence only; bind solely after effective file-backend confirmation.
+ * API-key proof is opt-in for native account lifecycle, never subscription execution. */
 export function createCodexCredentialFileProofReader(input) {
   const selected = resolve(input.homePath, input.codexHome ?? ".codex");
+  const AuthSchema = input.allowApiKey === true ? z.union([ChatgptAuthSchema, ApiKeyAuthSchema]) : ChatgptAuthSchema;
   return async () => {
     try {
       const uid = process.getuid?.();

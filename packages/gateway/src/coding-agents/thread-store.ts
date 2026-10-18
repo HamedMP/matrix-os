@@ -1446,8 +1446,10 @@ export function createCodingAgentThreadStore(
         throw new CodingAgentTurnError("thread_busy");
       }
       const provider = providerFor(thread.providerId);
-      await assertCodingAgentProviderEnabled(options.providerAdmission, thread.providerId,
-        () => new CodingAgentTurnError("turn_unavailable"));
+      if (thread.providerId === "codex") {
+        await assertCodingAgentProviderEnabled(options.providerAdmission, thread.providerId,
+          () => new CodingAgentTurnError("turn_unavailable"));
+      }
       if (!provider.steerTurn) throw new CodingAgentTurnError("turn_unavailable");
       await provider.steerTurn({
         principal,

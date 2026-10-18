@@ -79,7 +79,7 @@ export async function createTurnHarness(options: {
     now: () => turnNow,
   });
   const created = await threads.createThread(ownerPrincipal, {
-    providerId: "codex",
+    providerId: provider.providerId,
     prompt: "Start the implementation.",
     ...(options.globalThread ? {} : { projectId: "matrix-os", taskId: "task_auth" }),
     clientRequestId: "req_thread_turn_fixture",

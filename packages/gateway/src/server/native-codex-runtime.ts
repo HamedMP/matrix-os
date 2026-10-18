@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createCodexNativeAccountMetadataReader } from "../ai-providers/codex-native-account-metadata.js";
+import { createCodexNativeAccountMetadataReader, type CodexNativeAccountMetadataReader } from "../ai-providers/codex-native-account-metadata.js";
 import type { NativeProviderProfileGuard } from "../ai-providers/native-provider-profile-guard.js";
 import type { ProviderSettingsStore } from "../ai-providers/provider-settings-store.js";
 import { createCodexExecutionAdmission } from "../coding-agents/codex-execution-admission.js";
@@ -17,14 +17,14 @@ export function createNativeCodexRuntime(options: {
   getRuntime(): Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession" | "withSessionStart"> | null | undefined;
 }) {
   let reader: ReturnType<typeof createCodexNativeAccountMetadataReader> | undefined;
-  const readAccount = async () => {
+  const readAccount: CodexNativeAccountMetadataReader = async readOptions => {
     if (!options.executable) return null;
     try {
       reader ??= createCodexNativeAccountMetadataReader({
         executable: options.executable, cwd: options.homePath, environment: options.environment(),
       });
       await options.profileGuard.assertReadable("codex");
-      const metadata = await reader();
+      const metadata = await reader(readOptions);
       await options.profileGuard.assertReadable("codex");
       return metadata;
     } catch (error) {

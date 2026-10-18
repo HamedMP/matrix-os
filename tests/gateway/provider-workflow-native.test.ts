@@ -490,3 +490,13 @@ it('keeps Main Claude Terminal admission independent of Codex command-result sup
   expect(running.terminalSessionId).toBe(`${ref.workspaceId}:${ref.tabId}`);
   await running.cancel();
 });
+
+it('preserves Main read-only suppression of Claude workflow adapters', async () => {
+  const f = nativeFixture('claude'); f.row.installState = 'installed';
+  Object.assign((await f.store.getSnapshot()).access, { mode: 'read_only' });
+  const claudeBrowserLogin = vi.fn();
+  const adapters = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+    hostControl: { available: false, run: vi.fn() }, claudeBrowserLogin });
+  expect(adapters).toEqual([]);
+  expect(claudeBrowserLogin).not.toHaveBeenCalled();
+});
