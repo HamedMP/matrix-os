@@ -1,3 +1,4 @@
+import { BOKIO_ACTIONS } from "@matrix-os/contracts/bokio-integration";
 import { MANAGED_INTEGRATIONS } from "@matrix-os/contracts/managed-integrations";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -214,6 +215,8 @@ export function createApprovalHook(
 }
 
 export const MANAGED_WRITE_ACTIONS = new Set([
+  ...Object.entries(BOKIO_ACTIONS).filter(([, action]) => action.risk === "write")
+    .map(([action]) => `bokio/${action}`),
   ...Object.values(MANAGED_INTEGRATIONS).flatMap(service => Object.entries(service.actions)
     .filter(([, action]) => action.risk === "write").map(([action]) => `${service.id}/${action}`)),
   "gmail/send_email",
