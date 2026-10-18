@@ -458,6 +458,14 @@ describe('bounded full-scope maintenance',()=>{
  }
  const run=(f:ReturnType<typeof fixture>)=>gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
  const writtenPrs=(f:ReturnType<typeof fixture>)=>f.gateGithub.rest.checks.create.mock.calls.map(([args])=>JSON.parse(args.output.summary).prNumber).filter(number=>number>0);
+ it('reconciles an authenticated full-scope workflow dispatch using its bounded maintenance slot',async()=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');
+  const runInfo=(await f.github.rest.actions.getWorkflowRun()).data;
+  f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:{...runInfo,event:'workflow_dispatch'}} as any);
+  const result=await run(f);
+  expect(writtenPrs(f)).toHaveLength(8);expect(result).toMatchObject({examined:9,deferred:0});
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
  it('covers every PR in three bounded eight-PR scheduled batches without qualifying untouched PRs',async()=>{
   const seen=new Set<number>();
   for(let slot=0;slot<3;slot++){
@@ -549,4 +557,36 @@ it.each(['malformed','off-main','enabled'])('does not use hosted recovery to byp
   await expect(cycle.beforeDispatch(true)).rejects.toThrow('configuration changed');
   expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  }finally{cycle.close();}
+});
+
+
+describe('reserved requester dispatch admission',()=>{
+ function dispatchFixture(){
+  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
+  let prior:any,pendingApiCalls=0;
+  const calls=()=>Object.entries(f.github.rest).flatMap(([namespace,methods])=>Object.entries(methods).filter(([name])=>namespace!=='actions'||name!=='getRepoVariable').map(([,method])=>(method as ReturnType<typeof vi.fn>).mock.calls.length)).reduce((sum,n)=>sum+n,0)+f.gateGithub.rest.checks.create.mock.calls.length+f.gateGithub.rest.checks.update.mock.calls.length;
+  f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.ref===head&&args.check_name==='CI Source Qualification'&&prior?[prior]:[]}}));
+  const create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+  f.gateGithub.rest.checks.create.mockImplementation(async(args:any)=>{
+   const result=await create(args);
+   if(JSON.parse(args.output.summary).prNumber===2454){prior=result.data;pendingApiCalls=calls();}
+   return result;
+  });
+  const update=f.gateGithub.rest.checks.update.getMockImplementation()!;
+  f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{
+   const result=await update(args);
+   if(args.check_run_id===prior?.id){Object.assign(prior,result.data);if(args.status!=='completed')delete prior.conclusion;return{data:prior};}
+   return result;
+  });
+  const run=(maxApiCalls=256)=>gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub,maintenanceLimits:{maxApiCalls,maxMilliseconds:240000}});
+  return{...f,run,pendingApiCalls:()=>pendingApiCalls};
+ }
+ it('retries on the next reconciliation when the API budget cannot admit the pending marker and requester dispatch together',async()=>{
+  const baseline=dispatchFixture();await baseline.run();
+  expect(baseline.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+  const pendingApiCalls=baseline.pendingApiCalls();expect(pendingApiCalls).toBeGreaterThan(0);expect(pendingApiCalls).toBeLessThan(256);
+  const f=dispatchFixture();const first=await f.run(pendingApiCalls);
+  expect(first).toMatchObject({budgetDeferred:true,deferred:1});expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ });
 });
