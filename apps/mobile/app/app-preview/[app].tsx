@@ -1,6 +1,7 @@
+import { useCallback } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 
 import AppRuntimeFrame from "@/components/AppRuntimeFrame";
 import { Spacer } from "@/components/ui";
@@ -16,8 +17,14 @@ export default function AppPreviewScreen() {
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
   const runtimeSlugHint = Array.isArray(params.runtimeSlug) ? params.runtimeSlug[0] : params.runtimeSlug;
   const title = name || app || "App";
-  const { launchUrl, isPending, isError, requestAppBridge, appIdentity, runtimeSlug } = useComputerAppSession(app ?? "", runtimeSlugHint);
+  const { launchUrl, isPending, isError, requestAppBridge, resolveOpenApp, appIdentity, runtimeSlug, distribution } = useComputerAppSession(app ?? "", runtimeSlugHint);
   const { theme } = useUnistyles();
+  const router = useRouter();
+  const openApp = useCallback(async (appName: string, path: string, signal?: AbortSignal) => {
+    const target = await resolveOpenApp(appName, path);
+    if (signal?.aborted) throw new Error("App request unavailable");
+    router.push({ pathname: "/app-preview/[app]", params: target });
+  }, [resolveOpenApp, router]);
 
   return (
     <View testID="app-preview-runtime" style={styles.screen}>
@@ -27,7 +34,7 @@ export default function AppPreviewScreen() {
           <ActivityIndicator color={theme.v2.appColors.ink} />
         </View>
       ) : launchUrl ? (
-        <AppRuntimeFrame url={launchUrl} title={title} app={appIdentity} runtimeSlug={runtimeSlug} requestAppBridge={requestAppBridge} />
+        <AppRuntimeFrame url={launchUrl} title={title} app={appIdentity} runtimeSlug={runtimeSlug} distribution={distribution} requestAppBridge={requestAppBridge} openApp={openApp} />
       ) : (
         <View style={styles.centered}>
           <Text style={styles.title}>{isError ? "App session unavailable" : "App unavailable"}</Text>

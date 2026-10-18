@@ -4,6 +4,7 @@ let mockRuntimeSlug: string | undefined;
 
 jest.mock("expo-router", () => ({
   Stack: { Screen: () => null },
+  useRouter: () => ({ push: jest.fn() }),
   useLocalSearchParams: () => ({ app: mockApp, name: "Notes", runtimeSlug: mockRuntimeSlug }),
 }));
 
