@@ -1,7 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deliverRedditAttribution } from '../../packages/platform/src/reddit-purchase-attribution.js';
 
 describe('Reddit Stripe attribution', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-05-26T00:00:00Z')); });
+  afterEach(() => { vi.useRealTimers(); });
+  it.each([{}, { matrix_attr_marketing_consent: 'rejected' }, { matrix_attr_marketing_consent: 'accepted', matrix_attr_consent_expires_at: '1' }])('ignores conversions without current acceptance: %o', async metadata => {
+    const sendPurchase = vi.fn(); const sendSignUp = vi.fn();
+    expect(await deliverRedditAttribution({ type: 'checkout.session.completed', created: 1779753600, data: { object: { id: 'cs_no_consent', mode: 'subscription', client_reference_id: 'user_123', amount_total: 0, currency: 'usd', metadata } } }, { sendPurchase, sendSignUp })).toBe('ignored');
+    expect(sendPurchase).not.toHaveBeenCalled(); expect(sendSignUp).not.toHaveBeenCalled();
+  });
   it('maps a completed one-time Checkout payment into Purchase', async () => {
     const sendPurchase = vi.fn().mockResolvedValue('sent');
     const sendSignUp = vi.fn().mockResolvedValue('sent');
@@ -16,6 +23,8 @@ describe('Reddit Stripe attribution', () => {
           amount_total: 10000,
           currency: 'usd',
           metadata: {
+            matrix_attr_marketing_consent: 'accepted',
+            matrix_attr_consent_expires_at: String(Date.now() + 86400000),
             clerk_user_id: 'user_123',
             matrix_attr_rdt_cid: 'reddit-click',
             matrix_attr_landing_path: '/?rdt_cid=reddit-click&utm_source=reddit',
@@ -51,6 +60,8 @@ describe('Reddit Stripe attribution', () => {
           amount_total: 0,
           currency: 'usd',
           metadata: {
+            matrix_attr_marketing_consent: 'accepted',
+            matrix_attr_consent_expires_at: String(Date.now() + 86400000),
             matrix_attr_rdt_cid: 'reddit-click',
             matrix_attr_landing_path: '/pricing?utm_source=reddit',
           },
@@ -86,6 +97,8 @@ describe('Reddit Stripe attribution', () => {
             subscription_details: {
               subscription: 'sub_reddit_purchase',
               metadata: {
+                matrix_attr_marketing_consent: 'accepted',
+                matrix_attr_consent_expires_at: String(Date.now() + 86400000),
                 clerk_user_id: 'user_123',
                 matrix_attr_reddit_pending: '1',
                 matrix_attr_reddit_expires_at: '2026-12-31T00:00:00.000Z',
@@ -130,6 +143,8 @@ describe('Reddit Stripe attribution', () => {
             subscription_details: {
               subscription: 'sub_reddit_purchase',
               metadata: {
+                matrix_attr_marketing_consent: 'accepted',
+                matrix_attr_consent_expires_at: String(Date.now() + 86400000),
                 clerk_user_id: 'user_123',
                 matrix_attr_reddit_pending: '1',
                 matrix_attr_reddit_expires_at: '2026-06-01T00:00:00.000Z',

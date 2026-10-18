@@ -58,6 +58,21 @@ describe("Reddit Conversions API", () => {
     expect(JSON.stringify(body)).not.toContain("in_123");
   });
 
+  it("rejects oversized identifiers instead of sending a truncated match", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    const client = createRedditConversionsClient({ env: { REDDIT_PIXEL_ID: "a2_test", REDDIT_CONVERSIONS_ACCESS_TOKEN: "secret" }, fetcher });
+    await expect(client.sendSignUp({ eventAt: Date.now(), conversionId: "cs_trial", clerkUserId: "user_123", clickId: "x".repeat(257) })).rejects.toThrow("Reddit conversion delivery failed");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("strips personal query values and fragments from conversion source URLs", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    const client = createRedditConversionsClient({ env: { REDDIT_PIXEL_ID: "a2_test", REDDIT_CONVERSIONS_ACCESS_TOKEN: "secret" }, fetcher });
+    await client.sendSignUp({ eventAt: Date.now(), conversionId: "cs_trial", clerkUserId: "user_123", eventSourceUrl: "https://matrix-os.com/pricing?utm_source=reddit&email=private%40example.com&token=secret#private" });
+    const payload = JSON.parse(fetcher.mock.calls[0][1].body);
+    expect(payload.data.events[0].event_source_url).toBe("https://matrix-os.com/pricing?utm_source=reddit");
+  });
+
   it("sends Sign Up without fake revenue metadata", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     const client = createRedditConversionsClient({

@@ -1873,6 +1873,8 @@ describe('platform billing routes', () => {
           currency: 'usd',
           metadata: {
             clerk_user_id: 'user_123',
+            matrix_attr_marketing_consent: 'accepted',
+            matrix_attr_consent_expires_at: String(Date.now() + 86400000),
             matrix_attr_rdt_cid: 'reddit-click',
             matrix_attr_landing_path: '/?rdt_cid=reddit-click&utm_source=reddit',
           },
