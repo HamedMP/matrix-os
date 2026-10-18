@@ -31,7 +31,6 @@ import {
 } from './db.js';
 import type { Orchestrator } from './orchestrator.js';
 import { createSocialApi } from './social.js';
-import { createStoreApi } from './store-api.js';
 import { createSocialFeedApi } from './social-api.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
@@ -271,6 +270,7 @@ export function createApp(deps: {
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
   whatsappRoutes?: Hono<any>;
+  appStoreRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
@@ -798,6 +798,8 @@ export function createApp(deps: {
     platformSecret,
   }));
 
+  if (deps.appStoreRoutes) app.route('/internal/containers/:handle/app-store', deps.appStoreRoutes);
+
   // Auth middleware for admin API routes below
   app.use('*', async (c, next) => {
     if (c.req.path === '/health') return next();
@@ -822,10 +824,6 @@ export function createApp(deps: {
     adminBodyLimit: ADMIN_BODY_LIMIT,
     logRouteError: logPlatformRouteError,
   }));
-
-  // --- Store API (public, no auth) ---
-
-  app.route('/api/store', createStoreApi(db));
 
   // --- Social Feed API (public) ---
 

@@ -5,6 +5,7 @@ import type { PlatformDB } from '../db.js';
 import type { StoreActor, StoreVersionRow } from './types.js';
 import { AppStoreError, isUniqueViolation } from './errors.js';
 import { appendStoreEvent } from './repository-events.js';
+import { storeUploadKey } from './storage-keys.js';
 import { getStoreVersion } from './repository-listings.js';
 export function submissionSummary(version: StoreVersionRow, slug: string) {
   return { versionId: version.id, listingId: version.listing_id, listingSlug: slug, name: version.name, version: version.version,
@@ -50,7 +51,7 @@ export function createVersionRepository(db: PlatformDB, now: () => string) {
           submission_key: input.submissionKey, submission_digest: digest, submitted_by_clerk_user_id: actor.userId, status: 'awaiting_upload',
           name: input.listing.name, tagline: input.listing.tagline, description: input.listing.description, category: input.listing.category,
           changelog: input.changelog, license: input.license, capabilities, capabilities_digest: capDigest, manifest,
-          source_object_key: `app-store/uploads/${id}`, source_sha256: input.source.sha256, source_size: input.source.size,
+          source_object_key: storeUploadKey(actor.userId, id), upload_cleaned_at: null, source_sha256: input.source.sha256, source_size: input.source.size,
           approval_key_id: null, approval_signature: null, scan_report: null, generalization_report: input.generalizationReport,
           reviewer_message: null, decided_by_clerk_user_id: null, decided_at: null, scanning_started_at: null, published_at: null, created_at: time, updated_at: time,
         }).returningAll().executeTakeFirstOrThrow();
@@ -71,6 +72,7 @@ export function createVersionRepository(db: PlatformDB, now: () => string) {
     });
   }
   async function completeScan(versionId: string, report: AppStoreScanReport, sourceObjectKey?: string) {
+    report = { ...report, blocking: report.blocking || report.truncated };
     return db.transaction(async trx => {
       const time = now();
       const version = await trx.executor.updateTable('app_store_versions').set({ status: report.blocking ? 'scan_failed' : 'in_review', scan_report: report,
