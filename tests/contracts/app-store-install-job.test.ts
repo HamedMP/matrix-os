@@ -10,4 +10,9 @@ describe("local build progress", () => {
     expect(isAllowedAppStoreGalleryRequest(`/api/app-store/installs/${id}`, "GET")).toBe(true);
     expect(isAllowedAppStoreGalleryRequest(`/api/app-store/installs/${id}`, "POST")).toBe(false);
   });
+  it("allows submission paging without widening other query keys", () => {
+    expect(isAllowedAppStoreGalleryRequest("/api/app-store/submissions?cursor=next", "GET")).toBe(true);
+    expect(isAllowedAppStoreGalleryRequest("/api/app-store/submissions?user=other", "GET")).toBe(false);
+    expect(isAllowedAppStoreGalleryRequest("/api/app-store/submissions?cursor=a&cursor=b", "GET")).toBe(false);
+  });
 });

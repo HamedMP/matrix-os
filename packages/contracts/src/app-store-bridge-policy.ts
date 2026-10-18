@@ -17,7 +17,7 @@ const GALLERY_ROUTES: readonly Route[] = [
   route("GET", `/api/app-store/drafts/${UUID}`),
   route("GET", `/api/app-store/drafts/${UUID}/diff`, { allowed: ["path"], required: ["path"] }),
   route("POST", `/api/app-store/drafts/${UUID}/(?:revise|submit|listing|delete)`),
-  route("GET", "/api/app-store/submissions"),
+  route("GET", "/api/app-store/submissions", { allowed: ["cursor"] }),
   route("POST", `/api/app-store/submissions/${UUID}/withdraw`),
   route("GET", "/api/app-store/listings", { allowed: ["q", "category", "sort", "cursor", "limit"] }),
   route("GET", `/api/app-store/listings/${SLUG}`),
