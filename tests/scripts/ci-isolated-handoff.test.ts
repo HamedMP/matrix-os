@@ -4,7 +4,7 @@ import {routeControllerEvent} from '../../scripts/ci/dedicated-execution-router.
 const repo={owner:'HamedMP',repo:'matrix-os'},pin='a'.repeat(40),execution='e'.repeat(40),tree='f'.repeat(40);
 const head='b'.repeat(40),base='c'.repeat(40),source='d'.repeat(40),branch=`ci-execution/${pin}`;
 const inputs={execution_mode:'linux',pr_number:'2454',head_sha:head,base_sha:base,source_sha:source};
-const configuration={pin,flag:'true',imageDigest:'sha256:'+'1'.repeat(64),harnessDigest:'2'.repeat(64),linuxRequired:false};
+const configuration={pin,flag:'true',imageDigest:'sha256:'+'1'.repeat(64),harnessDigest:'2'.repeat(64),linuxRequired:true};
 const module=()=>import('../../scripts/ci/dedicated-ci-handoff.mjs');
 function fixture(){
  const run={id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_branch:branch,head_sha:execution,status:'in_progress',conclusion:null as string|null,
@@ -14,7 +14,7 @@ function fixture(){
   getWorkflow:vi.fn(async({workflow_id}:any)=>({data:{id:workflow_id==='ci.yml'?98:99,path:`.github/workflows/${workflow_id}`}})),
   getWorkflowRun:vi.fn(async()=>({data:run})),
   listWorkflowRuns:vi.fn(async()=>({data:{total_count:0,workflow_runs:[]}})),
-  listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[{name:'CI Results',steps:[{name:'Summarize required CI jobs',status:'completed',conclusion:'success'}]}]}})),
+  listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[{id:401,name:'Isolated CI Backend Decision',run_id:run.id,run_attempt:run.run_attempt,head_sha:run.head_sha,head_branch:run.head_branch,status:'completed',conclusion:'success'}]}})),
   createWorkflowDispatch:vi.fn(async()=>({status:204})),
   createWorkflowDispatchEvent:vi.fn(),
  },repos:{
