@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmod, lstat, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parseTrialCleanupArguments, claimTrialCleanupJournal } from '../../scripts/ops/cleanup-expired-trials.js';
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -15,7 +17,8 @@ describe('expired trial operator CLI', () => {
     ['/private/review.json', '--apply', '--reviewed-sha256', 'bad', '--journal', '/private/new.jsonl']].map(args => ({ args })))
     ('refuses ambiguous/destructive arguments $args', ({ args }) => expect(() => parseTrialCleanupArguments(args)).toThrow(/Usage/));
   it('durably claims a new protected journal and appends one matching committed receipt', async () => {
-    const directory = await mkdtemp('/private/tmp/matrix-trial-retention-'); directories.push(directory); await chmod(directory, 0o700);
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'matrix-trial-retention-')));
+    directories.push(directory); await chmod(directory, 0o700);
     const path = `${directory}/cleanup.jsonl`; const fingerprint = 'a'.repeat(64); const sourceSha = 'b'.repeat(40);
     const journal = await claimTrialCleanupJournal(path, fingerprint, sourceSha);
     try {
