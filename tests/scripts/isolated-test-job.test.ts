@@ -43,6 +43,11 @@ describe('bounded Matrix test jobs', () => {
     expect(job.args.slice(-7)).toEqual(['/usr/bin/flock', '--no-fork', '--timeout=7200', '/home/matrix/.cache/matrix-test-jobs/admission.lock', 'bun', 'run', 'test']);
     expect(job.preserve).toContain('MATRIX_TEST_WORKERS');
   });
+  it('keeps the caller tool path even when sudo replaces PATH', () => {
+    const job = isolatedTestJob(host, ['bun','run','test'], { PATH:'/owner/flox/bin:/usr/bin' });
+    expect(job.args).toContain('--setenv=PATH=/owner/flox/bin:/usr/bin');
+    expect(job.args).not.toContain('--setenv=PATH');
+  });
   it('forwards exact commands and native fixture selection without putting secrets in argv', () => {
     const command = ['node', 'test.mjs', '$HOME', 'a b', '$(touch /tmp/no)'];
     const job = isolatedTestJob(host, command, { MATRIX_PLATFORM_FIXTURE_POSTGRES_URL: 'postgres://synthetic-secret', PLATFORM_SECRET: 'private' });

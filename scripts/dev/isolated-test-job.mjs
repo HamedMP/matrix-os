@@ -30,7 +30,7 @@ export function isolatedTestJob(host, command, env) {
     '--property=MemorySwapMax=0',`--property=CPUQuota=${Math.min(4,host.cpus-1)*100}%`,
     '--property=TasksMax=2048','--property=Nice=10','--property=RuntimeMaxSec=10800',
     '--property=TimeoutStopSec=10','--property=KillMode=control-group','--property=OOMPolicy=stop',
-    ...preserve.map(key=>`--setenv=${key}`),'/usr/bin/flock','--no-fork','--timeout=7200',
+    ...preserve.map(key=>key === 'PATH' ? `--setenv=PATH=${env.PATH}` : `--setenv=${key}`),'/usr/bin/flock','--no-fork','--timeout=7200',
     join(directory,'admission.lock'),...command];
   return { unit, args, preserve, directory, memoryMiB };
 }
