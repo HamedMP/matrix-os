@@ -47,7 +47,7 @@ export function historicalChatPresentation(input: CanonicalChatMessage[], id: st
   for (const message of messages) {
     if (message.id === user?.id || message.id === final?.id) continue;
     if (isContext(message)) {
-      const item: ConversationWorkPresentation = { kind: "activity-group", id: `${message.id}:context`, activities: [{ id: message.id, kind: "context", state: "completed", label: "Imported instructions", detail: messagePresentation(message, "commentary").markdown }] };
+      const item: ConversationWorkPresentation = { kind: "activity-group", id: `${message.id}:context`, activities: [{ id: message.id, kind: "phase", state: "completed", label: "Imported instructions", detail: messagePresentation(message, "commentary").markdown }] };
       work.push(item); timeline.push({ kind: "work", item }); continue;
     }
     if (message.role === "user") { timeline.push({ kind: "user-followup", message: messagePresentation(message, "commentary") }); continue; }
