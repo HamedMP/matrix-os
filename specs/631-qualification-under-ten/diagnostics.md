@@ -19,6 +19,12 @@ existing mandatory duration/status files. Root copies only six fixed-name,
 regular timeline files, each capped at 16 KiB with a five-second collection
 deadline. Host smoke records its own interval. Diagnostics live in a sibling
 directory; the qualification validator's exact evidence set remains unchanged.
+Optional timeline reads run after required smoke and final source probes. Each
+optional Docker read recomputes its remaining budget against a root-owned
+preflight monotonic deadline that precedes the unchanged manager deadline,
+reserving 90 seconds for required cleanup, process reaping and final metadata.
+Late runs or missing/invalid budgets skip optional reads. No required deadline
+is extended, and optional RPCs cannot consume the cleanup reserve.
 
 Before removing the container, root verifies its lease/request labels, running
 PID and container ID, reads bounded cgroup-v2 metrics through symlink-safe file
