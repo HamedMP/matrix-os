@@ -88,6 +88,12 @@ No Worker secrets were uploaded. The local test used those credentials only on
 this computer. Two isolated database/role pairs separate shared control data
 from the agent's kernel database; the agent never receives the shared DB secret.
 
+After validation, both test databases/roles, the empty remote R2 bucket and both
+Queues were removed. Local preview processes, the native container/proxy,
+checkpoint state and secret copies were also removed. No remote container,
+Hyperdrive config or Worker secret was created. Unmerged code worktrees remain
+available for review; customer resources were preserved.
+
 Before a public rollout:
 
 1. Resolve a separate owner database/role and scoped AI access for every runtime;
