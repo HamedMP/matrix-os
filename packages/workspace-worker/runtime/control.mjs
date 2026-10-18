@@ -1,4 +1,5 @@
-import { parseGatewayResult, summarizeGatewayResult } from './result.mjs';
+import { summarizeGatewayResult } from './result.mjs';
+import { runChatJob } from './sessions.mjs';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve, relative } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -37,9 +38,12 @@ if (operation === 'hydrate') {
   if (!(await lstat(home)).isDirectory()) throw new Error('Unsafe workspace home');
   for (const file of files) {
     if (typeof file.path !== 'string' || file.path.length > 512 || typeof file.content !== 'string'
+      || file.path === '.matrix-runtime' || file.path.startsWith('.matrix-runtime/')
       || Buffer.byteLength(file.content) > 128 * 1024 || file.path.startsWith('/') || file.path.includes('\\')) throw new Error('Invalid workspace file');
     const target = resolve(home, file.path);
-    if (target === home || relative(home,target).startsWith('..')) throw new Error('Invalid workspace file');
+    const relativePath = relative(home, target);
+    if (target === home || relativePath.startsWith('..') || relativePath === '.matrix-runtime'
+      || relativePath.startsWith('.matrix-runtime/')) throw new Error('Invalid workspace file');
     let current = home;
     for (const segment of relative(home,dirname(target)).split('/').filter(Boolean)) {
       current += `/${segment}`;
@@ -79,14 +83,7 @@ if (operation === 'hydrate') {
   const job = JSON.parse(input);
   if (job.type === 'wake') { console.log(JSON.stringify({ ready: true })); }
   else {
-    const response = await request('/api/message', { text: job.message });
-    const chunks = []; let total = 0;
-    if (!response.body) throw new Error('Missing agent response');
-    for await (const chunk of response.body) {
-      total += chunk.byteLength; if (total > 256_000) throw new Error('Agent result too large'); chunks.push(chunk);
-    }
-    const text = Buffer.concat(chunks).toString('utf8');
-    const result = parseGatewayResult(text);
+    const result = await runChatJob('/workspace/home', job, request);
     await writeFile('/workspace/home/system/shared-spike-result.json', JSON.stringify(result), { mode: 0o600 });
     console.log(JSON.stringify({ completed: true, events: result.events.length }));
   }
