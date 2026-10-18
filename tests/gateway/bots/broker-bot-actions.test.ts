@@ -434,6 +434,42 @@ describe("group bot broker fencing", () => {
     await expect(actions.handleFrame({ version: 1, requestId: REQUEST_ID, runtimeHandle: RUNTIME, executionGeneration: "6", action: "inference.messages", method: "POST", path: "/v1/messages?beta=true", headers: { "anthropic-version": "2023-06-01" }, body: JSON.stringify({model: spec.route.modelId, stream: true, messages: []}) }))
       .resolves.toMatchObject({ ok: false, error: "action_denied" });
   });
+  it.each([
+    ["frame", "deadline"], ["frame", "run"], ["frame", "shutdown"],
+    ["tool", "deadline"], ["tool", "run"], ["tool", "shutdown"], ["tool", "child"],
+  ] as const)("settles stalled %s authorization on %s without a late effect", async (path, stop) => {
+    binding = { ...binding, group, capabilities: ["integration.inventory"] };
+    let release!: () => void;
+    const authorizeGroup = vi.fn(() => new Promise<ReturnType<typeof current>>((resolve) => { release = () => resolve(current()); }));
+    const deadline = new AbortController(), child = new AbortController();
+    if (stop === "deadline") vi.spyOn(AbortSignal, "timeout").mockImplementation(() => deadline.signal);
+    const { actions, registry, lifetime, events, tools } = setup({ authorizeGroup });
+    const work = path === "frame"
+      ? actions.handleFrame(frame({ action: "bot.event", event: { seq: 0, event: { type: "assistant_delta", text: "blocked" } } }))
+      : actions.callTool(binding, { toolCallId: "auth_wait", capability: "integration.inventory", args: {} }, child.signal)
+        .then(() => ({ ok: true }), (error: unknown) => ({ ok: false, code: error instanceof BotBrokerActionError ? error.code : "unexpected" }));
+    let outcome: unknown;
+    try {
+      await vi.waitFor(() => expect(authorizeGroup).toHaveBeenCalledOnce());
+      if (stop === "run") registry.cancelInference(binding);
+      else if (stop === "shutdown") lifetime.abort();
+      else if (stop === "child") child.abort();
+      else deadline.abort();
+      outcome = await Promise.race([work, new Promise((resolve) => setTimeout(() => resolve("still pending after cancellation"), 1_000))]);
+    } finally { release?.(); await work; }
+    expect(outcome).toMatchObject({ ok: false, code: stop === "run" || stop === "child" ? "stale_generation" : "timeout" });
+    if (stop === "deadline") expect(AbortSignal.timeout).toHaveBeenCalledWith(10_000);
+    expect(events.publish).not.toHaveBeenCalled(); expect(tools.dispatch).not.toHaveBeenCalled();
+    const checkpoints = await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: binding.runId });
+    expect(checkpoints).toEqual(path === "frame" ? [] : [expect.objectContaining({ phase: "observed_complete", outcomeRef: null })]);
+  });
+  it("keeps authorized group integration dispatch and its observed checkpoint", async () => {
+    binding = { ...binding, group, capabilities: ["integration.inventory"] };
+    const { actions, tools } = setup({ authorizeGroup: async () => current() });
+    await expect(actions.callTool(binding, { toolCallId: "authorized_inventory", capability: "integration.inventory", args: {} }, new AbortController().signal)).resolves.toMatchObject({ ok: true });
+    expect(tools.dispatch).toHaveBeenCalledOnce();
+    expect(await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: binding.runId })).toEqual([expect.objectContaining({ phase: "observed_complete" })]);
+  });
   it("rechecks every frame and denies access after revocation", async () => {
     await admitSessionRun(db, OWNER, binding.chatId, binding.runId);
     binding = { ...binding, group, capabilities: [] };
