@@ -1,4 +1,6 @@
-import { createProjectDeletionCleanup, type ProjectChatCleanup } from "./project-deletion-cleanup.js";
+import {
+  createProjectDeletionCleanup, type ProjectBrainCleanup, type ProjectChatCleanup,
+} from "./project-deletion-cleanup.js";
 import type { BackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { resolve } from "node:path";
 import { createAgentLauncher } from "./agent-launcher.js";
@@ -235,6 +237,7 @@ export function createWorkspaceStartupRecovery(options: {
   homePath: string;
   eventPublisher?: WorkspaceStartupRecoveryDeps["eventPublisher"];
   deleteProjectChats?: ProjectChatCleanup;
+  eraseProjectBrain?: ProjectBrainCleanup;
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "deleteProjectThreads">;
 }) {
   const homePath = resolve(options.homePath);
@@ -259,6 +262,7 @@ export function createWorkspaceStartupRecovery(options: {
     cleanupRelatedState: createProjectDeletionCleanup({
       sessions: agentSessionManager, reviews: reviewStore, threads: options.codingAgentThreadStore,
       terminal: terminalRuntime, deleteChats: options.deleteProjectChats, worktrees: worktreeManager,
+      eraseBrain: options.eraseProjectBrain,
     }),
   });
 

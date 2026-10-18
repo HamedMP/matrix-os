@@ -30,7 +30,8 @@ the runner. In memory: a connect queue (64 keys) and the runner's running set (1
 
 - Connect creates the source with its config in one transaction under the per-kind cap. The same identity answers
   the existing source; a missing config is saved compare-and-set on the revision, read again and retried when a
-  rename or pause moved it (3 tries, then `source_conflict`).
+  rename or pause moved it (3 tries, then `source_conflict`). `createSource` resolves the project again under the
+  scope lock, so a project deleted meanwhile gets no source.
 - Update saves the config with the revision move; a config the cursor cannot follow reconnects (`replaceSource`).
 - Sync is one bounded runner run. A paused source answers `source_inactive` before its config or account is read,
   and also when paused (or removed: `source_not_found`) while they are read.

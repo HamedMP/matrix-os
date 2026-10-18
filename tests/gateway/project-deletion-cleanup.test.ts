@@ -81,6 +81,26 @@ describe("project cascade cleanup", () => {
     await expect(f.cleanup(project, principal)).rejects.toThrow("Project worktree inventory failed");
   });
 
+  it("erases the project's brain after its chats and before threads and worktrees, even when worktrees are gone", async () => {
+    const f = fixture();
+    const eraseBrain = vi.fn(async () => { f.order.push("brain"); });
+    f.options.worktrees.listWorktrees.mockResolvedValueOnce({ ok: false, status: 404, error: { code: "not_found" } });
+    await createProjectDeletionCleanup({ ...f.options, eraseBrain })(project, principal);
+    expect(f.order.slice(0, 3)).toEqual(["chats", "brain", "threads"]);
+    expect(eraseBrain).toHaveBeenCalledExactlyOnceWith(project, principal);
+  });
+
+  it("fails the deletion on a brain erase failure so it is retried, before anything else is removed", async () => {
+    const f = fixture();
+    const eraseBrain = vi.fn().mockRejectedValueOnce(new Error("brain erase failed")).mockResolvedValue(undefined);
+    const cleanup = createProjectDeletionCleanup({ ...f.options, eraseBrain });
+    await expect(cleanup(project, principal)).rejects.toThrow("brain erase failed");
+    expect(f.options.threads.deleteProjectThreads).not.toHaveBeenCalled();
+    expect(f.options.worktrees.listWorktrees).not.toHaveBeenCalled();
+    await expect(cleanup(project, principal)).resolves.toBeUndefined();
+    expect(eraseBrain).toHaveBeenCalledTimes(2);
+  });
+
   it("stops on thread cleanup failure", async () => {
     const f = fixture();
     f.options.threads.deleteProjectThreads.mockRejectedValueOnce(new Error("stop failed"));

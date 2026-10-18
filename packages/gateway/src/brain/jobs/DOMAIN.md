@@ -44,7 +44,8 @@ Queued, leased, resumable runs of the brain's bounded work (sync, extract, searc
 
 ## Concurrency And Recovery
 
-- Enqueue and erase take `pg_advisory_xact_lock(hashtext(ownerId), hashtext('brain-jobs'))`; worker writes are
+- Enqueue and erase take `pg_advisory_xact_lock(hashtext(ownerId), hashtext('brain-jobs'))`, and enqueue resolves
+  the project again under it, so a project deleted meanwhile gets no job after its erase; worker writes are
   fenced by their claim instead (`status = 'running' AND lease_owner = <the claim's lease>`, the worker id and a
   random tag), so a run recovered or handed back writes nothing even after the same worker claimed the job again,
   and that worker stops the old run before it starts the new one. Claims use `FOR UPDATE SKIP LOCKED`.
