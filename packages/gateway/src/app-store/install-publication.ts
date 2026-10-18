@@ -5,7 +5,7 @@ import type {AppStoreDownloadGrant} from '@matrix-os/contracts/app-store';
 import {bundleDigest,encodeAppBundle} from '@matrix-os/contracts/app-store-bundle';
 import {snapshotOwnerApp} from './snapshot.js';
 import type {StoreToolchain} from './local-builder.js';
-import {APP_STORE_FIXED_BUILD} from '@matrix-os/contracts/app-store';
+import {installedStoreManifest} from './install-manifest.js';
 import {withStoreDirectory,atomicPrivateFile} from './private-state.js';import {pinDirectory,isFsError,type PinnedDirectory} from '../app-gallery/pinned-directory.js';
 import {readStoreProvenance,writeStoreProvenance} from './provenance.js';import {writeCommunityGrants,removeCommunityGrant} from './capability-grants.js';
 import {withOwnerFileMutation} from '../owner-file-mutations.js';import {invalidateAppIndexCache} from '../app-runtime/app-index.js';import {StoreError} from './platform-client.js';
@@ -36,7 +36,7 @@ export async function publishCommunityInstall(options:{homePath:string;jobId:str
    try{
     await writeTree(prepared,files);
     // A complete manifest is the discovery boundary, and carries no executable build script.
-    const manifest={...options.grant.manifest,slug:appSlug,listingTrust:'community',build:{...APP_STORE_FIXED_BUILD,timeout:120},database:'postgres'};
+    const manifest=installedStoreManifest(options.grant.manifest,appSlug);
     const manifestBytes=Buffer.from(JSON.stringify(manifest));await writeTree(prepared,new Map([['matrix.json',manifestBytes]]));
     const installedSource=new Map(options.source);installedSource.set('matrix.json',manifestBytes);record.installedSourceSha256=bundleDigest(encodeAppBundle('source',installedSource));
     await atomicPrivateFile(stage,'journal.json',Buffer.from(JSON.stringify({record,previous:previous??null})));
