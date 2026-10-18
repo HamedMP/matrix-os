@@ -1,7 +1,21 @@
 import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("contracts native Node runtime", () => {
+  it("loads the Native Gallery bridge policy without resolver-specific extension aliases", () => {
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const { canonicalAppRuntimeCatalogPath, isAppGalleryIdentity } =
+        await import("@matrix-os/contracts/app-gallery-bridge-policy");
+      console.log(canonicalAppRuntimeCatalogPath({ path: "apps/app-gallery/dist/index.html" }),
+        isAppGalleryIdentity("app-gallery"), isAppGalleryIdentity("app-gallery", "owner-copy"));
+    `], {
+      cwd: resolve(process.cwd(), "packages/contracts"), encoding: "utf8", timeout: 10_000,
+      env: { ...process.env, NODE_OPTIONS: "" },
+    });
+    expect(output.trim()).toBe("apps/app-gallery/dist/index.html true false");
+  });
+
   it("loads personal subscription peer and inference schemas without a TypeScript resolver", () => {
     const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
       const { ChatGptPlanPeerSnapshotSchema, ChatGptPlanRawWireSchema, ChatGptPlanWireSchema } = await import("@matrix-os/contracts");
