@@ -45,7 +45,10 @@ export async function isolatedReconciliationScope(github,repo,inputs){
   return{prNumber:tuple.prNumber};
  }
  const rows=run.pull_requests;
- if(!Array.isArray(rows)||rows.length!==1||!id(rows[0].number)||![rows[0].head?.repo?.url,rows[0].base?.repo?.url].every(url=>String(url).toLowerCase()===`https://api.github.com/repos/${repo.owner}/${repo.repo}`.toLowerCase()))throw new Error('Completed requester has no authenticated PR scope');
+ if(!Array.isArray(rows))throw new Error('Completed requester has no authenticated PR scope');
+ // Authenticated ordinary completions without a unique PR retain the full scan.
+ if(rows.length!==1)return{};
+ if(!id(rows[0]?.number)||![rows[0].head?.repo?.url,rows[0].base?.repo?.url].every(url=>String(url).toLowerCase()===`https://api.github.com/repos/${repo.owner}/${repo.repo}`.toLowerCase()))throw new Error('Completed requester has no authenticated PR scope');
  return{prNumber:rows[0].number};
 }
 export async function validatedIsolatedReconciliationScope(github,repo,inputs){

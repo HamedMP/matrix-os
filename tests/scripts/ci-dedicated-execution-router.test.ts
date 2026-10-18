@@ -135,6 +135,47 @@ it('keeps authenticated Main completion in the full maintenance scope',async()=>
  f.inputs.reconciliation_pr='2454';await expect(validatedIsolatedReconciliationScope(f.github,repo,f.inputs)).rejects.toThrow('Invalid isolated reconciliation scope hint');
 });
 
+function ambiguousScopeFixture(count:number){
+ const f=scopeFixture(2454),url='https://api.github.com/repos/HamedMP/matrix-os';
+ Object.assign(f.run,{pull_requests:Array.from({length:count},(_,index)=>({number:2454+index,head:{repo:{url}},base:{repo:{url}}}))});
+ f.inputs.reconciliation_pr='0';return f;
+}
+it.each([0,2])('preserves an authenticated completion with %s PR associations as full scope and rejects a forged hint',async count=>{
+ const f=ambiguousScopeFixture(count);
+ expect(await validatedIsolatedReconciliationScope(f.github,repo,f.inputs)).toEqual({});
+ f.inputs.reconciliation_pr='2454';
+ await expect(validatedIsolatedReconciliationScope(f.github,repo,f.inputs)).rejects.toThrow('Invalid isolated reconciliation scope hint');
+});
+it.each([0,2])('the actual router dispatches full scope for %s PR associations',async count=>{
+ const f=ambiguousScopeFixture(count),execution='e'.repeat(40),tree='f'.repeat(40),branch=`ci-execution/${pin}`,github:any=f.github;
+ github.rest.repos={getBranch:vi.fn(async({branch:requested}:any)=>({data:{name:requested,commit:{sha:requested===branch?execution:pin}}})),compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'identical',merge_base_commit:{sha:pin}}}))};
+ github.rest.git={getCommit:vi.fn(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:tree},parents:[{sha:pin}]}}))};
+ github.rest.actions.getWorkflow.mockImplementation(async({workflow_id}:any)=>({data:{id:workflow_id==='ci.yml'?98:99,path:`.github/workflows/${workflow_id}`}}));
+ github.rest.actions.listWorkflowRuns=vi.fn(async()=>({data:{workflow_runs:[]}}));
+ github.rest.actions.listJobsForWorkflowRun.mockResolvedValue({data:{total_count:0,jobs:[]}});
+ await expect(routeControllerEvent(github,repo,pin,f.context,snapshot)).resolves.toEqual({dispatched:true,mode:'reconcile'});
+ expect(github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ expect(github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({ref:branch,inputs:{controller_mode:'reconcile',requesting_run_id:'321',requesting_run_attempt:'1',requesting_action:'completed',reconciliation_pr:'0'}}));
+});
+it.each(['repository','workflow','attempt'])('full-scan ambiguity cannot bypass requester %s authentication',async kind=>{
+ const f=ambiguousScopeFixture(2);
+ if(kind==='repository')f.run.repository.full_name='attacker/matrix-os';
+ if(kind==='workflow')f.run.workflow_id=99;
+ if(kind==='attempt')f.run.run_attempt=2;
+ await expect(validatedIsolatedReconciliationScope(f.github,repo,f.inputs)).rejects.toThrow();
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+it.each(['non-array','invalid-id','foreign-head','foreign-base'])('does not hide malformed %s PR scope with a full scan',async kind=>{
+ const f=scopeFixture(2454),rows:any=(f.run as any).pull_requests;
+ if(kind==='non-array')Object.assign(f.run,{pull_requests:{}});
+ if(kind==='invalid-id')rows[0].number=0;
+ if(kind==='foreign-head')rows[0].head.repo.url='https://api.github.com/repos/attacker/matrix-os';
+ if(kind==='foreign-base')rows[0].base.repo.url='https://api.github.com/repos/attacker/matrix-os';
+ f.inputs.reconciliation_pr='0';
+ await expect(validatedIsolatedReconciliationScope(f.github,repo,f.inputs)).rejects.toThrow('Completed requester has no authenticated PR scope');
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+
 it('uses independent PR queue keys and revalidates hints before App credentials',()=>{
  const job=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8')).jobs.reconcile;
  const expression=job.concurrency.group.match(/\$\{\{([\s\S]*?)\}\}/)[1];
