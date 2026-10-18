@@ -67,4 +67,11 @@ The integrated affected run passed335tests with5macOS-only skips; Linux isolatio
 
 The public guide has471passing tests, current-head Greptile5/5 and live responsive preview captures. The broader repository unit run also exercises unrelated subsystems; any failures must be reported separately rather than converted to a passing count. These checks do not establish product visual qualification or a successful second-owner live scenario. Live Native Mobile testing is explicitly deferred by the requester.
 
-AI preparation preserves the complete source through bounded batches (48KiB serialized text-file/batch,16calls,180seconds total). Each subsequent batch receives the current manifest, complete file index and bounded read-only helper context. Oversized source needs splitting; it is never silently omitted. The saved owner-key route is offered for ready/unverified observations only, with separate explicit provider consent.
+AI preparation preserves the complete source through bounded batches (48KiB serialized text-file/batch,16calls,180seconds total). Each subsequent batch receives the current manifest, complete file index and bounded read-only helper context. Oversized source needs splitting; it is never silently omitted. Preparation offers the canonical Matrix AI Gateway route when eligible, or an available saved owner-key route. The consent names the selected provider/model and binds its exact route identity; each batch revalidates that identity. Matrix-funded calls use the existing text API, admission and relay budget policy, never SDK credential injection or a Gallery/community-app permission grant. The saved owner-key SDK route is offered for ready/unverified observations only. Its $0.25 per-call cap does not describe Matrix route pricing.
+
+## Requester qualification decisions
+
+- Builds run in isolation on each installer’s VPS from the full reviewed source.
+- Preparation should use the canonical Matrix AI Gateway when no saved owner API key is available. Preview runtimes retain their own legitimate funding identity; primary-runtime tokens are not copied.
+- Hamed explicitly deferred Native Mobile live testing and the positive second-owner rating check. Automated Native tests and self-rating denial remain in scope. These deferrals are not passing live evidence.
+- Live product captures, current review status and the Slack tech-channel handoff must remain explicit before review-readiness is claimed.

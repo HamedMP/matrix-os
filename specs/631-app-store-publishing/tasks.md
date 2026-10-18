@@ -20,7 +20,7 @@
 
 ---
 
-Implementation tasks below are marked from the integrated stack. Remaining test/qualification boxes retain their original detailed acceptance scope until the exact final runtime and evidence are recorded. Planned test filenames were consolidated under `tests/gateway/app-store/` and related contract/platform/Gallery suites. Native Mobile live testing is deferred explicitly by Hamed.
+Implementation tasks below are marked from the integrated stack. Remaining test/qualification boxes retain their original detailed acceptance scope until the exact final runtime and evidence are recorded. Planned test filenames were consolidated under `tests/gateway/app-store/` and related contract/platform/Gallery suites. Native Mobile live testing and the positive second-owner rating check are deferred explicitly by Hamed. Preparation uses the canonical Matrix AI Gateway when eligible; a saved owner key is an explicitly consented alternative.
 
 ## Phase 1: Setup and spec (L0)
 
