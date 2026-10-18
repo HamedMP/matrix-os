@@ -49,7 +49,7 @@ describe('explicit isolated CI handoff without workflow_run delivery',()=>{
   if(kind==='tree')f.github.rest.git.getCommit.mockImplementation(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:commit_sha===execution?'0'.repeat(40):tree},parents:[{sha:pin}]}}));
   if(kind==='parent')f.github.rest.git.getCommit.mockImplementation(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:tree},parents:[{sha:base}]}}));
   if(kind==='branch')f.github.rest.repos.getBranch.mockImplementation(async({branch:requested}:any)=>({data:{name:requested,commit:{sha:pin}}}));
-  if(kind==='source')f.github.rest.repos.getCommit.mockImplementation(async({ref}:any)=>({data:{sha:ref,parents:[{sha:base},{sha:execution}],commit:{tree:{sha:tree}}}));
+  if(kind==='source')f.github.rest.repos.getCommit.mockImplementation(async({ref}:any)=>({data:{sha:ref,parents:[{sha:base},{sha:execution}],commit:{tree:{sha:tree}}}}));
   if(kind==='disabled')config.flag='false';if(kind==='pin')config.pin=base;
   await expect((await module()).requestIsolatedCiQualification(f.github,repo,f.context,pin,actualInputs,config)).rejects.toThrow();
   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
