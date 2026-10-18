@@ -101,7 +101,7 @@ describe('actual isolated CI handoff workflow graph',()=>{
   expect(evaluates(job.if,{flag:'false'})).toBe(false);
   expect(evaluates(job.if,{actualRef:`refs/heads/ci-execution/${'b'.repeat(40)}`})).toBe(false);
   expect(evaluates(job.if,{actualRef:`${ref}/extra`})).toBe(false);
-  expect(job.permissions).toEqual({actions:'write',contents:'read','pull-requests':'read'});
+  expect(job.permissions).toEqual({actions:'write',checks:'read',contents:'read','pull-requests':'read'});
   expect(job['timeout-minutes']).toBeLessThanOrEqual(70);
   expect(needs).toContain('isolated-ci-backend');
   expect(ci.jobs['ci-backend'].needs).toContain('isolated-ci-backend');
