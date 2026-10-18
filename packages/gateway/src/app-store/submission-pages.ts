@@ -52,3 +52,24 @@ export function retainSubmissionObservations(
   const terminal = remaining ? entries.filter(([, status]) => TERMINAL.has(status)).slice(-remaining) : [];
   return Object.fromEntries([...terminal, ...pending]);
 }
+
+/** An expired upload may have been deleted by the platform sweeper. Only an
+ * exact owner-scoped lookup may retire that baseline; page omissions and time
+ * alone cannot prove expiry. Reviews and published history are never evicted. */
+export async function reconcileMissingSubmissionObservations(
+ previous:Readonly<Record<string,string>>,rows:readonly SubmissionObservation[],
+ lookup:(versionId:string)=>Promise<SubmissionObservation|null>,resume?:string,
+):Promise<{rows:SubmissionObservation[];missing:string[];cursor?:string}>{
+ if(Object.keys(previous).length>MAX_OBSERVATIONS||rows.length>MAX_OBSERVATIONS)throw new Error('Submission observation limit');
+ const present=new Set(rows.map(row=>row.versionId)); // At most500, discarded each pass.
+ const candidates=Object.keys(previous).filter(id=>['submitting','awaiting_upload'].includes(previous[id])&&!present.has(id)).sort();
+ const start=resume?candidates.findIndex(id=>id>resume):0;
+ const offset=start<0?0:start;const ordered=[...candidates.slice(offset),...candidates.slice(0,offset)];
+ const result=[...rows],missing:string[]=[];let cursor:string|undefined;
+ for(const id of ordered.slice(0,4)){
+  cursor=id;
+  try{const current=await lookup(id);if(current===null)missing.push(id);else{if(current.versionId!==id)throw new Error('Submission identity mismatch');result.push(current);}}
+  catch(error:unknown){console.warn('[app-store] Upload observation lookup will retry',error instanceof Error?error.name:'UnknownError');}
+ }
+ return {rows:result,missing,...(cursor?{cursor}:{})};
+}
