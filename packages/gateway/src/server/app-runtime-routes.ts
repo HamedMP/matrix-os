@@ -1,3 +1,5 @@
+import {runtimeDistribution} from '../app-store/runtime-distribution.js';
+import {communityRecord} from '../app-store/provenance.js';
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -6,8 +8,6 @@ import {
   appSessionMiddleware,
   resolveAppBySlug,
   loadManifest,
-  computeDistributionStatus,
-  sandboxCapabilities,
   computeRuntimeState,
   deriveAppSessionKey,
   signAppSession,
@@ -61,11 +61,8 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
     if (!resolved.ok) return c.json({ error: "internal" }, 500);
     const appDir = resolved.entry.appDir;
     const runtimeState = await computeRuntimeState(result.manifest, appDir);
-    const distributionStatus = computeDistributionStatus(
-      result.manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    return c.json({ manifest: result.manifest, runtimeState, distributionStatus });
+    const distributionStatus = await runtimeDistribution(homePath,slug,result.manifest.listingTrust);
+    return c.json({ manifest: result.manifest, runtimeState, distributionStatus,distribution:await communityRecord(homePath,slug)?{trust:'community'}:{trust:'owner'} });
   });
 
   app.post("/api/apps/:slug/ack", appSessionBodyLimit, async (c) => {
@@ -83,10 +80,7 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
     if (manifest.scope !== "personal") {
       return c.json({ error: "scope_mismatch" }, 409);
     }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
+    const distributionStatus = await runtimeDistribution(homePath,slug,manifest.listingTrust);
     if (distributionStatus === "blocked") {
       return c.json({ error: "install_blocked_by_policy" }, 403);
     }
@@ -112,10 +106,7 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
     if (manifest.scope !== "personal") {
       return c.json({ error: "scope_mismatch" }, 409);
     }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
+    const distributionStatus = await runtimeDistribution(homePath,slug,manifest.listingTrust);
     if (distributionStatus === "blocked") {
       return c.json({ error: "install_blocked_by_policy" }, 403);
     }
@@ -168,10 +159,7 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
     if (manifest.scope !== "personal") {
       return c.json({ error: "scope_mismatch" }, 409);
     }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
+    const distributionStatus = await runtimeDistribution(homePath,slug,manifest.listingTrust);
     if (distributionStatus === "blocked") {
       return c.json({ error: "install_blocked_by_policy" }, 403);
     }
@@ -195,6 +183,7 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
     return c.json({
       token,
       expiresAt,
+      distribution:await communityRecord(homePath,slug)?{trust:'community'}:{trust:'owner'},
       launchUrl: `/apps/${slug}/?session=${encodeURIComponent(token)}`,
     });
   });

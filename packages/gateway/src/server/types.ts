@@ -11,6 +11,7 @@ export interface GatewayConfig {
 }
 
 export type ServerMessage =
+  | {type:"app-store:submission";versionId:string;status:string}
   | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
   | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }

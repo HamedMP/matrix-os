@@ -1,3 +1,5 @@
+import {communityRecord} from '../app-store/provenance.js';
+import {communityCapabilityGrant} from '../app-store/runtime-policy.js';
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
@@ -23,5 +25,8 @@ export async function readAppCapabilityGrant(homePath: string, app: string): Pro
   }
   const document = await readBoundedJsonFileWithIdentity(path, 65_536);
   if (!document) throw new Error("Invalid app capability policy");
-  return AppCapabilityPolicySchema.parse(document.value).apps[app] ?? null;
+  const policy=AppCapabilityPolicySchema.parse(document.value);
+  const community=await communityRecord(homePath,app);
+  const grant=policy.apps[app]??(community?policy.apps[`apps/${community.appSlug}`]??policy.apps[community.appSlug]:null)??null;
+  return community?communityCapabilityGrant(community,grant):grant;
 }
