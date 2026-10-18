@@ -8,6 +8,55 @@ afterEach(async () => { await Promise.all(dirs.splice(0).map(path => rm(path, {r
 async function fixture() { const home = await mkdtemp(join(tmpdir(), "matrix-discovery-")); dirs.push(home); return home; }
 async function transcript(home: string, relative: string, records: unknown[]) { const path = join(home, relative); await mkdir(path.slice(0,path.lastIndexOf("/")), {recursive:true}); await writeFile(path, records.map(record=>JSON.stringify(record)).join("\n")+"\n"); return path; }
 describe("local conversation discovery", () => {
+    it.each(["claude", "codex"] as const)("keeps a %s prompt spanning adjacent metadata reads", async (harness) => {
+        const home = await fixture();
+        const text = "Boundary prompt " + "x".repeat(80 * 1024);
+        const record = harness === "claude" ? {type:"user",message:{content:text}}
+            : {type:"response_item",payload:{role:"user",content:[{type:"input_text",text}]}};
+        const relative = harness === "claude" ? ".claude/projects/project/boundary.jsonl" : ".codex/sessions/boundary.jsonl";
+        await transcript(home, relative, [record]);
+        const result = await discoverLocalChats({home}, new AbortController().signal);
+        expect(result.sources.map(source => source.title)).toEqual([text.slice(0,160)]);
+    });
+    it("keeps explicit saved-title precedence when its record crosses the adjacent-read boundary", async () => {
+        const home = await fixture();
+        await transcript(home, ".claude/projects/project/saved-boundary.jsonl", [
+            {type:"user",message:{content:"Original prompt"}},
+            {type:"custom-title",padding:"x".repeat(80 * 1024),customTitle:"Saved garden conversation"},
+        ]);
+        const result = await discoverLocalChats({home}, new AbortController().signal);
+        expect(result.sources.map(source => source.title)).toEqual(["Saved garden conversation"]);
+    });
+    it("decodes a multibyte title only after joining adjacent byte reads", async () => {
+        const home = await fixture();
+        const text = "🌻 Garden tasks";
+        const record = {type:"user",message:{content:text}};
+        const line = JSON.stringify(record);
+        const prefixBytes = Buffer.byteLength(line.slice(0,line.indexOf("🌻")));
+        const filler = {type:"assistant",padding:""};
+        // The first byte of the four-byte flower is the final byte of the head read.
+        filler.padding = "x".repeat(64 * 1024 - 1 - prefixBytes - Buffer.byteLength(JSON.stringify(filler)) - 1);
+        await transcript(home, ".claude/projects/project/unicode-boundary.jsonl", [filler,record]);
+        const result = await discoverLocalChats({home}, new AbortController().signal);
+        expect(result.sources.map(source => source.title)).toEqual([text]);
+    });
+    it("still reads a complete tail prompt when a large record leaves a gap", async () => {
+        const home = await fixture();
+        await transcript(home, ".claude/projects/project/gapped-tail.jsonl", [
+            {type:"assistant",padding:"x".repeat(160 * 1024)},
+            {type:"user",message:{content:"Complete tail prompt"}},
+        ]);
+        const result = await discoverLocalChats({home}, new AbortController().signal);
+        expect(result.sources.map(source => source.title)).toEqual(["Complete tail prompt"]);
+    });
+    it("never joins fragments separated by unread bytes into an invented prompt", async () => {
+        const home = await fixture();
+        await transcript(home, ".claude/projects/project/gap-only.jsonl", [
+            {type:"user",message:{content:"Unread middle " + "x".repeat(160 * 1024)}},
+        ]);
+        const result = await discoverLocalChats({home}, new AbortController().signal);
+        expect(result.sources.map(source => source.title)).toEqual(["Claude Code conversation gap-only"]);
+    });
     it("uses the next human prompt after Claude command metadata, retaining saved-title precedence",async()=>{
         const home=await fixture();
         const command="<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>";
