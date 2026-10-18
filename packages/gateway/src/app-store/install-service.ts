@@ -1,3 +1,5 @@
+import {reconcileAbsentInstalls} from './install-receipts.js';
+import {installedMatches,recoverInstallPublications} from './install-recovery.js';
 import {withOwnerFileMutation} from '../owner-file-mutations.js';
 import {randomUUID} from 'node:crypto';
 import {AppStoreInstallJobSchema,type AppStoreInstallJob,type AppStoreInstallRequest,type AppStoreLocalState} from '@matrix-os/contracts/app-store-gateway';
@@ -10,7 +12,7 @@ import {AppStoreIdSchema} from '@matrix-os/contracts/app-store';import {isFsErro
 interface PrivateJob {job:AppStoreInstallJob;listingSlug:string;versionId:string;consentDigest:string;updatedAt:number;receiptPending:boolean}
 export function createStoreInstallService(options:{homePath:string;platform:AppStorePlatformClient;builder:LocalStoreBuilder}){
  const active=new Map<string,Promise<void>>(); // Cap2 and removed on settlement; durable jobs cap32 + TTL7days.
- const stop=new AbortController();let maintenance:Promise<void>|undefined;
+ const stop=new AbortController();let ready=false;let maintenance:Promise<void>|undefined;
  async function save(record:PrivateJob){await withStoreDirectory(options.homePath,['install-jobs',record.job.id],dir=>atomicPrivateFile(dir,'job.json',Buffer.from(JSON.stringify(record))));}
  async function records():Promise<PrivateJob[]>{return withStoreDirectory(options.homePath,['install-jobs'],async root=>{
   await sweepPrivateChildren(root,/^[0-9a-f-]{36}$/,7*86400_000,64);const rows:PrivateJob[]=[];
@@ -22,7 +24,12 @@ export function createStoreInstallService(options:{homePath:string;platform:AppS
    }finally{await dir.close();}
   }return rows;
  });}
- async function receipt(row:PrivateJob){if(!row.receiptPending)return;await options.platform.recordInstall(row.listingSlug,row.versionId);row.receiptPending=false;row.updatedAt=Date.now();await save(row);}
+ async function receipt(row:PrivateJob){return withOwnerFileMutation(options.homePath,async()=>{
+   const current=(await readStoreProvenance(options.homePath)).installs.find(record=>record.listingSlug===row.listingSlug&&record.versionId===row.versionId);
+   if(!current)return;let present=false;try{const {snapshotOwnerApp}=await import('./snapshot.js');present=(await snapshotOwnerApp(options.homePath,current.appSlug)).has('matrix.json');}catch(error:unknown){if(!isFsError(error,'ENOENT'))throw error;}
+   if(!present){if(row.receiptPending){row.receiptPending=false;row.updatedAt=Date.now();await save(row);}return;}
+   if(!row.receiptPending)return;await options.platform.recordInstall(row.listingSlug,row.versionId);row.receiptPending=false;row.updatedAt=Date.now();await save(row);
+  });}
  async function run(row:PrivateJob){
   try{
    row.job.status='building';await save(row);
@@ -49,12 +56,13 @@ export function createStoreInstallService(options:{homePath:string;platform:AppS
   return {installed:present,appSlug:record.appSlug,launchPath:`apps/${record.appSlug}`,versionId:record.versionId,version:record.version,updateAvailable:present&&Boolean(currentVersion&&currentVersion!==record.version)};
  }
  async function recover(){
-  const provenance=await readStoreProvenance(options.homePath);
+  ready=false;await recoverInstallPublications(options.homePath);ready=true;try{await withOwnerFileMutation(options.homePath,()=>reconcileAbsentInstalls(options.homePath,options.platform));}catch(error:unknown){console.warn('[app-store] Uninstall receipt will retry',error instanceof Error?error.name:'UnknownError');}const provenance=await readStoreProvenance(options.homePath);
   for(const row of await records()){
    if(active.has(row.job.id))continue;
    if(['queued','building'].includes(row.job.status)){
     const existing=provenance.installs.find(record=>record.listingSlug===row.listingSlug&&record.versionId===row.versionId);
-    row.job=existing?{id:row.job.id,status:'installed',appSlug:existing.appSlug,launchPath:`apps/${existing.appSlug}`}:{id:row.job.id,status:'failed',error:'unavailable'};row.receiptPending=Boolean(existing);await save(row);
+    const valid=existing&&await installedMatches(options.homePath,existing);
+    row.job=valid?{id:row.job.id,status:'installed',appSlug:existing!.appSlug,launchPath:`apps/${existing!.appSlug}`}:{id:row.job.id,status:'failed',error:'unavailable'};row.receiptPending=Boolean(valid);await save(row);
    }
    try{await receipt(row);}catch(error:unknown){console.warn('[app-store] Receipt reconciliation unavailable',error instanceof Error?error.name:'UnknownError');}
   }
@@ -63,8 +71,9 @@ export function createStoreInstallService(options:{homePath:string;platform:AppS
  return {
   recover,
   async start(listingSlug:string,input:AppStoreInstallRequest):Promise<AppStoreInstallJob>{return withOwnerFileMutation(options.homePath,async()=>{
-   if(stop.signal.aborted)throw new StoreError();const rows=await records();const duplicate=rows.find(row=>row.listingSlug===listingSlug&&row.versionId===input.versionId&&row.consentDigest===input.consent.capabilitiesDigest&&row.job.status!=='failed');
-   if(duplicate)return duplicate.job;if(active.size>=2||rows.length>=32)throw new StoreError('limit');
+   if(stop.signal.aborted||!ready)throw new StoreError();const rows=await records();const duplicate=rows.find(row=>row.listingSlug===listingSlug&&row.versionId===input.versionId&&row.consentDigest===input.consent.capabilitiesDigest&&row.job.status!=='failed');
+   if(duplicate){if(duplicate.job.status!=='installed')return duplicate.job;const existing=(await readStoreProvenance(options.homePath)).installs.find(row=>row.listingSlug===listingSlug&&row.versionId===input.versionId);if(existing&&await installedMatches(options.homePath,existing))return duplicate.job;duplicate.job={id:duplicate.job.id,status:'failed',error:'unavailable'};duplicate.receiptPending=false;await save(duplicate);}
+   if(rows.some(row=>row.listingSlug===listingSlug&&['queued','building'].includes(row.job.status)))throw new StoreError('conflict');if(active.size>=2||rows.length>=32)throw new StoreError('limit');
    const row:PrivateJob={job:{id:randomUUID(),status:'queued'},listingSlug,versionId:input.versionId,consentDigest:input.consent.capabilitiesDigest,updatedAt:Date.now(),receiptPending:false};await save(row);
    const task=run(row);active.set(row.job.id,task);void task.catch((error:unknown)=>console.warn('[app-store] Install task failed',error instanceof Error?error.name:'UnknownError')).finally(()=>active.delete(row.job.id));return {...row.job,status:'queued'};
   });},

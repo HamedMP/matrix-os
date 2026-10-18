@@ -12,8 +12,10 @@ export async function withStoreDirectory<T>(homePath:string,segments:readonly st
 }
 export async function atomicPrivateFile(directory:PinnedDirectory,name:string,bytes:Buffer):Promise<void>{
  const temporary=`tmp-${randomUUID()}`;const handle=await directory.openFile(temporary,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY);
- try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}
- try{await rename(`${directory.path}/${temporary}`,`${directory.path}/${name}`);}finally{try{await unlink(`${directory.path}/${temporary}`);}catch(error:unknown){if(!isFsError(error,'ENOENT'))throw error;}}
+ try{
+  try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}
+  await rename(`${directory.path}/${temporary}`,`${directory.path}/${name}`);
+ }finally{try{await unlink(`${directory.path}/${temporary}`);}catch(error:unknown){if(!isFsError(error,'ENOENT'))throw error;}}
 }
 /** Bounded recurring cleanup, skipping symlinks; called by services before admission. */
 export async function sweepPrivateChildren(directory:PinnedDirectory,pattern:RegExp,maxAgeMs:number,maxEntries=128):Promise<number>{
