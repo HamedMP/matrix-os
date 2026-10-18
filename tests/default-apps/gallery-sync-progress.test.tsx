@@ -4,6 +4,8 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "../../home/app-templates/connected-starter/src/App";
 import { ImportDialog } from "../../home/app-templates/connected-starter/src/ImportDialog";
+import SyncProgress from "../../home/app-templates/connected-starter/src/SyncProgress";
+import type { GallerySyncSnapshot } from "../../home/app-templates/connected-starter/src/generated-sync";
 import catalog from "../../home/system/app-gallery.json";
 import type { Definition } from "../../home/app-templates/connected-starter/src/types";
 const app = catalog.apps.find(a => a.id === "subscriptions") as Definition;
@@ -11,6 +13,11 @@ const account = { id: "gmail_work", service: "gmail", account_label: "Work", acc
 const snapshot = { appId: "subscriptions", runId: "d38f91fb-8ac6-421d-9476-7451e3137321", status: "running", stage: "reading", sources: [{ service: "gmail", label: "Work", email: "work@example.test", status: "running" }], steps: 2, added: 0, updated: 0, skipped: 0, keepUpdated: true, startedAt: "2026-10-19T00:00:00Z", updatedAt: "2026-10-19T00:00:01Z", lastCheckedAt: null, nextCheckAt: null, error: null };
 afterEach(() => { cleanup(); delete window.MatrixOS; vi.useRealTimers(); });
 describe("shared app sync experience", () => {
+  it.each(["failed", "paused"] as const)("does not claim zero saved records for a %s import without verified counts", status => {
+    render(<SyncProgress name="Subscriptions" snapshot={{ ...snapshot, status } as GallerySyncSnapshot} />);
+    expect(screen.queryByText("0 new · 0 updated")).toBeNull();
+    expect(screen.getByText("Saved records are available below.")).toBeTruthy();
+  });
   it("awaits actual acceptance, submits selected identities and never uses the chat handoff", async () => {
     let accept!: (value: unknown) => void;
     const gatewayFetch = vi.fn(() => new Promise(resolve => { accept = resolve; })), generate = vi.fn();

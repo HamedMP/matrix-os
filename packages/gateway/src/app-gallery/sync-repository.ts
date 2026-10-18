@@ -39,7 +39,7 @@ export class GallerySyncRepository {
     return this.db.transaction().execute(async trx => {
       await trx.insertInto("gallery_sync_owners").values({ owner_id: ownerId }).onConflict(oc => oc.column("owner_id").doNothing()).execute();
       await trx.selectFrom("gallery_sync_owners").selectAll().where("owner_id", "=", ownerId).forUpdate().executeTakeFirstOrThrow();
-      const current = await trx.selectFrom(table).selectAll().where("owner_id", "=", ownerId).where("app_id", "=", appId).executeTakeFirst();
+      const current = await trx.selectFrom(table).selectAll().where("owner_id", "=", ownerId).where("app_id", "=", appId).forUpdate().executeTakeFirst();
       if (current && current.selection.requestId === selection.requestId) {
         if (selectionKey(current.selection) !== selectionKey(selection)) throw new GallerySyncError("conflict");
         return current.snapshot;

@@ -36,8 +36,10 @@ function SourceProgress({ snapshot, active }: { snapshot: GallerySyncSnapshot; a
   </>;
 }
 function SyncResults({ snapshot, active }: { snapshot: GallerySyncSnapshot; active: boolean }) {
+  const stoppedWithoutCounts = ["failed", "paused"].includes(snapshot.status) && snapshot.added + snapshot.updated === 0;
   return <>
     {active ? <p className="sync-note">{snapshot.steps} processing steps finished. You can keep using this app. Records appear as they are saved.</p>
+      : stoppedWithoutCounts ? <p className="sync-note">Saved records are available below.</p>
       : <p className="sync-results">{snapshot.added} new · {snapshot.updated} updated{snapshot.skipped > 0 && ` · ${snapshot.skipped} skipped`}</p>}
     {snapshot.status === "partial" && <p className="sync-note">Some sources could not be fully processed. Review or retry to finish; automatic checks are waiting.</p>}
     {snapshot.error && <p className="sync-error">{errors[snapshot.error]}</p>}

@@ -147,8 +147,11 @@ export class GallerySyncService {
     } catch (error) {
       console.warn("[gallery-sync] Import stopped", error instanceof Error ? error.name : "UnknownError");
       if (!(error instanceof GallerySyncError && error.code === "conflict")) {
+        let counts: { added: number; updated: number } | undefined;
+        try { counts = await this.options.records(lease.appId, lease.snapshot.runId, new Date(lease.snapshot.startedAt!)); }
+        catch (failure) { console.warn("[gallery-sync] Saved-count verification unavailable", failure instanceof Error ? failure.name : "UnknownError"); }
         try {
-          await this.options.repository.finish(lease, { status: "failed", error: controller.signal.aborted ? "interrupted" : error instanceof GallerySyncError && error.code === "denied" ? "connection_changed" : error instanceof GallerySyncError && error.code === "invalid" ? "import_incomplete" : "unavailable",
+          await this.options.repository.finish(lease, { ...counts, status: "failed", error: controller.signal.aborted ? "interrupted" : error instanceof GallerySyncError && error.code === "denied" ? "connection_changed" : error instanceof GallerySyncError && error.code === "invalid" ? "import_incomplete" : "unavailable",
             sources: lease.snapshot.sources.map(s => s.status === "running" ? { ...s, status: "failed" } : s) }, this.now());
         } catch (failure) { if (!(failure instanceof GallerySyncError && failure.code === "conflict")) throw failure; }
       }

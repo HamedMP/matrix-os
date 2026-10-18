@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { upgradeGalleryStarters } from "../../packages/gateway/src/app-gallery/sync-upgrade";
 import catalog from "../../home/system/app-gallery.json";
+import shippedLegacy from "../../home/system/gallery-starter-legacy.json";
+import { manifestFor } from "../../packages/gateway/src/app-gallery/service";
 const definition = catalog.apps.find(a => a.id === "people")!;
 const html = '<script id="matrix-app-definition">__MATRIX_APP_DEFINITION__</script>';
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -13,7 +15,7 @@ const files = new Map([["src/App.tsx", Buffer.from("new app")], ["src/SyncProgre
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "gallery-upgrade-"));
   for (const path of ["src", "dist/assets"]) await mkdir(join(home, "apps/people", path), { recursive: true });
-  await writeFile(join(home, "apps/people/matrix.json"), JSON.stringify({ slug: "people", name: "People" }));
+  await writeFile(join(home, "apps/people/matrix.json"), JSON.stringify(manifestFor(definition)));
   await writeFile(join(home, "apps/people/src/definition.json"), JSON.stringify(definition));
   await writeFile(join(home, "apps/people/src/App.tsx"), "old app");
   await writeFile(join(home, "apps/people/dist/index.html"), html.replace("__MATRIX_APP_DEFINITION__", JSON.stringify(definition)));
@@ -35,4 +37,15 @@ it.each(["src/App.tsx", "dist/index.html", "dist/assets/old.js", "src/SyncProgre
   await writeFile(join(home, "apps/people", path), "owner customization");
   expect(await upgrade()).toEqual({ updated: [], preserved: ["people"] });
   expect(await readFile(join(home, "apps/people", path), "utf8")).toBe("owner customization");
+});
+it("recognizes the manifest and definition rewritten by the installer despite their raw starter signatures", async () => {
+  const legacy = { files: { "src/App.tsx": digest("old app"), "dist/assets/old.js": digest("old bundle"),
+    "matrix.json": shippedLegacy.files["matrix.json"], "src/definition.json": shippedLegacy.files["src/definition.json"] }, html };
+  expect(await upgradeGalleryStarters({ homePath: home, apps: [definition], files, legacy })).toEqual({ updated: ["people"], preserved: [] });
+});
+it("preserves an owner-customized manifest", async () => {
+  const path = join(home, "apps/people/matrix.json");
+  const manifest = JSON.parse(await readFile(path, "utf8"));
+  await writeFile(path, JSON.stringify({ ...manifest, permissions: ["network"] }));
+  expect(await upgrade()).toEqual({ updated: [], preserved: ["people"] });
 });

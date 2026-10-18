@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { rename, unlink } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import type { GalleryApp } from "@matrix-os/contracts/app-gallery";
 import { createPrivateStage, DEFAULT_LIMITS, isFsError, pinDirectory } from "./filesystem.js";
 import type { PinnedDirectory } from "./pinned-directory.js";
 import { withOwnerFileMutation } from "../owner-file-mutations.js";
+import { manifestFor } from "./service.js";
 
 export interface LegacyGalleryTemplate { files: Record<string, string>; html: string }
 const hash = (value: Buffer) => createHash("sha256").update(value).digest("hex");
@@ -52,8 +54,9 @@ export async function upgradeGalleryStarters(options: {
         const { iconDataUrl: _icon, ...original } = definition;
         if (JSON.stringify(original) !== JSON.stringify(app)) { result.preserved.push(app.id); return; }
         const manifestBytes = await read(installed, "matrix.json");
-        if (!manifestBytes || JSON.parse(manifestBytes.toString("utf8")).slug !== app.id) return;
+        if (!manifestBytes || !isDeepStrictEqual(JSON.parse(manifestBytes.toString("utf8")), manifestFor(app))) { result.preserved.push(app.id); return; }
         const next = new Map(options.files); // At most DEFAULT_LIMITS.maxFiles from the bounded bundled template.
+        next.delete("matrix.json");
         next.delete("src/definition.json");
         next.set("dist/index.html", inject(next.get("dist/index.html")!.toString("utf8"), definition));
         const currentHtml = await read(installed, "dist/index.html");
@@ -61,6 +64,8 @@ export async function upgradeGalleryStarters(options: {
         if (currentHtml.equals(next.get("dist/index.html")!)) return;
         if (!currentHtml.equals(inject(options.legacy.html, definition))) { result.preserved.push(app.id); return; }
         for (const [path, expected] of Object.entries(options.legacy.files)) {
+          // The installer rewrites these from the catalog; they were checked separately above.
+          if (path === "matrix.json" || path === "src/definition.json") continue;
           const current = await read(installed, path);
           if (!current || hash(current) !== expected && (!next.has(path) || !current.equals(next.get(path)!))) { result.preserved.push(app.id); return; }
         }

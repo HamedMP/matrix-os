@@ -82,6 +82,23 @@ describe("tracked Gallery sync", () => {
     clock = new Date("2026-10-20T00:00:00Z"); await service.tick();
     expect(next).not.toHaveBeenCalled();
   });
+  it("reports records already saved when a later account fails", async () => {
+    const other = { ...account, label: "Personal", connectionId: "gmail_personal", expectedEmail: "personal@example.test" };
+    inventory.mockResolvedValue([account, other].map(a => ({ ...a, email: a.expectedEmail })));
+    await service.start(owner, "people", { ...input, accounts: [account, other] });
+    let calls = 0; const complete = onDispatch;
+    onDispatch = async (message, event) => { if (++calls === 2) throw new Error("Provider unavailable"); await complete(message, event); };
+    readRecords.mockResolvedValue({ added: 3, updated: 1 });
+    await service.tick();
+    expect(await service.status(owner, "people")).toMatchObject({ status: "failed", error: "unavailable", added: 3, updated: 1, nextCheckAt: null });
+  });
+  it("retains the original import failure when saved-count verification is unavailable", async () => {
+    await service.start(owner, "people", input);
+    inventory.mockResolvedValue([]); readRecords.mockRejectedValue(new Error("Database unavailable"));
+    await service.tick();
+    expect(readRecords).toHaveBeenCalledOnce();
+    expect(await service.status(owner, "people")).toMatchObject({ status: "failed", error: "connection_changed", nextCheckAt: null });
+  });
   it("rejects account replacement, ambiguous labels, unsupported sources and missing installations", async () => {
     inventory.mockResolvedValue([{ ...account, connectionId: "replacement", email: account.expectedEmail }]);
     await expect(service.start(owner, "people", input)).rejects.toThrow();

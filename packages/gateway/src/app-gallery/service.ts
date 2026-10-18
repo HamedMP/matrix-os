@@ -24,7 +24,7 @@ export interface AppGalleryService {
   install(id: string): Promise<GalleryInstallResult>;
 }
 
-function manifestFor(definition: GalleryApp) {
+export function manifestFor(definition: GalleryApp) {
   return AppManifestSchema.parse({
     name: definition.name, slug: definition.id, description: definition.description,
     category: definition.category, icon: `gallery-${definition.id}`, author: "Matrix OS", version: "1.0.0",
