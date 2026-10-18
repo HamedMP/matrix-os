@@ -10,7 +10,7 @@
 #   2. build — compile gateway, shell, kernel into host bundle tarball
 #   3. publish — upload immutable R2 artifacts and register metadata in platform DB
 #   4. (optional) deploy — explicit dispatches may trigger exact-version VPS deployment
-#   5. activate-speech — verify speech even when a requested deployment fails
+#   5. activate-speech — reconcile AI and speech even when a requested deployment fails
 
 name: Host Bundle Release
 

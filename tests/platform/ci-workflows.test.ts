@@ -1133,7 +1133,7 @@ describe('CI workflows', () => {
     expect(targetedJob).toContain('.healthy == true and .runtimeVersion == $version');
     expect(targetedJob).toContain('{handle: $handle}');
     expect(targetedJob).toContain('.activated == 1 and .failed == 0 and .complete == true');
-    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-fleet');
+    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-managed-features');
     expect(targetedJob).toContain('::add-mask::$TARGET_HANDLE');
     expect(targetedJob).not.toContain('printf \'%s\\n\' "$FLEET_RESPONSE"');
   });
