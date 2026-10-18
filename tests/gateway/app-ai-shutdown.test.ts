@@ -17,7 +17,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   );
   const logBestEffortFailure = vi.fn();
   const dependencies = {
-    appAiRuntime, closeAppAiCapabilities, logBestEffortFailure,
+    appAiRuntime, appStoreRuntime: service("App Store"), closeAppAiCapabilities, logBestEffortFailure,
     jevInboxRuntime: null, chatDriveContext: service("drive"), matrixMcpCapabilities: service("mcp"),
     workspaceStartupRecoveryController: service("recovery"), terminalPasteAssetCleanup: service("paste"),
     chatIdleReaper: null, chatAttachmentCleanup: service("attachments"),
@@ -65,6 +65,8 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
     "anthropic.close", "chats.close", "bots.close", "providers.close", "Chat database.release",
     "app database.destroy", "platform database.destroy", "telemetry.shutdown", "HTTP.close",
   ]));
+  expect(shutdown.calls.indexOf("App Store.close")).toBeLessThan(shutdown.calls.indexOf("providers.close"));
+  expect(shutdown.calls.indexOf("App Store.close")).toBeLessThan(shutdown.calls.indexOf("funded credentials.close"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
 });
 
