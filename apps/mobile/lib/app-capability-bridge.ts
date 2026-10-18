@@ -28,13 +28,14 @@ function requestFor(app: string, kind: unknown, input: unknown): { path: string;
 
 /** A broker is scoped to one launch; navigation/unmount destroys every pending request. */
 export function createMobileAppCapabilityBroker(options: {
-  app: string; runtimeUrl: string; runtimeSlug?: string; launchId: string; request: MobileAppBridgeRequest; reply: (script: string) => void; openApp?: (name: string, path: string, signal?: AbortSignal) => Promise<void>;
+  app: string; runtimeUrl: string; runtimeSlug?: string; distribution?: "owner" | "community"; launchId: string; request: MobileAppBridgeRequest; reply: (script: string) => void; openApp?: (name: string, path: string, signal?: AbortSignal) => Promise<void>;
 }) {
   AppIdentitySchema.parse(options.app);
   const routeApp = new URL(options.runtimeUrl).pathname.match(/\/apps\/([a-z0-9][a-z0-9_-]{0,63})(?:\/|$)/)?.[1];
   // Explicit aliases come only from the authenticated native catalog/session flow.
   const runtimeSlug = options.runtimeSlug ?? appRuntimeSlugFromIdentity(options.app);
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(runtimeSlug) || routeApp !== runtimeSlug || appRuntimeNavigation(options.runtimeUrl, options.runtimeUrl) !== "internal") throw new Error("App launch unavailable");
+  const privilegedGallery = options.distribution !== "community" && isAppGalleryIdentity(options.app, runtimeSlug);
   const pending = new Map<number, AbortController>();
   let active = true;
   let documentId: string | null = null;
@@ -78,19 +79,20 @@ export function createMobileAppCapabilityBroker(options: {
     if (pending.size >= 32) { send({ ok: false }); return; }
     const controller = new AbortController();
     pending.set(id, controller);
-    const timeout = frame.kind === "gateway" && isAppGalleryIdentity(options.app, runtimeSlug) ? mobileGalleryTimeout((frame.input as { url?: unknown } | null)?.url) : TIMEOUT_MS;
+    const timeout = frame.kind === "gateway" && privilegedGallery ? mobileGalleryTimeout((frame.input as { url?: unknown } | null)?.url) : TIMEOUT_MS;
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
       const aborted = new Promise<never>((_resolve, reject) => {
         controller.signal.addEventListener("abort", () => reject(new Error("App request unavailable")), { once: true });
       });
       if (frame.kind === "openApp") {
-        if (!isAppGalleryIdentity(options.app, runtimeSlug) || !options.openApp) throw new Error("Invalid app action");
+        if (!privilegedGallery || !options.openApp) throw new Error("Invalid app action");
         const input = mobileGalleryOpenInput(frame.input);
         await Promise.race([options.openApp(input.name, input.path, controller.signal), aborted]);
         if (!controller.signal.aborted) send({ ok: true, body: null });
         return;
       }
+      if (frame.kind === "gateway" && !privilegedGallery) throw new Error("Invalid app request");
       const { path, init } = frame.kind === "gateway" ? mobileGalleryRequest(options.app, runtimeSlug, frame.input) : requestFor(options.app, frame.kind, frame.input);
       if (path === "/api/bridge/query" && (typeof init.body !== "string" || bytes(init.body) > MAX_APP_DATABASE_REQUEST_BYTES)) throw new Error("Invalid app request");
       const response = await Promise.race([options.request(path, { ...init, headers: { "content-type": "application/json" }, signal: controller.signal, redirect: "error" }), aborted]);
@@ -128,8 +130,8 @@ export function createMobileAppCapabilityBroker(options: {
 }
 
 /** Installed before app scripts; only request metadata enters the page. */
-export function buildMobileAppBridgeScript(app: string, launchId: string): string {
-  const gallery = isAppGalleryIdentity(app) ? `gatewayFetch:function(url,init){init=init||{};if(Object.keys(init).some(function(key){return ["method","headers","body"].indexOf(key)<0;})||init.headers&&Object.keys(init.headers).some(function(key){return key.toLowerCase()!=="content-type"||init.headers[key]!=="application/json";}))return Promise.reject(new Error("App request unavailable"));return call("gateway",{url:url,method:init.method||"GET",body:init.body});},openApp:function(name,path){return call("openApp",{name:name,path:path});},` : "";
+export function buildMobileAppBridgeScript(app: string, launchId: string, distribution?: "owner" | "community"): string {
+  const gallery = distribution !== "community" && isAppGalleryIdentity(app) ? `gatewayFetch:function(url,init){init=init||{};if(Object.keys(init).some(function(key){return ["method","headers","body"].indexOf(key)<0;})||init.headers&&Object.keys(init.headers).some(function(key){return key.toLowerCase()!=="content-type"||init.headers[key]!=="application/json";}))return Promise.reject(new Error("App request unavailable"));return call("gateway",{url:url,method:init.method||"GET",body:init.body});},openApp:function(name,path){return call("openApp",{name:name,path:path});},` : "";
   return `(function(){
     if(window.top && window.top!==window)return;
     var app=${JSON.stringify(app)}, launch=${JSON.stringify(launchId)}, documentId=Math.random().toString(36).slice(2)+Date.now().toString(36), pending={}, count=0, seq=0, subscriptions=[];

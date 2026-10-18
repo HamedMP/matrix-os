@@ -17,7 +17,7 @@ export default function AppPreviewScreen() {
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
   const runtimeSlugHint = Array.isArray(params.runtimeSlug) ? params.runtimeSlug[0] : params.runtimeSlug;
   const title = name || app || "App";
-  const { launchUrl, isPending, isError, requestAppBridge, resolveOpenApp, appIdentity, runtimeSlug } = useComputerAppSession(app ?? "", runtimeSlugHint);
+  const { launchUrl, isPending, isError, requestAppBridge, resolveOpenApp, appIdentity, runtimeSlug, distribution } = useComputerAppSession(app ?? "", runtimeSlugHint);
   const { theme } = useUnistyles();
   const router = useRouter();
   const openApp = useCallback(async (appName: string, path: string, signal?: AbortSignal) => {
@@ -34,7 +34,7 @@ export default function AppPreviewScreen() {
           <ActivityIndicator color={theme.v2.appColors.ink} />
         </View>
       ) : launchUrl ? (
-        <AppRuntimeFrame url={launchUrl} title={title} app={appIdentity} runtimeSlug={runtimeSlug} requestAppBridge={requestAppBridge} openApp={openApp} />
+        <AppRuntimeFrame url={launchUrl} title={title} app={appIdentity} runtimeSlug={runtimeSlug} distribution={distribution} requestAppBridge={requestAppBridge} openApp={openApp} />
       ) : (
         <View style={styles.centered}>
           <Text style={styles.title}>{isError ? "App session unavailable" : "App unavailable"}</Text>

@@ -48,3 +48,12 @@ describe("Native Mobile Gallery bridge", () => {
     expect(buildMobileAppBridgeScript("sample-notes", "launch")).not.toContain("gatewayFetch:function");
   });
 });
+
+it("uses authenticated community provenance to deny Gallery privileges even for a Gallery-looking identity", async () => {
+  const request = vi.fn(async () => new Response("{}")), reply = vi.fn();
+  const broker = createMobileAppCapabilityBroker({ app: "app-gallery", runtimeUrl: runtime, launchId: "launch", distribution: "community", request, reply }); brokers.push(broker);
+  await broker.receive(JSON.stringify({ type: "matrix:app-ready", launchId: "launch", documentId: "doc" }), runtime);
+  await broker.receive(JSON.stringify({ type: "matrix:app-request", launchId: "launch", documentId: "doc", id: 1, kind: "gateway", input: { url: "/api/app-store/status", method: "GET" } }), runtime);
+  expect(request).not.toHaveBeenCalled();
+  expect(buildMobileAppBridgeScript("app-gallery", "launch", "community")).not.toContain("gatewayFetch:function");
+});

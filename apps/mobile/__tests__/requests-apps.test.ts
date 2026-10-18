@@ -61,3 +61,8 @@ describe("app requests", () => {
     );
   });
 });
+
+it("preserves only trusted session distribution metadata alongside launch data", async () => {
+  jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: jest.fn().mockResolvedValue({ launchUrl: "/apps/notes/?session=fixture", expiresAt: 1800000000000, distribution: { trust: "community" }, token: "not-exposed-separately" }) } as unknown as Response);
+  await expect(createAppSession("owner-token", "https://app.matrix-os.com", "notes")).resolves.toEqual({ launchUrl: "/apps/notes/?session=fixture", expiresAt: 1800000000000, distribution: { trust: "community" } });
+});

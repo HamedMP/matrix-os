@@ -115,3 +115,12 @@ it("resolves Gallery opens against the fresh owner catalog instead of a renderer
   await expect(result.current.resolveOpenApp("Escape", "apps/../system")).rejects.toThrow("Invalid Gallery action");
   unmount();
 });
+
+it("denies Gallery routes and app opens when the authenticated session is community", async () => {
+  mockUseQuery.mockReset().mockReturnValueOnce({ data: { handle: "fixture", runtimeSlot: "live", gatewayPath: "/vm/fixture" } }).mockReturnValueOnce({ data: { appIdentity: "app-gallery", runtimeSlug: "app-gallery", distribution: { trust: "community" } } });
+  const { result, unmount } = renderHook(() => useComputerAppSession("app-gallery"));
+  await expect(result.current.requestAppBridge("/api/app-store/status", { signal: new AbortController().signal })).rejects.toThrow("App request unavailable");
+  await expect(result.current.resolveOpenApp("Notes", "apps/notes")).rejects.toThrow("App unavailable");
+  expect(result.current.distribution).toBe("community");
+  unmount();
+});

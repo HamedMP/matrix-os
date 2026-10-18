@@ -114,28 +114,29 @@ export function useComputerAppSession(slug: string, runtimeSlugHint?: string) {
   });
 
   const requestAppBridge = useCallback<MobileAppBridgeRequest>(async (path, init) => {
-    const gallery = session.data?.appIdentity && session.data.runtimeSlug
+    const gallery = session.data?.distribution?.trust !== "community" && session.data?.appIdentity && session.data.runtimeSlug
       ? isMobileGalleryRequestAllowed(session.data.appIdentity, session.data.runtimeSlug, path, init.method ?? "GET") : false;
     if (!authEnabled || !gatewayUrl || !init.signal || (!gallery && !/^\/api\/bridge\/(?:capabilities|query|ai|ai\/routes)(?:\?|$)/.test(path))) throw new Error("App request unavailable");
     const token = await getToken();
     if (!token) throw new Error("App request unavailable");
     return streamingFetch(`${gatewayUrl}${path}`, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, signal: init.signal, redirect: "error" });
-  }, [authEnabled, gatewayUrl, getToken, userId, session.data?.appIdentity, session.data?.runtimeSlug]);
+  }, [authEnabled, gatewayUrl, getToken, userId, session.data?.appIdentity, session.data?.runtimeSlug, session.data?.distribution?.trust]);
 
   const resolveOpenApp = useCallback(async (name: string, path: string) => {
     mobileGalleryOpenInput({ name, path });
-    if (!authEnabled || !gatewayUrl || session.data?.appIdentity !== "app-gallery" || session.data.runtimeSlug !== "app-gallery") throw new Error("App unavailable");
+    if (!authEnabled || !gatewayUrl || session.data?.appIdentity !== "app-gallery" || session.data.runtimeSlug !== "app-gallery" || session.data.distribution?.trust === "community") throw new Error("App unavailable");
     const token = await getToken(); if (!token) throw new Error("App unavailable");
     const installed = await fetchInstalledApps(token, gatewayUrl);
     const matches = installed.filter(app => path.startsWith("matrix-app:") ? getAppSlug(app) === path.slice(11) : `apps/${getAppIdentity(app)}` === path);
     if (matches.length !== 1) throw new Error("App unavailable");
     return { app: getAppIdentity(matches[0]), runtimeSlug: getAppSlug(matches[0]), name: matches[0].name };
-  }, [authEnabled, gatewayUrl, getToken, session.data?.appIdentity, session.data?.runtimeSlug]);
+  }, [authEnabled, gatewayUrl, getToken, session.data?.appIdentity, session.data?.runtimeSlug, session.data?.distribution?.trust]);
 
   return {
     requestAppBridge, resolveOpenApp,
     appIdentity: session.data?.appIdentity,
     runtimeSlug: session.data?.runtimeSlug,
+    distribution: session.data?.distribution?.trust,
     launchUrl: gatewayUrl && session.data
       ? resolveMobileAppSessionLaunchUrl(gatewayUrl, session.data.launchUrl)
       : null,
