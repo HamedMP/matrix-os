@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
+import { injectedAppBridgeToken } from "./app-frame-test-utils.js";
 
 const fileChangeHandlers: Array<(path: string, event: "add" | "change" | "unlink") => void> = [];
 let fileChangeHandler: ((path: string, event: "add" | "change" | "unlink") => void) | null = null;
@@ -481,10 +482,22 @@ describe("mobile shell", () => {
     await waitFor(() => expect(view.container.querySelector("iframe")).toBeTruthy());
     const iframe = view.container.querySelector("iframe")!;
     await waitFor(() => expect(iframe.getAttribute("srcdoc")).toContain("os:bridge"));
+    const bridgeToken = injectedAppBridgeToken(iframe);
+    for (const token of [undefined, "previous-document"]) {
+      const deniedPort = { postMessage: vi.fn(), close: vi.fn() };
+      act(() => window.dispatchEvent(new MessageEvent("message", {
+        source: iframe.contentWindow, origin: "null", ports: [deniedPort as unknown as MessagePort],
+        data: { type: "os:bridge-fetch", app: "subscriptions", bridgeToken: token, payload: {
+          url: "/api/bridge/capabilities", init: { method: "POST", body: JSON.stringify({ kind: "integrations.list" }) },
+        } },
+      })));
+      expect(finish).toBeUndefined();
+      expect(deniedPort.postMessage).not.toHaveBeenCalled();
+    }
     const port = { postMessage: vi.fn(), close: vi.fn() };
     act(() => window.dispatchEvent(new MessageEvent("message", {
-      source: iframe.contentWindow, origin: window.location.origin, ports: [port as unknown as MessagePort],
-      data: { type: "os:bridge-fetch", app: "subscriptions", payload: {
+      source: iframe.contentWindow, origin: "null", ports: [port as unknown as MessagePort],
+      data: { type: "os:bridge-fetch", app: "subscriptions", bridgeToken, payload: {
         url: "/api/bridge/capabilities", init: { method: "POST", body: JSON.stringify({ kind: "integrations.list" }) },
       } },
     })));
