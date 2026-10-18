@@ -1,3 +1,5 @@
+// Composition only, under 2,000 lines: new seams get server/ modules (brain-wiring.ts). Extraction plan: route families
+// per GATEWAY_ROUTE_GROUPS (server/route-inventory.ts); canonical Chat per specs/536-conversational-bots/plan.md.
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
@@ -33,7 +35,6 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
 import {
-  appendFile as appendFileAsync,
   mkdir as mkdirAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
@@ -150,6 +151,9 @@ import { createAgentCredentialStatusService } from "./onboarding/agent-credentia
 import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createCompanyBrainReadinessService } from "./onboarding/company-brain-readiness.js";
 import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
+import { createBrainApiRoutes, stopBrainServices } from "./brain/api/index.js";
+import { createBrainGatewayAgentTools, createBrainGatewayProjectErase, createBrainGatewayStart } from "./server/brain-wiring.js";
+import { createHealingLog, logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure } from "./server/gateway-logging.js";
 import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
@@ -828,9 +832,11 @@ export async function createGateway(config: GatewayConfig) {
   let collaborationFailClosedReason: GatewayCollaborationConfigurationFailure | null = collaborationHealth.configured
     ? null
     : collaborationHealth.reason;
+  const brainStart = createBrainGatewayStart(codingAgentOwnerIds);
   const ownerDatabaseStartup = await initializeOwnerDatabaseServices({
     databaseUrl,
     homePath,
+    brainIntegrations: brainStart.integrations, brainOwnerIds: brainStart.ownerIds,
     collaborationConfig,
     initialFailureReason: collaborationFailClosedReason,
     providerSnapshotReader: collaborationProviderSnapshots.reader,
@@ -888,6 +894,7 @@ export async function createGateway(config: GatewayConfig) {
     fundedCredentialProvider,
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
+    ...createBrainGatewayAgentTools(ownerDatabaseServices, brainStart.ownerIds),
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
@@ -918,25 +925,6 @@ export async function createGateway(config: GatewayConfig) {
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
 
-  function logBestEffortFailure(context: string, err: unknown): void {
-    console.warn(
-      `[gateway] ${context}:`,
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-
-  function logUnexpectedJsonParseFailure(context: string, err: unknown): void {
-    if (!(err instanceof SyntaxError)) {
-      logBestEffortFailure(context, err);
-    }
-  }
-
-  function logUnexpectedWsSendFailure(context: string, err: unknown): void {
-    if (!(err instanceof Error && /not open|not opened|closed/i.test(err.message))) {
-      logBestEffortFailure(context, err);
-    }
-  }
-
   // Platform integration services are constructed before auth and mounted below it.
   const platformIntegrations = await initializePlatformIntegrations({
     env: process.env,
@@ -944,21 +932,13 @@ export async function createGateway(config: GatewayConfig) {
   });
   platformDb = platformIntegrations.db;
   const pipedreamClient = platformIntegrations.client;
+  brainStart.bindIntegrations({
+    internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken, db: platformDb, pipedream: pipedreamClient,
+  });
   const integrationRoutes = platformIntegrations.routes;
   const resolveIntegrationUserId = platformIntegrations.resolveUserId;
 
-  function logHealing(message: string) {
-    const timestamp = new Date().toISOString();
-    const line = `[${timestamp}] [heal] ${message}\n`;
-    const logPath = join(homePath, "system/activity.log");
-    appendFileAsync(logPath, line).catch((err: unknown) => {
-      if (err instanceof Error) {
-        console.warn("[heal] failed to append activity log:", err.message);
-      } else {
-        console.warn("[heal] failed to append activity log:", String(err));
-      }
-    });
-  }
+  const logHealing = createHealingLog(homePath);
 
   function broadcast(msg: ServerMessage) {
     const json = JSON.stringify(msg);
@@ -1302,6 +1282,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
+  app.route("/api/brain", createBrainApiRoutes(ownerDatabaseServices?.brainServices ?? null, (c) => requireRequestPrincipal(c)));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const { shellRouteDeps, terminalWorkspaceProjectAdmission,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
@@ -1691,6 +1672,7 @@ export async function createGateway(config: GatewayConfig) {
   const deleteProjectChats = chatRepository && canonicalChatOrchestrator
     ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
     : async () => { throw new Error("Project chat cleanup unavailable"); };
+  const eraseProjectBrain = createBrainGatewayProjectErase(Boolean(databaseUrl), ownerDatabaseServices);
   app.route("/", createWorkspaceRoutes({
     homePath,
     backgroundRuntime: backgroundAgentRuntime,
@@ -1702,6 +1684,7 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     codingAgentThreadStore,
     deleteProjectChats,
+    eraseProjectBrain,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
     ...(gatewayCollaboration ? {
       projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
@@ -1711,6 +1694,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api", createShellRoutes(shellRouteDeps));
   const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
     deleteProjectChats,
+    eraseProjectBrain,
     homePath,
     backgroundRuntime: backgroundAgentRuntime,
     eventPublisher: workspaceEventPublisher,
@@ -1861,6 +1845,7 @@ export async function createGateway(config: GatewayConfig) {
 
   const server = serve({ fetch: app.fetch, port });
   injectWebSocket(server);
+  for (const job of ownerDatabaseServices?.brainServices?.jobs ?? []) job.start();
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,
     onError: (error) => logBestEffortFailure("Temporary Chat attachment cleanup failed", error),
@@ -1886,6 +1871,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await stopBrainServices(ownerDatabaseServices?.brainServices ?? null);
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();

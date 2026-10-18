@@ -54,7 +54,7 @@ describe("kernel canonical Chat adapter", () => {
         suppressAiGeneration: true,
       },
       expect.any(AbortController),
-      { model: "claude-sonnet-5", accessSourceId: "owner_anthropic_key" },
+      { model: "claude-sonnet-5", accessSourceId: "owner_anthropic_key", callerId: "owner_1" },
     );
     expect(events).toEqual([
       { type: "state.updated", state: { sessionId: "session_1" } },
@@ -68,6 +68,16 @@ describe("kernel canonical Chat adapter", () => {
         tokenUsage: { inputTokens: 11, outputTokens: 3 },
       },
     ]);
+  });
+
+  it("names no caller for a shared or an organization run, so neither gets the owner's brain tools", async () => {
+    const dispatch = vi.fn(async (_prompt, _sessionId, onEvent) => { await onEvent({ type: "aborted" }); });
+    const adapter = createKernelChatProviderAdapter({ dispatcher: { dispatch } as unknown as Dispatcher });
+    for (const input of [{ sharedScopeId: "scope_1" }, { owner: { type: "organization", ownerId: "org_1" } }]) {
+      for await (const _event of adapter.start(runInput(input))) { /* drain */ }
+    }
+    const overrides = { model: "claude-sonnet-5", accessSourceId: "owner_anthropic_key" };
+    expect(dispatch.mock.calls.map((call) => (call as unknown[])[5])).toEqual([overrides, overrides]);
   });
 
   it("resumes the recorded session and aborts the dispatcher with the canonical signal", async () => {

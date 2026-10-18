@@ -44,6 +44,8 @@ export interface BrainSourceHandlersDeps {
   readonly accounts?: BrainSourceAccounts;
   /** The Matrix home for file sources; "" turns matrix_files off. */
   readonly homePath: string;
+  /** Principals that may read the gateway's Notes and home (matrix_notes, matrix_files): its owner. Absent: nobody. */
+  readonly homeOwnerIds?: readonly string[];
   /** The owner's Notes reader; null turns matrix_notes off. */
   readonly notes: BrainMatrixNotesReader | null;
   /** The owner's ChatRepository; null turns matrix_chat off. */
@@ -109,9 +111,11 @@ export function createBrainSourceHandlers(
     }));
   }
   if (ready.includes("matrix_sources")) {
+    // Without an owner principal the gateway's Notes and home are never handed over at all.
+    const ownerIds = deps.homeOwnerIds ?? [], owned = ownerIds.length > 0;
     handlers.push(
-      createBrainMatrixNotesHandler({ kysely, notes: deps.notes }),
-      createBrainMatrixFilesHandler({ kysely, homePath: deps.homePath }),
+      createBrainMatrixNotesHandler({ kysely, notes: owned ? deps.notes : null, ownerIds }),
+      createBrainMatrixFilesHandler({ kysely, homePath: owned ? deps.homePath : "", ownerIds }),
       createBrainMatrixChatHandler({ kysely, chats: deps.chats }),
     );
   }

@@ -24,8 +24,8 @@ The owner-bound adapter behind the Matrix agent's read-only Company Brain tools:
 
 ## Auth And Trust Boundaries
 
-- The owner is bound once at registration (`resolveBrainAgentOwnerId()` from `api/agent-tools.ts`, the owner a
-  request without a JWT resolves to); the model never passes an owner, scope or checkout path, only a project id or
+- The owner is bound per run to its server-set `callerId`, only an owner principal (`brainToolsFor` in
+  `server/brain-wiring.ts`); the model never passes an owner, scope or checkout path, only a project id or
   slug, which each service resolves owner-scoped (a foreign or missing project reads as not found).
 - Failures map to fixed statuses: `project_not_found`, `entity_not_found`, `git_ref_not_found` to `not_found`;
   `invalid_request`, store `invalid` and zod errors to `invalid`; `vector_search_unavailable` and

@@ -1,7 +1,7 @@
 /**
- * The Matrix agent's Company Brain read tools (brain_search ... brain_impact): binds the gateway owner once, at
- * registration, passes each call to its feature service and maps every failure to one of the fixed statuses the
- * kernel tools show. brain_why keeps its own adapter in api/agent-tools.ts.
+ * The Matrix agent's Company Brain read tools (brain_search ... brain_impact): binds one owner (the run's caller),
+ * passes each call to its feature service and maps every failure to one of the fixed statuses the kernel tools show.
+ * brain_why keeps its own adapter in api/agent-tools.ts.
  */
 import { z } from "zod/v4";
 import { BrainApiError } from "../api/types.js";

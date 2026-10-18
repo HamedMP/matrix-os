@@ -18,8 +18,8 @@ The owner's own Matrix content as Company Brain sources: Notes (`matrix_notes`),
 
 ## Public API
 
-`index.ts`: `bootstrapBrainMatrixDatabase`, `createBrainMatrixNotesHandler({ kysely, notes })`,
-`createBrainMatrixNotesReader(appDb)`, `createBrainMatrixFilesHandler({ kysely, homePath })`,
+`index.ts`: `bootstrapBrainMatrixDatabase`, `createBrainMatrixNotesHandler({ kysely, notes, ownerIds })`,
+`createBrainMatrixNotesReader(appDb)`, `createBrainMatrixFilesHandler({ kysely, homePath, ownerIds })`,
 `createBrainMatrixChatHandler({ kysely, chats })`, the reader seams and `BRAIN_MATRIX_LIMITS`.
 
 ## Documents
@@ -34,8 +34,11 @@ Ids are `sha256(JSON.stringify([version, externalRef, ...tail]))`, never of cont
 
 ## Auth And Trust Boundaries
 
-- The sources service resolves the project and scope from the request principal; handlers never authorize.
-- Notes and files belong to the gateway's home owner. Chats are read only for ids in `chatIds`, only through
+- The sources service resolves the project and scope from the request principal; handlers never resolve either.
+- Notes and files belong to the gateway's home owner: only principals in the handler's `ownerIds` (the
+  `startBrainServices` `ownerIds`; absent or empty, nobody) see these kinds available or get an adapter. Anyone else,
+  such as a collaborator with a project of their own, reads `not_configured`, lists no folder, and a sync of such a
+  source is `source_not_connected`. Chats are read only for ids in `chatIds`, only through
   `ChatRepository.get` / `getMessages` with the owner `{ type: "personal", ownerId }`; a chat that is not the owner's
   reads as missing and its documents are swept.
 - Roots: home-relative, no `..`, no hidden segment, never `system`, `agents` or anything holding

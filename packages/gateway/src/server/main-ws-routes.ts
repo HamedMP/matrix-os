@@ -488,6 +488,7 @@ export function registerMainWebSocketRoutes(options: MainWebSocketRouteOptions):
                 accessSourceId: parsed.accessSourceId,
                 workingDirectory,
                 requestApproval: approvalBridge?.requestApproval,
+                callerId: connectionOwnerId,
               })
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
