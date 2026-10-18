@@ -372,7 +372,8 @@ jobs:
         with:
           script: |
             const result=process.env.ISOLATED_BACKEND_RESULT,attempt=process.env.ISOLATED_BACKEND_ATTEMPT,current=process.env.REQUESTING_ATTEMPT,provider=process.env.ISOLATED_BACKEND_PROVIDER,fallback=process.env.ISOLATED_BACKEND_FALLBACK;
-            if(result!=='success'||!/^[1-9][0-9]*$/.test(current||'')||attempt!==current||!['linux','hosted'].includes(provider)||!['true','false'].includes(fallback)||(provider==='linux'&&fallback!=='false'))throw new Error('No verified current-attempt isolated backend');
+            // This retained decision schedules lanes only; the aggregate requires fresh completion proof.
+            if(result!=='success'||!/^[1-9][0-9]*$/.test(current||'')||!/^[1-9][0-9]*$/.test(attempt||'')||!Number.isSafeInteger(Number(current))||!Number.isSafeInteger(Number(attempt))||Number(attempt)>Number(current)||!['linux','hosted'].includes(provider)||!['true','false'].includes(fallback)||(provider==='linux'&&fallback!=='false'))throw new Error('No valid isolated backend scheduling decision');
             core.setOutput('provider',provider);core.setOutput('infrastructure_fallback',fallback);
       - name: Decide exact-source execution backend
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)) }}
@@ -1309,11 +1310,14 @@ jobs:
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
           HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
           LINUX_REQUIRED: ${{ needs.changes.outputs.dedicated_eligible }}
+          BACKEND_ATTEMPT: ${{ needs.isolated-ci-backend.outputs.attempt }}
+          BACKEND_PROVIDER: ${{ needs.isolated-ci-backend.outputs.provider }}
+          BACKEND_FALLBACK: ${{ needs.isolated-ci-backend.outputs.infrastructure_fallback }}
         with:
           script: |
             const {pathToFileURL}=require('node:url'),{resolve}=require('node:path');
             const {requestIsolatedCiCompletion}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-ci-handoff.mjs')).href);
-            const result=await requestIsolatedCiCompletion(github,context.repo,{...context,runId:context.runId,runAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA},process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,linuxRequired:process.env.LINUX_REQUIRED==='true'});
+            const result=await requestIsolatedCiCompletion(github,context.repo,{...context,runId:context.runId,runAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA},process.env.CONTROLLER_SHA,context.payload.inputs,{pin:process.env.CONTROLLER_SHA,flag:process.env.ISOLATED_EXECUTION,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,linuxRequired:process.env.LINUX_REQUIRED==='true',backendAttempt:Number(process.env.BACKEND_ATTEMPT),backendProvider:process.env.BACKEND_PROVIDER,backendInfrastructureFallback:process.env.BACKEND_FALLBACK==='true'});
             core.setOutput('attempt',String(result.attempt));
 
   ci-results:
