@@ -265,3 +265,21 @@ describe('isolated execution with reviewed-source authority',()=>{
   await expect(admitDedicatedSource(f.github,{repo,controller:f.currentController,eventName:'workflow_dispatch',payload:f.payload})).rejects.toThrow();
  });
 });
+
+it('keeps PR workflow-run execution on main until isolation is explicitly enabled, then routes it away',async()=>{
+ const {readFileSync}=await import('node:fs'),{parse}=await import('yaml');const workflow=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
+ const source={id:321,event:'pull_request',head_sha:head,head_branch:'child',run_attempt:1,display_title:`CI coverage-v1 · ${merge}`};
+ const github={ref:'refs/heads/main',event_name:'workflow_run',event:{action:'requested',workflow_run:source}};
+ const admits=(vars:any)=>Function('vars','github','startsWith','contains',`return (${jsCondition(workflow.jobs.benchmark.if)});`)(vars,github,(text:string,prefix:string)=>text.startsWith(prefix),contains);
+ const legacy={MATRIX_CI_DEDICATED_ENABLED:'true'};
+ expect(admits(legacy)).toBe(true);
+ expect(admits({...legacy,MATRIX_CI_ISOLATED_EXECUTION:'false'})).toBe(true);
+ expect(admits({...legacy,MATRIX_CI_ISOLATED_EXECUTION:'true'})).toBe(false);
+});
+it('continues genuine main Linux execution after auxiliary isolation is enabled',async()=>{
+ const {readFileSync}=await import('node:fs'),{parse}=await import('yaml');const workflow=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
+ const source={id:321,event:'push',head_sha:main,head_branch:'main',run_attempt:1,display_title:`CI coverage-v1 · ${main}`};
+ const github={ref:'refs/heads/main',event_name:'workflow_run',event:{action:'requested',workflow_run:source}};
+ const vars={MATRIX_CI_DEDICATED_ENABLED:'true',MATRIX_CI_DEDICATED_MAIN:'true',MATRIX_CI_ISOLATED_EXECUTION:'true'};
+ expect(Function('vars','github','startsWith','contains',`return (${jsCondition(workflow.jobs.benchmark.if)});`)(vars,github,(text:string,prefix:string)=>text.startsWith(prefix),contains)).toBe(true);
+});
