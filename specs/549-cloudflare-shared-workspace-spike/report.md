@@ -1,6 +1,6 @@
 # Immediate Web Desktop and disposable compute
 
-The isolated preview works locally through Cloudflare's native APIs with the
+The isolated preview works remotely through Cloudflare's native APIs with the
 **actual Matrix gateway, dispatcher and Claude Agent SDK**. Shared data works
 without a running container. Existing personal VPS routes remain alongside it.
 This is a spike, not a released Free plan or a production onboarding change.
@@ -24,7 +24,44 @@ This is a spike, not a released Free plan or a production onboarding change.
 
 ## Measurements and limits
 
-All timings below are **local** Wrangler/Miniflare plus Docker on Apple Silicon
+The remote Worker, Queue, Durable Object, Container, R2 and Hyperdrive path passed
+against isolated Postgres databases. The production-built Next frontend ran on
+the developer machine against those live APIs. These are individual observations,
+not fleet percentiles or a deployed frontend performance claim.
+Sanitized results: [remote-evidence.json](./remote-evidence.json).
+
+| Remote boundary | Observed |
+|---|---:|
+| Saved-data bootstrap with compute stopped | 127–202 ms |
+| Production-built Web Desktop visible | 1.17 seconds |
+| Saved file visible in the actual File Browser, compute still asleep | 1.52 seconds |
+| First queued real-gateway wake, before agent work | 74.2 seconds |
+| Agent reading shared input, including a 20s tool wait and durable result | 72.9 seconds |
+| Replacement restoring a private file and publishing its result | 50.8 seconds |
+| Completion to sleeping, including 15s idle grace and checkpoint | 18.2–21.4 seconds |
+| Maximum sampled VM used memory | 1.20 GiB |
+| Maximum sampled gateway RSS | 739 MiB |
+| Restore-verification agent inference | $0.0341263 |
+| Saved native archive | 97,391,005 bytes |
+
+The two completed agent jobs extended their persisted leases by 66.7s and 46.2s.
+Neither had a browser attached. A later real browser visit also started compute
+in the background; it remained running after the browser closed, then slept.
+Concurrent live dock-position and dock-size patches both remained saved.
+
+Native VM cgroup counters were unavailable. Memory above samples
+`MemTotal - MemAvailable` every three seconds; it is not an exact peak, process
+RSS total, or billable allocation. The tested instance was **standard-2: 6 GiB,
+1 vCPU, 12 GB disk**. A smaller remote shape has not been qualified.
+
+One earlier remote agent attempt failed and was interrupted without a completed
+output. Its cause remains unresolved. A fresh retry after adding safe RPC
+diagnostics passed both tasks. This small sample does not establish reliability.
+Image preparation also took several minutes; a tiny diagnostic image prepared
+in 16.9s. Pinning the actual amd64 manifest removed index ambiguity, but does not
+establish the cause of the preparation delay.
+
+Earlier timings below are **local** Wrangler/Miniflare plus Docker on Apple Silicon
 with Linux/amd64 emulation, source/tsx gateway imports and real external Postgres
 and inference. They are not Cloudflare remote latency or fleet percentiles.
 Raw sanitized results and boundaries: [evidence.json](./evidence.json).
@@ -81,18 +118,19 @@ or keeping both in sync as one filesystem, is **not implemented** here.
 
 ## Deployment and follow-ups
 
-Cloudflare resources created: an empty isolated R2 bucket and primary/dead-letter
-Queues. Remote Worker/container deployment and Hyperdrive connection creation
-were held after automatic approval review rejected exporting test credentials.
-No Worker secrets were uploaded. The local test used those credentials only on
-this computer. Two isolated database/role pairs separate shared control data
-from the agent's kernel database; the agent never receives the shared DB secret.
+After explicit user approval, the isolated deployment used Workers, Queues,
+Durable Objects, native Containers, R2 and Hyperdrive. Postgres remains the data
+source of truth; inference used the existing real gateway's Haiku route. Two
+disposable database/role pairs separate shared control data from the agent's
+kernel database; the agent never receives the shared DB secret. Four approved
+secrets were stored on the test Worker, never in its image or checkpoints.
 
-After validation, both test databases/roles, the empty remote R2 bucket and both
-Queues were removed. Local preview processes, the native container/proxy,
-checkpoint state and secret copies were also removed. No remote container,
-Hyperdrive config or Worker secret was created. Unmerged code worktrees remain
-available for review; customer resources were preserved.
+The Worker and secrets, container application, both Queues, Hyperdrive, ten R2
+objects (681 MB), bucket, two databases/roles and both registry image tags were
+removed and their absence checked. Local preview processes and test image tags
+were removed. Unmerged code worktrees remain available for review; customer
+resources were preserved. A saved archive scan found none of the five test
+secret values. Local credential copies are removed after evidence collection.
 
 Before a public rollout:
 
@@ -106,17 +144,30 @@ Before a public rollout:
    unfinished. The preview states these limitations visibly.
 3. Delete superseded native archives only after their replacement pointer is
    durable, and sweep unreferenced archives with bounded retention. The current
-   disposable test's archives are removed with its local state. The R2 file
-   adapter includes a bounded reference-aware collector for staged text objects.
+   disposable test's archives are removed with its test bucket. An hourly
+   reference-aware text-object collector already uses a persisted cursor, fenced
+   lease, bounded page and 24-hour grace. Native archive retention is unfinished.
 4. Wire real plan placement/admission and upgrade migration, preserve all OS-view
-   surfaces, and measure remote cold/warm latency and failures under concurrency.
+   surfaces, qualify smaller shapes and compiled-gateway startup, and measure
+   cold/warm latency and failures under concurrency.
+
+The Web Desktop screenshot and recording use a local production frontend with a
+live Cloudflare backend. A deployed UI capture, the required surface review and
+Slack evidence sharing remain review-readiness gates; this PR stays a draft.
+Web Canvas, Electron Desktop, Web Mobile and Native Mobile do not expose this
+isolated web preview entry. Their N/A rationale still needs reviewer approval.
 
 Separate public documentation: [site draft PR #264](https://github.com/FinnaAI/matrix-os-site/pull/264).
 
-Validation: **112 focused tests and 2 real Postgres integration tests passed**;
+Validation: **230 focused tests and 2 real Postgres integration tests passed**;
 Worker and shell typechecks passed. Native integration and browser checks above
 are additional live checks. Test failures were observed before the associated
 implementation fixes, including native SDK behavior that unit fixtures missed.
+The production shell build passed. The changed-code React audit passed without
+errors; remaining warnings concern bounded configuration parsing and existing
+Appearance complexity. The full repository audit still reports unrelated debt. The pattern scanner
+flags the Worker entrypoint and in-process Hono `app.fetch()` as external fetches;
+manual review confirms both are local dispatch, not network requests.
 
 ## Reproduction
 

@@ -1,5 +1,5 @@
 ---
-status: local-validated-remote-approval-pending
+status: completed
 ---
 
 # Cloudflare shared workspace spike

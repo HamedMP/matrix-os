@@ -81,10 +81,21 @@ The local actual-Matrix gateway/agent test recorded a **30.7-second task**,
 **1.41 GiB peak container memory**, and **$0.0453432 AI usage**. This single task is not a monthly average; its AI cost exceeds either
 5%-CPU Free subtotal above.
 
-At this report's preparation, remote Cloudflare container wake was still
-unmeasured, pending approval to install the isolated preview's required secrets.
-Neither the 15-second startup assumption nor production-scale isolation,
-checkpoint overhead or utilization has been verified remotely.
+Remote validation measured a first queued gateway wake of **74.2 seconds**,
+followed by about **18–22 seconds** from completion to sleeping. The two real
+agent tasks reached durable output in 72.9s (including a 20s tool wait) and 50.8s
+(including private-file restore). The restore task used **$0.0341263** of AI.
+These are individual source/tsx gateway observations on standard-2, not fleet
+percentiles. Maximum sampled VM used memory was 1.20 GiB; billing remains 6 GiB.
+
+As a conservative sensitivity, replace the illustrative startup/idle overhead
+with **74s + 22s per session**. The same Free and Starter scenarios become
+3,720 and 45,600 resident seconds. Standard-2 container-only charges are then
+**$0.0626–$0.1334 Free** and **$0.7679–$1.6353 Starter**, from 5% to full CPU.
+Attributed DO duration adds about $0.0060 and $0.0730 respectively. AI, Postgres,
+storage, requests and all other exclusions above remain additional. Repeated
+archive retention must be bounded: this spike's saved archive was about 97 MB.
+No invoice-level cost or production-scale utilization has been measured.
 
 **Sleeping accounts can have almost zero marginal container cost.** Durable
 storage and shared services still cost money. A viable Free plan therefore needs
