@@ -270,10 +270,14 @@ qualification does not depend on delivery of a recursive `workflow_run` event.
 After the selected workloads settle, a separate completion job dispatches
 reconciliation before the required aggregate. The aggregate rejects a failed
 or cancelled handoff and requires completion proof for the current attempt. A
-failed-only retry may retain an older successful backend job; completion then
+failed-only retry may retain an older successful backend job. GitHub can clone
+that job’s API record into the new attempt, so its protected output records
+ownership. A retained provider decision schedules lanes only; completion then
 requests fresh Linux qualification and verifies its immutable current-attempt
 receipt before reconciling. Infrastructure unavailability is not full coverage
-for that retained job; use a full rerun to select hosted recovery. An aggregate-only
+for that retained job; use a full rerun to select hosted recovery. Current-attempt
+hosted recovery still requires its verified infrastructure receipt and all
+required hosted workloads. An aggregate-only
 retry without fresh completion fails with explicit rerun guidance.
 
 Reconciliation waits at most three minutes for the real

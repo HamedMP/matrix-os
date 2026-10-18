@@ -41,16 +41,20 @@ export async function requestIsolatedCiCompletion(github,repo,context,pin,inputs
   const {data}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:context.runId,filter:'latest',per_page:100,request});
   if(!Array.isArray(data.jobs)||data.total_count!==data.jobs.length||data.jobs.length>100)throw new Error('Incomplete isolated CI backend inventory');
   const matches=data.jobs.filter(job=>job.name==='Isolated CI Backend Decision'),backend=matches[0];
-  if(matches.length!==1||!id(backend.id)||backend.run_id!==context.runId||!id(backend.run_attempt)||backend.run_attempt>context.runAttempt||backend.head_sha!==value.run.head_sha||backend.head_branch!==value.run.head_branch||backend.status!=='completed'||!['success','failure','cancelled','timed_out','action_required','startup_failure'].includes(backend.conclusion))throw new Error('Invalid isolated CI backend ownership');
-  if(backend.run_attempt<context.runAttempt){
-   if(backend.conclusion!=='success')throw new Error('Retained isolated CI backend did not succeed');
-   // A failed-only retry can retain the earlier backend job. Its old receipt
-   // never qualifies this attempt: dispatch and verify a new immutable receipt.
-   await requestIsolatedCiQualification(github,repo,context,pin,inputs,configuration);
-   qualificationDispatched=true;
+  if(matches.length!==1||!id(backend.id)||backend.run_id!==context.runId||backend.run_attempt!==context.runAttempt||backend.head_sha!==value.run.head_sha||backend.head_branch!==value.run.head_branch||backend.status!=='completed'||!['success','failure','cancelled','timed_out','action_required','startup_failure'].includes(backend.conclusion))throw new Error('Invalid isolated CI backend ownership');
+  const owner=configuration.backendAttempt;
+  if(backend.conclusion==='success'){
+   if(!id(owner)||owner>context.runAttempt)throw new Error('Invalid successful isolated CI backend output attempt');
+   if(!['linux','hosted'].includes(configuration.backendProvider)||typeof configuration.backendInfrastructureFallback!=='boolean'||configuration.backendProvider==='linux'&&configuration.backendInfrastructureFallback)throw new Error('Invalid successful isolated CI backend outputs');
+   // GitHub clones retained job rows into the current attempt. The protected
+   // backend output preserves its real attempt; only a new receipt is coverage.
+   if(owner<context.runAttempt){
+    await requestIsolatedCiQualification(github,repo,context,pin,inputs,configuration);
+    qualificationDispatched=true;
+   }
    const {waitForDedicatedResult}=await import('./dedicated-result.mjs');
-   await waitForDedicatedResult(github,{...repo,...value.source,requestingRunId:context.runId,requestingRunAttempt:context.runAttempt,controllerSha:pin,mode:'delegated',imageDigest:configuration.imageDigest,harnessDigest:configuration.harnessDigest,serverUrl:context.serverUrl??'https://github.com'});
-  }
+   await waitForDedicatedResult(github,{...repo,...value.source,requestingRunId:context.runId,requestingRunAttempt:context.runAttempt,controllerSha:pin,mode:'delegated',imageDigest:configuration.imageDigest,harnessDigest:configuration.harnessDigest,serverUrl:context.serverUrl??'https://github.com'},{allowInfrastructureFallback:owner===context.runAttempt&&configuration.backendProvider==='hosted'&&configuration.backendInfrastructureFallback});
+  }else if(owner!==undefined&&owner!==0&&owner!==context.runAttempt)throw new Error('Retained isolated CI backend did not succeed');
  }
  // Reauthenticate after any long qualification wait before posting completion.
  value=await self(github,repo,context,pin,inputs,configuration);
