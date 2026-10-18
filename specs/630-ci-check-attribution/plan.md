@@ -21,3 +21,20 @@ PR refresh and preview failures must belong to their execution commit. Main must
 5. Verify real isolated refresh/qualification/preview outcomes and the complete Main check/status rollup. Never fabricate passes or delete diagnostic history.
 
 Internal CI infrastructure has no product UI surface. Operator documentation: [fast CI](../../docs/dev/fast-ci.md#isolating-auxiliary-checks-from-main). Public product docs remain unchanged.
+
+## Explicit CI handoff follow-up
+
+[PR #2707](https://github.com/HamedMP/matrix-os/pull/2707) makes isolated CI
+explicitly enqueue qualification and terminal reconciliation, with the actual
+requester authenticated before dispatch or App credentials. A separate late
+handoff job avoids waiting for CI inside its qualification controller; failed
+handoffs fail the aggregate. Completion polling has one absolute three-minute
+deadline across nested API reads. Controller history retains a lower time bound
+derived from the authenticated requester, including across cursor pages.
+
+Acceptance: remote tests first; current-head Greptile 5/5 and full CI; genuine
+new Main qualification; protected exact-tree child activation; automatic CI
+canary with immutable evidence and complete Main rollup. Existing protection,
+old refs, receipts, runner limits and the enabled isolation flag are retained.
+Stakeholder review of this internal CI behavior is suggested through the PR;
+no separate approval gate or product documentation change is introduced.

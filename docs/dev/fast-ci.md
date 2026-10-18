@@ -230,13 +230,13 @@ ref protection, exact tree/parent proof and fresh PR-head checks remain required
 operators drain legacy jobs during rollout. CI grants retain their independent
 live configuration checks.
 
-### Staged activation
+### Initial staged activation
 
 1. Merge only after current-head Greptile 5/5 and genuine complete PR CI. Leave
    the isolation flag false/unset while the new Main commit completes genuine
    Main qualification through the existing route.
 2. Protect `ci-execution/*`, create its tree-identical execution commit, and
-   read back the exact parent, tree and ref. Add only that protected ref pattern
+   read back the exact parent, tree and ref. Add only that exact protected branch
    to the existing CI environment's allowed deployment branches when required.
 3. Follow the host-first controller procedure: genuine Main coverage, idle
    host, preserved policy backup, one reviewed controller append, and exact
@@ -256,3 +256,33 @@ live configuration checks.
 
 Do not replace failures with synthetic passing checks, hide failing tests with
 `continue-on-error`, or delete diagnostic history to produce a green badge.
+
+### Explicit isolated CI handoff
+
+An isolated PR refresh explicitly dispatches its own Linux qualification from
+its existing dispatch-capable routing job. It authenticates its actual run,
+attempt, workflow, protected execution origin and current PR source first.
+Main routing remains routing-only; the isolated self-handoff never suppresses
+its real workloads. Hosted-only refreshes retain their full hosted path.
+Automatic events for authenticated isolated requesters are duplicate no-ops;
+qualification does not depend on delivery of a recursive `workflow_run` event.
+
+After the selected workloads settle, a separate completion job dispatches
+reconciliation before the required aggregate. The aggregate rejects a failed
+or cancelled handoff. Reconciliation waits at most three minutes for the real
+requester to become terminal, before receiving App credentials; its actual
+success, failure or cancellation remains authoritative. The qualification
+controller never waits for completion of its requesting CI, avoiding a cycle.
+Dispatch transport ambiguity is not automatically retried.
+
+Controller history searches start ten minutes before the independently
+authenticated requester's creation time. Pagination retains that lower bound,
+along with existing request and same-second caps. Missing or malformed requester
+timestamps fail closed. An empty bounded search is missing evidence, never a
+passing qualification.
+
+For subsequent pin upgrades, keep isolation enabled. Fully qualify the new Main
+commit, reuse the existing execution protection, create a new exact-tree child,
+and add only its exact environment branch while preserving existing policies.
+Pause and drain auxiliary work, approve the new controller on the idle host,
+advance the pin last, and resume. Retain older execution refs and receipts.
