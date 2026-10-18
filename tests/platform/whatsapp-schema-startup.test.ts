@@ -9,6 +9,7 @@ import { PLATFORM_SCHEMA_REVISION } from '../../packages/platform/src/database/m
 import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
 import { FUNDED_PROBE_CACHE_REVISION } from '../../packages/platform/src/database/funded-probe-cache-revision.js';
 import { WHATSAPP_SCHEMA_REVISION } from '../../packages/platform/src/database/whatsapp-migration-revision.js';
+import { APP_STORE_SCHEMA_REVISION } from '../../packages/platform/src/app-store/migration-revision.js';
 import { GOOGLE_TRACKING_REVISION } from '../../packages/platform/src/billing/google-tracking-revision.js';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -63,6 +64,7 @@ describe('WhatsApp schema startup', () => {
         SELECT scope, generation, fingerprint FROM platform_schema_revisions ORDER BY scope
       `.execute(db);
       expect(revisions.rows).toEqual([
+        { scope: 'app-store', ...APP_STORE_SCHEMA_REVISION },
         { scope: 'billing-google-purchases', ...GOOGLE_TRACKING_REVISION },
         { scope: 'core', ...PLATFORM_SCHEMA_REVISION },
         { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },

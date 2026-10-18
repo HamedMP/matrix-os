@@ -59,13 +59,16 @@ describe("explicit computer API isolation", () => {
       const port = { postMessage: vi.fn(), close: vi.fn() };
       await handleBridgeFetch("games/chess", {
         url: "/api/bridge/service", init: {
-          method: "POST", headers: { authorization: "Bearer page-token", "x-platform-user-id": "page-owner" },
+          method: "POST", headers: { authorization: "Bearer page-token", "x-platform-user-id": "page-owner", "x-matrix-app-identity": "other-app" },
           body: JSON.stringify({ app: "other-app", service: "google-drive", action: "list_files" }),
         },
       }, port, new AbortController().signal);
       const [url, init] = fetcher.mock.calls.at(-1)! as unknown as [string, RequestInit];
       expect(url).toBe(`https://matrix.test/vm/${computer}/~runtime/${runtime}/api/bridge/capabilities`);
-      expect(init.headers).toEqual({ "content-type": "application/json" });
+      expect(Object.fromEntries(new Headers(init.headers))).toEqual({
+        "content-type": "application/json",
+        "x-matrix-app-identity": "games/chess",
+      });
       expect(JSON.parse(init.body as string)).toEqual({ app: "games/chess", input: { kind: "integrations.call", service: "google-drive", action: "list_files" } });
       expect(init.redirect).toBe("error");
       expect(init.signal).toBeInstanceOf(AbortSignal);

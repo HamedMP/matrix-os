@@ -73,7 +73,12 @@ it('helps a new owner find their first app from the installed-app empty state', 
 });
 
 it('distinguishes unavailable installed inventory from a successfully empty collection and supports retry', async () => {
-  const gatewayFetch=vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue({version:1,apps:[]});
+  const inventoryFetch=vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue({version:1,apps:[]});
+  const gatewayFetch=vi.fn(async (url: string) => {
+    if (url === '/api/app-store/status') return { enabled:false, reviewer:false, signingKeys:[] };
+    if (url === '/api/app-gallery') return inventoryFetch();
+    throw new Error('Unexpected Gallery request');
+  });
   window.MatrixOS={integrations:async()=>[],gatewayFetch};
   render(<Gallery/>);
   expect(await screen.findByRole('heading',{name:'Your apps are unavailable'})).toBeTruthy();
@@ -82,6 +87,7 @@ it('distinguishes unavailable installed inventory from a successfully empty coll
   fireEvent.click(screen.getByRole('button',{name:'Try again'}));
   expect(await screen.findByRole('heading',{name:'No apps yet'})).toBeTruthy();
   expect(screen.queryByRole('heading',{name:'Your apps are unavailable'})).toBeNull();
+  expect(inventoryFetch).toHaveBeenCalledTimes(2);
 });
 
 it('announces a named install failure after collection switches',async()=>{
