@@ -1,3 +1,5 @@
+import { migrateMarketingAttribution, rememberMarketingAttribution } from '../../packages/platform/src/billing/marketing-attribution-store.js';
+import { claimCheckoutAttempt } from '../../packages/platform/src/db.js';
 import { migrateGooglePurchases } from '../../packages/platform/src/billing/google-tracking-migration.js';
 import { Kysely, sql } from 'kysely';
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
@@ -13,6 +15,7 @@ async function fixture() {
   const kysely = new Kysely<PlatformDatabase>({ dialect: instance.dialect });
   await migratePlatformSchema(kysely);
   await migrateGooglePurchases(kysely);
+  await migrateMarketingAttribution(kysely);
   await bootstrapPlatformCollaborationDatabase(kysely as never);
   await bootstrapPlatformOrganizationDatabase(kysely as never);
   const wrap = (executor: PlatformDB['executor']): PlatformDB => ({ kysely, executor, ready: Promise.resolve(),
@@ -26,9 +29,15 @@ describe('account deletion personal database cleanup', () => {
       await db.executor.insertInto('billing_google_purchases').values({ subscription_id: 'sub_cleanup', transaction_id: 'in_cleanup',
         clerk_user_id: 'user_empty', payload: '{"clientId":"123.456"}', created_at: '2026-10-15', sent_at: null, attempts: 0,
         available_at: '2026-10-15', lease_until: null, lease_token: null }).execute();
+      const at = new Date().toISOString();
+      for (const owner of ['user_empty', 'user_other']) {
+        const { attempt } = await claimCheckoutAttempt(db, { id: `erase_${owner}`, clerkUserId: owner, runtimeSlot: 'primary', planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1', createdAt: at });
+        await rememberMarketingAttribution(db, attempt.id, owner, { rdt_cid: 'fixture-click' }, at);
+      }
       await expect(assertDeletionOwnershipSafe(db, 'user_empty')).resolves.toBeUndefined();
       await expect(eraseOwnerPlatformData(db, 'user_empty')).resolves.toBeUndefined();
       expect(await db.executor.selectFrom('billing_google_purchases').selectAll().execute()).toEqual([]);
+      expect(await db.executor.selectFrom('billing_marketing_checkout_attribution').select('clerk_user_id').execute()).toEqual([{ clerk_user_id: 'user_other' }]);
       await expect(eraseOwnerPlatformData(db, 'user_empty')).resolves.toBeUndefined();
     } finally { await db.destroy(); }
   });
