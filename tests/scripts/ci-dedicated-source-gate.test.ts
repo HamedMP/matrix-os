@@ -378,7 +378,7 @@ it('keeps a successfully dispatched fresh requester pending, but fails closed if
  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
  await reconcile(f);expect(lastWrite(f)).toMatchObject({status:'in_progress'});expect(lastWrite(f)).not.toHaveProperty('conclusion');
  const rejected=fixture();rejected.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
- rejected.github.rest.actions.createWorkflowDispatch.mockRejectedValue(new Error('Dispatch denied'));
+ rejected.github.rest.actions.createWorkflowDispatch.mockRejectedValue(Object.assign(new Error('Dispatch denied'),{status:403}));
  await expect(reconcile(rejected)).rejects.toThrow('Dispatch denied');
  expect(lastWrite(rejected)).toMatchObject({status:'completed',conclusion:'failure',output:{title:'Fresh requesting CI could not be dispatched'}});
 });
@@ -400,7 +400,7 @@ it('does not refresh an already active requester when a ready PR still has its d
 });
 it('retries a denied dispatch instead of treating its failed timestamp as accepted work',async()=>{
  const f=fixture();f.pull.labels=[{name:'fast-ci'},{name:'ready-for-ci'}];
- f.github.rest.actions.createWorkflowDispatch.mockRejectedValueOnce(new Error('Dispatch denied'));
+ f.github.rest.actions.createWorkflowDispatch.mockRejectedValueOnce(Object.assign(new Error('Dispatch denied'),{status:403}));
  await expect(reconcile(f)).rejects.toThrow('Dispatch denied');
  const prior={id:10,name:'CI Source Qualification',head_sha:head,...lastWrite(f),app:{id:777,slug:'matrix-ci-gate'}};
  f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.check_name==='CI Source Qualification'?[prior]:[]}}));
@@ -466,6 +466,19 @@ describe('bounded full-scope maintenance',()=>{
   expect(writtenPrs(f)).toHaveLength(8);expect(result).toMatchObject({examined:9,deferred:0});
   expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
  });
+ it('accepts a manual main workflow definition newer than its authenticated reviewed checkout pin',async()=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');
+  const runInfo=(await f.github.rest.actions.getWorkflowRun()).data;
+  f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:{...runInfo,event:'workflow_dispatch',head_sha:'9'.repeat(40)}} as any);
+  await run(f);expect(writtenPrs(f)).toHaveLength(8);
+ });
+ it.each(['candidate-branch','malformed-head'])('denies manual maintenance with %s workflow origin',async kind=>{
+  const f=maintenanceFixture(8,'2026-10-18T00:00:00.000Z');
+  const runInfo=(await f.github.rest.actions.getWorkflowRun()).data;
+  f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:{...runInfo,event:'workflow_dispatch',head_branch:kind==='candidate-branch'?'child':'main',head_sha:kind==='malformed-head'?'bad':head}} as any);
+  await expect(run(f)).rejects.toThrow('Untrusted manual maintenance checkout');
+  expect(writtenPrs(f)).toHaveLength(0);expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
  it('covers every PR in three bounded eight-PR scheduled batches without qualifying untouched PRs',async()=>{
   const seen=new Set<number>();
   for(let slot=0;slot<3;slot++){
@@ -516,7 +529,7 @@ it.each(['off-main','rollback'])('denies a well-formed %s replacement controller
  await reconcile(f);expect(lastWrite(f)).toMatchObject({conclusion:'failure',output:{title:'Reviewed execution configuration is incomplete'}});
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
 });
-it.each(['current-source','requester','qualification','dispatch'])('does not convert admitted-path %s deadline deferral into a failure check',async stage=>{
+it.each(['current-source','requester','qualification'])('does not convert admitted-path %s deadline deferral into a failure check',async stage=>{
  const f=completeFixture();let now=Date.UTC(2026,9,18);const clock=vi.spyOn(Date,'now').mockImplementation(()=>now);
  const run={...f.controller,id:123,event:'schedule',head_sha:main,head_branch:'main',created_at:'2026-10-18T00:00:00Z'};
  const history=f.github.rest.actions.getWorkflowRun.getMockImplementation()!;
@@ -529,11 +542,6 @@ it.each(['current-source','requester','qualification','dispatch'])('does not con
  if(stage==='requester'||stage==='qualification'){
   const original=f.github.rest.actions.listWorkflowRuns.getMockImplementation()!;let searches=0;
   f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>{const value=await original(args);if(++searches===(stage==='requester'?1:3))now+=240001;return value;});
- }
- if(stage==='dispatch'){
-  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[]}});
-  const create=f.gateGithub.rest.checks.create.getMockImplementation()!;
-  f.gateGithub.rest.checks.create.mockImplementation(async args=>{const value=await create(args);if(JSON.parse(args.output.summary).prNumber>0)now+=240001;return value;});
  }
  try{
   const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
@@ -587,6 +595,66 @@ describe('reserved requester dispatch admission',()=>{
   const pendingApiCalls=baseline.pendingApiCalls();expect(pendingApiCalls).toBeGreaterThan(0);expect(pendingApiCalls).toBeLessThan(256);
   const f=dispatchFixture();const first=await f.run(pendingApiCalls);
   expect(first).toMatchObject({budgetDeferred:true,deferred:1});expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ });
+ it.each(['network','timeout','server'])('does not duplicate an invoked requester dispatch with an ambiguous %s outcome',async kind=>{
+  const f=dispatchFixture(),error=kind==='timeout'?new DOMException('Request aborted','AbortError'):Object.assign(new Error('Outcome unknown'),kind==='server'?{status:503}:{});
+  f.github.rest.actions.createWorkflowDispatch.mockRejectedValueOnce(error);
+  await expect(f.run()).rejects.toThrow(error.message);
+  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(lastWrite(f).output.summary)).not.toHaveProperty('refreshDispatchFailed');
+  await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ });
+ it('retains duplicate suppression after a successful requester dispatch consumes the remaining deadline',async()=>{
+  const f=dispatchFixture();let now=Date.UTC(2026,9,18);const clock=vi.spyOn(Date,'now').mockImplementation(()=>now);
+  f.github.rest.actions.createWorkflowDispatch.mockImplementation(async()=>{now+=240001;return{data:{}};});
+  try{
+   await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+   await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+   const writes=[...f.gateGithub.rest.checks.create.mock.calls,...f.gateGithub.rest.checks.update.mock.calls].map(([args])=>args).filter(args=>JSON.parse(args.output.summary).prNumber===2454);
+   expect(writes.every(args=>args.conclusion===undefined)).toBe(true);
+  }finally{clock.mockRestore();}
+ });
+ it('retains the attempt marker when the reserved provider method receives an already-aborted absolute deadline',async()=>{
+  const f=dispatchFixture();let now=Date.UTC(2026,9,18),advance=true;
+  const clock=vi.spyOn(Date,'now').mockImplementation(()=>now),create=f.gateGithub.rest.checks.create.getMockImplementation()!;
+  f.gateGithub.rest.checks.create.mockImplementation(async args=>{const value=await create(args);if(advance&&JSON.parse(args.output.summary).prNumber===2454){advance=false;now+=240001;}return value;});
+  f.github.rest.actions.createWorkflowDispatch.mockImplementation(async(args:any)=>{expect(args.request.signal.aborted).toBe(true);throw new DOMException('Request aborted','AbortError');});
+  try{
+   expect(await f.run()).toMatchObject({budgetDeferred:true,deferred:1});
+   expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+   await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+   const writes=[...f.gateGithub.rest.checks.create.mock.calls,...f.gateGithub.rest.checks.update.mock.calls].map(([args])=>args).filter(args=>JSON.parse(args.output.summary).prNumber===2454);
+   expect(writes.every(args=>args.conclusion===undefined)).toBe(true);
+  }finally{clock.mockRestore();}
+ });
+ it('does not invoke the requester method after an ambiguous marker write and preserves its possible durable marker',async()=>{
+  const f=dispatchFixture(),create=f.gateGithub.rest.checks.create.getMockImplementation()!;let ambiguous=true;
+  f.gateGithub.rest.checks.create.mockImplementation(async args=>{const value=await create(args);if(ambiguous&&JSON.parse(args.output.summary).prNumber===2454){ambiguous=false;throw new Error('Marker outcome unknown');}return value;});
+  await expect(f.run()).rejects.toThrow('Marker outcome unknown');expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  await f.run();expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ });
+ it.each(['admission','marker-validation'])('retries corrected configuration after known pre-issuer %s failure without inventing an attempt timestamp',async phase=>{
+  const f=dispatchFixture();let broken=true,sourceSeen=false,reads=0;
+  const commit=f.github.rest.repos.getCommit.getMockImplementation()!,variables=f.github.rest.actions.listRepoVariables.getMockImplementation()!;
+  f.github.rest.repos.getCommit.mockImplementation(async(args:any)=>{const value=await commit(args);if(args.ref===merge)sourceSeen=true;return value;});
+  f.github.rest.actions.listRepoVariables.mockImplementation(async()=>{
+   const value=await variables();
+   if(broken&&sourceSeen&&++reads>=(phase==='admission'?1:2))return{data:{...value.data,variables:value.data.variables.map((entry:any)=>entry.name==='MATRIX_CI_CONTROLLER_SHA'?{...entry,value:'9'.repeat(40)}:entry)}};
+   return value;
+  });
+  Object.assign(f.github.rest.repos,{compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'diverged',merge_base_commit:{sha:base}}}))});
+  await expect(f.run()).rejects.toThrow('Reviewed execution configuration changed');
+  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+  expect(JSON.parse(lastWrite(f).output.summary)).not.toHaveProperty('refreshDispatchedAt');
+  broken=false;await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ });
+ it('does not discard an existing possible requester attempt after a marker issuer403 rejection',async()=>{
+  const f=dispatchFixture();await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+  const update=f.gateGithub.rest.checks.update.getMockImplementation()!;let denied=true;
+  f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{if(denied&&JSON.parse(args.output.summary).prNumber===2454){denied=false;throw Object.assign(new Error('Issuer denied'),{status:403});}return update(args);});
+  await expect(f.run()).rejects.toThrow('Issuer denied');
+  expect(JSON.parse(lastWrite(f).output.summary)).not.toHaveProperty('refreshDispatchFailed');
   await f.run();expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
  });
 });

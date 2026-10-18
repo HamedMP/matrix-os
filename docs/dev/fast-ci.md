@@ -58,6 +58,12 @@ checks; deferral never grants qualification or turns missing coverage into
 success. PR-specific events still reconcile their scope immediately. The
 schedule is a trigger cadence, not a guaranteed refresh deadline.
 
+Manual full-scope reconciliation also requires an authenticated main workflow;
+its workflow-definition head may differ from the separately reviewed checkout pin.
+Requester dispatch reserves its API slot before recording the attempt; known
+pre-call deferral can retry, while ambiguous marker or dispatch outcomes retain
+duplicate suppression. Only an explicit rejected dispatch permits an immediate retry.
+
 A controller superseded by a later reviewed pin on main stops before writing
 checks or dispatching work. Invalid configuration and unauthenticated replacement
 pins still fail closed. An operator pin change requires the rollout steps below.

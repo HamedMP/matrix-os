@@ -19,23 +19,24 @@ export function reconciliationCycle(source,issuer,repo,controller,options){
  const calls=limits.maxApiCalls??256,milliseconds=limits.maxMilliseconds??240000;
  if(!Number.isSafeInteger(calls)||calls<1||calls>256||!Number.isSafeInteger(milliseconds)||milliseconds<1||milliseconds>240000)throw new Error('Invalid maintenance limits');
  const deadline=bounded?Date.now()+milliseconds:Infinity;
- const aborter=new AbortController();let used=0,stopped;
+ const aborter=new AbortController();let used=0,reserved=0,stopped;
  const stop=(reason,kind='budget')=>{if(!stopped){stopped=new DeferredReconciliation(reason);stopped.kind=kind;}throw stopped;};
  const assertAvailable=()=>{
   if(stopped)throw stopped;
-  if(bounded&&(Date.now()>=deadline||used>=calls||aborter.signal.aborted))stop('Maintenance deferred at its reviewed budget');
+  if(bounded&&(Date.now()>=deadline||used+reserved>=calls||aborter.signal.aborted))stop('Maintenance deferred at its reviewed budget');
  };
  const timer=bounded?setTimeout(()=>aborter.abort(),milliseconds):undefined;timer?.unref?.();
+ const invoke=async(target,method,args={},admitted=false)=>{
+  if(!admitted)assertAvailable();used++;
+  const remaining=bounded?Math.max(1,Math.floor(deadline-Date.now())):10000;
+  if(admitted&&bounded&&Date.now()>=deadline)aborter.abort();
+  const request={...args.request,timeout:Math.min(args.request?.timeout??10000,remaining),
+   ...(bounded?{signal:args.request?.signal?AbortSignal.any([args.request.signal,aborter.signal]):aborter.signal}:{})};
+  try{return await method.call(target,{...args,request});}
+  catch(error){if(!admitted&&(stopped||bounded&&(Date.now()>=deadline||aborter.signal.aborted)))stop('Maintenance deferred at its reviewed deadline');throw error;}
+ };
  const wrap=client=>({...client,rest:Object.fromEntries(Object.entries(client.rest).map(([namespace,methods])=>[namespace,new Proxy(methods,{get(target,key){
-  const method=target[key];if(typeof method!=='function')return method;
-  return async(args={})=>{
-   assertAvailable();used++;
-   const remaining=bounded?Math.max(1,Math.floor(deadline-Date.now())):10000;
-   const request={...args.request,timeout:Math.min(args.request?.timeout??10000,remaining),
-    ...(bounded?{signal:args.request?.signal?AbortSignal.any([args.request.signal,aborter.signal]):aborter.signal}:{})};
-   try{return await method.call(target,{...args,request});}
-   catch(error){if(stopped||bounded&&(Date.now()>=deadline||aborter.signal.aborted))stop('Maintenance deferred at its reviewed deadline');throw error;}
-  };
+  const method=target[key];return typeof method==='function'?(args={})=>invoke(target,method,args):method;
  }})]))});
  const github=wrap(source),gateGithub=wrap(issuer);
  const generation=async values=>{
@@ -68,5 +69,21 @@ export function reconciliationCycle(source,issuer,repo,controller,options){
   beforeDispatch:async(hostedRecovery=false)=>{
    const values=await readReviewedConfiguration(github,repo);
    if(!await generation(values)&&!(hostedRecovery&&missingHostedConfiguration(values)))throw new Error('Reviewed execution configuration changed before dispatch');
+  },
+  dispatchAfterMarker:async(hostedRecovery,marker,args,onDispatchAttempt)=>{
+   const values=await readReviewedConfiguration(github,repo);
+   if(!await generation(values)&&!(hostedRecovery&&missingHostedConfiguration(values)))throw new Error('Reviewed execution configuration changed before dispatch');
+   assertAvailable();
+   // Keep the final request slot unavailable to the marker's configuration read/write.
+   if(bounded&&used+reserved+3>calls)stop('Maintenance deferred before requester dispatch admission');
+   reserved++;let unused=true;
+   try{
+    await marker();
+    reserved--;unused=false;
+    // From this point the provider method is attempted, even if its signal is already
+    // aborted. Its outcome is ambiguous; never turn it into a local pre-call deferral.
+    onDispatchAttempt?.();
+    return await invoke(source.rest.actions,source.rest.actions.createWorkflowDispatch,args,true);
+   }finally{if(unused)reserved--;}
   },close:()=>clearTimeout(timer)};
 }

@@ -40,10 +40,11 @@ async function ownedGate(github,repo,pull,workflow,appId){
   const runId=Number(check.details_url.slice(prefix.length));
   if(!id(runId)||evidence?.schemaVersion!==1||evidence.prNumber!==pull.number||evidence.controllerRef!=='refs/heads/main'||!sha.test(evidence.controllerSha||'')||!id(evidence.controllerAttempt))continue;
   const run=await recordedControllerAttempt(github,repo,runId,evidence.controllerAttempt);
-  if(run.id!==runId||run.run_attempt!==evidence.controllerAttempt||run.workflow_id!==workflow.id||run.path!==path||!['pull_request_target','workflow_run','schedule','push'].includes(run.event)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))continue;
+  if(run.id!==runId||run.run_attempt!==evidence.controllerAttempt||run.workflow_id!==workflow.id||run.path!==path||!['pull_request_target','workflow_run','schedule','push','workflow_dispatch'].includes(run.event)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))continue;
   // Scheduled/main-push definitions must never inherit a candidate-branch
   // run's app identity. PTR metadata describes the live PR head separately.
   if(['push','schedule'].includes(run.event)&&(run.head_branch!=='main'||!sha.test(run.head_sha||'')))continue;
+  if(run.event==='workflow_dispatch'&&(run.head_branch!=='main'||!sha.test(run.head_sha||'')))continue;
   if(pull.number===0&&(evidence.sourceKind!=='main'||evidence.headSha!==pull.head.sha||run.head_branch!=='main'||(run.event==='workflow_run'&&run.head_sha!==pull.head.sha)))continue;
   if(run.event==='pull_request_target'&&(run.head_sha!==pull.head.sha||run.head_branch!==pull.head.ref))continue;
   if(run.event==='workflow_run'&&run.head_branch!=='main'&&(run.head_sha!==pull.head.sha||run.head_branch!==pull.head.ref))continue;
@@ -112,7 +113,8 @@ export async function reconcileSourceQualification(github,repo,controller,option
   const catalog=[];for await(const pull of pulls)catalog.push(pull);candidates=catalog.length;
   if(candidates){
    const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:options.runId,request});
-   if(run.id!==options.runId||run.run_attempt!==options.runAttempt||run.workflow_id!==workflow.id||run.path!==path||!['schedule','push','workflow_run','pull_request_target'].includes(run.event)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))throw new Error('Untrusted maintenance slot origin');
+   if(run.id!==options.runId||run.run_attempt!==options.runAttempt||run.workflow_id!==workflow.id||run.path!==path||!['schedule','push','workflow_run','pull_request_target','workflow_dispatch'].includes(run.event)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))throw new Error('Untrusted maintenance slot origin');
+   if(run.event==='workflow_dispatch'&&(run.head_branch!=='main'||!sha.test(run.head_sha||'')))throw new Error('Untrusted manual maintenance checkout');
    pulls=maintenanceBatch(catalog,run.created_at);
   }else pulls=[];
  }
@@ -148,11 +150,12 @@ export async function reconcileSourceQualification(github,repo,controller,option
   // Otherwise its already-running hosted replacement becomes older than itself.
   if(sameRecovery){evidence.recoveryStartedAt=old.recoveryStartedAt;evidence.recoveryAfterRunId=old.recoveryAfterRunId;}
   let currentCheck=prior?.check;
-  const write=async(conclusion,title,extra={})=>{
+  const write=async(conclusion,title,extra={},onIssuerAttempt)=>{
    await cycle.beforeWrite(conclusion,extra.notApplicable===true,recovery);
    const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,...(conclusion?{status:'completed',conclusion}:{status:'in_progress'}),request,output:{title,summary:JSON.stringify({...evidence,...extra})}};
    if(args.output.summary.length>4096)throw new Error('Source gate evidence exceeds bounded summary');
    const update=currentCheck&&(conclusion||currentCheck.status==='in_progress');
+   onIssuerAttempt?.();
    const {data:written}=update?await options.gateGithub.rest.checks.update({...args,check_run_id:currentCheck.id}):await options.gateGithub.rest.checks.create({...args,name,head_sha:pull.head.sha});
    if(written.app?.id!==options.gateAppId||written.app?.slug==='github-actions'||written.name!==name||written.head_sha!==pull.head.sha)throw new Error('Dedicated gate App issuer response mismatch');
    currentCheck=written;
@@ -200,10 +203,18 @@ export async function reconcileSourceQualification(github,repo,controller,option
   if(!requester){
    const duplicate=prior?.evidence.refreshDispatchFailed!==true&&prior?.evidence.refreshDispatchedAt&&prior.evidence.executionMode===snapshot.executionMode&&prior.evidence.sourceSha===snapshot.sourceSha&&prior.evidence.baseSha===snapshot.baseSha&&(!recovery||(prior.evidence.recoveryStartedAt===evidence.recoveryStartedAt&&prior.evidence.recoveryAfterRunId===evidence.recoveryAfterRunId))&&Date.now()-Date.parse(prior.evidence.refreshDispatchedAt)<30*60*1000;
    const refresh=duplicate?{refreshDispatchedAt:prior.evidence.refreshDispatchedAt}:{refreshDispatchedAt:new Date().toISOString()};
-   await write(null,recovery?'Waiting for fresh exact-source hosted replacement':'Waiting for fresh exact-source hosted and Linux coverage',refresh);
+   let markerAttempted=false,dispatchAttempted=false;
+   const marker=()=>write(null,recovery?'Waiting for fresh exact-source hosted replacement':'Waiting for fresh exact-source hosted and Linux coverage',refresh,()=>{markerAttempted=true;});
    try{
-    if(!duplicate){await cycle.beforeDispatch(recovery);await github.rest.actions.createWorkflowDispatch({...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:snapshot.headSha,base_sha:snapshot.baseSha,source_sha:snapshot.sourceSha,...(recovery?{execution_mode:'hosted-only'}:{})},request});dispatched++;}
-   }catch(error){if(isDeferredReconciliation(error))throw error;await write('failure','Fresh requesting CI could not be dispatched',{...refresh,refreshDispatchFailed:true});throw error;}
+    if(duplicate)await marker();
+    else{await cycle.dispatchAfterMarker(recovery,marker,{...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:snapshot.headSha,base_sha:snapshot.baseSha,source_sha:snapshot.sourceSha,...(recovery?{execution_mode:'hosted-only'}:{})},request},()=>{dispatchAttempted=true;});dispatched++;}
+   }catch(error){
+    if(isDeferredReconciliation(error))throw error;
+    // An authenticated request rejection is known not to have dispatched. Network,
+    // timeout and server errors keep the durable attempt marker and suppress retries.
+    const denied=error instanceof Error&&[400,401,403,404,422,429].includes(error.status);
+    await write('failure','Fresh requesting CI could not be dispatched',{...(markerAttempted||duplicate?refresh:{}),...(dispatchAttempted&&denied?{refreshDispatchFailed:true}:{})});throw error;
+   }
    continue;
   }
   if(requester.status!=='completed'){await write(null,'Waiting for current requesting CI to finish',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
