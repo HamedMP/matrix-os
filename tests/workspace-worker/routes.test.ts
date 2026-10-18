@@ -57,14 +57,12 @@ describe("shared desktop data routes", () => {
 describe("durable chat admission", () => {
   it("creates a canonical owner chat and persists input before queue admission", async () => {
     const chat = { id: "chat_server", ownerId: "fixed_preview_owner", title: "Run", createdAt: "2026-10-18T00:00:00.000Z" };
-    vi.mocked(repository.chat).mockResolvedValueOnce(null);
-    vi.mocked(repository.createChat).mockResolvedValueOnce(chat);
-    const appendMessage = vi.fn(async () => {});
-    const app = createWorkspaceRoutes({ repository: { ...repository, appendMessage }, files, runtime, auth, previewEnabled: true });
+    const admitChatMessage = vi.fn(async () => chat);
+    const app = createWorkspaceRoutes({ repository: { ...repository, admitChatMessage }, files, runtime, auth, previewEnabled: true });
     const result = await app.fetch(request("/api/workspace/actions", { method: "POST", body: JSON.stringify({ type: "chat", chatId: "chat_new", idempotencyKey: "request1", message: "Run" }) }));
     expect(result.status).toBe(202);
-    expect(appendMessage).toHaveBeenCalledWith("fixed_preview_owner", "chat_server", "request1", "user", "Run");
+    expect(admitChatMessage).toHaveBeenCalledWith("fixed_preview_owner", { type: "chat", chatId: "chat_new", idempotencyKey: "request1", message: "Run" });
     expect(runtime.enqueue).toHaveBeenCalledWith("fixed_preview_owner", { type: "chat", chatId: "chat_server", idempotencyKey: "request1", message: "Run" });
-    expect(appendMessage.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(runtime.enqueue).mock.invocationCallOrder[0]);
+    expect(admitChatMessage.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(runtime.enqueue).mock.invocationCallOrder[0]);
   });
 });

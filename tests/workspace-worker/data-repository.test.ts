@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Kysely } from "kysely";
+import { Kysely, sql } from "kysely";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { PostgresWorkspaceRepository, type WorkspaceDatabase } from "../../packages/workspace-worker/src/data/repository.js";
 
@@ -65,5 +65,48 @@ describe("bounded durable agent publication", () => {
     expect((await repository.file("agent_owner", "spike-result.txt"))?.objectKey).toBe("browser-edit");
     expect(await repository.messages("agent_owner", chat.id)).toHaveLength(1);
     await repository.close(); if (!engine.client.closed) await engine.client.close();
+  });
+});
+
+
+describe("atomic Chat input admission",()=>{
+  let engine:Awaited<ReturnType<typeof createTestPGlite>>;
+  let repository:PostgresWorkspaceRepository;
+  beforeAll(async()=>{engine=await createTestPGlite();repository=new PostgresWorkspaceRepository(new Kysely<WorkspaceDatabase>({dialect:engine.dialect}));await repository.initialize();});
+  afterAll(async()=>{await repository?.close();if(engine&&!engine.client.closed)await engine.client.close();});
+  it("deduplicates a retried new Chat and first input in one owner transaction",async()=>{
+    const input={chatId:"chat_client",idempotencyKey:"request_atomic",message:"Run once"};
+    const first=await repository.admitChatMessage("atomic_owner",input);
+    const retry=await repository.admitChatMessage("atomic_owner",input);
+    expect(retry.id).toBe(first.id);
+    const concurrent=await Promise.all([
+      repository.admitChatMessage("atomic_parallel",input),
+      repository.admitChatMessage("atomic_parallel",input),
+    ]);
+    expect(concurrent[0].id).toBe(concurrent[1].id);
+    expect(await repository.messages("atomic_parallel",concurrent[0].id)).toHaveLength(1);
+    expect(await repository.listChats("atomic_owner",100)).toHaveLength(1);
+    expect(await repository.messages("atomic_owner",first.id)).toHaveLength(1);
+    await expect(repository.admitChatMessage("atomic_owner",{...input,message:"Changed"})).rejects.toMatchObject({code:"conflict"});
+    const other=await repository.createChat("atomic_owner","another_chat","Other");
+    expect((await repository.admitChatMessage("atomic_owner",{...input,chatId:other.id})).id).toBe(first.id);
+    expect(await repository.messages("atomic_owner",other.id)).toHaveLength(0);
+  });
+  it("rolls back a new Chat if the first input insert fails",async()=>{
+    await repository.db.schema.alterTable("shared_chat_messages").addCheckConstraint("reject_first_input",sql`text <> 'reject_first_input'`).execute();
+    await expect(repository.admitChatMessage("rollback_owner",{chatId:"chat_client",idempotencyKey:"request_rollback",message:"reject_first_input"})).rejects.toThrow();
+    expect(await repository.listChats("rollback_owner",100)).toEqual([]);
+    expect(await repository.db.selectFrom("shared_chat_messages").selectAll().where("owner_id","=","rollback_owner").execute()).toEqual([]);
+  });
+  it("returns the newest bounded message window in ascending presentation order",async()=>{
+    const chat=await repository.createChat("latest_owner","request_latest","Latest");
+    await repository.db.insertInto("shared_chat_messages").values(Array.from({length:205},(_,index)=>({
+      owner_id:"latest_owner",chat_id:chat.id,request_id:`request_${index}`,id:`msg_${index}`,seq:index+1,role:"assistant",text:`message ${index+1}`,created_at:new Date().toISOString(),
+    }))).execute();
+    const messages=await repository.messages("latest_owner",chat.id);
+    expect(messages).toHaveLength(200);
+    expect(messages[0].seq).toBe(6);
+    expect(messages.at(-1)?.text).toBe("message 205");
+    expect(messages.map(message=>message.seq)).toEqual(Array.from({length:200},(_,index)=>index+6));
   });
 });

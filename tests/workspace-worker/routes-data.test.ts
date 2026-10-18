@@ -28,11 +28,11 @@ describe("shared API durable read/write wiring", () => {
     const app = createWorkspaceRoutes({ repository, files, runtime, auth: { previewBearer: { token, ownerId: owner } }, previewEnabled: true });
     return app.fetch(new Request(`https://shared.test${path}`, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }));
   };
-  it("persists file text without compute and cleans rejected/superseded objects", async () => {
+  it("persists file text without compute and retains uncertain uploads for scheduled cleanup", async () => {
     expect((await request("owner1", "/api/files/text", { path: "notes/test.txt", content: "initial", baseRevision: 0 }, "PUT")).status).toBe(200);
     expect((await request("owner1", "/api/files/text", { path: "notes/test.txt", content: "updated", baseRevision: 1 }, "PUT")).status).toBe(200);
     expect((await request("owner1", "/api/files/text", { path: "notes/test.txt", content: "stale", baseRevision: 1 }, "PUT")).status).toBe(409);
-    expect(contents.size).toBe(1);
+    expect(contents.size).toBe(2); // Current pointer plus an uncertain upload for the collector.
     expect(await (await request("owner1", "/api/files/text?path=notes/test.txt")).json()).toMatchObject({ content: "updated", revision: 2 });
     expect((await request("owner2", "/api/files/text?path=notes/test.txt")).status).toBe(404);
     expect(runtime.enqueue).not.toHaveBeenCalled();
@@ -95,6 +95,27 @@ describe("shared API durable read/write wiring", () => {
     expect(response.status).toBe(409);
     expect((await repository.settings(owner)).osView).toMatchObject({ document: { pinnedApps: ["files"] } });
     expect((await repository.bootstrap(owner)).revision).toBe(2);
+  });
+
+  it("retains a newly referenced object when a file commit acknowledgement is lost",async()=>{
+    const owner="lost_file_ack";
+    const commit=repository.commitFile.bind(repository);
+    const uncertain=new Proxy(repository,{get(target,property){
+      if(property==="commitFile")return async (...args:Parameters<typeof commit>)=>{await commit(...args);throw new Error("acknowledgement lost");};
+      const value=Reflect.get(target,property);return typeof value==="function"?value.bind(target):value;
+    }});
+    const app=createWorkspaceRoutes({repository:uncertain,files,runtime,auth:{previewBearer:{token,ownerId:owner}},previewEnabled:true});
+    const response=await app.fetch(new Request("https://shared.test/api/files/text",{method:"PUT",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify({path:"saved.txt",content:"durable",baseRevision:0})}));
+    expect(response.status).toBe(503);
+    const pointer=await repository.file(owner,"saved.txt");
+    expect(pointer).not.toBeNull();
+    expect(await files.read(pointer!.objectKey)).toBe("durable");
+  });
+  it("applies the directory limit after grouping immediate children",async()=>{
+    for(let index=0;index<51;index++)await repository.commitFile("grouped_files",`a/${String(index).padStart(2,"0")}.txt`,`grouped-${index}`,1,0);
+    await repository.commitFile("grouped_files","z.txt","grouped-last",1,0);
+    const response=await request("grouped_files","/api/files/list?limit=50");
+    expect((await response.json() as {entries:{name:string}[]}).entries.map(entry=>entry.name)).toEqual(["a","z.txt"]);
   });
 
 });

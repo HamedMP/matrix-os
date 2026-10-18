@@ -38,6 +38,7 @@ export async function publishRuntimeOutput(repository: PostgresWorkspaceReposito
   if (output.files.length > 20 || typeof output.text !== 'string' || output.text.length > 32000) throw new Error('Invalid runtime output');
   const staged: {path:string;objectKey:string;bytes:number;baseRevision:number}[] = [];
   const superseded: string[] = [];
+  let publicationStarted = false;
   try {
     for (const file of output.files) {
       safePath.parse(file.path);
@@ -46,13 +47,16 @@ export async function publishRuntimeOutput(repository: PostgresWorkspaceReposito
       staged.push({path:file.path,objectKey,bytes:new TextEncoder().encode(file.content).byteLength,baseRevision:revisions.get(file.path) ?? 0});
       if (previous) superseded.push(previous.objectKey);
     }
+    publicationStarted = true;
     const published = await repository.publishOutput(lease, {text:output.text,files:staged});
     if (published === false) {
       await Promise.all(staged.map(file => files.remove(file.objectKey)));
       return;
     }
   } catch (error) {
-    await Promise.all(staged.map(file => files.remove(file.objectKey).catch(cleanupError => console.error('[workspace] staged cleanup failed', cleanupError instanceof Error ? cleanupError.name : 'UnknownError'))));
+    // A rejected acknowledgement does not prove the transaction rolled back.
+    // Once publication starts, leave uploaded objects to the reference-aware collector.
+    if (!publicationStarted) await Promise.all(staged.map(file => files.remove(file.objectKey).catch(cleanupError => console.error('[workspace] staged cleanup failed', cleanupError instanceof Error ? cleanupError.name : 'UnknownError'))));
     throw error;
   }
   await Promise.all(superseded.map(key => files.remove(key).catch(error => console.error('[workspace] superseded cleanup failed',error instanceof Error ? error.name : 'UnknownError'))));

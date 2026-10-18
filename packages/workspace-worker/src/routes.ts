@@ -114,18 +114,18 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     const result = await options.repository.saveSetting(owner, "osView", { document, mutationId: input.data.mutationId, updatedAt }, stateRevision);
     return c.json({ revision: result.revision + 1, document, updatedAt });
   });
-  const listFiles = async (owner: string, path: string, limit: number) => options.repository.listFiles(owner, path ? `${path}/` : "", limit);
+  const listFiles = async (owner: string, path: string) => options.repository.listFiles(owner, path ? `${path}/` : "", 100);
   for (const route of ["/api/files", "/api/files/list", "/api/files/tree"]) {
     app.get(route, async (c) => {
       const input = z.object({ path: relativePath.or(z.literal("")).default(""), limit: limitSchema }).safeParse({ path: c.req.query("path"), limit: c.req.query("limit") });
       if (!input.success) return c.json({ error: "Invalid query" }, 400);
-      const files = await listFiles(c.get("ownerId"), input.data.path, input.data.limit);
+      const files = await listFiles(c.get("ownerId"), input.data.path);
       // Gateway directory contract; immediate children only, with synthesized directories.
       const prefix = input.data.path ? `${input.data.path}/` : "";
       const entries = files.map((file) => {
         const relative = file.path.slice(prefix.length); const name = relative.split("/")[0];
         return { name, type: relative.includes("/") ? "directory" : "file", size: file.bytes, gitStatus: null, modified: file.updatedAt };
-      }).filter((entry, index, all) => all.findIndex((other) => other.name === entry.name) === index);
+      }).filter((entry, index, all) => all.findIndex((other) => other.name === entry.name) === index).slice(0, input.data.limit);
       return c.json(route === "/api/files/tree" ? entries : { path: input.data.path, entries });
     });
   }
@@ -147,16 +147,13 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     const owner = c.get("ownerId"); const { path, content, baseRevision } = input.data;
     const previous = await options.repository.file(owner, path);
     const key = await options.files.write(owner, content);
-    try {
-      const file = await options.repository.commitFile(owner, path, key, new TextEncoder().encode(content).byteLength, baseRevision);
-      if (previous && previous.objectKey !== key) {
-        try { await options.files.remove(previous.objectKey); } catch (cleanupError) { console.error("[workspace-files] superseded cleanup failed", cleanupError instanceof Error ? cleanupError.name : "UnknownError"); }
-      }
-      return c.json({ ok: true, path: file.path, revision: file.revision });
-    } catch (error) {
-      try { await options.files.remove(key); } catch (cleanupError) { console.error("[workspace-files] orphan cleanup failed", cleanupError instanceof Error ? cleanupError.name : "UnknownError"); }
-      throw error;
+    // A failed commit acknowledgement does not prove rollback: retain the upload
+    // for scheduled reference-aware collection rather than deleting a live object.
+    const file = await options.repository.commitFile(owner, path, key, new TextEncoder().encode(content).byteLength, baseRevision);
+    if (previous && previous.objectKey !== key) {
+      try { await options.files.remove(previous.objectKey); } catch (cleanupError) { console.error("[workspace-files] superseded cleanup failed", cleanupError instanceof Error ? cleanupError.name : "UnknownError"); }
     }
+    return c.json({ ok: true, path: file.path, revision: file.revision });
   });
   app.get("/api/chats", async (c) => {
     const query = z.object({ limit: limitSchema, scope: z.enum(["global", "all"]).optional(), cursor: z.string().max(200).optional(), unread: z.enum(["true", "false"]).optional() }).safeParse(c.req.query());
@@ -174,7 +171,7 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     const chat = await options.repository.chat(c.get("ownerId"), id.data);
     if (!chat) return c.json({ error: "Not found" }, 404);
     const messages = await options.repository.messages(c.get("ownerId"), id.data);
-    const record = canonicalRecord(chat); record.chat.messageCount = messages.length;
+    const record = canonicalRecord(chat); record.chat.messageCount = messages.at(-1)?.seq ?? 0;
     return c.json({ record, messages: messages.map((message) => ({ id: message.id, chatId: message.chatId, seq: message.seq, role: message.role, state: "committed", parts: [{ type: "text", text: message.text }], createdAt: message.createdAt })), turns: [], runs: [], activities: [] });
   });
   app.get("/api/workspace/runtime", async (c) => c.json(await options.runtime.status(c.get("ownerId"))));
@@ -184,9 +181,7 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     const owner = c.get("ownerId");
     if (input.data.type === "chat") {
       const action = input.data;
-      const chat = await options.repository.chat(owner, action.chatId)
-        ?? await options.repository.createChat(owner, action.idempotencyKey, action.message.slice(0, 100));
-      await options.repository.appendMessage(owner, chat.id, action.idempotencyKey, "user", action.message);
+      const chat = await options.repository.admitChatMessage(owner, action);
       return c.json({ ...await options.runtime.enqueue(owner, { ...action, chatId: chat.id }) as Record<string, unknown>, chatId: chat.id }, 202);
     }
     return c.json(await options.runtime.enqueue(owner, input.data), 202);
