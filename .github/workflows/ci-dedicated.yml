@@ -266,15 +266,23 @@ jobs:
               mode:data.mode,suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,
                 workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
             const raceLost=error=>error instanceof Error&&JSON.parse(process.env.RACE_LOST_ERRORS).includes(error.message);
-            let receipt;
+            let receipt,diagnostics;
             try{receipt=await dispatchDedicatedLease(configuration.github,{repo:context.repo,
               controller:{sha:process.env.CONTROLLER_SHA,ref:process.env.EXECUTION_ORIGIN?'refs/heads/main':context.ref,workflowRef:process.env.EXECUTION_ORIGIN?`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`:process.env.CONTROLLER_WORKFLOW_REF,...(process.env.EXECUTION_ORIGIN?{executionOrigin:JSON.parse(process.env.EXECUTION_ORIGIN)}:{})},request,
               ssh:{host:process.env.CI_SSH_HOST,key:process.env.CI_SSH_KEY,knownHosts:process.env.CI_KNOWN_HOSTS}},
-              {metrics:values=>core.info('Controller API polling: '+JSON.stringify(values))});}
+              {metrics:values=>core.info('Controller API polling: '+JSON.stringify(values)),onDiagnostics:value=>{diagnostics=value;},onDiagnosticsWarning:message=>core.warning(message)});}
             catch(error){if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('superseded','true');return;}
             finally{await configuration.close();}
             await mkdir('output/ci-dedicated',{recursive:true});
             await writeFile('output/ci-dedicated/receipt.json',JSON.stringify(process.env.EXECUTION_ORIGIN?{schemaVersion:2,executionOrigin:JSON.parse(process.env.EXECUTION_ORIGIN),receipt}:receipt),{flag:'wx'});
+            if(diagnostics){
+              try{
+                const {qualificationDiagnosticsSummary}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-diagnostics.mjs')).href);
+                await mkdir('output/ci-dedicated-diagnostics',{recursive:true});
+                await writeFile('output/ci-dedicated-diagnostics/diagnostics.json',JSON.stringify(diagnostics),{flag:'wx'});
+                await core.summary.addRaw(qualificationDiagnosticsSummary(diagnostics)).write();
+              }catch(error){core.warning(error instanceof Error?'Qualification diagnostics could not be published; the qualification receipt is unchanged.':'Qualification diagnostics publishing returned an unknown error type; the qualification receipt is unchanged.');}
+            }
             core.setOutput('request',JSON.stringify(request));
             core.setOutput('request_digest',receipt.requestDigest);
             core.setOutput('lease_id',receipt.leaseId);
@@ -389,6 +397,16 @@ jobs:
           name: dedicated-qualification-${{ steps.admit.outputs.head_sha }}-${{ steps.admit.outputs.sha }}-${{ steps.admit.outputs.base_sha }}-pr${{ steps.admit.outputs.pr_number }}-request${{ steps.admit.outputs.requesting_run_id }}-${{ steps.admit.outputs.requesting_run_attempt }}-attempt${{ github.run_attempt }}
           path: output/ci-dedicated/receipt.json
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload advisory qualification diagnostics
+        if: always() && steps.dispatch.outputs.verified == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dedicated-diagnostics-${{ steps.admit.outputs.head_sha }}-${{ steps.admit.outputs.sha }}-${{ steps.admit.outputs.base_sha }}-pr${{ steps.admit.outputs.pr_number }}-request${{ steps.admit.outputs.requesting_run_id }}-${{ steps.admit.outputs.requesting_run_attempt }}-attempt${{ github.run_attempt }}
+          path: output/ci-dedicated-diagnostics/diagnostics.json
+          if-no-files-found: ignore
           retention-days: 7
 
   reconcile:

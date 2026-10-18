@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createConditionalGithub} from './dedicated-api.mjs';
 import {verifyDedicatedLeaseGrant} from './dedicated-lease.mjs';
+import {verifyQualificationDiagnostics} from './dedicated-diagnostics.mjs';
 const sha=/^[a-f0-9]{40}$/;
 const hash=/^[a-f0-9]{64}$/;
 const limits={unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048};
@@ -51,7 +52,7 @@ export async function runDedicatedLeaseSession(child,envelope,options){
  const digest=createHash('sha256').update(canonicalRequest(envelope.request)).digest('hex');
  const timeout=options.maxMilliseconds??3_900_000;if(!integer(timeout)||timeout<1||timeout>3_900_000)throw new Error('Invalid lease session deadline');
  return new Promise((resolve,reject)=>{
-  let buffer='',bytes=0,state='initial',terminal=null,ended=false,failed=false,grantSent=false,stderr='',stderrBytes=0;
+  let buffer='',bytes=0,state='initial',terminal=null,diagnosticsCandidate,ended=false,failed=false,grantSent=false,stderr='',stderrBytes=0;
   const handshakeStarted=Date.now();let handshakeTimer;
   if(options.transportHost)handshakeTimer=setTimeout(()=>finish(new Error('Pinned SSH handshake deadline exceeded')),20000);
   const challenges=new Set();let chain=Promise.resolve(),killTimer;const decoder=new TextDecoder('utf-8',{fatal:true});
@@ -85,7 +86,7 @@ export async function runDedicatedLeaseSession(child,envelope,options){
     if(record.type==='locked')state='granted';return;
    }
    if(record.type==='running'&&state==='granted'){state='running';return;}
-   if(record.type==='completed'&&state==='running'&&record.status===0){terminal=verifyLeaseReceipt(record.receipt,envelope);await revalidate(record,true);return;}
+   if(record.type==='completed'&&state==='running'&&record.status===0){terminal=verifyLeaseReceipt(record.receipt,envelope);await revalidate(record,true);diagnosticsCandidate=record.diagnostics;return;}
    if(record.type==='infrastructure-unavailable'&&['initial','queued'].includes(state)){const proof=verifyInfrastructureRecord(record,envelope,digest);await revalidate(record,true);terminal=proof;return;}
    if(['failed','cancelled'].includes(record.type))throw new Error('Owned Linux qualification did not complete');
    throw new Error('Unexpected Linux lease control transition');
@@ -110,6 +111,23 @@ export async function runDedicatedLeaseSession(child,envelope,options){
     const unavailable=(code===76&&terminal?.outcome==='infrastructure-unavailable')||
      (code===255&&terminal?.outcome==='transport-unavailable');
     if((code!==0&&!unavailable)||buffer||!terminal){finish(new Error(`Linux disconnected without a complete trusted receipt (phase=${state},class=${disconnectClass(code,state,bytes,grantSent)})`));return;}
+    // Advisory diagnostics carry no coverage credit. Deliver only after receipt
+    // verification, final source authentication and clean complete SSH closure.
+    if(terminal.qualified===true){
+     let diagnostics;const warn=message=>{try{(options.onDiagnosticsWarning??console.warn)(message);}catch(error){console.warn(error instanceof Error?'Qualification diagnostics warning delivery failed.':'Qualification diagnostics warning delivery failed with an unknown error type.');console.warn(message);}};
+     if(diagnosticsCandidate===undefined)warn('Qualification diagnostics unavailable: approved runner diagnostics are not present.');
+     else{
+      try{diagnostics=verifyQualificationDiagnostics(diagnosticsCandidate,terminal);}
+      catch(error){warn(error instanceof Error?'Qualification diagnostics discarded: receipt binding or bounded metrics are invalid.':'Qualification diagnostics discarded: validation returned an unknown error type.');}
+      if(diagnostics&&options.onDiagnostics){
+       let deliveryTimer;
+       try{await Promise.race([Promise.resolve().then(()=>options.onDiagnostics(diagnostics)),new Promise((_,reject)=>{deliveryTimer=setTimeout(()=>reject(new Error('Advisory delivery deadline exceeded')),1000);})]);}
+       catch(error){warn(error instanceof Error?'Qualification diagnostics unavailable: bounded advisory delivery failed.':'Qualification diagnostics unavailable: advisory delivery returned an unknown error type.');}
+       finally{clearTimeout(deliveryTimer);}
+       if(failed)return;
+      }
+     }
+    }
     clearTimeout(timer);options.signal?.removeEventListener('abort',abort);child.stdin.end();resolve(terminal);
    }).catch(finish);
   });
@@ -129,7 +147,7 @@ export async function dispatchDedicatedLease(github,input,options={}){
   await writeSshPrivateKey(join(directory,'key'),key);await writeFile(join(directory,'hosts'),knownHosts,{mode:0o600,flag:'wx'});
   const args=['-F','/dev/null','-p','22','-o','ProxyCommand=none','-o','ProxyJump=none','-i',join(directory,'key'),'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','GlobalKnownHostsFile=/dev/null','-o','StrictHostKeyChecking=yes','-o',`UserKnownHostsFile=${join(directory,'hosts')}`,'-o','ConnectTimeout=15','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3',`matrixci@${host}`];
   const child=spawn('/usr/bin/ssh',[...args,`lease-v1 run ${envelope.leaseId}`],{stdio:['pipe','pipe','pipe'],env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});
-  try{return await runDedicatedLeaseSession(child,envelope,{signal:aborter.signal,transportHost:host,revalidate:(request,cycle)=>cycle.unconditional?api.runUnconditional(()=>verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)):verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)});}
+  try{return await runDedicatedLeaseSession(child,envelope,{signal:aborter.signal,transportHost:host,onDiagnostics:options.onDiagnostics,onDiagnosticsWarning:options.onDiagnosticsWarning,revalidate:(request,cycle)=>cycle.unconditional?api.runUnconditional(()=>verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)):verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)});}
   catch(error){
    aborter.abort();
    // EOF already revokes the streamed lease. Also authenticate exact-owner

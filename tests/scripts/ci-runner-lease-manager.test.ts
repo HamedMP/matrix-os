@@ -133,7 +133,7 @@ with tempfile.TemporaryDirectory() as td:
  assert pipe.records[-1]['type']=='failed' and not any(r['type']=='completed' for r in pipe.records)
  assert manager.store.read(envelope['leaseId'])['status']=='completed'
 `));
-  it.each(['final-tick','verify-error','invalid-receipt','success'])('terminalizes proven-clean ownership for %s',failure=>python(`${fixture}
+  it.each(['final-tick','verify-error','invalid-receipt','success','diagnostic-error','diagnostic-oversize','diagnostic-type'])('terminalizes proven-clean ownership for %s',failure=>python(`${fixture}
 from lease_manager import LeaseManager
 from lease_protocol import LeaseProtocol
 protocol=LeaseProtocol(envelope)
@@ -146,22 +146,36 @@ class Pipe:
    return [dict(protocolVersion=1,type='grant',leaseId=envelope['leaseId'],requestDigest=canonical_digest(request),challenge=protocol.pending,capability=envelope['capability'])]
   time.sleep(.005);return []
 failure=${JSON.stringify(failure)}
+success=failure=='success' or failure.startswith('diagnostic-')
 with tempfile.TemporaryDirectory() as td:
- root=Path(td);pipe=Pipe();cleanup_calls=[]
+ root=Path(td);pipe=Pipe();cleanup_calls=[];diagnostic_calls=[]
  def cleaned():
   cleanup_calls.append(True)
   if failure=='final-tick':pipe.eof=True
   return True
  def verify():
   if failure=='verify-error':raise ValueError('rejected evidence')
-  return dict(qualified=failure=='success')
- manager=LeaseManager(envelope,config,root,[sys.executable,'-c','pass'],cleanup=cleaned,verify=verify,pipe=pipe,protocol=protocol)
+  return dict(qualified=success)
+ def diagnostic(receipt):
+  assert len(cleanup_calls)==2 and receipt['qualified'] is True
+  diagnostic_calls.append(receipt)
+  if failure=='diagnostic-error':raise OSError('unavailable')
+  if failure=='diagnostic-oversize':return dict(blob='x'*16385)
+  if failure=='diagnostic-type':return []
+  return dict(advisory=True)
+ manager=LeaseManager(envelope,config,root,[sys.executable,'-c','pass'],cleanup=cleaned,verify=verify,pipe=pipe,protocol=protocol,diagnostics=diagnostic)
  status=manager.run()
- assert (status==0)==(failure=='success') and manager.child.process.poll() is not None
+ assert (status==0)==success and manager.child.process.poll() is not None
  assert len(cleanup_calls)==2
  assert manager.store.read(envelope['leaseId'])['status']=='completed'
- if failure=='success':assert pipe.records[-1]['type']=='completed' and pipe.records[-1]['receipt']['qualified'] is True
- else:assert pipe.records[-1]['type']=='failed' and 'receipt' not in pipe.records[-1]
+ if success:
+  assert pipe.records[-1]['type']=='completed' and pipe.records[-1]['receipt']['qualified'] is True
+  assert len(diagnostic_calls)==1
+  if failure=='success':assert pipe.records[-1]['diagnostics']==dict(advisory=True)
+  else:assert 'diagnostics' not in pipe.records[-1]
+ else:
+  assert pipe.records[-1]['type']=='failed' and 'receipt' not in pipe.records[-1]
+  assert 'diagnostics' not in pipe.records[-1] and not diagnostic_calls
  replacement=dict(envelope,leaseId='3'*32,capability='4'*64,request=dict(request,controllerRunId=203))
  manager.store.reserve(replacement)
  assert manager.store.is_first(replacement['leaseId']), 'clean failed lease still owns queue'

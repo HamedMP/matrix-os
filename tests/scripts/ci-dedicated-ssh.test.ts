@@ -3,11 +3,13 @@ import {PassThrough} from 'node:stream';
 import {createHash} from 'node:crypto';
 import {describe,expect,it,vi} from 'vitest';
 import * as helpers from '../../scripts/ci/dedicated-admission.mjs';
+import {diagnosticPhases} from '../../scripts/ci/dedicated-diagnostics.mjs';
 const canonical=(value:unknown):string=>JSON.stringify(value&&typeof value==='object'?Array.isArray(value)?value.map(x=>JSON.parse(canonical(x))):Object.fromEntries(Object.entries(value).sort().map(([k,v])=>[k,JSON.parse(canonical(v))])):value);
 const request={repository:'HamedMP/matrix-os',prNumber:2454,headSha:'a'.repeat(40),baseSha:'b'.repeat(40),baseRef:'stack/parent',mergeSha:'c'.repeat(40),mergeParents:['b'.repeat(40),'a'.repeat(40)],requestingRunId:321,requestingRunAttempt:1,controllerRunId:123,controllerRunAttempt:1,controllerSha:'d'.repeat(40),controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),mode:'shadow',suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
 const leaseId='1'.repeat(32),capability='2'.repeat(64),digest=createHash('sha256').update(canonical(request)).digest('hex');
 const files=['file-download','canonical-input','provider-auth-terminal','agents-providers-figma','agents-providers-button-contrast','provider-settings-idle','project-folder-picker-layout','terminal-file-drop','terminal-snapshot','release-alignment','chat-title-layout','terminal-clipboard'].map(x=>`tests/e2e/desktop/${x}.e2e.test.ts`).concat('tests/e2e/provider-authorization-electron.e2e.test.ts').sort();
 function receipt(){return{schemaVersion:1,leaseId,requestDigest:digest,request,qualified:true,exitCode:0,sourceSha:request.mergeSha,parents:request.mergeParents,imageDigest:request.imageDigest,harnessDigest:request.harnessDigest,lockSha256:'3'.repeat(64),inventorySha256:'4'.repeat(64),startedUtc:'2026-10-11T01:00:00Z',finishedUtc:'2026-10-11T01:01:00Z',queueSeconds:1,wallSeconds:60,phaseCount:55,guardCount:14,independentHostSourceChecks:4,allPhasesPassed:true,allGuardsClean:true,containerGone:true,reports:Object.fromEntries(['unit','general','grid','electron-download','electron-input','electron-providers','electron-folder','electron-clipboard','electron-drop','electron-snapshot','electron-release','electron-title'].map(name=>[name,{files:name==='electron-providers'?5:1,total:2,passed:1,skipped:1,failed:0,inventoryComplete:true}])),requiredElectronFiles:files,smoke:{comparedExports:264,svgRenderComparisons:264,distinctIconModules:216,missingExportControl:'rejected',negativeAliasControl:'rejected'}};}
+function diagnostics(){return{schemaVersion:1,kind:'qualification-diagnostics',leaseId,requestDigest:digest,sourceSha:request.mergeSha,imageDigest:request.imageDigest,harnessDigest:request.harnessDigest,receiptSha256:createHash('sha256').update(canonical(receipt())).digest('hex'),queueSeconds:1,wallSeconds:60,phaseSeconds:Object.fromEntries(Object.values(diagnosticPhases).flat().map(name=>[name,1])),phaseTimeline:null,memory:{status:'unavailable',reason:'unsupported_cgroup'}};}
 function fake(){const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),kill:vi.fn()});return child;}
 async function run(child:ReturnType<typeof fake>,revalidate=vi.fn(async(_request:unknown,_cycle:unknown)=>{})){const fn=(helpers as Record<string,unknown>).runDedicatedLeaseSession as Function;expect(fn).toBeTypeOf('function');return fn(child,{protocolVersion:1,leaseId,capability,request},{revalidate,maxMilliseconds:1000});}
 function emit(child:ReturnType<typeof fake>,type:string,extra:Record<string,unknown>={}){child.stdout.write(JSON.stringify({protocolVersion:1,type,leaseId,requestDigest:digest,...extra})+'\n');}
@@ -142,5 +144,47 @@ describe('SSH completion while authenticated renewal is pending',()=>{
  it('preserves explicit cancellation while a valid receipt waits behind renewal authentication',async()=>{
   const aborter=new AbortController(),value=await heldRenewal({signal:aborter.signal});completedBeforeClose(value);aborter.abort();value.held.resolve();
   await expect(value.pending).rejects.toThrow(/cancelled/);expect(value.child.kill).toHaveBeenCalledWith('SIGTERM');
+ });
+});
+
+describe('advisory diagnostics cannot supply qualification coverage',()=>{
+ const fn=(helpers as Record<string,unknown>).runDedicatedLeaseSession as Function;
+ it('delivers diagnostics only after final unconditional revalidation and a clean SSH close',async()=>{
+  const c=fake(),onDiagnostics=vi.fn(),verify=vi.fn(async()=>{});
+  const pending=fn(c,{protocolVersion:1,leaseId,capability,request},{revalidate:verify,maxMilliseconds:1000,onDiagnostics});pending.catch(()=>{});await admitted(c);
+  emit(c,'completed',{status:0,receipt:receipt(),diagnostics:diagnostics()});await new Promise(r=>setImmediate(r));
+  expect(verify).toHaveBeenCalledTimes(2);expect(onDiagnostics).not.toHaveBeenCalled();c.emit('close',0);
+  await expect(pending).resolves.toEqual(receipt());expect(onDiagnostics).toHaveBeenCalledExactlyOnceWith(diagnostics());
+ });
+ it.each(['missing','invalid'])('preserves verified receipt with a safe warning for %s diagnostics',async kind=>{
+  const c=fake(),onDiagnostics=vi.fn(),onDiagnosticsWarning=vi.fn();const pending=fn(c,{protocolVersion:1,leaseId,capability,request},{revalidate:vi.fn(async()=>{}),maxMilliseconds:1000,onDiagnostics,onDiagnosticsWarning});pending.catch(()=>{});await admitted(c);
+  emit(c,'completed',{status:0,receipt:receipt(),...(kind==='invalid'?{diagnostics:{...diagnostics(),raw:'sensitive upstream error'}}:{})});c.emit('close',0);
+  await expect(pending).resolves.toEqual(receipt());expect(onDiagnostics).not.toHaveBeenCalled();expect(onDiagnosticsWarning).toHaveBeenCalledOnce();expect(onDiagnosticsWarning.mock.calls[0][0]).not.toContain('sensitive');
+ });
+ it('limits a hung advisory callback to one second without blocking a valid receipt',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+  try{
+   const c=fake(),onDiagnostics=vi.fn(()=>new Promise(()=>{})),onDiagnosticsWarning=vi.fn();let settled=false;
+   const pending=fn(c,{protocolVersion:1,leaseId,capability,request},{revalidate:vi.fn(async()=>{}),maxMilliseconds:10000,onDiagnostics,onDiagnosticsWarning});pending.then(()=>{settled=true;},()=>{});await admitted(c);
+   emit(c,'completed',{status:0,receipt:receipt(),diagnostics:diagnostics()});c.emit('close',0);await new Promise(r=>setImmediate(r));expect(onDiagnostics).toHaveBeenCalledOnce();
+   await vi.advanceTimersByTimeAsync(999);expect(settled).toBe(false);await vi.advanceTimersByTimeAsync(1);expect(settled).toBe(true);
+   await expect(pending).resolves.toEqual(receipt());expect(onDiagnosticsWarning).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
+  }finally{vi.useRealTimers();}
+ });
+ it.each(['cancelled','deadline'])('preserves %s failure while advisory delivery is pending',async kind=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+  try{
+   const c=fake(),aborter=new AbortController(),onDiagnostics=vi.fn(()=>new Promise(()=>{}));
+   const pending=fn(c,{protocolVersion:1,leaseId,capability,request},{revalidate:vi.fn(async()=>{}),maxMilliseconds:kind==='deadline'?500:10000,onDiagnostics,onDiagnosticsWarning:vi.fn(),signal:aborter.signal});pending.catch(()=>{});await admitted(c);
+   emit(c,'completed',{status:0,receipt:receipt(),diagnostics:diagnostics()});c.emit('close',0);await new Promise(r=>setImmediate(r));expect(onDiagnostics).toHaveBeenCalledOnce();
+   if(kind==='cancelled')aborter.abort();else await vi.advanceTimersByTimeAsync(501);
+   await expect(pending).rejects.toThrow(kind==='cancelled'?/cancelled/:/deadline/);await vi.advanceTimersByTimeAsync(1000);expect(vi.getTimerCount()).toBe(0);
+  }finally{vi.useRealTimers();}
+ });
+ it.each(['nonzero','trailing','stale','cancelled','diagnostic-alone'])('never delivers diagnostics for %s completion',async kind=>{
+  const c=fake(),onDiagnostics=vi.fn(),aborter=new AbortController(),verify=vi.fn(async()=>{if(kind==='stale'&&verify.mock.calls.length===2)throw new Error('final source changed');});
+  const pending=fn(c,{protocolVersion:1,leaseId,capability,request},{revalidate:verify,maxMilliseconds:1000,onDiagnostics,signal:aborter.signal});pending.catch(()=>{});await admitted(c);
+  emit(c,'completed',{status:0,...(kind==='diagnostic-alone'?{}:{receipt:receipt()}),diagnostics:diagnostics()});if(kind==='trailing')c.stdout.write('trailing');if(kind==='cancelled')aborter.abort();c.emit('close',kind==='nonzero'?1:0);
+  await expect(pending).rejects.toThrow();expect(onDiagnostics).not.toHaveBeenCalled();
  });
 });
