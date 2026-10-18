@@ -1,12 +1,12 @@
 import {rename,rm} from 'node:fs/promises';
-import {AppStoreInstallRecordSchema,type AppStoreInstallRecord} from '@matrix-os/contracts/app-store-gateway';
+import {AppStoreInstallRecordSchema,AppStoreInstallJobSchema,type AppStoreInstallRecord} from '@matrix-os/contracts/app-store-gateway';
 import {z} from 'zod/v4';
 import {bundleDigest,encodeAppBundle} from '@matrix-os/contracts/app-store-bundle';
 import {snapshotOwnerApp} from './snapshot.js';
 import {readStoreProvenance,writeStoreProvenance} from './provenance.js';
 import {writeCommunityGrants,removeCommunityGrant} from './capability-grants.js';
-import {withStoreDirectory} from './private-state.js';
-import {isFsError,pinDirectory} from '../app-gallery/pinned-directory.js';
+import {withStoreDirectory,atomicPrivateFile} from './private-state.js';
+import {isFsError,pinDirectory,type PinnedDirectory} from '../app-gallery/pinned-directory.js';
 import {withOwnerFileMutation} from '../owner-file-mutations.js';
 import {invalidateAppIndexCache} from '../app-runtime/app-index.js';
 export const PublicationJournalSchema=z.strictObject({record:AppStoreInstallRecordSchema,previous:AppStoreInstallRecordSchema.nullable()});
@@ -16,6 +16,18 @@ export function publicationRecoveryAction(input:{currentMatchesNew:boolean;curre
 export async function installedMatches(homePath:string,record:AppStoreInstallRecord):Promise<boolean>{
  try{const source=await snapshotOwnerApp(homePath,record.appSlug);const dist=await snapshotOwnerApp(homePath,record.appSlug,'dist');return bundleDigest(encodeAppBundle('source',source))===record.installedSourceSha256&&bundleDigest(encodeAppBundle('dist',dist))===record.distSha256;}
  catch(error:unknown){if(isFsError(error,'ENOENT'))return false;throw error;}
+}
+/** Preserve both source trees and their journal for owner resolution. A single
+ * customized app must not disable recovery/admission for unrelated listings. */
+async function quarantinePublication(homePath:string,jobId:string,stage:PinnedDirectory,record:AppStoreInstallRecord):Promise<void>{
+ await atomicPrivateFile(stage,'conflict.json',Buffer.from(JSON.stringify({listingSlug:record.listingSlug,versionId:record.versionId,reason:'owner_edits',updatedAt:new Date().toISOString()})));
+ try{await withStoreDirectory(homePath,['install-jobs',jobId],async directory=>{
+  const row:unknown=JSON.parse((await directory.readFile('job.json',8192)).toString('utf8'));
+  if(!row||typeof row!=='object'||!('job' in row))throw new Error('Invalid install recovery job');
+  const job=AppStoreInstallJobSchema.parse(row.job);
+  await atomicPrivateFile(directory,'job.json',Buffer.from(JSON.stringify({...row,job:{id:job.id,status:'failed',error:'unavailable'},receiptPending:false,updatedAt:Date.now()})));
+ },false);}catch(error:unknown){if(!isFsError(error,'ENOENT'))throw error;}
+ console.warn('[app-store] Publication conflict quarantined for owner review');
 }
 /** Called before admitting new jobs. Unknown owner edits keep their recovery backup intact. */
 export async function recoverInstallPublications(homePath:string):Promise<void>{return withOwnerFileMutation(homePath,()=>withStoreDirectory(homePath,['install-stages'],async stages=>{
@@ -27,7 +39,7 @@ export async function recoverInstallPublications(homePath:string):Promise<void>{
  if(live&&live.versionId!==record.versionId&&live.versionId!==previous?.versionId){remove=true;continue;}
  const owner=await pinDirectory(homePath);let apps;try{apps=await owner.ensureChild('apps');let hasDestination=false,hasBackup=false;for await(const row of await apps.entries()){if(row.name===record.appSlug)hasDestination=true;}for await(const row of await stage.entries()){if(row.name==='backup'&&row.isDirectory()&&!row.isSymbolicLink())hasBackup=true;}
  const action=publicationRecoveryAction({currentMatchesNew:await installedMatches(homePath,record),currentMatchesPrevious:previous?await installedMatches(homePath,previous):false,hasDestination,hasBackup});
- if(action==='conflict'){throw new Error('Publication recovery requires owner review');}
+ if(action==='conflict'){await quarantinePublication(homePath,entry.name,stage,record);continue;}
  if(action==='restore')await rename(`${stage.path}/backup`,`${apps.path}/${record.appSlug}`);
  const chosen=action==='commit'?record:previous;
  await writeStoreProvenance(homePath,{version:1,installs:[...state.installs.filter(row=>row.listingSlug!==record.listingSlug),...(chosen?[chosen]:[])]});
