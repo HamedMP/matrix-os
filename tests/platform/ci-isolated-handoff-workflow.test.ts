@@ -156,6 +156,7 @@ describe('actual isolated CI handoff workflow graph',()=>{
  });
 });
 
+// A retained provider decision may schedule work; only current completion can award coverage.
 it.each([
  {result:'success',provider:'linux',fallback:'false',attempt:'2',accepted:true},
  {result:'success',provider:'hosted',fallback:'false',attempt:'2',accepted:true},
@@ -163,13 +164,22 @@ it.each([
  {result:'failure',provider:'linux',fallback:'false',attempt:'2',accepted:false},
  {result:'skipped',provider:'linux',fallback:'false',attempt:'2',accepted:false},
  {result:'cancelled',provider:'linux',fallback:'false',attempt:'2',accepted:false},
- {result:'success',provider:'linux',fallback:'false',attempt:'1',accepted:false},
+ {result:'success',provider:'linux',fallback:'false',attempt:'1',accepted:true},
+ {result:'success',provider:'hosted',fallback:'false',attempt:'1',accepted:true},
+ {result:'success',provider:'hosted',fallback:'true',attempt:'1',accepted:true},
+ {result:'failure',provider:'linux',fallback:'false',attempt:'1',accepted:false},
+ {result:'success',provider:'linux',fallback:'false',attempt:'0',accepted:false},
+ {result:'success',provider:'linux',fallback:'false',attempt:'01',accepted:false},
+ {result:'success',provider:'linux',fallback:'false',attempt:' 1',accepted:false},
+ {result:'success',provider:'linux',fallback:'false',attempt:'1e0',accepted:false},
+ {result:'success',provider:'linux',fallback:'false',attempt:'+1',accepted:false},
+ {result:'success',provider:'linux',fallback:'false',attempt:'1.0',accepted:false},
  {result:'success',provider:'linux',fallback:'false',attempt:'3',accepted:false},
  {result:'success',provider:'linux',fallback:'false',attempt:'',accepted:false},
  {result:'success',provider:'untrusted',fallback:'false',attempt:'2',accepted:false},
  {result:'success',provider:'linux',fallback:'maybe',attempt:'2',accepted:false},
  {result:'success',provider:'linux',fallback:'true',attempt:'2',accepted:false},
-])('the actual read-only backend validates P result/output tuple $result/$provider/$fallback/$attempt',async({result,provider,fallback,attempt,accepted})=>{
+])('the actual read-only backend validates only the P scheduling tuple $result/$provider/$fallback/$attempt',async({result,provider,fallback,attempt,accepted})=>{
  const step=ci.jobs['ci-backend'].steps.find((value:any)=>value.env?.ISOLATED_BACKEND_RESULT);
  expect(step,'P proof pass-through cannot run the ordinary candidate backend under write authority').toBeDefined();
  const outputs:Record<string,string>={},core={setOutput:(name:string,value:string)=>{outputs[name]=value;}};
