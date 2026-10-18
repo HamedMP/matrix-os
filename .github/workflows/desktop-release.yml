@@ -116,6 +116,9 @@ jobs:
       version: ${{ needs.prepare.outputs.version }}
       artifact_prefix: ${{ needs.prepare.outputs.artifact_prefix }}
       retention_days: 30
+      # PR branches cannot enter the protected Windows signing environment.
+      # Publishing, tags and Main dry-runs retain the complete release matrix.
+      build_windows: ${{ inputs.mode != 'dry-run' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
     secrets: inherit
 
   release:
