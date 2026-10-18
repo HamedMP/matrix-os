@@ -30,4 +30,12 @@ describe('transactional runtime compute admission',()=>{
   expect(await store.confirmStopped('revoke',generation,300)).toBe(true);
   expect(hooks.confirmStopped).toHaveBeenCalled();
  });
+ it('quarantines the interrupted-finish API before admitting replacement work',async()=>{
+  const store=new PostgresRuntimeStore(repo.db,hooks);
+  const lease=(await store.claim({ownerId:'interrupted_finish',jobId:'old',type:'wake'},100,1000,5000))!;
+  expect(await store.finish(lease,'interrupted',200)).toBe(true);
+  expect(await store.status('interrupted_finish')).toMatchObject({state:'interrupting',generation:2});
+  await expect(store.claim({ownerId:'interrupted_finish',jobId:'replacement',type:'wake'},210,1000,5000)).rejects.toMatchObject({name:'RuntimeBusyError'});
+ });
+
 });

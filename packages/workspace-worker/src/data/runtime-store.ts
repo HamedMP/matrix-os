@@ -66,6 +66,7 @@ export class PostgresRuntimeStore implements RuntimeStore {
     });
   }
   async finish(lease: RuntimeLease, outcome: "completed" | "interrupted", now: number): Promise<boolean> {
+    if (this.compute && outcome === "interrupted") return await this.beginInterrupt(lease,now) !== null;
     return this.db.transaction().execute(async (trx) => {
       const row = await trx.selectFrom("shared_workspaces").selectAll().where("owner_id", "=", lease.ownerId).forUpdate().executeTakeFirst();
       if (!row || row.generation !== lease.generation || row.placement !== "pooled") return false;
