@@ -4,20 +4,24 @@ import { exportRecords, filterRecords, readRecords } from "./model";
 import { useRecords } from "./useRecords";
 import Sidebar from "./Sidebar";
 import WorkspaceContent from "./WorkspaceContent";
+import { useSync } from "./useSync";
+import SyncProgress from "./SyncProgress";
 import type { Definition, OwnerRecord } from "./types";
+function connectionNotice(records: boolean, connected: boolean, app: Definition) {
+  if (!records) return "The app connection is not ready. Reopen the app in Matrix to use saved records and imports.";
+  if (app.services.length && !connected) return "The import connection is not ready. Reopen the app in Matrix or use manual entries.";
+  return "";
+}
 export default function App({ app }: { app: Definition }) {
   const { records, error, loading, limited, reload, save, archive } =
     useRecords();
   const canUseRecords = !!window.MatrixOS?.db,
     canImport =
       canUseRecords &&
-      !!window.MatrixOS?.generate &&
+      !!window.MatrixOS?.gatewayFetch &&
       !!window.MatrixOS?.integrations;
-  const unavailable = !canUseRecords
-    ? "The app connection is not ready. Reopen the app in Matrix to use saved records and imports."
-    : app.services.length && !canImport
-      ? "The import connection is not ready. Reopen the app in Matrix or use manual entries."
-      : "";
+  const sync = useSync(app.id, canImport && app.services.length > 0, reload);
+  const unavailable = connectionNotice(canUseRecords, canImport, app);
   const [query, setQuery] = useState(""),
     [scope, setScope] = useState<"all" | "personal" | "work">("all"),
     [account, setAccount] = useState(""),
@@ -25,6 +29,7 @@ export default function App({ app }: { app: Definition }) {
     [evidence, setEvidence] = useState<OwnerRecord | null>(null),
     [importing, setImporting] = useState(false),
     [exportError, setExportError] = useState("");
+  const creationScope = scope === "all" ? (app.collection === "business" ? "work" : "personal") : scope;
   const visible = useMemo(
     () => filterRecords(records, { query, scope, account }),
     [records, query, scope, account],
@@ -100,11 +105,14 @@ export default function App({ app }: { app: Definition }) {
             </button>
           </div>
         </header>
+        <SyncProgress name={app.name} snapshot={sync.snapshot} error={sync.error} busy={sync.busy}
+          onRefresh={() => void sync.refresh()} onConfigure={() => setImporting(true)}
+          onAction={action => { void sync.action(action).catch(cause => console.warn("Sync action failed", cause)); }} />
         <WorkspaceContent
           app={app}
           records={records}
           visible={visible}
-          creationScope={scope === "all" ? (app.collection === "business" ? "work" : "personal") : scope}
+          creationScope={creationScope}
           error={error}
           exportError={exportError}
           loading={loading}
@@ -123,7 +131,7 @@ export default function App({ app }: { app: Definition }) {
         <Editor
           app={app}
           record={editor ?? undefined}
-          creationScope={scope === "all" ? (app.collection === "business" ? "work" : "personal") : scope}
+          creationScope={creationScope}
           onSave={save}
           onLoadLatest={async draftId => {
             const db = window.MatrixOS?.db;
@@ -139,7 +147,7 @@ export default function App({ app }: { app: Definition }) {
         <EvidenceDrawer record={evidence} onClose={() => setEvidence(null)} />
       )}
       {importing && (
-        <ImportDialog app={app} onClose={() => setImporting(false)} />
+        <ImportDialog app={app} onClose={() => setImporting(false)} onStart={input => sync.action("start", input)} progress={sync.snapshot} />
       )}
     </div>
   );

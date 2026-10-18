@@ -42,7 +42,7 @@ describe("canonical connected account inventory", () => {
       window.MatrixOS = { integrations: async () => raw, generate: vi.fn() };
       render(createElement(ImportDialog, { app: folio, onClose: () => {} }));
       await screen.findByText(`label-${count - 1}`);
-      expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+      expect(screen.getAllByRole("checkbox")).toHaveLength(2);
     });
   }
   it("rejects 2001 accounts and preserves unknown availability in both clients", async () => {
@@ -62,7 +62,7 @@ describe("canonical connected account inventory", () => {
     expect(
       (
         screen.getByRole("button", {
-          name: "Ask Matrix to import",
+          name: "Start import",
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
@@ -126,6 +126,9 @@ it("refreshes both generated parsers and gallery branding in a repository and re
         join(target, "src/generated-inventory.ts"),
         await readFile(join(app, "src/generated-inventory.ts"), "utf8"),
       );
+      if (app.endsWith("connected-starter")) {
+        for (const name of ["generated-sync", "generated-import"]) await writeFile(join(target, `src/${name}.ts`), await readFile(join(app, `src/${name}.ts`), "utf8"));
+      }
       if (app.endsWith("app-gallery")) {
         await writeFile(
           join(target, "src/generated-contract.ts"),

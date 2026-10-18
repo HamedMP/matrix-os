@@ -19,7 +19,9 @@
     "./managed-integrations": "./src/managed-integrations.ts",
     "./bokio-integration": "./src/bokio-integration.ts",
     "./data-imports": "./src/data-imports.ts",
-    "./command-preview-policy": "./src/command-preview-policy.mjs"
+    "./command-preview-policy": "./src/command-preview-policy.mjs",
+    "./app-gallery-sync": "./src/app-gallery-sync.ts",
+    "./app-gallery-import": "./src/app-gallery-import.ts"
   },
   "imports": {
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
