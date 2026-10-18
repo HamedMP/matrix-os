@@ -19,15 +19,17 @@ PY_PNPM_RENAME
 }
 pnpm_sweep_private_stages() { python3 - "$1" "$2" <<'PY_PNPM_SWEEP'
 import os,shutil,stat,sys,time
-parent,prefix=sys.argv[1:];matches=[]
+parent,prefix=sys.argv[1:];active=0;now=time.time()
 with os.scandir(parent) as entries:
  for count,entry in enumerate(entries):
   if count>=1024:raise ValueError('pnpm staging entry cap')
-  if entry.name.startswith(prefix):matches.append(entry)
-if len(matches)>16:raise ValueError('pnpm staging count cap')
-for entry in matches:
- info=entry.stat(follow_symlinks=False)
- if stat.S_ISDIR(info.st_mode) and info.st_uid==os.getuid() and time.time()-info.st_mtime>86400:shutil.rmtree(entry.path)
+  if not entry.name.startswith(prefix):continue
+  info=entry.stat(follow_symlinks=False)
+  if stat.S_ISDIR(info.st_mode) and info.st_uid==os.getuid() and now-info.st_mtime>86400:
+   shutil.rmtree(entry.path)
+  else:active+=1
+# Delete expired entries before enforcing the live cap, even on overfull scans.
+if active>16:raise ValueError('pnpm staging count cap')
 PY_PNPM_SWEEP
 }
 record_pnpm_runtime_transaction() (
@@ -60,6 +62,30 @@ restore_pnpm_runtime_transaction() (
     *) return 1 ;;
   esac
 )
+# Swap only our fixed owned package directory; interrupted repair always leaves a complete package.
+pnpm_atomic_exchange_packages() { python3 - "$1" "$2" <<'PY_PNPM_EXCHANGE'
+import ctypes,os,stat,sys
+source,target=sys.argv[1:]
+for path in (source,target):
+ info=os.lstat(path)
+ if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.getuid():raise ValueError('invalid owned pnpm package')
+libc=ctypes.CDLL(None,use_errno=True)
+if sys.platform=='linux':
+ exchange=libc.renameat2
+ exchange.argtypes=[ctypes.c_int,ctypes.c_char_p,ctypes.c_int,ctypes.c_char_p,ctypes.c_uint]
+ result=exchange(-100,os.fsencode(source),-100,os.fsencode(target),2)
+elif sys.platform=='darwin':
+ exchange=libc.renamex_np
+ exchange.argtypes=[ctypes.c_char_p,ctypes.c_char_p,ctypes.c_uint]
+ result=exchange(os.fsencode(source),os.fsencode(target),2)
+else:raise ValueError('atomic pnpm repair unavailable')
+if result:raise OSError(ctypes.get_errno(),'atomic pnpm repair failed')
+for path in (source,target):
+ parent=os.open(os.path.dirname(path),os.O_RDONLY|os.O_DIRECTORY)
+ try:os.fsync(parent)
+ finally:os.close(parent)
+PY_PNPM_EXCHANGE
+}
 pnpm_runtime_probe() { python3 - "$1/bin/node" "$2/bin/pnpm.cjs" <<'PY_PNPM_PROBE'
 import os,subprocess,sys
 result=subprocess.run([sys.argv[1],sys.argv[2],'--version'],cwd='/',env={'PATH':'/usr/bin:/bin','HOME':'/nonexistent','CI':'1'},capture_output=True,text=True,timeout=10,check=True)
@@ -120,7 +146,10 @@ PY_PNPM_ROOT_MODE
   mkdir "$work/package" || return 1;tar -xzf "$work/package.tgz" --strip-components=1 -C "$work/package" || return 1
   pnpm_runtime_probe "$root" "$work/package" || return 1
   if [ -e "$destination" ] || [ -L "$destination" ];then
-    [ -d "$destination" ] && [ ! -L "$destination" ] || return 1;pnpm_runtime_probe "$root" "$destination" || return 1
+    [ -d "$destination" ] && [ ! -L "$destination" ] || return 1
+    if ! pnpm_runtime_probe "$root" "$destination";then
+      pnpm_atomic_exchange_packages "$work/package" "$destination" || return 1
+    fi
   else pnpm_atomic_replace "$work/package" "$destination" || return 1;fi
   ln -s ../lib/node_modules/matrix-store-pnpm-10.33.4/bin/pnpm.cjs "$incoming" || return 1
   pnpm_atomic_replace "$incoming" "$root/bin/pnpm"
