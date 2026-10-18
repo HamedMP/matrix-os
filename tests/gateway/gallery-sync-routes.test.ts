@@ -16,6 +16,13 @@ function setup(available = true) {
   return { app, service };
 }
 describe("Gallery sync owner API and trusted hosts", () => {
+  it("does not replace the existing catalog and installation route authorization", async () => {
+    const { app } = setup();
+    app.get("/api/app-gallery", c => c.json({ catalog: true }));
+    app.post("/api/app-gallery/people/install", c => c.json({ installed: true }));
+    expect((await app.request("/api/app-gallery", { headers: { "x-test-owner": "separate-existing-route-owner" } })).status).toBe(200);
+    expect((await app.request("/api/app-gallery/people/install", { method: "POST", headers: { "x-test-owner": "separate-existing-route-owner" } })).status).toBe(200);
+  });
   it("returns durable acceptance and isolates every operation to the runtime owner", async () => {
     const { app, service } = setup();
     const response = await app.request("/api/app-gallery/people/sync", { method: "POST", headers: { "content-type": "application/json" }, body: '{"selected":"input"}' });

@@ -8,13 +8,14 @@ const AppId = z.string().regex(/^[a-z][a-z0-9-]{0,47}$/);
 /** Trusted hosts mediate this owner API; sandboxed app cookies cannot call it directly. */
 export function createGallerySyncRoutes(options: { service: GallerySyncService | null; ownerIds: readonly string[] }) {
   const app = new Hono();
-  app.use("*", async (c, next) => {
+  const paths = ["/:appId/sync", "/:appId/sync/pause", "/:appId/sync/retry", "/:appId/sync/resume"];
+  for (const path of paths) app.use(path, async (c, next) => {
     if (c.req.header("origin") === "null" || c.get("appSession" as never)) return c.json({ error: "Forbidden" }, 403);
     try { if (!options.ownerIds.includes(requireRequestPrincipal(c, { isLocalDevelopment: false }).userId)) return c.json({ error: "Forbidden" }, 403); }
     catch (error) { if (!isRequestPrincipalError(error)) console.error("[gallery-sync] Principal unavailable", error); return c.json({ error: "Forbidden" }, 403); }
     await next();
   });
-  app.use("*", bodyLimit({ maxSize: 16384 }));
+  for (const path of paths) app.use(path, bodyLimit({ maxSize: 16384 }));
   app.all("/:appId/sync/*", async (c, next) => { if (!AppId.safeParse(c.req.param("appId")).success) return c.json({ error: "Invalid app" }, 400); await next(); });
   app.get("/:appId/sync", async c => {
     if (!AppId.safeParse(c.req.param("appId")).success) return c.json({ error: "Invalid app" }, 400);
