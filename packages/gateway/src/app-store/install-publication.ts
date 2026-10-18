@@ -21,7 +21,7 @@ export async function publishCommunityInstall(options:{homePath:string;jobId:str
   let previousPresent=false;if(previous){try{previousPresent=true;if(bundleDigest(encodeAppBundle('source',await snapshotOwnerApp(options.homePath,previous.appSlug)))!==previous.installedSourceSha256)throw new StoreError('conflict');}catch(error:unknown){if(isFsError(error,'ENOENT'))previousPresent=false;else throw error;}}
   const owner=await pinDirectory(options.homePath);const apps=await owner.ensureChild('apps');
   try{return await withStoreDirectory(options.homePath,['install-stages',options.jobId],async stage=>{
-   const prepared=await stage.createChild('app');let backedUp=false,published=false,rolledBack=false;
+   let backedUp=false,published=false,rolledBack=false;
    let appSlug=previous?.appSlug??options.listingSlug;
    if(!previous){const index=await indexOwnerApps(apps,await resolveActiveDesignId(options.homePath));if(index.unavailable)throw new StoreError('conflict');for(let suffix=0;suffix<=9;suffix++){
     appSlug=suffix?`${options.listingSlug}-${suffix}`:options.listingSlug;
@@ -32,6 +32,7 @@ export async function publishCommunityInstall(options:{homePath:string;jobId:str
    const now=new Date().toISOString();const record:AppStoreInstallRecord={listingSlug:options.listingSlug,appSlug,versionId:options.grant.versionId,version:options.grant.version,sourceSha256:options.grant.source.sha256,distSha256:options.distSha256,installedSourceSha256:'0'.repeat(64),toolchain:options.toolchain,capabilities:options.grant.capabilities,installedAt:previous?.installedAt??now,updatedAt:now};
    const files=new Map(options.source);files.delete('matrix.json');for(const[path,bytes]of options.dist)files.set(`dist/${path}`,bytes);
    files.set('.build-stamp',Buffer.from(JSON.stringify({sourceHash:options.grant.source.sha256,lockfileHash:'store-reviewed-source',builtAt:Date.now(),exitCode:0})));
+   const prepared=await stage.createChild('app');
    try{
     await writeTree(prepared,files);
     // A complete manifest is the discovery boundary, and carries no executable build script.
