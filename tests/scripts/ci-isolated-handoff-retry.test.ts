@@ -5,7 +5,7 @@ import {receiptFor,receiptZip,artifactDownloadApi} from './helpers/dedicated-art
 const repo={owner:'HamedMP',repo:'matrix-os'},pin='a'.repeat(40),execution='e'.repeat(40),tree='f'.repeat(40);
 const head='b'.repeat(40),base='c'.repeat(40),source='d'.repeat(40),branch=`ci-execution/${pin}`;
 const inputs={execution_mode:'linux',pr_number:'2454',head_sha:head,base_sha:base,source_sha:source};
-const configuration={pin,flag:'true',imageDigest:'sha256:'+'6'.repeat(64),harnessDigest:'7'.repeat(64),linuxRequired:true};
+const configuration={pin,flag:'true',imageDigest:'sha256:'+'6'.repeat(64),harnessDigest:'7'.repeat(64),linuxRequired:true,backendProvider:'linux',backendInfrastructureFallback:false};
 const module=()=>import('../../scripts/ci/dedicated-ci-handoff.mjs');
 
 // All completion assertions use the production result verifier and an actual
@@ -131,8 +131,16 @@ describe('completion ownership under whole and failed-job retries',()=>{
   Object.assign(summary,{receiptVerified:false,outcome:'infrastructure-unavailable',status:76,reason:'queue_timeout',stage:'admission',workloadStarted:false,containerGone:true});
   f.envelope.receipt=receiptFor(summary,654,[base,head]);
   f.check.conclusion='neutral';f.check.output.summary=JSON.stringify({...summary,requestDigest:f.envelope.receipt.requestDigest});f.pinReceipt();
-  expect(await complete(f)).toEqual({dispatched:true,attempt:2,qualificationDispatched:false});
+  expect(await complete(f,{...configuration,backendAttempt:f.backendAttempt,backendProvider:'hosted',backendInfrastructureFallback:true})).toEqual({dispatched:true,attempt:2,qualificationDispatched:false});
   expect(modes(f)).toEqual(['reconcile']);expect(f.github.rest.actions.downloadArtifact).toHaveBeenCalledTimes(1);
+ });
+ it.each(['linux','hosted'])('does not accept current infrastructure proof without a protected %s fallback decision',async backendProvider=>{
+  const f=fixture(),summary=JSON.parse(f.check.output.summary);Object.assign(f.backend,{status:'completed',conclusion:'success'});
+  Object.assign(summary,{receiptVerified:false,outcome:'infrastructure-unavailable',status:76,reason:'queue_timeout',stage:'admission',workloadStarted:false,containerGone:true});
+  f.envelope.receipt=receiptFor(summary,654,[base,head]);
+  f.check.conclusion='neutral';f.check.output.summary=JSON.stringify({...summary,requestDigest:f.envelope.receipt.requestDigest});f.pinReceipt();
+  await expect(complete(f,{...configuration,backendAttempt:f.backendAttempt,backendProvider,backendInfrastructureFallback:false})).rejects.toThrow();
+  expect(modes(f)).toEqual([]);expect(f.github.rest.actions.downloadArtifact).toHaveBeenCalledTimes(1);
  });
  it.each(['image','harness','required-boolean'])(
   'validates %s configuration before dispatching retained-backend work',async kind=>{
