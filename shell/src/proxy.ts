@@ -1,5 +1,5 @@
 import { isSharedWorkspacePath, SHARED_WORKSPACE_PREFIX } from "./lib/shared-workspace";
-import { hasSharedPreviewBearer } from "./app/workspace/access";
+import { hasSharedPreviewBearer, sharedShellOrigin } from "./app/workspace/access";
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse, type NextRequest } from "next/server";
 import {
@@ -120,7 +120,20 @@ const withClerk = clerkMiddleware(async (auth, request) => {
   if (isSharedWorkspacePath(request.nextUrl.pathname)) {
     if (process.env.MATRIX_SHARED_WORKSPACE_SPIKE !== "1") return new NextResponse("Not found", { status: 404 });
     const session = await auth();
-    if (!session.userId) return new NextResponse("Authentication required", { status: 401 });
+    if (!session.userId) {
+      const document = ["GET", "HEAD"].includes(request.method)
+        && (request.nextUrl.pathname === "/workspace" || request.nextUrl.pathname === "/workspace/");
+      if (!document) return new NextResponse("Authentication required", { status: 401 });
+      try {
+        const publicOrigin = sharedShellOrigin(request.url);
+        const signInUrl = new URL(configuredSignInUrl ?? "/sign-in", publicOrigin);
+        signInUrl.searchParams.set("redirect_url", new URL(`${request.nextUrl.pathname}${request.nextUrl.search}`, publicOrigin).toString());
+        return NextResponse.redirect(signInUrl);
+      } catch (error: unknown) {
+        console.error("[workspace] Sign-in unavailable", error instanceof Error ? error.name : "UnknownError");
+        return new NextResponse("Workspace access unavailable", { status: 503 });
+      }
+    }
     return sharedWorkspaceResponse(request);
   }
 

@@ -13,6 +13,24 @@ describe("shared preview does not inherit personal auth bypasses", () => {
     const response = await proxy(new NextRequest("https://shell.test/workspace"), event);
     expect(response.status).toBe(404);
   });
+  it("redirects a signed-out workspace document to sign-in and preserves its destination", async () => {
+    vi.stubEnv("MATRIX_SHARED_WORKSPACE_SPIKE", "1");
+    vi.stubEnv("MATRIX_SHARED_WORKSPACE_SHELL_ORIGIN", "https://preview.matrix.test");
+    session.auth.mockResolvedValue({ userId: null });
+    const response = await proxy(new NextRequest("http://localhost:3217/workspace?launch=__chat__", { headers: { "x-forwarded-host": "attacker.test" } }), event);
+    expect(response.status).toBe(307);
+    const target = new URL(response.headers.get("location")!);
+    expect(target.origin).toBe("https://preview.matrix.test");
+    expect(target.pathname).toBe("/sign-in");
+    expect(target.searchParams.get("redirect_url")).toBe("https://preview.matrix.test/workspace?launch=__chat__");
+  });
+  it("returns 401 for signed-out direct internal shared API requests", async () => {
+    vi.stubEnv("MATRIX_SHARED_WORKSPACE_SPIKE", "1");
+    session.auth.mockResolvedValue({ userId: null });
+    const response = await proxy(new NextRequest("https://shell.test/workspace/api/api/files"), event);
+    expect(response.status).toBe(401);
+    expect(response.headers.get("location")).toBeNull();
+  });
   it("requires Clerk auth before rewriting shared APIs even when E2E bypass is enabled", async () => {
     vi.stubEnv("MATRIX_SHARED_WORKSPACE_SPIKE", "1");
     vi.stubEnv("E2E_TEST_BYPASS", "1");
