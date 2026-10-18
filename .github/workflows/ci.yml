@@ -266,7 +266,7 @@ jobs:
   ci-backend:
     name: CI Backend Decision
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 70
     permissions:
@@ -407,7 +407,7 @@ jobs:
   patterns:
     name: Pattern Scan
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -461,7 +461,7 @@ jobs:
   react-doctor:
     name: React Doctor
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
     # Include observed 5m15s checkout, audit and cleanup/transfer variance.
     timeout-minutes: 10
@@ -535,7 +535,7 @@ jobs:
   sync-client:
     name: Sync Client Package
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -674,6 +674,7 @@ jobs:
             tests/scripts/ci-dedicated-admission.test.ts \
             tests/scripts/ci-dedicated-api.test.ts \
             tests/scripts/ci-dedicated-bridge.test.ts \
+            tests/scripts/ci-dedicated-routing.test.ts \
             tests/scripts/ci-dedicated-metadata.test.ts \
             tests/scripts/ci-superseded-pr-heads.test.ts \
             tests/platform/ci-docs-only-jobs.test.ts \
@@ -723,7 +724,7 @@ jobs:
   funded-postgres:
     name: Funded Settlement PostgreSQL
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -1069,7 +1070,7 @@ jobs:
   funded-host-root:
     name: Protected Funded Host Root Contracts
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1108,7 +1109,7 @@ jobs:
     needs: changes
     # Only delegated routing waits on Linux here. In shadow mode CI Results would otherwise wait up to
     # 70 minutes for a non-blocking result; the controller check and source gates record shadow outcomes.
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && needs.changes.outputs.dedicated_mode == 'delegated'
+    if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && needs.changes.outputs.dedicated_mode == 'delegated')
     runs-on: ubuntu-latest
     # Shadow observes Linux qualification; checkout failures and timeouts must not fail the run either.
     continue-on-error: ${{ needs.changes.outputs.dedicated_mode != 'delegated' }}
