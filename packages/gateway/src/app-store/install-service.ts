@@ -1,4 +1,4 @@
-import {reconcileAbsentInstalls} from './install-receipts.js';
+import {reconcileStoreReceipts} from './install-receipts.js';
 import {installedMatches,recoverInstallPublications} from './install-recovery.js';
 import {withOwnerFileMutation} from '../owner-file-mutations.js';
 import {randomUUID} from 'node:crypto';
@@ -6,9 +6,9 @@ import {AppStoreInstallJobSchema,type AppStoreInstallJob,type AppStoreInstallReq
 import type {AppStoreCatalogQuery} from '@matrix-os/contracts/app-store';
 import {encodeAppBundle,bundleDigest} from '@matrix-os/contracts/app-store-bundle';
 import {withStoreDirectory,atomicPrivateFile,sweepPrivateChildren} from './private-state.js';
-import {readStoreProvenance} from './provenance.js';import {validateStoreGrant} from './install-validation.js';import {publishCommunityInstall} from './install-publication.js';
+import {readStoreProvenance,installedAppPresent} from './provenance.js';import {validateStoreGrant} from './install-validation.js';import {publishCommunityInstall} from './install-publication.js';
 import {StoreBuildError,type LocalStoreBuilder} from './local-builder.js';import {StoreError,type AppStorePlatformClient} from './platform-client.js';
-import {AppStoreIdSchema} from '@matrix-os/contracts/app-store';import {isFsError} from '../app-gallery/pinned-directory.js';
+import {AppStoreIdSchema} from '@matrix-os/contracts/app-store';
 interface PrivateJob {job:AppStoreInstallJob;listingSlug:string;versionId:string;consentDigest:string;updatedAt:number;receiptPending:boolean}
 export function createStoreInstallService(options:{homePath:string;platform:AppStorePlatformClient;builder:LocalStoreBuilder}){
  const active=new Map<string,Promise<void>>(); // Cap2 and removed on settlement; durable jobs cap32 + TTL7days.
@@ -24,12 +24,10 @@ export function createStoreInstallService(options:{homePath:string;platform:AppS
    }finally{await dir.close();}
   }return rows;
  });}
- async function receipt(row:PrivateJob){return withOwnerFileMutation(options.homePath,async()=>{
-   const current=(await readStoreProvenance(options.homePath)).installs.find(record=>record.listingSlug===row.listingSlug&&record.versionId===row.versionId);
-   if(!current)return;let present=false;try{const {snapshotOwnerApp}=await import('./snapshot.js');present=(await snapshotOwnerApp(options.homePath,current.appSlug)).has('matrix.json');}catch(error:unknown){if(!isFsError(error,'ENOENT'))throw error;}
-   if(!present){if(row.receiptPending){row.receiptPending=false;row.updatedAt=Date.now();await save(row);}return;}
-   if(!row.receiptPending)return;await options.platform.recordInstall(row.listingSlug,row.versionId);row.receiptPending=false;row.updatedAt=Date.now();await save(row);
+ async function receipt(row:PrivateJob){if(!row.receiptPending)return;return withOwnerFileMutation(options.homePath,async()=>{
+   await reconcileStoreReceipts(options.homePath,options.platform,row.listingSlug);row.receiptPending=false;row.updatedAt=Date.now();await save(row);
   });}
+
  async function run(row:PrivateJob){
   try{
    row.job.status='building';await save(row);
@@ -47,16 +45,13 @@ export function createStoreInstallService(options:{homePath:string;platform:AppS
    row.job={id:row.job.id,status:'failed',error:error instanceof StoreBuildError?error.code:error instanceof StoreError&&error.code==='invalid'?'invalid':'unavailable'};row.updatedAt=Date.now();await save(row);
   }
  }
- async function local(listingSlug:string,currentVersion?:string):Promise<AppStoreLocalState>{
-  const record=(await readStoreProvenance(options.homePath)).installs.find(row=>row.listingSlug===listingSlug);
+ async function local(record:Awaited<ReturnType<typeof readStoreProvenance>>['installs'][number]|undefined,currentVersion?:string):Promise<AppStoreLocalState>{
   if(!record)return {installed:false,updateAvailable:false};
-  // Provenance may outlive manual owner deletion. Never claim an app is installed from a row alone.
-  let present=false;
-  try{const {snapshotOwnerApp}=await import('./snapshot.js');const files=await snapshotOwnerApp(options.homePath,record.appSlug);present=files.has('matrix.json');}catch(error:unknown){if(!isFsError(error,'ENOENT'))console.warn('[app-store] Local install unavailable',error instanceof Error?error.name:'UnknownError');}
+  const present=await installedAppPresent(options.homePath,record.appSlug);
   return {installed:present,appSlug:record.appSlug,launchPath:`apps/${record.appSlug}`,versionId:record.versionId,version:record.version,updateAvailable:present&&Boolean(currentVersion&&currentVersion!==record.version)};
  }
  async function recover(){
-  ready=false;await recoverInstallPublications(options.homePath);ready=true;try{await withOwnerFileMutation(options.homePath,()=>reconcileAbsentInstalls(options.homePath,options.platform));}catch(error:unknown){console.warn('[app-store] Uninstall receipt will retry',error instanceof Error?error.name:'UnknownError');}const provenance=await readStoreProvenance(options.homePath);
+  ready=false;await recoverInstallPublications(options.homePath);ready=true;try{await withOwnerFileMutation(options.homePath,()=>reconcileStoreReceipts(options.homePath,options.platform));}catch(error:unknown){console.warn('[app-store] Uninstall receipt will retry',error instanceof Error?error.name:'UnknownError');}const provenance=await readStoreProvenance(options.homePath);
   for(const row of await records()){
    if(active.has(row.job.id))continue;
    if(['queued','building'].includes(row.job.status)){
@@ -78,8 +73,8 @@ export function createStoreInstallService(options:{homePath:string;platform:AppS
    const task=run(row);active.set(row.job.id,task);void task.catch((error:unknown)=>console.warn('[app-store] Install task failed',error instanceof Error?error.name:'UnknownError')).finally(()=>active.delete(row.job.id));return {...row.job,status:'queued'};
   });},
   async job(id:string):Promise<AppStoreInstallJob>{AppStoreIdSchema.parse(id);const row=(await records()).find(row=>row.job.id===id);if(!row)throw new StoreError('not_found');return row.job;},
-  async catalog(query:AppStoreCatalogQuery){const page=await options.platform.catalog(query);return {...page,listings:await Promise.all(page.listings.map(async row=>({...row,local:await local(row.slug,row.version??undefined)})))};},
-  async detail(slug:string){const detail=await options.platform.detail(slug);return {...detail,local:await local(slug,detail.currentVersion?.version)};},
+  async catalog(query:AppStoreCatalogQuery){const page=await options.platform.catalog(query);const provenance=await readStoreProvenance(options.homePath);const listings=[];for(let offset=0;offset<page.listings.length;offset+=4){listings.push(...await Promise.all(page.listings.slice(offset,offset+4).map(async row=>({...row,local:await local(provenance.installs.find(record=>record.listingSlug===row.slug),row.version??undefined)}))));}return {...page,listings};},
+  async detail(slug:string){const detail=await options.platform.detail(slug);return {...detail,local:await local((await readStoreProvenance(options.homePath)).installs.find(row=>row.listingSlug===slug),detail.currentVersion?.version)};},
   async close(){clearInterval(timer);stop.abort();await Promise.allSettled([...active.values(),...(maintenance?[maintenance]:[])]);},
  };
 }
