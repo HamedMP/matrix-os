@@ -17,6 +17,7 @@ describe("desktop release workflows", () => {
     expect(windows).toMatch(/name: Windows x64\s+if: \$\{\{ inputs\.build_windows \}\}/);
     expect(windows).toContain("environment: desktop-release");
     expect(release).toContain("build_windows: ${{ inputs.mode != 'dry-run' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}");
+    expect(release).toMatch(/name: Prepare channel pointer manifests\s+if: \$\{\{ needs\.prepare\.outputs\.mode != 'dry-run' \|\| github\.ref == 'refs\/heads\/main' \|\| startsWith\(github\.ref, 'refs\/tags\/'\) \}\}/);
     expect(canary).not.toContain("build_windows: false");
   });
 
