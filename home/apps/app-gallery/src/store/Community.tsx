@@ -63,6 +63,7 @@ export default function Community({ client }: { client: StoreClient }) {
         slug={selected}
         onBack={() => {
           setSelected(null);
+          setPageCursor(undefined);
           setRefresh((value) => value + 1);
         }}
       />

@@ -53,7 +53,8 @@ export default function ListingDetail({
     [showConsent, setShowConsent] = useState(false);
   const [busy, setBusy] = useState(false),
     [job, setJob] = useState<AppStoreInstallJob | null>(null),
-    [refresh, setRefresh] = useState(0);
+    [refresh, setRefresh] = useState(0),
+    [pollAttempt, setPollAttempt] = useState(0);
   const consentKey =
     detail?.currentVersion && detail.capabilitiesDigest
       ? `${detail.slug}:${detail.currentVersion.id}:${detail.capabilitiesDigest}`
@@ -95,10 +96,13 @@ export default function ListingDetail({
     const jobId = pendingJobId ?? restored;
     if (!jobId) return;
     const started = Date.now();
+    let failures = 0;
     const poll = async () => {
       try {
         const result = await client.installJob(jobId);
         if (!active) return;
+        failures = 0;
+        setError("");
         setJob(result);
         if (result.status === "installed") {
           remember(slug);
@@ -115,7 +119,13 @@ export default function ListingDetail({
             "The build is taking longer than expected. Reopen this listing to check its progress.",
           );
       } catch (cause) {
-        if (active) setError(storeErrorMessage(cause));
+        if (!active) return;
+        setError(storeErrorMessage(cause));
+        if (++failures <= 3 && Date.now() - started < 20 * 60 * 1000)
+          timer = setTimeout(
+            () => void poll(),
+            Math.min(1500 * 2 ** failures, 10000),
+          );
       }
     };
     timer = setTimeout(() => void poll(), pendingJobId ? 1500 : 0);
@@ -123,7 +133,7 @@ export default function ListingDetail({
       active = false;
       clearTimeout(timer);
     };
-  }, [client, slug, pendingJobId]);
+  }, [client, slug, pendingJobId, pollAttempt]);
   const perform = async (operation: () => Promise<void>) => {
     if (lock.current) return;
     lock.current = true;
@@ -177,6 +187,17 @@ export default function ListingDetail({
         ← Back to community
       </button>
       <ErrorNotice error={error} />
+      {error && building && (
+        <button
+          disabled={busy}
+          onClick={() => {
+            setError("");
+            setPollAttempt((value) => value + 1);
+          }}
+        >
+          Retry build status
+        </button>
+      )}
       {!detail ? (
         <>
           <p role="status">

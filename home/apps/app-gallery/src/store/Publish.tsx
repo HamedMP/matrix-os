@@ -142,6 +142,7 @@ export default function Publish({
               App to publish
               <select
                 aria-label="App to publish"
+                disabled={busy}
                 value={app}
                 onChange={(event) => setApp(event.target.value)}
               >
@@ -174,7 +175,12 @@ export default function Publish({
             <ul className="store-list">
               {drafts.map((item) => (
                 <li key={item.id}>
-                  <button onClick={() => setSelected(item.id)}>
+                  <button
+                    disabled={busy}
+                    onClick={() => {
+                      if (!lock.current) setSelected(item.id);
+                    }}
+                  >
                     {item.sourceName} · {item.status.replaceAll("_", " ")}
                   </button>
                   <small>

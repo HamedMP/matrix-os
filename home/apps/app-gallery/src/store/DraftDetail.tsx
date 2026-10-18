@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   APP_STORE_LICENSES,
   storeErrorMessage,
@@ -36,7 +36,17 @@ export default function DraftDetail({
     setConsentedDraft(value ? consentKey : null);
   const alive = useRef(true),
     lock = useRef(false),
-    fileRequest = useRef(0);
+    fileRequest = useRef(0),
+    draftRevision = useRef<string | null>(null);
+  const updateDraft = useCallback((value: StoreDraft) => {
+    const revision = `${value.id}:${value.updatedAt}`;
+    if (draftRevision.current !== revision) {
+      draftRevision.current = revision;
+      fileRequest.current++;
+      setDiff(null);
+    }
+    setDraft(value);
+  }, []);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -55,7 +65,7 @@ export default function DraftDetail({
       try {
         const value = await client.draft(id);
         if (!active) return;
-        setDraft(value);
+        updateDraft(value);
         if (
           !["preparing", "submitting"].includes(value.status) ||
           Date.now() - started >= 20 * 60 * 1000
@@ -74,7 +84,7 @@ export default function DraftDetail({
       active = false;
       clearInterval(timer);
     };
-  }, [client, id, refresh]);
+  }, [client, id, refresh, updateDraft]);
   const perform = async (operation: () => Promise<void>) => {
     if (lock.current) return;
     lock.current = true;
@@ -91,6 +101,12 @@ export default function DraftDetail({
     }
   };
   const file = async (path: string) => {
+    if (
+      lock.current ||
+      !draft ||
+      ["preparing", "submitting"].includes(draft.status)
+    )
+      return;
     const request = ++fileRequest.current;
     setError("");
     try {
@@ -126,6 +142,7 @@ export default function DraftDetail({
               Preparation needs attention (
               {draft.failureCode.replaceAll("_", " ")}). Your original app is
               kept.
+              {draft.failureCode === "limits_exceeded" && " Split large text files, reduce the app size or shorten revision instructions, then prepare a new copy."}
             </p>
           )}
           {draft.ai !== "completed" && (
@@ -149,7 +166,7 @@ export default function DraftDetail({
                 perform(async () => {
                   const result = await client.saveListing(id, value);
                   if (alive.current) {
-                    setDraft(result);
+                    updateDraft(result);
                     setDirty(false);
                     setConsent(false);
                     setNotice("Listing saved. Review it before submitting.");
@@ -166,6 +183,7 @@ export default function DraftDetail({
                   event.preventDefault();
                   void perform(async () => {
                     setConsent(false);
+                    fileRequest.current++;
                     setDiff(null);
                     await client.revise(id, instructions, accessSourceId);
                     if (alive.current) {
