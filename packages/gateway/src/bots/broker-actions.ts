@@ -33,6 +33,7 @@ import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_TIMEOUT_MS = 60_000;
+const AUTHORIZATION_TIMEOUT_MS = 10_000;
 /** Per-run event order entries kept after release; runs still bound are never evicted. */
 const MAX_TRACKED_RUNS = 256;
 
@@ -169,14 +170,20 @@ export function createBotBrokerActions(deps: {
     return true;
   }
 
-  async function reauthorize(binding: PiRuntimeBinding): Promise<void> {
+  async function reauthorize(binding: PiRuntimeBinding, childSignal?: AbortSignal): Promise<void> {
     if (!binding.group) return;
+    const runSignal = deps.registry.inferenceSignal(binding);
+    if (!runSignal || runSignal.aborted || childSignal?.aborted) throw new BotBrokerActionError("stale_generation");
+    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(AUTHORIZATION_TIMEOUT_MS), ...(childSignal ? [childSignal] : [])]);
+    if (signal.aborted) throw new BotBrokerActionError(runSignal.aborted || childSignal?.aborted ? "stale_generation" : "timeout");
     try {
-      await requireGroupBotAuthority({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, group: binding.group }, deps.authorizeGroup);
+      await untilAborted(requireGroupBotAuthority({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, group: binding.group }, deps.authorizeGroup), signal);
     } catch (error: unknown) {
+      if (signal.aborted) throw new BotBrokerActionError(runSignal.aborted || childSignal?.aborted ? "stale_generation" : "timeout");
       console.warn("[bots] group authorization denied:", error instanceof Error ? error.name : "UnknownError");
       throw new BotBrokerActionError("denied");
     }
+    if (signal.aborted) throw new BotBrokerActionError(runSignal.aborted || childSignal?.aborted ? "stale_generation" : "timeout");
     if (!deps.registry.lookupRun(binding)) throw new BotBrokerActionError("stale_generation");
   }
 
@@ -226,7 +233,7 @@ export function createBotBrokerActions(deps: {
       ? 10 * 60_000 : request.capability === "browser.action" ? SHARED_BROWSER_ACTION_DEADLINE_MS : request.capability === "agent.task" ? 120_000 : toolTimeoutMs;
     const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(deadline)]);
     try {
-      await reauthorize(binding);
+      await reauthorize(binding, runSignal);
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
       await checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });
       return result;
