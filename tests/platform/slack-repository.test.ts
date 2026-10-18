@@ -1,4 +1,4 @@
-import { Kysely } from "kysely";
+import { Kysely, sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapSlackDatabase, type SlackDatabase } from "../../packages/platform/src/slack/database.js";
@@ -157,10 +157,14 @@ describe("durable Slack authorization metadata", () => {
     expect(await repository.getInstallation("A123","T123")).toMatchObject({generation:change==="revoked"?2:1,state:change==="revoked"?"revoked":"active"});
   });
   it("upgrades legacy OAuth states fail-closed and commits each new permit once",async()=>{
-    await db.schema.dropTable("slack_oauth_states").execute();
-    await db.schema.createTable("slack_oauth_states").addColumn("hash","text",c=>c.primaryKey()).addColumn("actor_id","text",c=>c.notNull())
-      .addColumn("organization_id","text",c=>c.notNull()).addColumn("expires_at","timestamptz",c=>c.notNull()).addColumn("consumed_at","timestamptz").execute();
-    await db.insertInto("slack_oauth_states").values({hash:"e".repeat(64),actor_id:"user_admin",organization_id:"org_company",expires_at:new Date(clock.getTime()+60_000),consumed_at:null} as never).execute();
+    // Reconstruct a pre-revision deployment without resetting unrelated schema markers.
+    await db.transaction().execute(async (trx) => {
+      await sql`DELETE FROM platform_schema_revisions WHERE scope = 'slack'`.execute(trx);
+      await trx.schema.dropTable("slack_oauth_states").execute();
+      await trx.schema.createTable("slack_oauth_states").addColumn("hash","text",c=>c.primaryKey()).addColumn("actor_id","text",c=>c.notNull())
+        .addColumn("organization_id","text",c=>c.notNull()).addColumn("expires_at","timestamptz",c=>c.notNull()).addColumn("consumed_at","timestamptz").execute();
+      await trx.insertInto("slack_oauth_states").values({hash:"e".repeat(64),actor_id:"user_admin",organization_id:"org_company",expires_at:new Date(clock.getTime()+60_000),consumed_at:null} as never).execute();
+    });
     await bootstrapSlackDatabase(db);expect(await repository.getOAuthState("e".repeat(64))).toBeNull();
     const hash="f".repeat(64);await repository.createOAuthState({appId:"A123",hash,actorId:"user_admin",organizationId:"org_company"});
     await repository.consumeOAuthState(hash,"user_admin");await repository.saveInstallation(installation,{oauthStateHash:hash});
