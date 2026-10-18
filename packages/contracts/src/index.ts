@@ -1466,4 +1466,4 @@ export * from '#chatgpt-plan-wire';
 export * from '#matrix-anthropic-connection';
 
 export * from "#chat-navigation";
-export { isInjectedContext as isImportedChatContext } from "./local-chat-import/blocks.js";
+export { isInjectedContext as isImportedChatContext } from "#local-chat-import/blocks";
