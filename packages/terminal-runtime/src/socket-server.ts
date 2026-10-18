@@ -19,6 +19,7 @@ import type { TerminalSizeListener } from "./workspace-resize.js";
 import { TerminalFrameQueue } from "./input-frame-queue.js";
 import { presentZellijSnapshot } from "./zellij-screen-dump.js";
 import { TerminalCommandStateSchema, type TerminalCommandState } from "./terminal-command-state.js";
+import { TerminalCommandResultSchema, type TerminalCommandResult } from './terminal-command-state.js';
 import type { TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import { TerminalRuntimeError } from "./errors.js";
 import {
@@ -34,6 +35,7 @@ import {
 export interface TerminalRuntimeControlApi {
   archiveEndedTab?(ref: TerminalRef, input: TerminalEndedTabArchiveInput): Promise<TerminalTab>;
   getCommandState?(ref: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState>;
+  getCommandResult?(ref: TerminalRef, expectedIncarnation: string): Promise<TerminalCommandResult>;
   scrollState?(ref: TerminalRef, line?: number): Promise<TerminalScrollState | null>;
   listWorkspaces(): Promise<TerminalWorkspace[]>;
   ensureWorkspace(input?: { projectId?: string }): Promise<TerminalWorkspace>;
@@ -368,6 +370,11 @@ export class TerminalRuntimeSocketServer {
         const result = await this.options.runtime.getCommandState?.({ workspaceId, tabId }, expectedIncarnation);
         const state = TerminalCommandStateSchema.safeParse(result);
         return state.success ? state.data : "unknown";
+      }
+      case 'GetCommandResult': {
+        const { workspaceId, tabId, expectedIncarnation } = request.input;
+        const result = TerminalCommandResultSchema.safeParse(await this.options.runtime.getCommandResult?.({ workspaceId, tabId }, expectedIncarnation));
+        return result.success ? result.data : { state: 'unknown' };
       }
       case "ArchiveEndedTab": {
         if (!this.options.runtime.archiveEndedTab) throw new TerminalRuntimeError("unavailable");

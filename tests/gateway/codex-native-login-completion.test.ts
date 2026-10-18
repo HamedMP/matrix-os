@@ -8,6 +8,7 @@ import { createProviderGenericHarnessCoordinator } from "../../packages/gateway/
 import { normalizeCodexNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/codex-native-account-metadata.js";
 
 import { createNativeProviderWorkflowAdapters } from "../../packages/gateway/src/ai-providers/provider-workflow-native.js";
+import { createProviderWorkflowService } from '../../packages/gateway/src/ai-providers/provider-workflows.js';
 import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 
 const roots: string[] = [], services: AiProviderService[] = [];
@@ -164,14 +165,45 @@ it('updates the exact native account method after a previously signed-out key is
 it.each([false, true])("binds foreground completion to the real store login revision (intervening Off: %s)", async off => {
   const f = await fixture();
   let observer: { onFrame(frame: unknown): void } | undefined;
-  const terminal = { listWorkspaces: async () => [{ tabs: [{ workspaceId: 'workspace', id: 'login' }] }], attach: (value: typeof observer) => { observer = value; return { close() {}, send() {} }; }, terminateTab: async () => {} };
+  let commandExited = false;
+  const terminal = { listWorkspaces: async () => [{ tabs: [{ workspaceId: 'workspace', id: 'login', incarnation: 'ti_11111111111111111111111111111111' }] }], getCommandResult: async () => commandExited ? { state: 'exited', exitCode: 0 } : { state: 'running' }, attach: (value: typeof observer) => { observer = value; return { close() {}, send() {} }; }, terminateTab: async () => {} };
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: terminal as never });
   const publish = vi.fn();
   await adapter!.start({ registerCleanup: vi.fn(), request: { harnessInstanceId: f.input.harnessInstanceId, kind: 'login', method: 'terminal', idempotencyKey: 'real-foreground' }, publish });
   const started = await f.store.getSnapshot();
   expect(started.revision).toBe(f.before.revision + 1);
   if (off) await f.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: f.input.harnessInstanceId, enabled: false, expectedRevision: started.revision, idempotencyKey: 'off-during-login' });
+  commandExited = true;
   observer!.onFrame({ type: 'exit', revision: 1, exitCode: 0, terminalRef: { workspaceId: 'workspace', tabId: 'login' } });
   await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: off ? 'failed' : 'succeeded', safeFailure: off ? 'unavailable' : null }));
   expect((await f.store.getSnapshot()).harnesses.find(row => row.id === f.input.harnessInstanceId)?.configuredEnabled).toBe(!off);
+});
+
+it('preserves an already committing real native selection when cancel waits for completion', async () => {
+  const f = await fixture();
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const committing = new Promise<void>(resolve => { entered = resolve; });
+  const apply = f.runtime.applyConfiguration.bind(f.runtime);
+  f.runtime.applyConfiguration = async input => { await apply(input); entered(); await gate; };
+  let commandExited = false;
+  const terminal = {
+    listWorkspaces: async () => [{ tabs: [{ workspaceId: 'workspace', id: 'login', incarnation: 'ti_11111111111111111111111111111111' }] }],
+    getCommandResult: async () => commandExited ? { state: 'exited', exitCode: 0 } : { state: 'running' },
+    attach: () => ({ close() {}, send() {} }), terminateTab: vi.fn(async () => {}),
+  };
+  const adapters = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: terminal as never });
+  const service = createProviderWorkflowService({ ownerId: 'owner', adapters });
+  const operation = await service.start('owner', { harnessInstanceId: f.input.harnessInstanceId, kind: 'login', method: 'terminal', idempotencyKey: 'committing-before-cancel' });
+  commandExited = true;
+  try {
+    await committing;
+    const cancelled = service.cancel('owner', operation.id);
+    release();
+    await expect(cancelled).resolves.toMatchObject({ state: 'succeeded', safeFailure: null });
+    const selected = (await f.store.getSnapshot()).harnesses.find(row => row.id === f.input.harnessInstanceId)!;
+    expect(selected).toMatchObject({ configuredEnabled: true, configuredAccessSourceId: 'owner_openai_profile' });
+    expect(f.systemRead).not.toHaveBeenCalled(); expect(f.systemUpdate).not.toHaveBeenCalled();
+    expect(terminal.terminateTab).not.toHaveBeenCalled();
+  } finally { release(); await service.close(); }
 });

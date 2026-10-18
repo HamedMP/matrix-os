@@ -23,7 +23,7 @@ export async function createNativeProviderWorkflowRuntime(options: {
   ownerId: string | null;
   getPrincipal: (context: Context) => { userId: string } | null;
   store: ProviderSettingsStoreWriter;
-  terminal: Pick<TerminalRuntimeSocketClient, "ensureWorkspace" | "createTab" | "terminateTab" | "attach" | "listWorkspaces">;
+  terminal: Pick<TerminalRuntimeSocketClient, "ensureWorkspace" | "createTab" | "terminateTab" | "attach" | "listWorkspaces" | "getCommandResult">;
   profileGuard: NativeProviderProfileGuard;
   inventory: () => Promise<Pick<AiProviderSnapshotV3, "drivers">>;
 }) {
