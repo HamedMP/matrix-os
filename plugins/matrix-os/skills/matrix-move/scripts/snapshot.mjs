@@ -96,6 +96,7 @@ async function snapshot(rootInput, brief) {
           const destination = join(stage, name); await mkdir(dirname(destination), { recursive: true });
           const mode = before.mode & 0o111 ? 0o755 : 0o644;
           await writeFile(destination, bytes, { flag: "wx", mode });
+          await chmod(destination, mode); // Match the manifest even under a private umask.
           files.push({ path: name, bytes: bytes.length, sha256: hash(bytes), mode }); total += bytes.length;
         } finally { await input.close(); }
       }

@@ -24,6 +24,14 @@ it("does not lose an expanded history window when a new message streams in", () 
   expect(result?.messages).toHaveLength(255);
   expect(result?.messages[0]?.seq).toBe(1);
 });
+it("explains when the display limit returns an expanded view to recent messages", () => {
+  const loadPage = vi.fn(); const update = vi.fn();
+  const full = page("chat_one", Array.from({ length: 10000 }, (_, i) => i + 1));
+  const hook = renderHook(({ detail }) => useCanonicalChatHistory({ detail, activeChatId: "chat_one", loadPage, update }), { initialProps: { detail: full } });
+  hook.rerender({ detail: page("chat_one", Array.from({ length: 200 }, (_, i) => i + 9802), "before9802", 2) });
+  expect(hook.result.current.error).toContain("Showing recent messages");
+  hook.unmount();
+});
 it("keeps the fresh cursor reachable when a reconnect snapshot has no overlap with saved history", () => {
   const fresh = page("chat_one", [301, 302], "before301", 2);
   expect(mergeLoadedChatHistory(fresh, page("chat_one", [1, 2], "before1"))).toBe(fresh);

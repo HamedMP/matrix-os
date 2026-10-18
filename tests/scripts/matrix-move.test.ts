@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, chmod } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, chmod, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -18,6 +18,14 @@ async function fixture() {
 afterEach(async () => { await Promise.all(temporary.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
 describe("Matrix move workspace snapshot", () => {
+  it("archives the declared permissions under a private process mask", async () => {
+    const { source } = await fixture();
+    await writeFile(join(source, "run.sh"), "#!/bin/sh\ntrue\n", { mode: 0o755 });
+    const { stdout } = await execFile(process.execPath, ["--input-type=module", "-e", "process.umask(0o077); await import(process.argv[1]);", script, source]);
+    const result = JSON.parse(stdout); temporary.push(result.directory);
+    const manifest = JSON.parse(await readFile(result.manifest, "utf8"));
+    expect((await stat(join(result.directory, "stage", "run.sh"))).mode & 0o777).toBe(manifest.files[0].mode);
+  });
   it("does not traverse ignored dependency directories", async () => {
     const { source } = await fixture();
     await execFile("git", ["init", "-q"], { cwd: source });

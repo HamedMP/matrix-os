@@ -28,3 +28,15 @@ it("does not finish a download after switching owner with the same Chat id", asy
   expect(savePreviewBlob).not.toHaveBeenCalled();
   hook.unmount();
 });
+it("aborts an imported image request when its owner changes", async () => {
+  let signal: AbortSignal | null | undefined;
+  let resolve!: (value: Response) => void;
+  vi.stubGlobal("fetch", vi.fn((_url, init: RequestInit) => { signal = init.signal; return new Promise<Response>(r => { resolve = r; }); }));
+  const hook = renderHook(({ owner }) => useImportedChatAssets(ref.chatId, owner), { initialProps: { owner: "owner_a" } });
+  const pending = hook.result.current.loadImportedImage(`/api/chats/${ref.chatId}/imports/assets/${ref.assetId}/content`);
+  hook.rerender({ owner: "owner_b" });
+  expect(signal?.aborted).toBe(true);
+  resolve(new Response("old image"));
+  await expect(pending).rejects.toThrow();
+  hook.unmount();
+});

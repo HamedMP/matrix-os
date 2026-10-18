@@ -11,7 +11,11 @@ export function useImportedChatAssets(chatId?: string, authorityKey?: string) {
   const generation = live.current.generation;
   live.current = { chatId, authorityKey, generation };
   const active = useRef<AbortController | null>(null);
-  useEffect(() => () => { live.current.generation += 1; active.current?.abort(); active.current = null; }, [chatId, authorityKey]);
+  const images = useRef(new Set<AbortController>()); // At most 16 concurrent requests, removed on settlement or scope change.
+  useEffect(() => () => {
+    live.current.generation += 1; active.current?.abort(); active.current = null;
+    for (const controller of images.current) controller.abort(); images.current.clear();
+  }, [chatId, authorityKey]);
   const load = useCallback(async (input: ImportedChatAssetRef, signal?: AbortSignal) => {
     const requestGeneration = live.current.generation;
     const ref = ImportedChatAssetRefSchema.parse(input);
@@ -33,7 +37,10 @@ export function useImportedChatAssets(chatId?: string, authorityKey?: string) {
     const match = /^\/api\/chats\/([^/]+)\/imports\/assets\/([^/]+)\/content$/.exec(src);
     const ref = ImportedChatAssetRefSchema.parse({ chatId: match?.[1], assetId: match?.[2], label: "Imported image" });
     if (importedChatAssetContentPath(ref) !== src) throw new Error("ImportedAssetUnavailable");
-    return load(ref);
+    if (images.current.size >= 16) throw new Error("ImportedAssetUnavailable");
+    const controller = new AbortController(); images.current.add(controller);
+    try { return await load(ref, controller.signal); }
+    finally { images.current.delete(controller); }
   }, [load]);
   return { openImportedAsset, loadImportedImage };
 }

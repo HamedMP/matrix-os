@@ -7,6 +7,19 @@ function message(seq: number, role: CanonicalChatMessage["role"], parts: Canonic
   return { id: `msg_${seq}`, chatId: "chat_history", seq, role, state: "committed", createdAt: "2026-10-18T00:00:00Z", parts: [...parts, provenance] };
 }
 describe("imported Web Chat history", () => {
+  it("retains late tool output and references and honors failures after the grouped preview limit", () => {
+    const projected = projectCanonicalMessages([
+      message(1, "tool", [{ type: "tool_request", toolCallId: "call_many", name: "Read", label: "Read file" }]),
+      ...Array.from({ length: 70 }, (_, i) => message(i + 2, "tool", [
+        { type: "tool_result", toolCallId: "call_many", outcome: i === 69 ? "failed" : "success", text: `Result ${i}` },
+        { type: "import_reference", assetId: `asset_${i}`, kind: "tool_output", label: `Full result ${i}`, sizeBytes: 1, mimeType: "text/plain" },
+      ])),
+    ]);
+    const details = projected.map(item => item.toolDisplay?.detail).join("\n");
+    for (let i = 0; i < 70; i++) expect(details).toContain(`Result ${i}`);
+    expect(projected[0]?.toolDisplay?.state).toBe("failed");
+    expect(projected.flatMap(item => item.attachments ?? []).map(item => item.label)).toContain("Full result 69");
+  });
   it("pairs saved results with calls, keeps output collapsed, and never shows historical work as running", () => {
     const projected = projectCanonicalMessages([
       message(1, "user", [{ type: "text", text: "My request" }]),

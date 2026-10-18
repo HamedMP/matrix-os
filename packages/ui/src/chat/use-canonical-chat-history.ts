@@ -49,11 +49,21 @@ export function useCanonicalChatHistory({ detail, activeChatId, loadPage, update
   useEffect(() => () => { live.current.epoch += 1; }, []);
   const inFlight = useRef<number | null>(null);
   const [state, setState] = useState<{ epoch: number; loading: boolean; error: string | null }>({ epoch: 0, loading: false, error: null });
+  const previous = useRef({ detail, epoch: live.current.epoch });
+  useEffect(() => {
+    const before = previous.current; const epoch = live.current.epoch;
+    previous.current = { detail, epoch };
+    if (before.epoch === epoch && before.detail?.record.chat.id === detail?.record.chat.id
+      && (before.detail?.messages.length ?? 0) >= MAX_LOADED_CHAT_MESSAGES
+      && detail && detail.messages.length < before.detail!.messages.length) {
+      setState({ epoch, loading: false, error: "History display limit reached. Showing recent messages; earlier messages remain saved." });
+    }
+  }, [detail, activeChatId]);
   const loadEarlier = useCallback(async () => {
     const { detail: start, activeChatId: chatId, epoch } = live.current;
     if (!start?.nextCursor || start.record.chat.id !== chatId || inFlight.current === epoch) return;
     if (start.messages.length >= MAX_LOADED_CHAT_MESSAGES) {
-      setState({ epoch, loading: false, error: "History display limit reached. The original archive retains the full conversation." });
+      setState({ epoch, loading: false, error: "History display limit reached. Earlier messages remain saved." });
       return;
     }
     inFlight.current = epoch;
@@ -64,7 +74,7 @@ export function useCanonicalChatHistory({ detail, activeChatId, loadPage, update
       if (older.record.chat.id !== chatId || older.nextCursor === start.nextCursor
         || !older.messages.length || older.messages.at(-1)!.seq !== start.messages[0]!.seq - 1) throw new Error("InvalidHistoryPage");
       if (start.messages.length + older.messages.length > MAX_LOADED_CHAT_MESSAGES) {
-        setState({ epoch, loading: false, error: "History display limit reached. The original archive retains the full conversation." });
+        setState({ epoch, loading: false, error: "History display limit reached. Earlier messages remain saved." });
         return;
       }
       let limitReached = false;
@@ -74,7 +84,7 @@ export function useCanonicalChatHistory({ detail, activeChatId, loadPage, update
         const { nextCursor: _, ...merged } = mergeLoadedChatHistory(current, older);
         return { ...merged, ...(older.nextCursor ? { nextCursor: older.nextCursor } : {}) };
       });
-      setState({ epoch, loading: false, error: limitReached ? "History display limit reached. The original archive retains the full conversation." : null });
+      setState({ epoch, loading: false, error: limitReached ? "History display limit reached. Earlier messages remain saved." : null });
     } catch (error: unknown) {
       if (live.current.epoch !== epoch) return;
       console.warn("[canonical-chat] earlier history unavailable:", error instanceof Error ? error.name : "UnknownError");

@@ -11,7 +11,7 @@ export function importedAttachments(message: CanonicalChatMessage): NonNullable<
 }
 /** Historical requests/results have no live Run; join them before projecting bubbles. */
 export function importedToolProjector(messages: CanonicalChatMessage[]) {
-  type Entry = { request?: Extract<CanonicalChatMessage["parts"][number], { type: "tool_request" }>; results: Extract<CanonicalChatMessage["parts"][number], { type: "tool_result" }>[]; messages: CanonicalChatMessage[] };
+  type Entry = { request?: Extract<CanonicalChatMessage["parts"][number], { type: "tool_request" }>; results: Extract<CanonicalChatMessage["parts"][number], { type: "tool_result" }>[]; messages: CanonicalChatMessage[]; state: CanonicalToolActivity["state"]; more?: boolean };
   const links = new Map<string, Entry>();
   const MAX_TOOL_LINKS = 10_000;
   for (const message of messages) {
@@ -19,10 +19,15 @@ export function importedToolProjector(messages: CanonicalChatMessage[]) {
     for (const part of message.parts) {
       if (part.type !== "tool_request" && part.type !== "tool_result") continue;
       if (!links.has(part.toolCallId) && links.size >= MAX_TOOL_LINKS) links.delete(links.keys().next().value!);
-      const entry = links.get(part.toolCallId) ?? { results: [], messages: [] };
+      const entry: Entry = links.get(part.toolCallId) ?? { results: [], messages: [], state: "partial" };
+      const keep = part.type === "tool_request" || entry.results.length < 64;
       if (part.type === "tool_request") entry.request = part;
-      else if (entry.results.length < 64) entry.results.push(part);
-      if (entry.messages.length < 64 && !entry.messages.includes(message)) entry.messages.push(message);
+      else {
+        entry.state = entry.state === "failed" || part.outcome === "failed" ? "failed"
+          : entry.state === "stopped" || part.outcome === "cancelled" ? "stopped" : "completed";
+        if (keep) entry.results.push(part); else entry.more = true;
+      }
+      if (keep && entry.messages.length < 65 && !entry.messages.includes(message)) entry.messages.push(message);
       links.set(part.toolCallId, entry);
     }
   }
@@ -34,21 +39,21 @@ export function importedToolProjector(messages: CanonicalChatMessage[]) {
       toolDisplay: { id: message.id, kind: "context", state: "completed", label: "Imported instructions", detail: text }, attachments: importedAttachments(message) }];
     const tools = message.parts.filter(part => part.type === "tool_request" || part.type === "tool_result");
     if (!tools.length) return null;
-    return tools.flatMap(part => {
-      if (emitted.has(part.toolCallId)) return [];
+    return tools.flatMap((part, index) => {
       const entry = links.get(part.toolCallId);
-      if (!entry) return [];
-      emitted.add(part.toolCallId);
-      const state = entry.results.some(result => result.outcome === "failed") ? "failed"
-        : entry.results.some(result => result.outcome === "cancelled") ? "stopped"
-        : entry.results.length ? "completed" : "partial";
-      const label = entry.request?.label ?? "Tool result";
-      const detail = [entry.request?.inputPreview, ...entry.results.map(result => result.text)].filter(Boolean).join("\n\n");
+      const overflow = part.type === "tool_result" && !entry?.results.includes(part);
+      if (!overflow && entry && emitted.has(part.toolCallId)) return [];
+      if (!overflow && entry) emitted.add(part.toolCallId);
+      const request = entry?.request ?? (part.type === "tool_request" ? part : undefined);
+      const results = overflow && part.type === "tool_result" ? [part] : entry?.results ?? [];
+      const state = overflow && part.type === "tool_result" ? part.outcome === "failed" ? "failed" : part.outcome === "cancelled" ? "stopped" : "completed" : entry?.state ?? "partial";
+      const label = request?.label ?? "Tool result";
+      const detail = [request?.inputPreview, ...results.map(result => result.text), ...(!overflow && entry?.more ? ["Additional saved results follow."] : [])].filter(Boolean).join("\n\n");
       const toolDisplay: CanonicalToolActivity = { id: part.toolCallId, kind: "tool", state, label,
-        ...(entry.request?.inputPreview ? { preview: entry.request.inputPreview, previewKind: "text" } : {}), ...(detail ? { detail } : {}) };
-      return [{ id: `${message.id}:${part.toolCallId}`, role: "system" as const, tool: label, toolDisplay,
+        ...(request?.inputPreview ? { preview: request.inputPreview, previewKind: "text" } : {}), ...(detail ? { detail } : {}) };
+      return [{ id: `${message.id}:${part.toolCallId}:${index}`, role: "system" as const, tool: label, toolDisplay,
         content: `${state === "partial" ? "Incomplete" : "Used"} ${label}`, timestamp: Date.parse(message.createdAt),
-        attachments: entry.messages.flatMap(importedAttachments) }];
+        attachments: (overflow || !entry ? [message] : entry.messages).flatMap(importedAttachments) }];
     });
   };
 }
