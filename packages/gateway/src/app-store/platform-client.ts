@@ -1,3 +1,4 @@
+import {MAX_APP_STORE_BRIDGE_REPLY_BYTES} from '@matrix-os/contracts/app-store-bridge-policy';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { z } from 'zod/v4';
@@ -23,7 +24,7 @@ export function createAppStorePlatformClient(options:{platformUrl:string;handle:
   for(const[key,value]of Object.entries(init.query??{}))if(value!==undefined)target.searchParams.set(key,String(value));
   try{
    const response=await fetcher(target.toString(),{method:init.method??'GET',headers:{authorization:`Bearer ${options.token}`,...(init.body!==undefined?{'content-type':'application/json'}:{})},...(init.body!==undefined?{body:JSON.stringify(init.body)}:{}),redirect:'error',signal:AbortSignal.timeout(10_000)});
-   const payload:unknown=JSON.parse((await readBoundedResponse(response,2*1024*1024)).toString('utf8'));
+   const payload:unknown=JSON.parse((await readBoundedResponse(response,/^review\/versions\/[0-9a-f-]{36}\/file$/.test(path)?MAX_APP_STORE_BRIDGE_REPLY_BYTES:2*1024*1024)).toString('utf8'));
    if(!response.ok){const error=C.AppStoreErrorSchema.safeParse(payload);throw new StoreError(error.success?error.data.error:'unavailable');}
    const parsed=schema.safeParse(payload);if(!parsed.success)throw new StoreError();return parsed.data;
   }catch(error:unknown){if(error instanceof StoreError)throw error;console.warn('[app-store] Platform request failed',error instanceof Error?error.name:'UnknownError');throw new StoreError();}
@@ -40,7 +41,7 @@ export function createAppStorePlatformClient(options:{platformUrl:string;handle:
   rate:(value:string,stars:number|null)=>request(`listings/${slug(value)}/rating`,C.AppStoreRatingStateSchema,{method:stars===null?'DELETE':'PUT',...(stars===null?{}:{body:C.AppStoreRatingInputSchema.parse({stars})})}),
   createSubmission:(input:C.AppStoreCreateSubmission)=>request('submissions',C.AppStoreCreateSubmissionResultSchema,{method:'POST',body:C.AppStoreCreateSubmissionSchema.parse(input)}),
   finalize:(value:string)=>request(`submissions/${id(value)}/finalize`,C.AppStoreSubmissionSummarySchema,{method:'POST',body:{}}),
-  submissions:()=>request('submissions',C.AppStoreSubmissionsPageSchema),
+  submissions:(cursor?:string)=>request('submissions',C.AppStoreSubmissionsPageSchema,{query:{cursor:C.AppStoreCatalogQuerySchema.shape.cursor.parse(cursor)}}),
   withdraw:(value:string)=>request(`submissions/${id(value)}/withdraw`,C.AppStoreSubmissionSummarySchema,{method:'POST',body:{}}),
   reviewQueue:(query:Record<string,unknown>)=>request('review/queue',C.AppStoreReviewQueuePageSchema,{query:C.AppStoreReviewQueueQuerySchema.parse(query)}),
   reviewDetail:(value:string)=>request(`review/versions/${id(value)}`,C.AppStoreReviewDetailSchema),

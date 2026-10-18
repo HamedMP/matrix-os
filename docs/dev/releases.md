@@ -40,6 +40,10 @@ that image.
   surfaces. Tear them down before promoting a feature to `stable`; see
   [Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
 
+## App Store build-tool prerequisite
+
+Host bundles include integrity-verified pnpm10.33.4 for isolated community source builds. Updates activate only its versioned runtime pointer and retain the prior pointer for rollback; they keep Node and the existing global package intact. A legacy prefix with unsafe root permissions is sealed by the privileged prerequisite helper only after verifying the bundled archive. Missing or invalid prerequisites fail closed. See [App Store developer notes](app-store.md).
+
 ## Version Scheme
 
 ```
