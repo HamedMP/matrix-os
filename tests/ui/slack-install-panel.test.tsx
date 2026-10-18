@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { SlackInstallPanel } from '../../packages/ui/src/messaging/SlackInstallPanel';
 import { AddToSlack } from '../../packages/ui/src/messaging/AddToSlack';
-const sharedStyles = readFileSync(new URL('../../packages/ui/src/styles.css', import.meta.url), 'utf8');
+const sharedStyles = readFileSync(resolve(process.cwd(), 'packages/ui/src/styles.css'), 'utf8');
 let stylesheet: HTMLStyleElement;
 beforeEach(() => {
  stylesheet = document.createElement('style');
