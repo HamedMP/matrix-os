@@ -37,9 +37,12 @@ function markdownLinkText(text: string): string {
   let output = "";
   let copiedUntil = 0;
   let labelStart = -1;
+  let escaped = false;
   let link: { start: number; labelEnd: number; destinationStart: number } | null = null;
   for (let index = 0; index < text.length; index++) {
     const character = text.charAt(index);
+    const isEscaped = escaped;
+    escaped = character === "\\" && !escaped;
     if (link && (character === ")" || /\s/.test(character))) {
       if (character === ")" && index > link.destinationStart) {
         output += text.slice(copiedUntil, link.start) + text.slice(link.start + 1, link.labelEnd);
@@ -52,7 +55,7 @@ function markdownLinkText(text: string): string {
     }
     // Keep the latest label candidate while scanning a destination: if that
     // destination fails at whitespace, a nested label may still form a link.
-    if (character === "[") labelStart = index;
+    if (character === "[" && !isEscaped) labelStart = index;
     else if (character === "]") {
       if (labelStart !== -1 && index > labelStart + 1 && text[index + 1] === "(") {
         link ??= { start: labelStart, labelEnd: index, destinationStart: index + 2 };
