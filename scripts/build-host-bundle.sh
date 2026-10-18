@@ -78,7 +78,8 @@ grep "  ${NODE_ARCHIVE}$" "$DIST_DIR/SHASUMS256.txt" > "$DIST_DIR/${NODE_ARCHIVE
 tar -xJf "$DIST_DIR/$NODE_ARCHIVE" -C "$STAGE_DIR/runtime"
 mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
 # The isolated App Store builder requires this verified offline-install toolchain.
-node "$ROOT_DIR/scripts/stage-host-pnpm.mjs" "$STAGE_DIR/runtime/node"
+mkdir -p "$STAGE_DIR/app/host-toolchain"
+node "$ROOT_DIR/scripts/stage-host-pnpm.mjs" "$STAGE_DIR/runtime/node" "$STAGE_DIR/app/host-toolchain/pnpm-10.33.4.tgz"
 
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
@@ -132,7 +133,8 @@ node "$ROOT_DIR/scripts/inline-sync-agent-recovery.mjs" \
   "$STAGE_DIR/bin/matrix-sync-agent" \
   "$STAGE_DIR/bin/matrix-sync-agent-recovery" \
   "$STAGE_DIR/bin/matrix-update-manifest" \
-  "$STAGE_DIR/bin/matrix-update-request-rejection"
+  "$STAGE_DIR/bin/matrix-update-request-rejection" \
+  "$STAGE_DIR/bin/matrix-update-pnpm"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while

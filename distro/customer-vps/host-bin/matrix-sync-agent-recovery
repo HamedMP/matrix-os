@@ -5,6 +5,11 @@
 # This file is sourced by the agent after its update primitives are defined. It
 # deliberately owns no process lifecycle or mutable globals of its own.
 
+# Development source path; production bundles inline this library alongside recovery.
+if [ -f "$BIN_DIR/matrix-update-pnpm" ] && [ ! -L "$BIN_DIR/matrix-update-pnpm" ]; then
+  source "$BIN_DIR/matrix-update-pnpm"
+fi
+
 resume_update_transaction_services() {
   local name state
   while IFS=: read -r name state; do
@@ -216,6 +221,9 @@ do_rollback() {
   if ! stop_runtime_services; then
     log "ERROR: rollback could not stop the runtime services safely"
     return 1
+  fi
+  if declare -F restore_pnpm_runtime_transaction >/dev/null; then
+    restore_pnpm_runtime_transaction "$(current_version)" || return 1
   fi
   if [ "$has_app_rollback" = true ] \
     && [ -f "$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE" ] \
