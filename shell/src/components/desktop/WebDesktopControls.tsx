@@ -63,8 +63,11 @@ function WebComputerMenu({ gateway }: { gateway: string }) {
 }
 
 interface ComputerMenuState { status: 'loading' | 'ready' | 'error'; inventory: WebComputerList | null; slot: string | null }
+function isCurrentComputer(computer: WebComputer, slot: string | null, shared: boolean) {
+  return shared ? computer.kind === 'starter' : computer.kind !== 'starter' && computer.runtimeSlot === slot;
+}
 function computerMenuPresentation(state: ComputerMenuState, shared: boolean) {
-  const current = state.inventory?.items.find((computer) => computer.runtimeSlot === state.slot);
+  const current = state.inventory?.items.find((computer) => isCurrentComputer(computer, state.slot, shared));
   const label = current?.label ?? (shared ? 'Shared workspace' : state.status === 'loading' ? 'Loading computers…' : state.status === 'ready' ? 'Current computer' : 'Computer unavailable');
   const triggerLabel = shared ? `Change computer, currently ${label}` : state.status === 'loading' ? 'Loading computers' : state.status === 'error' ? 'Computer list unavailable' : `Change computer, currently ${label}`;
   return { label, triggerLabel };
@@ -108,7 +111,7 @@ function ScopedComputerMenu({ gateway }: { gateway: string }) {
     <div className="flex items-center justify-between px-2 py-1 text-[11px] text-muted-foreground"><span>COMPUTERS</span><button type="button" aria-label="Refresh computers" onClick={requestRefresh} className="rounded p-1 focus-visible:outline-2 focus-visible:outline-primary"><RefreshCwIcon className="size-3.5" aria-hidden="true" /></button></div>
     {state.status === "loading" ? <p role="status" className="p-2 text-xs">Loading computers…</p> : null}
     {state.status === "error" ? <p role="alert" className="p-2 text-xs">Your computer list is unavailable. Try refreshing.</p> : null}
-    {state.inventory?.items.map(computer => <ComputerChoice key={computer.runtimeSlot} computer={computer} selected={computer.runtimeSlot === state.slot} />)}
+    {state.inventory?.items.map(computer => <ComputerChoice key={computer.runtimeSlot} computer={computer} selected={isCurrentComputer(computer, state.slot, shared)} />)}
     <Link href="/runtime" className={rowClass}>{shared ? 'Personal computers' : 'All computers'}</Link>
   </Menu.Content></Menu.Portal></Menu.Root>;
 }

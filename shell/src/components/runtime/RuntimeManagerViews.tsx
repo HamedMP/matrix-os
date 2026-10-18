@@ -151,7 +151,7 @@ const COMPUTER_TONES = [
 ] as const;
 
 function computerIdentity(computer: MatrixComputer): { emoji: string; tone: string } {
-  if (computer.kind === 'starter') return { emoji: '🌱', tone: 'bg-[#DDE9DF]' };
+  if (computer.kind === 'starter') return { emoji: '🌱', tone: 'bg-forest/10' };
   if (computer.kind === "preview") return { emoji: "🧪", tone: "bg-[#E8E8E1]" };
   if (computer.runtimeSlot === "primary") return { emoji: "🐇", tone: "bg-[#F4E4CF]" };
   const index = [...computer.runtimeSlot].reduce((total, character) => total + character.codePointAt(0)!, 0) % COMPUTER_EMOJIS.length;

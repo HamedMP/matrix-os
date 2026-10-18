@@ -34,3 +34,17 @@ it('shows Starter as a separate computer and links back to the unchanged persona
   expect(screen.getByRole('menuitem', { name: /Starter Computer/ }).getAttribute('data-disabled')).not.toBeNull();
   expect(fetcher).toHaveBeenCalledOnce();
 });
+
+it('keeps a personal computer named starter selectable from the shared workspace', async () => {
+  window.history.replaceState({}, '', '/workspace');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [
+    { handle: 'hamed', runtimeSlot: 'starter', label: 'Additional Computer', availability: 'available', kind: 'customer', gatewayPath: '/vm/hamed?runtime=starter', capabilities: [] },
+  ], selectedSlot: 'starter', hasMore: false, limit: 20 }) }));
+  render(<WebDesktopControls onOpenSettings={vi.fn()} onOpenCommandPalette={vi.fn()} onOpenSupport={vi.fn()} onOpenFirstWork={vi.fn()} />);
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'Change computer, currently Shared workspace' }), { button: 0, ctrlKey: false });
+  const personal = await screen.findByRole('menuitem', { name: /Additional Computer/ });
+  expect(personal.getAttribute('href')).toBe('/vm/hamed?runtime=starter');
+  expect(personal.getAttribute('data-disabled')).toBeNull();
+  fireEvent.keyDown(personal, { key: 'Escape' });
+  expect(screen.getByRole('button', { name: 'Change computer, currently Shared workspace' })).toBeTruthy();
+});
