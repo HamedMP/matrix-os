@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
+import { isMachineSpeechReady, readBoundedHostJson } from "./host-readiness.js";
 import {
   buildPlatformSpeechRuntimeVerificationToken,
   buildPlatformVerificationToken,
@@ -32,13 +33,12 @@ export interface SpeechFleetActivationPageResult extends SpeechFleetActivationRe
 
 async function configured(response: Response, expectedRevision: string): Promise<boolean> {
   if (!response.ok) return false;
-  const responseText = await response.text();
-  if (responseText.length > 1024) return false;
   try {
+    const value = await readBoundedHostJson(response, 1024);
     const parsed = z.object({
       configured: z.boolean(),
       configurationRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
-    }).strict().parse(JSON.parse(responseText));
+    }).strict().parse(value);
     return parsed.configured && parsed.configurationRevision === expectedRevision;
   } catch (error: unknown) {
     if (!(error instanceof SyntaxError || error instanceof z.ZodError)) {
@@ -109,7 +109,15 @@ export async function activatePlatformSpeechFleet(options: {
         }),
       });
       if (!response.ok) {
-        return { machineId: machine.machineId, handle: machine.handle, status: "failed" as const, error: `HTTP ${response.status}` };
+        const rejectedStatus = response.status;
+        await response.body?.cancel();
+        if (rejectedStatus === 400 && await isMachineSpeechReady({
+          machine,
+          get: (path) => fetchImpl(`${base}${path}`, { ...requestOptions(), method: "GET" }),
+        })) {
+          return { machineId: machine.machineId, handle: machine.handle, status: "activated" as const };
+        }
+        return { machineId: machine.machineId, handle: machine.handle, status: "failed" as const, error: `HTTP ${rejectedStatus}` };
       }
       for (let attempt = 0; attempt < attempts; attempt += 1) {
         await wait(1_000);

@@ -636,6 +636,8 @@ sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 
 Publish with `./scripts/publish-release.sh <version> --channel <channel>` or let `.github/workflows/host-bundle-release.yml` do it on `main`. The publish step uploads immutable R2 objects and registers the release in platform Postgres; platform Postgres is the source of truth for release metadata and channel pointers.
 
+Requested fleet or targeted deployments run managed speech activation in a separate follow-up job when `MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true`. Activation runs after deployment success or failure, including a deployment timeout, with its own runner and 50-minute limit. The deployment failure remains visible. Publish-only runs, disabled speech, and cancelled workflows do not activate the fleet. The shared activation helper retains bounded retries and verifies host configuration after gateway restart. If a host rejects replacement of its pinned platform origin, activation may instead verify the exact runtime handle, machine ID, and slot plus live ready dictation capabilities. It does not overwrite the pinned origin or weaken the host configuration checks.
+
 Existing VPS deployments are explicit. Normal `main` pushes publish and promote
 `dev` without updating any VPS. Target each reviewed customer handle rather than
 using an unqualified fleet deploy:
