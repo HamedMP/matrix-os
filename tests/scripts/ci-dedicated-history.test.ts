@@ -66,3 +66,12 @@ it('retains a bounded API budget even for arbitrarily deep timestamped traffic',
  await expect(newestWorkflowRun(github,repo,workflow,()=>false,{kind:'controller',headSha:scope.headSha,headRef:'child'})).rejects.toThrow(/bounded request/);
  expect(github.rest.actions.listWorkflowRuns.mock.calls.length).toBe(100);
 });
+
+it('awaits an asynchronous origin verdict instead of treating a rejected Promise as authenticated coverage',async()=>{
+ const github=fixture(args=>args.event==='pull_request'?[row(400)]:[row(401)]);
+ expect(await newestWorkflowRun(github,repo,workflow,async()=>false,scope)).toBeUndefined();
+});
+it('awaits origin verification before comparing the newest requester generation',async()=>{
+ const github=fixture(args=>args.event==='pull_request'?[row(400,true)]:[row(401,false)]);
+ expect((await newestWorkflowRun(github,repo,workflow,async(r:any)=>r.relevant,scope)).id).toBe(400);
+});

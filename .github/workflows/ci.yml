@@ -618,6 +618,11 @@ jobs:
             tests/scripts/ci-dedicated-main.test.ts \
             tests/scripts/ci-dedicated-result.test.ts \
             tests/scripts/ci-dedicated-source-gate.test.ts \
+            tests/scripts/ci-dedicated-refresh.test.ts \
+            tests/scripts/ci-dedicated-history.test.ts \
+            tests/scripts/ci-execution-origin.test.ts \
+            tests/scripts/zellij-watcher-startup.test.ts \
+            tests/platform/preview-execution-origin.test.ts \
             --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=output/ci/controller-regression.json
 
       - name: Upload controller regression evidence

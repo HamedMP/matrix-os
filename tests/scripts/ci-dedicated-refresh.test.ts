@@ -217,3 +217,51 @@ it('bounds waiting for a refresh title that never renders', async () => {
 it.each([{event:'pull_request'},{head_branch:'child'},{display_title:'CI metadata-v1'},{run_attempt:2}])('rejects unrelated placeholder event %j', change => {
  expect(helpers.refreshExecutionRequested('requested',{event:'workflow_dispatch',head_branch:'main',run_attempt:1,display_title:'CI',...change})).toBe(false);
 });
+
+// The execution commit is deliberately distinct from both the reviewed helper
+// pin and the candidate. Branch aliases at the main SHA cannot isolate checks.
+function isolatedExecutionFixture(){
+ const f=fixture(),execution='e'.repeat(40),tree='f'.repeat(40),branch=`ci-execution/${main}`;
+ const executionContext={sha:execution,ref:`refs/heads/${branch}`,workflowRef:`HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/${branch}`,workflowSha:execution};
+ const currentController={sha:main,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'};
+ const requester={id:321,run_attempt:2,status:'in_progress',workflow_id:98,path:'.github/workflows/ci.yml',event:'pull_request',head_sha:head,head_branch:'child',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2454,head:{sha:head},base:{sha:base,ref:'stack/parent'}}]};
+ const github={rest:{...f.github.rest,
+  git:{getCommit:vi.fn(async(args:any)=>({data:{sha:args.commit_sha,tree:{sha:tree},parents:[{sha:args.commit_sha===execution?main:base}]}}))},
+  repos:{...f.github.rest.repos,getCommit:vi.fn(async(args:any)=>({data:args.ref===main?{sha:main,parents:[{sha:base}],commit:{tree:{sha:tree}}}:{sha:merge,parents:[{sha:base},{sha:head}]}})),getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:args.branch===branch?execution:args.branch==='main'?main:base}}})),compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'identical',merge_base_commit:{sha:main}}}))},
+  actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),getWorkflowRun:vi.fn(async()=>({data:requester}))}}};
+ const payload={inputs:{controller_mode:'qualification',requesting_run_id:'321',requesting_run_attempt:'2',requesting_action:'in_progress'}};
+ return{...f,github,execution,tree,branch,executionContext,currentController,requester,payload};
+}
+
+describe('isolated execution with reviewed-source authority',()=>{
+ it('resolves an exact PR refresh from a distinct tree-identical execution commit',async()=>{
+  const f=isolatedExecutionFixture();const context={...f.executionContext,controllerSha:main,workflowRef:`HamedMP/matrix-os/.github/workflows/ci.yml@refs/heads/${f.branch}`};
+  await expect(helpers.resolveRequestingSource(f.github,repo,context,f.inputs)).resolves.toMatchObject({prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,mergeParents:[base,head]});
+  expect(f.github.rest.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({commit_sha:f.execution}));
+ });
+ it('does not confuse a dispatcher SHA with the tested PR source or genuine main coverage',async()=>{
+  const f=isolatedExecutionFixture();const context={...f.executionContext,controllerSha:main,workflowRef:`HamedMP/matrix-os/.github/workflows/ci.yml@refs/heads/${f.branch}`};
+  const value=await helpers.resolveRequestingSource(f.github,repo,context,f.inputs);
+  expect(value.sourceSha).toBe(merge);expect(value.sourceSha).not.toBe(f.execution);
+  const dispatch={...f.requester,event:'workflow_dispatch',head_branch:f.branch,head_sha:f.execution,display_title:`CI coverage-v1 · ${main}`};
+  expect(helpers.authenticatedRequestingRun(dispatch,repo,{sourceKind:'main',prNumber:0,headSha:main,sourceSha:main},{id:98})).toBe(false);
+ });
+ it('requires a verified isolated side proof before forwarding a live requester into qualification',async()=>{
+  const {admitDedicatedSource}=await import('../../scripts/ci/dedicated-admission.mjs');const f=isolatedExecutionFixture();
+  await expect(admitDedicatedSource(f.github,{repo,controller:f.currentController,executionContext:f.executionContext,eventName:'workflow_dispatch',payload:f.payload})).resolves.toMatchObject({prNumber:2454,headSha:head,sourceSha:merge,baseSha:base,mergeParents:[base,head]});
+  expect(f.github.rest.actions.getWorkflowRun).toHaveBeenCalledWith(expect.objectContaining({run_id:321}));
+ });
+ it.each(['attempt','requester','action','free-source','origin'])('rejects an isolated controller with %s disagreement before any lease is admitted',async kind=>{
+  const {admitDedicatedSource}=await import('../../scripts/ci/dedicated-admission.mjs');const f=isolatedExecutionFixture();
+  if(kind==='attempt')f.payload.inputs.requesting_run_attempt='1';
+  if(kind==='requester')f.requester.head_repository.full_name='fork/repo';
+  if(kind==='action')f.payload.inputs.requesting_action='completed';
+  if(kind==='free-source')Object.assign(f.payload.inputs,{source_sha:merge});
+  if(kind==='origin')f.executionContext.workflowSha=main;
+  await expect(admitDedicatedSource(f.github,{repo,controller:f.currentController,executionContext:f.executionContext,eventName:'workflow_dispatch',payload:f.payload})).rejects.toThrow();
+ });
+ it('rejects a caller-supplied logical main authority with no actual execution context',async()=>{
+  const {admitDedicatedSource}=await import('../../scripts/ci/dedicated-admission.mjs');const f=isolatedExecutionFixture();
+  await expect(admitDedicatedSource(f.github,{repo,controller:f.currentController,eventName:'workflow_dispatch',payload:f.payload})).rejects.toThrow();
+ });
+});
