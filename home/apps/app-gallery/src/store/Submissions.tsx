@@ -42,7 +42,11 @@ export default function Submissions({ client }: { client: StoreClient }) {
                 ? [...current, ...result.submissions].slice(-500)
                 : result.submissions,
             );
-            setListings(result.listings);
+            setListings((current) =>
+              page
+                ? [...current, ...result.listings].slice(-500)
+                : result.listings,
+            );
             setCursor(result.nextCursor);
           }
         },
@@ -126,7 +130,7 @@ export default function Submissions({ client }: { client: StoreClient }) {
           </li>
         ))}
       </ul>
-      {!loading && !items.length && !error && (
+      {!loading && !items.length && !listings.length && !error && (
         <p>No submissions yet. Prepare a copy in Publish to get started.</p>
       )}
       {cursor && (

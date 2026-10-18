@@ -31,8 +31,10 @@ export function storeOffset(cursor?: string): number {
 }
 export const storeCursor = (offset: number) => Buffer.from(String(offset)).toString('base64url');
 export function createListingRepository(db: PlatformDB) {
-  async function catalog(query: AppStoreCatalogQuery) {
-    let request = db.executor.selectFrom('app_store_listings').selectAll().where('status', '=', 'live').where('publisher_clerk_user_id', 'not like', 'deleted:%');
+  async function catalog(query: AppStoreCatalogQuery, review = false) {
+    let request = db.executor.selectFrom('app_store_listings').selectAll();
+    request = review ? request.where('current_version_id', 'is not', null)
+      : request.where('status', '=', 'live').where('publisher_clerk_user_id', 'not like', 'deleted:%');
     if (query.q) { const pattern = `%${query.q.replace(/[\\%_]/g, '\\$&')}%`; request = request.where(eb => eb.or([eb('name', 'ilike', pattern), eb('tagline', 'ilike', pattern)])); }
     if (query.category) request = request.where('category', '=', query.category);
     if (query.sort === 'new') request = request.orderBy('created_at', 'desc');
@@ -46,15 +48,16 @@ export function createListingRepository(db: PlatformDB) {
   async function detail(slug: string, owner: string): Promise<AppStoreListingDetail> {
     const row = await getStoreListing(db, slug); const publisher = row.publisher_clerk_user_id === owner;
     const install = await db.executor.selectFrom('app_store_installs').selectAll().where('listing_id', '=', row.id).where('clerk_user_id', '=', owner).executeTakeFirst();
-    if (row.status !== 'live' && !publisher && !(row.status === 'suspended' && install)) throw new AppStoreError('not_found');
-    const version = row.current_version_id ? await getStoreVersion(db, row.current_version_id) : null;
+    const removed = !publisher && Boolean(install) && ['delisted', 'suspended'].includes(row.status);
+    if (row.status !== 'live' && !publisher && !removed) throw new AppStoreError('not_found');
+    const version = !removed && row.current_version_id ? await getStoreVersion(db, row.current_version_id) : null;
     const rating = await db.executor.selectFrom('app_store_ratings').select('stars').where('listing_id', '=', row.id).where('clerk_user_id', '=', owner).executeTakeFirst();
     const installedVersion = install ? await getStoreVersion(db, install.version_id) : null;
-    return { ...storeSummary(row, version), description: row.description,
+    return { ...storeSummary(row, removed ? installedVersion : version), ...(removed ? { hasIcon: false } : {}), description: removed ? '' : row.description,
       currentVersion: version ? { id: version.id, version: version.version, changelog: version.changelog, license: version.license, publishedAt: version.published_at! } : null,
       capabilities: version?.capabilities ?? null, capabilitiesDigest: version ? await capabilitiesDigest(version.capabilities) : null,
       myRating: rating?.stars ?? null, myInstall: install && installedVersion ? { versionId: install.version_id, version: installedVersion.version, active: install.uninstalled_at === null } : null,
-      isPublisher: publisher, ...(row.status === 'suspended' ? { notice: 'removed' as const } : {}) };
+      isPublisher: publisher, ...(['delisted', 'suspended'].includes(row.status) ? { notice: 'removed' as const } : {}) };
   }
   async function downloadVersion(slug: string, owner: string, versionId: string) {
     const listing = await getStoreListing(db, slug); const version = await getStoreVersion(db, versionId);
@@ -64,5 +67,5 @@ export function createListingRepository(db: PlatformDB) {
     if (!(listing.status === 'live' && listing.current_version_id === version.id) && previous?.version_id !== version.id) throw new AppStoreError('forbidden');
     return version;
   }
-  return { catalog, detail, downloadVersion };
+  return { catalog: (query: AppStoreCatalogQuery) => catalog(query), reviewListings: (query: AppStoreCatalogQuery) => catalog(query, true), detail, downloadVersion };
 }

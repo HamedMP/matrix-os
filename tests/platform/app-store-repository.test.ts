@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { sql } from 'kysely';
 import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
@@ -130,6 +130,48 @@ describe('App Store repository', () => {
     await expect(repository.rate(author.userId, 'garden', 5)).rejects.toMatchObject({ code: 'forbidden' });
     await repository.rate(consumer.userId, 'garden', 4); expect(await repository.rate(consumer.userId, 'garden', 2)).toEqual({ myRating: 2, ratingAverage: 2, ratingCount: 1 });
     expect(await repository.rate(consumer.userId, 'garden', null)).toEqual({ myRating: null, ratingAverage: null, ratingCount: 0 });
+  });
+  it('returns only coarse removed metadata to prior installers of a delisted app', async () => {
+    const first = await published(); await repository.install(consumer.userId, 'garden', first.id);
+    await repository.listingAction('reviewer', first.listing_id, { type: 'delist', message: 'Retired' });
+    expect(await repository.detail('garden', consumer.userId)).toMatchObject({ status: 'delisted', notice: 'removed', description: '', currentVersion: null, capabilities: null,
+      myInstall: { versionId: first.id, active: true } });
+    await expect(repository.detail('garden', 'user_new')).rejects.toMatchObject({ code: 'not_found' });
+    await expect(repository.downloadVersion('garden', 'user_new', first.id)).rejects.toMatchObject({ code: 'forbidden' });
+    expect((await repository.catalog({ sort: 'new', limit: 50 })).listings).toEqual([]);
+  });
+  it('paginates all publisher listings even after their abandoned versions have been cleaned up', async () => {
+    const first = await repository.createSubmission(author, input());
+    const template = await db.executor.selectFrom('app_store_listings').selectAll().where('id', '=', first.listing_id).executeTakeFirstOrThrow();
+    await db.executor.insertInto('app_store_listings').values(Array.from({ length: 104 }, (_, i) => ({ ...template, id: randomUUID(), slug: `garden-${i}` }))).execute();
+    const firstPage = await repository.submissions(author.userId);
+    expect(firstPage.listings).toHaveLength(100); expect(firstPage.nextCursor).toBeTruthy();
+    const secondPage = await repository.submissions(author.userId, firstPage.nextCursor);
+    expect(secondPage.listings).toHaveLength(5); expect(secondPage.nextCursor).toBeUndefined();
+    expect(new Set([...firstPage.listings, ...secondPage.listings].map(row => row.id)).size).toBe(105);
+    expect(firstPage.submissions).toHaveLength(1); expect(secondPage.submissions).toEqual([]);
+    expect((await repository.submissions(consumer.userId)).listings).toEqual([]);
+  });
+  it.runIf(Boolean(process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL))('enforces the owner pending quota across concurrent different slugs in native PostgreSQL', async () => {
+    const first = await repository.createSubmission(author, input());
+    const version = await repository.getVersion(first.id);
+    await db.executor.insertInto('app_store_versions').values(Array.from({ length: 18 }, (_, i) => ({ ...version, id: randomUUID(), submission_key: `quota:seed:${i}`, version: `1.0.${i + 1}`, version_patch: i + 1 }))).execute();
+    const result = await sql<{ name: string }>`SELECT current_database() AS name`.execute(db.executor);
+    const url = new URL(process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL!); url.pathname = `/${result.rows[0].name}`;
+    const concurrentDb = createPlatformDb(url.toString()); await concurrentDb.ready;
+    try {
+      // Delay the insert after admission so two independent sessions overlap at
+      // the quota boundary. Each slug has a different listing row lock.
+      await sql`CREATE FUNCTION app_store_quota_insert_delay() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END $$`.execute(db.executor);
+      await sql`CREATE TRIGGER app_store_quota_insert_delay BEFORE INSERT ON app_store_versions FOR EACH ROW EXECUTE FUNCTION app_store_quota_insert_delay()`.execute(db.executor);
+      const concurrent = createAppStoreRepository(concurrentDb, { signing });
+      const create = (suffix: string) => { const value = input('1.0.0', `quota:new:${suffix}`); return concurrent.createSubmission(author, { ...value, listing: { ...value.listing, slug: `new-${suffix}` } }); };
+      const outcomes = await Promise.allSettled([create('one'), create('two')]);
+      expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1);
+      expect(outcomes.filter(outcome => outcome.status === 'rejected')).toEqual([expect.objectContaining({ reason: expect.objectContaining({ code: 'limit' }) })]);
+      expect(await db.executor.selectFrom('app_store_versions').select('id').where('submitted_by_clerk_user_id', '=', author.userId).execute()).toHaveLength(20);
+      expect(await db.executor.selectFrom('app_store_listings').select('id').where('slug', 'in', ['new-one', 'new-two']).execute()).toHaveLength(1);
+    } finally { await concurrentDb.destroy(); }
   });
   it('hides nonlive listings, preserves removed notices, and does not reinstate on update approval', async () => {
     const first = await published(); await repository.install(consumer.userId, 'garden', first.id);

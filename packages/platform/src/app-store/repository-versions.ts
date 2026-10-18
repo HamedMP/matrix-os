@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppStoreManifestSchema, canonicalJson, capabilitiesDigest, compareSemver, deriveAppStoreCapabilities, parseSemver,
   type AppStoreCreateSubmission, type AppStoreScanReport } from '@matrix-os/contracts/app-store';
@@ -21,6 +22,9 @@ export function createVersionRepository(db: PlatformDB, now: () => string) {
     const capDigest = await capabilitiesDigest(capabilities); const versionParts = parseSemver(input.version)!;
     try {
       return await db.transaction(async trx => {
+        // The pending limit belongs to the publisher, across every listing and
+        // platform process, independently of optional account-deletion admission.
+        await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`app-store-pending:${actor.userId}`}, 0))`.execute(trx.executor);
         const existing = await trx.executor.selectFrom('app_store_versions').selectAll().where('submission_key', '=', input.submissionKey).executeTakeFirst();
         if (existing) {
           if (existing.submitted_by_clerk_user_id !== actor.userId || existing.submission_digest !== digest) throw new AppStoreError('conflict');

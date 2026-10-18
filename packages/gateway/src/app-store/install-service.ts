@@ -74,7 +74,15 @@ export function createStoreInstallService(options:{homePath:string;platform:AppS
   });},
   async job(id:string):Promise<AppStoreInstallJob>{AppStoreIdSchema.parse(id);const row=(await records()).find(row=>row.job.id===id);if(!row)throw new StoreError('not_found');return row.job;},
   async catalog(query:AppStoreCatalogQuery){const page=await options.platform.catalog(query);const provenance=await readStoreProvenance(options.homePath);const listings=[];for(let offset=0;offset<page.listings.length;offset+=4){listings.push(...await Promise.all(page.listings.slice(offset,offset+4).map(async row=>({...row,local:await local(provenance.installs.find(record=>record.listingSlug===row.slug),row.version??undefined)}))));}return {...page,listings};},
-  async detail(slug:string){const detail=await options.platform.detail(slug);return {...detail,local:await local((await readStoreProvenance(options.homePath)).installs.find(row=>row.listingSlug===slug),detail.currentVersion?.version)};},
+  async detail(slug:string){
+   const detail=await options.platform.detail(slug);
+   const state=await local((await readStoreProvenance(options.homePath)).installs.find(row=>row.listingSlug===slug),detail.currentVersion?.version);
+   // Private records are capped/TTL-swept; this read never downloads or rebuilds source.
+   const matching=(await records()).filter(row=>row.listingSlug===slug&&row.versionId===detail.currentVersion?.id).sort((a,b)=>b.updatedAt-a.updatedAt);
+   const latest=matching.find(row=>row.job.status==='queued'||row.job.status==='building')??matching[0];
+   const installJob=latest&&(latest.job.status!=='installed'||state.installed&&state.versionId===latest.versionId)?latest.job:null;
+   return {...detail,local:state,installJob};
+  },
   async close(){clearInterval(timer);stop.abort();await Promise.allSettled([...active.values(),...(maintenance?[maintenance]:[])]);},
  };
 }

@@ -291,3 +291,14 @@ Then open the app from the Matrix launcher using the existing authenticated sess
 ### Distinct identities within an app family
 
 Keep shared typography, spacing, material, lighting and interaction conventions, but give each app a recognizable dominant accent with coordinated soft surfaces and a matching icon palette. Carry that identity into Gallery cards and phone layouts. Use app-local identity tokens rather than inheriting the same shell accent for every product; preserve host base surfaces and semantic success, warning and error colours. Choose purpose-appropriate palettes such as teal finance, sky travel, poppy calendar, plum subscriptions or amber focus. Check light/dark control-label contrast before shipping. First-party palette data lives in `packages/brand/src/app-identities.json`; regenerate installed-app and Gallery CSS with its companion generator.
+
+## Community publishing preview
+
+Use `publish_app` to prepare a private publishing draft and direct the owner to **Gallery → Publish**. The original app stays unchanged. The tool does not consent to AI disclosure or platform upload.
+
+- Ask the owner to use Gallery’s named AI-access consent before sending scrubbed source for generalization. A saved key may be available without having been validated; failures remain generic.
+- Have the owner inspect the complete source, images, scan findings, permissions, listing and source license, then explicitly submit for staff review. Never embed account tokens, private records or fixed connected-account labels.
+- Keep Vite source and a frozen pnpm lockfile. Approved full source is signed and built on each installer’s VPS with pinned pnpm10.33.4 and isolated offline execution. Missing isolation stops installation.
+- Store app data in the owner’s Postgres namespace. Updates preserve data and refuse to overwrite customized source. AI capability declarations never grant AI access automatically.
+
+See [App Store developer notes](../../../docs/dev/app-store.md) and the public publishing guide.

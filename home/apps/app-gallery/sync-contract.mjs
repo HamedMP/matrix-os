@@ -1,6 +1,7 @@
 // Repository builds refresh canonical contracts. Owner copies retain portable snapshots.
 import { readFile, writeFile } from "node:fs/promises";
 for (const [name, target, header] of [
+  ["app-store-bridge-policy.ts", "generated-store-policy.ts", "// Generated App Store bridge policy. Do not edit.\n"],
   ["app-store.ts", "generated-store.ts", "// Generated store contract. Do not edit.\n"],
   ["app-store-gateway.ts", "generated-store-gateway.ts", "// Generated gateway store contract. Do not edit.\n"],
   [

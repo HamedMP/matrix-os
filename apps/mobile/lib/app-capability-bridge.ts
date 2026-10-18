@@ -1,3 +1,4 @@
+import {MAX_APP_STORE_BRIDGE_REPLY_BYTES} from '@matrix-os/contracts/app-store-bridge-policy';
 import { AppAiInputSchema, AppCapabilityInputSchema, AppIdentitySchema, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, appRuntimeSlugFromIdentity, appCapabilityReplyBytes } from "@matrix-os/contracts";
 import { isAppGalleryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
 import { mobileGalleryRequest, mobileGalleryTimeout, mobileGalleryOpenInput } from "./app-gallery-bridge";
@@ -97,7 +98,7 @@ export function createMobileAppCapabilityBroker(options: {
       if (path === "/api/bridge/query" && (typeof init.body !== "string" || bytes(init.body) > MAX_APP_DATABASE_REQUEST_BYTES)) throw new Error("Invalid app request");
       const response = await Promise.race([options.request(path, { ...init, headers: { "content-type": "application/json" }, signal: controller.signal, redirect: "error" }), aborted]);
       if (!response.ok && frame.kind !== "gateway") throw new Error("App request unavailable");
-      const maxReply = frame.kind === "gateway" ? 2 * 1024 * 1024 : frame.kind === "db" ? MAX_APP_DATABASE_REPLY_BYTES : frame.kind === "capability" ? appCapabilityReplyBytes(AppCapabilityInputSchema.parse(frame.input)) : MAX_APP_BRIDGE_REPLY_BYTES;
+      const maxReply = frame.kind === "gateway" ? (path.startsWith("/api/app-store/")?MAX_APP_STORE_BRIDGE_REPLY_BYTES:2*1024*1024) : frame.kind === "db" ? MAX_APP_DATABASE_REPLY_BYTES : frame.kind === "capability" ? appCapabilityReplyBytes(AppCapabilityInputSchema.parse(frame.input)) : MAX_APP_BRIDGE_REPLY_BYTES;
       if (Number(response.headers.get("content-length")) > maxReply) { await response.body?.cancel(); throw new Error("App response unavailable"); }
       if (!response.body?.getReader) throw new Error("App response unavailable");
       const reader = response.body.getReader();
@@ -142,7 +143,7 @@ export function buildMobileAppBridgeScript(app: string, launchId: string, distri
       var id=++seq, text=JSON.stringify({type:"matrix:app-request",launchId:launch,documentId:documentId,id:id,kind:kind,input:input});
       var maximum=kind==="db"?${MAX_APP_DATABASE_REQUEST_BYTES + MAX_APP_CAPABILITY_BYTES}:${MAX_APP_CAPABILITY_BYTES};
       if(count>=32||utf8Bytes(text)>maximum||(kind==="db"&&utf8Bytes(JSON.stringify(Object.assign({},input,{app:app})))>${MAX_APP_DATABASE_REQUEST_BYTES})){reject(new Error("App request unavailable"));return;}
-      var timer=setTimeout(function(){delete pending[id];count--;reject(new Error("App request unavailable"));},kind==="gateway"?120000:35000);
+      var timer=setTimeout(function(){delete pending[id];count--;reject(new Error("App request unavailable"));},kind==="gateway"?125000:35000);
       pending[id]={resolve:resolve,reject:reject,timer:timer};count++;
       window.ReactNativeWebView.postMessage(text);
     });}

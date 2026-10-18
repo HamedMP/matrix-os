@@ -2,8 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { storeErrorMessage, type StoreClient } from "../store-model";
 import type { AppStoreReviewQueueItem } from "../generated-store";
 import ReviewDetail from "./ReviewDetail";
+import ReviewListings from "./ReviewListings";
 import { ErrorNotice } from "./Shared";
 export default function Review({ client }: { client: StoreClient }) {
+  const [published, setPublished] = useState(false);
   const [items, setItems] = useState<AppStoreReviewQueueItem[]>([]),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true);
@@ -16,6 +18,7 @@ export default function Review({ client }: { client: StoreClient }) {
     [page, setPage] = useState<string | undefined>();
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
+    if (published) return;
     let active = true;
     setLoading(true);
     setError("");
@@ -40,7 +43,18 @@ export default function Review({ client }: { client: StoreClient }) {
     return () => {
       active = false;
     };
-  }, [client, status, page, refresh]);
+  }, [client, status, page, refresh, published]);
+  if (published)
+    return (
+      <ReviewListings
+        client={client}
+        onBack={() => {
+          setPublished(false);
+          setPage(undefined);
+          setRefresh((value) => value + 1);
+        }}
+      />
+    );
   if (selected)
     return (
       <ReviewDetail
@@ -65,6 +79,7 @@ export default function Review({ client }: { client: StoreClient }) {
         and AI notes are advisory.
       </p>
       <div className="store-filters">
+        <button onClick={() => setPublished(true)}>Published listings</button>
         <label>
           Queue status
           <select

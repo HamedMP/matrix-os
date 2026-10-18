@@ -25,3 +25,6 @@ describe('authenticated store client',()=>{
   await expect(client.status()).rejects.toMatchObject({code:'unavailable'});
  });
 });
+
+it('pages owner submissions through a bounded opaque cursor',async()=>{const fetcher=vi.fn(async()=>Response.json({submissions:[],listings:[]}));const client=createAppStorePlatformClient({platformUrl:'https://platform.test',handle:'owner',token:'fixture',fetcher});await client.submissions('owner_page-2');expect(fetcher.mock.calls[0][0]).toContain('submissions?cursor=owner_page-2');expect(()=>client.submissions('../invalid')).toThrow();});
+it('reads full reviewer source text within its escaped JSON budget',async()=>{const text='\u0001'.repeat(512*1024);const client=createAppStorePlatformClient({platformUrl:'https://platform.test',handle:'owner',token:'fixture',fetcher:async()=>Response.json({path:'src/example.ts',text,size:text.length,binary:false,truncated:false})});expect((await client.reviewFile('11111111-1111-4111-8111-111111111111',{path:'src/example.ts'})).text).toBe(text);});

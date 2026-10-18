@@ -1,3 +1,4 @@
+import {appStoreBridgeTimeoutMs} from "./generated-store-policy";
 import { z } from "zod/v4";
 import * as S from "./generated-store";
 import * as G from "./generated-store-gateway";
@@ -69,7 +70,7 @@ export function createStoreClient(bridge: GalleryBridge) {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(body),
             },
-        35000,
+        Math.max(35000,appStoreBridgeTimeoutMs(`/api/app-store${path}`)+5000),
       );
       const error = S.AppStoreErrorSchema.safeParse(raw);
       if (error.success) throw new StoreError(error.data.error);
@@ -185,6 +186,11 @@ export function createStoreClient(bridge: GalleryBridge) {
       request(
         `/review/queue${query(S.AppStoreReviewQueueQuerySchema.parse({ status, cursor }))}`,
         S.AppStoreReviewQueuePageSchema,
+      ),
+    reviewListings: (input: Partial<S.AppStoreCatalogQuery>) =>
+      request(
+        `/review/listings${query(S.AppStoreCatalogQuerySchema.parse(input))}`,
+        S.AppStoreCatalogPageSchema,
       ),
     review: (value: string) =>
       request(`/review/versions/${id(value)}`, S.AppStoreReviewDetailSchema),

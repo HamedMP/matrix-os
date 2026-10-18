@@ -1,3 +1,4 @@
+import {appStoreBridgeTimeoutMs,MAX_APP_STORE_BRIDGE_REPLY_BYTES} from '@matrix-os/contracts/app-store-bridge-policy';
 import { prepareAppAiRequest } from "./app-ai-request";
 import { AppCapabilityInputSchema, AppIdentitySchema, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, appCapabilityReplyBytes, APP_CAPABILITY_TIMEOUT_MS } from "@matrix-os/contracts";
 
@@ -17,10 +18,12 @@ export function prepareAppCapabilityRequest(app: string, init: RequestInit): Req
 
 export { MAX_APP_BRIDGE_REPLY_BYTES };
 export function appBridgeTimeoutMs(url: string): number {
+  if(url.startsWith("/api/app-store/"))return appStoreBridgeTimeoutMs(url);
   const galleryInstall = /^\/api\/app-gallery\/[a-z][a-z0-9-]{0,47}\/install$/.test(url);
   return galleryInstall || url === "/api/bridge/ai" || url.startsWith("/api/bridge/ai/routes?") || url === "/api/bridge/capabilities" ? APP_CAPABILITY_TIMEOUT_MS : 10_000;
 }
 function replyBytes(request?: {url:string;init:RequestInit}): number {
+  if(request?.url.startsWith("/api/app-store/"))return MAX_APP_STORE_BRIDGE_REPLY_BYTES;
   if (request?.url === "/api/bridge/query" || request?.url === "/api/bridge/data") return MAX_APP_DATABASE_REPLY_BYTES;
   if (request?.url === "/api/bridge/capabilities" && typeof request.init.body === "string") {
     return appCapabilityReplyBytes(AppCapabilityInputSchema.parse(JSON.parse(request.init.body).input));

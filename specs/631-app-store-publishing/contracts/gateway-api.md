@@ -13,7 +13,7 @@ These routes are served by the per-user gateway.
 | GET | `/api/app-store/publishable-apps` | — | `{ apps: AppStorePublishableApp[] }` `{ slug, name, icon?, description?, eligible: boolean, reason? }` |
 | GET | `/api/app-store/drafts` | — | `{ drafts: AppStoreDraftSummary[] }` |
 | POST | `/api/app-store/drafts` | `{ app: slug, aiConsent?: { accessSourceId } }` | `AppStoreDraftSummary` (201), starts the pipeline |
-| GET | `/api/app-store/drafts/:draftId` | — | `AppStoreDraftDetail` (findings before/after, report, listing draft, changed files, AI status) |
+| GET | `/api/app-store/drafts/:draftId` | — | `AppStoreDraftDetail` (findings before/after, report, listing draft, changed files, complete bounded source-file index, AI status) |
 | GET | `/api/app-store/drafts/:draftId/diff` | `?path=` | `{ path, change: added\|removed\|modified, before?: string, after?: string, truncated }` (≤ 256 KiB per side) |
 | POST | `/api/app-store/drafts/:draftId/revise` | `{ instructions: string ≤ 1000, aiConsent?: { accessSourceId } }` | `AppStoreDraftSummary` (202) |
 | POST | `/api/app-store/drafts/:draftId/listing` | `AppStoreListingDraftPatch` | `AppStoreDraftDetail` |
@@ -27,7 +27,7 @@ These routes are served by the per-user gateway.
 | Method | Path | Body | Response |
 | --- | --- | --- | --- |
 | GET | `/api/app-store/listings` | `AppStoreCatalogQuery` | Platform page, with `installed` and `launchPath` merged from local provenance |
-| GET | `/api/app-store/listings/:slug` | — | Platform detail, with `local: { installed, appSlug?, launchPath?, version?, updateAvailable }` merged |
+| GET | `/api/app-store/listings/:slug` | — | Platform detail, with `local: { installed, appSlug?, launchPath?, version?, updateAvailable }` and optional owner-only `installJob` merged |
 | GET | `/api/app-store/listings/:slug/icon` | — | Proxied image (≤ 256 KiB, type allowlisted) |
 | POST | `/api/app-store/listings/:slug/install` | `{ versionId, consent: { capabilitiesDigest } }` | `AppStoreInstallJob` `{ id, status: queued\|building\|installed\|failed, error?: unavailable\|build_failed\|invalid, appSlug?, launchPath? }` (202), or existing successful result for the already-installed fast path |
 | GET | `/api/app-store/installs/:jobId` | — | Owner-scoped `AppStoreInstallJob`; durable progress after reopening Gallery |
@@ -40,6 +40,7 @@ These routes are served by the per-user gateway.
 | Method | Path | Maps to |
 | --- | --- | --- |
 | GET | `/api/app-store/status` | Platform `/status` (also allowed for `app-gallery`) |
+| GET | `/api/app-store/review/listings` | `AppStoreCatalogQuery` | Reviewer-only platform listing page including hidden published listings |
 | GET | `/api/app-store/review/queue` | Platform `/review/queue` |
 | GET | `/api/app-store/review/versions/:versionId` | Platform detail |
 | GET | `/api/app-store/review/versions/:versionId/file` | Platform file |
