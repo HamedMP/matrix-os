@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { auth } from "@clerk/nextjs/server";
+import { starterPilotForOwner } from '@matrix-os/contracts/starter-computers';
 
 /** Isolated automation only: both token and fixed owner mapping must exist. */
 export function hasSharedPreviewBearer(headers: Headers): boolean {
@@ -14,18 +15,28 @@ export function hasSharedPreviewBearer(headers: Headers): boolean {
 }
 
 export async function sharedWorkspaceAccess(headers: Headers): Promise<
-  { status: 200; token: string } | { status: 401 | 404 | 503 }
+  { status: 200; token: string; origin?: string } | { status: 401 | 404 | 503 }
 > {
   if (process.env.MATRIX_SHARED_WORKSPACE_SPIKE !== "1") return { status: 404 };
-  if (hasSharedPreviewBearer(headers)) return { status: 200, token: process.env.MATRIX_SHARED_WORKSPACE_PREVIEW_TOKEN! };
+  const pilotConfigured = process.env.MATRIX_STARTER_COMPUTERS !== undefined;
+  if (!pilotConfigured && hasSharedPreviewBearer(headers)) return { status: 200, token: process.env.MATRIX_SHARED_WORKSPACE_PREVIEW_TOKEN! };
   const session = await auth();
   if (!session.userId) return { status: 401 };
+  if (pilotConfigured) {
+    try {
+      const pilot = starterPilotForOwner(process.env.MATRIX_STARTER_COMPUTERS, session.userId);
+      return pilot ? { status: 200, token: pilot.token, origin: pilot.origin } : { status: 404 };
+    } catch (error: unknown) {
+      console.warn('[workspace] Starter configuration unavailable', error instanceof Error ? error.name : 'UnknownError');
+      return { status: 503 };
+    }
+  }
   const token = await session.getToken();
   return token ? { status: 200, token } : { status: 503 };
 }
 
-export function sharedWorkerTarget(path: string[], search: string): URL {
-  const configured = process.env.MATRIX_SHARED_WORKSPACE_ORIGIN;
+export function sharedWorkerTarget(path: string[], search: string, ownerOrigin?: string): URL {
+  const configured = ownerOrigin ?? process.env.MATRIX_SHARED_WORKSPACE_ORIGIN;
   if (!configured) throw new Error("Shared workspace is unavailable");
   const origin = new URL(configured);
   const local = ["127.0.0.1", "localhost", "[::1]"].includes(origin.hostname);

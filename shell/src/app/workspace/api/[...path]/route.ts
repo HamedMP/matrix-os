@@ -43,7 +43,7 @@ async function forward(request: Request, context: { params: Promise<{ path: stri
   const { path } = await context.params;
   if (path[0] === "ws") return Response.json({ error: "Live connection unavailable in this preview" }, { status: 503 });
   let target: URL;
-  try { target = sharedWorkerTarget(path, new URL(request.url).search); }
+  try { target = sharedWorkerTarget(path, new URL(request.url).search, access.origin); }
   catch (error: unknown) {
     console.warn("[workspace] Invalid shared target", error instanceof Error ? error.name : "UnknownError");
     return Response.json({ error: "Workspace service unavailable" }, { status: 503 });

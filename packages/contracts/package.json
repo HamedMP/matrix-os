@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./starter-computers": "./src/starter-computers.ts",
     "./chat-subagent": "./src/chat-subagent.ts",
     "./collaboration": "./src/collaboration.ts",
     "./collaboration-direct": "./src/collaboration-direct.ts",

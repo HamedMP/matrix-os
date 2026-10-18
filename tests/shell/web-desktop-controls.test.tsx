@@ -13,6 +13,13 @@ const inventory = { items: [
 beforeEach(() => vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => url.includes("/api/auth/computers") ? inventory : url.includes("/api/system/info") ? { runtime: { runtimeSlot: "primary" } } : {} }))));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("shared Web Desktop top bar", () => {
+ it('offers the Starter workspace alongside the current personal computer', async () => {
+  const withStarter = { ...inventory, items: [...inventory.items, { handle: 'neo', runtimeSlot: 'starter', label: 'Starter Computer', availability: 'available', kind: 'starter', gatewayPath: '/workspace', capabilities: ['starterComputerWebV1'] }] };
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => ({ ok: true, json: async () => url.includes('/api/auth/computers') ? withStarter : url.includes('/api/system/info') ? { runtime: { runtimeSlot: 'primary' } } : {} })));
+  render(<WebDesktopControls onOpenSettings={vi.fn()} onOpenCommandPalette={vi.fn()} onOpenSupport={vi.fn()} onOpenFirstWork={vi.fn()} />);
+  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Change computer, currently Main Computer' }), { button: 0, ctrlKey: false });
+  expect(screen.getByRole('menuitem', { name: /Starter Computer/ }).getAttribute('href')).toBe('/workspace');
+ });
  it("uses the installed preview identity and ignores late responses from the old computer", async () => {
   let finishOld: (value: unknown) => void = () => {};
   const pending = new Promise(resolve => { finishOld = resolve; });

@@ -11,6 +11,8 @@ import {
 } from '@matrix-os/contracts';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { z } from 'zod/v4';
+import { WebComputerListSchema, starterPilotForOwner, starterComputerProjection, type WebComputer } from '@matrix-os/contracts/starter-computers';
 
 import type { ClerkAuth } from './clerk-auth.js';
 import {
@@ -168,6 +170,11 @@ export function createComputerRoutes(opts: {
     }
 
     try {
+      const include = z.literal('starter').optional().safeParse(c.req.query('include'));
+      if (!include.success) {
+        opts.applyNoStoreHeaders(c);
+        return c.json({ error: 'Invalid computer query' }, 400);
+      }
       const requestedSelectedSlot = identity.source === 'auth' ? identity.runtimeSlot ?? null : null;
       const records = await listUserRuntimeComputersByClerkId(
         opts.db,
@@ -179,13 +186,23 @@ export function createComputerRoutes(opts: {
         const computer = projectComputer(record);
         return computer ? [computer] : [];
       });
-      const items = projected.slice(0, COMPUTER_LIST_LIMIT);
+      const items: WebComputer[] = projected.slice(0, COMPUTER_LIST_LIMIT);
+      if (include.data === 'starter' && opts.appEnv.MATRIX_SHARED_WORKSPACE_SPIKE === '1'
+        && items.length < COMPUTER_LIST_LIMIT && !items.some((item) => item.runtimeSlot === 'starter')) {
+        try {
+          const pilot = starterPilotForOwner(opts.appEnv.MATRIX_STARTER_COMPUTERS, identity.userId);
+          if (pilot) items.push(starterComputerProjection(pilot.handle));
+        } catch (error: unknown) {
+          // A broken pilot must not hide or mutate the owner's personal VPS inventory.
+          opts.logRouteError('/api/auth/computers starter configuration', error);
+        }
+      }
       const selectedSlot = requestedSelectedSlot !== null && items.some(
         (item) => item.runtimeSlot === requestedSelectedSlot,
       )
         ? requestedSelectedSlot
         : null;
-      const payload = MatrixComputerListSchema.parse({
+      const payload = (include.data === 'starter' ? WebComputerListSchema : MatrixComputerListSchema).parse({
         items,
         selectedSlot,
         hasMore: projected.length > items.length,
