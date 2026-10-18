@@ -1,3 +1,4 @@
+import { exportAppStoreOwnerData } from '../app-store/account-data.js';
 import { z } from 'zod/v4';
 import type { PlatformDB } from '../db.js';
 import { ownerStoragePrefixes, type AccountDeletionObjectStore } from './storage.js';
@@ -55,6 +56,7 @@ export async function exportOwnerPlatformData(db: PlatformDB, owner: string) {
     if ([posts,comments,likes,follows].some((rows)=>rows.length>10000) || machines.length>1000 || billing.length>1000) {
       throw new Error('Platform export capacity exceeded');
     }
-    return { version:1,exportedAt:new Date().toISOString(),profile,posts,comments,likes,follows,machines,billing,onboarding };
+    const appStore = await exportAppStoreOwnerData(trx, owner);
+    return { appStore, version:1,exportedAt:new Date().toISOString(),profile,posts,comments,likes,follows,machines,billing,onboarding };
   });
 }
