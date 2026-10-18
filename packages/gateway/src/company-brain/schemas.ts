@@ -10,14 +10,14 @@ const PermalinkSchema = z.string().max(2048).url().refine((value) => {
 export const PublishBrainSourceSchema = z.object({
   sourceId: BrainSourceIdSchema,
   audienceScopeId: BrainScopeIdSchema,
-  title: z.string().trim().min(1).max(300),
-  text: z.string().min(1).max(65_536),
+  title: z.string().trim().min(1).max(300).refine((value) => !value.includes("\u0000"), "Text must not contain NUL"),
+  text: z.string().min(1).max(65_536).refine((value) => !value.includes("\u0000"), "Text must not contain NUL"),
   permalink: PermalinkSchema,
   sourceUpdatedAt: z.iso.datetime({ offset: true }),
   expectedRevision: BrainRevisionSchema,
 }).strict().refine((value) => Buffer.byteLength(value.text, "utf8") + Buffer.byteLength(value.title, "utf8") <= 65_536, "Source is too large");
 export const SearchBrainSchema = z.object({
-  query: z.string().trim().min(1).max(500),
+  query: z.string().trim().min(1).max(500).refine((value) => !value.includes("\u0000"), "Text must not contain NUL"),
   limit: z.number().int().min(1).max(20).default(5),
 }).strict();
 export type PublishBrainSource = z.input<typeof PublishBrainSourceSchema>;
