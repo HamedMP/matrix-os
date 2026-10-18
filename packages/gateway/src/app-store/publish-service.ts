@@ -2,7 +2,7 @@ import {z} from 'zod/v4';
 import {AppStoreManifestSchema,AppStoreCreateSubmissionSchema} from '@matrix-os/contracts/app-store';
 import {AppStoreDraftSummarySchema,AppStoreListingDraftPatchSchema,type AppStoreDraftDetail,AppStoreSubmitDraftSchema,type AppStoreDraftDiff} from '@matrix-os/contracts/app-store-gateway';
 import {encodeAppBundle,bundleDigest} from '@matrix-os/contracts/app-store-bundle';
-import {redactSecrets} from '@matrix-os/contracts/app-store-scan';
+import {redactSecrets,scanAppFiles} from '@matrix-os/contracts/app-store-scan';
 import {listApps} from '../apps.js';
 import {withOwnerFileMutation} from '../owner-file-mutations.js';
 import {snapshotOwnerApp} from './snapshot.js';import {createDraftStore} from './draft-store.js';
@@ -51,7 +51,31 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
    if(jobs.has(id)||submitting.has(id))throw new StoreError('conflict');const current=await store.read(id);if(current.status==='submitted')throw new StoreError('conflict');
    const draft={...current,status:'preparing' as const,stage:'generalize' as const,updatedAt:new Date().toISOString()};await store.write(draft);start(draft,input.aiConsent,input.instructions);return AppStoreDraftSummarySchema.strip().parse(draft);
   },
-  async listing(id:string,patch:unknown){if(jobs.has(id)||submitting.has(id))throw new StoreError('conflict');const draft=await store.read(id);if(draft.status==='submitted'||!draft.listing)throw new StoreError('conflict');const result={...draft,listing:{...draft.listing,...AppStoreListingDraftPatchSchema.parse(patch)},updatedAt:new Date().toISOString()};await store.write(result);return result;},
+  async listing(id:string,patch:unknown){return withOwnerFileMutation(options.homePath,async()=>{
+   if(jobs.has(id)||submitting.has(id)||jobs.size>=2||stop.signal.aborted)throw new StoreError('conflict');
+   const draft=await store.read(id);if(draft.status==='submitted'||!draft.listing)throw new StoreError('conflict');
+   const listing={...draft.listing,...AppStoreListingDraftPatchSchema.parse(patch)};
+   const files=await store.files(id,'prepared');
+   const manifest=AppStoreManifestSchema.parse(JSON.parse(files.get('matrix.json')!.toString('utf8')));
+   const sourceChanged=manifest.version!==listing.version||manifest.slug!==listing.slug;
+   const result:AppStoreDraftDetail={...draft,listing,updatedAt:new Date().toISOString()};
+   if(!sourceChanged){await store.write(result);return result;}
+   files.set('matrix.json',Buffer.from(JSON.stringify({...manifest,slug:listing.slug,version:listing.version},null,2)+'\n'));
+   result.status='preparing';result.stage='verify';delete result.failureCode;
+   await store.write(result);
+   await store.writeFiles(id,'prepared',files);
+   const task=(async()=>{
+    const findingsAfter=scanAppFiles(files,{ownerTerms:[...(options.ownerTerms??[])]});
+    const changedFiles=[...draft.changedFiles.filter(file=>file.path!=='matrix.json'),{path:'matrix.json',change:'modified' as const}];
+    let ready=!findingsAfter.blocking&&draft.report?.ai==='completed';
+    let failureCode:AppStoreDraftDetail['failureCode'];
+    if(ready)try{await options.builder.build(files,stop.signal);}catch(error:unknown){console.warn('[app-store] Edited draft verification failed',error instanceof Error?error.name:'UnknownError');ready=false;failureCode='build_failed';}
+    await store.write({...result,status:ready?'ready':'needs_attention',findingsAfter,changedFiles,
+     blockingFindings:findingsAfter.findings.filter(f=>f.severity==='high').length,...(failureCode?{failureCode}:{}),updatedAt:new Date().toISOString()});
+   })();
+   jobs.set(id,task);void task.catch((error:unknown)=>console.warn('[app-store] Edited draft job failed',error instanceof Error?error.name:'UnknownError')).finally(()=>jobs.delete(id));
+   return result;
+  });},
   async diff(id:string,path:string):Promise<AppStoreDraftDiff>{
    const [beforeFiles,afterFiles]=await Promise.all([store.files(id,'original'),store.files(id,'prepared')]);const before=beforeFiles.get(path),after=afterFiles.get(path);if(!before&&!after)throw new StoreError('not_found');
    const binary=Boolean(before?.includes(0)||after?.includes(0));const limit=256*1024;
@@ -60,13 +84,15 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
   async submit(id:string,input:z.infer<typeof AppStoreSubmitDraftSchema>){return exclusiveSubmit(id,async()=>{
    if(jobs.has(id))throw new StoreError('conflict');const draft=await store.read(id);if(draft.status==='submitted')return AppStoreDraftSummarySchema.strip().parse(draft);
    if(!input.consent||draft.status!=='ready'||!draft.listing||!draft.report||draft.findingsAfter?.blocking)throw new StoreError('invalid');
-   const files=await store.files(id,'prepared');const source=encodeAppBundle('source',files);const manifest=AppStoreManifestSchema.parse(JSON.parse(files.get('matrix.json')!.toString('utf8')));
+   const files=await store.files(id,'prepared');
+   if(scanAppFiles(files,{ownerTerms:[...(options.ownerTerms??[])]}).blocking)throw new StoreError('invalid');
+   const source=encodeAppBundle('source',files);const manifest=AppStoreManifestSchema.parse(JSON.parse(files.get('matrix.json')!.toString('utf8')));
    const {version,changelog,...listing}=draft.listing;
    const payload=AppStoreCreateSubmissionSchema.parse({submissionKey:`draft:${id}`,listing,version,changelog,license:input.license,manifest,source:{sha256:bundleDigest(source),size:source.length},generalizationReport:JSON.parse(redactSecrets(JSON.stringify(draft.report)).text)});
    await store.write({...draft,status:'submitting',stage:'upload',updatedAt:new Date().toISOString()});
    try{
     const created=await options.platform.createSubmission(payload);if(created.upload)await options.platform.transfer(created.upload.url,'PUT',source);
-    const finalized=await options.platform.finalize(created.versionId);
+    const finalized=created.status==='awaiting_upload'?await options.platform.finalize(created.versionId):created;
     const result={...draft,status:'submitted' as const,stage:'upload' as const,submission:{listingSlug:listing.slug,version,versionId:created.versionId,status:finalized.status},updatedAt:new Date().toISOString()};await store.write(result);return AppStoreDraftSummarySchema.strip().parse(result);
    }catch(error:unknown){await store.write({...draft,status:'ready',failureCode:'upload_failed',updatedAt:new Date().toISOString()});throw error;}
   });},
