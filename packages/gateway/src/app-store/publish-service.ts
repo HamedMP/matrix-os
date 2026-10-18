@@ -39,12 +39,18 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
   async recover(){for(const draft of await store.list())if(['preparing','submitting'].includes(draft.status))await store.write({...draft,status:'needs_attention',failureCode:'interrupted',updatedAt:new Date().toISOString()});},
   async publishableApps(){return publishableStoreApps(options.homePath);},
   async list(){return (await store.list()).map(d=>AppStoreDraftSummarySchema.strip().parse(d));},
-  async detail(id:string){return exclusiveSubmit(id,async()=>{
+  async detail(id:string){
+   if(stop.signal.aborted)throw new StoreError();
    const draft=await store.read(id);
-   if(jobs.has(id)||['preparing','submitting'].includes(draft.status))return {...draft,sourceFiles:[]};
+   // Reads never reserve mutation admission or wait for remote submission work.
+   const busy=()=>submitting.has(id)||jobs.has(id);
+   if(busy()||['preparing','submitting'].includes(draft.status))return {...draft,sourceFiles:[]};
    const [before,after]=await Promise.all([store.files(id,'original'),store.files(id,'prepared')]);
-   return {...draft,sourceFiles:draftSourceIndex(before,after)};
-  });},
+   const current=await store.read(id);
+   // A concurrent edit gets its current metadata, never an index from another revision.
+   if(busy()||current.updatedAt!==draft.updatedAt||['preparing','submitting'].includes(current.status))return {...current,sourceFiles:[]};
+   return {...current,sourceFiles:draftSourceIndex(before,after)};
+  },
   async create(input:{app:string;aiConsent?:{accessSourceId:string}}){
    return withOwnerFileMutation(options.homePath,async()=>{
     if(jobs.size>=2||(await store.list()).length>=5)throw new StoreError('limit');
