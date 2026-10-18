@@ -32,13 +32,16 @@ cursor follows a tap or a swipe.
 - ctrl is sticky: pressing it arms it (drawn inverted) and brings up the
   keyboard; the next letter or control punctuation typed is sent as its
   control key and disarms it. Another key from the rows also disarms it and
-  is sent as it is.
+  is sent as it is. Replies the emulator sends to the program (they start
+  with ESC, which the on-screen keyboard never types) leave it armed.
 - Extra page 1: left, right, Home, End, Shift+Tab, Paste and symbols
   (/ ~ | - _ $ * >). Page 2: Kill line, Search history, Clear screen,
   Page up, Page down, Scroll to bottom. A page key turns between them.
 - The extra pages fold away when Enter is pressed (from the rows or the
   keyboard) and when the keyboard goes down.
 - With the keyboard down the rows keep clear of the home indicator.
+- Every row fits a 320pt wide screen: keys keep their width while a row fits
+  and shrink together, down to a floor, when it does not.
 - A sideways swipe across the rows sends left or right, one per 14pt, and
   takes them back if the finger returns; an up or down swipe sends up or
   down, one per 20pt. A short wobble stays a tap on the key underneath.
@@ -46,6 +49,9 @@ cursor follows a tap or a swipe.
   right arrows (the program's application-cursor form when it asked for
   it). It goes no further than the end of the text and does nothing on
   other lines, while scrolled back, or while the program hides the cursor.
+  Positions are counted in screen cells; a wide character (CJK, emoji) is
+  two cells but one arrow press. The emulator's mouse mode is not a signal:
+  zellij always asks for the mouse.
 - The iOS form toolbar above the keyboard is hidden.
 - No zellij mode keys are offered.
 

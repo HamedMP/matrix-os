@@ -33,7 +33,7 @@ interface TerminalControlBarProps {
 }
 
 type KeyVariant = "primary" | "danger" | "arrow" | "symbol" | "tool";
-type KeySize = "compact" | "normal" | "grow";
+type KeySize = "compact" | "normal" | "wide" | "grow";
 
 type BarItem = {
   id: string;
@@ -84,7 +84,7 @@ export function TerminalControlBar({
     { id: "stop", label: "Stop", variant: "danger", size: "grow", onPress: sendKey("ctrl-c") },
     { id: "escape", label: "esc", size: "compact", onPress: sendKey("escape") },
     { id: "tab", label: "tab", size: "compact", onPress: sendKey("tab") },
-    { id: "ctrl", label: "ctrl", size: "compact", selected: ctrlArmed, onPress: onToggleCtrl },
+    { id: "ctrl", label: "ctrl", size: "wide", selected: ctrlArmed, onPress: onToggleCtrl },
     { id: "arrow-up", label: "Arrow up", icon: ArrowUp02Icon, variant: "arrow", onPress: sendKey("arrow-up") },
     { id: "arrow-down", label: "Arrow down", icon: ArrowDown02Icon, variant: "arrow", onPress: sendKey("arrow-down") },
     keyboardVisible
@@ -176,7 +176,7 @@ export function TerminalControlBar({
             adjustsFontSizeToFit
             ellipsizeMode="clip"
             maxFontSizeMultiplier={1}
-            minimumFontScale={0.8}
+            minimumFontScale={0.65}
             numberOfLines={1}
             style={[styles.keyLabel(variant, item.size), item.selected && styles.keyLabelSelected]}
           >
@@ -197,7 +197,7 @@ export function TerminalControlBar({
       {...swipe}
     >
       {rows.map((row) => (
-        <View key={row.id} style={styles.row}>
+        <View key={row.id} testID="terminal-key-row" style={styles.row}>
           {row.items.map(renderKey)}
         </View>
       ))}
@@ -272,19 +272,21 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: 4,
   },
+  // Keys keep their own width while a row fits and shrink together when it
+  // does not, down to floors that fit every row in 320pt.
   key: (variant: KeyVariant, size: KeySize = "normal") => ({
     flexGrow: size === "grow" ? 1 : 0,
     flexShrink: 1,
-    flexBasis: size === "grow" ? 0 : undefined,
-    minWidth: size === "grow"
-      ? variant === "danger" ? 46 : 40
-      : size === "compact"
-        ? 34
+    flexBasis: size === "grow"
+      ? 0
+      : size === "wide"
+        ? 42
         : variant === "arrow" || variant === "symbol"
           ? 32
           : 34,
+    minWidth: size === "grow" ? 30 : variant === "arrow" || variant === "symbol" ? 26 : 30,
     height: 36,
-    paddingHorizontal: 5,
+    paddingHorizontal: 4,
     flexDirection: "row" as const,
     alignItems: "center" as const,
     justifyContent: "center" as const,
@@ -306,7 +308,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   keyPressed: { opacity: 0.72, transform: [{ scale: 0.96 }] },
   keyLabel: (variant: KeyVariant, size?: KeySize) => ({
-    fontFamily: variant === "symbol" || size === "compact"
+    fontFamily: variant === "symbol" || size === "compact" || size === "wide"
       ? theme.fonts.monoBold
       : theme.fonts.sansSemiBold,
     fontSize: variant === "symbol" ? 14 : 12.5,

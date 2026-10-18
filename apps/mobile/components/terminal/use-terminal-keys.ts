@@ -34,9 +34,16 @@ export function useTerminalKeys(send: (data: string) => void, focusKeyboard: () 
     };
   }, []);
 
-  // Text typed on the keyboard. An armed ctrl turns the next letter into its
-  // control key, and Return folds the extra keys away to make room for the answer.
+  // Text from the emulator. An armed ctrl turns the next letter typed into its
+  // control key, and Return folds the extra keys away to make room for the
+  // answer. Replies the emulator makes to the program (cursor position, focus
+  // and the like) start with ESC, which the on-screen keyboard never sends;
+  // they go out as they are and leave ctrl and the keys alone.
   const sendTyped = useCallback((data: string) => {
+    if (data.startsWith("\x1b")) {
+      send(data);
+      return;
+    }
     let typed = data;
     if (ctrlArmed) {
       setCtrlArmed(false);

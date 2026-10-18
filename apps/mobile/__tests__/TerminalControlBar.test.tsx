@@ -13,6 +13,7 @@ import * as Clipboard from "expo-clipboard";
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import { StyleSheet } from "react-native";
 import { SafeAreaInsetsContext, type EdgeInsets } from "react-native-safe-area-context";
+import type { ReactTestInstance } from "react-test-renderer";
 
 import { TerminalControlBar } from "../components/TerminalControlBar";
 import { sendTerminalClipboardPaste } from "../lib/terminal-controls";
@@ -126,6 +127,34 @@ describe("TerminalControlBar", () => {
     expect(screen.getByLabelText("Arrow left")).toBeTruthy();
   });
 
+  it("fits every row on a 320pt wide screen", () => {
+    const narrowest = 320;
+    const check = () => {
+      const barStyle = StyleSheet.flatten(screen.getByTestId("terminal-control-bar").props.style);
+      for (const row of screen.getAllByTestId("terminal-key-row")) {
+        const rowStyle = StyleSheet.flatten(row.props.style);
+        const keys = row.findAll(
+          (node: ReactTestInstance) => node.props.accessibilityRole === "button" && typeof node.type === "string",
+        );
+        const floors = keys.map((key: ReactTestInstance) => {
+          const style = StyleSheet.flatten(key.props.style);
+          expect(style.flexShrink).toBe(1);
+          return style.minWidth as number;
+        });
+        const smallest = floors.reduce((sum: number, floor: number) => sum + floor, 0)
+          + rowStyle.gap * (keys.length - 1)
+          + barStyle.paddingHorizontal * 2;
+        expect(keys.length).toBeGreaterThan(0);
+        expect(smallest).toBeLessThanOrEqual(narrowest);
+      }
+    };
+
+    renderBar({ expanded: true });
+    check();
+    fireEvent.press(screen.getByLabelText("Next keys page"));
+    check();
+  });
+
   it("keeps the key rows above the home indicator while the keyboard is down", () => {
     const insets = { ...NO_INSETS, bottom: 34 };
     const hidden = renderBar({ keyboardVisible: false }, insets);
@@ -191,5 +220,17 @@ describe("TerminalControlBar", () => {
     await sendTerminalClipboardPaste(onSend);
 
     expect(onSend).toHaveBeenCalledWith("copied text");
+  });
+
+  it("logs a clipboard that cannot be read and sends nothing", async () => {
+    const onSend = jest.fn();
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    jest.spyOn(Clipboard, "getStringAsync").mockRejectedValueOnce(new TypeError("denied"));
+
+    await expect(sendTerminalClipboardPaste(onSend)).resolves.toBeUndefined();
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith("[mobile] terminal paste unavailable", "TypeError");
+    warn.mockRestore();
   });
 });

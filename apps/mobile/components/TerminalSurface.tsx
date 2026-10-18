@@ -336,14 +336,15 @@ function buildHtml(fontScale: number): string {
           if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) return;
           var buffer = term.buffer.active;
           var row = Math.floor((y - rect.top) / (rect.height / term.rows));
-          var line = buffer.getLine(buffer.viewportY + row);
+          var cells = terminalRowCells(buffer.getLine(buffer.viewportY + row), term.cols);
           var core = term._core && term._core.coreService;
           var keys = terminalTapCursorMove({
             col: Math.floor((x - rect.left) / (rect.width / term.cols)),
             row: row,
             cursorCol: buffer.cursorX,
             cursorRow: buffer.cursorY,
-            lineLength: line ? line.translateToString(true).length : 0,
+            lineLength: cells.length,
+            widths: cells.widths,
             cols: term.cols,
             scrolled: buffer.viewportY !== buffer.baseY,
             cursorHidden: !!(core && core.isCursorHidden),

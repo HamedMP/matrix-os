@@ -23,16 +23,37 @@ interface TapCursorInput {
   cursorCol: number;
   cursorRow: number;
   lineLength: number;
+  widths?: number[];
   cols: number;
   scrolled: boolean;
   cursorHidden: boolean;
   applicationCursor: boolean;
 }
 
-// The page runs this function as plain script; run the same text here.
-const terminalTapCursorMove = new Function(
-  `${TAP_CURSOR_SCRIPT}; return terminalTapCursorMove;`,
-)() as (tap: TapCursorInput) => string;
+interface FakeCell { getWidth: () => number; getChars: () => string }
+
+// The page runs these functions as plain script; run the same text here.
+const { terminalTapCursorMove, terminalRowCells } = new Function(
+  `${TAP_CURSOR_SCRIPT}; return { terminalTapCursorMove, terminalRowCells };`,
+)() as {
+  terminalTapCursorMove: (tap: TapCursorInput) => string;
+  terminalRowCells: (line: { getCell: (col: number) => FakeCell | undefined } | null, cols: number) => {
+    widths: number[];
+    length: number;
+  };
+};
+
+// An xterm line: wide characters fill a cell of width 2 and an empty one of width 0.
+function fakeLine(text: string, cols: number) {
+  const cells: FakeCell[] = [];
+  for (const char of text) {
+    const wide = /[　-鿿]/.test(char);
+    cells.push({ getWidth: () => (wide ? 2 : 1), getChars: () => char });
+    if (wide) cells.push({ getWidth: () => 0, getChars: () => "" });
+  }
+  while (cells.length < cols) cells.push({ getWidth: () => 1, getChars: () => "" });
+  return { getCell: (col: number) => cells[col] };
+}
 
 function renderSurface(onResize = jest.fn()) {
   const ref = React.createRef<TerminalSurfaceHandle>();
@@ -257,6 +278,30 @@ describe("native mobile terminal surface", () => {
       expect(terminalTapCursorMove({ ...tap, scrolled: true })).toBe("");
       expect(terminalTapCursorMove({ ...tap, cursorHidden: true })).toBe("");
       expect(terminalTapCursorMove({ ...tap, col: 4 })).toBe("");
+    });
+
+    it("counts a wide character as one press", () => {
+      // Cells 6-7 and 8-9 each hold one wide character.
+      const widths = [1, 1, 1, 1, 1, 1, 2, 0, 2, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+      expect(terminalTapCursorMove({ ...tap, widths, col: 10 })).toBe("\x1b[C".repeat(4));
+      // A tap on the second half of a wide character lands on its start.
+      expect(terminalTapCursorMove({ ...tap, widths, col: 9 })).toBe("\x1b[C".repeat(3));
+      expect(terminalTapCursorMove({ ...tap, widths, cursorCol: 10, col: 6 })).toBe("\x1b[D".repeat(2));
+    });
+
+    it("measures a line with wide characters in cells", () => {
+      // Ten wide characters, then five narrow ones: 25 cells, 15 characters.
+      const cells = terminalRowCells(fakeLine("一二三四五六七八九十abcde", 49), 49);
+      expect(cells.length).toBe(25);
+      expect(cells.widths.slice(0, 4)).toEqual([2, 0, 2, 0]);
+
+      const move = { ...tap, cursorCol: 20, lineLength: cells.length, widths: cells.widths };
+      expect(terminalTapCursorMove({ ...move, col: 24 })).toBe("\x1b[C".repeat(4));
+      expect(terminalTapCursorMove({ ...move, col: 3 })).toBe("\x1b[D".repeat(9));
+    });
+
+    it("treats a missing line as empty", () => {
+      expect(terminalRowCells(null, 3)).toEqual({ widths: [1, 1, 1], length: 0 });
     });
   });
 

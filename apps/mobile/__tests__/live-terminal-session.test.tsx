@@ -74,6 +74,10 @@ jest.mock("@/components/TerminalSurface", () => {
           onPress: () => props.onInput("\r"),
         }, React.createElement(Text, null, "return")),
         React.createElement(Pressable, {
+          accessibilityLabel: "Reply with cursor position",
+          onPress: () => props.onInput("\x1b[12;5R"),
+        }, React.createElement(Text, null, "cursor report")),
+        React.createElement(Pressable, {
           accessibilityLabel: "Send terminal protocol reply",
           onPress: () => props.onBinary("\x1b]10;?\x07"),
         }, React.createElement(Text, null, "protocol")),
@@ -341,6 +345,22 @@ describe("live terminal session modal", () => {
     act(() => mockBarProps!.onToggleCtrl());
     act(() => mockBarProps!.onToggleCtrl());
     expect(mockBarProps!.ctrlArmed).toBe(false);
+    rendered.unmount();
+  });
+
+  it("keeps ctrl armed and the keys open across a reply the emulator sends to the program", async () => {
+    const rendered = await openAttached();
+
+    act(() => mockBarProps!.onExpandedChange(true));
+    act(() => mockBarProps!.onToggleCtrl());
+    fireEvent.press(screen.getByLabelText("Reply with cursor position"));
+
+    expect(mockSendInput).toHaveBeenLastCalledWith("\x1b[12;5R");
+    expect(mockBarProps!.ctrlArmed).toBe(true);
+    expect(mockBarProps!.expanded).toBe(true);
+
+    fireEvent.press(screen.getByLabelText("Type terminal input"));
+    expect(mockSendInput).toHaveBeenLastCalledWith("\x01");
     rendered.unmount();
   });
 
