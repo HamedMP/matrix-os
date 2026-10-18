@@ -6,7 +6,7 @@ const provenance = { type: "import_provenance", harness: "codex", sourceId: "019
 describe("historical Chat presentation", () => {
   it("keeps injected instructions collapsed without hiding the real human request", () => {
     const saved = (id: string, seq: number, text: string) => CanonicalChatMessageSchema.parse({ id, chatId: "chat_imported_test", seq,
-      role: "user", state: "committed", createdAt, parts: [{ type: "text", text }, { ...provenance, phase: "human", origin: "human" }] });
+      role: "user", state: "committed", createdAt, parts: [{ type: "text", text }, { ...provenance, sourceKey: String(seq).repeat(64), phase: "human", origin: "human" }] });
     const context = '<skill>\n<name>example</name>\n<path>/skills/example/SKILL.md</path>\nSaved instructions\n</skill>';
     const view = canonicalChatPresentation({ messages: [saved("msg_context", 1, context), saved("msg_request", 2, "My actual request")], turns: [], runs: [], activities: [] });
     expect(view[0]?.work[0]).toMatchObject({ kind: "activity-group", activities: [{ kind: "phase", state: "completed", label: "Imported instructions", detail: context }] });
