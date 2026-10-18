@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppSitePanel } from "../../shell/src/components/app-sites/AppSitePanel";
 import type { SiteClient } from "../../shell/src/lib/site-client";
@@ -11,6 +11,36 @@ function client(overrides: Partial<SiteClient> = {}): SiteClient {
 }
 afterEach(cleanup);
 describe("shared app publishing", () => {
+  it("toggles visitor submissions closed and reloads only when reopened", async () => {
+    const api = client();
+    render(<AppSitePanel appSlug="launch" client={api} />);
+    await screen.findByText("Your app is public.");
+    const trigger = screen.getByRole("button", { name: "Visitor submissions" });
+    fireEvent.click(trigger);
+    const region = await screen.findByRole("region", { name: "Visitor submissions" });
+    await screen.findByText("No visitor submissions yet.");
+    expect(api.submissions).toHaveBeenCalledTimes(1);
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("region", { name: "Visitor submissions" })).toBeNull();
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(api.submissions).toHaveBeenCalledTimes(1);
+    fireEvent.click(trigger);
+    const reopened = await screen.findByRole("region", { name: "Visitor submissions" });
+    await waitFor(() => expect(api.submissions).toHaveBeenCalledTimes(2));
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(reopened.id).toBe(trigger.getAttribute("aria-controls"));
+    expect(region.id).toBe(reopened.id);
+  });
+  it("guides owners through an empty visitor submissions state", async () => {
+    render(<AppSitePanel appSlug="launch" client={client()} />);
+    await screen.findByText("Your app is public.");
+    fireEvent.click(screen.getByRole("button", { name: "Visitor submissions" }));
+    const empty = await screen.findByRole("status", { name: "No visitor submissions yet" });
+    expect(within(empty).getByRole("heading", { name: "No visitor submissions yet." })).toBeTruthy();
+    expect(empty.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    expect(within(empty).getByText("Responses from your published forms will appear here.")).toBeTruthy();
+    expect(within(empty).getByText("Share the public app link and ask visitors to submit a form.")).toBeTruthy();
+  });
   it("loads publication and requires preview before deploying draft changes", async () => {
     const api = client({ get: vi.fn(async () => null) });
     render(<AppSitePanel appSlug="launch" client={api} />);
