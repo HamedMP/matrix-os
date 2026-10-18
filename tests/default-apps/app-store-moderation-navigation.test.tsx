@@ -160,3 +160,45 @@ it("pages published listings and keeps a safe message when moderation fails", as
   ).toBe("Issue corrected");
   expect(screen.queryByText(/postgres:/)).toBeNull();
 });
+
+it("retries the same failed moderation page without resetting loaded listings", async () => {
+  const { local, ...listing } = summary();
+  let nextPageCalls = 0;
+  const gatewayFetch = vi.fn(async (url: string) => {
+    if (url.includes("/review/queue")) return { items: [] };
+    if (url.includes("cursor=")) {
+      if (++nextPageCalls === 1) throw new Error("Temporary transport failure");
+      return {
+        listings: [
+          {
+            ...listing,
+            id: secondId,
+            slug: "second-notes",
+            name: "Second Notes",
+          },
+        ],
+      };
+    }
+    return { listings: [listing], nextCursor: "next" };
+  });
+  render(
+    <Review client={createStoreClient({ gatewayFetch, openApp: vi.fn() })} />,
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Published listings" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Load more published listings" }),
+  );
+  await screen.findByRole("alert");
+  expect(screen.getByRole("heading", { name: "Sample Notes" })).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Load more published listings" }),
+  );
+  await screen.findByRole("heading", { name: "Second Notes" });
+  expect(nextPageCalls).toBe(2);
+  expect(screen.getAllByRole("heading", { name: "Sample Notes" })).toHaveLength(
+    1,
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+});
