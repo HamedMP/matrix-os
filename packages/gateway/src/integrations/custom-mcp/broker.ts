@@ -1,3 +1,4 @@
+import { MANAGED_INTEGRATIONS, managedToolWriteRequirements } from "@matrix-os/contracts/managed-integrations";
 import { randomUUID } from "node:crypto";
 import type { PlatformDb } from "../../platform-db.js";
 import {
@@ -169,12 +170,17 @@ export class CustomMcpBroker {
   async getPresetWriteAuthorization(userId: string, presetId: string): Promise<{ enabled: boolean; scopes: string[] }> {
     const denied = { enabled: false, scopes: [] };
     const row = await this.options.db.getCustomMcpPresetForBroker(presetId, userId);
-    if (!row || row.user_id !== userId || row.preset_id !== presetId || !row.enabled || row.status !== "ready" || !row.encrypted_credentials) return denied;
+    return row ? this.presetWriteAuthorization(userId, row, presetId) : denied;
+  }
+
+  private presetWriteAuthorization(userId: string, row: NonNullable<Awaited<ReturnType<PlatformDb["getCustomMcpServerForBroker"]>>>, presetId: string): { enabled: boolean; scopes: string[] } {
+    const denied = { enabled: false, scopes: [] };
+    if (row.user_id !== userId || row.preset_id !== presetId || !row.enabled || row.status !== "ready" || !row.encrypted_credentials) return denied;
     try {
       const { oauth } = decryptCustomMcpCredential<CustomMcpCredential>(row.encrypted_credentials, this.options.encryptionKey, { userId, serverId: row.id });
       if (!oauth?.managedWriteAccess || oauth.state || oauth.removing || oauth.refreshing || !oauth.accessToken
         || !Array.isArray(oauth.grantedScopes) || oauth.grantedScopes.length > 100
-        || !oauth.grantedScopes.every(scope => typeof scope === "string" && scope.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(scope))) return denied;
+        || !oauth.grantedScopes.every(scope => typeof scope === "string" && scope.length > 0 && scope.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(scope))) return denied;
       return { enabled: true, scopes: [...oauth.grantedScopes] };
     } catch (error: unknown) {
       console.warn("[custom-mcp] managed write grant unreadable", { errorName: error instanceof Error ? error.name : "UnknownError" });
@@ -189,7 +195,18 @@ export class CustomMcpBroker {
     url: string;
   }): Promise<NonNullable<Awaited<ReturnType<PlatformDb["getCustomMcpServerForBroker"]>>>> {
     const existing = await this.options.db.getCustomMcpPresetForBroker(input.presetId, input.userId);
-    if (existing) return existing;
+    if (existing) {
+      const preset = Object.hasOwn(MANAGED_INTEGRATIONS, input.presetId) ? MANAGED_INTEGRATIONS[input.presetId] : undefined;
+      if (!preset || input.url !== preset.url || existing.url === preset.url) return existing;
+      if (hasManagedSettingsClaim(existing, this.options.encryptionKey)) throw new CustomMcpBrokerError("action_required");
+      await this.validateRemoteUrl(preset.url);
+      const updated = await this.options.db.updateCustomMcpServer(existing.id, input.userId, existing.revision, {
+        url: preset.url, enabled: false, status: "auth_required",
+      });
+      if (!updated) throw new CustomMcpBrokerError("conflict");
+      await this.projectOrMarkActionRequired(input.userId, updated);
+      return this.requirePrivate(input.userId, existing.id);
+    }
     await this.validateRemoteUrl(input.url);
     const id = randomUUID();
     const now = this.options.now?.() ?? new Date();
@@ -422,6 +439,15 @@ export class CustomMcpBroker {
       throw new CustomMcpBrokerError("forbidden");
     }
     if (!row.enabled || row.status !== "ready") throw new CustomMcpBrokerError("forbidden");
+    const requirements = managedPresetId ? managedToolWriteRequirements(managedPresetId, input.toolName, input.arguments) : { write: false, requiredScopes: [] };
+    const enforceWriteGrant = (snapshot: typeof row) => {
+      if (!requirements.write || !managedPresetId) return;
+      const grant = this.presetWriteAuthorization(input.userId, snapshot, managedPresetId);
+      if (!grant.enabled || !requirements.requiredScopes.every(scope => grant.scopes.includes(scope))) {
+        throw new CustomMcpBrokerError("forbidden");
+      }
+    };
+    enforceWriteGrant(row);
     const tool = row.enforcement_projection.find((candidate) => candidate.name === input.toolName);
     const localTool = input.localProjection?.tools.find((candidate) => candidate.name === input.toolName);
     if (!tool?.enabled
@@ -453,6 +479,7 @@ export class CustomMcpBroker {
     if (current.revision !== row.revision || !current.enabled || current.status !== "ready") {
       throw new CustomMcpBrokerError("forbidden");
     }
+    enforceWriteGrant(current);
     return this.client.callTool({
       serverId: row.id,
       url: row.url,

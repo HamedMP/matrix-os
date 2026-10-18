@@ -161,6 +161,8 @@ export interface CreateCustomMcpServerInput {
 }
 
 export interface UpdateCustomMcpServerInput {
+  /** Internal preset migration only; routes do not accept arbitrary URL patches. */
+  url?: string;
   name?: string;
   enabled?: boolean;
   status?: CustomMcpStatus;
@@ -803,6 +805,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
         revision: sql`revision + 1`,
         updated_at: sql`now()`,
       };
+      if (update.url !== undefined) values.url = update.url;
       if (update.name !== undefined) values.name = update.name;
       if (update.enabled !== undefined) values.enabled = update.enabled;
       if (update.status !== undefined) values.status = update.status;
