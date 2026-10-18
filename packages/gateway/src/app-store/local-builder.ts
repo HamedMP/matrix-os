@@ -71,7 +71,12 @@ export function createLocalStoreBuilder(options:{homePath:string;nodeRoot?:strin
    if(launch){
     // Stop the entire service cgroup, including descendants that outlived Vite.
     try{await run('/usr/bin/systemctl',['--user','stop',`${unit}.service`],{env:launch.env,timeout:10_000,maxBuffer:16_384});}
-    catch(error:unknown){console.warn('[app-store] Build service drain failed',error instanceof Error?error.name:'UnknownError');}
+    catch(error:unknown){
+     // --collect removes completed transient units before stop can find them.
+     let state='';try{state=(await run('/usr/bin/systemctl',['--user','is-active',`${unit}.service`],{env:launch.env,timeout:5000,maxBuffer:1024})).stdout.trim();}
+     catch(probe:unknown){if(probe&&typeof probe==='object'&&'stdout' in probe&&typeof probe.stdout==='string')state=probe.stdout.trim();}
+     if(!['inactive','failed','unknown'].includes(state)){console.warn('[app-store] Build service drain failed',error instanceof Error?error.name:'UnknownError');throw new StoreBuildError('unavailable');}
+    }
    }
    await rm(directory,{recursive:true,force:true});
   }
