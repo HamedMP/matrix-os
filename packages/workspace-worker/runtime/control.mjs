@@ -1,5 +1,6 @@
 import { summarizeGatewayResult } from './result.mjs';
 import { runChatJob } from './sessions.mjs';
+import { isRuntimePrivatePath } from './paths.mjs';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve, relative } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -38,12 +39,11 @@ if (operation === 'hydrate') {
   if (!(await lstat(home)).isDirectory()) throw new Error('Unsafe workspace home');
   for (const file of files) {
     if (typeof file.path !== 'string' || file.path.length > 512 || typeof file.content !== 'string'
-      || file.path === '.matrix-runtime' || file.path.startsWith('.matrix-runtime/')
+      || isRuntimePrivatePath(file.path)
       || Buffer.byteLength(file.content) > 128 * 1024 || file.path.startsWith('/') || file.path.includes('\\')) throw new Error('Invalid workspace file');
     const target = resolve(home, file.path);
     const relativePath = relative(home, target);
-    if (target === home || relativePath.startsWith('..') || relativePath === '.matrix-runtime'
-      || relativePath.startsWith('.matrix-runtime/')) throw new Error('Invalid workspace file');
+    if (target === home || relativePath.startsWith('..') || isRuntimePrivatePath(relativePath)) throw new Error('Invalid workspace file');
     let current = home;
     for (const segment of relative(home,dirname(target)).split('/').filter(Boolean)) {
       current += `/${segment}`;

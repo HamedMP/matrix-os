@@ -3,8 +3,9 @@ import { readSharedFileSnapshot, type PostgresWorkspaceRepository } from './data
 import type { WorkspaceFiles } from './data/files.js';
 import type { RuntimeJob, RuntimeLease } from './runtime/contracts.js';
 import type { RuntimeOutput } from './runtime/native-driver.js';
+import { isRuntimePrivatePath } from '../runtime/paths.mjs';
 
-const safePath = z.string().min(1).max(512).refine(path => !path.startsWith('/') && !/[\\\u0000-\u001f]/.test(path)
+const safePath = z.string().min(1).max(512).refine(path => !path.startsWith('/') && !isRuntimePrivatePath(path) && !/[\\\u0000-\u001f]/.test(path)
   && path.split('/').every(part => part.length > 0 && part !== '.' && part !== '..'));
 const identity = z.string().regex(/^[A-Za-z0-9_-]{1,160}$/);
 const job = z.discriminatedUnion('type', [
@@ -16,7 +17,7 @@ export function parseQueuedJob(value: unknown): RuntimeJob { return job.parse(va
 export async function hydrateWorkspace(repository: PostgresWorkspaceRepository, files: WorkspaceFiles, ownerId: string,
   revisions: Map<string, number> = new Map()): Promise<RuntimeOutput['files']> {
   revisions.clear();
-  const stored = await repository.listFiles(ownerId, '', 100);
+  const stored = (await repository.listFiles(ownerId, '', 100)).filter(file => !isRuntimePrivatePath(file.path));
   if (stored.length >= 100) throw new Error('Workspace projection exceeds spike limit');
   const result: RuntimeOutput['files'] = [];
   let bytes = 0;
