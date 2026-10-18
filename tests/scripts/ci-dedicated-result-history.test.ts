@@ -42,7 +42,7 @@ function fixture(kind:'pr'|'main'|'stack'='pr'){
  const state={admitted:true,older:[] as any[]};
  const github={rest:{
   repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:main?source:base}}})),
-   getCommit:vi.fn(async()=>({data:{sha:source,parents:(main?[base]:[base,head]).map(sha=>({sha}))}}))},
+   getCommit:vi.fn(async()=>({data:{sha:source,parents:(main?[base]:[base,head]).map(sha=>({sha})),commit:{tree:{sha:'9'.repeat(40)}}}}))},
   pulls:{get:vi.fn(async()=>({data:{number:2440,state:'open',draft:false,
    labels:[{name:'ready-for-ci'},{name:'fast-ci'}],head:{sha:head,ref:'feature/source',repo:repository},
    base:{sha:base,ref:baseRef,repo:repository},merge_commit_sha:source}}))},
