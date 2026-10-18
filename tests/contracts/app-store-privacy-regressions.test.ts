@@ -32,4 +32,14 @@ describe("publishing privacy boundaries", () => {
     const report = scanAppFiles(new Map([["assets/alice-customer-list.csv", Buffer.from("example")]]), { ownerTerms: ["alice"] });
     expect(report.blocking).toBe(true);
   });
+  it("finds owner identity in binary metadata", () => {
+    const report = scanAppFiles(new Map([["assets/photo.jpg", Buffer.from("\xff\0Artist: alice")]]), { ownerTerms: ["alice"] });
+    expect(report.blocking).toBe(true);
+  });
+  it("blocks credential-bearing file names without echoing credentials", () => {
+    const secret = "sk-ant-abcdefghijklmnopqrstuvwxyz";
+    const report = scanAppFiles(new Map([[`assets/${secret}.txt`, Buffer.from("example")]]));
+    expect(report.blocking).toBe(true);
+    expect(JSON.stringify(report)).not.toContain(secret);
+  });
 });

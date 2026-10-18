@@ -141,7 +141,7 @@ export function scanAppFiles(files: ReadonlyMap<string, Buffer>, options: ScanOp
     if (seen.has(key)) return;
     if (findings.length >= MAX_FINDINGS) { truncated = true; return; }
     seen.add(key);
-    findings.push({ rule, category, severity, file, line, message });
+    findings.push({ rule, category, severity, file: redactSecrets(file).text, line, message });
   };
 
   for (const path of [...files.keys()].sort()) {
@@ -151,6 +151,10 @@ export function scanAppFiles(files: ReadonlyMap<string, Buffer>, options: ScanOp
     for (const pattern of ownerPatterns) {
       pattern.lastIndex = 0;
       if (pattern.test(path)) add("personal.owner_path", "personal", "high", path, 1, "Owner identity in file name");
+    }
+    for (const rule of SECRET_RULES) {
+      rule.pattern.lastIndex = 0;
+      if (rule.pattern.test(path)) add(rule.rule, "secret", "high", path, 1, "Credential in file name");
     }
     const source = data.toString("utf8");
     const lines = source.split("\n");
@@ -165,11 +169,11 @@ export function scanAppFiles(files: ReadonlyMap<string, Buffer>, options: ScanOp
       for (const match of text.matchAll(GENERIC_SECRET)) {
         if (looksSecret(match[1])) add("secret.generic", "secret", "high", path, line, "Hardcoded credential");
       }
-      if (!codeText) continue;
       for (const pattern of ownerPatterns) {
         pattern.lastIndex = 0;
         if (pattern.test(text)) add("personal.owner", "personal", "high", path, line, "Owner name, handle or email");
       }
+      if (!codeText) continue;
       for (const match of text.matchAll(EMAIL)) {
         const email = match[0];
         if (IMAGE_TLDS.has(match[1].toLowerCase()) || IGNORED_EMAIL_DOMAIN.test(email) || ownerLower.has(email.toLowerCase())) continue;
