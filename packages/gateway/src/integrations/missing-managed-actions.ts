@@ -55,7 +55,8 @@ const trends = z.strictObject({ kind: z.literal("TrendsQuery"), dateRange: z.str
   series: z.array(z.strictObject({ kind: z.literal("EventsNode"), event: z.string().min(1).max(200), math: z.enum(["total", "dau"]).optional() })).min(1).max(5),
 }).refine(value => { const elapsed = Date.parse(value.dateRange.date_to) - Date.parse(value.dateRange.date_from); return elapsed >= 0 && elapsed <= 93 * 86_400_000; });
 const query = object(trends, "Bounded TrendsQuery: 1–5 event series, absolute date range of at most 93 days");
-const insightQuery = object(z.strictObject({ kind: z.literal("InsightVizNode"), source: trends }));
+const insightQuery = object(z.strictObject({ kind: z.literal("InsightVizNode"), source: trends }),
+  'InsightVizNode with source TrendsQuery; no extra fields. source.dateRange requires real YYYY-MM-DD date_from/date_to, ordered and at most 93 days apart. source.series requires 1–5 EventsNode objects, each with event of 1–200 characters and optional math total|dau. Optional source.interval is day|week|month. Example: `{"kind":"InsightVizNode","source":{"kind":"TrendsQuery","dateRange":{"date_from":"2026-10-01","date_to":"2026-10-08"},"interval":"day","series":[{"kind":"EventsNode","event":"$pageview","math":"total"}]}}`');
 // Both hosts are official PostHog application API origins and allowed by the
 // Pipedream app. Region selection is explicit; keys must match that region.
 // No caller URL or arbitrary self-hosted origin is accepted.
