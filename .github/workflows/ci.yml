@@ -780,6 +780,9 @@ jobs:
             tests/scripts/ci-dedicated-main-fallback.test.ts \
             tests/scripts/ci-dedicated-main-source-gate.test.ts \
             tests/scripts/ci-dedicated-main.test.ts \
+            tests/scripts/ci-main-base-snapshot.test.ts \
+            tests/scripts/ci-main-source-provenance.test.ts \
+            tests/scripts/ci-stable-main-qualification.test.ts \
             tests/scripts/ci-dedicated-result.test.ts \
             tests/scripts/ci-dedicated-result-history.test.ts \
             tests/scripts/ci-dedicated-waiter-rate-limit.test.ts \
