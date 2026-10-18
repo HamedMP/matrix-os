@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
-import { AppStoreReviewQueueQuerySchema, AppStoreReviewFileQuerySchema, AppStoreReviewDecisionSchema, AppStoreListingActionSchema } from '@matrix-os/contracts/app-store';
+import { AppStoreCatalogQuerySchema, AppStoreReviewQueueQuerySchema, AppStoreReviewFileQuerySchema, AppStoreReviewDecisionSchema, AppStoreListingActionSchema } from '@matrix-os/contracts/app-store';
 import { AppStoreError } from './errors.js';
 import { parseStore, storeBody, storeId, type StoreRouteEnv, type StoreRouteDeps } from './internal-routes.js';
 export function createStoreReviewRoutes(deps: StoreRouteDeps) {
   const app = new Hono<StoreRouteEnv>();
   app.use('*', async (c, next) => { if (!c.get('storeReviewer')) throw new AppStoreError('forbidden'); await next(); });
+  app.get('/listings', async c => { const query = parseStore(AppStoreCatalogQuerySchema, c.req.query()); return c.json(await deps.repository.reviewListings(query)); });
   app.get('/queue', async c => { const query = parseStore(AppStoreReviewQueueQuerySchema, c.req.query()); return c.json(await deps.repository.queue(query.status, query.cursor)); });
   app.get('/versions/:versionId', async c => {
     const id = storeId(c); if (!deps.review) throw new AppStoreError('unavailable'); return c.json(await deps.review.detail(id));

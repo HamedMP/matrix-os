@@ -7,7 +7,7 @@ import { ensurePlatformUser, insertUserMachine, type PlatformDB } from '../../pa
 import { createConfiguredAppStoreRuntime } from '../../packages/platform/src/app-store/startup.js';
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { encodeAppBundle, bundleDigest } from '../../packages/contracts/src/app-store-bundle.js';
-import { AppStoreDownloadGrantSchema, AppStoreReviewDetailSchema, AppStoreStatusSchema, AppStoreSubmissionSummarySchema } from '../../packages/contracts/src/app-store.js';
+import { AppStoreCatalogPageSchema, AppStoreDownloadGrantSchema, AppStoreReviewDetailSchema, AppStoreStatusSchema, AppStoreSubmissionSummarySchema } from '../../packages/contracts/src/app-store.js';
 import { verifyStoreApproval } from '../../packages/contracts/src/app-store-signing.js';
 const secret = 'test-platform-secret-for-app-store';
 const pair = generateKeyPairSync('ed25519');
@@ -106,6 +106,23 @@ describe('App Store authenticated platform routes', () => {
     expect((await request(target, '/listings/garden/install', 'PUT', { versionId: created.versionId }, 'consumer')).status).toBe(200);
     expect((await request(target, '/listings/garden/rating', 'PUT', { stars: 4 }, 'consumer')).status).toBe(200);
     expect((await request(target, `/review/versions/${created.versionId}/decision`, 'POST', { type: 'approve' }, 'reviewer')).status).toBe(409);
+  });
+  it('paginates public-history listings only for authenticated allowlisted reviewers, including removed listings', async () => {
+    const target = app(); const created = await create(target);
+    await request(target, `/submissions/${created.versionId}/finalize`, 'POST');
+    await request(target, `/review/versions/${created.versionId}/decision`, 'POST', { type: 'approve' }, 'reviewer');
+    const version = await runtime.repository.getVersion(created.versionId);
+    await runtime.repository.listingAction('user_reviewer', version.listing_id, { type: 'delist', message: 'Retired' });
+    const pending = { ...submission(), submissionKey: 'publisher:another:draft', listing: { ...submission().listing, slug: 'private-pending' }, manifest: { ...manifest, slug: 'private-pending' } };
+    expect((await request(target, '/submissions', 'POST', pending)).status).toBe(201);
+    const response = await request(target, '/review/listings?limit=1&sort=new', 'GET', undefined, 'reviewer');
+    expect(response.status).toBe(200);
+    expect(AppStoreCatalogPageSchema.parse(await response.json()).listings).toEqual([expect.objectContaining({ id: version.listing_id, status: 'delisted' })]);
+    await runtime.repository.listingAction('user_reviewer', version.listing_id, { type: 'suspend', message: 'Removed' });
+    expect(AppStoreCatalogPageSchema.parse(await (await request(target, '/review/listings', 'GET', undefined, 'reviewer')).json()).listings[0].status).toBe('suspended');
+    expect((await request(target, '/review/listings', 'GET', undefined, 'consumer')).status).toBe(403);
+    expect((await request(target, '/review/listings?limit=999', 'GET', undefined, 'reviewer')).status).toBe(400);
+    await expect((await request(target, '/review/listings?q=nomatch', 'GET', undefined, 'reviewer')).json()).resolves.toMatchObject({ listings: [] });
   });
   it('returns finalized source state after a lost response without rescanning or leaking another owner submission', async () => {
     const target = app(); const created = await create(target);
