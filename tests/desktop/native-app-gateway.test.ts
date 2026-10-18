@@ -21,7 +21,7 @@ describe("native Resource Manager gateway bridge", () => {
     await expect(bridge.gatewayFetch(sender, { url, init: { method: "GET" } }))
       .resolves.toEqual({ generatedAt: "now" });
     expect(fetchFn).toHaveBeenCalledWith(`https://gateway.test${url}`, expect.objectContaining({
-      method: "GET", redirect: "error", headers: { authorization: "Bearer desktop-token" },
+      method: "GET", redirect: "error", headers: { authorization: "Bearer desktop-token", "x-matrix-app-identity":"resource-manager" },
       signal: expect.any(AbortSignal),
     }));
   });

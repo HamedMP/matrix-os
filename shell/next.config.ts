@@ -54,6 +54,11 @@ const nextConfig: NextConfig = {
     };
     return config;
   },
+  async headers() {
+    // App frames may not navigate to an external origin and retain their parent bridge.
+    // Auth pages keep their separate provider frame policy.
+    return [{source:"/",headers:[{key:"Content-Security-Policy",value:"frame-src 'self'"}]}];
+  },
   async rewrites() {
     return [
       // Same-origin PostHog proxy. Ad blockers blocklist *.posthog.com and

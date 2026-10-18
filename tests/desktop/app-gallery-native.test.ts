@@ -38,7 +38,7 @@ describe("Electron Desktop gallery", () => {
     expect(loaded.connections?.[0]?.account_label).toBe("personal");
     await expect(installGalleryApp({ gatewayFetch }, "folio")).resolves.toMatchObject({ status: "installed", slug: "folio" });
     expect(fetchFn).toHaveBeenLastCalledWith(`${origin}/api/app-gallery/folio/install`, expect.objectContaining({
-      method: "POST", redirect: "error", headers: { authorization: "Bearer owner-token", "content-type": "application/json" }, body: "{}", signal: expect.any(AbortSignal),
+      method: "POST", redirect: "error", headers: { authorization: "Bearer owner-token", "content-type": "application/json", "x-matrix-app-identity":"app-gallery" }, body: "{}", signal: expect.any(AbortSignal),
     }));
   });
 

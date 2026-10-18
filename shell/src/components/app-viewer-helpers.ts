@@ -1,3 +1,4 @@
+import {OWNER_IFRAME_SANDBOX,communityDocumentPolicy} from './app-frame-authority';
 import { buildBridgeScript, withCredentialedAssets, type ThemeVars } from "@/lib/os-bridge";
 import { appRuntimeSlugFromIdentity } from "@matrix-os/contracts";
 
@@ -11,7 +12,7 @@ const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "tetris",
 ]);
 
-export const APP_IFRAME_SANDBOX = "allow-scripts allow-forms allow-popups allow-downloads";
+export const APP_IFRAME_SANDBOX = OWNER_IFRAME_SANDBOX;
 
 const APP_IFRAME_CSP = [
   "default-src 'self'",
@@ -70,13 +71,14 @@ export function injectBridgeIntoAppHtml(
   themeVars: ThemeVars,
   baseHref: string,
   design?: string,
+  authority?:{token:string;community:boolean},
 ): string {
-  const bridgeScript = buildBridgeScript(appName, themeVars, design)
+  const bridgeScript = buildBridgeScript(appName, themeVars, design,authority?.token)
     + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}\n`;
   const escapedBaseHref = baseHref.replace(/"/g, "&quot;");
   const injection = [
     `<base href="${escapedBaseHref}">`,
-    `<meta http-equiv="Content-Security-Policy" content="${APP_IFRAME_CSP.replace(/"/g, "&quot;")}">`,
+    `<meta http-equiv="Content-Security-Policy" content="${(APP_IFRAME_CSP+(authority?.community?"; "+communityDocumentPolicy:"")).replace(/"/g, "&quot;")}">`,
     `<script>${bridgeScript}</script>`,
   ].join("");
 
