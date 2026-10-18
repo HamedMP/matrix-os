@@ -75,3 +75,50 @@ it('awaits origin verification before comparing the newest requester generation'
  const github=fixture(args=>args.event==='pull_request'?[row(400,true)]:[row(401,false)]);
  expect((await newestWorkflowRun(github,repo,workflow,async(r:any)=>r.relevant,scope)).id).toBe(400);
 });
+
+describe('requester-bounded controller creation history',()=>{
+ const floor='2026-10-18T11:50:00.000Z';
+ const controllerScope={kind:'controller',headSha:scope.headSha,headRef:scope.headRef,notBefore:floor};
+ function bounds(created:string|undefined){
+  if(!created)return {start:-Infinity,end:Infinity};
+  if(created.startsWith('>='))return {start:Date.parse(created.slice(2)),end:Infinity};
+  if(created.startsWith('<='))return {start:-Infinity,end:Date.parse(created.slice(2))};
+  const [start,end]=created.split('..');return {start:Date.parse(start),end:Date.parse(end)};
+ }
+ function history(runs:any[]){
+  return fixture(args=>{
+   if(args.event!=='workflow_run'||args.branch!=='main')return [];
+   const {start,end}=bounds(args.created);
+   return runs.filter(run=>Date.parse(run.created_at)>=start&&Date.parse(run.created_at)<=end)
+    .slice((args.page-1)*100,Math.min(args.page*100,1000));
+  });
+ }
+ it('returns no controller without exhausting older Main traffic outside the authenticated requester floor',async()=>{
+  const older=Array.from({length:12000},(_,i)=>({...row(20000-i),created_at:new Date(Date.UTC(2026,9,18,10,0,-i)).toISOString()}));
+  const github=history(older);
+  await expect(newestWorkflowRun(github,repo,workflow,()=>false,controllerScope)).resolves.toBeUndefined();
+  expect(github.rest.actions.listWorkflowRuns.mock.calls.length).toBeLessThanOrEqual(3);
+  expect(github.rest.actions.listWorkflowRuns.mock.calls.every(([args])=>bounds(args.created).start===Date.parse(floor))).toBe(true);
+ });
+ it('retains a legitimate same-event PTR controller created shortly before its requester',async()=>{
+  const controller={...row(29999,true),created_at:'2026-10-18T11:59:30Z'};
+  const github=fixture(args=>args.event==='pull_request_target'?[controller]:[]);
+  expect(await newestWorkflowRun(github,repo,workflow,(run:any)=>run.relevant,controllerScope)).toBe(controller);
+  expect(github.rest.actions.listWorkflowRuns.mock.calls.every(([args])=>bounds(args.created).start===Date.parse(floor))).toBe(true);
+ });
+ it('preserves the inclusive lower floor when advancing the upper creation cursor',async()=>{
+  const recent=Array.from({length:700},(_,i)=>({...row(30000-i,i===650),created_at:new Date(Date.UTC(2026,9,18,12,0,0)-i*500).toISOString()}));
+  const older=Array.from({length:12000},(_,i)=>({...row(20000-i),created_at:new Date(Date.UTC(2026,9,18,10,0,-i)).toISOString()}));
+  const github=history([...recent,...older]);
+  expect((await newestWorkflowRun(github,repo,workflow,(run:any)=>run.relevant,controllerScope)).id).toBe(29350);
+  const queries=github.rest.actions.listWorkflowRuns.mock.calls.map(([args])=>args.created);
+  expect(queries.some(created=>Number.isFinite(bounds(created).end))).toBe(true);
+  expect(queries.every(created=>bounds(created).start===Date.parse(floor))).toBe(true);
+  expect(github.rest.actions.listWorkflowRuns.mock.calls.length).toBeLessThan(20);
+ });
+ it.each(['not-a-date','2026-02-30T00:00:00Z',0,{}])('rejects malformed creation floor before a workflow API request (%j)',async notBefore=>{
+  const github=fixture(()=>[]);
+  await expect(newestWorkflowRun(github,repo,workflow,()=>false,{...controllerScope,notBefore})).rejects.toThrow();
+  expect(github.rest.actions.listWorkflowRuns).not.toHaveBeenCalled();
+ });
+});
