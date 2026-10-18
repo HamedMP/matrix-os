@@ -38,7 +38,7 @@ import {
 import { useChatContext } from "@/stores/chat-context";
 import { mobileAppsFromBootstrap } from "./mobile-app";
 import { getGatewayUrl } from "@/lib/gateway";
-import { webShellIconUrlForApp, webGalleryLauncherIconUrl } from "@/lib/web-desktop-app-launch";
+import { webShellIconUrlForApp } from "@/lib/web-desktop-app-launch";
 import { nameToSlug } from "@/lib/utils";
 import { normalizeAppBridgeLaunchPath, routeAppBridgeLaunch } from "@/lib/builtin-apps";
 import {
@@ -551,7 +551,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
         </AnimatePresence>
       </main>
 
-      <MobileDock galleryIconUrl={webGalleryLauncherIconUrl(apps)}
+      <MobileDock
         apps={pinnedDock}
         currentPath={view === "app" ? top?.app.path : undefined}
         view={view}

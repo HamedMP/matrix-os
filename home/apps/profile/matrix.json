@@ -3,7 +3,7 @@
   "description": "Your Matrix profile page",
   "runtime": "vite",
   "category": "social",
-  "icon": "profile",
+  "icon": "v3-profile",
   "version": "1.0.0",
   "slug": "profile",
   "runtimeVersion": "^1.0.0",
