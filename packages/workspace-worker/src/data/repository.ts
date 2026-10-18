@@ -76,6 +76,26 @@ export async function ensureWorkspace(db: Kysely<WorkspaceDatabase>, ownerId: st
   }).onConflict((oc) => oc.column("owner_id").doNothing()).execute();
 }
 
+/** Caller-owned admission transaction: Chat input, budget and outbox commit together. */
+export async function admitWorkspaceChatMessage(trx: Kysely<WorkspaceDatabase>, ownerId: string, input: ChatAdmissionInput): Promise<SharedChat> {
+  if (!input.message.trim() || input.message.length > 16_000 || new TextEncoder().encode(input.message).byteLength > 64_000) throw new WorkspaceError("invalid");
+  await ensureWorkspace(trx, ownerId);
+  await trx.selectFrom("shared_workspaces").select("owner_id").where("owner_id", "=", ownerId).forUpdate().executeTakeFirstOrThrow();
+  const admitted = await trx.selectFrom("shared_chat_messages").selectAll().where("owner_id", "=", ownerId)
+    .where("request_id", "=", input.idempotencyKey).where("role", "=", "user").limit(2).execute();
+  if (admitted.length) {
+    if (admitted.length !== 1 || admitted[0].text !== input.message) throw new WorkspaceError("conflict");
+    const chat = await trx.selectFrom("shared_chats").selectAll().where("owner_id", "=", ownerId).where("id", "=", admitted[0].chat_id).executeTakeFirst();
+    if (!chat) throw new WorkspaceError("not_found");
+    return chatRecord(chat);
+  }
+  const existing = await trx.selectFrom("shared_chats").selectAll().where("owner_id", "=", ownerId).where("id", "=", input.chatId).executeTakeFirst();
+  const chat = existing ? chatRecord(existing) : await new PostgresWorkspaceRepository(trx, false).upsertChat(trx, ownerId, input.idempotencyKey, input.message.slice(0, 100));
+  await trx.selectFrom("shared_chats").select("id").where("owner_id", "=", ownerId).where("id", "=", chat.id).forUpdate().executeTakeFirstOrThrow();
+  await new PostgresWorkspaceRepository(trx, false).insertMessage(trx, ownerId, chat.id, input.idempotencyKey, "user", input.message);
+  return chat;
+}
+
 export class PostgresWorkspaceRepository implements WorkspaceRepository {
   constructor(readonly db: Kysely<WorkspaceDatabase>, private readonly ownsDb = true) {}
   async initialize(): Promise<void> {
@@ -195,7 +215,7 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
   async createChat(ownerId: string, requestId: string, title: string) {
     return this.db.transaction().execute(trx => this.upsertChat(trx, ownerId, requestId, title));
   }
-  private async upsertChat(trx: Kysely<WorkspaceDatabase>, ownerId: string, requestId: string, title: string): Promise<SharedChat> {
+  async upsertChat(trx: Kysely<WorkspaceDatabase>, ownerId: string, requestId: string, title: string): Promise<SharedChat> {
     await trx.insertInto("shared_chats").values({ owner_id: ownerId, id: `chat_${crypto.randomUUID().replaceAll("-", "")}`, request_id: requestId, title, created_at: new Date().toISOString() })
       .onConflict((oc) => oc.columns(["owner_id", "request_id"]).doNothing()).execute();
     const row = await trx.selectFrom("shared_chats").selectAll().where("owner_id", "=", ownerId).where("request_id", "=", requestId).executeTakeFirstOrThrow();
@@ -203,25 +223,9 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
   }
   /** A durable input and its Chat are one admission; Queue delivery happens after commit. */
   async admitChatMessage(ownerId: string, input: ChatAdmissionInput): Promise<SharedChat> {
-    if (!input.message.trim() || input.message.length > 16_000 || new TextEncoder().encode(input.message).byteLength > 64_000) throw new WorkspaceError("invalid");
-    return this.db.transaction().execute(async (trx) => {
-      await ensureWorkspace(trx, ownerId);
-      await trx.selectFrom("shared_workspaces").select("owner_id").where("owner_id", "=", ownerId).forUpdate().executeTakeFirstOrThrow();
-      const admitted = await trx.selectFrom("shared_chat_messages").selectAll().where("owner_id", "=", ownerId)
-        .where("request_id", "=", input.idempotencyKey).where("role", "=", "user").limit(2).execute();
-      if (admitted.length) {
-        if (admitted.length !== 1 || admitted[0].text !== input.message) throw new WorkspaceError("conflict");
-        const chat = await trx.selectFrom("shared_chats").selectAll().where("owner_id", "=", ownerId).where("id", "=", admitted[0].chat_id).executeTakeFirst();
-        if (!chat) throw new WorkspaceError("not_found");
-        return chatRecord(chat);
-      }
-      const existing = await trx.selectFrom("shared_chats").selectAll().where("owner_id", "=", ownerId).where("id", "=", input.chatId).executeTakeFirst();
-      const chat = existing ? chatRecord(existing) : await this.upsertChat(trx, ownerId, input.idempotencyKey, input.message.slice(0, 100));
-      await trx.selectFrom("shared_chats").select("id").where("owner_id", "=", ownerId).where("id", "=", chat.id).forUpdate().executeTakeFirstOrThrow();
-      await this.insertMessage(trx, ownerId, chat.id, input.idempotencyKey, "user", input.message);
-      return chat;
-    });
+    return this.db.transaction().execute(trx => admitWorkspaceChatMessage(trx, ownerId, input));
   }
+
   async chat(ownerId: string, chatId: string) {
     const row = await this.db.selectFrom("shared_chats").selectAll().where("owner_id", "=", ownerId).where("id", "=", chatId).executeTakeFirst();
     return row ? chatRecord(row) : null;
@@ -240,7 +244,7 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
       await this.insertMessage(trx, ownerId, chatId, requestId, role, text);
     });
   }
-  private async insertMessage(trx: Kysely<WorkspaceDatabase>, ownerId: string, chatId: string, requestId: string, role: "user" | "assistant", text: string) {
+  async insertMessage(trx: Kysely<WorkspaceDatabase>, ownerId: string, chatId: string, requestId: string, role: "user" | "assistant", text: string) {
     const latest = await trx.selectFrom("shared_chat_messages").select("seq").where("owner_id", "=", ownerId).where("chat_id", "=", chatId).orderBy("seq", "desc").limit(1).executeTakeFirst();
     await trx.insertInto("shared_chat_messages").values({ owner_id: ownerId, chat_id: chatId, request_id: requestId,
       id: `msg_${crypto.randomUUID().replaceAll("-", "")}`, seq: (latest?.seq ?? 0) + 1, role, text, created_at: new Date().toISOString(),

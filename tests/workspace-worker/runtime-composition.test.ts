@@ -25,3 +25,16 @@ describe('runtime credential composition',()=>{
     expect(connection.store.bindRuntime).toHaveBeenCalledWith('runtime-a','owner_a'); expect(close).toHaveBeenCalledOnce();
   });
 });
+
+describe('compute reconciliation alarm composition',()=>{
+  it('rearms pooled work without starting compute and leaves personal placement alone',async()=>{
+    const setAlarm=vi.fn();const close=vi.fn(async()=>undefined);
+    const store={status:vi.fn(async()=>({placement:'personal'})),bindRuntime:vi.fn()};
+    const connection={store,close} as unknown as RuntimeConnection;
+    class Runtime extends WorkspaceRuntime {protected async openRuntimeConnection(){return connection;}}
+    const runtime=new Runtime({container:{running:false},id:{toString:()=> 'bound'},storage:{setAlarm}} as never,{});
+    await runtime.reconcile('owner');expect(setAlarm).not.toHaveBeenCalled();expect(store.bindRuntime).not.toHaveBeenCalled();
+    store.status.mockResolvedValueOnce({placement:'pooled'});await runtime.reconcile('owner');
+    expect(store.bindRuntime).toHaveBeenCalledWith('bound','owner');expect(setAlarm).toHaveBeenCalledOnce();expect(close).toHaveBeenCalledTimes(2);
+  });
+});

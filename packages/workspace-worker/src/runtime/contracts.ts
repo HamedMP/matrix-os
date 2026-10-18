@@ -47,6 +47,8 @@ export interface RuntimeStore {
   saveCheckpoint(ownerId: string, checkpoint: RuntimeCheckpoint): Promise<boolean>;
   latestCheckpoint(ownerId: string): Promise<RuntimeCheckpoint | null>;
   markSleeping(ownerId: string, generation: number): Promise<boolean>;
+  /** Confirmed native destruction is the only interrupted-reservation settlement proof. */
+  confirmStopped?(ownerId: string, generation: number, now: number): Promise<boolean>;
   fail(ownerId: string, generation: number): Promise<void>;
 }
 export interface RuntimeDriver {

@@ -12,6 +12,7 @@ export class RuntimeLifecycle {
     private readonly schedule: (at: number) => Promise<void>,
     private readonly now: () => number = Date.now,
     private readonly policy: RuntimePolicy = DEFAULT_RUNTIME_POLICY,
+    private readonly withTermination: (operation:()=>Promise<void>)=>Promise<void> = operation=>operation(),
   ) {
     if (policy.heartbeatMs <= 0 || policy.leaseMs < policy.heartbeatMs * 2
       || policy.maxRunMs > 30 * 60_000 || policy.maxRunMs <= 0 || policy.idleGraceMs < 0) {
@@ -42,8 +43,20 @@ export class RuntimeLifecycle {
   private async interrupt(lease: RuntimeLease): Promise<void> {
     const generation = await this.store.beginInterrupt(lease,this.now());
     if (generation === null) return;
-    await this.driver.cancel(lease);
-    await this.store.fail(lease.ownerId,generation);
+    await this.terminate(lease.ownerId,generation,lease);
+  }
+
+  private async terminate(ownerId:string,generation:number,lease?:RuntimeLease):Promise<void> {
+    await this.withTermination(async()=>{
+      // A previous callback may already have released this generation. Recheck
+      // under the DO's shared termination gate before touching native compute.
+      const current=await this.store.status(ownerId);
+      if(current.placement !== 'pooled' || current.state !== 'interrupting' || current.generation !== generation) return;
+      const now=this.now();
+      await this.driver.cancel(lease ?? {ownerId,jobId:'recovery',generation,expiresAt:now,maxRunAt:now});
+      if(this.store.confirmStopped) await this.store.confirmStopped(ownerId,generation,this.now());
+      else await this.store.fail(ownerId,generation);
+    });
   }
 
   async alarm(ownerId: string): Promise<void> {
@@ -51,10 +64,8 @@ export class RuntimeLifecycle {
     if (summary.placement === 'personal') return;
     const now = this.now();
     if (summary.state === 'interrupting') {
-      try {
-        await this.driver.cancel({ownerId,jobId:'recovery',generation:summary.generation,expiresAt:now,maxRunAt:now});
-        await this.store.fail(ownerId,summary.generation);
-      } finally { await this.schedule(now + this.policy.heartbeatMs); }
+      try { await this.terminate(ownerId,summary.generation); }
+      finally { await this.schedule(now + this.policy.heartbeatMs); }
       return;
     }
     const active = await this.store.active(ownerId, now);
@@ -68,6 +79,10 @@ export class RuntimeLifecycle {
       }
     }
     await this.store.recoverExpired(ownerId, now);
+    if ((await this.store.status(ownerId)).state === 'interrupting') {
+      await this.schedule(now + this.policy.heartbeatMs);
+      return;
+    }
     if (remaining) {
       await this.driver.keepAlive();
       await this.schedule(now + this.policy.heartbeatMs);
@@ -100,8 +115,7 @@ export class RuntimeLifecycle {
       if (summary.idleSince !== null && now - summary.idleSince >= retryMs) {
         const nextGeneration = await this.store.beginIdleInterrupt(ownerId,generation,now);
         if (nextGeneration !== null) {
-          await this.driver.cancel({ownerId,jobId:'checkpoint-recovery',generation:nextGeneration,expiresAt:now,maxRunAt:now});
-          await this.store.fail(ownerId,nextGeneration);
+          await this.terminate(ownerId,nextGeneration);
         }
       } else { await this.driver.keepAlive(); }
       await this.schedule(now + this.policy.heartbeatMs);

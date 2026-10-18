@@ -7,6 +7,7 @@ import { createDefaultOsViewDocument, OsViewDocumentSchema, PatchOsViewStateRequ
 import { createWorkspaceAuthenticator, type WorkspaceAuthOptions } from "./auth.js";
 import { readSharedFileSnapshot, WorkspaceError, type WorkspaceRepository, type SharedChat } from "./data/repository.js";
 import { MAX_TEXT_BYTES, type WorkspaceFiles } from "./data/files.js";
+import { ComputeBudgetError } from "./data/compute-budget.js";
 import { isRuntimePrivatePath } from '../runtime/paths.mjs';
 
 export type WorkspaceAction = { type: "wake" } | { type: "chat"; chatId: string; message: string; idempotencyKey: string };
@@ -50,6 +51,12 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     await next();
   });
   app.onError((error, c) => {
+    if (error instanceof ComputeBudgetError) {
+      if (error.code === "exhausted") return c.json({error:"Compute allowance unavailable"},429);
+      if (error.code === "conflict") return c.json({error:"conflict"},409);
+      if (error.code === "invalid") return c.json({error:"Invalid action"},400);
+      return c.json({error:"Compute unavailable"},503);
+    }
     if (error instanceof WorkspaceError) return c.json({ error: error.code }, error.code === "conflict" ? 409 : error.code === "not_found" ? 404 : 400);
     if (error instanceof SyntaxError) return c.json({ error: "Invalid request" }, 400);
     console.error("[workspace-api] request failed", error instanceof Error ? error.name : "UnknownError");
@@ -182,11 +189,6 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     const input = actionSchema.safeParse(await c.req.json());
     if (!input.success) return c.json({ error: "Invalid action" }, 400);
     const owner = c.get("ownerId");
-    if (input.data.type === "chat") {
-      const action = input.data;
-      const chat = await options.repository.admitChatMessage(owner, action);
-      return c.json({ ...await options.runtime.enqueue(owner, { ...action, chatId: chat.id }) as Record<string, unknown>, chatId: chat.id }, 202);
-    }
     return c.json(await options.runtime.enqueue(owner, input.data), 202);
   });
   return app;
