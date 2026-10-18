@@ -119,4 +119,25 @@ describe('terminal requester fence before reconciliation credentials',()=>{
   expect(delay.mock.calls.length).toBeLessThanOrEqual(1);expect(f.run.status).toBe('in_progress');
   expect(f.github.rest.apps.createInstallationAccessToken).not.toHaveBeenCalled();
  });
+ it('does not start later origin reads once a nested read exhausts the absolute deadline',async()=>{
+  const f=fixture();let ticks=0;
+  f.github.rest.repos.getBranch.mockImplementation(async({branch:requested}:any)=>{
+   ticks=1001;return{data:{name:requested,commit:{sha:execution}}};
+  });
+  await expect((await module()).awaitTerminalIsolatedRequester(f.github,repo,settling,{maxMilliseconds:1000,now:()=>ticks})).rejects.toThrow();
+  expect(f.github.rest.git.getCommit).not.toHaveBeenCalled();
+  expect(f.github.rest.apps.createInstallationAccessToken).not.toHaveBeenCalled();
+ });
+ it('passes the absolute abort signal to a slow nested origin read',async()=>{
+  const f=fixture();let observed:AbortSignal|undefined;
+  f.github.rest.repos.getBranch.mockImplementation(({request}:any)=>new Promise((_resolve,reject)=>{
+   observed=request.signal;
+   if(!observed){reject(new Error('Missing absolute deadline signal'));return;}
+   observed.addEventListener('abort',()=>reject(observed?.reason),{once:true});
+  }));
+  await expect((await module()).awaitTerminalIsolatedRequester(f.github,repo,settling,{maxMilliseconds:1000})).rejects.toThrow();
+  expect(observed).toBeInstanceOf(AbortSignal);expect(observed?.aborted).toBe(true);
+  expect(f.github.rest.git.getCommit).not.toHaveBeenCalled();
+  expect(f.github.rest.apps.createInstallationAccessToken).not.toHaveBeenCalled();
+ });
 });

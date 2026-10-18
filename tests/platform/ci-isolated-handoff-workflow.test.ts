@@ -71,13 +71,15 @@ describe('actual isolated CI handoff workflow graph',()=>{
   expect(JSON.stringify(job)).not.toContain('secrets.');expect(JSON.stringify(job)).not.toContain('awaitTerminalIsolatedRequester');
   expect(ci.jobs['ci-results'].if).toContain('always()');
  });
- it.each(['success','skipped','failure','cancelled'])('the actual aggregate handles completion handoff %s truthfully',result=>{
+ it.each(['handoff','redirect'].flatMap(kind=>['success','skipped','failure','cancelled'].map(result=>({kind,result}))))('the actual aggregate handles $kind $result truthfully',({kind,result})=>{
   const {id}=completion();
   const step=ci.jobs['ci-results'].steps.find((value:any)=>value.name==='Summarize required CI jobs');
   expect(step.env.CI_HANDOFF_RESULT).toContain(`needs.${id}.result`);
+  expect(step.env.CI_REDIRECT_RESULT).toContain('needs.redirect.result');
   const directory=mkdtempSync(join(tmpdir(),'matrix-handoff-aggregate-'));
   try{
-   const env:NodeJS.ProcessEnv={PATH:process.env.PATH,GITHUB_STEP_SUMMARY:join(directory,'summary.md'),CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'false',CHANGES_RESULT:'success',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_MODE:'shadow',CI_HANDOFF_RESULT:result};
+   const env:NodeJS.ProcessEnv={PATH:process.env.PATH,GITHUB_STEP_SUMMARY:join(directory,'summary.md'),CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'false',CHANGES_RESULT:'success',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_MODE:'shadow',CI_HANDOFF_RESULT:'skipped',CI_REDIRECT_RESULT:'skipped'};
+   env[kind==='handoff'?'CI_HANDOFF_RESULT':'CI_REDIRECT_RESULT']=result;
    for(const name of ['CI_BACKEND','DEDICATED_LINUX','TYPECHECK','SHELL_PRODUCTION_BUILD','PATTERNS','REACT_DOCTOR','SYNC_CLIENT','AGENT_SDK_COMPATIBILITY','UNIT','FUNDED_POSTGRES','FUNDED_HOST_ROOT','DOCS_CONTRACT','OS_VIEW_PARITY','E2E'])env[`${name}_RESULT`]='skipped';
    const execute=()=>execFileSync('bash',['-c',step.run],{env,timeout:5000,maxBuffer:65536,stdio:'pipe'});
    if(['failure','cancelled'].includes(result))expect(execute).toThrow();else expect(execute).not.toThrow();
