@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { readFile } from "node:fs/promises";
 import { describe, it, expect, vi } from "vitest";
 import {
