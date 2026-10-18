@@ -146,7 +146,11 @@ export const AppStoreGatewayCatalogPageSchema = z.strictObject({
   listings: z.array(AppStoreGatewayListingSummarySchema).max(50),
   nextCursor: z.string().max(200).optional(),
 });
-export const AppStoreGatewayListingDetailSchema = AppStoreListingDetailSchema.extend({ local: AppStoreLocalStateSchema });
+export const AppStoreGatewayListingDetailSchema = AppStoreListingDetailSchema.extend({
+  local: AppStoreLocalStateSchema,
+  /** Owner gateway's durable job for this exact listing and approved source version. */
+  installJob: AppStoreInstallJobSchema.nullable().optional(),
+});
 export type AppStoreGatewayListingDetail = z.infer<typeof AppStoreGatewayListingDetailSchema>;
 
 /** Gateway-owned provenance for community installs (`~/system/app-store/installs.json`). */
