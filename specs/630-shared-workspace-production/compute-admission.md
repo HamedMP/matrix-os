@@ -12,6 +12,8 @@ Runtime claim and successful completion share the lifecycle transaction with the
 
 Durable alarms renew work through model/tool waits and client disconnects. Server account revocation prevents heartbeat renewal. Scheduled reconciliation re-arms owner alarms and retries pending delivery; the owner/generation fence is acquired before destruction. Unknown native termination stays quarantined and held. Cancellation does not imply that a user action or external tool side effect was rolled back.
 
+Confirmed destruction persists a terminal `interrupted` outbox outcome separately from its settled reservation. Exact replay returns HTTP 409; only successful completion returns `completed`/200. A new attempt needs a new idempotency key. Initialization atomically upgrades both outbox checks on existing databases with bounded DDL lock/statement timeouts; repeated initialization preserves rows and avoids taking a DDL lock once upgraded. Apply the schema upgrade before running the new runtime code. Previously recorded `completed` rows are not reclassified without authoritative outcome evidence.
+
 ## Auth matrix
 
 | Boundary | Authority | Public | Validation/limits |

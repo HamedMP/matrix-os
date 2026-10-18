@@ -9,7 +9,9 @@ Use a disposable PostgreSQL database and an operator-owned Kysely instance/pool.
 1. `PostgresWorkspaceRepository.initialize()` creates owner data tables.
 2. `PostgresRuntimeStore.initialize()` creates runtime jobs and owner bindings.
 3. `PostgresComputeBudgetStore.initialize()` creates allowance policies and reservations.
-4. `PostgresComputeAdmissionStore.initialize()` creates accounts and the durable outbox, whose foreign keys depend on the preceding tables.
+4. `PostgresComputeAdmissionStore.initialize()` creates accounts and the durable outbox, whose foreign keys depend on the preceding tables. On initialized databases it atomically upgrades both outbox checks to accept terminal `interrupted` outcomes. Run this upgrade before enabling the new code; a lock or statement timeout fails initialization and must be retried before rollout.
+
+The completed isolated Cloudflare run, exact timing boundaries, inference cost, limitations and verified cleanup are recorded in [qualification evidence](./cloudflare-evidence.md). Those runtime observations precede the local interrupted-outcome fix; the fix has separate real PostgreSQL failure/timeout/replay and existing-schema migration coverage, with no additional paid inference.
 
 Then explicitly provision the test owner's policy window and allowance, and activate that account. The example accepts trusted operator inputs rather than embedding credentials or granting a default allowance:
 

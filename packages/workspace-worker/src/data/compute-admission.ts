@@ -27,7 +27,7 @@ function parse<T extends z.ZodType>(schema: T, raw: unknown): z.output<T> {
 type Outbox = AdmissionDatabase['shared_compute_outbox'];
 export interface ComputeAdmission { job: RuntimeJob; jobId: string; state: 'queued'|'running'|'completed'; chatId?: string }
 const result = (row: Outbox): ComputeAdmission => {
-  if(row.state === 'cancelled' || row.state === 'uncertain') throw new ComputeBudgetError('conflict');
+  if(row.state === 'cancelled' || row.state === 'uncertain' || row.state === 'interrupted') throw new ComputeBudgetError('conflict');
   const job = parseQueuedJob(row.payload);
   return { job, jobId: job.jobId, state: row.state === 'pending' ? 'queued' : row.state, ...(job.type === 'chat' ? { chatId: job.chatId } : {}) };
 };
@@ -198,7 +198,8 @@ export class PostgresComputeAdmissionStore {
     const rows = await trx.selectFrom('shared_compute_outbox').selectAll().where('owner_id', '=', ownerId).where('state', '=', 'uncertain').where('generation', '<', currentGeneration).execute();
     for (const row of rows) {
       await settleComputeBudget(budgetTransaction(trx), { ownerId, reservationId: row.job_id, actualMs: row.amount_ms });
-      await trx.updateTable('shared_compute_outbox').set({ state: 'completed' }).where('owner_id', '=', ownerId).where('job_id', '=', row.job_id).execute();
+      // Confirmed termination settles accounting, never successful task completion.
+      await trx.updateTable('shared_compute_outbox').set({ state: 'interrupted' }).where('owner_id', '=', ownerId).where('job_id', '=', row.job_id).execute();
     }
   }
   /** Rotate bounded reconciliation candidates so a failed owner cannot starve other owners. */
