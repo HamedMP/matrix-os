@@ -32,7 +32,8 @@ Raw sanitized results and boundaries: [evidence.json](./evidence.json).
 | Boundary | Observed |
 |---|---:|
 | Shared bootstrap with compute stopped | 195–217 ms |
-| Warm development Web Desktop visible | about 3.1 seconds |
+| Warm development Web Desktop visible | 1.8–3.1 seconds |
+| Restored saved file visible in the actual File Browser | 2.7 seconds, compute asleep |
 | Native queued wake, before agent execution | about 28 seconds |
 | First queued agent, including cold start, 20s tool wait and durable result | 62.3 seconds |
 | Second queued agent, including replacement, restore and durable result | 44.7 seconds |

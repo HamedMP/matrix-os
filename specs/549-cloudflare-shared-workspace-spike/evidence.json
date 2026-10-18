@@ -188,5 +188,13 @@
     "Direct gateway image size in the earlier sample is superseded by the later Dockerfile image; do not compare those image sizes as the same artifact.",
     "Additional recovery-path hardening was tested after the live normal-path sample; the benchmark is not a measurement of a committed final head.",
     "Single allowlisted compute owner; separate kernel and shared-control test databases. No production Free signup, billing, full Chat/Terminal WebSocket bridge or automatic SDK-session resume shipped."
-  ]
+  ],
+  "browser": {
+    "at": "2026-10-18T12:51:14.847Z",
+    "environment": "local Next development, warm modules",
+    "desktopVisibleMs": 1759,
+    "savedFileVisibleMs": 2726,
+    "savedFileListed": "spike-result.txt",
+    "computeStateAtSavedRead": "sleeping"
+  }
 }
