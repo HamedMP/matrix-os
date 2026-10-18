@@ -8,7 +8,9 @@ vi.mock('../../../packages/gateway/src/app-store/draft-store.js', () => ({ creat
   writeFiles: async (_: string, which: string, files: Map<string, Buffer>) => { if (which === 'prepared') state.prepared = new Map(files); },
 }) }));
 vi.mock('../../../packages/gateway/src/owner-file-mutations.js', () => ({ withOwnerFileMutation: async (_: string, action: () => unknown) => action() }));
+vi.mock('../../../packages/gateway/src/app-store/submission-poller.js',()=>({rememberSubmissionObservation:vi.fn(async()=>{})}));
 import { createStorePublishService } from '../../../packages/gateway/src/app-store/publish-service.js';
+import {rememberSubmissionObservation} from '../../../packages/gateway/src/app-store/submission-poller.js';
 const id = '6f84f223-bd35-4e4d-ad4a-2fb7bd9174fa';
 const manifest = { name: 'Garden', slug: 'garden', description: 'A sample garden', version: '1.0.0', runtime: 'vite', permissions: [] };
 let service: ReturnType<typeof createStorePublishService>;
@@ -58,6 +60,7 @@ describe('private publishing reconciliation', () => {
     const { platform } = fixture();
     const result = await service.submit(id, { consent: true, license: 'MIT' });
     expect(result.status).toBe('submitted');
+    expect(rememberSubmissionObservation).toHaveBeenCalledWith('/test',id);
     expect(platform.finalize).not.toHaveBeenCalled(); expect(platform.transfer).not.toHaveBeenCalled();
     expect(state.draft.submission).toMatchObject({ status: 'in_review', versionId: id });
   });

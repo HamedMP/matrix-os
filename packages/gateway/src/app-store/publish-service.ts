@@ -8,6 +8,7 @@ import {withOwnerFileMutation} from '../owner-file-mutations.js';
 import {snapshotOwnerApp} from './snapshot.js';import {createDraftStore} from './draft-store.js';
 import {createStoreGeneralizer,type StoreGeneralizer} from './generalizer.js';import {preparePublishDraft} from './prepare-draft.js';
 import {StoreError,type AppStorePlatformClient} from './platform-client.js';import type {LocalStoreBuilder} from './local-builder.js';
+import {rememberSubmissionObservation} from './submission-poller.js';
 export function createStorePublishService(options:{homePath:string;platform:AppStorePlatformClient;builder:LocalStoreBuilder;generalizer?:StoreGeneralizer;ownerTerms?:readonly string[]}){
  const store=createDraftStore(options.homePath);const generalizer=options.generalizer??createStoreGeneralizer(options.homePath);
  const jobs=new Map<string,Promise<void>>(); // Cap2, removed on settlement; new drafts cap5/TTL7days.
@@ -92,7 +93,9 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
    const payload=AppStoreCreateSubmissionSchema.parse({submissionKey:`draft:${id}`,listing,version,changelog,license:input.license,manifest,source:{sha256:bundleDigest(source),size:source.length},generalizationReport:JSON.parse(redactSecrets(JSON.stringify(draft.report)).text)});
    await store.write({...draft,status:'submitting',stage:'upload',updatedAt:new Date().toISOString()});
    try{
-    const created=await options.platform.createSubmission(payload);if(created.upload)await options.platform.transfer(created.upload.url,'PUT',source);
+    const created=await options.platform.createSubmission(payload);
+    await rememberSubmissionObservation(options.homePath,created.versionId);
+    if(created.upload)await options.platform.transfer(created.upload.url,'PUT',source);
     const finalized=created.status==='awaiting_upload'?await options.platform.finalize(created.versionId):created;
     const result={...draft,status:'submitted' as const,stage:'upload' as const,submission:{listingSlug:listing.slug,version,versionId:created.versionId,status:finalized.status},updatedAt:new Date().toISOString()};await store.write(result);return AppStoreDraftSummarySchema.strip().parse(result);
    }catch(error:unknown){await store.write({...draft,status:'ready',failureCode:'upload_failed',updatedAt:new Date().toISOString()});throw error;}
