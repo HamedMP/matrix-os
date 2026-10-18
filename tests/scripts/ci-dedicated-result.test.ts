@@ -227,7 +227,7 @@ describe('pre-admission default-controller retry coordination',()=>{
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('No verified');
   });
   it('rejects saturated source history without valid creation timestamps',async()=>{
-    const {github,run}=fixture();github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:Array.from({length:100},(_,index)=>({...run,id:200+index,display_title:'other source request'}))}});
+    const {github,run}=fixture();github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:Array.from({length:100},(_,index)=>({...run,id:200+index,created_at:undefined,display_title:'other source request'}))}});
     await expect(waitForDedicatedResult(github,expected,{maxAttempts:1,delay:async()=>{}})).rejects.toThrow('Invalid bounded workflow creation history');
     expect(Math.max(...github.rest.actions.listWorkflowRuns.mock.calls.map(([args]:any[])=>args.page))).toBe(3);expect(github.rest.actions.listWorkflowRuns.mock.calls.length).toBeLessThanOrEqual(9);
   });
