@@ -25,9 +25,9 @@ const source = stage === 'before' ? before : unifiedThemes;
 Object.assign(document.body.style, { overflow: 'visible', height: 'auto', minHeight: '100vh', position: 'static' });
 Object.assign(document.documentElement.style, { overflow: 'auto', height: 'auto', position: 'static' });
 Object.assign(document.getElementById('root')!.style, { overflow: 'visible', height: 'auto' });
-function ReviewStates({ variant }: { variant: ReturnType<typeof getThemeVariant> }) {
+function ReviewStates({ variant, paletteId }: { variant: ReturnType<typeof getThemeVariant>; paletteId: string }) {
   const c = variant.chrome;
-  const semantic = themeSemantics(c);
+  const semantic = themeSemantics(c, paletteId);
   const tones = ['success', 'warning', 'danger', 'info'] as const;
   return <div style={{ background: c.card, color: c.foreground, padding: 12, border: `1px solid ${c.border}`, borderRadius: 8, marginTop: 8, fontSize: 12 }}>
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -46,7 +46,7 @@ function Gallery() {
     <div style={{ display: 'grid', gridTemplateColumns: id ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 24 }}>
       {source.filter(theme => !id || theme.id === id).map(theme => {
         const variant = stage === 'before' ? theme[mode] ?? theme.dark ?? theme.light : getThemeVariant(theme.id, mode);
-        return <section key={theme.id} data-theme-specimen={theme.id}><h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{theme.name} {!theme[mode] && '(dark fallback)'}</h2><ThemePreview variant={variant!} fontFamily="Geist, sans-serif" monoFamily="JetBrains Mono, monospace" />{stage === "after" && <ReviewStates variant={variant!} />}</section>;
+        return <section key={theme.id} data-theme-specimen={theme.id}><h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{theme.name} {!theme[mode] && '(dark fallback)'}</h2><ThemePreview variant={variant!} fontFamily="Geist, sans-serif" monoFamily="JetBrains Mono, monospace" />{stage === "after" && <ReviewStates variant={variant!} paletteId={theme.id} />}</section>;
       })}
     </div>
   </main>;
