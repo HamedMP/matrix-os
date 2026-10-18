@@ -1,4 +1,4 @@
-import { canonicalOsViewCatalogPath } from "./os-view.js";
+import { canonicalOsViewCatalogPath } from "#os-view";
 
 /** Shared exact-path capability policy for the Web and Electron app bridges. */
 export function isAllowedAppGalleryBridgeRequest(url: string, method = "GET"): boolean {

@@ -582,6 +582,9 @@ prepare_update_transaction() {
   else
     : >"$UPDATE_TRANSACTION_DIR/matrix-terminal-attach.missing"
   fi
+  if [ -f "$extract_dir/app/host-toolchain/pnpm-10.33.4.tgz" ]; then
+    record_pnpm_runtime_transaction "$version" || return 1
+  fi
   write_update_transaction_state prepared
 }
 
@@ -658,6 +661,9 @@ restore_update_transaction() {
   local name state current_target incoming
   [ -f "$UPDATE_TRANSACTION_STATE" ] && [ ! -L "$UPDATE_TRANSACTION_STATE" ] || return 0
   stop_candidate_touched_system_units || return 1
+  if declare -F restore_pnpm_runtime_transaction >/dev/null; then
+    restore_pnpm_runtime_transaction || return 1
+  fi
   restore_update_payload_directory "$BIN_DIR" bin || return 1
   restore_update_payload_directory /etc/systemd/system systemd || return 1
   restore_update_payload_directory /etc/systemd/user user-systemd || return 1
@@ -723,7 +729,8 @@ preserve_host_rollback_transaction() {
       grep -Fxq 'matrix-symphony.service' "$UPDATE_TRANSACTION_DIR/systemd.present"; } ||
     [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ] ||
     [ -f "$UPDATE_TRANSACTION_DIR/support-helper.present" ] ||
-    [ -f "$UPDATE_TRANSACTION_DIR/support-helper.missing" ]; then
+    [ -f "$UPDATE_TRANSACTION_DIR/support-helper.missing" ] || \
+    [ -d "$STAGING_DIR/pnpm-runtime-rollback" ]; then
     log "Preserved host artifacts for manual rollback"
   else
     cleanup_update_transaction
@@ -1499,6 +1506,13 @@ apply_update() {
     return 1
   fi
 
+  if declare -F install_pnpm_runtime_payload >/dev/null && ! install_pnpm_runtime_payload "$extract_dir/app/host-toolchain"; then
+    log "ERROR: pinned pnpm activation failed — rolling back"
+    do_rollback false || return 1
+    cleanup_staged_release_metadata
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
+    return 1
+  fi
   if ! write_update_phase app-install; then
     cleanup_staged_release_metadata
     return 1
@@ -1905,6 +1919,9 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+if declare -F reconcile_installed_pnpm_runtime >/dev/null && [ ! -e "$UPDATE_PHASE_MARKER" ]; then
+  reconcile_installed_pnpm_runtime "$(current_version)" || log "WARN: pinned pnpm runtime reconciliation deferred"
+fi
 funded_installed_version="$(cat "$APP_DIR/BUNDLE_VERSION" 2>/dev/null || true)"
 if [[ "$funded_installed_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] && [ ! -e "$UPDATE_PHASE_MARKER" ]; then
   # Startup installs independently verified bytes only; it never stops a runtime.
