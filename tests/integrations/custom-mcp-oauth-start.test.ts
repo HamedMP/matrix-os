@@ -129,3 +129,12 @@ describe("OAuth full start deadline", () => {
     expect(f.db.updateCustomMcpCredentialsIfCurrent).not.toHaveBeenCalled();
   });
 });
+
+
+describe("OAuth requested scope bounds", () => {
+  it.each([["invalid scope"], ["scope\nsecret"], Array(101).fill("read"), ["s".repeat(257)], [5]].map(scopes => [scopes]))("rejects malformed scope sets before persisting a grant (%#)", async scopes => {
+    const f = fixture();
+    await expect(f.manager.start("owner", "server", { scopes: scopes as string[] })).rejects.toMatchObject({ code: "upstream" });
+    expect(f.db.updateCustomMcpCredentialsIfCurrent).not.toHaveBeenCalled();
+  });
+});

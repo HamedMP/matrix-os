@@ -35,8 +35,14 @@ export interface CustomMcpCredential {
     revocationEndpoint?: string;
     clientId?: string;
     clientIssuer?: string;
+    /** Retained only in the owner/server encrypted credential envelope. */
+    clientSecret?: string;
+    tokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
     redirectUri?: string;
     scopes?: string[];
+    grantedScopes?: string[];
+    /** Fresh owner consent for curated managed writes; absent legacy grants stay read-only. */
+    managedWriteAccess?: boolean;
     /** Credential refresh lease; does not change the projection policy revision. */
     refreshing?: boolean;
     refreshStartedAt?: string;
@@ -71,7 +77,7 @@ export interface PatchCustomMcpInput {
 
 export class CustomMcpBrokerError extends Error {
   constructor(
-    readonly code: "not_found" | "conflict" | "invalid" | "forbidden" | "upstream" | "action_required",
+    readonly code: "not_found" | "conflict" | "invalid" | "forbidden" | "upstream" | "action_required" | "oauth_client_setup_required",
     message = "Custom MCP operation failed",
   ) {
     super(message);
@@ -157,6 +163,22 @@ export class CustomMcpBroker {
 
   async getPreset(userId: string, presetId: string) {
     return this.options.db.getCustomMcpPresetForBroker(presetId, userId);
+  }
+
+  async getPresetWriteAuthorization(userId: string, presetId: string): Promise<{ enabled: boolean; scopes: string[] }> {
+    const denied = { enabled: false, scopes: [] };
+    const row = await this.options.db.getCustomMcpPresetForBroker(presetId, userId);
+    if (!row || row.user_id !== userId || row.preset_id !== presetId || !row.enabled || row.status !== "ready" || !row.encrypted_credentials) return denied;
+    try {
+      const { oauth } = decryptCustomMcpCredential<CustomMcpCredential>(row.encrypted_credentials, this.options.encryptionKey, { userId, serverId: row.id });
+      if (!oauth?.managedWriteAccess || oauth.state || oauth.removing || oauth.refreshing || !oauth.accessToken
+        || !Array.isArray(oauth.grantedScopes) || oauth.grantedScopes.length > 100
+        || !oauth.grantedScopes.every(scope => typeof scope === "string" && scope.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(scope))) return denied;
+      return { enabled: true, scopes: [...oauth.grantedScopes] };
+    } catch (error: unknown) {
+      console.warn("[custom-mcp] managed write grant unreadable", { errorName: error instanceof Error ? error.name : "UnknownError" });
+      return denied;
+    }
   }
 
   async ensurePreset(input: {
