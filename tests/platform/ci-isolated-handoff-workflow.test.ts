@@ -216,3 +216,21 @@ it.each([
   if(accepted)expect(run).not.toThrow();else expect(run).toThrow();
  }finally{rmSync(directory,{recursive:true,force:true});}
 });
+
+it.each([
+ {kind:'hosted backend failed',backend:'failure',source:true,accepted:false},
+ {kind:'hosted backend cancelled',backend:'cancelled',source:true,accepted:false},
+ {kind:'hosted backend passed',backend:'success',source:true,accepted:true},
+ {kind:'non-P docs backend skipped',backend:'skipped',source:false,accepted:true},
+ {kind:'historical non-P docs backend omitted',backend:undefined,source:false,accepted:true},
+])('the actual aggregate preserves backend outcome: $kind',({backend,source,accepted})=>{
+ const step=ci.jobs['ci-results'].steps.find((value:any)=>value.name==='Summarize required CI jobs');
+ const directory=mkdtempSync(join(tmpdir(),'matrix-hosted-backend-outcome-'));
+ try{
+  const env:NodeJS.ProcessEnv={PATH:process.env.PATH,GITHUB_STEP_SUMMARY:join(directory,'summary.md'),CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:String(source),CHANGES_RESULT:'success',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_MODE:'shadow',CI_BACKEND_PROVIDER:'hosted',INFRASTRUCTURE_FALLBACK:'false',CI_ISOLATED_REQUEST:String(source),CI_REQUESTING_ATTEMPT:'2',CI_HANDOFF_ATTEMPT:'2',CI_HANDOFF_RESULT:source?'success':'skipped',CI_REDIRECT_RESULT:'skipped'};
+  for(const name of ['DEDICATED_LINUX','TYPECHECK','SHELL_PRODUCTION_BUILD','PATTERNS','REACT_DOCTOR','SYNC_CLIENT','AGENT_SDK_COMPATIBILITY','UNIT','FUNDED_POSTGRES','FUNDED_HOST_ROOT','DOCS_CONTRACT','OS_VIEW_PARITY','E2E'])env[`${name}_RESULT`]=source?'success':'skipped';
+  if(backend!==undefined)env.CI_BACKEND_RESULT=backend;
+  const run=()=>execFileSync('bash',['-c',step.run],{env,timeout:5000,maxBuffer:65536,stdio:'pipe'});
+  if(accepted)expect(run).not.toThrow();else expect(run).toThrow();
+ }finally{rmSync(directory,{recursive:true,force:true});}
+});
