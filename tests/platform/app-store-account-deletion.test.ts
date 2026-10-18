@@ -6,6 +6,7 @@ import { createAppStoreRepository } from '../../packages/platform/src/app-store/
 import { eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
 import { ownerStoragePrefixes } from '../../packages/platform/src/account-deletion/storage.js';
 import { exportOwnerPlatformData } from '../../packages/platform/src/account-deletion/export.js';
+import { exportAppStoreOwnerData } from '../../packages/platform/src/app-store/account-data.js';
 import { AppStoreCreateSubmissionSchema } from '../../packages/contracts/src/app-store.js';
 let db: PlatformDB;
 afterEach(async () => { await destroyTestPlatformDb(db); });
@@ -30,6 +31,38 @@ describe('App Store account ownership erasure', () => {
     expect(await repository.detail('another', other.userId)).toMatchObject({ installCount: 0, activeInstallCount: 0, ratingCount: 0, ratingAverage: null });
     await expect(repository.install('user_new', 'garden', published.id)).rejects.toMatchObject({ code: 'forbidden' });
     await eraseOwnerPlatformData(db, owner.userId);
+  });
+  it('removes never-published listing text and audit copies during owner erasure', async () => {
+    ({ db } = await createTestPlatformDb());
+    await ensurePlatformUser(db, { clerkId: 'user_private', handle: 'private', displayName: 'Private', email: 'private@example.test', containerId: 'clerk:user_private' });
+    const repository = createAppStoreRepository(db, {});
+    const draft = await repository.createSubmission({ userId: 'user_private', handle: 'private' }, AppStoreCreateSubmissionSchema.parse({
+      submissionKey: 'private:draft', listing: { slug: 'private-draft', name: 'Alice household budget', tagline: 'Alice private address', description: 'Alice medical notes', category: 'utilities' },
+      version: '1.0.0', changelog: '', license: 'MIT', manifest: { name: 'Budget', description: 'Budget', runtime: 'vite', version: '1.0.0' },
+      source: { sha256: 'a'.repeat(64), size: 3 }, generalizationReport: { ai: 'completed', changes: [] },
+    }));
+    await eraseOwnerPlatformData(db, 'user_private');
+    expect(await db.executor.selectFrom('app_store_listings').selectAll().where('id', '=', draft.listing_id).execute()).toEqual([]);
+    expect(await db.executor.selectFrom('app_store_versions').selectAll().where('listing_id', '=', draft.listing_id).execute()).toEqual([]);
+    expect(await db.executor.selectFrom('app_store_moderation_events').selectAll().where('listing_id', '=', draft.listing_id).execute()).toEqual([]);
+  });
+  it('exports authored moderation messages and erases reviewer copies without deleting another publisher app', async () => {
+    ({ db } = await createTestPlatformDb());
+    await ensurePlatformUser(db, { clerkId: 'user_staff', handle: 'staff', displayName: 'Staff', email: 'staff@example.test', containerId: 'clerk:user_staff' });
+    const repository = createAppStoreRepository(db, {});
+    const draft = await repository.createSubmission({ userId: 'user_publisher', handle: 'publisher' }, AppStoreCreateSubmissionSchema.parse({
+      submissionKey: 'public:draft', listing: { slug: 'public-draft', name: 'Budget', tagline: 'Sample', description: 'Sample', category: 'utilities' },
+      version: '1.0.0', changelog: '', license: 'MIT', manifest: { name: 'Budget', description: 'Budget', runtime: 'vite', version: '1.0.0' },
+      source: { sha256: 'a'.repeat(64), size: 3 }, generalizationReport: { ai: 'completed', changes: [] },
+    }));
+    await repository.beginScan('user_publisher', draft.id);
+    await repository.completeScan(draft.id, { blocking: false, truncated: false, findings: [] }, 'verified/source');
+    await repository.decide('user_staff', draft.id, { type: 'request_changes', message: 'My personal review notes' });
+    const exported = await exportAppStoreOwnerData(db, 'user_staff');
+    expect(exported.moderationEvents).toEqual([expect.objectContaining({ actor_clerk_user_id: 'user_staff', message: 'My personal review notes' })]);
+    await eraseOwnerPlatformData(db, 'user_staff');
+    expect(await repository.getVersion(draft.id)).toMatchObject({ submitted_by_clerk_user_id: 'user_publisher', reviewer_message: null });
+    expect((await repository.events(draft.listing_id)).filter(event => event.action === 'request_changes')).toEqual([expect.objectContaining({ message: null })]);
   });
   it('includes app-store source and upload copies under the canonical owner storage deletion boundary', () => {
     expect(ownerStoragePrefixes('user_owner', 'matrixos-sync')).toContain('app-store/owners/user_owner/');
