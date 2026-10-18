@@ -19,6 +19,7 @@ import {
   type GatewayFetcher,
 } from "../../kernel/dist/tools/integrations.js";
 import { z } from "zod/v4";
+import { registerOwnerAppReadTool } from "./app-data-read.js";
 
 export interface IntegrationsMcpServerOptions {
   fetcher?: GatewayFetcher;
@@ -92,6 +93,7 @@ export function createIntegrationsMcpServer(
   }
 
   if (integrationRead) registerIntegrationReadTools(server, fetcher);
+  if (chat && !previewDrive) registerOwnerAppReadTool(server, fetcher);
 
   if (surface.endsWith("-drive")) registerCompanyDriveTools(server, fetcher);
 

@@ -30,6 +30,7 @@ describe("Matrix MCP advertises only the selected runnable surface", () => {
   it("Claude Chat discovers built-in accounts and schemas alongside Custom MCP without unrelated tools", async () => {
     await withClient("chat-call", async client => {
       expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+        "read_app_data",
         "list_integration_inventory", "list_connected_services", "describe_service",
         "connect_service", "sync_services", "call_service", "disconnect_service",
         ...customDiscovery, "call_custom_mcp_tool",
