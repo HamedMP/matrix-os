@@ -36,6 +36,7 @@ export function createAppStorePlatformClient(options:{platformUrl:string;handle:
   detail:(value:string)=>request(`listings/${slug(value)}`,C.AppStoreListingDetailSchema),
   download:(value:string,versionId:string)=>request(`listings/${slug(value)}/download`,C.AppStoreDownloadGrantSchema,{method:'POST',body:{versionId:id(versionId)}}),
   recordInstall:(value:string,versionId:string)=>request(`listings/${slug(value)}/install`,C.AppStoreInstallStateSchema,{method:'PUT',body:{versionId:id(versionId)}}),
+  async removeInstall(value:string):Promise<void>{await request(`listings/${slug(value)}/install`,C.AppStoreInstallStateSchema,{method:'DELETE'});},
   rate:(value:string,stars:number|null)=>request(`listings/${slug(value)}/rating`,C.AppStoreRatingStateSchema,{method:stars===null?'DELETE':'PUT',...(stars===null?{}:{body:C.AppStoreRatingInputSchema.parse({stars})})}),
   createSubmission:(input:C.AppStoreCreateSubmission)=>request('submissions',C.AppStoreCreateSubmissionResultSchema,{method:'POST',body:C.AppStoreCreateSubmissionSchema.parse(input)}),
   finalize:(value:string)=>request(`submissions/${id(value)}/finalize`,C.AppStoreSubmissionSummarySchema,{method:'POST',body:{}}),

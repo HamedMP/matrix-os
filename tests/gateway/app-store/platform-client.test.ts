@@ -1,6 +1,14 @@
 import {describe,it,expect,vi} from 'vitest';
 import {createAppStorePlatformClient} from '../../../packages/gateway/src/app-store/platform-client.js';
 describe('authenticated store client',()=>{
+ it('reconciles uninstalls through the authenticated mutation and propagates retryable failures',async()=>{
+  const fetcher=vi.fn(async()=>Response.json({installed:false,versionId:null,installCount:1,activeInstallCount:0}));
+  const client=createAppStorePlatformClient({platformUrl:'https://platform.test',handle:'owner',token:'secret',fetcher});
+  await expect(client.removeInstall('garden')).resolves.toBeUndefined();
+  expect(fetcher.mock.calls[0]).toMatchObject(['https://platform.test/internal/containers/owner/app-store/listings/garden/install',{method:'DELETE',headers:{authorization:'Bearer secret'},redirect:'error'}]);
+  fetcher.mockResolvedValueOnce(Response.json({error:'unavailable'},{status:503}));
+  await expect(client.removeInstall('garden')).rejects.toMatchObject({code:'unavailable'});
+ });
  it('validates status and never follows redirects',async()=>{
   const fetcher=vi.fn(async()=>Response.json({enabled:true,reviewer:false,signingKeys:[]}));
   const client=createAppStorePlatformClient({platformUrl:'https://platform.test',handle:'owner',token:'secret',fetcher});
