@@ -112,6 +112,14 @@ describe('actual isolated CI handoff workflow graph',()=>{
   expect(JSON.stringify(job)).not.toContain('secrets.');expect(JSON.stringify(job)).not.toContain('awaitTerminalIsolatedRequester');
   expect(ci.jobs['ci-results'].if).toContain('always()');
  });
+ it('passes protected retained backend output attempt into the authenticated completion helper',()=>{
+  const {job}=completion(),step=helperStep(job,'requestIsolatedCiCompletion');
+  // GitHub may clone retained successes into current-attempt job rows with new IDs.
+  // This protected output is written only after the backend's real verifier succeeds.
+  expect(step.env.BACKEND_ATTEMPT).toBe('${{ needs.isolated-ci-backend.outputs.attempt }}');
+  expect(script(step)).toMatch(/backendAttempt:\s*Number\(process\.env\.BACKEND_ATTEMPT\)/);
+  expect(script(step)).not.toMatch(/backendAttempt:[^,}]*\|\|/);
+ });
  it.each(['handoff','redirect'].flatMap(kind=>['success','skipped','failure','cancelled'].map(result=>({kind,result}))))('the actual aggregate handles $kind $result truthfully',({kind,result})=>{
   const {id}=completion();
   const step=ci.jobs['ci-results'].steps.find((value:any)=>value.name==='Summarize required CI jobs');
