@@ -5,11 +5,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatsCommand } from "../../src/cli/commands/chats.js";
 import { resolveCliProfile } from "../../src/cli/profiles.js";
+import * as chatFiles from "../../src/cli/chat-client.js";
 vi.mock("../../src/cli/profiles.js",()=>({resolveCliProfile:vi.fn(async()=>({name:"review",gatewayUrl:"https://matrix.test/vm/review?runtime=review"}))}));
 vi.mock("../../src/cli/auth-state.js",()=>({requireCliAuthToken:vi.fn(async()=>"private-token")}));
 const detail={record:{chat:{id:"chat_test",ownerScope:{type:"personal",ownerId:"owner_test"},title:"Test",lifecycle:"active",attention:"none",revision:0,messageCount:0,createdAt:"2026-10-18T00:00:00.000Z",updatedAt:"2026-10-18T00:00:00.000Z"}},messages:[],turns:[],runs:[],activities:[]};
 afterEach(()=>{vi.restoreAllMocks();process.exitCode=0;});
 describe("Chat commands",()=>{
+  it("does not report export success when interrupted during saving", async()=>{
+    const output=vi.spyOn(console,"log").mockImplementation(()=>{});
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(Response.json(detail));
+    vi.spyOn(chatFiles,"writeChatExport").mockImplementation(async()=>{process.emit("SIGINT");});
+    await runCommand(chatsCommand,{rawArgs:["export","chat_test","--output","unused.json","--json"]});
+    expect(process.exitCode).toBe(130); expect(output).not.toHaveBeenCalled();
+  });
   it.each(["read","get"])("%s uses profile auth and prints a structured result",async command=>{
     const output=vi.spyOn(console,"log").mockImplementation(()=>{});
     const fetcher=vi.spyOn(globalThis,"fetch").mockResolvedValue(Response.json(detail));

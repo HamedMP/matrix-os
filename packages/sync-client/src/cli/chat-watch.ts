@@ -4,6 +4,7 @@ import { chatError, validateChatId, type ChatClient } from "./chat-client.js";
 
 const MAX_FRAME_CHARS = 512 * 1024;
 const HEALTHY_CONNECTION_MS = 30_000;
+const MAX_SEEN_CURSORS = 10_000;
 export async function watchChat(client: ChatClient, id: string, input: {
   signal: AbortSignal;
   cursor?: number;
@@ -12,7 +13,13 @@ export async function watchChat(client: ChatClient, id: string, input: {
 }): Promise<void> {
   validateChatId(id);
   if (input.cursor !== undefined && (!Number.isSafeInteger(input.cursor) || input.cursor < 0)) throw chatError("chat_invalid_input");
+  try { await client.read(id, { limit: 1, signal: input.signal }); }
+  catch (error: unknown) {
+    if (input.signal.aborted) return;
+    throw error instanceof Error ? error : chatError("chat_unavailable");
+  }
   let cursor = input.cursor; let failures = 0;
+  const seen = new Set<number>(); // FIFO eviction bounds deduplication across reconnects.
   async function emit(frame: Parameters<typeof input.onFrame>[0]) {
     try { await input.onFrame(frame); }
     catch (error: unknown) { if (!(error instanceof Error)) console.warn("[chat-cli] output failed", "UnknownError"); throw chatError("chat_output_failed"); }
@@ -41,9 +48,12 @@ export async function watchChat(client: ChatClient, id: string, input: {
           try { frame = CanonicalChatTransportFrameSchema.parse(JSON.parse(data)); }
           catch (error: unknown) { if (!(error instanceof Error)) console.warn("[chat-cli] invalid frame", "UnknownError"); throw chatError("chat_invalid_response"); }
           if (frame.type === "chat.event" || frame.type === "chat.content") {
-            if (cursor !== undefined && frame.event.cursor <= cursor) continue;
-            cursor = frame.event.cursor; progress = true;
-            if (frame.event.chatId === id) await emit(frame);
+            cursor = Math.max(cursor ?? 0, frame.event.cursor); progress = true;
+            if (frame.event.chatId === id && !seen.has(frame.event.cursor)) {
+              seen.add(frame.event.cursor);
+              if (seen.size > MAX_SEEN_CURSORS) seen.delete(seen.values().next().value!);
+              await emit(frame);
+            }
           } else if (frame.type === "chat.replay.end") {
             if (frame.nextCursor !== undefined) cursor = Math.max(cursor ?? 0, frame.nextCursor);
           } else if (frame.type === "chat.replay.gap") {

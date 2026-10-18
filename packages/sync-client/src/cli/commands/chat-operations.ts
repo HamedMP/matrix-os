@@ -85,7 +85,8 @@ export const exportChatCommand = defineCommand({ meta: { name: "export", descrip
     const detail = await readAllChat(client, args.chat, signal);
     const content = format === "markdown" ? renderChatMarkdown(detail) : `${JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), detail }, null, 2)}\n`;
     if (signal.aborted) throw chatError("chat_cancelled");
-    await writeChatExport(args.output, content);
+    await writeChatExport(args.output, content, signal);
+    if (signal.aborted) throw chatError("chat_cancelled");
     const receipt = { chatId: args.chat, output: args.output, format, messageCount: detail.messages.length };
     console.log(args.json ? formatCliSuccess(receipt) : `Exported ${receipt.messageCount} messages to ${args.output}`);
   }),

@@ -156,18 +156,34 @@ export function renderChatMarkdown(detail: CanonicalChatDetailResponse): string 
   }
   return lines.join("\n");
 }
-export async function writeChatExport(path: string, content: string): Promise<void> {
+export async function writeChatExport(path: string, content: string, signal?: AbortSignal): Promise<void> {
   if (Buffer.byteLength(content) > CHAT_MAX_EXPORT_BYTES) throw chatError("chat_limit");
+  if (signal?.aborted) throw chatError("chat_cancelled");
   let file;
   try { file = await open(path, "wx", 0o600); }
   catch (error: unknown) { if (error instanceof Error && "code" in error && error.code === "EEXIST") throw chatError("chat_file_exists"); throw chatError("chat_export_failed"); }
-  try { await file.writeFile(content); await file.sync(); }
-  catch (error: unknown) {
-    const owned = await file.stat();
-    await file.close();
-    try { const current = await lstat(path); if (current.isFile() && current.ino === owned.ino && current.dev === owned.dev) await unlink(path); }
-    catch (cleanup: unknown) { console.warn("[chat-cli] incomplete export cleanup failed", cleanup instanceof Error ? cleanup.name : "UnknownError"); }
-    throw chatError("chat_export_failed");
+  let owned: { ino: number; dev: number } | undefined;
+  let failed = false;
+  try {
+    owned = await file.stat();
+    if (signal?.aborted) throw chatError("chat_cancelled");
+    await file.writeFile(content, { signal });
+    if (signal?.aborted) throw chatError("chat_cancelled");
+    await file.sync();
   }
-  await file.close();
+  catch (error: unknown) {
+    failed = true;
+    if (!(error instanceof Error)) console.warn("[chat-cli] export failed", "UnknownError");
+  } finally {
+    try { await file.close(); }
+    catch (error: unknown) {
+      failed = true;
+      console.warn("[chat-cli] export close failed", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+  if (failed || signal?.aborted) {
+    try { const current = owned ? await lstat(path) : undefined; if (owned && current?.isFile() && current.ino === owned.ino && current.dev === owned.dev) await unlink(path); }
+    catch (cleanup: unknown) { console.warn("[chat-cli] incomplete export cleanup failed", cleanup instanceof Error ? cleanup.name : "UnknownError"); }
+    throw chatError(signal?.aborted ? "chat_cancelled" : "chat_export_failed");
+  }
 }

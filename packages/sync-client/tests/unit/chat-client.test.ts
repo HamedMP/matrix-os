@@ -14,6 +14,7 @@ function detail(sequences: number[] = [1], nextCursor?: string) {
     turns: [], runs: [], activities: [], ...(nextCursor ? { nextCursor } : {}) };
 }
 function client(fetcher: typeof fetch) { return createChatClient({ gatewayUrl: "https://app.matrix-os.com/vm/neo?runtime=review", token: "private-token", fetch: fetcher }); }
+function watchClient(fetcher: typeof fetch) { return { ...client(fetcher), read: vi.fn().mockResolvedValue(detail()) }; }
 
 describe("Chat ID client", () => {
   it("preserves selected runtime, authenticates and validates canonical details", async () => {
@@ -87,6 +88,30 @@ describe("Chat ID client", () => {
 });
 
 describe("Chat watch", () => {
+  it("detaches quietly when cancelled during the initial Chat check", async () => {
+    const stop = new AbortController(); const fetcher = vi.fn<typeof fetch>();
+    const selected = watchClient(fetcher);
+    selected.read.mockImplementation(async()=>{ stop.abort(); throw new DOMException("aborted","AbortError"); });
+    await expect(watchChat(selected,id,{signal:stop.signal,onFrame:()=>{}})).resolves.toBeUndefined();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("does not open the global stream for a missing Chat", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response("not found", { status: 404 }));
+    await expect(watchChat(client(fetcher), id, { signal: new AbortController().signal, onFrame: () => {} }))
+      .rejects.toMatchObject({ code: "chat_not_found" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(String(fetcher.mock.calls[0]![0])).toContain(`/api/chats/${id}?`);
+  });
+  it("delivers unseen lower cursors once even after another Chat's higher cursor", async () => {
+    const stop = new AbortController(); const received: number[] = [];
+    const text = [[5,"chat_other"],[4,id],[4,id],[3,id]].map(([cursor,chatId]) =>
+      `data: ${JSON.stringify({ type:"chat.event",event:{cursor,chatId,revision:4,eventType:"chat.updated",createdAt:time} })}\n\n`).join("");
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(text,{headers:{"content-type":"text/event-stream"}}));
+    await watchChat(watchClient(fetcher),id,{signal:stop.signal,retryDelayMs:1,onFrame:frame=>{
+      if(frame.type==="chat.event") { received.push(frame.event.cursor); if(received.length===2) stop.abort(); }
+    }});
+    expect(received).toEqual([4,3]);
+  });
   it("keeps reconnecting after healthy quiet connections time out", async () => {
     const stop = new AbortController(); let now = 0; let calls = 0;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -98,13 +123,13 @@ describe("Chat watch", () => {
       } }, { highWaterMark: 0 }), { headers: { "content-type": "text/event-stream" } });
     });
     try {
-      await watchChat(client(fetcher), id, { signal: stop.signal, onFrame: () => {}, retryDelayMs: 1 });
+      await watchChat(watchClient(fetcher), id, { signal: stop.signal, onFrame: () => {}, retryDelayMs: 1 });
       expect(calls).toBe(7);
     } finally { clock.mockRestore(); }
   });
   it("bounds repeated connections that fail immediately", async () => {
     const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("connection failed"));
-    await expect(watchChat(client(fetcher), id, {
+    await expect(watchChat(watchClient(fetcher), id, {
       signal: new AbortController().signal, onFrame: () => {}, retryDelayMs: 1,
     })).rejects.toMatchObject({ code: "chat_watch_disconnected" });
     expect(fetcher).toHaveBeenCalledTimes(5);
@@ -115,7 +140,7 @@ describe("Chat watch", () => {
       {type:"chat.event",event:{cursor:9,chatId:id,revision:4,eventType:"chat.updated",createdAt:time}}];
     const text=events.map(frame=>`data: ${JSON.stringify(frame)}\n\n`).join("");
     const fetcher=vi.fn<typeof fetch>().mockImplementation(async()=>new Response(new ReadableStream({ start(c){c.enqueue(new TextEncoder().encode(text.slice(0,15)));c.enqueue(new TextEncoder().encode(text.slice(15)));c.close();} }),{headers:{"content-type":"text/event-stream"}}));
-    await watchChat(client(fetcher), id, {signal:stop.signal,onFrame:frame=>{frames.push(frame);stop.abort();}});
+    await watchChat(watchClient(fetcher), id, {signal:stop.signal,onFrame:frame=>{frames.push(frame);stop.abort();}});
     expect(frames).toEqual([events[1]]);
     expect(fetcher.mock.calls[0]![1]?.headers).toMatchObject({Accept:"text/event-stream"});
   });
@@ -125,7 +150,7 @@ describe("Chat watch", () => {
       calls++; if(calls===2){expect(init?.headers).toMatchObject({"Last-Event-ID":"7"});stop.abort();throw new DOMException("aborted","AbortError");}
       return new Response(`data: ${JSON.stringify({type:"chat.replay.end",nextCursor:7})}\n\n`,{headers:{"content-type":"text/event-stream"}});
     });
-    await watchChat(client(fetcher),id,{signal:stop.signal,onFrame:()=>{},retryDelayMs:1});
+    await watchChat(watchClient(fetcher),id,{signal:stop.signal,onFrame:()=>{},retryDelayMs:1});
     expect(calls).toBe(2);
   });
   it("parses CRLF even when a chunk ends between CR and LF", async () => {
@@ -136,13 +161,13 @@ describe("Chat watch", () => {
       c.enqueue(new TextEncoder().encode("\n\r"));c.enqueue(new TextEncoder().encode("\n"));c.close();
     }}),{headers:{"content-type":"text/event-stream"}}));
     const onFrame=vi.fn(()=>stop.abort());
-    await watchChat(client(fetcher),id,{signal:stop.signal,onFrame,retryDelayMs:1});
+    await watchChat(watchClient(fetcher),id,{signal:stop.signal,onFrame,retryDelayMs:1});
     expect(onFrame).toHaveBeenCalledWith(frame);
   });
   it("stops without reconnecting when its output consumer fails",async()=>{
     const frame={type:"chat.event",event:{cursor:1,chatId:id,revision:4,eventType:"chat.updated",createdAt:time}};
     const fetcher=vi.fn<typeof fetch>().mockImplementation(async()=>new Response(`data: ${JSON.stringify(frame)}\n\n`,{headers:{"content-type":"text/event-stream"}}));
-    await expect(watchChat(client(fetcher),id,{signal:new AbortController().signal,onFrame:()=>{throw Error("broken pipe");},retryDelayMs:1})).rejects.toMatchObject({code:"chat_output_failed"});
+    await expect(watchChat(watchClient(fetcher),id,{signal:new AbortController().signal,onFrame:()=>{throw Error("broken pipe");},retryDelayMs:1})).rejects.toMatchObject({code:"chat_output_failed"});
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
