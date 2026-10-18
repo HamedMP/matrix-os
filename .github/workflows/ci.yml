@@ -687,6 +687,9 @@ jobs:
             tests/scripts/ci-dedicated-main-source-gate.test.ts \
             tests/scripts/ci-dedicated-main.test.ts \
             tests/scripts/ci-dedicated-result.test.ts \
+            tests/scripts/ci-dedicated-result-history.test.ts \
+            tests/scripts/ci-isolated-handoff.test.ts \
+            tests/platform/ci-isolated-handoff-workflow.test.ts \
             tests/scripts/ci-dedicated-source-gate.test.ts \
             tests/scripts/ci-dedicated-refresh.test.ts \
             tests/scripts/ci-dedicated-history.test.ts \
