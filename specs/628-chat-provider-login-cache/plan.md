@@ -1,5 +1,7 @@
 # Chat provider cache after login
 
+**Current continuation (18 October):** see [Main-only source, current verification and live checklist](main-only-continuation.md). Production checkpoint `fb0b93ce7e` rebases only these cache commits onto Main `101fbd5f`. Claude and local ChatGPT plan no longer depend on the historical bcb+6f combination; native Codex remains gated on its producer landing normally. The sections below preserve the 17 October checkpoint and are not current publication or runtime receipts.
+
 Continuation: ENG-318 / Draft PR #2691 now exists. The a851 checkpoint is published; the separate local Codex cache follow-up and exact producer dependency are documented in [codex-cross-pr-contract.md](codex-cross-pr-contract.md). Old external-publication restrictions below describe the author checkpoint. Current order is local code/contract tests, coordinated matching-version machine evidence, human review, then Greptile/formal CI/Ready only if the user explicitly requests them.
 
 Goal: make an already-open Electron Desktop Chat observe a confirmed connection immediately while retaining ordinary session caching.
