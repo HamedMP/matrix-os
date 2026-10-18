@@ -9,6 +9,8 @@ const projects = [
   ['packages/gateway', 'tsconfig.json', true],
   ['packages/platform', 'tsconfig.typecheck.json', true],
   ['packages/proxy', 'tsconfig.json', true],
+  // tests/ui is not a package; run it from the gateway so legacy uses TS5.
+  ['packages/gateway', '../../tests/ui/tsconfig.brain-compat.json', true],
   ['packages/edge-router', 'tsconfig.json', false],
   ['desktop', 'tsconfig.json', false],
   ['desktop', 'tsconfig.node.json', false],
@@ -34,7 +36,7 @@ export function runTypechecks({
       // TS7 changed this default; keep the existing TS5 side-effect policy.
       args.push('--noUncheckedSideEffectImports', 'false');
     }
-    console.log(`[typecheck:${compiler}] ${directory}/${config}`);
+    console.log(`[typecheck:${compiler}] ${join(directory, config)}`);
     const result = run(compiler === 'native' ? process.execPath : 'pnpm',
       compiler === 'native' ? [nativeEntry, ...args] : ['exec', 'tsc', ...args],
       { cwd: join(root, directory), stdio: 'inherit', timeout: 180_000 });

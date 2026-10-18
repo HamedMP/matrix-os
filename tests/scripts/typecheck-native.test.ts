@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -10,12 +10,12 @@ const load = () => import(pathToFileURL(join(root, 'scripts/typecheck.mjs')).hre
 const configs = [
   'packages/observability/tsconfig.json', 'packages/integrations-mcp/tsconfig.json',
   'packages/gateway/tsconfig.json', 'packages/platform/tsconfig.typecheck.json',
-  'packages/proxy/tsconfig.json', 'packages/edge-router/tsconfig.json',
+  'packages/proxy/tsconfig.json', 'tests/ui/tsconfig.brain-compat.json', 'packages/edge-router/tsconfig.json',
   'desktop/tsconfig.json', 'desktop/tsconfig.node.json',
 ];
 
 describe('native standalone typecheck', () => {
-  it('checks all eight original projects with the pinned native entry point', async () => {
+  it('checks all nine projects with the pinned native entry point', async () => {
     const { runTypechecks } = await load();
     const calls: { binary: string; args: string[]; options: { cwd: string; timeout: number } }[] = [];
     const status = runTypechecks({ root, nativeEntry: '/compiler/bin/tsc', run: (binary: string, args: string[], options: typeof calls[number]['options']) => {
@@ -34,20 +34,20 @@ describe('native standalone typecheck', () => {
     const { runTypechecks } = await load();
     const argsByProject: string[][] = [];
     runTypechecks({ root, nativeEntry: '/compiler/bin/tsc', run: (_binary: string, args: string[]) => { argsByProject.push(args); return { status: 0 }; } });
-    expect(argsByProject.slice(0, 5).map(args => args.slice(args.indexOf('--types'), args.indexOf('--types') + 2))).toEqual(Array(5).fill(['--types', '*']));
-    expect(argsByProject.slice(5).every(args => !args.includes('--types'))).toBe(true);
+    expect(argsByProject.slice(0, 6).map(args => args.slice(args.indexOf('--types'), args.indexOf('--types') + 2))).toEqual(Array(6).fill(['--types', '*']));
+    expect(argsByProject.slice(6).every(args => !args.includes('--types'))).toBe(true);
     expect(argsByProject.every(args => args.includes('--noUncheckedSideEffectImports') && args[args.indexOf('--noUncheckedSideEffectImports') + 1] === 'false')).toBe(true);
     expect(JSON.parse(readFileSync(join(root, 'desktop/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual([]);
     expect(JSON.parse(readFileSync(join(root, 'packages/edge-router/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual(['@cloudflare/workers-types']);
   });
 
-  it('offers the same eight projects through each package’s legacy compiler for parity checks', async () => {
+  it('offers the same nine projects through each package’s legacy compiler for parity checks', async () => {
     const { runTypechecks } = await load();
     const calls: { binary: string; args: string[]; cwd: string }[] = [];
     expect(runTypechecks({ root, compiler: 'legacy', run: (binary: string, args: string[], options: { cwd: string }) => { calls.push({ binary, args, cwd: options.cwd }); return { status: 0 }; } })).toBe(0);
     expect(calls.map(call => join(call.cwd, call.args[call.args.indexOf('-p') + 1]).slice(root.length + 1))).toEqual(configs);
     expect(calls.every(call => call.binary === 'pnpm' && call.args.slice(0, 2).join(' ') === 'exec tsc' && !call.args.includes('--types') && !call.args.includes('--noUncheckedSideEffectImports'))).toBe(true);
-    expect(JSON.parse(readFileSync(join(root, 'packages/gateway/package.json'), 'utf8')).devDependencies.typescript).toBe('^5.9.3');
+    for (const { cwd } of calls) expect(existsSync(join(cwd, 'package.json')) && JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8')).devDependencies?.typescript, cwd).toBe('^5.9.3');
   });
 
   it('propagates a project failure and never silently falls back to a different compiler', async () => {
