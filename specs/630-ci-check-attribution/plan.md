@@ -42,3 +42,8 @@ canary with immutable evidence and complete Main rollup. Existing protection,
 old refs, receipts, runner limits and the enabled isolation flag are retained.
 Stakeholder review of this internal CI behavior is suggested through the PR;
 no separate approval gate or product documentation change is introduced.
+
+The existing CI workflow exceeds the composition-size target. A follow-up should
+extract duplicated protected-origin proof and aggregate outcome logic into shared
+reviewed helpers, retaining the actual workflow graph tests and permission guards.
+This repair keeps the existing job identities and limits that refactor’s scope.
