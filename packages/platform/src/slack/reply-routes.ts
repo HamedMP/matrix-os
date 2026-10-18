@@ -24,7 +24,16 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
     const key = { appId: options.config.appId, teamId: parsed.data.teamId, eventId: parsed.data.eventId };
     const digest = createHash("sha256").update(parsed.data.text).digest("hex");
     const publication = { textDigest: digest };
-    const authorized = await authorizeSlackDestination(options, key, runtime.ownerId, publication);
+    const notSent = () => {
+      c.header("Retry-After", "30");
+      return c.json({ error: "Try again later", code: "reply_not_sent" }, 503);
+    };
+    let authorized: Awaited<ReturnType<typeof authorizeSlackDestination>>;
+    try { authorized = await authorizeSlackDestination(options, key, runtime.ownerId, publication); }
+    catch (error: unknown) {
+      console.warn("[slack] reply preflight unavailable", error instanceof Error ? error.name : "UnknownError");
+      return notSent();
+    }
     if (!authorized) {
       const pending = await options.repository.getPendingReplyDestination(key);
       if (pending?.ownerId === runtime.ownerId) {
@@ -39,10 +48,13 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
     try {
       channel = await options.api.conversationInfo({ token, channelId: destination.channelId });
     } catch (error: unknown) {
-      if (!(error instanceof SlackApiRateLimitError)) throw error;
       // No publication has been claimed or attempted during this metadata read.
-      c.header("Retry-After", String(error.retryAfterSeconds));
-      return c.json({ error: "Try again later" }, 429);
+      if (error instanceof SlackApiRateLimitError) {
+        c.header("Retry-After", String(error.retryAfterSeconds));
+        return c.json({ error: "Try again later" }, 429);
+      }
+      console.warn("[slack] reply metadata unavailable", error instanceof Error ? error.name : "UnknownError");
+      return notSent();
     }
     if (!channel.canAccess || channel.isExternalShared) return c.json({ error: "Forbidden" }, 403);
     const claim = await options.repository.claimReply(key, digest);
@@ -51,12 +63,15 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
       return messageTs ? c.json({ sent: true, messageTs }) : c.json({ error: "Delivery needs review" }, 503);
     }
     if (claim !== "claimed") return c.json({ error: "Delivery needs review" }, 409);
+    // Only this invocation owns a prepared claim; a postMessage call may commit before rejecting.
+    let sendStarted = false;
     try {
       // Channel metadata and intent persistence may take seconds. Do not publish with authority from before that latency.
       if (!await authorizeSlackDestination(options, key, runtime.ownerId, publication)) {
         await options.repository.settleReply(key, null);
         return c.json({ error: "Forbidden" }, 403);
       }
+      sendStarted = true;
       const response = await options.api.postMessage({ token,
         channelId: destination.channelId, threadTs: destination.threadTs, text: parsed.data.text });
       await options.repository.settleReply(key, response.ts);
@@ -66,6 +81,14 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
         await options.repository.releaseRateLimitedReply(key, digest);
         c.header("Retry-After", String(error.retryAfterSeconds));
         return c.json({ error: "Try again later" }, 429);
+      }
+      if (!sendStarted) {
+        try { await options.repository.releaseRateLimitedReply(key, digest); }
+        catch (releaseError: unknown) {
+          console.warn("[slack] unsent reply claim release unavailable", releaseError instanceof Error ? releaseError.name : "UnknownError");
+          return c.json({ error: "Delivery needs review" }, 503);
+        }
+        return notSent();
       }
       console.warn("[slack] reply outcome unknown", error instanceof Error ? error.name : "UnknownError");
       // A network failure may occur after Slack committed. Never automatically replay an uncertain external effect.

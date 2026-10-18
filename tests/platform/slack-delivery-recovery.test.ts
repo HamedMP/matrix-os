@@ -151,4 +151,43 @@ describe("Slack delivery recovery and dispatch fences", () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect((await db.selectFrom("slack_reply_intents").selectAll().executeTakeFirstOrThrow()).state).toBe("unknown");
   });
+
+  it("releases only this invocation's unsent claim after final authorization times out", async () => {
+    await linkEmployee(); await app.request("/webhooks/slack/events", signed(envelope(dm)));
+    authorizeReply.mockResolvedValueOnce(true).mockRejectedValueOnce(new DOMException("Synthetic authorization timeout", "TimeoutError"));
+    const response = await reply();
+    const observed = { status: response.status, body: await response.json(), sends: api.postMessage.mock.calls.length,
+      claims: await db.selectFrom("slack_reply_intents").selectAll().execute() };
+    expect(observed).toEqual({ status: 503, body: { error: "Try again later", code: "reply_not_sent" }, sends: 0, claims: [] });
+    expect((await reply()).status).toBe(200); expect((await reply()).status).toBe(200);
+    expect(api.postMessage).toHaveBeenCalledOnce();
+  });
+  it("does not release another invocation's prepared claim when claiming fails or reports unknown", async () => {
+    await linkEmployee(); await app.request("/webhooks/slack/events", signed(envelope(dm)));
+    expect(await repo.claimReply(key, createHash("sha256").update("answer").digest("hex"))).toBe("claimed");
+    const claim = vi.spyOn(repo, "claimReply").mockRejectedValueOnce(new Error("Synthetic database response failure"));
+    expect((await reply()).status).toBe(503); claim.mockRestore();
+    expect((await reply()).status).toBe(409); expect(api.postMessage).not.toHaveBeenCalled();
+    expect((await db.selectFrom("slack_reply_intents").selectAll().executeTakeFirstOrThrow()).state).toBe("prepared");
+  });
+  it("never releases a claim after Slack sent but the sent-state database response failed", async () => {
+    await linkEmployee(); await app.request("/webhooks/slack/events", signed(envelope(dm)));
+    const settle = repo.settleReply.bind(repo);
+    vi.spyOn(repo, "settleReply").mockRejectedValueOnce(new Error("Synthetic commit response failure")).mockImplementation(settle);
+    expect((await reply()).status).toBe(503); expect((await reply()).status).toBe(409);
+    expect(api.postMessage).toHaveBeenCalledOnce();
+    expect((await db.selectFrom("slack_reply_intents").selectAll().executeTakeFirstOrThrow()).state).toBe("unknown");
+  });
+
+  it("withholds a no-send retry marker when exact prepared-claim release fails", async () => {
+    await linkEmployee(); await app.request("/webhooks/slack/events", signed(envelope(dm)));
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("limited", { status: 429, headers: { "Retry-After": "2" } }));
+    api.postMessage.mockImplementation(createSlackApi({ clientId: config.clientId, clientSecret: config.clientSecret, fetchImpl }).postMessage);
+    const release = vi.spyOn(repo, "releaseRateLimitedReply").mockRejectedValueOnce(new Error("Synthetic release failure"));
+    const response = await reply(); expect(response.status).toBe(503);
+    expect(await response.json()).not.toHaveProperty("code", "reply_not_sent"); expect(release).toHaveBeenCalledOnce();
+    expect((await db.selectFrom("slack_reply_intents").selectAll().executeTakeFirstOrThrow()).state).toBe("prepared");
+    expect((await reply()).status).toBe(409); expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
 });
