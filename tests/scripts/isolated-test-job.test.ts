@@ -37,7 +37,7 @@ describe('bounded Matrix test jobs', () => {
     expect(job.unit).toBe(`matrix-test-999-${host.unitId}.service`);
     expect(job.args).toEqual(expect.arrayContaining(['--uid=999', '--gid=1000', '--wait', '--pipe', '--collect',
       '--property=MemoryMax=6144M', '--property=MemorySwapMax=0', '--property=CPUQuota=400%',
-      '--property=MemoryHigh=6144M',
+      '--property=MemoryHigh=6144M', '--property=TemporaryFileSystem=/run/user:ro',
       '--property=KillMode=control-group', '--property=RuntimeMaxSec=10800', '--expand-environment=no']));
     expect(job.args).not.toContain('--user'); expect(job.args).not.toContain('--scope');
     expect(job.args.slice(-7)).toEqual(['/usr/bin/flock', '--no-fork', '--timeout=7200', '/home/matrix/.cache/matrix-test-jobs/admission.lock', 'bun', 'run', 'test']);

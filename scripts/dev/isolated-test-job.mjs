@@ -24,12 +24,13 @@ export function isolatedTestJob(host, command, env) {
   const unit = `matrix-test-${host.uid}-${host.unitId}.service`;
   const directory = join(host.home, '.cache', 'matrix-test-jobs');
   const preserve = Object.keys(env).filter(key => environmentKeys.has(key));
+  // Hide the owner bus so provider fixtures cannot reparent outside this job's cgroup.
   const args = ['--quiet','--wait','--pipe','--collect','--service-type=exec','--expand-environment=no',
     `--unit=${unit}`,`--uid=${host.uid}`,`--gid=${host.gid}`,`--working-directory=${host.cwd}`,
     `--property=MemoryMax=${memoryMiB}M`,`--property=MemoryHigh=${memoryMiB}M`,
     '--property=MemorySwapMax=0',`--property=CPUQuota=${Math.min(4,host.cpus-1)*100}%`,
     '--property=TasksMax=2048','--property=Nice=10','--property=RuntimeMaxSec=10800',
-    '--property=TimeoutStopSec=10','--property=KillMode=control-group','--property=OOMPolicy=stop',
+    '--property=TimeoutStopSec=10','--property=KillMode=control-group','--property=OOMPolicy=stop','--property=TemporaryFileSystem=/run/user:ro',
     ...preserve.map(key=>key === 'PATH' ? `--setenv=PATH=${env.PATH}` : `--setenv=${key}`),'/usr/bin/flock','--no-fork','--timeout=7200',
     join(directory,'admission.lock'),...command];
   return { unit, args, preserve, directory, memoryMiB };
