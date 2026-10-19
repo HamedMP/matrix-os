@@ -21,6 +21,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   disabled:
+    concurrency:
+      group: preview-review-scheduler
+      cancel-in-progress: false
     if: vars.MATRIX_PREVIEW_REVIEW_ENABLED != 'true' && github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'preview'
     runs-on: ubuntu-latest
     timeout-minutes: 3

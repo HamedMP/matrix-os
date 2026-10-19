@@ -1,3 +1,4 @@
+import { composeAgentPlan, validateAgentPlan, commentSourceHead, PREVIEW_COMMENT } from "./preview-semantic-plan.mjs";
 import { sharedMachine } from "./preview-review-model.mjs";
 export const request = { timeout: 15000 };
 export async function pages(method, args, key) {
@@ -127,6 +128,7 @@ export async function upsertComment(github, repo, pr, body) {
       c.user?.login === "github-actions[bot]" &&
       c.body?.startsWith("<!-- matrix-preview-review-v1 -->"),
   );
+  body = composeAgentPlan(body, old?.body, { repo, pr });
   if (old?.body === body) return;
   if (old)
     await github.rest.issues.updateComment({
@@ -207,6 +209,7 @@ export async function publishReviewComment(
   body,
   snapshot,
 ) {
+  body = composeAgentPlan(body, snapshot.old?.body, { repo, pr: number });
   if (snapshot.old?.body === body) return;
   if (snapshot.old)
     await github.rest.issues.updateComment({
@@ -223,4 +226,29 @@ export async function publishReviewComment(
       body,
       request,
     });
+}
+
+
+// Trusted publisher only. Planning workers receive no GitHub mutation credentials.
+export async function publishAgentTestPlan(github, repo, number, plan) {
+  validateAgentPlan(plan, { repo, pr: number, head: plan?.head });
+  const current = async () => {
+    const { data } = await github.rest.pulls.get({ ...repo, pull_number: number, request });
+    if (data.state !== "open" || data.head?.sha !== plan.head
+      || data.head?.repo?.full_name?.toLowerCase() !== "hamedmp/matrix-os")
+      throw new Error("Agent test plan source changed");
+    return data;
+  };
+  await current();
+  const rows = await pages(github.rest.issues.listComments, { ...repo, issue_number: number });
+  const old = rows.find((c) => c.user?.login === "github-actions[bot]"
+    && c.body?.startsWith(PREVIEW_COMMENT));
+  if (old && commentSourceHead(old.body) !== plan.head)
+    throw new Error("Preview status source changed; refresh status first");
+  const base = old?.body ?? `${PREVIEW_COMMENT}\n**PR test planning**\nSource: \`${plan.head}\`\nNo preview or qualification evidence has been established by this plan.`;
+  const body = composeAgentPlan(base, old?.body, { repo, pr: number, plan });
+  await current();
+  if (old?.body === body) return;
+  if (old) await github.rest.issues.updateComment({ ...repo, comment_id: old.id, body, request });
+  else await github.rest.issues.createComment({ ...repo, issue_number: number, body, request });
 }

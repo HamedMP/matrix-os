@@ -1,0 +1,58 @@
+name: PR Test Advice
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number (including stacked PRs)"
+        required: true
+        type: string
+      agent_plan:
+        description: "Optional bounded, exact-head advisory plan JSON from a read-only planning agent"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: preview-review-scheduler
+  cancel-in-progress: false
+
+jobs:
+  advise:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event.pull_request.base.ref == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        id: source
+        with:
+          script: |
+            const { data } = await github.rest.repos.getBranch({ ...context.repo, branch: 'main', request: { timeout: 15000 } });
+            if (!/^[a-f0-9]{40}$/.test(data.commit.sha)) throw new Error('Main source unavailable');
+            core.setOutput('sha', data.commit.sha);
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/ci/preview-test-advice.mjs
+            scripts/ci/preview-review-api.mjs
+            scripts/ci/preview-review-model.mjs
+            scripts/ci/preview-semantic-plan.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const { advisePreviewTests } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/preview-test-advice.mjs`);
+            const number = context.eventName === 'workflow_dispatch' ? Number(context.payload.inputs.pr) : context.issue.number;
+            const plan = context.eventName === 'workflow_dispatch' && context.payload.inputs.agent_plan;
+            if (plan) {
+              if (Buffer.byteLength(plan) > 16000) throw new Error('Agent plan too large');
+              const { publishAgentTestPlan } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/preview-review-api.mjs`);
+              await publishAgentTestPlan(github, context.repo, number, JSON.parse(plan));
+            } else await advisePreviewTests(github, context.repo, number);
