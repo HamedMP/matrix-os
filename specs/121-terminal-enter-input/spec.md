@@ -33,3 +33,17 @@ from local fixtures. Current-head deployed screenshots/recordings and Slack tech
 sharing are still required before merge readiness. Document the supported input
 mechanisms in a separate FinnaAI/matrix-os-site content/docs PR; obtain runtime
 and exact-tool evidence before claiming customer resolution.
+
+## Evidence
+
+Local real-Chromium capture of the production Web Terminal pane (`TerminalPane`
+with real xterm, synthetic writer socket that echoes input). `hello` is typed
+with the keyboard, then a key-only `keyCode=0` Enter is dispatched to the
+focused textarea; exactly one `\r` input frame reaches the socket.
+
+| Before modern Enter | After modern Enter |
+| --- | --- |
+| ![Web Terminal with `hello` typed](evidence/web-desktop-before-modern-enter.png) | ![Web Terminal after key-only Enter submitted the command](evidence/web-desktop-after-modern-enter.png) |
+
+This is a local fixture capture, not deployed-surface evidence; deployed VPS
+captures for Web Desktop, Web Canvas and Web Mobile remain deferred.
