@@ -31,6 +31,16 @@ describe("bot worker and broker envelopes", () => {
     expect(BotWorkerCommandSchema.parse({ version: 1, kind: "bot.cancel", runId: "run_abc" }).kind).toBe("bot.cancel");
   });
 
+  it("accepts a trusted smaller generation ceiling without changing the normal tool budget", () => {
+    const bounded = { ...run, limits: { maxToolActions: 60, maxInferenceCalls: 12 } };
+    expect(BotWorkerCommandSchema.safeParse(bounded).success).toBe(true);
+    const { version: _version, kind: _kind, runId: _runId, ...spec } = bounded;
+    expect(BotRunSpecSchema.safeParse(spec).success).toBe(true);
+    for (const cap of [0, -1, 1.5, 64, "12", null]) {
+      expect(BotWorkerCommandSchema.safeParse({ ...run, limits: { maxToolActions: 60, maxInferenceCalls: cap } }).success).toBe(false);
+    }
+  });
+
   it("frames bot broker actions with the workload identity and rejects unknown actions", () => {
     expect(BotBrokerRequestSchema.parse({ ...envelope, action: "bot.session.load" }).action).toBe("bot.session.load");
     expect(BotBrokerRequestSchema.parse({ ...envelope, action: "bot.event", event: { seq: 0, event: { type: "assistant_delta", text: "hi" } } }).action).toBe("bot.event");

@@ -1,12 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { sql } from "kysely";
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import type { PlatformDB } from "./db.js";
 import type { FundedModelProbeResult } from "./ai-funded-model-probes.js";
 import { probeWithSignal } from "./ai-funded-jev-probe.js";
 
 const MAX_ROWS = 128;
 const MAX_PENDING_DB = 64;
-const LEASE_MS = 14_000;
+const MAX_DB_DEADLINE_MS = 1_500;
+// Acquisition commit, paid-probe admission and publication each retain a DB
+// budget around the bounded Relay call. A live slow probe must not lose its
+// lease to another replica before it can publish (or clean up on cancellation).
+const LEASE_MS = FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs + 3 * MAX_DB_DEADLINE_MS;
 export const SHARED_FUNDED_HEALTH_TTL_MS = 300_000;
 const NEGATIVE_TTL_MS = 5_000;
 const pending = new Set<Promise<unknown>>();
@@ -23,7 +28,7 @@ interface Row {
 export function fundedProbeCacheKey(input: {
   modelId: string; relayOrigin: string; controlToken: string; dailyLimit: number; minuteLimit: number;
 }): string {
-  return createHash("sha256").update(JSON.stringify(["priced-readiness-v1", input.modelId,
+  return createHash("sha256").update(JSON.stringify(["priced-readiness-v2", FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs, LEASE_MS, input.modelId,
     input.relayOrigin, input.controlToken, input.dailyLimit, input.minuteLimit])).digest("hex");
 }
 
@@ -62,7 +67,7 @@ async function boundedDb<T>(db: PlatformDB, signal: AbortSignal, deadlineMs: num
 /** Bounded shared health only; policy, owner identity, funds and admission are
  * never stored here. The acquisition transaction ends before budget or fetch. */
 export function createSharedFundedProbeCache(input: { db: PlatformDB; now: () => Date; dbDeadlineMs?: number }) {
-  const dbDeadlineMs = Math.min(1_500, Math.max(1, input.dbDeadlineMs ?? 1_500));
+  const dbDeadlineMs = Math.min(MAX_DB_DEADLINE_MS, Math.max(1, input.dbDeadlineMs ?? MAX_DB_DEADLINE_MS));
   async function acquire(key: string, token: string, signal: AbortSignal): Promise<Row | undefined> {
     return boundedDb(input.db, signal, dbDeadlineMs, async trx => {
       // Serialize only the bounded row-cap/lease admission, never provider I/O.

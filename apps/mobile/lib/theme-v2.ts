@@ -114,6 +114,29 @@ export const borderWidth = {
   emphasis: 1.5,
 } as const;
 
+// How the app moves. Every animation takes its timing from here, so presses,
+// tabs, sheets and rows all settle the same way.
+export const motion = {
+  duration: {
+    // A press, a highlight, an image fading in.
+    fast: 120,
+    // Most changes on screen: content arriving, a row leaving.
+    base: 200,
+    // Something that travels across the screen.
+    slow: 300,
+  },
+  spring: {
+    // Presses and toggles: settles in about a quarter of a second without a visible bounce.
+    snappy: { damping: 34, stiffness: 450, mass: 1 },
+    // Things that travel, such as the tab highlight: softer, still without a bounce.
+    gentle: { damping: 24, stiffness: 180, mass: 1 },
+  },
+  // How far a pressed button or tile shrinks while it is held.
+  pressScale: 0.97,
+  // The same for a row as wide as the screen, where 0.97 would pull its edges in too far.
+  rowPressScale: 0.985,
+} as const;
+
 export const typography = {
   h1: { fontFamily: fonts.productExtraBold, fontSize: 36, lineHeight: 40, letterSpacing: -1.08 },
   h2: { fontFamily: fonts.productSemiBold, fontSize: 30, lineHeight: 36, letterSpacing: -0.6 },

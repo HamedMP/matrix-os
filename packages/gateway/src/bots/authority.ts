@@ -7,7 +7,9 @@
  * the account inventory is unavailable, services without a live grant are
  * left out rather than reported as not connected.
  */
+import { createHash } from "node:crypto";
 import {
+  BotConnectionStateSchema,
   BotAuthorityViewSchema,
   BotMemoryItemSchema,
   ChatAgentIdSchema,
@@ -15,6 +17,7 @@ import {
   type BotConnectionState,
 } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
+import { getService } from "../integrations/registry.js";
 import type { BotStateTransactions } from "./events.js";
 import { BotIntegrationError, type BotIntegrationClient, type BotIntegrationConnection } from "./integration-client.js";
 import type { BotRecipeCatalog } from "./recipe-catalog.js";
@@ -23,6 +26,7 @@ import { createBotMemoryRepository } from "./repositories/memory.js";
 
 const AUDIENCE = "direct";
 const MAX_PENDING = 32;
+const MAX_DISPLAY_ACCOUNTS = 10;
 
 export class BotAuthorityError extends Error {
   constructor(readonly code: "invalid_request" | "not_found") {
@@ -74,9 +78,25 @@ export function createBotAuthority(deps: {
       }));
       const connected = await inventory(ownerId);
       const connections = services.flatMap((service): BotConnectionState[] => {
-        if (grants.some((grant) => grant.service === service)) return [{ service, state: "granted" }];
-        if (!connected) return [];
-        return [{ service, state: connected.some((connection) => connection.service === service) ? "connected_not_granted" : "not_connected" }];
+        const definition = getService(service);
+        const logoUrl = definition?.logoUrl;
+        const display = { service, serviceName: definition?.name ?? service,
+          ...(logoUrl && BotConnectionStateSchema.shape.logoUrl.safeParse(logoUrl).success ? { logoUrl } : {}) };
+        if (!connected) return grants.some((grant) => grant.service === service)
+          ? [{ ...display, state: "granted", accounts: [] }] : [];
+        const serviceConnections = connected.filter((connection) => connection.service === service);
+        const accountStates = serviceConnections.map((connection) => ({
+          displayKey: `acct_${createHash("sha256").update(`${ownerId}\0${service}\0${connection.connectionId}`).digest("hex").slice(0, 24)}`,
+          label: connection.label, email: connection.email ?? null,
+          state: grants.some((grant) => grant.service === service && grant.connectionId === connection.connectionId
+            && grant.accountLabel === connection.label
+            && serviceConnections.filter((candidate) => candidate.label === connection.label).length === 1)
+            ? "granted" as const : "connected_not_granted" as const,
+        }));
+        const accounts = [...accountStates.filter((account) => account.state === "granted"),
+          ...accountStates.filter((account) => account.state !== "granted")].slice(0, MAX_DISPLAY_ACCOUNTS);
+        return [{ ...display, state: accountStates.some((account) => account.state === "granted") ? "granted"
+          : accountStates.length ? "connected_not_granted" : "not_connected", accounts }];
       });
       return BotAuthorityViewSchema.parse({
         agentId: agentId.data,

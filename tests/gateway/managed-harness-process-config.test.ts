@@ -11,7 +11,10 @@ describe("managed generic harness process configuration", () => {
       const env = await preparePiRunEnvironment({ homePath: home, credentials: { OPENAI_API_KEY: "private-lease", OPENAI_BASE_URL: "https://relay.example.test/v1" } });
       const content = await readFile(join(env.PI_CODING_AGENT_DIR!, "models.json"), "utf8");
       expect(content).not.toContain("private-lease");
-      expect(JSON.parse(content).providers.cloudflare).toMatchObject({ api: "openai-completions", apiKey: "OPENAI_API_KEY", models: [{ id: "@cf/zai-org/glm-5.3-flash", input: ["text"] }] });
+      const provider = JSON.parse(content).providers.cloudflare;
+      expect(provider).toMatchObject({ api: "openai-completions", apiKey: "OPENAI_API_KEY" });
+      expect(provider.models).toHaveLength(9);
+      expect(provider.models[0]).toMatchObject({ id: "@cf/zai-org/glm-5.3-flash", input: ["text"] });
       expect(env).toMatchObject({ HOME: home, OPENAI_API_KEY: "private-lease" });
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     } finally { await rm(home, { recursive: true, force: true }); }

@@ -156,6 +156,28 @@ describe("canonical coding Chat Provider adapter", () => {
     }
   });
 
+  it("enriches the same canonical command on completion in live and recovered snapshots", async () => {
+    const initial = [event({ type: "tool.started", eventId: "evt_late_start", toolCallId: "late_command", displayName: "Run command", kind: "command" })];
+    const completion = { type: "tool.completed", eventId: "evt_late_end", threadId: "thread_native", occurredAt,
+      toolCallId: "late_command", outcome: "success", preview: "printf ok", previewKind: "command", detail: "Working directory: projects/demo" };
+    expect(AgentThreadEventSchema.safeParse(completion).success).toBe(true);
+    const ended = AgentThreadEventSchema.parse(completion);
+    const terminal = event({ type: "thread.completed", eventId: "evt_late_done", outcome: "completed" });
+    for (const live of [false, true]) {
+      const fake = fakeStore(live ? initial : [...initial, ended, terminal]);
+      const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+      const received: CanonicalProviderRunEvent[] = [];
+      const collect = (async () => { for await (const item of adapter.start(input())) {
+        received.push(item);
+        if (live && item.type === "agent.activity" && item.status === "running") fake.publish([ended, terminal]);
+      } })();
+      await collect;
+      const activities = received.filter(item => item.type === "agent.activity");
+      expect(activities).toHaveLength(2);
+      expect(activities[1]).toMatchObject({ activityId: "late_command", kind: "command", status: "completed", preview: "printf ok", previewKind: "command", detail: "Working directory: projects/demo" });
+    }
+  });
+
   it("projects captured provider media as a canonical assistant attachment", async () => {
     const fake = fakeStore([
       event({

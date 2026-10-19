@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import {
   isRunnableGenericHarnessCredentialRoute,
   isSupportedGenericHarnessCredentialRoute,
@@ -6,6 +7,7 @@ import {
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { isMatrixGatewaySourceReady, isMatrixGatewaySourceDiscoverable, matrixGatewayEligibleModels } from "./GatewayPanel.js";
+import { gatewayCreditStaleAfter } from "./utils.js";
 import type {
   ProviderSettingsMutationIntent,
   AgentsProvidersViewProps,
@@ -29,6 +31,7 @@ export function useGatewaySelection({
 }) {
   const [gatewayPending, setGatewayPending] = useState(false);
   const [gatewayError, setGatewayError] = useState(false);
+  const [presentationSourceId, setPresentationSourceId] = useState<string | null>(null);
   const mutationsDisabled = disabled || gatewayPending;
   const configurationHarnessKinds = snapshot.configurationHarnessKinds ?? [];
   const genericConfiguration =
@@ -39,13 +42,20 @@ export function useGatewaySelection({
     configurationHarnessKinds.includes(harness.harness);
   // One Matrix balance, with separate exact serving routes behind it. Preserve
   // the selected managed route; prefer GLM only when choosing Matrix anew.
+  const displayClock = useLocalObservationExpiry(snapshot.accessSources.map(gatewayCreditStaleAfter));
+  const now = displayClock ?? Number.NaN;
   const readyGatewaySource = (source: ProviderSettingsSnapshot["accessSources"][number]) =>
     isMatrixGatewaySourceReady(source, snapshot.gatewayPolicy,
-      snapshot.modelProviders.find((provider) => provider.id === source.providerId) ?? null);
+      snapshot.modelProviders.find((provider) => provider.id === source.providerId) ?? null,
+      now);
   const discoveredGatewaySources = snapshot.accessSources.filter((source) =>
     isMatrixGatewaySourceDiscoverable(source, snapshot.gatewayPolicy,
       snapshot.modelProviders.find((provider) => provider.id === source.providerId) ?? null));
   const gatewaySource = snapshot.accessSources.find((source) => source.kind === "matrix_gateway" && source.id === harness?.accessSourceId)
+    // Keep only the existing panel identity during clock synchronization. No
+    // retained source object or inferred timestamp can authorize a connection.
+    ?? (displayClock === null ? snapshot.accessSources.find((source) =>
+      source.kind === "matrix_gateway" && source.id === presentationSourceId) : undefined)
     ?? snapshot.accessSources.find((source) => source.id === "matrix_cloudflare" && readyGatewaySource(source))
     ?? snapshot.accessSources.find(readyGatewaySource)
     ?? discoveredGatewaySources.find((source) => source.readiness.safeReason === "credit_reserved"
@@ -53,6 +63,10 @@ export function useGatewaySelection({
     ?? discoveredGatewaySources[0]
     ?? snapshot.accessSources.find((source) => source.id === snapshot.gatewayPolicy?.accessSourceId)
     ?? snapshot.accessSources.find((source) => source.kind === "matrix_gateway") ?? null;
+  const sourceId = gatewaySource?.id ?? null;
+  if (displayClock !== null && presentationSourceId !== sourceId) {
+    setPresentationSourceId(sourceId);
+  }
   const gatewayProvider =
     gatewaySource === null
       ? null
@@ -64,6 +78,7 @@ export function useGatewaySelection({
     gatewaySource,
     snapshot.gatewayPolicy,
     gatewayProvider,
+    now,
   );
   const gatewayModelsFor = (item: ProviderHarnessInstance) =>
     eligibleGatewayModels.filter(

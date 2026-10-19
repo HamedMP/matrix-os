@@ -4,6 +4,7 @@ import { MatrixAnthropicConnectionSchema, MatrixAnthropicConnectSchema, MatrixAn
 import { MatrixAnthropicConnectionError, type MatrixAnthropicConnectionService } from "./matrix-anthropic-connection.js";
 import { MatrixAnthropicSourceError } from "./matrix-anthropic-source.js";
 import type { AiProviderSnapshotReader } from "./service.js";
+import { projectConnectionModelInputs } from "./connection-model-input-projection.js";
 
 /** Mounted beneath /api/ai. Runtime owner authentication precedes reads, JSON parsing and provider calls. */
 export function createMatrixAnthropicConnectionRoutes(options: {
@@ -29,7 +30,7 @@ export function createMatrixAnthropicConnectionRoutes(options: {
       if (action) await action(options.service!, options.ownerId!);
       const snapshot = await options.providerSnapshotReader!.getSnapshot({ admissionScope: "managed_matrix", suppressFundedProbes: true });
       if (!snapshot.matrixAnthropicConnection) throw new MatrixAnthropicConnectionError("unavailable");
-      return context.json(MatrixAnthropicConnectionSchema.parse(snapshot.matrixAnthropicConnection));
+      return context.json(projectConnectionModelInputs(MatrixAnthropicConnectionSchema.parse(snapshot.matrixAnthropicConnection)));
     }
     catch (error) {
       if (error instanceof MatrixAnthropicConnectionError || error instanceof MatrixAnthropicSourceError) {

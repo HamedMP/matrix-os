@@ -4,3 +4,5 @@ export function sealToolOutput(key: Buffer, toolCallId: string, text: string): P
 export function openToolOutput(key: Buffer, toolCallId: string, envelope: unknown): string;
 
 export function tryLoadToolOutputKey(home: string): Promise<Buffer | undefined>;
+export function sealToolPreview(key: Buffer, toolCallId: string, text: string): ProtectedToolOutput;
+export function openToolPreview(key: Buffer, toolCallId: string, envelope: unknown): string;

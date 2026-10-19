@@ -201,6 +201,13 @@ describe("bot grant, memory, task, and authority contracts", () => {
     expect(BotAuthorityViewSchema.parse(view)).toEqual(view);
     expect(BotAuthorityViewSchema.safeParse({ ...view, grants: Array.from({ length: 101 }, () => grant) }).success).toBe(false);
     expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ service: "gmail", state: "unknown" }] }).success).toBe(false);
+    const account = { displayKey: `acct_${"a".repeat(24)}`, label: "Work", email: "owner@example.test", state: "connected_not_granted" };
+    const connection = { service: "gmail", serviceName: "Gmail", logoUrl: "https://pipedream.com/s.v0/gmail/logo/48",
+      state: "connected_not_granted", accounts: [account] };
+    expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [connection] }).success).toBe(true);
+    expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ ...connection, accounts: [{ ...account, displayKey: "conn_work" }] }] }).success).toBe(false);
+    expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ ...connection, logoUrl: "javascript:alert(1)" }] }).success).toBe(false);
+    expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ ...connection, accounts: Array(11).fill(account) }] }).success).toBe(false);
   });
 });
 
@@ -216,5 +223,19 @@ it("accepts only complete trusted isolated phase configuration and preserves def
     { ...config, runtimeSlot: "../primary" }, { ...config, sourceSha: "short" }, { ...config, runtimeCredentialSha256: undefined }]) {
     expect(IsolatedChatEnvelopeSchema.safeParse(invalid).success).toBe(false);
     expect(() => parseIsolatedChatEnvelope(JSON.stringify(invalid))).toThrow("configuration");
+  }
+});
+
+
+it("pins a canonical isolated target to an exact bot and recipe while legacy managed phases stay valid", () => {
+  const base = { phaseId: "phase_bot", ownerId: "owner", machineId: "machine", runtimeSlot: "primary",
+    runtimeTokenEpoch: 2, runtimeCredentialSha256: "a".repeat(64), chatId: "chat_one", modelId: "@cf/zai-org/glm-5.3-flash",
+    sourceSha: "b".repeat(40), startsAt: "2026-10-10T12:00:00.000Z", expiresAt: "2026-10-10T12:20:00.000Z" };
+  const target = { kind: "canonical_bot", botId: "bot_0123456789abcdef", recipeRef: { recipeId: "matrix-bot", version: "2026-10-10.1" } };
+  expect(parseIsolatedChatEnvelope(JSON.stringify({ ...base, target }))).toEqual({ ...base, target });
+  expect(IsolatedChatEnvelopeSchema.safeParse(base).success).toBe(true);
+  for (const bad of [{ ...target, botId: "chat_one" }, { ...target, recipeRef: "matrix-bot@2026-10-10.1" },
+    { ...target, kind: "managed_chat" }, { ...target, widened: true }]) {
+    expect(IsolatedChatEnvelopeSchema.safeParse({ ...base, target: bad }).success).toBe(false);
   }
 });

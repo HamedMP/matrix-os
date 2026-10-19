@@ -3,6 +3,7 @@ import { Alert } from "react-native";
 
 import * as mockRoute from "./agent-chat-route-test-utils";
 import AgentChatRoute from "../app/(drawer)/(tabs)/agents/[agentId]";
+import { ToastHost } from "../components/ui/Toast";
 import { AgentRequestError } from "../lib/requests/bots";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -31,6 +32,9 @@ jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
 }));
 jest.mock("@/lib/queries/use-send-chat-message", () => ({
   useSendChatMessage: () => ({ mutate: mockRoute.shell.sendMessage, isPending: false }),
+}));
+jest.mock("@/lib/queries/use-retry-chat-turn", () => ({
+  useRetryChatTurn: () => ({ mutate: jest.fn(), isPending: false, isError: false, variables: undefined }),
 }));
 jest.mock("@/lib/queries/use-cancel-run", () => ({
   useCancelRun: () => ({ mutate: mockRoute.shell.cancelRun, isPending: false }),
@@ -188,6 +192,17 @@ describe("agent chat route: details and archiving", () => {
       expect(router.dismissAll).toHaveBeenCalledTimes(1);
       expect(router.replace).not.toHaveBeenCalled();
       expect(alert).toHaveBeenCalledTimes(1);
+    });
+
+    it("says so with a toast once the agent is archived", async () => {
+      shell.archive.mockResolvedValue(undefined);
+      render(<><AgentChatRoute /><ToastHost /></>);
+      fireEvent.press(screen.getByRole("button", { name: "Agent details" }));
+      fireEvent.press(screen.getByRole("button", { name: "Archive agent" }));
+
+      await act(async () => alertButton("Archive").onPress?.());
+
+      expect(screen.getByText("Agent archived")).toBeTruthy();
     });
 
     it("goes to the Agents list when there is no screen under this one to return to", async () => {

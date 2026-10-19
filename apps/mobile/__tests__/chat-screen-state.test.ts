@@ -3,6 +3,7 @@ import type { CanonicalChatDetailResponse, CanonicalChatRecord } from "@matrix-o
 import {
   activeChatRun,
   allowsHomeRelativeAppPaths,
+  chatLoadState,
   chatScreenTitle,
   composerPlaceholder,
 } from "../components/chat/chat-screen-state";
@@ -93,5 +94,22 @@ describe("allowsHomeRelativeAppPaths", () => {
   it("does not allow them in a project's chat, or before the chat has loaded", () => {
     expect(allowsHomeRelativeAppPaths(detailOf({ record: { projectId: "project_a" }, messages, runs }), "msg_home")).toBe(false);
     expect(allowsHomeRelativeAppPaths(null, "msg_home")).toBe(false);
+  });
+});
+
+describe("chatLoadState", () => {
+  it("is ready with no chat open, or once the chat has loaded", () => {
+    expect(chatLoadState({ chatId: null, loaded: false, failed: true, shownMessages: 0 })).toBe("ready");
+    expect(chatLoadState({ chatId: "chat_a", loaded: true, failed: true, shownMessages: 0 })).toBe("ready");
+  });
+
+  it("is loading until the chat has loaded, unless messages sent from here are already there to show", () => {
+    expect(chatLoadState({ chatId: "chat_a", loaded: false, failed: false, shownMessages: 0 })).toBe("loading");
+    expect(chatLoadState({ chatId: "chat_a", loaded: false, failed: false, shownMessages: 1 })).toBe("ready");
+  });
+
+  it("has failed when the chat could not be read, whatever was sent from here", () => {
+    expect(chatLoadState({ chatId: "chat_a", loaded: false, failed: true, shownMessages: 0 })).toBe("failed");
+    expect(chatLoadState({ chatId: "chat_a", loaded: false, failed: true, shownMessages: 1 })).toBe("failed");
   });
 });
