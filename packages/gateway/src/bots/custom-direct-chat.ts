@@ -43,6 +43,12 @@ export function createCustomBotChats(options: {
     },
     async directBot(owner, chatId) {
       if (owner.type !== "personal") return null;
+      // Recognize deployed thread history without treating it as an ordinary or direct Chat.
+      // This existence check must not depend on the bounded binding-history page.
+      const thread = await ownerBotExecutor(options.chats.kysely).selectFrom("bot_chat_bindings")
+        .select("chat_id").where("owner_id", "=", owner.ownerId).where("chat_id", "=", chatId)
+        .where("kind", "=", "thread").where("removed_at", "is", null).limit(1).executeTakeFirst();
+      if (thread) throw new BotEntryError("unavailable");
       const bound = await bindings.forChat({ ownerId: owner.ownerId, chatId });
       return bound.find(binding => binding.kind === "direct")?.botId ?? null;
     },
