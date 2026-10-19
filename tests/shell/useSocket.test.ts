@@ -51,10 +51,7 @@ describe("websocket auth in self-host mode", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", {
-      location: {
-        protocol: "http:",
-        host: "167.233.232.103",
-      },
+      location: new URL("http://167.233.232.103/"),
     });
     vi.stubGlobal("document", {
       documentElement: {
