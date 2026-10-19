@@ -525,6 +525,12 @@ jobs:
             if [ "${SLACK_PREVIEW_ENABLED:-false}" = "true" ]; then
               app_domain_hosts="${app_domain_hosts},${SLACK_PREVIEW_BROWSER_ORIGIN#https://}"
             fi
+            local collaboration_env_bindings="$collaboration_env_bindings"
+            if [ "${SLACK_PREVIEW_ENABLED:-false}" = "true" ]; then
+              # The sign-in alias serves Slack only; collaboration uses this exact PR backend.
+              collaboration_origin="$api_origin"
+              collaboration_env_bindings="|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${collaboration_allowed_origins}|MATRIX_COLLABORATION_RELAY_ORIGIN=${collaboration_origin}"
+            fi
             local custom_mcp_secret_bindings=""
             if [ "$CUSTOM_MCP_ENABLED" = "true" ]; then
               custom_mcp_secret_bindings=",MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1"
