@@ -41,6 +41,7 @@ jobs:
       lease: ${{ steps.verify.outputs.lease }}
       version_suffix: ${{ steps.verify.outputs.version_suffix }}
       artifact_prefix: ${{ steps.verify.outputs.artifact_prefix }}
+      controller_sha: ${{ steps.verify.outputs.controller_sha }}
     steps:
       - name: Require reviewed controller configuration
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
@@ -89,6 +90,7 @@ jobs:
             core.setOutput('lease', String(lease));
             core.setOutput('version_suffix', `pr${pr}.${head.slice(0, 12)}`);
             core.setOutput('artifact_prefix', `preview-desktop-pr${pr}-${head}-lease${lease}`);
+            core.setOutput('controller_sha', controllerSha);
 
   build:
     name: Build matching preview desktop installers
@@ -105,3 +107,106 @@ jobs:
       retention_days: 3
       build_windows: false
     secrets: inherit
+
+  # Deliberately separate from the protected Windows release/signing job.
+  # PR code receives neither release environment secrets nor OIDC authority.
+  windows:
+    name: Windows x64 unsigned preview
+    needs: request
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      MATRIX_DESKTOP_UPDATE_CHANNEL: dev
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      VITE_POSTHOG_PROJECT_TOKEN: ${{ vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_KEY }}
+      VITE_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.request.outputs.head }}
+          persist-credentials: false
+
+      - name: Verify desktop source checkout
+        shell: pwsh
+        env:
+          DESKTOP_SOURCE_SHA: ${{ needs.request.outputs.head }}
+        run: |
+          node --input-type=module -e "import { execFileSync } from 'node:child_process'; const actual = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); if (actual !== process.env.DESKTOP_SOURCE_SHA) throw new Error('Desktop checkout source mismatch');"
+
+      - name: Checkout reviewed Windows preview tools
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.request.outputs.controller_sha }}
+          path: .preview-tools
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /desktop/electron-builder.windows-preview.mjs
+            /scripts/ci/preview-windows-smoke.ps1
+
+      - name: Verify and stage reviewed Windows preview tools
+        shell: pwsh
+        env:
+          PREVIEW_CONTROLLER_SHA: ${{ needs.request.outputs.controller_sha }}
+        run: |
+          node --input-type=module -e "import { execFileSync } from 'node:child_process'; const actual = execFileSync('git', ['-C', '.preview-tools', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); if (actual !== process.env.PREVIEW_CONTROLLER_SHA) throw new Error('Preview tools controller mismatch');"
+          if ($LASTEXITCODE -ne 0) { throw "Cannot verify Windows preview tools" }
+          # A generated config beside the candidate base YAML supports PRs that
+          # predate these helpers without replacing any tracked candidate file.
+          Copy-Item .preview-tools/desktop/electron-builder.windows-preview.mjs desktop/.matrix-preview-windows-config.mjs
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Validate PostHog support configuration
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VITE_POSTHOG_PROJECT_TOKEN)) {
+            throw "Missing required public PostHog project token for Desktop Support"
+          }
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply preview desktop version
+        shell: pwsh
+        env:
+          VERSION_SUFFIX: ${{ needs.request.outputs.version_suffix }}
+        run: |
+          node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); j.version = j.version.replace(/-.*/, '') + '-' + process.env.VERSION_SUFFIX; await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
+
+      - name: Build desktop app
+        shell: pwsh
+        env:
+          MATRIX_DESKTOP_BUILD_SOURCE_SHA: ${{ needs.request.outputs.head }}
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          node --input-type=module -e "import { spawnSync } from 'node:child_process'; const result = spawnSync('bun', ['--cwd', 'desktop', 'run', 'build'], { stdio: 'inherit', env: { ...process.env, GITHUB_SHA: process.env.MATRIX_DESKTOP_BUILD_SOURCE_SHA } }); if (result.error) throw result.error; process.exit(result.status ?? 1);"
+
+      - name: Package unsigned Windows preview
+        working-directory: desktop
+        shell: pwsh
+        run: pnpm exec electron-builder --config .matrix-preview-windows-config.mjs --win nsis --x64 --publish never
+
+      - name: Smoke test unsigned Windows preview
+        shell: pwsh
+        env:
+          DESKTOP_SOURCE_SHA: ${{ needs.request.outputs.head }}
+          PREVIEW_ARTIFACT_PREFIX: ${{ needs.request.outputs.artifact_prefix }}
+          PREVIEW_CONTROLLER_SHA: ${{ needs.request.outputs.controller_sha }}
+        run: ./.preview-tools/scripts/ci/preview-windows-smoke.ps1
+
+      - name: Upload unsigned Windows preview
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ needs.request.outputs.artifact_prefix }}-windows-x64
+          path: |
+            desktop/dist/Matrix-OS-*-win-x64.exe
+            desktop/dist/windows-preview-source.json
+          if-no-files-found: error
+          retention-days: 3

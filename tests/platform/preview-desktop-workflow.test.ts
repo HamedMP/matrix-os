@@ -203,4 +203,41 @@ describe("source-bound preview desktop builds", () => {
     );
     expect(preview.concurrency["cancel-in-progress"]).toBe(false);
   });
+
+  it("builds unsigned Windows previews without release authority", () => {
+    const job = workflow("preview-desktop.yml").jobs.windows;
+    expect(job).toBeDefined();
+    expect(job.needs).toBe("request");
+    expect(job["runs-on"]).toBe("windows-latest");
+    expect(job.permissions).toEqual({ contents: "read" });
+    expect(job).not.toHaveProperty("environment");
+    expect(job).not.toHaveProperty("secrets");
+    expect(JSON.stringify(job)).not.toMatch(/secrets\.|id-token|azure\/login|desktop-release/);
+    const checkout = job.steps.find((value: any) => value.uses?.startsWith("actions/checkout@"));
+    expect(checkout.with.ref).toBe("${{ needs.request.outputs.head }}");
+    expect(checkout.with["persist-credentials"]).toBe(false);
+    expect(job.steps.indexOf(step(job, "Verify desktop source checkout"))).toBeLessThan(
+      job.steps.indexOf(step(job, "Install dependencies")),
+    );
+    const tools = step(job, "Checkout reviewed Windows preview tools");
+    expect(tools.with.ref).toBe("${{ needs.request.outputs.controller_sha }}");
+    expect(tools.with.path).toBe(".preview-tools");
+    expect(tools.with["persist-credentials"]).toBe(false);
+    expect(tools.with["sparse-checkout"]).toContain("electron-builder.windows-preview.mjs");
+    expect(step(job, "Verify and stage reviewed Windows preview tools").run).toContain("'.preview-tools', 'rev-parse', 'HEAD'");
+    expect(step(job, "Verify and stage reviewed Windows preview tools").run).toContain("desktop/.matrix-preview-windows-config.mjs");
+    expect(step(job, "Package unsigned Windows preview").run).toContain("--config .matrix-preview-windows-config.mjs");
+    expect(step(job, "Package unsigned Windows preview").run).toContain("--publish never");
+    expect(job.env.CSC_IDENTITY_AUTO_DISCOVERY).toBe("false");
+    expect(step(job, "Smoke test unsigned Windows preview").run).toContain("preview-windows-smoke.ps1");
+    expect(step(job, "Upload unsigned Windows preview").with).toMatchObject({
+      name: "${{ needs.request.outputs.artifact_prefix }}-windows-x64",
+      "retention-days": 3,
+      "if-no-files-found": "error",
+    });
+    const release = workflow("desktop-build.yml").jobs.windows;
+    expect(release.environment).toBe("desktop-release");
+    expect(release.permissions["id-token"]).toBe("write");
+    expect(step(release, "Verify Windows artifacts and Authenticode signatures").run).toContain("::Valid");
+  });
 });

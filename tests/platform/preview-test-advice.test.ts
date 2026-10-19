@@ -63,7 +63,7 @@ describe("preview test advice", () => {
         "Web Desktop",
         "Web Canvas",
         "Web Mobile",
-        "Electron Desktop (macOS arm64/x64, Linux x64)",
+        "Electron Desktop (macOS arm64/x64, Linux x64, Windows x64 unsigned preview)",
       ]),
     );
   });
@@ -98,7 +98,7 @@ describe("preview test advice", () => {
     ).toBe(true);
     expect(
       classifyPreviewTests([{ filename: "pnpm-lock.yaml" }]).surfaces,
-    ).toContain("Electron Desktop (macOS arm64/x64, Linux x64)");
+    ).toContain("Electron Desktop (macOS arm64/x64, Linux x64, Windows x64 unsigned preview)");
   });
   it("includes native and CLI consumers of shared contracts and lockfile changes", () => {
     for (const filename of ["packages/contracts/src/index.ts", "pnpm-lock.yaml"]) {
@@ -114,7 +114,7 @@ describe("preview test advice", () => {
   it("requires compatibility scenarios for gateway changes and infrastructure selection for preview controllers", () => {
     const gateway = classifyPreviewTests([{ filename: "packages/gateway/src/routes.ts" }]);
     expect(gateway.surfaces).toContain("Native Mobile (iOS and Android)");
-    expect(gateway.surfaces).toContain("Electron Desktop (macOS arm64/x64, Linux x64)");
+    expect(gateway.surfaces).toContain("Electron Desktop (macOS arm64/x64, Linux x64, Windows x64 unsigned preview)");
     expect(gateway.manual).toBe(true);
     const controller = classifyPreviewTests([{ filename: "scripts/ci/preview-review.mjs" }]);
     expect(controller.preview).toBe(true);
@@ -125,7 +125,7 @@ describe("preview test advice", () => {
     expect(classifyPreviewTests([{ filename: "bin/matrixos.mjs" }]).surfaces).toContain("CLI (Linux, macOS and Windows)");
     const advice = classifyPreviewTests([{ filename: ".github/workflows/desktop-build.yml" }]);
     expect(advice.surfaces).toContain("Windows build (existing protected checks)");
-    expect(advice.reasons.join(" ")).toContain("Windows preview installers are unavailable");
+    expect(advice.reasons.join(" ")).toContain("Windows preview installers are unsigned and do not qualify protected release signing");
   });
   it("does not make a negative preview recommendation when inventory reads fail", async () => {
     const f = fixture();

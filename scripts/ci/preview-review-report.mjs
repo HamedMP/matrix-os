@@ -83,7 +83,7 @@ export async function publishReviewComments({
           label:
             kind === "web"
               ? "Web build and stability checks"
-              : "Desktop packaging and signing",
+              : "Desktop packaging (Windows unsigned preview)",
           url: url(run),
           state: terminal(run) ? run.conclusion : run.status,
         }));
@@ -128,6 +128,7 @@ export async function publishReviewComments({
               ["macos-arm64", "macOS Apple Silicon"],
               ["macos-x64", "macOS Intel"],
               ["linux-x64", "Linux x64"],
+              ["windows-x64", "Windows x64 · unsigned preview"],
             ]) {
               const artifact = available.find(
                 (a) => a.name === `${prefix}-${suffix}`,
@@ -151,11 +152,11 @@ export async function publishReviewComments({
             : row.payload.desktop &&
                 desktopRun?.conclusion === "success" &&
                 terminal(desktopRun) &&
-                artifacts.length !== 3
+                artifacts.length !== 4
               ? "Desktop downloads unavailable/expired; remove and re-add preview to rebuild"
               : webRun?.conclusion === "success" &&
                   installed &&
-                  (!row.payload.desktop || artifacts.length === 3)
+                  (!row.payload.desktop || artifacts.length === 4)
                 ? "Ready for review"
                 : web
                   ? "Web available; validation in progress"
@@ -198,6 +199,7 @@ export async function publishReviewComments({
         active,
         runs,
         platform: row?.payload.platform,
+        desktop: row?.payload.head === snapshot.head ? row.payload.desktop : undefined,
         occupied,
       }),
       snapshot,

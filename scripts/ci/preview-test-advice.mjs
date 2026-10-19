@@ -2,7 +2,7 @@ import { request, upsertComment } from "./preview-review-api.mjs";
 import { needsDesktop } from "./preview-review-model.mjs";
 const SHA = /^[a-f0-9]{40}$/;
 const WEB = ["Web Desktop", "Web Canvas", "Web Mobile"];
-const ELECTRON = "Electron Desktop (macOS arm64/x64, Linux x64)";
+const ELECTRON = "Electron Desktop (macOS arm64/x64, Linux x64, Windows x64 unsigned preview)";
 const NATIVE = "Native Mobile (iOS and Android)";
 const CLI = "CLI (Linux, macOS and Windows)";
 const owned = (pr) =>
@@ -49,7 +49,7 @@ export function classifyPreviewTests(files, complete = true) {
       }
       if (/^\.github\/workflows\/desktop-(build|release)\.yml$/.test(path)) {
         surfaces.add("Windows build (existing protected checks)");
-        reasons.add("Retain protected Windows build and signing qualification for shared builder changes. Windows preview installers are unavailable.");
+        reasons.add("Retain protected Windows build and signing qualification for shared builder changes. Windows preview installers are unsigned and do not qualify protected release signing.");
       }
       if (path.startsWith("packages/platform/")) {
         platform = true;
