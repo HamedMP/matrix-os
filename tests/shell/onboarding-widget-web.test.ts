@@ -254,6 +254,49 @@ describe("web onboarding app connect", () => {
     expect(result.current.connections.map((connection) => connection.id)).toEqual(["conn_1"]);
   });
 
+  it("stops waiting and offers Try again as soon as the consent window is closed", async () => {
+    const popup = { ...popupStub(), closed: false };
+    vi.mocked(window.open).mockReturnValue(popup as unknown as Window);
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/integrations/available")) return json(services);
+      if (url.endsWith("/api/integrations")) return json([]);
+      if (url.endsWith("/api/integrations/connect")) return json({ url: "https://consent.example.test/github" });
+      if (url.endsWith("/api/integrations/sync")) { popup.closed = true; return json({ services: [] }); }
+      throw new Error(`unexpected ${url}`);
+    });
+    const dispatch = vi.fn();
+    // A long second interval: only the closed window can end the attempt in time.
+    const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0, 0, 600_000] }));
+    await waitFor(() => expect(result.current.available).toHaveLength(1));
+
+    act(() => result.current.connectApp("github"));
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "github" }));
+    expect(result.current.connectingService).toBeNull();
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.succeeded", service: "github" });
+  });
+
+  it("still confirms a sign-in whose page closed its own window", async () => {
+    const popup = { ...popupStub(), closed: false };
+    vi.mocked(window.open).mockReturnValue(popup as unknown as Window);
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/integrations/available")) return json(services);
+      if (url.endsWith("/api/integrations")) return json([]);
+      if (url.endsWith("/api/integrations/connect")) return json({ url: "https://consent.example.test/github" });
+      if (url.endsWith("/api/integrations/sync")) {
+        popup.closed = true;
+        return json({ services: [{ id: "conn_1", service: "github", account_label: "sahar", status: "active" }] });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0, 0] }));
+    await waitFor(() => expect(result.current.available).toHaveLength(1));
+
+    act(() => result.current.connectApp("github"));
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "github" }));
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.failed", service: "github" });
+  });
+
   it("fails without a request when the browser blocks the popup", async () => {
     vi.spyOn(window, "open").mockReturnValue(null);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

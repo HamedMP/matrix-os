@@ -190,7 +190,15 @@ export function useShellOnboardingIntegrations(
         tick: async () => {
           if (!isCurrent()) return;
           const synced = parseConnectedIntegrations(await readJson(fetchFn, `${gatewayUrl}/api/integrations/sync`, { method: "POST" }));
-          if (isCurrent()) applyConnections(synced);
+          if (!isCurrent()) return;
+          applyConnections(synced);
+          // A closed window ends the attempt unless this last sync found the connection;
+          // some sign-in pages close themselves once they finish.
+          if (popup.closed && !hasNewActiveConnection(synced, serviceId, previouslyActive)) {
+            cancelPollRef.current?.();
+            cancelPollRef.current = null;
+            fail();
+          }
         },
         isDone: () => hasNewActiveConnection(connectionsRef.current, serviceId, previouslyActive),
         onSettled: (found) => {
