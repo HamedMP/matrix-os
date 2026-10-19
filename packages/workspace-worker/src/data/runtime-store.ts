@@ -2,12 +2,14 @@ import { sql, type Kysely } from "kysely";
 import { ensureWorkspace, type WorkspaceDatabase, WorkspaceError } from "./repository.js";
 import type { RuntimeCheckpoint, RuntimeJob, RuntimeLease, RuntimeStore, RuntimeSummary } from "../runtime/contracts.js";
 
+import type { RuntimeComputeHooks } from "../runtime/compute-hooks.js";
+
 const MAX_ACTIVE_RUNS = 1;
 export class RuntimeBusyError extends Error { constructor() { super("Runtime busy"); this.name = "RuntimeBusyError"; } }
 const toLease = (row: WorkspaceDatabase["shared_runtime_jobs"]): RuntimeLease => ({ ownerId: row.owner_id, jobId: row.job_id, generation: row.generation, expiresAt: row.expires_at, maxRunAt: row.max_run_at });
 /** All state transitions serialize on an owner row. Jobs are never rerun after admission. */
 export class PostgresRuntimeStore implements RuntimeStore {
-  constructor(readonly db: Kysely<WorkspaceDatabase>) {}
+  constructor(readonly db: Kysely<WorkspaceDatabase>, private readonly compute?: RuntimeComputeHooks) {}
   async initialize() {
     await this.db.schema.createTable("shared_runtime_jobs").ifNotExists()
       .addColumn("owner_id", "text", (c) => c.notNull()).addColumn("job_id", "text", (c) => c.notNull())
@@ -43,6 +45,7 @@ export class PostgresRuntimeStore implements RuntimeStore {
       if (duplicate) return null;
       const active = await trx.selectFrom("shared_runtime_jobs").select("job_id").where("owner_id", "=", job.ownerId).where("state", "=", "running").limit(MAX_ACTIVE_RUNS).execute();
       if (active.length >= MAX_ACTIVE_RUNS) throw new RuntimeBusyError();
+      if (this.compute && !await this.compute.claim(trx, job, now, maxRunMs, row.generation)) return null;
       const lease = { ownerId: job.ownerId, jobId: job.jobId, generation: row.generation, expiresAt: now + Math.min(leaseMs, maxRunMs), maxRunAt: now + maxRunMs };
       const inserted = await trx.insertInto("shared_runtime_jobs").values({ owner_id: job.ownerId, job_id: job.jobId, generation: row.generation, state: "running", expires_at: lease.expiresAt, max_run_at: lease.maxRunAt, payload: { ...job } })
         .onConflict((oc) => oc.columns(["owner_id", "job_id"]).doNothing()).returning("job_id").executeTakeFirst();
@@ -55,6 +58,7 @@ export class PostgresRuntimeStore implements RuntimeStore {
     return this.db.transaction().execute(async (trx) => {
       const row = await trx.selectFrom("shared_workspaces").selectAll().where("owner_id", "=", lease.ownerId).forUpdate().executeTakeFirst();
       if (!row || row.generation !== lease.generation || row.placement !== "pooled" || row.runtime_state === "checkpointing") return false;
+      if (this.compute && (!await this.compute.allowed(trx, lease.ownerId) || await this.compute.needsInterruption?.(trx,lease.ownerId,lease.generation))) return false;
       const updated = await trx.updateTable("shared_runtime_jobs").set({ expires_at: sql`least(${now + leaseMs}, max_run_at)` })
         .where("owner_id", "=", lease.ownerId).where("job_id", "=", lease.jobId).where("generation", "=", lease.generation)
         .where("state", "=", "running").where("expires_at", ">", now).where("max_run_at", ">", now).returning("job_id").executeTakeFirst();
@@ -62,6 +66,7 @@ export class PostgresRuntimeStore implements RuntimeStore {
     });
   }
   async finish(lease: RuntimeLease, outcome: "completed" | "interrupted", now: number): Promise<boolean> {
+    if (this.compute && outcome === "interrupted") return await this.beginInterrupt(lease,now) !== null;
     return this.db.transaction().execute(async (trx) => {
       const row = await trx.selectFrom("shared_workspaces").selectAll().where("owner_id", "=", lease.ownerId).forUpdate().executeTakeFirst();
       if (!row || row.generation !== lease.generation || row.placement !== "pooled") return false;
@@ -70,6 +75,8 @@ export class PostgresRuntimeStore implements RuntimeStore {
       if (outcome === "completed") query = query.where("expires_at", ">", now).where("max_run_at", ">", now);
       const updated = await query.returning("job_id").executeTakeFirst();
       if (!updated) return false;
+      if (outcome === "completed") await this.compute?.completion(trx, lease, now);
+      else await this.compute?.uncertain(trx, lease.ownerId, lease.generation);
       const active = await trx.selectFrom("shared_runtime_jobs").select("job_id").where("owner_id", "=", lease.ownerId).where("state", "=", "running").limit(1).executeTakeFirst();
       if (!active) await trx.updateTable("shared_workspaces").set({ runtime_state: "ready", idle_since: now }).where("owner_id", "=", lease.ownerId).execute();
       return true;
@@ -86,6 +93,7 @@ export class PostgresRuntimeStore implements RuntimeStore {
       const job = await trx.selectFrom("shared_runtime_jobs").select("job_id").where("owner_id", "=", lease.ownerId).where("job_id", "=", lease.jobId)
         .where("generation", "=", lease.generation).where("state", "=", "running").executeTakeFirst();
       if (!job) return null;
+      await this.compute?.uncertain(trx, lease.ownerId, lease.generation);
       const generation = workspace.generation + 1;
       await trx.updateTable("shared_runtime_jobs").set({ state: "interrupted" }).where("owner_id", "=", lease.ownerId).where("generation", "=", lease.generation).where("state", "=", "running").execute();
       await trx.updateTable("shared_workspaces").set({ generation, runtime_state: "interrupting", idle_since: now }).where("owner_id", "=", lease.ownerId).execute();
@@ -113,8 +121,14 @@ export class PostgresRuntimeStore implements RuntimeStore {
       const interrupted = await trx.updateTable("shared_runtime_jobs").set({ state: "interrupted" }).where("owner_id", "=", ownerId).where("state", "=", "running")
         .where((eb) => eb.or([eb("expires_at", "<=", now), eb("max_run_at", "<=", now)])).returning("job_id").execute();
       if (!interrupted.length) return;
+      await this.compute?.uncertain(trx, ownerId, row.generation);
       const active = await trx.selectFrom("shared_runtime_jobs").select("job_id").where("owner_id", "=", ownerId).where("state", "=", "running").limit(1).executeTakeFirst();
-      if (!active) await trx.updateTable("shared_workspaces").set({ runtime_state: "ready", idle_since: now }).where("owner_id", "=", ownerId).execute();
+      if (!active) {
+        // Budgeted recovery must quarantine before any termination-based settlement.
+        await trx.updateTable("shared_workspaces").set(this.compute
+          ? {runtime_state:"interrupting",generation:row.generation+1,idle_since:now}
+          : {runtime_state:"ready",idle_since:now}).where("owner_id","=",ownerId).execute();
+      }
     });
   }
   /** Idempotent re-entry recovers a DO eviction after the transition committed. */
@@ -142,6 +156,15 @@ export class PostgresRuntimeStore implements RuntimeStore {
       .where("owner_id", "=", ownerId).where("generation", "=", generation).where("placement", "=", "pooled").where("runtime_state", "=", "checkpointing")
       .where(sql<boolean>`checkpoint->>'generation' = ${String(generation)}`).returning("owner_id").executeTakeFirst();
     return !!updated;
+  }
+  async confirmStopped(ownerId: string, generation: number, now: number): Promise<boolean> {
+    return this.db.transaction().execute(async trx => {
+      const row = await trx.selectFrom("shared_workspaces").selectAll().where("owner_id", "=", ownerId).forUpdate().executeTakeFirst();
+      if (!row || row.placement !== "pooled" || row.generation !== generation || row.runtime_state !== "interrupting") return false;
+      await this.compute?.confirmStopped(trx, ownerId, generation, now);
+      await trx.updateTable("shared_workspaces").set({runtime_state:"failed",idle_since:null}).where("owner_id","=",ownerId).where("generation","=",generation).execute();
+      return true;
+    });
   }
   async fail(ownerId: string, generation: number) {
     await this.db.updateTable("shared_workspaces").set({ runtime_state: "failed" }).where("owner_id", "=", ownerId).where("generation", "=", generation).where("placement", "=", "pooled").execute();

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ComputeBudgetError } from "../../packages/workspace-worker/src/data/compute-budget.js";
 import { createWorkspaceRoutes } from "../../packages/workspace-worker/src/routes.js";
 import type { WorkspaceRepository } from "../../packages/workspace-worker/src/data/repository.js";
 
@@ -55,14 +56,33 @@ describe("shared desktop data routes", () => {
 });
 
 describe("durable chat admission", () => {
-  it("creates a canonical owner chat and persists input before queue admission", async () => {
-    const chat = { id: "chat_server", ownerId: "fixed_preview_owner", title: "Run", createdAt: "2026-10-18T00:00:00.000Z" };
-    const admitChatMessage = vi.fn(async () => chat);
-    const app = createWorkspaceRoutes({ repository: { ...repository, admitChatMessage }, files, runtime, auth, previewEnabled: true });
-    const result = await app.fetch(request("/api/workspace/actions", { method: "POST", body: JSON.stringify({ type: "chat", chatId: "chat_new", idempotencyKey: "request1", message: "Run" }) }));
-    expect(result.status).toBe(202);
-    expect(admitChatMessage).toHaveBeenCalledWith("fixed_preview_owner", { type: "chat", chatId: "chat_new", idempotencyKey: "request1", message: "Run" });
-    expect(runtime.enqueue).toHaveBeenCalledWith("fixed_preview_owner", { type: "chat", chatId: "chat_server", idempotencyKey: "request1", message: "Run" });
-    expect(admitChatMessage.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(runtime.enqueue).mock.invocationCallOrder[0]);
+  it("delegates Chat input and budget to one atomic admission boundary", async () => {
+    const admitChatMessage=vi.fn();
+    const enqueue=vi.fn(async()=>({state:'queued',jobId:'request1',chatId:'chat_server'}));
+    const app=createWorkspaceRoutes({repository:{...repository,admitChatMessage},files,runtime:{...runtime,enqueue},auth,previewEnabled:true});
+    const action={type:'chat',chatId:'chat_new',idempotencyKey:'request1',message:'Run'};
+    const result=await app.fetch(request('/api/workspace/actions',{method:'POST',body:JSON.stringify(action)}));
+    expect(result.status).toBe(202); expect(await result.json()).toMatchObject({chatId:'chat_server'});
+    expect(enqueue).toHaveBeenCalledWith('fixed_preview_owner',action);
+    expect(admitChatMessage).not.toHaveBeenCalled();
   });
+});
+
+describe('compute allowance denial',()=>{
+  it('returns a safe quota error and leaves saved data readable without retrying compute',async()=>{
+    const enqueue=vi.fn(async()=>{throw new ComputeBudgetError('exhausted');});
+    const app=createWorkspaceRoutes({repository,files,runtime:{...runtime,enqueue},auth,previewEnabled:true});
+    const denied=await app.fetch(request('/api/workspace/actions',{method:'POST',body:JSON.stringify({type:'wake'})}));
+    expect(denied.status).toBe(429);expect(await denied.json()).toEqual({error:'Compute allowance unavailable'});
+    expect((await app.fetch(request('/api/shell/bootstrap'))).status).toBe(200);expect(enqueue).toHaveBeenCalledOnce();
+  });
+});
+
+describe('completed action replay',()=>{
+ it('returns the stored completed outcome without claiming new queue acceptance',async()=>{
+  const enqueue=vi.fn(async()=>({state:'completed',jobId:'existing',chatId:'chat_existing'}));
+  const app=createWorkspaceRoutes({repository,files,runtime:{...runtime,enqueue},auth,previewEnabled:true});
+  const response=await app.fetch(request('/api/workspace/actions',{method:'POST',body:JSON.stringify({type:'chat',chatId:'chat_existing',idempotencyKey:'existing',message:'already done'})}));
+  expect(response.status).toBe(200);expect(await response.json()).toMatchObject({state:'completed'});
+ });
 });

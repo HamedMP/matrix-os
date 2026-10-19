@@ -83,6 +83,29 @@ export async function reserveComputeBudget(trx: Transaction<ComputeBudgetDatabas
   return reservation(inserted);
 }
 
+async function lockedComputeReservation(trx: Transaction<ComputeBudgetDatabase>, ownerId: string, reservationId: string): Promise<ComputeReservationTable> {
+  const found = await trx.selectFrom("shared_compute_reservations").select("period_id")
+    .where("owner_id", "=", ownerId).where("reservation_id", "=", reservationId).executeTakeFirst();
+  if (!found) throw new ComputeBudgetError("not_found");
+  await trx.selectFrom("shared_compute_policies").select("owner_id")
+    .where("owner_id", "=", ownerId).where("period_id", "=", found.period_id).forUpdate().executeTakeFirstOrThrow();
+  return trx.selectFrom("shared_compute_reservations").selectAll()
+    .where("owner_id", "=", ownerId).where("reservation_id", "=", reservationId).executeTakeFirstOrThrow();
+}
+
+/** Caller-owned completion/outbox transaction; never release a hold without final proof. */
+export async function settleComputeBudget(trx: Transaction<ComputeBudgetDatabase>, raw: ComputeSettleInput): Promise<ComputeReservation> {
+  const input = parse(settleSchema, raw);
+  const row = await lockedComputeReservation(trx, input.ownerId, input.reservationId);
+  if (row.state === "settled") return reservation(row);
+  const actualMs = Math.min(input.actualMs, row.amount_ms);
+  const updated = await trx.updateTable("shared_compute_reservations").set({ state: "settled", settled_ms: actualMs })
+    .where("owner_id", "=", input.ownerId).where("reservation_id", "=", input.reservationId).returningAll().executeTakeFirstOrThrow();
+  await trx.updateTable("shared_compute_policies").set({ held_ms: sql`held_ms - ${row.amount_ms}`, settled_ms: sql`settled_ms + ${actualMs}` })
+    .where("owner_id", "=", input.ownerId).where("period_id", "=", row.period_id).execute();
+  return reservation(updated);
+}
+
 /** Injected Postgres resources belong to the caller. This store never closes them.
  * Compute time is independent of inference funding. No policy is inferred or granted.
  */
@@ -128,20 +151,11 @@ export class PostgresComputeBudgetStore {
     parse(reserveSchema, input);
     return this.db.transaction().execute((trx) => reserveComputeBudget(trx, input));
   }
-  private async lockedReservation(trx: Transaction<ComputeBudgetDatabase>, ownerId: string, reservationId: string): Promise<ComputeReservationTable> {
-    const found = await trx.selectFrom("shared_compute_reservations").select("period_id")
-      .where("owner_id", "=", ownerId).where("reservation_id", "=", reservationId).executeTakeFirst();
-    if (!found) throw new ComputeBudgetError("not_found");
-    await trx.selectFrom("shared_compute_policies").select("owner_id")
-      .where("owner_id", "=", ownerId).where("period_id", "=", found.period_id).forUpdate().executeTakeFirstOrThrow();
-    return trx.selectFrom("shared_compute_reservations").selectAll()
-      .where("owner_id", "=", ownerId).where("reservation_id", "=", reservationId).executeTakeFirstOrThrow();
-  }
   /** Cancellation or a timeout is not proof that execution stopped: retain the full hold. */
   async markUncertain(raw: { ownerId: string; reservationId: string }): Promise<ComputeReservation> {
     const input = parse(reservationScopeSchema, raw);
     return this.db.transaction().execute(async (trx) => {
-      const row = await this.lockedReservation(trx, input.ownerId, input.reservationId);
+      const row = await lockedComputeReservation(trx, input.ownerId, input.reservationId);
       if (row.state === "settled") return reservation(row);
       const updated = await trx.updateTable("shared_compute_reservations").set({ state: "uncertain" })
         .where("owner_id", "=", input.ownerId).where("reservation_id", "=", input.reservationId).returningAll().executeTakeFirstOrThrow();
@@ -153,17 +167,9 @@ export class PostgresComputeBudgetStore {
    */
   async settle(raw: ComputeSettleInput): Promise<ComputeReservation> {
     const input = parse(settleSchema, raw);
-    return this.db.transaction().execute(async (trx) => {
-      const row = await this.lockedReservation(trx, input.ownerId, input.reservationId);
-      if (row.state === "settled") return reservation(row);
-      const actualMs = Math.min(input.actualMs, row.amount_ms);
-      const updated = await trx.updateTable("shared_compute_reservations").set({ state: "settled", settled_ms: actualMs })
-        .where("owner_id", "=", input.ownerId).where("reservation_id", "=", input.reservationId).returningAll().executeTakeFirstOrThrow();
-      await trx.updateTable("shared_compute_policies").set({ held_ms: sql`held_ms - ${row.amount_ms}`, settled_ms: sql`settled_ms + ${actualMs}` })
-        .where("owner_id", "=", input.ownerId).where("period_id", "=", row.period_id).execute();
-      return reservation(updated);
-    });
+    return this.db.transaction().execute((trx) => settleComputeBudget(trx, input));
   }
+
   async snapshot(raw: { ownerId: string; periodId: string }): Promise<ComputeBudgetSnapshot | null> {
     const input = parse(scopeSchema, raw);
     const row = await this.db.selectFrom("shared_compute_policies").selectAll()

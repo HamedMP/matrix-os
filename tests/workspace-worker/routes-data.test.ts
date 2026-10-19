@@ -10,7 +10,7 @@ import { R2WorkspaceFiles } from "../../packages/workspace-worker/src/data/files
 describe("shared API durable read/write wiring", () => {
   let engine: Awaited<ReturnType<typeof createTestPGlite>>;
   let repository: PostgresWorkspaceRepository;
-  const runtime = { status: vi.fn(async () => ({ state: "sleeping" })), enqueue: vi.fn(async () => ({ queued: true })) };
+  const runtime = { status: vi.fn(async () => ({ state: "sleeping" })), enqueue: vi.fn(async (_owner: string, _action: import("../../packages/workspace-worker/src/routes.js").WorkspaceAction):Promise<Record<string,unknown>> => ({ queued: true })) };
   const contents = new Map<string, string>(); // Test fixture only, capped to 100 entries below.
   const files = new R2WorkspaceFiles({
     get: async (key) => contents.has(key) ? { size: new TextEncoder().encode(contents.get(key)!).byteLength, text: async () => contents.get(key)! } : null,
@@ -38,6 +38,11 @@ describe("shared API durable read/write wiring", () => {
     expect(runtime.enqueue).not.toHaveBeenCalled();
   });
   it("returns actual persisted user and agent messages matching released Chat contracts", async () => {
+    runtime.enqueue.mockImplementationOnce(async (owner, action) => {
+      if (action.type !== "chat") throw new Error("Expected Chat");
+      const chat=await repository.admitChatMessage(owner,action);
+      return {queued:true,chatId:chat.id};
+    });
     const response = await request("owner1", "/api/workspace/actions", { type: "chat", chatId: "chat_new", idempotencyKey: "request_new", message: "Please work" }, "POST");
     const { chatId } = await response.json() as { chatId: string };
     await repository.appendMessage("owner1", chatId, "agent_output", "assistant", "Done");

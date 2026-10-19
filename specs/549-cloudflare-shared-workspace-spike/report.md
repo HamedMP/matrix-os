@@ -184,6 +184,8 @@ manual review confirms both are local dispatch, not network requests.
 
 ## Reproduction
 
+For the budgeted runtime stack, follow the ordered [U4 qualification setup](../630-shared-workspace-production/qualification.md). The original two-schema setup below describes the historical spike and is insufficient after compute admission is enabled.
+
 Use an isolated preview owner and two disposable least-privilege Postgres
 databases. Never point the harness at customer data. Initialize the shared schema
 through `PostgresWorkspaceRepository.initialize()` and
