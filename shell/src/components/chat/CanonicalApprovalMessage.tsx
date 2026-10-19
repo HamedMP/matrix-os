@@ -21,8 +21,7 @@ interface CanonicalApprovalView {
   allowedDecisions: CanonicalChatApprovalDecision[];
   pending: boolean;
   decision?: CanonicalChatApprovalDecision;
-  reason?: "expired" | "session_revoked";
-  undoable?: false;
+  reason?: "expired";
 }
 
 export function canonicalApproval(message: ChatMessage): CanonicalApprovalView | null {
@@ -37,11 +36,10 @@ export function canonicalApproval(message: ChatMessage): CanonicalApprovalView |
     typeof decision === "string" && APPROVAL_DECISIONS.has(decision as CanonicalChatApprovalDecision));
   if (allowedDecisions.length === 0) return null;
   const decision = candidate.decision && APPROVAL_DECISIONS.has(candidate.decision) ? candidate.decision : undefined;
-  const reason = candidate.reason === "expired" || candidate.reason === "session_revoked" ? candidate.reason : undefined;
+  const reason = candidate.reason === "expired" ? candidate.reason : undefined;
   return {
     ...candidate, runId: runId.data, allowedDecisions, decision,
     ...(reason ? { reason } : {}),
-    ...(candidate.undoable === false ? { undoable: false as const } : {}),
   } as CanonicalApprovalView;
 }
 
@@ -62,7 +60,7 @@ export function CanonicalApprovalMessage({
   submitting: boolean;
   permissionMode?: string;
   onPermissionMode?: (mode: "supervised" | "full_access") => void;
-  onTryAgain?: () => void;
+  onTryAgain?: (prompt: string) => void;
   onSubmit?: (runId: string, approvalId: string, decision: CanonicalChatApprovalDecision) => Promise<void>;
 }) {
   const approval = canonicalApproval(message);

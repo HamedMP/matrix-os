@@ -114,7 +114,6 @@ export function canonicalChatPresentation(input: {
       const approval = approvalViews.find(view => view.runId === run?.id && view.approvalId === item.requestId);
       return [{ ...item, label: approval?.title ?? item.label, detail: approval?.description, decision: approval?.decision,
         ...(approval?.reason ? { reason: approval.reason } : {}),
-        ...(approval?.undoable === false ? { undoable: false as const } : {}),
         state: approval?.pending ? "waiting" : "resolved", actions: approval?.pending ? item.actions : undefined }];
     });
     const timeline = [

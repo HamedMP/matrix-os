@@ -719,7 +719,7 @@ function ChatAppContent({
                           })()}
                           permissionMode={approvalPermissionMode}
                           onPermissionMode={onApprovalPermissionMode}
-                          onTryAgain={() => document.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus()}
+                          onTryAgain={(prompt) => { composer.setText(prompt); document.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
                           onSubmit={onSubmitApproval ? async (runId, approvalId, decision) => {
                             const submissionId = `${runId}\0${approvalId}`;
                             setSubmittingApprovalId(submissionId);

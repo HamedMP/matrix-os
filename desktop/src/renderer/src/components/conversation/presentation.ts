@@ -93,8 +93,7 @@ export interface ConversationRequestPresentation {
   requestKind: "approval" | "input";
   requestId: string;
   decision?: CanonicalChatApprovalDecision;
-  reason?: "expired" | "session_revoked";
-  undoable?: false;
+  reason?: "expired";
   state: "waiting" | "resolved";
   label: string;
   detail?: string;
@@ -152,7 +151,7 @@ export interface ConversationPresentationCallbacks {
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
   permissionMode?: string;
   onPermissionMode?: (mode: "supervised" | "full_access") => void;
-  onTryAgain?: () => void;
+  onTryAgain?: (prompt: string) => void;
   openFile?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
   openImportedAsset?: (asset: ImportedChatAssetRef) => Promise<void>;
   openAttachment?: (path: string) => boolean;

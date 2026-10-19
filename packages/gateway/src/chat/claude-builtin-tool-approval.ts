@@ -10,18 +10,17 @@ import { sanitizeAssistantText } from "./safe-activity-projection.js";
 
 const PENDING_LIMIT = 16;
 const INPUT_LIMIT = 4_000;
-const GRANT_LIMIT = 64;
 export const CLAUDE_BUILTIN_TOOL_APPROVAL_TTL_MS = 10 * 60_000;
 const DECLINED = "The owner declined this tool request.";
 const EXPIRED = "This tool request expired before a decision.";
 const CANCELLED = "This tool request was cancelled.";
 const UNAVAILABLE = "Tool approval is unavailable in this Chat connection.";
-const DECISIONS = new Set<CanonicalChatApprovalDecision>(["approve", "approve_for_session", "decline", "cancel"]);
+// One-time decisions only: a remembered grant needs a Platform signature for approve_for_session first.
+const DECISIONS = ["approve", "decline", "cancel"] as const satisfies readonly CanonicalChatApprovalDecision[];
 
 type Respond = (value: unknown) => Promise<void>;
 interface Pending {
   nativeId: string;
-  toolName: string;
   input: Record<string, unknown>;
   respond: Respond;
   timer: ReturnType<typeof setTimeout>;
@@ -51,23 +50,7 @@ export function createClaudeBuiltinToolApprovalControl(options: {
   onError(error: unknown): void;
 }) {
   const pending = new Map<string, Pending>(); // max 16; resolved, expired, and closed entries are removed
-  // Allow in this chat lasts for this run only, so Undo stays available for every live grant.
-  // Keyed by approval id -> exact tool name; card titles are shared and must not widen a grant.
-  const grants = new Map<string, string>(); // max 64, oldest evicted; cleared on close
   let closed = false;
-
-  function rememberGrant(approvalId: string, toolName: string) {
-    if (grants.has(approvalId)) return;
-    if (grants.size >= GRANT_LIMIT) {
-      const oldest = grants.keys().next().value;
-      if (oldest) grants.delete(oldest);
-    }
-    grants.set(approvalId, toolName);
-  }
-  function granted(toolName: string) {
-    for (const tool of grants.values()) if (tool === toolName) return true;
-    return false;
-  }
 
   function warn(error: unknown) {
     console.warn("[chat-claude] Built-in tool approval failed", error instanceof Error ? error.name : "UnknownError");
@@ -82,7 +65,7 @@ export function createClaudeBuiltinToolApprovalControl(options: {
     pending.delete(id);
     return true;
   }
-  function resolved(id: string, decision: CanonicalChatApprovalDecision, reason?: "expired" | "session_revoked") {
+  function resolved(id: string, decision: CanonicalChatApprovalDecision, reason?: "expired") {
     options.emit(CanonicalProviderRunEventSchema.parse({
       type: "approval.resolved", approvalId: id, decision, ...(reason ? { reason } : {}),
     }));
@@ -94,17 +77,13 @@ export function createClaudeBuiltinToolApprovalControl(options: {
   }
 
   return {
-    has(id: string) { return pending.has(id) || grants.has(id); },
+    has(id: string) { return pending.has(id); },
     onToolPermission(request: { nativeRequestId: string; toolName: string; input: Record<string, unknown> }, respond: Respond): boolean {
       if (request.toolName.startsWith("mcp__") || request.toolName === "AskUserQuestion") return false;
       const duplicate = [...pending.values()].some(value => value.nativeId === request.nativeRequestId);
       if (duplicate) return true;
       const raw = JSON.stringify(request.input);
       const copy = supervisedToolApprovalCopy(request.toolName);
-      if (!closed && raw.length <= INPUT_LIMIT && granted(request.toolName)) {
-        void respond({ behavior: "allow", updatedInput: structuredClone(request.input) }).catch(warn);
-        return true;
-      }
       if (closed || pending.size >= PENDING_LIMIT || raw.length > INPUT_LIMIT) {
         deny(respond, UNAVAILABLE);
         return true;
@@ -120,7 +99,6 @@ export function createClaudeBuiltinToolApprovalControl(options: {
       const id = `tool_${randomUUID()}`;
       const current: Pending = {
         nativeId: request.nativeRequestId,
-        toolName: request.toolName,
         input: structuredClone(request.input),
         respond,
         timer: setTimeout(() => {
@@ -136,7 +114,7 @@ export function createClaudeBuiltinToolApprovalControl(options: {
       options.emit(CanonicalProviderRunEventSchema.parse({
         type: "approval.requested", approvalId: id,
         title, safeDescription, risk: copy.risk,
-        allowedDecisions: ["approve", "approve_for_session", "decline", "cancel"],
+        allowedDecisions: [...DECISIONS],
       }));
       return true;
     },
@@ -147,23 +125,13 @@ export function createClaudeBuiltinToolApprovalControl(options: {
       chatId: string; clientRequestId: string; platformApprovalProof?: string;
     }) {
       const current = pending.get(id);
-      const grant = grants.get(id);
       if (!provenance?.platformApprovalProof || provenance.chatId !== options.chatId) {
         throw new Error("Authenticated approval proof unavailable");
       }
-      if (!current) {
-        if (closed || grant === undefined || decision !== "decline") throw new Error("Approval unavailable");
-        const verified = await options.verify({
-          chatId: options.chatId, runId: options.runId, approvalId: id,
-          decision, clientRequestId: provenance.clientRequestId, platformApprovalProof: provenance.platformApprovalProof,
-        });
-        if (!verified || closed || grants.get(id) !== grant) throw new Error("Authenticated approval proof unavailable");
-        resolved(id, "approve_for_session", "session_revoked");
-        grants.delete(id);
-        return;
+      if (!current || closed || current.deciding || !(DECISIONS as readonly string[]).includes(decision)) {
+        throw new Error("Approval unavailable");
       }
-      if (closed || current.deciding || !DECISIONS.has(decision)) throw new Error("Approval unavailable");
-      const provenDecision = decision;
+      const provenDecision = decision as typeof DECISIONS[number];
       const proof = provenance.platformApprovalProof;
       const clientRequestId = provenance.clientRequestId;
       current.deciding = (async () => {
@@ -175,12 +143,10 @@ export function createClaudeBuiltinToolApprovalControl(options: {
           });
           if (!verified || closed || pending.get(id) !== current) throw new Error("Authenticated approval proof unavailable");
           responded = true;
-          const allow = provenDecision === "approve" || provenDecision === "approve_for_session";
-          await current.respond(allow
+          await current.respond(provenDecision === "approve"
             ? { behavior: "allow", updatedInput: current.input }
             : { behavior: "deny", message: provenDecision === "decline" ? DECLINED : CANCELLED });
           if (!forget(id, current)) return;
-          if (provenDecision === "approve_for_session") rememberGrant(id, current.toolName);
           resolved(id, provenDecision);
         } catch (error: unknown) {
           if (!responded && pending.get(id) === current) {
@@ -195,7 +161,6 @@ export function createClaudeBuiltinToolApprovalControl(options: {
     },
     close() {
       closed = true;
-      grants.clear();
       for (const [id, current] of [...pending]) finish(id, current, "cancel", UNAVAILABLE);
     },
   };

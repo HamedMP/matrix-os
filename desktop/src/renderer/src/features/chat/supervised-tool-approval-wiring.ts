@@ -30,16 +30,20 @@ export function supervisedToolCallbacks(input: {
   catalog: CanonicalProviderCatalog | null | undefined;
   directBot: boolean;
   onSelectionChange: (selection: CanonicalComposerSelection) => void;
+  setDraft: (text: string) => void;
 }): Pick<ConversationPresentationCallbacks, "permissionMode" | "onPermissionMode" | "onTryAgain"> {
-  const { selection, catalog, directBot, onSelectionChange } = input;
+  const { selection, catalog, directBot, onSelectionChange, setDraft } = input;
   const fullAccess = !directBot && selection && catalog?.instances.some((instance) => (
     instance.id === selection.instanceId && instance.supports.permissionModes.includes("full_access")
   ));
   return {
     permissionMode: selection?.permissionMode,
     ...(fullAccess ? { onPermissionMode: (mode) => onSelectionChange({ ...selection, permissionMode: mode }) } : {}),
-    onTryAgain: () => {
-      document.querySelector<HTMLTextAreaElement>("[data-slot=shared-chat-composer] textarea")?.focus();
+    // Try again fills the composer so the owner can resend; nothing is sent on their behalf.
+    onTryAgain: (prompt) => {
+      setDraft(prompt);
+      if (typeof document === "undefined") return;
+      document.querySelector<HTMLElement>("[data-slot=shared-chat-composer] :is(textarea, [contenteditable=true])")?.focus();
     },
   };
 }

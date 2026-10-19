@@ -13,7 +13,7 @@ export function isCustomMcpApprovalSubmitPath(method: string, path: string): boo
 const Payload = z.object({
   version: z.literal(1), handle: z.string().min(1).max(63), actorId: z.string().min(1).max(256),
   chatId: z.string().regex(REF), runId: z.string().regex(REF), approvalId: z.string().regex(REF),
-  decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]), clientRequestId: z.string().regex(REF),
+  decision: z.enum(["approve", "decline", "cancel"]), clientRequestId: z.string().regex(REF),
   actionDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   bodyDigest: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().int(),
   nonce: z.string().regex(/^[a-f0-9]{32}$/),
@@ -49,7 +49,7 @@ export function mintCustomMcpApprovalProof(input: {
     return null;
   }
   const parsed = CanonicalSubmitChatApprovalRequestSchema.safeParse(value);
-  if (!parsed.success) return null;
+  if (!parsed.success || parsed.data.decision === "approve_for_session") return null;
   const now = input.now ?? Date.now();
   const payload = Payload.parse({
     version: 1, handle: input.identity.handle, actorId: input.identity.userId,
@@ -65,7 +65,7 @@ export function mintCustomMcpApprovalProof(input: {
 
 export function verifyCustomMcpApprovalProof(proof: string | undefined, expected: {
   handle: string; actorId: string; chatId: string; runId: string; approvalId: string;
-  decision: "approve" | "approve_for_session" | "decline" | "cancel"; clientRequestId: string;
+  decision: "approve" | "decline" | "cancel"; clientRequestId: string;
   actionDigest?: string;
   secret: string; now?: number;
 }): boolean {
@@ -75,7 +75,7 @@ export function verifyCustomMcpApprovalProof(proof: string | undefined, expected
 /** Return signed nonce for an atomic one-use Preview action grant. */
 export function readVerifiedCustomMcpApprovalProof(proof: string | undefined, expected: {
   handle: string; actorId: string; chatId: string; runId: string; approvalId: string;
-  decision: "approve" | "approve_for_session" | "decline" | "cancel"; clientRequestId: string;
+  decision: "approve" | "decline" | "cancel"; clientRequestId: string;
   actionDigest?: string; secret: string; now?: number;
 }): Payload | null {
   if (!proof || proof.length > 1_500 || !expected.secret) return null;

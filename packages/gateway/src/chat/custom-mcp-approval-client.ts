@@ -10,7 +10,7 @@ const DecisionResponse = z.object({ receipt: z.string().regex(/^[a-f0-9]{64}$/).
 
 export interface CustomMcpApprovalClient {
   verifyIntegrationDecision?(input: { chatId: string; runId: string; approvalId: string;
-    decision: "approve" | "approve_for_session" | "decline" | "cancel"; clientRequestId: string; platformApprovalProof: string }): Promise<boolean>;
+    decision: "approve" | "decline" | "cancel"; clientRequestId: string; platformApprovalProof: string }): Promise<boolean>;
   registerRun(runId: string): Promise<{ generation: number }>;
   prepare(runId: string, input: {
     generation: number;

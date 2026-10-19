@@ -22,8 +22,7 @@ export interface CanonicalChatApprovalView {
   allowedDecisions: CanonicalChatApprovalDecision[];
   pending: boolean;
   decision?: CanonicalChatApprovalDecision;
-  reason?: "expired" | "session_revoked";
-  undoable?: false;
+  reason?: "expired";
   timestamp: number;
   beforeMessageId?: string;
 }
@@ -34,7 +33,7 @@ export interface CanonicalChatApprovalView {
  */
 export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse, "runs" | "turns" | "messages" | "activities">): CanonicalChatApprovalView[] {
   const approvals = new Map<string, CanonicalChatApprovalView>();
-  const resolved = new Map<string, { decision: CanonicalChatApprovalDecision; reason?: "expired" | "session_revoked" }>();
+  const resolved = new Map<string, { decision: CanonicalChatApprovalDecision; reason?: "expired" }>();
   const key = (runId: string, approvalId: string) => `${runId}\0${approvalId}`;
   for (const message of detail.messages) {
     if (!message.runId) continue;
@@ -76,7 +75,6 @@ export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse,
     const runActive = ["accepted", "running", "waiting_for_approval", "waiting_for_input"].includes(run.status);
     return [{ ...approval,
       ...(outcome ? { decision: outcome.decision, ...(outcome.reason ? { reason: outcome.reason } : {}) } : {}),
-      ...(outcome?.decision === "approve_for_session" && outcome.reason !== "session_revoked" && !runActive ? { undoable: false as const } : {}),
       pending: runActive && !resolved.has(identity),
       ...(next ? { beforeMessageId: next.id } : {}),
     }];

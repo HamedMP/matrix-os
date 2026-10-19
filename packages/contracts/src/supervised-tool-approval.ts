@@ -97,9 +97,7 @@ export interface SupervisedToolApprovalSource {
   description?: string;
   pending: boolean;
   decision?: CanonicalChatApprovalDecision;
-  reason?: "expired" | "session_revoked";
-  /** False once the run can no longer accept Undo. Omitted means the grant is still revocable. */
-  undoable?: boolean;
+  reason?: "expired";
   allowedDecisions: readonly CanonicalChatApprovalDecision[];
 }
 
@@ -111,10 +109,9 @@ export type SupervisedToolApproval =
     details?: string;
     bar: string;
     allowOnce: boolean;
-    allowInChat: boolean;
     decline: boolean;
   }
-  | { kind: "allowed"; line: string; undo: boolean }
+  | { kind: "allowed"; line: string }
   | { kind: "declined"; line: string }
   | { kind: "expired"; title: string; summary: string }
   | { kind: "cancelled"; line: string };
@@ -131,6 +128,11 @@ function detailsFor(tool: ToolCopy, description: string | undefined): string | u
   return split.length > 0 ? split : undefined;
 }
 
+/** Composer text that asks Claude to retry an expired tool request; the owner still sends it. */
+export function supervisedToolRetryPrompt(title: string): string {
+  return `Try again: ${title}`;
+}
+
 /** The Desktop tool-approval card, or null when this approval is some other request. */
 export function supervisedToolApproval(source: SupervisedToolApprovalSource): SupervisedToolApproval | null {
   const tool = matchTool(source.title);
@@ -144,21 +146,13 @@ export function supervisedToolApproval(source: SupervisedToolApprovalSource): Su
       ...(details ? { details } : {}),
       bar: tool.title,
       allowOnce: source.allowedDecisions.includes("approve"),
-      allowInChat: source.allowedDecisions.includes("approve_for_session"),
       decline: source.allowedDecisions.includes("decline"),
     };
   }
   if (source.reason === "expired") {
     return { kind: "expired", title: source.title, summary: tool.expired };
   }
-  if (source.decision === "approve") return { kind: "allowed", line: `${tool.noun} allowed`, undo: false };
-  if (source.decision === "approve_for_session") {
-    return {
-      kind: "allowed",
-      line: `${tool.noun} allowed in this chat`,
-      undo: source.reason !== "session_revoked" && source.undoable !== false,
-    };
-  }
+  if (source.decision === "approve") return { kind: "allowed", line: `${tool.noun} allowed` };
   if (source.decision === "decline") return { kind: "declined", line: `${tool.noun} not allowed` };
   if (source.decision === "cancel") return { kind: "cancelled", line: `${tool.noun} was not used` };
   return null;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CanonicalChatApprovalDecision } from "@matrix-os/contracts";
-import type { SupervisedToolApproval } from "@matrix-os/contracts";
+import { supervisedToolRetryPrompt, type SupervisedToolApproval } from "@matrix-os/contracts";
 
 const warning = "var(--surface-warning-emphasis, var(--warning, #e0aa52))";
 const ink = "var(--text-primary, #171717)";
@@ -122,24 +122,14 @@ function PermissionModeControl({
 function SettledApproval({
   approval,
   anchorId,
-  submitting,
-  onDecision,
 }: {
   approval: Extract<SupervisedToolApproval, { kind: "allowed" | "declined" | "cancelled" }>;
   anchorId?: string;
-  submitting: boolean;
-  onDecision?: (decision: CanonicalChatApprovalDecision) => void;
 }) {
-  const canUndo = approval.kind === "allowed" && approval.undo && onDecision;
   return (
     <div id={anchorId} className="flex items-center gap-2 text-[13px] font-medium" style={{ color: muted }}>
       <span aria-hidden>{approval.kind === "allowed" ? "✓" : "×"}</span>
       <span>{approval.line}</span>
-      {canUndo ? (
-        <button type="button" className="font-medium underline" style={{ color: ink }} disabled={submitting} onClick={() => onDecision("decline")}>
-          Undo
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -159,11 +149,11 @@ export function SupervisedToolApprovalCard({
   permissionMode?: string;
   onDecision?: (decision: CanonicalChatApprovalDecision) => void;
   onPermissionMode?: (mode: "supervised" | "full_access") => void;
-  onTryAgain?: () => void;
+  onTryAgain?: (prompt: string) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   if (approval.kind === "allowed" || approval.kind === "declined" || approval.kind === "cancelled") {
-    return <SettledApproval approval={approval} anchorId={anchorId} submitting={submitting} onDecision={onDecision} />;
+    return <SettledApproval approval={approval} anchorId={anchorId} />;
   }
   const expired = approval.kind === "expired";
   return (
@@ -187,7 +177,7 @@ export function SupervisedToolApprovalCard({
       {approval.kind === "waiting" ? (
         <ApprovalActions approval={approval} submitting={submitting} permissionMode={permissionMode} onDecision={onDecision} onPermissionMode={onPermissionMode} />
       ) : onTryAgain ? (
-        <button type="button" className="self-start text-[13px] font-medium underline" style={{ color: ink }} onClick={onTryAgain}>Try again</button>
+        <button type="button" className="self-start text-[13px] font-medium underline" style={{ color: ink }} onClick={() => onTryAgain(supervisedToolRetryPrompt(approval.title))}>Try again</button>
       ) : null}
     </div>
   );
@@ -216,7 +206,6 @@ function ApprovalActions({
   return (
     <div className="relative flex items-center gap-2">
       {approval.allowOnce ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: ink, color: paper }} onClick={() => onDecision?.("approve")}>Allow once</button> : null}
-      {approval.allowInChat ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: paper, color: ink, border: `1px solid ${line}` }} onClick={() => onDecision?.("approve_for_session")}>Allow in this chat</button> : null}
       {approval.decline ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: "transparent", color: ink }} onClick={() => onDecision?.("decline")}>Not now</button> : null}
       <span className="flex-1" />
       {onPermissionMode ? <PermissionModeControl mode={permissionMode} onSelect={choosePermission} /> : null}

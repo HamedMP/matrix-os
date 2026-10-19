@@ -85,7 +85,7 @@ describe("Claude Supervised built-in tool approval", () => {
       expect(event.title).not.toContain("WebSearch");
       expect(event.safeDescription).toContain("Nothing is sent or changed.");
       expect(event.risk).toBe("low");
-      expect(event.allowedDecisions).toEqual(["approve", "approve_for_session", "decline", "cancel"]);
+      expect(event.allowedDecisions).toEqual(["approve", "decline", "cancel"]);
       await expect(adapter.submitApproval?.({
         owner: { type: "personal", ownerId: "wrong_owner" }, chatId: input.chatId, runId: input.runId,
         approvalId: event.approvalId, decision: "approve", clientRequestId: "req_wrong",
@@ -253,65 +253,30 @@ describe("Claude built-in tool approval control", () => {
     }
   });
 
-  async function allowInChat(target: ReturnType<typeof control>, nativeRequestId: string, toolName: string, toolInput: Record<string, unknown>) {
-    expect(target.approval.onToolPermission({ nativeRequestId, toolName, input: toolInput }, target.respond)).toBe(true);
-    const requested = target.events.at(-1);
+  it("offers only one-time decisions and refuses a chat-wide grant", async () => {
+    const { approval, events, responses, respond } = control();
+    approval.onToolPermission({ nativeRequestId: "native_web", toolName: "WebSearch", input: { query: "pricing" } }, respond);
+    const requested = events[0];
     if (requested?.type !== "approval.requested") throw new Error("Approval was not requested");
-    await target.approval.submit(requested.approvalId, "approve_for_session", {
-      chatId: "chat_1", clientRequestId: `req_${nativeRequestId}`, platformApprovalProof: "signed-chat",
-    });
-    expect(target.responses.at(-1)).toEqual({ behavior: "allow", updatedInput: toolInput });
-    return requested.approvalId;
-  }
-
-  function asksAgain(target: ReturnType<typeof control>, nativeRequestId: string, toolName: string, toolInput: Record<string, unknown>) {
-    const before = target.events.length;
-    expect(target.approval.onToolPermission({ nativeRequestId, toolName, input: toolInput }, target.respond)).toBe(true);
-    return target.events.slice(before).some((event) => event.type === "approval.requested");
-  }
-
-  it("limits Allow in this chat to the exact tool that was approved", async () => {
-    const run = control();
-    await allowInChat(run, "native_kill", "KillShell", { shell_id: "1" });
-    // Unmapped tools share the fallback card title; a grant for one must not cover another.
-    expect(asksAgain(run, "native_todo", "TodoWrite", { todos: [] })).toBe(true);
-    await allowInChat(run, "native_edit", "Edit", { file_path: "notes.md" });
-    // Edit and Write share the "Update a file" card; the grant still names only Edit.
-    expect(asksAgain(run, "native_write", "Write", { file_path: "other.md" })).toBe(true);
-    expect(asksAgain(run, "native_edit_again", "Edit", { file_path: "later.md" })).toBe(false);
-  });
-
-  it("keeps Allow in this chat to its run and drops it on Undo", async () => {
-    const first = control();
-    const approvalId = await allowInChat(first, "native_web", "WebSearch", { query: "pricing" });
-    const allowed: unknown[] = [];
-    expect(first.approval.onToolPermission({
-      nativeRequestId: "native_later", toolName: "WebSearch", input: { query: "later" },
-    }, async (value) => { allowed.push(value); })).toBe(true);
-    await vi.waitFor(() => expect(allowed).toEqual([{ behavior: "allow", updatedInput: { query: "later" } }]));
-    expect(asksAgain(first, "native_bash", "Bash", { command: "pwd" })).toBe(true);
-
-    // A later run in the same chat has no grant it could not undo.
-    const nextRun = control();
-    expect(asksAgain(nextRun, "native_next", "WebSearch", { query: "next" })).toBe(true);
-    expect(nextRun.approval.has(approvalId)).toBe(false);
-
-    await first.approval.submit(approvalId, "decline", {
-      chatId: "chat_1", clientRequestId: "req_undo", platformApprovalProof: "signed-undo",
-    });
-    expect(first.events.at(-1)).toMatchObject({
-      type: "approval.resolved", approvalId, decision: "approve_for_session", reason: "session_revoked",
-    });
-    expect(asksAgain(first, "native_again", "WebSearch", { query: "again" })).toBe(true);
-  });
-
-  it("forgets its grants when the run closes", async () => {
-    const run = control();
-    const approvalId = await allowInChat(run, "native_web", "WebSearch", { query: "pricing" });
-    run.approval.close();
-    expect(run.approval.has(approvalId)).toBe(false);
-    await expect(run.approval.submit(approvalId, "decline", {
-      chatId: "chat_1", clientRequestId: "req_late_undo", platformApprovalProof: "signed-undo",
+    expect(requested.allowedDecisions).toEqual(["approve", "decline", "cancel"]);
+    await expect(approval.submit(requested.approvalId, "approve_for_session", {
+      chatId: "chat_1", clientRequestId: "req_chat", platformApprovalProof: "signed-chat",
     })).rejects.toThrow();
+    expect(responses).toEqual([]);
+    expect(approval.has(requested.approvalId)).toBe(true);
+  });
+
+  it("asks again for the next call after Allow once", async () => {
+    const { approval, events, responses, respond } = control();
+    approval.onToolPermission({ nativeRequestId: "native_web", toolName: "WebSearch", input: { query: "pricing" } }, respond);
+    const first = events[0];
+    if (first?.type !== "approval.requested") throw new Error("Approval was not requested");
+    await approval.submit(first.approvalId, "approve", {
+      chatId: "chat_1", clientRequestId: "req_once", platformApprovalProof: "signed-once",
+    });
+    expect(responses).toEqual([{ behavior: "allow", updatedInput: { query: "pricing" } }]);
+    approval.onToolPermission({ nativeRequestId: "native_web_2", toolName: "WebSearch", input: { query: "later" } }, respond);
+    expect(events.filter((event) => event.type === "approval.requested")).toHaveLength(2);
+    expect(responses).toHaveLength(1);
   });
 });

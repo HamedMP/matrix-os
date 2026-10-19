@@ -13,20 +13,19 @@ const waiting: SupervisedToolApproval = {
   details: "{\"query\":\"AI agent pricing\"}",
   bar: "Search the web",
   allowOnce: true,
-  allowInChat: true,
   decline: true,
 };
 
 describe("Supervised tool approval card", () => {
-  it("offers Allow once, Allow in this chat, and Not now", () => {
+  it("offers Allow once and Not now, and no chat-wide grant", () => {
     const onDecision = vi.fn();
     render(<SupervisedToolApprovalCard approval={waiting} onDecision={onDecision} />);
     expect(screen.getByText("Needs your approval")).toBeTruthy();
     expect(screen.getByText("Nothing is sent or changed.", { exact: false })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Allow in this chat" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
-    fireEvent.click(screen.getByRole("button", { name: "Allow in this chat" }));
     fireEvent.click(screen.getByRole("button", { name: "Not now" }));
-    expect(onDecision.mock.calls.map((call) => call[0])).toEqual(["approve", "approve_for_session", "decline"]);
+    expect(onDecision.mock.calls.map((call) => call[0])).toEqual(["approve", "decline"]);
   });
 
   it("switches to Full access and approves the current request so the run continues", () => {
@@ -97,18 +96,12 @@ describe("Supervised tool approval card", () => {
     }} onTryAgain={onTryAgain} />);
     expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(onTryAgain).toHaveBeenCalledOnce();
+    expect(onTryAgain).toHaveBeenCalledWith("Try again: Search the web · “AI agent pricing”");
   });
 
-  it("offers Undo only for a chat grant", () => {
-    const onDecision = vi.fn();
-    render(<SupervisedToolApprovalCard approval={{ kind: "allowed", line: "Web search allowed in this chat", undo: true }} onDecision={onDecision} />);
-    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    expect(onDecision).toHaveBeenCalledWith("decline");
-  });
-
-  it("hides Undo after the chat grant is revoked", () => {
-    render(<SupervisedToolApprovalCard approval={{ kind: "allowed", line: "Web search allowed in this chat", undo: false }} onDecision={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  it("settles an allowed request into one line with no further actions", () => {
+    render(<SupervisedToolApprovalCard approval={{ kind: "allowed", line: "Web search allowed" }} onDecision={vi.fn()} />);
+    expect(screen.getByText("Web search allowed")).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

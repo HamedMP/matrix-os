@@ -179,7 +179,6 @@ function supervisedToolView(request: ConversationRequestPresentation): Supervise
     pending: request.state === "waiting",
     decision: request.decision,
     reason: request.reason,
-    ...(request.undoable === false ? { undoable: false as const } : {}),
     allowedDecisions: (request.actions ?? []).flatMap((action) => action.kind === "approval" ? [action.decision] : []),
   });
 }
