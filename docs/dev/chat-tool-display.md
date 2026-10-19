@@ -145,3 +145,40 @@ is covered by the component test, not represented as device acceptance.
 ![Electron Desktop expanded tool result](assets/chat-tool-details-electron.png)
 
 Pi and OpenCode retain their existing thread event/journal contracts. When their results enter canonical Chat, the shared coding adapter seals them with the runtime key before canonical activities and outbox persistence; missing keys leave coarse notices. Their pre-existing thread journals are outside this output-protection boundary. Legacy unsealed Codex output remains coarse because Codex sealing belongs before journal persistence.
+
+## Managed Matrix Pi (ENG265 follow-up)
+
+`matrix_pi` uses `managed-pi-runtime` and the pinned bot worker, not the native
+Pi CLI collector. The internal broker's optional `tool_progress.display`
+selects a tool name, known scalar input fields, an allowed command and recognized
+text blocks. It never forwards raw argument/result objects, binary content or
+model thinking. Gateway ingestion rechecks evidence and seals parameters and
+output with the existing owner key before canonical activity/outbox writes.
+Command evidence uses `protectedPreview`; selected parameters and result use
+`protectedOutput`. Private parameter paths are filtered independently, so they
+cannot hide an otherwise displayable result. Known credential context/results
+remain withheld even from the owner; absent keys retain coarse notices.
+
+Start, update and completion use the same toolCallId/activityId. Managed Pi
+`tool.output` entries are authoritative display snapshots; projections select
+the latest one rather than concatenate partial and final results. Codex/Claude
+retain append semantics. Worker tracking is capped at60 tools per turn, three
+updates per tool at least250ms apart, 750 characters of selected input, 3,000
+characters of result and 4,000 characters of command. Gateway repeats tool/update
+caps. The global event budget reserves a terminal slot for every tracked tool.
+Canonical retention remains500 records; full tool snapshots do not grow without
+bound. Snapshot replacement preserves parameters alongside the current result.
+
+Cancellation keeps the existing orchestrator rule rejecting late provider
+output. Pending managed cards derive stopped/failed/partial from the canonical
+Run when it is aborted/failed/completed, including after reload; explicit tool
+terminal states remain unchanged. Missing end events never imply success.
+Empty text, unavailable/unknown envelopes, hidden sensitive output and truncated
+output have separate notices. Historical payload-free events remain supported;
+previously discarded details cannot be reconstructed.
+
+This adds display support for SDK partial-result events. Current artifact,
+integration and MCP broker calls use a request-response interface and do not
+produce streaming stdout; their results appear when the backend returns. No
+shell tool, streaming backend, permission or approval expansion is introduced.
+Live managed-provider/GUI acceptance remains a separate parent-scheduled gate.
