@@ -17,6 +17,7 @@ export function ChatImportPanel({ transport, native, onOpenChat }: {
     const ready = items.filter(item => item.status === "ready");
     const failed = items.filter(item => item.status === "failed");
     const imported = items.filter(item => item.status === "imported").length;
+    const batchComplete = !busy && imported === items.length && (!discovers || state.localBatchComplete);
     const canImport = (list: typeof items) => !busy && !state.library.loading && !state.library.error && list.length > 0 && list.every(item => validImportTitle(item.title));
     const full = items.length >= MAX_IMPORT_SELECTIONS;
     return <section className="matrix-chat-import" aria-label="Import chats">
@@ -41,8 +42,8 @@ export function ChatImportPanel({ transport, native, onOpenChat }: {
         {busy === "reading" ? <div className="matrix-import-library-actions"><p className="matrix-import-reading" role="status">Reading transcripts on this computer…</p>{!discovers && !items.length ? <button type="button" className="matrix-import-button" onClick={state.pause}>Stop waiting</button> : null}</div> : null}
         {error ? <p className="matrix-import-error" role="alert">{error}</p> : null}
         {items.length ? <div className="matrix-import-review">
-            <div className="matrix-import-review-head"><div><h3>{imported === items.length ? "Your chats are in Matrix" : "Review conversations"}</h3><p>{items.length} {items.length === 1 ? "conversation" : "conversations"} · {importBytes(items.reduce((sum, item) => sum + item.preview.rawBytes, 0))} of original history</p></div>
-                {imported === items.length ? <button type="button" className="matrix-import-text-button" onClick={state.reset}>Start another batch</button> : <span className="matrix-import-private"><LockKeyhole size={14} aria-hidden="true"/>Private</span>}
+            <div className="matrix-import-review-head"><div><h3>{batchComplete ? "Your chats are in Matrix" : "Review conversations"}</h3><p>{items.length} {items.length === 1 ? "conversation" : "conversations"} · {importBytes(items.reduce((sum, item) => sum + item.preview.rawBytes, 0))} of original history</p></div>
+                {batchComplete ? <button type="button" className="matrix-import-text-button" onClick={state.reset}>Start another batch</button> : <span className="matrix-import-private"><LockKeyhole size={14} aria-hidden="true"/>Private</span>}
             </div>
             <ul className="matrix-import-list">{items.map(item => <ImportChatRow key={item.key} item={item} single={items.length === 1} busy={Boolean(busy)} onTitle={title => state.changeTitle(item.key, title)} onRemove={() => state.remove(item.key)} onOpen={onOpenChat}/>)}</ul>
             {imported > 0 && items.length > 1 ? <p className="matrix-import-completion" role="status"><CheckCircle2 size={17} aria-hidden="true"/>{imported === 1 ? "1 chat is ready in Matrix." : `${imported} chats are ready in Matrix.`}</p> : null}
