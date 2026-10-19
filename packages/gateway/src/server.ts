@@ -270,6 +270,9 @@ import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
 import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
+import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
+import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
+import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
@@ -879,8 +882,10 @@ export async function createGateway(config: GatewayConfig) {
         }),
       })
     : undefined;
+  const executionAdmissionFence = createExecutionAdmissionFence();
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
+    executionAdmissionFence,
     model: config.model,
     maxTurns: config.maxTurns,
     spawnFn: config.spawnFn,
@@ -1252,7 +1257,19 @@ export async function createGateway(config: GatewayConfig) {
       })
     : undefined;
   app.route("/api/speech", speechRuntime.routes);
-  app.route("/api/internal/platform-speech", createPlatformSpeechHostConfigRoutes());
+  const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
+    && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
+    && (canonicalChatOrchestrator?.pendingCount ?? 0) === 0;
+  const managedFeatureRestart = createManagedFeatureRestartCoordinator({
+    fence: executionAdmissionFence, isIdle: isManagedFeatureRestartIdle,
+  });
+  app.route("/api/internal/platform-speech", createPlatformSpeechHostConfigRoutes({
+    scheduleRestart: managedFeatureRestart.schedule,
+  }));
+  app.route("/api/internal/platform-funded-ai", createPlatformFundedAiHostConfigRoutes({
+    isIdle: isManagedFeatureRestartIdle,
+    scheduleRestart: managedFeatureRestart.schedule,
+  }));
   const fundedOwnerIds = new Set([
     fundedAiRuntimeConfig?.identity.ownerId,
     process.env.MATRIX_USER_ID?.trim(),
@@ -1627,6 +1644,7 @@ export async function createGateway(config: GatewayConfig) {
     }
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
+      executionAdmissionFence,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
       repository: chatRepository,
@@ -1886,6 +1904,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await managedFeatureRestart.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();

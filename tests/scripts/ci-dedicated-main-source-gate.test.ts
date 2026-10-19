@@ -11,12 +11,12 @@ import {writeMainCiDecision,cleanupMainCiDecision} from '../../scripts/ci/main-c
 const source='a'.repeat(40),base='b'.repeat(40),tree='c'.repeat(40),controllerSha='d'.repeat(40);
 const repo={owner:'HamedMP',repo:'matrix-os'},origin={sha:controllerSha,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'};
 function fixture(){
- const ci={id:321,run_attempt:1,workflow_id:98,event:'push',path:'.github/workflows/ci.yml',head_sha:source,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},status:'completed',conclusion:'success',display_title:`CI coverage-v1 · ${source}`};
- const controller={...ci,id:124,workflow_id:99,event:'workflow_run',path:'.github/workflows/ci-dedicated.yml',display_title:`dedicated-refresh-v2 execution=true request=321 title=${ci.display_title}`};
+ const ci={id:321,created_at:'2026-10-18T12:00:00Z',run_attempt:1,workflow_id:98,event:'push',path:'.github/workflows/ci.yml',head_sha:source,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},status:'completed',conclusion:'success',display_title:`CI coverage-v1 · ${source}`};
+ const controller={...ci,id:124,created_at:'2026-10-18T12:00:01Z',workflow_id:99,event:'workflow_run',path:'.github/workflows/ci-dedicated.yml',display_title:`dedicated-refresh-v2 execution=true request=321 title=${ci.display_title}`};
  const check={id:12,name:'Dedicated CI Results',head_sha:source,app:{slug:'github-actions'},status:'completed',conclusion:'neutral',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124',output:{summary:JSON.stringify({schemaVersion:3,sourceKind:'main',prNumber:0,suite:'qualification',headSha:source,baseSha:base,baseRef:'main',sourceSha:source,mergeParents:[base],controllerSha,controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',controllerAttempt:1,requestingRunId:321,requestingRunAttempt:1,mode:'delegated',imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),receiptVerified:false,requestDigest:'9'.repeat(64),leaseId:'8'.repeat(32),outcome:'infrastructure-unavailable',status:76,reason:'queue_timeout',stage:'admission',workloadStarted:false,containerGone:true})}};
  const jobs=[...HOSTED_LANES,'CI Results'].map((name,i)=>({id:i+1,name,run_id:321,run_attempt:1,head_sha:source,status:'completed',conclusion:'success',check_run_url:`https://api.github.com/repos/HamedMP/matrix-os/check-runs/${i+1}`}));
  const aggregate={id:jobs.at(-1)!.id,name:'CI Results',app:{slug:'github-actions'},head_sha:source,status:'completed',conclusion:'success',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/321/job/99'};
- const github={rest:{pulls:{list:vi.fn(async()=>({data:[]})),get:vi.fn()},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:source}}})),getCommit:vi.fn(async()=>({data:{sha:source,parents:[{sha:base}],commit:{tree:{sha:tree}}}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}})),get:vi.fn(async()=>({data:aggregate})),create:vi.fn(),update:vi.fn()},actions:{getWorkflow:vi.fn(async({workflow_id}:any)=>({data:{id:workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+workflow_id}})),listRepoVariables:vi.fn(async()=>({data:{total_count:6,variables:[{name:'MATRIX_CI_CONTROLLER_SHA',value:controllerSha},{name:'MATRIX_CI_DEDICATED_ENABLED',value:'true'},{name:'MATRIX_CI_DEDICATED_MAIN',value:'true'},{name:'MATRIX_CI_DEDICATED_SHADOW',value:'false'},{name:'MATRIX_CI_RUNNER_IMAGE_DIGEST',value:'sha256:'+'e'.repeat(64)},{name:'MATRIX_CI_RUNNER_HARNESS_DIGEST',value:'f'.repeat(64)}]}})),listWorkflowRuns:vi.fn(async({workflow_id}:any)=>({data:{workflow_runs:workflow_id===98?[ci]:[controller]}})),getWorkflowRun:vi.fn(async()=>({data:controller})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${source}-${source}-${base}-pr0-request321-1-attempt1`,id:55,expired:false,size_in_bytes:2000,workflow_run:{id:124}}]}})),listJobsForWorkflowRun:vi.fn(async({run_id}:any)=>({data:run_id===124?{jobs:[{name:'benchmark',status:'completed',conclusion:'success'}]}:{total_count:jobs.length,jobs}})),createWorkflowDispatch:vi.fn()}}};
+ const github={rest:{pulls:{list:vi.fn(async()=>({data:[]})),get:vi.fn()},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:source}}})),getCommit:vi.fn(async()=>({data:{sha:source,parents:[{sha:base}],commit:{tree:{sha:tree}}}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}})),get:vi.fn(async()=>({data:aggregate})),create:vi.fn(),update:vi.fn()},actions:{getWorkflow:vi.fn(async({workflow_id}:any)=>({data:{id:workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+workflow_id}})),listRepoVariables:vi.fn(async()=>({data:{total_count:6,variables:[{name:'MATRIX_CI_CONTROLLER_SHA',value:controllerSha},{name:'MATRIX_CI_DEDICATED_ENABLED',value:'true'},{name:'MATRIX_CI_DEDICATED_MAIN',value:'true'},{name:'MATRIX_CI_DEDICATED_SHADOW',value:'false'},{name:'MATRIX_CI_RUNNER_IMAGE_DIGEST',value:'sha256:'+'e'.repeat(64)},{name:'MATRIX_CI_RUNNER_HARNESS_DIGEST',value:'f'.repeat(64)}]}})),listWorkflowRuns:vi.fn(async({workflow_id}:any)=>({data:{workflow_runs:workflow_id===98?[ci]:[controller]}})),getWorkflowRun:vi.fn(async({run_id}:any)=>({data:run_id===321?ci:controller})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${source}-${source}-${base}-pr0-request321-1-attempt1`,id:55,expired:false,size_in_bytes:2000,workflow_run:{id:124}}]}})),listJobsForWorkflowRun:vi.fn(async({run_id}:any)=>({data:run_id===124?{jobs:[{name:'benchmark',status:'completed',conclusion:'success'}]}:{total_count:jobs.length,jobs}})),createWorkflowDispatch:vi.fn()}}};
  const gateGithub={rest:{checks:{create:vi.fn(async(args:any)=>({data:{id:100,...args,app:{id:777,slug:'matrix-ci-gate'}}})),update:vi.fn(async(args:any)=>({data:{id:args.check_run_id,name:'CI Source Qualification',head_sha:source,...args,app:{id:777,slug:'matrix-ci-gate'}}}))}}};
  pinArtifactFixture(github,check,controller);const result={github,gateGithub,ci,controller,check,jobs,aggregate};pinFullDecision(result);return result;
 }
@@ -74,7 +74,8 @@ it.each(['complete','skipped'])('retains independent main recovery after switchi
 it('never uses a candidate-branch controller to update the main App-owned gate',async()=>{
  const f=fixture();const prior={id:99,name:'CI Source Qualification',head_sha:source,app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/125',output:{summary:JSON.stringify({schemaVersion:1,sourceKind:'main',prNumber:0,headSha:source,controllerSha,controllerRef:'refs/heads/main',controllerAttempt:1})}};
  f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[f.check,prior]}});
- f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>({data:args.run_id===125?{...f.controller,id:125,head_sha:base,head_branch:'candidate'}:f.controller}));
+ const originalRun=f.github.rest.actions.getWorkflowRun.getMockImplementation()!;
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>args.run_id===125?{data:{...f.controller,id:125,head_sha:base,head_branch:'candidate'}}:originalRun(args));
  await reconcile(f);expect(written(f)).toMatchObject({conclusion:'success'});expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
 });
 it('cannot use an Actions-owned App response to claim independent main qualification',async()=>{
@@ -125,11 +126,51 @@ function retainAppHistory(f:ReturnType<typeof fixture>){
  let prior:any;const originalList=f.github.rest.checks.listForRef.getMockImplementation()!;
  f.github.rest.checks.listForRef.mockImplementation(async args=>{const value=await originalList(args);return{data:{check_runs:[...value.data.check_runs,...(prior?[prior]:[])]}};});
  const protectedRun={...f.controller,id:123,event:'schedule',head_branch:'main'};
- f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>({data:args.run_id===123?protectedRun:f.controller}));
+ const originalRun=f.github.rest.actions.getWorkflowRun.getMockImplementation()!;
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>args.run_id===123?{data:protectedRun}:originalRun(args));
  const save=async(args:any)=>{prior={id:100,name:'CI Source Qualification',head_sha:source,...args,app:{id:777,slug:'matrix-ci-gate'}};return{data:prior};};
  f.gateGithub.rest.checks.create.mockImplementation(save);f.gateGithub.rest.checks.update.mockImplementation(save);
  return{current:()=>prior};
 }
+function isolatedMainAppFixture(){
+ const f=docsFixture(),history=retainAppHistory(f),execution='f'.repeat(40);
+ const executionOrigin={schemaVersion:1,controllerSha,controllerRef:'refs/heads/main',executionRef:`refs/heads/ci-execution/${controllerSha}`,executionSha:execution,executionWorkflowSha:execution,workflowPath:'.github/workflows/ci-dedicated.yml',treeSha:tree};
+ const actual={...f.controller,id:123,event:'workflow_dispatch',head_sha:execution,head_branch:`ci-execution/${controllerSha}`};
+ const originalRun=f.github.rest.actions.getWorkflowRun.getMockImplementation()!;
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>args.run_id===123?{data:actual}:originalRun(args));
+ f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:args.branch===actual.head_branch?execution:source}}}));
+ const g:any=f.github;
+ g.rest.git={getCommit:vi.fn(async({commit_sha}:any)=>({data:{sha:commit_sha,tree:{sha:tree},parents:commit_sha===execution?[{sha:controllerSha}]:[]}}))};
+ g.rest.repos.compareCommitsWithBasehead=vi.fn(async()=>({data:{status:'ahead',merge_base_commit:{sha:controllerSha}}}));
+ const run=()=>reconcileSourceQualification(f.github,repo,{...origin,executionOrigin},{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub});
+ return{f,history,executionOrigin,run};
+}
+it('retains a genuine Main push decision through an authenticated isolated reconciliation origin',async()=>{
+ const {f,history,executionOrigin,run}=isolatedMainAppFixture();
+ await run();expect(history.current()).toMatchObject({conclusion:'success',head_sha:source});
+ const first=JSON.parse(history.current().output.summary),proof=first.coverageProof;
+ expect(first).toMatchObject({sourceKind:'main',sourceSha:source,requestingRunId:321,executionOrigin});
+ expect(f.ci).toMatchObject({event:'push',head_branch:'main',head_sha:source});
+ f.artifact.expired=true;f.gateGithub.rest.checks.create.mockClear();
+ await run();expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();
+ expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:100,conclusion:'success'}));
+ expect(JSON.parse(history.current().output.summary)).toMatchObject({executionOrigin,coverageProof:proof});
+});
+it('never reuses a Main decision whose recorded isolated reconciliation origin was substituted',async()=>{
+ const {f,history,run}=isolatedMainAppFixture();await run();
+ const evidence=JSON.parse(history.current().output.summary);
+ expect(evidence.executionOrigin).toBeDefined();evidence.executionOrigin.executionSha=base;
+ history.current().output.summary=JSON.stringify(evidence);f.artifact.expired=true;
+ f.gateGithub.rest.checks.update.mockClear();await run();
+ expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();
+ expect(history.current().conclusion).toBe('failure');
+});
+it('does not turn an isolated reconciliation into genuine Main coverage for a manual requester',async()=>{
+ const {f,history,run}=isolatedMainAppFixture();f.ci.event='workflow_dispatch';
+ await run();expect(history.current()).toMatchObject({status:'in_progress'});
+ expect(history.current().conclusion).not.toBe('success');
+ expect(JSON.parse(history.current().output.summary).coverageProof).toBeUndefined();
+});
 it.each(['expired','deleted','transient-failure','source-api-failure'])('revalidates durable authenticated main decision after artifact %s',async kind=>{
  const f=docsFixture(),history=retainAppHistory(f);await reconcile(f);
  expect(history.current().conclusion).toBe('success');const proof=JSON.parse(history.current().output.summary).coverageProof;
@@ -246,7 +287,7 @@ it('wires the main-only immutable proof after the actual detector and route, wit
  expect(steps.indexOf(record)).toBeGreaterThan(steps.findIndex((step:any)=>step.name==='Select guarded Linux delegation'));expect(steps.indexOf(upload)).toBeGreaterThan(steps.indexOf(record));
  expect(record.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'");expect(upload.if).toBe(record.if);expect(record.run).toBe('node scripts/ci/main-ci-decision.mjs');
  expect(record.env).toEqual({COVERAGE_BASE_SHA:'${{ steps.changed.outputs.base_sha }}',COVERAGE_BOOTSTRAP:'${{ steps.changed.outputs.bootstrap }}',SHOULD_RUN:'${{ steps.changed.outputs.should_run }}',DOCS_CONTRACT_TESTS:'${{ steps.changed.outputs.docs_contract_tests }}',OS_VIEW_PARITY_TESTS:'${{ steps.changed.outputs.os_view_parity_tests }}',DEDICATED_ELIGIBLE:'${{ steps.route.outputs.eligible }}',DEDICATED_REQUIRED:'${{ steps.route.outputs.required }}'});
- expect(upload.uses).toBe('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a');expect(upload.with).toEqual({name:'main-ci-decision-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}',path:'${{ runner.temp }}/main-ci-decision/receipt.json','if-no-files-found':'error','retention-days':1});
+ const pinnedAction=/^actions\/upload-artifact@[a-f0-9]{40}$/;expect(upload.uses).toMatch(pinnedAction);expect('actions/upload-artifact@v7').not.toMatch(pinnedAction);expect('untrusted/upload-artifact@'+'a'.repeat(40)).not.toMatch(pinnedAction);expect(upload.with).toEqual({name:'main-ci-decision-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}',path:'${{ runner.temp }}/main-ci-decision/receipt.json','if-no-files-found':'error','retention-days':1});
  expect(cleanup.if).toBe("always() && github.event_name == 'push' && github.ref == 'refs/heads/main'");expect(cleanup.run).toBe('node scripts/ci/main-ci-decision.mjs --cleanup');
 });
 describe('shadow mode observes without blocking main',()=>{

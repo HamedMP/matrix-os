@@ -1,3 +1,4 @@
+import {verifyRunExecution,isolatedRunPin,dispatchExecutionRef,assertNotRoutingCoverage} from './dedicated-isolated.mjs';
 // All-PR freshness context, owned exclusively by the default controller.
 // CI Results remains the genuine Actions aggregate and is never modified here.
 import {assertDefaultController,verifyCurrentDedicatedSource,verifyCurrentHostedSource} from './dedicated-admission.mjs';
@@ -44,8 +45,13 @@ async function ownedGate(github,repo,pull,workflow,appId){
   // Scheduled/main-push definitions must never inherit a candidate-branch
   // run's app identity. PTR metadata describes the live PR head separately.
   if(['push','schedule'].includes(run.event)&&(run.head_branch!=='main'||!sha.test(run.head_sha||'')))continue;
-  if(run.event==='workflow_dispatch'&&(run.head_branch!=='main'||!sha.test(run.head_sha||'')))continue;
-  if(pull.number===0&&(evidence.sourceKind!=='main'||evidence.headSha!==pull.head.sha||run.head_branch!=='main'||(run.event==='workflow_run'&&run.head_sha!==pull.head.sha)))continue;
+  if(run.event==='workflow_dispatch'){
+   if(isolatedRunPin(run)){
+    const origin=await verifyRunExecution(github,repo,run,path,evidence.controllerSha);
+    if(JSON.stringify(origin)!==JSON.stringify(evidence.executionOrigin))continue;
+   }else if(run.head_branch!=='main'||!sha.test(run.head_sha||''))continue;
+  }
+  if(pull.number===0&&(evidence.sourceKind!=='main'||evidence.headSha!==pull.head.sha||(run.head_branch!=='main'&&!isolatedRunPin(run))||(run.event==='workflow_run'&&run.head_sha!==pull.head.sha)))continue;
   if(run.event==='pull_request_target'&&(run.head_sha!==pull.head.sha||run.head_branch!==pull.head.ref))continue;
   if(run.event==='workflow_run'&&run.head_branch!=='main'&&(run.head_sha!==pull.head.sha||run.head_branch!==pull.head.ref))continue;
   return{prior:{check,evidence},history};
@@ -59,12 +65,13 @@ function logGateError(prNumber,stage,error){logGateEvent(`Source qualification f
 async function currentRequester(github,repo,snapshot,options={}){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refresh CI definition');
- return newestWorkflowRun(github,repo,workflow,run=>{
+ return newestWorkflowRun(github,repo,workflow,async run=>{
   const authenticated=snapshot.baseRef==='main'&&snapshot.sourceKind===undefined?Boolean(mainPrRequest(run,repo,snapshot,workflow,{executionMode:snapshot.executionMode,allModes:options.allModes})):authenticatedRequestingRun(run,repo,snapshot,workflow)||(options.allModes&&authenticatedRequestingRun(run,repo,{...snapshot,executionMode:undefined},workflow));
   if(!authenticated)return false;
+  await verifyRunExecution(github,repo,run,'.github/workflows/ci.yml');
   if(options.afterId!==undefined&&(run.id<=options.afterId||!Number.isFinite(Date.parse(run.created_at))||Date.parse(run.created_at)<Date.parse(options.notBefore)))return false;
   return true;
- },{kind:'requester',sourceKind:snapshot.sourceKind,headSha:snapshot.headSha,headRef:snapshot.headRef});
+ },{kind:'requester',sourceKind:snapshot.sourceKind,headSha:snapshot.headSha,headRef:snapshot.headRef,controllerSha:snapshot.executionControllerSha});
 }
 async function requesterSource(github,repo,run,snapshot){
  if(snapshot.baseRef!=='main'||snapshot.sourceKind!==undefined)return snapshot;
@@ -76,6 +83,7 @@ const sameSource=(a,b)=>a.headSha===b.headSha&&a.baseRef===b.baseRef&&a.baseSha=
 async function verifyHostedReplacement(github,repo,run){
  const {data}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,filter:'latest',per_page:100,request});
  if(!Number.isSafeInteger(data.total_count)||data.total_count>100||!Array.isArray(data.jobs)||data.jobs.length!==data.total_count)throw new Error('Hosted replacement job inventory incomplete');
+ assertNotRoutingCoverage(data.jobs);
  const jobs=data.jobs.filter(job=>job.name==='CI Results');
  if(jobs.length!==1)throw new Error('Genuine hosted CI Results missing');
  const job=jobs[0],prefix=`https://api.github.com/repos/${repo.owner}/${repo.repo}/check-runs/`;
@@ -86,7 +94,7 @@ async function verifyHostedReplacement(github,repo,run){
 }
 async function settings(github,repo){
  const values=await readReviewedConfiguration(github,repo);
- return{controllerSha:values.MATRIX_CI_CONTROLLER_SHA,admitted:values.MATRIX_CI_DEDICATED_ENABLED==='true'||values.MATRIX_CI_DEDICATED_SHADOW==='true',mode:values.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow',mainMode:values.MATRIX_CI_DEDICATED_ENABLED==='true'&&values.MATRIX_CI_DEDICATED_MAIN==='true'?'delegated':'shadow',imageDigest:values.MATRIX_CI_RUNNER_IMAGE_DIGEST,harnessDigest:values.MATRIX_CI_RUNNER_HARNESS_DIGEST};
+ return{isolated:values.MATRIX_CI_ISOLATED_EXECUTION==='true',controllerSha:values.MATRIX_CI_CONTROLLER_SHA,admitted:values.MATRIX_CI_DEDICATED_ENABLED==='true'||values.MATRIX_CI_DEDICATED_SHADOW==='true',mode:values.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow',mainMode:values.MATRIX_CI_DEDICATED_ENABLED==='true'&&values.MATRIX_CI_DEDICATED_MAIN==='true'?'delegated':'shadow',imageDigest:values.MATRIX_CI_RUNNER_IMAGE_DIGEST,harnessDigest:values.MATRIX_CI_RUNNER_HARNESS_DIGEST};
 }
 export async function reconcileSourceQualification(github,repo,controller,options){
  assertDefaultController(repo,controller);
@@ -114,7 +122,12 @@ export async function reconcileSourceQualification(github,repo,controller,option
   if(candidates){
    const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:options.runId,request});
    if(run.id!==options.runId||run.run_attempt!==options.runAttempt||run.workflow_id!==workflow.id||run.path!==path||!['schedule','push','workflow_run','pull_request_target','workflow_dispatch'].includes(run.event)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))throw new Error('Untrusted maintenance slot origin');
-   if(run.event==='workflow_dispatch'&&(run.head_branch!=='main'||!sha.test(run.head_sha||'')))throw new Error('Untrusted manual maintenance checkout');
+   if(run.event==='workflow_dispatch'){
+    if(isolatedRunPin(run)){
+     const origin=await verifyRunExecution(github,repo,run,path,controller.sha);
+     if(JSON.stringify(origin)!==JSON.stringify(controller.executionOrigin))throw new Error('Unbound isolated maintenance execution');
+    }else if(run.head_branch!=='main'||!sha.test(run.head_sha||''))throw new Error('Untrusted manual maintenance checkout');
+   }
    pulls=maintenanceBatch(catalog,run.created_at);
   }else pulls=[];
  }
@@ -128,6 +141,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
   examined++;
   const {prior,history}=await ownedGate(github,repo,pull,workflow,options.gateAppId);
   let snapshot={prNumber:pull.number,headSha:pull.head.sha,headRef:pull.head.ref,baseSha:pull.base.sha,baseRef:pull.base.ref,sourceSha:pull.merge_commit_sha};
+  if(config.isolated)snapshot.executionControllerSha=config.controllerSha;
   const admitted=config.admitted&&same(pull.head?.repo?.full_name,repo)&&pull.state==='open'&&pull.draft===false&&['ready-for-ci','fast-ci'].every(label=>pull.labels?.some(value=>value.name===label));
   const previouslyAdmitted=history||Boolean(prior&&(prior.evidence.admittedPreviously===true||prior.evidence.notApplicable!==true));
   const recovery=!admitted&&previouslyAdmitted;
@@ -145,7 +159,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
    else if(admitted||recovery)canonicalMain=await resolveMainPrSnapshot(github,repo,pull);
    if(canonicalMain&&!sameRecovery)snapshot={...snapshot,baseSha:canonicalMain.baseSha,sourceSha:canonicalMain.sourceSha,mergeParents:canonicalMain.mergeParents};
   }catch(error){if(isDeferredReconciliation(error))throw error;if(!(error instanceof Error))throw error;discoveryError=error;}
-  const evidence={schemaVersion:1,admittedPreviously:previouslyAdmitted||admitted,...snapshot,...(sourceBindings.length?{sourceBindings}:{}),controllerSha:controller.sha,controllerRef:controller.ref,controllerAttempt:options.runAttempt};
+  const evidence={schemaVersion:1,admittedPreviously:previouslyAdmitted||admitted,...snapshot,...(sourceBindings.length?{sourceBindings}:{}),controllerSha:controller.sha,controllerRef:controller.ref,controllerAttempt:options.runAttempt,...(controller.executionOrigin?{executionOrigin:controller.executionOrigin}:{})};
   // Keep the authenticated generation while source/API validation fails closed.
   // Otherwise its already-running hosted replacement becomes older than itself.
   if(sameRecovery){evidence.recoveryStartedAt=old.recoveryStartedAt;evidence.recoveryAfterRunId=old.recoveryAfterRunId;}
@@ -207,7 +221,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
    const marker=()=>write(null,recovery?'Waiting for fresh exact-source hosted replacement':'Waiting for fresh exact-source hosted and Linux coverage',refresh,()=>{markerAttempted=true;});
    try{
     if(duplicate)await marker();
-    else{await cycle.dispatchAfterMarker(recovery,marker,{...repo,workflow_id:'ci.yml',ref:'main',inputs:{pr_number:String(pull.number),head_sha:snapshot.headSha,base_sha:snapshot.baseSha,source_sha:snapshot.sourceSha,...(recovery?{execution_mode:'hosted-only'}:{})},request},()=>{dispatchAttempted=true;});dispatched++;}
+    else{const refreshRef=config.isolated?await dispatchExecutionRef(github,repo,config.controllerSha,'.github/workflows/ci.yml'):'main';await cycle.dispatchAfterMarker(recovery,marker,{...repo,workflow_id:'ci.yml',ref:refreshRef,inputs:{pr_number:String(pull.number),head_sha:snapshot.headSha,base_sha:snapshot.baseSha,source_sha:snapshot.sourceSha,...(recovery?{execution_mode:'hosted-only'}:{})},request},()=>{dispatchAttempted=true;});dispatched++;}
    }catch(error){
     if(isDeferredReconciliation(error))throw error;
     // An authenticated request rejection is known not to have dispatched. Network,

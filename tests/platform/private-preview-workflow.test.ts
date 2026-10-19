@@ -36,8 +36,9 @@ function evaluateExpression(expression: string, context: Record<string, unknown>
 
 function concurrencyGroup(eventName: string, bundleOnly = false, action = '', pr: number | string = 1907): string {
   const context = {
-    github: { event_name: eventName, event: { action, pull_request: { number: eventName === 'pull_request' ? pr : undefined }, label: { name: 'preview-vps' } }, run_id: 42 },
+    github: { ref: eventName === 'schedule' ? 'refs/heads/main' : 'refs/heads/ci-execution/' + 'a'.repeat(40), event_name: eventName, event: { action, pull_request: { number: eventName === 'pull_request' ? pr : undefined }, label: { name: 'preview-vps' } }, run_id: 42 },
     inputs: { pr: String(pr), bundle_only: bundleOnly },
+    vars: { MATRIX_CI_ISOLATED_EXECUTION: 'true' },
   };
   return workflow.concurrency.group.replace(/\$\{\{([\s\S]*?)\}\}/g,
     (_match, expression: string) => String(evaluateExpression(expression, context)));
@@ -74,6 +75,8 @@ esac
       GITHUB_OUTPUT: output,
       GITHUB_REPOSITORY: 'HamedMP/matrix-os',
       GITHUB_REF: 'refs/pull/1907/merge',
+      EXECUTION_ORIGIN_VERIFIED: 'true',
+      EXECUTION_ORIGIN_MODE: 'pull_request',
       EVENT_NAME: 'pull_request',
       EVENT_ACTION: 'synchronize',
       PR_NUMBER: '1907',
@@ -122,7 +125,9 @@ describe('Private Preview bundles in the Preview workflow', () => {
     });
     expect(status).toBe(0);
     expect(outputs).toMatchObject({ action: 'bundle', head_sha: liveSha, head_ref: 'fresh-feature', author: 'fresh-author', requested_version: '', teardown_private: 'false' });
-    expect(workflow.jobs.build!.steps.find((candidate) => candidate.uses === 'actions/checkout@v6')?.with?.ref).toBe('${{ needs.gate.outputs.head_sha }}');
+    const checkout = workflow.jobs.build!.steps.find((candidate) => candidate.uses?.startsWith('actions/checkout@'));
+    expect(checkout?.uses).toMatch(/^actions\/checkout@v[67]$/);
+    expect(checkout?.with?.ref).toBe('${{ needs.gate.outputs.head_sha }}');
     expect((await decide({ EVENT_NAME: 'workflow_dispatch' })).outputs.action).toBe('deploy');
   });
 
@@ -134,11 +139,11 @@ describe('Private Preview bundles in the Preview workflow', () => {
     expect(concurrencyGroup('workflow_dispatch', true)).toBe(publication);
     expect(concurrencyGroup('workflow_dispatch', true, '', 1908)).not.toBe(publication);
     expect(evaluateExpression(workflow.concurrency['cancel-in-progress'], {
-      github: { event_name: 'workflow_dispatch', event: { action: '' } },
+      github: { event_name: 'workflow_dispatch', event: { action: '' } }, inputs: { reap: false },
     })).toBe(true);
     for (const [eventName, action] of [['pull_request', 'closed'], ['schedule', '']]) {
       expect(evaluateExpression(workflow.concurrency['cancel-in-progress'], {
-        github: { event_name: eventName, event: { action } },
+        github: { event_name: eventName, event: { action } }, inputs: { reap: false },
       })).toBe(false);
     }
   });
@@ -148,13 +153,13 @@ describe('Private Preview bundles in the Preview workflow', () => {
     expect(concurrencyGroup('workflow_dispatch', false, '', '123-bundle')).not.toBe(publication);
     const deployment = concurrencyGroup('workflow_dispatch', false, '', 123);
     expect(concurrencyGroup('workflow_dispatch', true, '', '123-bundle')).not.toBe(deployment);
-    expect(concurrencyGroup('schedule', false, '', '')).toBe('preview-vps-reaper-active');
+    expect(concurrencyGroup('schedule', false, '', '')).toBe('preview-route-vps-reaper-active');
   });
 
   it.each(['bundle', 'deploy', 'deploy_existing', 'verify', 'teardown', 'skip', 'unknown'])
     ('runs only the intended jobs for action %s, including failed/skipped builds', (action) => {
       for (const buildResult of ['success', 'failure', 'skipped']) {
-        const context = { needs: { gate: { outputs: { action } }, build: { result: buildResult } } };
+        const context = { needs: { execution_origin: { result: 'success', outputs: { allowed: 'true' } }, gate: { outputs: { action } }, build: { result: buildResult } } };
         const expected: Record<string, boolean> = {
           build: action === 'deploy' || action === 'bundle',
           publish_bundle: action === 'bundle' && buildResult === 'success',
@@ -178,6 +183,15 @@ describe('Private Preview bundles in the Preview workflow', () => {
     expect(result.outputs).toEqual({});
   });
 
+  it('requires verified isolated authority for P deployments and retains the legacy Main fence', async () => {
+    const request = { EVENT_NAME: 'workflow_dispatch', REQUESTED_VERSION: 'v2026.10.03-pr1907-1-1-0123456' };
+    const isolated = { ...request, GITHUB_REF: 'refs/heads/ci-execution/' + 'a'.repeat(40), EXECUTION_ORIGIN_MODE: 'isolated' };
+    expect((await decide(isolated)).outputs.action).toBe('deploy_existing');
+    expect((await decide({ ...isolated, EXECUTION_ORIGIN_VERIFIED: 'false' })).status).toBe(1);
+    expect((await decide({ ...isolated, EXECUTION_ORIGIN_MODE: 'legacy' })).status).toBe(1);
+    expect((await decide({ ...request, GITHUB_REF: 'refs/heads/main', EXECUTION_ORIGIN_MODE: 'legacy' })).outputs.action).toBe('deploy_existing');
+  });
+
   it('does not publish a fork or invalid SHA through manual bundle-only dispatch', async () => {
     for (const head of [
       { sha: headSha, ref: 'feature', repo: { full_name: 'someone/matrix-os' } },
@@ -197,10 +211,10 @@ describe('Private Preview bundles in the Preview workflow', () => {
   it('builds the bundle, then publishes it with provenance from trusted scripts without provisioning anything', () => {
     expect(workflow.jobs.build!.if).toContain("needs.gate.outputs.action == 'bundle'");
     const job = workflow.jobs.publish_bundle!;
-    expect(job.needs).toEqual(['gate', 'build']);
+    expect(job.needs).toEqual(['execution_origin', 'gate', 'build']);
     expect(job.if).toContain("needs.gate.outputs.action == 'bundle'");
     expect(job.if).toContain("needs.build.result == 'success'");
-    expect(step('publish_bundle', 'Checkout trusted release scripts').with).toMatchObject({ ref: 'main' });
+    expect(step('publish_bundle', 'Checkout trusted release scripts').with).toMatchObject({ ref: '${{ needs.execution_origin.outputs.trusted_ref }}' });
     const publish = step('publish_bundle', 'Publish release with PR provenance (register-only, no channel)').run!;
     expect(publish).toContain('--channel none');
     expect(publish).toContain('--source-pr "$PR"');

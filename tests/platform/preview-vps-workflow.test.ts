@@ -149,11 +149,11 @@ describe('Preview VPS provisioning workflow', () => {
       }),
       expect.objectContaining({
         if: "needs.gate.outputs.action == 'deploy_existing'",
-        with: { ref: 'main' },
+        with: { ref: '${{ needs.execution_origin.outputs.trusted_ref }}' },
       }),
     ]);
     expect(workflow.jobs.gate.steps.find((step: { name?: string }) => step.name === 'Decide action').run)
-      .toContain('[ "$GITHUB_REF" != "refs/heads/main" ]');
+      .toContain('[ "${EXECUTION_ORIGIN_VERIFIED:-false}" != "true" ]');
     expect(deploy.steps.find((step: { name?: string }) => step.name === 'Provision or resume preview VPS').run)
       .toContain('PREVIEW_MACHINE_ID="$accepted_machine_id" ./scripts/wait-preview-provisioning.sh');
   });
