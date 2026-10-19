@@ -1,3 +1,4 @@
+import { registerPreviewDeletionRoute } from './customer-vps-preview-deletion-routes.js';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
@@ -444,5 +445,6 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
     }
   });
 
+  registerPreviewDeletionRoute(app, deps.service, requirePlatformAuth);
   return app;
 }

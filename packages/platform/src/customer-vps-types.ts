@@ -75,6 +75,7 @@ export interface ResizeResponse {
 }
 
 export interface StatusResponse {
+  previewDeletionConfirmed?: boolean;
   machineId: string;
   clerkUserId: string;
   handle: string;
@@ -107,6 +108,7 @@ export interface DeployTarget {
 export type SpeechActivationTarget = CustomerVpsSpeechActivationTarget;
 
 export interface CustomerVpsService {
+  previewCleanupStatus(scope: { owner: string; pr: number }): Promise<{ confirmed: boolean }>;
   provision(input: ProvisionRequest, options?: ProvisionOptions): Promise<ProvisionResponse>;
   provisionForCheckout(
     input: ProvisionRequest,

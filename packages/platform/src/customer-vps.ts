@@ -1,3 +1,4 @@
+import { previewDeletionProof, previewScopeDeletionProof } from './customer-vps-preview-deletion.js';
 import type { UserMachineRecord } from './db.js';
 import {
   claimUserMachineDelete,
@@ -545,12 +546,14 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
     },
 
+    previewCleanupStatus: (scope) => previewScopeDeletionProof(deps.db, deps.hetzner, scope),
+
     async status(machineId) {
       const row = await getUserMachine(deps.db, machineId);
       if (!row) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
-      return statusResponse(row);
+      return { ...statusResponse(row), ...await previewDeletionProof(row, deps.hetzner, deps.db) };
     },
 
     async delete(machineId) {
