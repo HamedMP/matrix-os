@@ -24,7 +24,6 @@ export const activeEntitlement = (overrides: Partial<BillingEntitlement> = {}): 
   effectiveUntil: null, updatedAt: '2026-05-30T00:00:00.000Z',
   ...overrides,
 });
-
 export function useCustomerVpsFixture(assign: (value: PlatformDB | undefined) => void = () => {}) {
   let db: PlatformDB | undefined;
   beforeEach(async () => { ({ db } = await createTestPlatformDb()); assign(db); });
