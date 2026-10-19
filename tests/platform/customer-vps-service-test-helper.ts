@@ -7,15 +7,13 @@ import type { BillingEntitlement } from '../../packages/platform/src/billing.js'
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
-export function createTestConfig(overrides: Partial<ReturnType<typeof loadCustomerVpsConfig>> = {}) {
-  return { ...loadCustomerVpsConfig({
+export const createTestConfig = (overrides: Partial<ReturnType<typeof loadCustomerVpsConfig>> = {}) => ({ ...loadCustomerVpsConfig({
     PLATFORM_PORT: '9000', PLATFORM_SECRET: 'platform-secret', HETZNER_API_TOKEN: 'token',
     S3_ACCESS_KEY_ID: 'r2-access-key', S3_SECRET_ACCESS_KEY: 'r2-secret-key',
     S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'matrixos-sync',
     POSTHOG_TOKEN: 'phc_public', POSTHOG_PROJECT_TOKEN: 'phc_project', NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',
     POSTHOG_HOST: 'https://eu.i.posthog.com', NEXT_PUBLIC_POSTHOG_HOST: 'https://eu.posthog.com',
-  }), ...overrides };
-}
+  }), ...overrides });
 export const activeEntitlement = (overrides: Partial<BillingEntitlement> = {}): BillingEntitlement => ({
   clerkUserId: 'user_123', source: 'stripe',
   planSlug: 'matrix_builder', status: 'active',
@@ -38,11 +36,9 @@ export function useCustomerVpsFixture(assign: (value: PlatformDB | undefined) =>
     const service = createCustomerVpsService({
       db, config: createTestConfig(), hetzner, systemStore,
       tokenFactory: () => ({
-        token: 'registration-token', hash: hashRegistrationToken('registration-token'),
-        expiresAt: '2099-01-01T00:00:00.000Z',
+        token: 'registration-token', hash: hashRegistrationToken('registration-token'), expiresAt: '2099-01-01T00:00:00.000Z',
       }),
-      machineIdFactory: () => '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
-      postgresPasswordFactory: () => 'postgres-secret',
+      machineIdFactory: () => '9f05824c-8d0a-4d83-9cb4-b312d43ff112', postgresPasswordFactory: () => 'postgres-secret',
       now: () => new Date('2026-04-26T12:00:00.000Z'),
       ...overrides,
     });
