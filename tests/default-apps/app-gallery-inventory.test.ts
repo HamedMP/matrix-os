@@ -127,10 +127,17 @@ it("refreshes both generated parsers and gallery branding in a repository and re
         await readFile(join(app, "src/generated-inventory.ts"), "utf8"),
       );
       if (app.endsWith("app-gallery")) {
-        await writeFile(
-          join(target, "src/generated-contract.ts"),
-          await readFile(join(app, "src/generated-contract.ts"), "utf8"),
-        );
+        for (const snapshot of [
+          "generated-contract.ts",
+          "generated-store-policy.ts",
+          "generated-store.ts",
+          "generated-store-gateway.ts",
+        ]) {
+          await writeFile(
+            join(target, "src", snapshot),
+            await readFile(join(app, "src", snapshot), "utf8"),
+          );
+        }
         await writeFile(
           join(target, "sync-brand-tokens.mjs"),
           await readFile(join(app, "sync-brand-tokens.mjs"), "utf8"),

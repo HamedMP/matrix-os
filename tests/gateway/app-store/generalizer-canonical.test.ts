@@ -21,6 +21,19 @@ function fixture() {
 }
 beforeEach(()=>{vi.clearAllMocks();mocks.sources.mockResolvedValue({ownerApiKey:{state:'setup_required'}});});
 describe('canonical Matrix AI publishing preparation',()=>{
+  it('edits a large source through a short exact patch within the relay output budget',async()=>{
+    const f=fixture();try{
+      const source=files();const original=`${'// neutral source\n'.repeat(2500)}const title = "My garden";\n`;
+      source.set('src/main.ts',Buffer.from(original));
+      const reply=JSON.stringify({edits:[{path:'src/main.ts',replacements:[{before:'"My garden"',after:'"Garden"'}]}],report:{ai:'completed',changes:[]},listing});
+      expect(Buffer.byteLength(reply)).toBeLessThan(512);
+      f.fetchImpl.mockResolvedValue(Response.json({choices:[{finish_reason:'stop',message:{content:reply}}]}));
+      const status=await f.generalizer.status();const prepared=await f.generalizer.generalize(source,{accessSourceId:status.accessSourceId},'',AbortSignal.timeout(2000));
+      expect(prepared!.files.get('src/main.ts')!.toString()).toBe(original.replace('"My garden"','"Garden"'));
+      expect(source.get('src/main.ts')!.toString()).toBe(original);expect(f.fetchImpl).toHaveBeenCalledOnce();
+      const body=JSON.parse(f.fetchImpl.mock.calls[0]![1]!.body as string);expect(body.max_tokens).toBe(8192);expect(body.messages[1].content).toContain('short exact unique replacements');
+    }finally{f.queue.close();}
+  });
   it('offers exact provider/model consent and uses the text-only relay with funded admission, never the SDK or app grants',async()=>{
     const f=fixture();try{const admitted=vi.spyOn(f.queue,'run');const status=await f.generalizer.status();expect(status.available).toBe(true);expect(status.label).toContain('Matrix AI Gateway');expect(status.label).toContain('Cloudflare');expect(status.label).toContain(buildBundledModelCatalog().find(model=>model.id===MATRIX_DEFAULT_MODEL_ID)!.displayName);expect(status.accessSourceId).toMatch(/^matrix_cloudflare_[a-f0-9]{32}$/);
       const prepared=await f.generalizer.generalize(files(),{accessSourceId:status.accessSourceId},'',AbortSignal.timeout(2000));expect(prepared?.report.ai).toBe('completed');expect(f.getCredential).toHaveBeenCalledOnce();expect(admitted).toHaveBeenCalledOnce();expect(mocks.sdk).not.toHaveBeenCalled();expect(mocks.launch).not.toHaveBeenCalled();
