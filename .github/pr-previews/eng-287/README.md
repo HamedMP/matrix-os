@@ -3,7 +3,8 @@
 Captured October 14, 2026 from the changed platform `account-deletion/page.ts`, real account routes and record exporter, against an isolated local PostgreSQL 16 database. 205 synthetic posts; no customer data, customer exports or deletion requests. Auth is a fixture bearer verifier plus injected Clerk session; object inventory/download transport is a synthetic local fixture. These captures do not prove real Clerk authentication, deployed S3/R2 credentials or backup freshness.
 
 - 375, 768 and 1280 px: real rendered account utility page, source timestamps/sizes, no document horizontal overflow.
-- Video: three numbered JSON page downloads, one failed continuation and retry, final completion.
+- Video: three numbered JSON page downloads, one failed continuation and retry, final completion. Captured before the explicit save-confirmation step was added; in the current page each download is followed by a confirmation ("I saved page N") before the next page is offered.
+- `record-page-confirm-1280.png` and `record-page-confirm-375.png`: current page state after a records download starts, showing the download-again and save-confirmation controls, rendered against a stubbed Clerk session and stubbed records route.
 - Downloaded JSON pages contained 205 distinct post IDs without omission/duplication.
 - Downloaded custom-format snapshot through the account inventory link; restored with `pg_restore --no-owner --no-privileges` into a clean isolated PostgreSQL database. Two synthetic `owner_notes` rows matched source exactly. SHA-256: `3b6e22589ab3dc356a6d37aae8162385ce5c10efbe823bdbc9c7a51ec439084b`.
 

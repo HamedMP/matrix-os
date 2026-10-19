@@ -11,13 +11,13 @@ export function getAccountDeletionPage(options:{nonce:string;publishableKey?:str
  <p>Download your data or finish migration before the deadline. Existing computers remain accessible during the grace period. Transfer ownership of organizations and shared projects first; other members’ data stays with them.</p>
  <p id="status" role="status" aria-live="polite">Sign in to manage your account.</p><p id="error" role="alert"></p>
  <p id="apple-revocation">If you used Sign in with Apple, after your Matrix account is deleted, check your Apple Account and remove Matrix OS if it is still listed. Follow <a href="https://support.apple.com/102571" rel="noreferrer">Apple’s instructions</a>. Removing Apple access alone does not delete your Matrix account.</p>
- <button id="signin" type="button">Sign in</button><section id="account" hidden><h2>Keep a copy of your data</h2><div class="actions"><button id="export" type="button">Download backed-up files</button><button id="platform-export" type="button">Download account records</button><a href="/runtime">Open your computers for migration</a></div><button id="records-more" type="button" hidden>Download next records page</button><p id="records-note" role="status" aria-live="polite"></p><div id="downloads"></div><button id="more" type="button" hidden>Load more files</button><p id="export-note"></p>
+ <button id="signin" type="button">Sign in</button><section id="account" hidden><h2>Keep a copy of your data</h2><div class="actions"><button id="export" type="button">Download backed-up files</button><button id="platform-export" type="button">Download account records</button><a href="/runtime">Open your computers for migration</a></div><div class="actions"><button id="records-again" type="button" hidden>Download this page again</button><button id="records-confirm" type="button" hidden>I saved this page</button><button id="records-more" type="button" hidden>Download next records page</button></div><p id="records-note" role="status" aria-live="polite"></p><div id="downloads"></div><button id="more" type="button" hidden>Load more files</button><p id="export-note"></p>
  <p>You can export without requesting deletion.</p><h2>Delete your account</h2><div id="confirm"><label><input type="checkbox" id="ack"> I understand that deletion removes my account, computers and personal data.</label><button id="delete" class="danger" type="button" disabled>Schedule account deletion</button></div><button id="cancel" type="button" hidden>Cancel account deletion</button></section>
  </main>${options.publishableKey?`<script id="clerk-script" nonce="${nonce}" async crossorigin="anonymous" data-clerk-publishable-key="${key}" src="${CLERK_SCRIPT_ORIGIN}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>`:''}
  <script nonce="${nonce}">
  const el=id=>document.getElementById(id);
- let busy=false,current=null,cursor=null,recordsCursor=null,recordsPage=0;
- const controls=['delete','cancel','export','platform-export','more','records-more'];
+ let busy=false,current=null,cursor=null,recordsCursor=null,recordsPage=0,pendingRecords=null;
+ const controls=['delete','cancel','export','platform-export','more','records-more','records-again','records-confirm'];
  function failure(){el('error').textContent='The request could not be completed. Please try again.';}
  async function api(path,body){
    const token=await window.Clerk.session.getToken();if(!token)throw Error('unauthorized');
@@ -55,15 +55,31 @@ export function getAccountDeletionPage(options:{nonce:string;publishableKey?:str
  el('more').addEventListener('click',()=>action(()=>files(cursor)));
  async function records(next){
    const data=await api('/api/account/delete/export/platform'+(next?'?cursor='+encodeURIComponent(next):''));
-   const page=next?recordsPage+1:1;
-   const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
-   try{const a=document.createElement('a');a.href=url;a.download='matrix-account-page-'+String(page).padStart(3,'0')+'.json';a.click();}finally{URL.revokeObjectURL(url);}
-   recordsPage=page;recordsCursor=data.nextCursor||null;
-   el('records-more').hidden=!recordsCursor;
-   el('records-note').textContent='Downloaded account records page '+page+'. '+(recordsCursor?'Download the next page to finish. Keep every numbered JSON file.':'Account records export complete. Keep all '+page+' JSON page(s).');
+   // Only the owner's confirmation advances the cursor: the browser cannot tell a saved file from a cancelled or blocked download.
+   pendingRecords={page:next?recordsPage+1:1,nextCursor:typeof data.nextCursor==='string'?data.nextCursor:null,json:JSON.stringify(data,null,2)};
+   deliverRecords();
+ }
+ function deliverRecords(){
+   const pending=pendingRecords;if(!pending)return;
+   const url=URL.createObjectURL(new Blob([pending.json],{type:'application/json'}));
+   try{const a=document.createElement('a');a.href=url;a.download='matrix-account-page-'+String(pending.page).padStart(3,'0')+'.json';a.click();}finally{URL.revokeObjectURL(url);}
+   recordsState('Download of account records page '+pending.page+' started. Once the file is saved, confirm it to continue. If the download was cancelled or blocked, download page '+pending.page+' again.');
+ }
+ function confirmRecords(){
+   const pending=pendingRecords;if(!pending)return;
+   pendingRecords=null;recordsPage=pending.page;recordsCursor=pending.nextCursor;
+   recordsState('Saved account records page '+pending.page+'. '+(recordsCursor?'Download the next page to finish. Keep every numbered JSON file.':'Account records export complete. Keep all '+pending.page+' JSON page(s).'));
+ }
+ function recordsState(note){
+   const pending=pendingRecords;
+   el('records-again').hidden=!pending;el('records-confirm').hidden=!pending;el('records-more').hidden=Boolean(pending)||!recordsCursor;
+   if(pending){el('records-again').textContent='Download page '+pending.page+' again';el('records-confirm').textContent='I saved page '+pending.page;}
+   el('records-note').textContent=note;
  }
  el('platform-export').addEventListener('click',()=>action(()=>records(null)));
  el('records-more').addEventListener('click',()=>action(()=>records(recordsCursor)));
+ el('records-again').addEventListener('click',()=>action(async()=>deliverRecords()));
+ el('records-confirm').addEventListener('click',()=>action(async()=>confirmRecords()));
  el('signin').addEventListener('click',()=>location.assign('/sign-in?redirect_url='+encodeURIComponent('/account/delete')));
  async function boot(){try{if(!window.Clerk)throw Error('missing');await window.Clerk.load();if(!window.Clerk.session)return;display(await api('/api/account/delete'));el('signin').hidden=true;el('account').hidden=false;}catch(e){failure();}}
  const script=el('clerk-script');if(window.Clerk)boot();else if(script){script.addEventListener('load',boot);script.addEventListener('error',failure);}else{el('signin').disabled=true;failure();}

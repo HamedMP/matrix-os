@@ -19,7 +19,7 @@ function pageHarness(fetch: (path: string, init: RequestInit) => Promise<Respons
       replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); } };
   }
   // Fixed, small DOM fixture; no production or customer browser is involved.
-  const ids = ['account','signin','status','error','delete','cancel','export','platform-export','more','ack','confirm','downloads','export-note','clerk-script','records-more','records-note'];
+  const ids = ['account','signin','status','error','delete','cancel','export','platform-export','more','ack','confirm','downloads','export-note','clerk-script','records-more','records-note','records-again','records-confirm'];
   const elements = Object.fromEntries(ids.map(id => [id, makeElement()]));
   elements.account.hidden = true;
   const html = getAccountDeletionPage({ nonce: 'fixture', publishableKey: 'pk_fixture' });
