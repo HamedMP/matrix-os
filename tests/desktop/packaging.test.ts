@@ -13,7 +13,9 @@ async function expectSameArtwork(actual: Buffer, expected: Buffer): Promise<void
     sharp(expected).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
   ]);
   expect(actualPixels.info).toEqual(expectedPixels.info);
-  expect(actualPixels.data).toEqual(expectedPixels.data);
+  // Compare every decoded byte without recursively walking millions of
+  // Buffer entries in the assertion library under parallel CI load.
+  expect(actualPixels.data.equals(expectedPixels.data)).toBe(true);
 }
 
 function readPngDimensions(path: string): { width: number; height: number } {
