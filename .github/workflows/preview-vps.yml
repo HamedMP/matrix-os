@@ -501,7 +501,7 @@ jobs:
             if(pr.state!=='open'||pr.head.sha!==context.payload.inputs.expected_head||!pr.labels.some(l=>l.name==='preview'))throw new Error('Queued preview source changed before publication');
             const {data:lease}=await github.rest.repos.getDeployment({...context.repo,deployment_id:Number(context.payload.inputs.preview_lease),request:{timeout:10000}});
             const {data:states}=await github.rest.repos.listDeploymentStatuses({...context.repo,deployment_id:lease.id,per_page:1,request:{timeout:10000}});
-            if(lease.creator?.login!=='github-actions[bot]'||lease.sha!==pr.head.sha||lease.payload?.schema!=='matrix-preview-v1'||lease.payload.pr!==pr.number||lease.payload.head!==pr.head.sha||Date.parse(lease.payload.expiresAt)<=Date.now()||!['pending','in_progress','success'].includes(states[0]?.state))throw new Error('Queued preview reservation expired or stopped');
+            if(lease.creator?.login!=='github-actions[bot]'||lease.sha!==pr.head.sha||lease.payload?.schema!=='matrix-preview-v1'||lease.payload.pr!==pr.number||lease.payload.head!==pr.head.sha||Date.parse(lease.payload.expiresAt)<=Date.now()||!['pending','in_progress','success'].includes(states[0]?.state)||states[0]?.description?.startsWith('Cleanup started: '))throw new Error('Queued preview reservation expired or stopped');
       - name: Publish release (register-only, no channel)
         if: needs.gate.outputs.action == 'deploy'
         env:

@@ -1,3 +1,4 @@
+import { stopExistingReview } from "./preview-review-recovery.mjs";
 import {
   eligible,
   labeled,
@@ -31,7 +32,7 @@ export async function publishReviewComments({
 }) {
   // Active reviews refresh every pass. Rotate waiting comments so a large
   // backlog cannot exhaust the repository's hourly Actions API allowance.
-  const candidates = prs.filter(labeled),
+  const candidates = prs,
     urgent = candidates.filter(
       (p) =>
         leases.some((r) => r.payload.pr === p.number) ||
@@ -52,6 +53,14 @@ export async function publishReviewComments({
   for (const pr of selected) {
     const row = leases.find((r) => r.payload.pr === pr.number);
     if (row && retiring.some((r) => r.id === row.id)) continue;
+    if (!row && (!labeled(pr) || pr.state !== "open")) {
+      const snapshot = await reviewPublication(github, repo, pr.number);
+      if (snapshot.head === pr.head.sha && (!snapshot.labeled || !snapshot.open))
+        await stopExistingReview({
+          github, repo, pr, snapshot, waiting, active, occupied,
+        });
+      continue;
+    }
     let label = eligible(pr)
         ? "Queued"
         : pr.labels?.some((l) => l.name === "preview-collaboration")

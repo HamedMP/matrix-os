@@ -1,4 +1,5 @@
 import {
+  cleanupStarted,
   SHA,
   TASK,
   ownedLease,
@@ -39,7 +40,10 @@ export async function verifyPreviewRequest(github, repo, input) {
     per_page: 1,
     request,
   });
-  if (!["pending", "in_progress", "success"].includes(states[0]?.state))
+  if (
+    cleanupStarted(states[0] ?? {}) ||
+    !["pending", "in_progress", "success"].includes(states[0]?.state)
+  )
     throw new Error("Preview reservation is not active");
   const { data: live } = await github.rest.pulls.get({
     ...repo,

@@ -1,7 +1,10 @@
+import { collectReviewPrs } from "./preview-review-recovery.mjs";
 import { loadPreviewHistory } from "./preview-review-history.mjs";
 import { originReadSnapshot } from "./preview-review-api.mjs";
 import { publishReviewComments } from "./preview-review-report.mjs";
 import {
+  CLEANUP_PREFIX,
+  cleanupStarted,
   CAPACITY,
   TTL_MS,
   TASK,
@@ -62,17 +65,9 @@ export async function reconcilePreviews({
       }
     }
   }
-  const prs = [...open];
-  for (const row of leases) {
-    if (!prs.some((p) => p.number === row.payload.pr)) {
-      const { data } = await github.rest.pulls.get({
-        ...repo,
-        pull_number: row.payload.pr,
-        request,
-      });
-      prs.push(data);
-    }
-  }
+  const prs = await collectReviewPrs({
+    github, repo, open, leases, requestedPr, now,
+  });
   const workflowRuns = new Map();
   const since = new Date(
     Math.min(now, ...leases.map((r) => Date.parse(r.created_at))) - 600000,
@@ -207,9 +202,14 @@ export async function reconcilePreviews({
     reservations: leases,
     machines,
     pendingPrs,
+    owner,
     now,
   }).cleanup;
   for (const row of retiring) {
+    // This persisted barrier survives retries and label re-additions. Writers
+    // must observe it before cancellation or provider deletion can begin.
+    if (!cleanupStarted(row))
+      await status(row, "in_progress", `${CLEANUP_PREFIX}Reconciling preview shutdown`);
     const pr = prs.find((p) => p.number === row.payload.pr);
     await upsertComment(
       github,
@@ -246,7 +246,7 @@ export async function reconcilePreviews({
         }
       }
       if (draining) {
-        await status(row, "in_progress", "Stopping superseded preview jobs");
+        await status(row, "in_progress", `${CLEANUP_PREFIX}Stopping superseded preview jobs`);
         continue;
       }
       // An empty run set immediately after an ambiguous dispatch is not proof that
@@ -259,7 +259,7 @@ export async function reconcilePreviews({
         await status(
           row,
           "pending",
-          "Waiting to reconcile preview dispatch before cleanup",
+          `${CLEANUP_PREFIX}Waiting to reconcile preview dispatch before cleanup`,
         );
         continue;
       }
@@ -282,7 +282,7 @@ export async function reconcilePreviews({
         await status(
           row,
           "in_progress",
-          "Waiting for physical preview cleanup confirmation",
+          `${CLEANUP_PREFIX}Waiting for physical preview cleanup confirmation`,
         );
         continue;
       }
@@ -310,7 +310,7 @@ export async function reconcilePreviews({
       await status(
         row,
         "error",
-        "Cleanup unavailable; capacity remains reserved",
+        `${CLEANUP_PREFIX}Cleanup unavailable; capacity remains reserved`,
       );
     }
   }
@@ -320,6 +320,7 @@ export async function reconcilePreviews({
     reservations: leases,
     machines,
     pendingPrs,
+    owner,
     now,
   });
   for (const pr of legacyDispatchDraining || !history.complete
@@ -351,7 +352,11 @@ export async function reconcilePreviews({
       head: pr.head.sha,
       controllerSha,
       desktop,
-      platform: files.some((f) => f.filename.startsWith("packages/platform/")),
+      platform: files.some((f) =>
+        [f.filename, f.previous_filename].some((path) =>
+          path?.startsWith("packages/platform/"),
+        ),
+      ),
       expiresAt: new Date(
         Math.min(
           now + TTL_MS,
@@ -421,6 +426,7 @@ export async function reconcilePreviews({
     reservations: leases,
     machines,
     pendingPrs,
+    owner,
     now,
   });
   const waiting = prs

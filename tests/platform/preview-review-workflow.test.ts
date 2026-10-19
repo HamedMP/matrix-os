@@ -105,13 +105,14 @@ describe("unified preview workflow authorization and retained checks", () => {
         expiresAt: "2099-10-22T00:00:00Z",
       },
     };
+    const latest = { state: "in_progress", description: "Build/deploy in progress" };
     const github = {
       rest: {
         pulls: { get: async () => ({ data: live }) },
         repos: {
           getDeployment: async () => ({ data: lease }),
           listDeploymentStatuses: async () => ({
-            data: [{ state: "in_progress" }],
+            data: [latest],
           }),
         },
       },
@@ -121,6 +122,9 @@ describe("unified preview workflow authorization and retained checks", () => {
       payload: { inputs: { pr: "1", expected_head: head, preview_lease: "1" } },
     };
     await expect(run(github, context)).resolves.toBeUndefined();
+    latest.description = "Cleanup started: Waiting for physical preview cleanup confirmation";
+    await expect(run(github, context)).rejects.toThrow("stopped");
+    latest.description = "Build/deploy in progress";
     lease.payload.expiresAt = "2000-01-01T00:00:00Z";
     await expect(run(github, context)).rejects.toThrow("expired");
     lease.payload.expiresAt = "2099-10-22T00:00:00Z";
