@@ -1,3 +1,4 @@
+import type { KernelCredentialResolver } from "../kernel-credentials.js";
 import type { SpawnFn } from "../dispatcher.js";
 
 export interface GatewayConfig {
@@ -6,6 +7,7 @@ export interface GatewayConfig {
   model?: string;
   maxTurns?: number;
   spawnFn?: SpawnFn;
+  kernelCredentialResolver?: KernelCredentialResolver;
   runningVersion?: string;
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }

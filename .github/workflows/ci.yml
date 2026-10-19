@@ -683,6 +683,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build test prerequisites once
         run: bun run test:prepare
+      - name: Verify shared runtime authority on PostgreSQL
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const client = new pg.Client({ connectionString: process.env.MATRIX_TEST_POSTGRES_URL, connectionTimeoutMillis: 10000 });
+          try { await client.connect(); await client.query('CREATE DATABASE matrix_ci_platform_fixture_admin'); }
+          finally { await client.end(); }
+          NODE
+          MATRIX_PLATFORM_FIXTURE_POSTGRES_URL="${MATRIX_TEST_POSTGRES_URL%/matrix_test}/matrix_ci_platform_fixture_admin" pnpm exec vitest run tests/platform/shared-preview-runtime.test.ts --maxWorkers=1 --no-file-parallelism
+
       - name: Verify funded settlement on PostgreSQL
         run: |
           set -euo pipefail

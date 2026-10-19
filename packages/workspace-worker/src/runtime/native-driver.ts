@@ -1,3 +1,4 @@
+import { runtimeExecutionEnvironment } from './execution-environment.js';
 import { DirectoryBackup, type DirectoryBackupRecord } from '@cloudflare/sandbox';
 import type { RuntimeCheckpoint, RuntimeDriver, RuntimeJob, RuntimeLease, RuntimeExecutionControl } from './contracts.js';
 import { runtimeDiagnostic } from './diagnostic.js';
@@ -37,15 +38,7 @@ export class NativeRuntimeDriver implements RuntimeDriver {
     const credentials=await resolveRuntimeCredentials(this.resolveCredentials,{ownerId,generation});
     this.boundOwner=ownerId;
     this.credentials=credentials;
-    this.executionEnv = {
-      HOME: '/workspace/home', MATRIX_HOME: '/workspace/home', NODE_ENV: 'production',
-      MATRIX_AUTH_TOKEN:credentials.authToken, ANTHROPIC_API_KEY:credentials.inferenceKey,
-      DATABASE_URL:credentials.databaseUrl,
-      // Shared compute leases cover one attached SDK task. Detached work needs
-      // its own durable lease before it can survive task completion and sleep.
-      // https://code.claude.com/docs/en/env-vars#variables
-      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS:'1',
-    };
+    this.executionEnv = runtimeExecutionEnvironment(credentials);
     if (!this.container.running) {
       this.container.start({
         image: this.container.images.workspace, enableInternet: true,
@@ -139,7 +132,7 @@ export class NativeRuntimeDriver implements RuntimeDriver {
         text=text.split(JSON.stringify(value).slice(1,-1)).join('[redacted]');
       }
     }
-    return text.replace(/sk-[A-Za-z0-9_-]+/g,'[redacted-key]').replace(/postgres(?:ql)?:\/\/[^\s"']+/g,'[redacted-database]').slice(-4096);
+    return text.replace(/sk-matrix-funded-[A-Za-z0-9_.:-]+\.[A-Za-z0-9_-]{43}/g,'[redacted-key]').replace(/sk-[A-Za-z0-9_-]+/g,'[redacted-key]').replace(/postgres(?:ql)?:\/\/[^\s"']+/g,'[redacted-database]').slice(-4096);
   }
 
   private clearCredentials():void {this.executionEnv={};this.credentials=undefined;}

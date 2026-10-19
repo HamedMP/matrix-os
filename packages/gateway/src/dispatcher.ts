@@ -29,6 +29,7 @@ import {
 import {
   buildKernelCredentialLaunch,
   type KernelCredentialAccessSourceId,
+  type KernelCredentialResolver,
 } from "./kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "./funded-ai-credential-manager.js";
 import type { FundedAiRequestClass } from "@matrix-os/contracts";
@@ -44,6 +45,7 @@ export interface DispatchOptions {
   spawnFn?: SpawnFn;
   maxConcurrency?: number;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  kernelCredentialResolver?: KernelCredentialResolver;
   /** Called once per completed kernel query with usage metadata only
       (trace/session id, model, latency, token counts, error category input).
       Never receives message content. Failures are swallowed. */
@@ -221,7 +223,10 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         });
       }
 
-      const credentialLaunch = await buildKernelCredentialLaunch(
+      const credentialLaunch = opts.kernelCredentialResolver
+        ? await opts.kernelCredentialResolver({ model: dispatchModel, accessSourceId: entry.kernelOverrides?.accessSourceId,
+            requestClass: entry.kernelOverrides?.fundedRequestClass ?? "interactive", signal: entry.abortController?.signal })
+        : await buildKernelCredentialLaunch(
         homePath,
         process.env,
         entry.kernelOverrides?.accessSourceId,
@@ -376,7 +381,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           let batchResultData: KernelResult | undefined;
           let batchSessionId = "";
 
-          const credentialLaunch = await buildKernelCredentialLaunch(
+          const credentialLaunch = opts.kernelCredentialResolver
+            ? await opts.kernelCredentialResolver({ model: opts.model, requestClass: "background" })
+            : await buildKernelCredentialLaunch(
             homePath,
             process.env,
             undefined,

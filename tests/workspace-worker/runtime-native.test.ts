@@ -23,6 +23,26 @@ function fixture() {
 }
 
 describe('native Cloudflare runtime adapter', () => {
+  it('starts the actual gateway with the exact owner-scoped Matrix authority, not an Anthropic key', async () => {
+    const f=fixture();
+    f.resolveCredentials.mockImplementation(async ({ownerId,generation})=>({ownerId,generation,expiresAt:Date.now()+30*60_000,
+      authToken:'generation-auth-secret',databaseUrl:'postgres://owner@db/runtime',matrixGateway:{ownerId,machineId:'machine_a',
+        handle:'swp-2758-aabbccdd',runtimeSlot:'swp-2758-aabbccdd',platformOrigin:'https://platform.example.com',
+        relayOrigin:'https://relay.example.com',runtimeToken:'R'.repeat(64),maxRunMs:300_000}}) as any);
+    await f.driver.start('owner',null,2);
+    const env=f.commands.find(command=>command.args.at(-1)==='start')!.options.env;
+    expect(env).toMatchObject({RUNTIME_INFERENCE_MODE:'matrix-gateway',MATRIX_WORKSPACE_OWNER_ID:'owner',MATRIX_WORKSPACE_GENERATION:'2',
+      MATRIX_USER_ID:'owner',MATRIX_CLERK_USER_ID:'owner',MATRIX_MACHINE_ID:'machine_a',MATRIX_RUNTIME_SLOT:'swp-2758-aabbccdd',
+      MATRIX_FUNDED_AI_RELAY_URL:'https://relay.example.com',MATRIX_FUNDED_AI_RUNTIME_TOKEN:'R'.repeat(64)});
+    expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    expect(f.container.start.mock.calls[0]?.[0]).not.toHaveProperty('env');
+  });
+  it('redacts the entire opaque Matrix credential, including its secret suffix, from native failures', async () => {
+    const f=fixture();const secret='A'.repeat(43);
+    f.container.exec.mockRejectedValue(new Error('private sk-matrix-funded-credential_123.'+secret));
+    const error=await f.driver.start('owner',null,1).catch(error=>error);
+    expect(error.message).not.toContain(secret);
+  });
   it('does not touch the container when owner credentials are denied', async () => {
     const f=fixture(); f.resolveCredentials.mockRejectedValue(new Error('private-resolver-secret'));
     await expect(f.driver.start('owner',null,1)).rejects.toThrow('Runtime credentials unavailable');

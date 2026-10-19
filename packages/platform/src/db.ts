@@ -808,6 +808,7 @@ export interface AccountDeletionJobsTable {
 import type { GooglePurchaseTable, GoogleCheckoutAttributionTable } from './billing/google-tracking-migration.js';
 
 export interface PlatformDatabase {
+  shared_preview_runtime_bindings: import('./shared-preview-runtime.js').SharedPreviewRuntimeBindingTable;
   billing_google_purchases: GooglePurchaseTable;
   billing_google_checkout_attribution: GoogleCheckoutAttributionTable;
   preview_drive_grants: PreviewDriveGrantsTable;

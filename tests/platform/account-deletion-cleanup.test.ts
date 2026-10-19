@@ -78,6 +78,22 @@ import { vi } from 'vitest';
 import { createAccountDeletionAdapters } from '../../packages/platform/src/account-deletion/adapters.js';
 const ctx = { clerkUserId:'user_owner',appleTokens:[] };
 describe('production cleanup adapters', () => {
+  it.each([false, true])('handles shared runtime cleanup without a VPS provider (retired=%s)', async (retired) => {
+    const db = await fixture();
+    try {
+      const { registerSharedPreviewRuntime } = await import('../../packages/platform/src/shared-preview-runtime.js');
+      const machine = await registerSharedPreviewRuntime(db, { ownerId: ctx.clerkUserId, sourcePr: 2758,
+        workerOrigin: 'https://owner.example.workers.dev' });
+      if (retired) await db.executor.updateTable('user_machines').set({ status: 'deleted', deleted_at: new Date().toISOString() })
+        .where('machine_id', '=', machine.machineId).execute();
+      const remove = vi.fn();
+      const adapters = createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync',
+        customerVpsService: { delete: remove }, fetch: vi.fn(async () => Response.json({ data: [], total_count: 0 })) });
+      if (retired) await expect(adapters.vps(ctx)).resolves.toBeUndefined();
+      else await expect(adapters.vps(ctx)).rejects.toThrow('Shared runtime cleanup required');
+      expect(remove).not.toHaveBeenCalled();
+    } finally { await db.destroy(); }
+  });
   it.each([false,true])('retains Custom MCP credentials when cleanup is unavailable (runtime=%s)',async(liveRuntime)=> {
     const db=await fixture();
     try {

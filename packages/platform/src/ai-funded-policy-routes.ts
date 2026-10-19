@@ -1,3 +1,4 @@
+import { resolveFundedRuntimeMachine } from './shared-preview-runtime.js';
 import {
   FundedAiAuthorizationRequestSchema,
   FundedAiExecutionRecoveryRequestSchema,
@@ -140,7 +141,7 @@ async function authenticatedRuntimeMachine(
   runtimeSlot: string,
 ): Promise<Awaited<ReturnType<typeof getRunningUserMachineByHandle>> | undefined> {
   const handle = HandleSchema.parse(c.req.param("handle"));
-  const machine = await getRunningUserMachineByHandle(options.db, handle, runtimeSlot);
+  const machine = await resolveFundedRuntimeMachine(options.db, handle, runtimeSlot);
   if (!machine) return undefined;
   const authorization = c.req.header("authorization");
   const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;

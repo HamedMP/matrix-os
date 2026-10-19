@@ -12,6 +12,8 @@ const projects = [
   ['packages/edge-router', 'tsconfig.json', false],
   ['desktop', 'tsconfig.json', false],
   ['desktop', 'tsconfig.node.json', false],
+  ['packages/workspace-worker', 'tsconfig.json', false],
+  ['packages/workspace-worker', 'tsconfig.runtime.json', false],
 ];
 
 // Use the alias directly: package-local tsc must remain TypeScript 5 for builds

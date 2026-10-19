@@ -1,3 +1,4 @@
+import { migrateSharedPreviewRuntimes } from './migrations/shared-preview-runtimes.js';
 import { migrateAccountDeletion } from './migrations/account-deletion.js';
 import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
@@ -29,6 +30,7 @@ export interface PlatformMigrationStep {
 export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'identity', run: migrateIdentity },
   { name: 'user-machines', run: migrateUserMachines },
+  { name: 'shared-preview-runtimes', run: migrateSharedPreviewRuntimes },
   { name: 'ai-funded', run: migrateAiFunded },
   { name: 'ai-credit-history', run: migrateAiCreditHistory },
   { name: 'speech', run: migrateSpeech },

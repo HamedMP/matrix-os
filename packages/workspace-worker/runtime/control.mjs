@@ -70,7 +70,7 @@ if (operation === 'hydrate') {
       if (Date.now() > deadline || !await alive()) {
         let detail = await readFile(`${root}/gateway.log`,'utf8').catch((readError) => { if (readError.code==='ENOENT') return 'Gateway log unavailable'; throw readError; });
         for (const value of Object.values(process.env)) { if (value && value.length>=6) detail=detail.split(value).join('[redacted]'); }
-        detail=detail.replace(/sk-[A-Za-z0-9_-]+/g,'[redacted-key]').replace(/postgres(?:ql)?:\/\/[^\s"']+/g,'[redacted-database]');
+        detail=detail.replace(/sk-matrix-funded-[A-Za-z0-9_.:-]+\.[A-Za-z0-9_-]{43}/g,'[redacted-key]').replace(/sk-[A-Za-z0-9_-]+/g,'[redacted-key]').replace(/postgres(?:ql)?:\/\/[^\s"']+/g,'[redacted-database]');
         console.error(detail.slice(-4096)); throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
