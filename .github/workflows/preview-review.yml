@@ -1,0 +1,149 @@
+name: PR Preview Queue
+run-name: preview-review-v1 ${{ github.event_name }}
+on:
+  pull_request_target:
+    types: [labeled, unlabeled, synchronize, reopened, closed]
+  workflow_run:
+    workflows: [Preview VPS, Preview Desktop]
+    types: [completed]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      requested_pr:
+        description: PR whose comment should be prioritized
+        type: string
+        default: ""
+permissions:
+  contents: read
+concurrency:
+  group: preview-review-${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && 'scheduler' || 'router' }}
+  cancel-in-progress: false
+jobs:
+  disabled:
+    if: vars.MATRIX_PREVIEW_REVIEW_ENABLED != 'true' && github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          retries: 0
+          script: |
+            const pr = context.payload.pull_request;
+            if (pr.head.repo.full_name.toLowerCase() !== 'hamedmp/matrix-os') return;
+            const body = '<!-- matrix-preview-review-v1 -->\n**PR preview: awaiting reviewed controller activation**\n\nThe preview queue is not enabled. Existing CI checks still run normally. Follow ENG-325 activation instructions before requesting runtime capacity.';
+            const comments=[];
+            for(let page=1;page<=50;page++){
+              const {data}=await github.rest.issues.listComments({...context.repo,issue_number:pr.number,per_page:100,page,request:{timeout:10000}});
+              comments.push(...data);if(data.length<100)break;
+              if(page===50)throw new Error('Preview comment inventory limit reached');
+            }
+            const old = comments.find(c => c.user.login === 'github-actions[bot]' && c.body.startsWith('<!-- matrix-preview-review-v1 -->'));
+            if (old) await github.rest.issues.updateComment({...context.repo, comment_id: old.id, body, request: {timeout: 10000}});
+            else await github.rest.issues.createComment({...context.repo, issue_number: pr.number, body, request: {timeout: 10000}});
+  route:
+    name: Route preview metadata to reviewed execution
+    if: vars.MATRIX_PREVIEW_REVIEW_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Validate controller pin
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+        with:
+          script: |
+            if (!/^[a-f0-9]{40}$/.test(process.env.CONTROLLER || '')) throw new Error('Reviewed preview controller required');
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Dispatch serialized preview reconciliation
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+        with:
+          retries: 0
+          script: |
+            // Coalesce label/completion bursts before expensive controller proof.
+            // The scheduled pass recovers events skipped during the coalescing window.
+            const executionRef = `ci-execution/${process.env.CONTROLLER}`;
+            const {data:recent} = await github.rest.actions.listWorkflowRuns({...context.repo,workflow_id:'preview-review.yml',event:'workflow_dispatch',branch:executionRef,per_page:1,request:{timeout:10000}});
+            if (recent.workflow_runs.some(r => r.event === 'workflow_dispatch' && r.head_branch === executionRef && Date.parse(r.created_at) > Date.now()-300000)) {
+              core.notice('Preview reconciliation already requested within five minutes');
+              return;
+            }
+            const {pathToFileURL} = require('node:url');
+            const {resolve} = require('node:path');
+            const {dispatchExecutionRef} = await import(pathToFileURL(resolve('scripts/ci/dedicated-isolated.mjs')).href);
+            const branch = await dispatchExecutionRef(github, context.repo, process.env.CONTROLLER, '.github/workflows/preview-review.yml');
+            await github.rest.actions.createWorkflowDispatch({...context.repo, workflow_id:'preview-review.yml', ref:branch, inputs:{requested_pr:String(context.payload.pull_request?.number ?? '')}, request:{timeout:10000}});
+  origin:
+    name: Verify preview scheduler execution origin
+    if: vars.MATRIX_PREVIEW_REVIEW_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      allowed: ${{ steps.origin.outputs.allowed }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Prove immutable reviewed execution
+        id: origin
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        with:
+          retries: 0
+          script: |
+            const {pathToFileURL} = require('node:url');
+            const {resolve} = require('node:path');
+            const {verifyIsolatedExecutionOrigin} = await import(pathToFileURL(resolve('scripts/ci/execution-origin.mjs')).href);
+            await verifyIsolatedExecutionOrigin(github, context.repo, {ref:context.ref,sha:context.sha,workflowRef:process.env.WORKFLOW_REF,workflowSha:process.env.WORKFLOW_SHA}, {workflowPath:'.github/workflows/preview-review.yml',controllerSha:process.env.CONTROLLER});
+            core.setOutput('allowed','true');
+  reconcile:
+    name: Reconcile sixteen preview slots and reviewer comments
+    needs: origin
+    if: needs.origin.result == 'success' && needs.origin.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+      deployments: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Reconcile source-bound queue
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+          PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+          PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+          REQUESTED_PR: ${{ inputs.requested_pr }}
+        with:
+          retries: 0
+          script: |
+            const {pathToFileURL} = require('node:url');
+            const {resolve} = require('node:path');
+            const load = name => import(pathToFileURL(resolve('scripts/ci',name)).href);
+            const {reconcilePreviews} = await load('preview-review.mjs');
+            const {platformClient} = await load('preview-review-api.mjs');
+            const result = await reconcilePreviews({github,repo:context.repo,platform:platformClient({origin:process.env.PLATFORM_PUBLIC_URL,token:process.env.PLATFORM_SECRET}),controllerSha:process.env.CONTROLLER,executionRef:`ci-execution/${process.env.CONTROLLER}`,owner:process.env.PREVIEW_CLERK_USER_ID,requestedPr:Number(process.env.REQUESTED_PR)||undefined});
+            await core.summary.addHeading('PR preview queue').addRaw(`${result.occupied}/16 slots occupied; ${result.waiting} PRs waiting.`,true).write();
