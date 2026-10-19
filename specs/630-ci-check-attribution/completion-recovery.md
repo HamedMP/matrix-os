@@ -22,3 +22,21 @@
 Review and merge the PR normally. The release workflow and icon test apply to new main runs. The lease helper requires green-main verification followed by the existing idle-host policy update and `MATRIX_CI_CONTROLLER_SHA` activation procedure. Do not mark historical failures successful or change routing flags. Validate a new main run and host-bundle gate after activation.
 
 This internal CI repair changes no product UI or public API. Operator documentation is in `docs/dev/fast-ci.md`; public product documentation and surface captures are not applicable.
+
+## Neutral diagnostic release follow-up
+
+The first merge exposed a second contract mismatch: redundant controllers settle
+`Dedicated CI Results` as `neutral`, while the release gate accepted only
+`success` or `skipped` for every listed check. Accept only that exact diagnostic's
+terminal neutral result. Keep the successful same-SHA CI requirement, wait for
+pending diagnostics, and reject neutral test jobs and every failure, cancellation
+or timeout. A neutral diagnostic grants no Linux coverage and cannot hide a
+failed required lane.
+
+Regression coverage executes the release shell against successful hosted work
+plus a neutral diagnostic, pending-to-neutral transitions, and real lane and
+controller failures. After review and merge, verify the new Main commit's actual
+CI and host-bundle release. Preserve the older failed checks and GitHub's stuck
+pre-queue retry; do not manually rewrite their results. No controller pin or
+root policy change is needed for this release-only follow-up. This remains an
+internal CI contract change with no product UI or public API documentation.

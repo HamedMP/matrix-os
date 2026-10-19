@@ -148,8 +148,9 @@ jobs:
 
               # Workflow completion can precede the jobs API catching up.
               # Empty conclusions are pending evidence, including on jobs
-              # already marked completed. Never publish from an empty inventory.
-              pending_jobs="$(printf '%s' "$run_jobs" | jq --arg shadow "${DEDICATED_SHADOW_ONLY:-false}" '.jobs | map(select(($shadow == "true" and .name == "Verified Dedicated Linux Qualification") | not)) | if length == 0 then 1 else map(select(.status != "completed" or .conclusion == null or .conclusion == "")) | length end')"
+              # already marked completed. A neutral diagnostic is not a CI job
+              # inventory; never publish until actual workflow jobs are visible.
+              pending_jobs="$(printf '%s' "$run_jobs" | jq --arg shadow "${DEDICATED_SHADOW_ONLY:-false}" '.jobs | map(select(($shadow == "true" and .name == "Verified Dedicated Linux Qualification") | not)) | map(select((.name == "Dedicated CI Results" and .status == "completed" and .conclusion == "neutral") | not)) | if length == 0 then 1 else map(select(.status != "completed" or .conclusion == null or .conclusion == "")) | length end')"
               if [ "$pending_jobs" -gt 0 ]; then
                 if [ "$SECONDS" -ge "$deadline" ]; then
                   echo "Timed out waiting for complete CI job results for $TARGET_SHA" >&2
@@ -160,7 +161,9 @@ jobs:
                 continue
               fi
 
-              failed_job="$(printf '%s' "$run_jobs" | jq -r --arg shadow "${DEDICATED_SHADOW_ONLY:-false}" '.jobs | map(select(.conclusion != "success" and .conclusion != "skipped")) | map(select(($shadow == "true" and .name == "Verified Dedicated Linux Qualification") | not)) | .[0] | if . then "\(.name) (\(.conclusion // "unknown"))" else "" end')"
+              # Redundant authenticated controller work settles neutral without
+              # coverage credit. CI workflow success and every other job still gate release.
+              failed_job="$(printf '%s' "$run_jobs" | jq -r --arg shadow "${DEDICATED_SHADOW_ONLY:-false}" '.jobs | map(select(.conclusion != "success" and .conclusion != "skipped")) | map(select((.name == "Dedicated CI Results" and .status == "completed" and .conclusion == "neutral") | not)) | map(select(($shadow == "true" and .name == "Verified Dedicated Linux Qualification") | not)) | .[0] | if . then "\(.name) (\(.conclusion // "unknown"))" else "" end')"
               if [ -n "$failed_job" ]; then
                 echo "CI workflow run passed but a job was not successful for $TARGET_SHA: $failed_job" >&2
                 printf '%s\n' "$run_jobs" >&2
