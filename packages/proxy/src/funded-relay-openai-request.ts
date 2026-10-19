@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { FUNDED_GLM_FLASH } from "./funded-relay-model.js";
+import { MANAGED_WORKERS_AI_MODEL_IDS, managedWorkersAiModel } from "@matrix-os/contracts";
 import { BoundedJsonSchema } from "./funded-relay-request.js";
 
 const Text = z.string().max(1024 * 1024);
@@ -32,11 +32,8 @@ const RequestSchema = z.object({
     type: z.literal("function"), function: z.object({ name: Name }).strict(),
   }).strict()]).optional(),
   parallel_tool_calls: z.boolean().optional(),
-  // GLM cannot disable reasoning: omission and unsupported OpenAI aliases
-  // select provider max. Keep ordinary managed turns on the low budget while
-  // preserving deliberate high/max requests.
-  // https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/
-  reasoning_effort: z.enum(["low", "high", "max"]).default("low"),
+  // The selected model validates its own supported effort levels below.
+  reasoning_effort: z.enum(["none", "low", "medium", "high", "xhigh", "max"]).optional(),
   temperature: z.number().min(0).max(2).optional(), top_p: z.number().min(0).max(1).optional(),
   frequency_penalty: z.number().min(-2).max(2).optional(), presence_penalty: z.number().min(-2).max(2).optional(),
   stop: z.union([z.string().max(1024), z.array(z.string().max(1024)).max(4)]).optional(),
@@ -49,12 +46,17 @@ const RequestSchema = z.object({
 
 export function serializeFundedOpenAiRequest(value: unknown) {
   const parsed = RequestSchema.parse(value);
-  if (parsed.model !== FUNDED_GLM_FLASH) throw new Error("Unsupported funded AI model");
+  const model = managedWorkersAiModel(parsed.model);
+  if (!model) throw new Error("Unsupported funded AI model");
+  if (parsed.reasoning_effort !== undefined && !model.reasoningEfforts.includes(parsed.reasoning_effort)) {
+    throw new Error("Unsupported reasoning effort");
+  }
+  const reasoningEffort = parsed.reasoning_effort ?? (model.reasoningEfforts.includes("low") ? "low" : undefined);
   // A client without an output limit still receives a bounded generation.
   const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? 8192;
-  const request = { ...parsed, max_tokens: maxTokens };
-  const { max_tokens: _max, max_completion_tokens: _maxCompletion, ...rest } = parsed;
-  return { request, body: JSON.stringify({ ...rest, max_tokens: maxTokens,
+  const request = { ...parsed, reasoning_effort: reasoningEffort, max_tokens: maxTokens };
+  const { max_tokens: _max, max_completion_tokens: _maxCompletion, ...rest } = request;
+  return { request, body: JSON.stringify({ ...rest, [model.outputTokenField]: maxTokens,
     ...(parsed.stream ? { stream_options: { include_usage: true } } : {}), store: false }) };
 }
 
@@ -62,12 +64,13 @@ export function serializeFundedOpenAiRequest(value: unknown) {
  * never from a caller URL/header. This is the prepaid Workers AI route.
  * https://developers.cloudflare.com/ai-gateway/usage/rest-api/#call-a-workers-ai-model
  */
-export function workersAiTarget(gatewayBaseUrl: string): { url: string; gatewayId: string } {
+export function workersAiTarget(gatewayBaseUrl: string, modelId: string = MANAGED_WORKERS_AI_MODEL_IDS[0]): { url: string; gatewayId: string } {
+  if (!managedWorkersAiModel(modelId)) throw new Error("Unsupported funded AI model");
   const parts = new URL(gatewayBaseUrl).pathname.split("/");
   const accountId = parts[2];
   const gatewayId = parts[3];
   if (!/^[a-f0-9]{32}$/.test(accountId ?? "") || !/^[a-zA-Z0-9_-]{1,64}$/.test(gatewayId ?? "")) {
     throw new Error("Invalid Workers AI gateway configuration");
   }
-  return { url: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${FUNDED_GLM_FLASH}`, gatewayId: gatewayId! };
+  return { url: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${modelId}`, gatewayId: gatewayId! };
 }

@@ -1,3 +1,4 @@
+import { migrateGooglePurchases } from '../../packages/platform/src/billing/google-tracking-migration.js';
 import { Kysely, sql } from 'kysely';
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { describe, expect, it } from 'vitest';
@@ -11,6 +12,7 @@ async function fixture() {
   const instance = await createTestPGlite();
   const kysely = new Kysely<PlatformDatabase>({ dialect: instance.dialect });
   await migratePlatformSchema(kysely);
+  await migrateGooglePurchases(kysely);
   await bootstrapPlatformCollaborationDatabase(kysely as never);
   await bootstrapPlatformOrganizationDatabase(kysely as never);
   const wrap = (executor: PlatformDB['executor']): PlatformDB => ({ kysely, executor, ready: Promise.resolve(),
@@ -21,8 +23,12 @@ describe('account deletion personal database cleanup', () => {
   it('supports an owner with no billing or VPS and is idempotent', async () => {
     const db = await fixture();
     try {
+      await db.executor.insertInto('billing_google_purchases').values({ subscription_id: 'sub_cleanup', transaction_id: 'in_cleanup',
+        clerk_user_id: 'user_empty', payload: '{"clientId":"123.456"}', created_at: '2026-10-15', sent_at: null, attempts: 0,
+        available_at: '2026-10-15', lease_until: null, lease_token: null }).execute();
       await expect(assertDeletionOwnershipSafe(db, 'user_empty')).resolves.toBeUndefined();
       await expect(eraseOwnerPlatformData(db, 'user_empty')).resolves.toBeUndefined();
+      expect(await db.executor.selectFrom('billing_google_purchases').selectAll().execute()).toEqual([]);
       await expect(eraseOwnerPlatformData(db, 'user_empty')).resolves.toBeUndefined();
     } finally { await db.destroy(); }
   });

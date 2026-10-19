@@ -21,7 +21,7 @@ export const GALLERY_CATEGORIES: readonly string[] = [
 // Mirrors LAUNCH_BOT_RECIPE_IDS in packages/ui/src/chat-agents/recipe-handoff.ts.
 /** The templates only a computer offers: an inspiration with one of these ids is never listed. */
 export const LAUNCH_RECIPE_IDS: readonly string[] = [
-  "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book",
+  "matrix-bot", "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book",
   "event-request-desk", "writing-bot", "echo", "spend-review",
 ];
 

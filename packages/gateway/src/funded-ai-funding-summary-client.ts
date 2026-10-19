@@ -1,3 +1,4 @@
+import { createCanonicalPhaseReadiness, type CanonicalPhaseReadinessOptions } from "./chat/canonical-phase-readiness.js";
 import {
   FundedAiSafeErrorSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
@@ -82,15 +83,17 @@ export async function readBoundedFundedJson(response: Response): Promise<unknown
 
 export function createFundedAiFundingSummaryClient(
   config: FundedAiRuntimeConfig,
-  dependencies: {
+  dependencies: CanonicalPhaseReadinessOptions & {
     fetchFn?: typeof fetch;
     makeTimeoutSignal?: (ms: number) => AbortSignal;
   } = {},
 ): FundedAiFundingSummaryReader {
+  const scope = createCanonicalPhaseReadiness(config.isolatedChat, dependencies);
   const fetchFn = dependencies.fetchFn ?? fetch;
   const makeTimeoutSignal = dependencies.makeTimeoutSignal ?? AbortSignal.timeout;
   return {
     async getFundingSummary(options = {}) {
+      const phaseHeaders = scope.requestHeaders(config);
       const timeout = makeTimeoutSignal(config.requestTimeoutMs);
       const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
       try {
@@ -102,13 +105,14 @@ export function createFundedAiFundingSummaryClient(
             authorization: `Bearer ${config.runtimeAuthToken}`,
             "content-type": "application/json",
             accept: "application/json",
+            ...phaseHeaders,
           },
           body,
         });
         let response = await request(JSON.stringify({ includeChatAvailability: true }));
         // Older strict platforms reject the opt-in field. Retry only once,
         // sharing the original deadline and returning unknown Chat availability.
-        if (response.status === 400) {
+        if (response.status === 400 && !scope.canonical) {
           const rejection = FundedAiSafeErrorSchema.safeParse(await readBoundedFundedJson(response));
           if (!rejection.success || rejection.data.error.code !== "invalid_request") {
             throw new FundedAiFundingSummaryClientError();

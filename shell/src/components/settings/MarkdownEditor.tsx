@@ -9,13 +9,16 @@ interface MarkdownEditorProps {
   onSave: (content: string) => void | Promise<void>;
   placeholder?: string;
   saving?: boolean;
+  validationError?: (content: string) => string | null;
 }
 
-export function MarkdownEditor({ content, onSave, placeholder, saving }: MarkdownEditorProps) {
+export function MarkdownEditor({ content, onSave, placeholder, saving, validationError }: MarkdownEditorProps) {
   // react-doctor-disable-next-line react-doctor/no-derived-useState -- editable draft buffer, not a mirror of `content`: seeded from the prop, then diverges as the user types, committed via onSave, and reset to `content` on the prev-prop edge below. It cannot be computed in render because it holds uncommitted user input.
   const [value, setValue] = useState(content);
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [dirty, setDirty] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const draftError = validationError?.(value) ?? null;
   // react-doctor-disable-next-line react-doctor/no-derived-useState, react-doctor/rerender-state-only-in-handlers -- transition tracker, not a mirror of `content`: `prevContent` IS read in render (the `content !== prevContent` guard below). It must be state, not a ref, so the corrective synchronous re-render runs and resets the draft when the incoming content changes.
   const [prevContent, setPrevContent] = useState(content);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -29,13 +32,21 @@ export function MarkdownEditor({ content, onSave, placeholder, saving }: Markdow
   }
 
   const handleMarkdownChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setSaveError(null);
     setValue(e.target.value);
     setDirty(e.target.value !== content);
   };
 
   const handleSave = async () => {
-    await onSave(value);
-    setDirty(false);
+    if (draftError) return;
+    setSaveError(null);
+    try {
+      await onSave(value);
+      setDirty(false);
+    } catch (error: unknown) {
+      console.warn("Markdown save failed", error instanceof Error ? error.name : "UnknownError");
+      setSaveError("Unable to save. Your changes are still here; try again.");
+    }
   };
 
   return (
@@ -69,13 +80,19 @@ export function MarkdownEditor({ content, onSave, placeholder, saving }: Markdow
             size="sm"
             className="h-7 text-xs"
             onClick={handleSave}
-            disabled={!dirty || saving}
+            disabled={!dirty || saving || !!draftError}
           >
             <SaveIcon className="size-3 mr-1" />
             {saving ? "Saving..." : "Save"}
           </Button>
         </div>
       </div>
+
+      {(draftError || saveError) && (
+        <p role="alert" className="px-3 py-2 text-sm text-destructive">
+          {draftError ?? saveError}
+        </p>
+      )}
 
       {mode === "edit" ? (
         <textarea

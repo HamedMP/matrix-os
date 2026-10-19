@@ -2,11 +2,16 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-const { execFileMock } = vi.hoisted(() => ({
+const { execFileMock, platformMock } = vi.hoisted(() => ({
   execFileMock: vi.fn(),
+  platformMock: vi.fn(() => "darwin"),
 }));
 vi.mock("node:child_process", () => ({
   execFile: execFileMock,
+}));
+vi.mock("node:os", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:os")>(),
+  platform: platformMock,
 }));
 import {
   login,
@@ -31,6 +36,8 @@ async function createTokenStorePath(fileName: string): Promise<string> {
 
 beforeEach(() => {
   tempDirs = [];
+  execFileMock.mockReset();
+  platformMock.mockReturnValue("darwin");
   vi.useFakeTimers();
 });
 
@@ -41,6 +48,78 @@ afterEach(async () => {
 });
 
 describe("requestDeviceCode", () => {
+  const validDeviceResponse = {
+    deviceCode: "device-1",
+    userCode: "BCDF-GHJK",
+    verificationUri: "https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK",
+    expiresIn: 900,
+    interval: 5,
+  };
+
+  it.each([
+    null,
+    {},
+    { ...validDeviceResponse, deviceCode: "" },
+    { ...validDeviceResponse, deviceCode: 123 },
+    { ...validDeviceResponse, userCode: "BCDF\nGHJK" },
+    { ...validDeviceResponse, userCode: "" },
+    { ...validDeviceResponse, expiresIn: "900" },
+    { ...validDeviceResponse, expiresIn: -1 },
+    { ...validDeviceResponse, expiresIn: 100_000 },
+    { ...validDeviceResponse, interval: 0 },
+    { ...validDeviceResponse, interval: 1.5 },
+    { ...validDeviceResponse, interval: 10_000 },
+    { ...validDeviceResponse, verificationUri: "file:///C:/Windows/example.exe" },
+    { ...validDeviceResponse, verificationUri: "https://user:secret@example.com/auth/device" },
+    { ...validDeviceResponse, verificationUri: "https://example.com/auth/device\n" },
+  ])("rejects malformed device responses at the response boundary (%#)", async (body) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(body)));
+    vi.stubGlobal("fetch", fetchMock);
+    execFileMock.mockClear();
+
+    await expect(requestDeviceCode(config)).rejects.toMatchObject({
+      code: "login_failed",
+      message: "Request failed",
+    });
+
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects invalid JSON with a safe login error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not-json")));
+    await expect(requestDeviceCode(config)).rejects.toMatchObject({
+      code: "login_failed",
+      message: "Request failed",
+    });
+  });
+
+  it.each([
+    { error: new TypeError("connection closed while reading response"), code: "platform_unreachable" },
+    { error: new DOMException("response body aborted", "AbortError"), code: "request_timeout" },
+    { error: new DOMException("response body timed out", "TimeoutError"), code: "request_timeout" },
+    { error: new Error("unexpected response reader failure"), code: "login_failed" },
+  ])("maps response-body failures to a safe $code error", async ({ error, code }) => {
+    const response = new Response(JSON.stringify(validDeviceResponse));
+    const jsonSpy = vi.spyOn(response, "json").mockRejectedValue(error);
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(requestDeviceCode(config)).rejects.toMatchObject({
+      code,
+      message: "Request failed",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(jsonSpy).toHaveBeenCalledTimes(1);
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a configured public verification origin different from the API origin", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(validDeviceResponse))));
+    await expect(requestDeviceCode(config)).resolves.toEqual(validDeviceResponse);
+  });
+
   it("POSTs to /api/auth/device/code with the clientId", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -113,7 +192,7 @@ describe("openBrowser", () => {
 
   it("rejects non-http(s) verification URLs", () => {
     expect(() => openBrowser("javascript:alert(1)")).toThrow(
-      /Refusing to open non-http\(s\) verification URL/,
+      /Request failed/,
     );
   });
 });
@@ -298,6 +377,55 @@ describe("pollForToken", () => {
 });
 
 describe("login", () => {
+  it("rejects an invalid verification response before display, launch, or polling", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      deviceCode: "device-1",
+      userCode: "BCDF-GHJK",
+      verificationUri: "https://user:secret@example.com/auth/device",
+      expiresIn: 900,
+      interval: 5,
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(login(config)).rejects.toMatchObject({ code: "login_failed" });
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes Windows login and persists the token while keeping quiet stdout clean", async () => {
+    platformMock.mockReturnValue("win32");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    execFileMock.mockImplementationOnce((_command, _args, _options, callback) => callback(null));
+    const token = {
+      accessToken: "jwt-token", expiresAt: 9_999_999_999_000, userId: "user_alice", handle: "alice",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        deviceCode: "device-1", userCode: "BCDF-GHJK",
+        verificationUri: "https://app.matrix-os.com/auth/device?user_code=BCDF-GHJK&intent=sign-in",
+        expiresIn: 900, interval: 5,
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify(token)));
+    vi.stubGlobal("fetch", fetchMock);
+    const tokenStorePath = await createTokenStorePath("auth.json");
+
+    const promise = login({ ...config, quiet: true, tokenStorePath });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(promise).resolves.toEqual(token);
+    expect(JSON.parse(await readFile(tokenStorePath, "utf-8"))).toEqual(token);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(execFileMock).toHaveBeenCalledWith(
+      "powershell.exe", expect.any(Array), expect.objectContaining({ shell: false }), expect.any(Function),
+    );
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps JSON-mode stdout clean while preserving manual device-flow recovery on stderr", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

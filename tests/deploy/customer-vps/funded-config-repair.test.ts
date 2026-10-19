@@ -11,6 +11,8 @@ const token = 'a'.repeat(64);
 const identity = { machineId: 'example-machine', ownerId: 'user_example', handle: 'example-main', runtimeSlot: 'primary', epoch: 2 };
 const original = '# preserved\nMATRIX_MACHINE_ID=example-machine\nMATRIX_CLERK_USER_ID=user_example\nMATRIX_HANDLE=example-main\nMATRIX_RUNTIME_SLOT=primary\nMATRIX_RUNTIME_TOKEN_EPOCH=2\nPLATFORM_INTERNAL_URL=https://platform.example.com\nUNRELATED="value $literal"\n';
 const config = { relayUrl: 'https://relay.example.com/v1', runtimeToken: token };
+const routingContents = original + `MATRIX_FUNDED_AI_ENABLED=false\nMATRIX_FUNDED_AI_RUNTIME_TOKEN=${token}\nMATRIX_FUNDED_AI_RELAY_URL=https://old---relay.example.com\nMATRIX_FUNDED_AI_PLATFORM_URL=https://old---platform.example.com\n`;
+const expectedRelease = { version: 'v2026.10.11-test', gitCommit: 'e'.repeat(40) };
 
 function fixture(contents = original) {
   const root = mkdtempSync(join(tmpdir(), 'matrix-funding-repair-'));
@@ -28,6 +30,11 @@ function expected(path: string) {
 
 function request(path: string, action = 'apply') {
   return { action, rolloutId: 'test-repair', identity, expectedFile: expected(path), quiescentWindow: true, ...(action === 'apply' ? { config } : {}) };
+}
+
+function routingRequest(path: string, action = 'align-routing') {
+  return { ...request(path, action), expectedRelease,
+    ...(action === 'align-routing' ? { config: { relayUrl: 'https://relay.example.com', platformUrl: 'https://platform.example.com' } } : {}) };
 }
 
 // Exercise real file descriptors/rename/fsync/flock with test-only directory and ownership injection.
@@ -51,7 +58,7 @@ except m.RepairError as e:
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe('operator funded Chat configuration repair', () => {
-  function supported() {
+  function supported(contents = original) {
     const base = fixture();
     const matrix = join(base.root, 'opt', 'matrix');
     const env = join(matrix, 'env');
@@ -59,9 +66,142 @@ describe('operator funded Chat configuration repair', () => {
     mkdirSync(matrix, { mode: 0o770 });
     chmodSync(matrix, 0o770);
     mkdirSync(env, { mode: 0o750 });
-    const path = join(env, 'host.env'); writeFileSync(path, original, { mode: 0o640 });
+    const path = join(env, 'host.env'); writeFileSync(path, contents, { mode: 0o640 });
+    writeFileSync(join(matrix, 'release.json'), JSON.stringify({
+      version: 'v2026.10.11-test', gitCommit: 'e'.repeat(40),
+    }), { mode: 0o644 });
     return { root: base.root, matrix, env, path };
   }
+
+  it('aligns only two routing URLs and rolls back without supplying or changing token, enabled state or epoch', () => {
+    const contents = routingContents;
+    const { root, path } = supported(contents);
+    const expectedRelease = { version: 'v2026.10.11-test', gitCommit: 'e'.repeat(40) };
+    const input = { ...request(path), action: 'align-routing', expectedRelease,
+      config: { relayUrl: 'https://relay.example.com', platformUrl: 'https://platform.example.com' } };
+    const result = run(root, input, '', 'lambda: None', true);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: 'align-routing', changed: true, restartRequired: true });
+    expect(readFileSync(path, 'utf8')).toBe(contents.replace('https://old---relay.example.com', 'https://relay.example.com')
+      .replace('https://old---platform.example.com', 'https://platform.example.com'));
+    expect(result.stdout + result.stderr).not.toContain(token);
+    const rollback = { ...request(path, 'rollback-routing'), expectedRelease };
+    expect(run(root, rollback, '', 'lambda: None', true).status).toBe(0);
+    expect(readFileSync(path, 'utf8')).toBe(contents);
+  });
+
+  it.each(['relayUrl', 'platformUrl'] as const)('refuses raw whitespace/control characters in %s without writing', field => {
+    for (const character of ['\r\n', '\n', '\t', ' ', '\u0000', '\u007f']) {
+      const { root, path } = supported(routingContents);
+      const input = routingRequest(path);
+      input.config![field] += character;
+      expect(run(root, input, '', 'lambda: None', true).status).toBe(1);
+      expect(readFileSync(path, 'utf8')).toBe(routingContents);
+    }
+  });
+
+  it.each(['MATRIX_FUNDED_AI_RELAY_URL', 'MATRIX_FUNDED_AI_PLATFORM_URL'])('refuses a missing %s assignment without repairing it', key => {
+    const contents = routingContents.replace(new RegExp(`^${key}=.*\\n`, 'm'), '');
+    const { root, path } = supported(contents);
+    expect(run(root, routingRequest(path), '', 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(path, 'utf8')).toBe(contents);
+  });
+
+  it('keeps routing no-op inode and rolls back only its URLs while preserving later excluded assignments', () => {
+    const { root, path } = supported(routingContents);
+    expect(run(root, routingRequest(path), '', 'lambda: None', true).status).toBe(0);
+    const before = expected(path);
+    const noop = run(root, routingRequest(path), '', 'lambda: None', true);
+    expect(noop.status).toBe(0);
+    expect(JSON.parse(noop.stdout)).toMatchObject({ changed: false, restartRequired: false, backup: null });
+    expect(expected(path)).toEqual(before);
+    writeFileSync(path, readFileSync(path, 'utf8').replace('# preserved', '# later edit') + 'MATRIX_UPDATE_CHANNEL=canary\n');
+    expect(run(root, routingRequest(path, 'rollback-routing'), '', 'lambda: None', true).status).toBe(0);
+    expect(readFileSync(path, 'utf8')).toBe(routingContents.replace('# preserved', '# later edit') + 'MATRIX_UPDATE_CHANNEL=canary\n');
+    expect(run(root, routingRequest(path, 'rollback-routing'), '', 'lambda: None', true).status).toBe(0);
+  });
+
+  it.each(['MATRIX_FUNDED_AI_RELAY_URL', 'MATRIX_FUNDED_AI_PLATFORM_URL', 'MATRIX_FUNDED_AI_RUNTIME_TOKEN', 'MATRIX_FUNDED_AI_ENABLED', 'MATRIX_RUNTIME_TOKEN_EPOCH'])('refuses routing rollback after %s changes independently', key => {
+    const { root, path } = supported(routingContents);
+    expect(run(root, routingRequest(path), '', 'lambda: None', true).status).toBe(0);
+    const replacement = key.endsWith('_URL') ? 'https://other.example.com' : key.endsWith('_TOKEN') ? 'f'.repeat(64) : '1';
+    writeFileSync(path, readFileSync(path, 'utf8').replace(new RegExp(`^${key}=.*$`, 'm'), `${key}=${replacement}`));
+    const before = readFileSync(path);
+    expect(run(root, routingRequest(path, 'rollback-routing'), '', 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(path)).toEqual(before);
+  });
+
+  it.each(['sha256', 'inode', 'device'] as const)('rejects routing CAS with stale %s', key => {
+    const { root, path } = supported(routingContents);
+    const input = routingRequest(path);
+    input.expectedFile[key] = (key === 'sha256' ? '0'.repeat(64) : 0) as never;
+    expect(run(root, input, '', 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(path, 'utf8')).toBe(routingContents);
+  });
+
+  it('refuses stale release, wrong epoch, missing token or a token supplied in the routing payload', () => {
+    for (const patch of [{ expectedRelease: { ...expectedRelease, gitCommit: 'f'.repeat(40) } },
+      { identity: { ...identity, epoch: 1 } }, { config: { relayUrl: 'https://relay.example.com', platformUrl: 'https://platform.example.com', runtimeToken: token } }]) {
+      const { root, path } = supported(routingContents);
+      expect(run(root, { ...routingRequest(path), ...patch }, '', 'lambda: None', true).status).toBe(1);
+      expect(readFileSync(path, 'utf8')).toBe(routingContents);
+    }
+    const { root, path } = supported(original);
+    expect(run(root, routingRequest(path), '', 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
+
+  it('detects routing source drift immediately before rename and never reuses a routing journal as legacy repair', () => {
+    const { root, path } = supported(routingContents);
+    const setup = `calls=0\ndef activity():\n global calls\n calls+=1\n if calls==2:\n  with open(root+'/opt/matrix/release.json','w') as f:json.dump({'version':'different','gitCommit':'f'*40},f)`;
+    expect(run(root, routingRequest(path), setup, 'activity', true).status).toBe(1);
+    expect(readFileSync(path, 'utf8')).toBe(routingContents);
+    const next = supported(routingContents);
+    expect(run(next.root, routingRequest(next.path), '', 'lambda: None', true).status).toBe(0);
+    const before = readFileSync(next.path);
+    expect(run(next.root, request(next.path, 'rollback'), '', 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(next.path)).toEqual(before);
+  });
+
+  it('reports a possibly committed routing write when source changes after rename, and refuses blind replay', () => {
+    const { root, path } = supported(routingContents);
+    const input = routingRequest(path);
+    const setup = `replace=m.os.replace\ndef drift(*a,**kw):\n replace(*a,**kw)\n with open(root+'/opt/matrix/release.json','w') as f:json.dump({'version':'different','gitCommit':'f'*40},f)\nm.os.replace=drift`;
+    expect(run(root, input, setup, 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(path, 'utf8')).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://relay.example.com');
+    expect(existsSync(join(root, 'opt/matrix/env/host.env.funded-test-repair.json'))).toBe(true);
+    expect(run(root, input, '', 'lambda: None', true).status).toBe(1);
+  });
+
+  it('defers routing under writer/lock activity, catches late file edits and preserves bytes on rename failure', () => {
+    const a = supported(routingContents);
+    const lock = `fd=os.open(root+'/opt/matrix/env/.host.env.funded-repair.lock',os.O_CREAT|os.O_RDWR,0o600);m.fcntl.flock(fd,m.fcntl.LOCK_EX|m.fcntl.LOCK_NB)`;
+    expect(run(a.root, routingRequest(a.path), lock, 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(a.path, 'utf8')).toBe(routingContents);
+    const b = supported(routingContents);
+    expect(run(b.root, routingRequest(b.path), '', 'lambda: (_ for _ in ()).throw(m.RepairError("writer_busy"))', true).status).toBe(1);
+    const setup = `calls=0\ndef activity():\n global calls\n calls+=1\n if calls==2:\n  with open(root+'/opt/matrix/env/host.env','a') as f:f.write('OTHER=changed\\n')`;
+    expect(run(b.root, routingRequest(b.path), setup, 'activity', true).status).toBe(1);
+    expect(readFileSync(b.path, 'utf8')).toBe(routingContents + 'OTHER=changed\n');
+    const c = supported(routingContents);
+    expect(run(c.root, routingRequest(c.path), 'def fail(*a,**kw):raise OSError("injected")\nm.os.replace=fail', 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(c.path, 'utf8')).toBe(routingContents);
+    expect(readdirSync(c.env).filter(name => name.includes('.tmp-'))).toEqual([]);
+    expect(existsSync(join(c.env, 'host.env.funded-test-repair.json'))).toBe(true);
+  });
+
+  it('never follows routing symlink source metadata or permits unreviewed tag/path destinations', () => {
+    const a = supported(routingContents);
+    const release = join(a.matrix, 'release.json');
+    rmSync(release); symlinkSync(a.path, release);
+    expect(run(a.root, routingRequest(a.path), '', 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(a.path, 'utf8')).toBe(routingContents);
+    for (const relayUrl of ['https://tag---relay.example.com', 'https://relay-preview.example.com', 'https://relay.example.com/v1']) {
+      const b = supported(routingContents);
+      expect(run(b.root, { ...routingRequest(b.path), config: { relayUrl, platformUrl: 'https://platform.example.com' } }, '', 'lambda: None', true).status).toBe(1);
+      expect(readFileSync(b.path, 'utf8')).toBe(routingContents);
+    }
+  });
 
   it('applies and rolls back through anchored provisioned 0770 matrix / 0750 env ancestors', () => {
     const { root, path } = supported();

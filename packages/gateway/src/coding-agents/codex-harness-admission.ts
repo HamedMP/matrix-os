@@ -38,3 +38,12 @@ export function createCodexHarnessAdmission({ homePath }: { homePath: string }):
     },
   };
 }
+
+/** Shared effect gate; callers retain their existing public error mapping. */
+export async function assertCodingAgentProviderEnabled(
+  admission: CodingAgentProviderAdmission | undefined,
+  providerId: string,
+  unavailable: () => Error,
+): Promise<void> {
+  if (admission && !await admission.isProviderEnabled(providerId)) throw unavailable();
+}

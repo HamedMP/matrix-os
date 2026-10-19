@@ -14,6 +14,8 @@ const SPEECH_ACTIVATION_PAGE_SIZE = 32;
 export interface CustomerVpsSpeechActivationTarget {
   handle?: string;
   afterMachineId?: string;
+  /** Internal cancellation only; never accepted from the HTTP request schema. */
+  signal?: AbortSignal;
 }
 
 export async function activateCustomerVpsSpeechPage(options: {
@@ -23,6 +25,7 @@ export async function activateCustomerVpsSpeechPage(options: {
   platformSecret: string;
   fetchDispatcher?: Dispatcher;
 }): Promise<SpeechFleetActivationPageResult> {
+  options.target?.signal?.throwIfAborted();
   const platformOrigin = new URL(options.platformRegisterUrl).origin;
   // One request handles at most one concurrent wave. Even if every gateway
   // status probe reaches its 10-second timeout, the response remains inside
@@ -51,6 +54,7 @@ export async function activateCustomerVpsSpeechPage(options: {
     platformSecret: options.platformSecret,
     fetchDispatcher: options.fetchDispatcher,
     concurrency: SPEECH_ACTIVATION_PAGE_SIZE,
+    signal: options.target?.signal,
   });
   const complete = options.target?.handle !== undefined
     || machines.length < SPEECH_ACTIVATION_PAGE_SIZE;

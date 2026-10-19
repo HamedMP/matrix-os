@@ -2,6 +2,7 @@ import { sql } from 'kysely';
 
 import {
   accessibleUserMachinePredicate,
+  UserMachineProvisioningClassSchema,
   type PlatformDB,
   type UserMachineProvisioningClass,
 } from './db.js';
@@ -28,7 +29,7 @@ export async function listUserRuntimeComputersByClerkId(
     .select(['handle', 'runtime_slot', 'provisioning_class', 'status', 'image_version'])
     .where(accessibleUserMachinePredicate(clerkUserId))
     .where('deleted_at', 'is', null)
-    .where('provisioning_class', 'in', ['customer', 'preview'])
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .where(sql<boolean>`${sql.ref('handle')} ~ ${HANDLE_PATTERN_SOURCE}`)
     .where(sql<boolean>`${sql.ref('runtime_slot')} ~ ${'^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$'}`)
     .where(sql<boolean>`char_length(${sql.ref('runtime_slot')}) <= 32`);
@@ -44,7 +45,7 @@ export async function listUserRuntimeComputersByClerkId(
   return rows.map((row) => ({
     handle: row.handle,
     runtimeSlot: row.runtime_slot,
-    provisioningClass: row.provisioning_class === 'preview' ? 'preview' : 'customer',
+    provisioningClass: UserMachineProvisioningClassSchema.parse(row.provisioning_class),
     status: row.status,
     imageVersion: row.image_version,
   }));

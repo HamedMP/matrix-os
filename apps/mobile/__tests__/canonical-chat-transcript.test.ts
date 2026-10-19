@@ -51,7 +51,7 @@ const optimistic: OptimisticUserMessage = {
 };
 
 describe("optimistic user messages", () => {
-  it("renders as an ordinary sent user message", () => {
+  it("renders as a user message on its way", () => {
     expect(optimisticTranscriptMessage(optimistic)).toEqual({
       id: "optimistic-req_mine",
       role: "user",
@@ -60,6 +60,22 @@ describe("optimistic user messages", () => {
       activities: [],
       isRunning: false,
       createdAt: 1_700_000_000_000,
+      delivery: "sending",
+    });
+  });
+
+  it("is no longer on its way once the computer has admitted it", () => {
+    expect(optimisticTranscriptMessage({ ...optimistic, messageId: "msg_3" })).not.toHaveProperty("delivery");
+  });
+
+  it("is marked as not sent when its send failed, and says when it cannot be sent again as it is", () => {
+    expect(optimisticTranscriptMessage({ ...optimistic, failed: true })).toMatchObject({
+      delivery: "failed",
+      retryBlocked: false,
+    });
+    expect(optimisticTranscriptMessage({ ...optimistic, failed: true, retryBlocked: true })).toMatchObject({
+      delivery: "failed",
+      retryBlocked: true,
     });
   });
 
@@ -159,5 +175,88 @@ describe("attachments in the transcript", () => {
 
     expect(withLocalAttachments(transcript, {})).toBe(transcript);
     expect(withLocalAttachments(transcript, { "temporary/desktop-chat/other.jpg": "file:///cache/other.jpg" })).toBe(transcript);
+  });
+});
+
+describe("turns that did not finish", () => {
+  const at = "2026-09-09T00:00:00.000Z";
+
+  function runFor(turnId: string, status: string, extra: Record<string, unknown> = {}) {
+    return {
+      id: `run_${turnId}`, chatId: "chat_1", turnId: `cturn_${turnId}`, attempt: 1, status,
+      createdAt: at, updatedAt: at, completedAt: at, ...extra,
+    };
+  }
+
+  function runError(turnId: string, error: Record<string, unknown>) {
+    return { id: `act_${turnId}`, type: "run.error", runId: `run_${turnId}`, sequence: 1, occurredAt: at, error };
+  }
+
+  const retryable = { code: "service_unavailable", safeMessage: "Connection lost. Reconnect or try again.", retryable: true, recoveryActions: ["retry"] };
+
+  function failedChat({
+    status = "failed",
+    error = retryable as Record<string, unknown> | null,
+    failedTurn = "b",
+  }: { status?: string; error?: Record<string, unknown> | null; failedTurn?: string } = {}) {
+    const turns = ["a", "b"].map((id, index) => ({
+      id: `cturn_${id}`, chatId: "chat_1", clientRequestId: `req_${id}`, inputMessageId: `msg_${id}`,
+      baseMessageSeq: index * 2, status: "completed", createdAt: at, updatedAt: at,
+    }));
+    return {
+      record: { chat: { id: "chat_1", revision: 4 } },
+      turns,
+      runs: turns.map(({ id }) => {
+        const turnId = id.replace("cturn_", "");
+        return turnId === failedTurn ? runFor(turnId, status) : runFor(turnId, "completed");
+      }),
+      activities: error ? [runError(failedTurn, error)] : [],
+      messages: [userMessage("msg_a", 1, "First"), userMessage("msg_b", 3, "Second")],
+    } as unknown as CanonicalChatDetailResponse;
+  }
+
+  function noticeOf(detail: CanonicalChatDetailResponse) {
+    return buildTranscript(detail).find((message) => message.notice);
+  }
+
+  it("offers to run the chat's latest turn again when its failure says a retry can help", () => {
+    expect(noticeOf(failedChat())).toMatchObject({
+      role: "system",
+      text: "Connection lost. Reconnect or try again.",
+      notice: { tone: "failed", retryTurnId: "cturn_b" },
+    });
+  });
+
+  it.each([
+    ["the computer does not call it retryable", { ...retryable, retryable: false }],
+    ["its recovery is not a retry", { ...retryable, recoveryActions: ["select_provider"] }],
+    ["the reviewed failure says to check progress first", {
+      code: "run_failed", safeMessage: "The agent timed out. Check progress before trying again.",
+      retryable: true, recoveryActions: ["retry"],
+    }],
+  ])("does not offer a retry when %s", (_label, error) => {
+    const notice = noticeOf(failedChat({ error }));
+    expect(notice?.notice).toEqual({ tone: "failed" });
+  });
+
+  it("does not offer a retry for a failure without a reported error", () => {
+    expect(noticeOf(failedChat({ error: null }))).toMatchObject({
+      text: "The agent could not finish. Try again.",
+      notice: { tone: "failed" },
+    });
+    expect(noticeOf(failedChat({ error: null }))?.notice?.retryTurnId).toBeUndefined();
+  });
+
+  it("does not offer a retry for an earlier turn: the computer only runs the latest one again", () => {
+    const notice = noticeOf(failedChat({ failedTurn: "a" }));
+    expect(notice).toMatchObject({ text: "Connection lost. Reconnect or try again.", notice: { tone: "failed" } });
+    expect(notice?.notice?.retryTurnId).toBeUndefined();
+  });
+
+  it("says a stopped turn stopped, with nothing to retry", () => {
+    expect(noticeOf(failedChat({ status: "aborted", error: null }))).toMatchObject({
+      text: "Agent work stopped.",
+      notice: { tone: "stopped" },
+    });
   });
 });

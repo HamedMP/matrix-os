@@ -12,6 +12,8 @@ import {
 } from "@/components/ui";
 import { defaultAppColors, type DefaultAppId } from "@/lib/apps-launcher";
 
+import { APP_ARTWORK_FOOTPRINT, APP_ICON_SQUIRCLE } from "./app-icon-shape";
+
 const ICONS: Record<DefaultAppId, IconData> = {
   chat: ChatIcon,
   terminal: TerminalTabIcon,
@@ -35,16 +37,14 @@ export function DefaultAppIcon({ id, name }: { id: DefaultAppId; name: string })
 
 const styles = StyleSheet.create({
   container: {
-    width: 68,
-    height: 68,
+    width: APP_ARTWORK_FOOTPRINT,
+    height: APP_ARTWORK_FOOTPRINT,
     alignItems: "center",
     justifyContent: "center",
   },
   artwork: {
-    width: 64,
-    height: 64,
+    ...APP_ICON_SQUIRCLE,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 14,
   },
 });

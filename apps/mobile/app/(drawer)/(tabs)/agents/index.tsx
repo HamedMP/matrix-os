@@ -2,15 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { AgentsListScreen } from "@/components/agents/AgentsListScreen";
+import { confirmArchiveAgent, reportArchiveAgentFailure } from "@/components/agents/agent-archive";
 import { agentListRows } from "@/components/agents/agent-rows";
 import { agentChatRoute } from "@/components/agents/agent-routes";
 import { useAgentStatuses } from "@/lib/queries/use-agent-statuses";
-import { useAgents } from "@/lib/queries/use-agents";
+import { useAgents, useArchiveAgent } from "@/lib/queries/use-agents";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
+import { showToast } from "@/lib/toast";
 
 export default function AgentsScreen() {
   const router = useRouter();
   const library = useAgents();
+  const archive = useArchiveAgent();
   const { statuses, refetch: refetchStatuses } = useAgentStatuses(library.agents);
   const { chats } = useCanonicalChats();
   const [refreshing, setRefreshing] = useState(false);
@@ -67,6 +70,17 @@ export default function AgentsScreen() {
     router.push(agentChatRoute(agentId) as never);
   };
 
+  const archiveAgent = (agentId: string) => {
+    const agent = library.agents.find((candidate) => candidate.id === agentId);
+    if (!agent) return;
+    confirmArchiveAgent(agent.name, () => {
+      // The list is read again whatever the answer, so a retry carries the current revision.
+      archive.mutateAsync({ agentId: agent.id, baseRevision: agent.revision })
+        .then(() => showToast("Agent archived"))
+        .catch(reportArchiveAgentFailure);
+    });
+  };
+
   const unavailable = library.agentsEnabled === false || (library.isError && library.agents.length === 0);
 
   return (
@@ -78,6 +92,7 @@ export default function AgentsScreen() {
       onRetry={() => void reload()}
       onNewAgent={() => router.push("/agents/new" as never)}
       onOpenAgent={openAgent}
+      onArchiveAgent={archiveAgent}
     />
   );
 }

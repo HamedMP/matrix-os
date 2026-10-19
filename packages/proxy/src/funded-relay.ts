@@ -1,3 +1,4 @@
+import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
 import {
   FundedAiClaimKeySchema,
@@ -19,7 +20,7 @@ import {
   serializeFundedJevEvaluationRequest,
 } from "./funded-relay-evaluation.js";
 import { JEV_READINESS_PATH, jevProbeControlAuthorized, fixedJevProbeRequest, assertJevProbeSettlement } from "./funded-relay-jev-probe.js";
-import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
+import { estimateWorstCaseMicrousd, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
 import {
@@ -346,7 +347,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       anthropicBeta = resolveRequestedBetas(c.req.header("anthropic-beta"), config.allowedBetas);
       if (!isOpenAi) assertFundedSystemMessageBeta(parsedBody as FundedRequest, anthropicBeta);
       model = mapFundedModel(parsedBody.model);
-      if ((model.nativeModelId === FUNDED_GLM_FLASH) !== isOpenAi) throw new Error("Unsupported funded AI model");
+      if (isManagedWorkersAiModel(model.nativeModelId) !== isOpenAi) throw new Error("Unsupported funded AI model");
     } catch (error) {
       if (error instanceof Error && error.name === "BodyLimitError") throw error;
       if (error instanceof Error && error.message === "Unsupported funded AI model") {
@@ -508,7 +509,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }, config.firstResponseTimeoutMs);
     const generationSignal = AbortSignal.any([state.lifetimeSignal, firstResponseController.signal]);
     const generationUrl = isOpenAi
-      ? workersAiTarget(config.gatewayBaseUrl).url
+      ? workersAiTarget(config.gatewayBaseUrl, model.nativeModelId).url
       : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`;
     // Retain pseudonymous generation receipts even when gateway collection is
     // disabled. Payload suppression/ZDR remain set; counting and probes keep

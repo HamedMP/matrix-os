@@ -6,6 +6,7 @@ import {
   FundedAiGlobalPolicySchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   IsoTimestampSchema,
+  isManagedWorkersAiModel,
   type FundedAiGlobalPolicy,
   type FundedAiIdentity,
   type FundedAiRuntimeCredentialIssueResponse,
@@ -20,7 +21,8 @@ import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
-const ModelIdsSchema = z.array(z.string().min(3).max(200).regex(/^(?:[A-Za-z0-9][A-Za-z0-9._:/-]*|@cf\/zai-org\/glm-5\.3-flash)$/))
+const ModelIdsSchema = z.array(z.string().min(3).max(200).refine(value =>
+  /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value) || isManagedWorkersAiModel(value)))
   .max(64).refine((values) => new Set(values).size === values.length);
 const IdentitySchema = z.object({
   ownerId: z.string().min(1).max(160),

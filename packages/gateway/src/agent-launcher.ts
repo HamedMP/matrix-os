@@ -10,6 +10,7 @@ import {
   type AgentModelOption,
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
+import { nativeCodexLaunchPolicy, type NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 import { MATRIX_INTEGRATION_DISCOVERY_TOOLS, MATRIX_INTEGRATION_ACTION_TOOLS } from "./chat/integration-tool-authority.js";
@@ -65,6 +66,8 @@ export interface AgentLaunchInput {
   providerEventPath?: string;
   providerThreadId?: string;
   codexExecutable?: string;
+  /** Server-owned exact native admission only; never accepted from renderer DTOs. */
+  nativeCodexSubscription?: NativeCodexSubscriptionLaunch;
   claudePermissionMode?: "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
   claudeOutputFormat?: "stream-json";
   claudeIncludePartialMessages?: boolean;
@@ -79,6 +82,8 @@ export interface AgentLaunchSpec {
   args: string[];
   cwd: string;
   env: Record<string, string>;
+  /** False means the final child must use only env, without parent inheritance. */
+  inheritEnv?: boolean;
 }
 
 type CommandRunner = (
@@ -100,6 +105,12 @@ const CODEX_APP_SERVER_RUNNER_PATH = fileURLToPath(
   new URL("./coding-agents/codex-app-server-runner.mjs", import.meta.url),
 );
 const CodexAppServerConfigSchema = z.object({
+  nativeSubscription: z.literal(true).optional(),
+  expectedNativePrincipal: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  expectedNativeConsent: z.object({ revision: z.number().int().nonnegative(),
+    harnessInstanceId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
+    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
   prompt: z.string().trim().min(1).max(64 * 1024),
   providerThreadId: z.string().trim().min(1).max(512).optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
@@ -433,6 +444,10 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
     ? "danger-full-access"
     : sandbox?.mode ?? "workspace-write";
   return CodexAppServerConfigSchema.parse({
+    ...(input.nativeCodexSubscription ? { nativeSubscription: true, expectedNativePrincipal: input.nativeCodexSubscription.expectedPrincipalFingerprint,
+      expectedNativeConsent: { revision: input.nativeCodexSubscription.expectedConsentRevision,
+        harnessInstanceId: input.nativeCodexSubscription.expectedHarnessInstanceId, accountId: input.nativeCodexSubscription.expectedAccountId,
+        configurationFingerprint: input.nativeCodexSubscription.expectedConfigurationFingerprint } } : {}),
     prompt: codexPrompt(input.prompt, input.mode),
     ...(input.providerThreadId ? { providerThreadId: input.providerThreadId } : {}),
     approvalPolicy: input.approvalPolicy === "on-failure"
@@ -451,7 +466,8 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const command = parsed === "codex" && input.codexExecutable
     ? CodexExecutableSchema.parse(input.codexExecutable)
     : AGENTS[parsed].command;
-  const env = buildAgentRuntimeEnvironment(input.runtimeHome);
+  const nativePolicy = input.nativeCodexSubscription ? nativeCodexLaunchPolicy(input, buildAgentRuntimeEnvironment(input.runtimeHome)) : undefined;
+  const env = nativePolicy?.env ?? buildAgentRuntimeEnvironment(input.runtimeHome);
   switch (parsed) {
     case "claude":
       return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
@@ -479,10 +495,12 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
             providerEventPath,
             CODEX_VERIFIED_VERSION,
             command,
+            ...(nativePolicy?.args ?? []),
             appServerConfig,
           ],
           cwd: input.cwd,
           env,
+          ...(nativePolicy ? { inheritEnv: false } : {}),
         };
       }
     case "opencode":
