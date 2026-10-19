@@ -69,6 +69,17 @@ describe("onboarding widget prefs", () => {
 
   const pendingRun = { taskId: "research", answer: "Trip ideas for Lisbon", appConnected: true, simpler: false, runId: "run_1" } as const;
 
+  it("still saves a follow-up whose title is a long research topic, shortened", () => {
+    const storage = memoryStorage();
+    const topic = "AI agent pricing ".repeat(100).trim();
+    writeOnboardingPrefs("k", { ...DEFAULT_ONBOARDING_PREFS, chatId: "chat_1", pendingRun: { ...pendingRun, taskId: "custom", answer: "Go deeper", title: topic } }, storage);
+    const saved = readOnboardingPrefs("k", storage)?.pendingRun;
+    expect(saved).toMatchObject({ taskId: "custom", runId: "run_1" });
+    expect(saved?.title?.length).toBeLessThanOrEqual(200);
+    expect(saved?.title?.endsWith("…")).toBe(true);
+    expect(topic.startsWith(saved!.title!.slice(0, -1))).toBe(true);
+  });
+
   it("keeps a pending run across restarts and still reads prefs saved before it existed", () => {
     const storage = memoryStorage();
     writeOnboardingPrefs("k", { ...DEFAULT_ONBOARDING_PREFS, chatId: "chat_1", pendingRun: { ...pendingRun, answer: "x".repeat(2_000) } }, storage);
