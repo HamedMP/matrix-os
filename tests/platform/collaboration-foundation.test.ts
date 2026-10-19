@@ -77,6 +77,7 @@ describe('platform schema registration (S01 foundation)', () => {
     expect(PLATFORM_MIGRATION_STEPS.map((step) => step.name)).toEqual([
       'identity',
       'user-machines',
+      'shared-preview-runtimes',
       'ai-funded',
       'ai-credit-history',
       'speech',
