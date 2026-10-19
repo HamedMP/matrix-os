@@ -145,70 +145,73 @@ describe("terminal output after viewer expiry and reattachment in real xterm", (
 
   it("disconnects the expired viewer and keeps rendering live output after the same tab reattaches", async () => {
     const f = await createReattachFixture();
-    const page = await browser.newPage({ viewport: { width: 1180, height: 820 } });
     try {
-      await page.setContent(`<!doctype html><html><body>
-        <h1>Terminal viewer recovery · same tab, same process</h1>
-        <div id="terminal"></div><p id="result">Waiting for terminal output</p>
-        <style>body{margin:32px;background:#17191c;color:#e6e8ec;font:16px system-ui}
-        h1{font-size:22px}p{color:#abb2be}#terminal{padding:16px;background:#101114;border-radius:8px}
-        #result{font-family:monospace;color:#9ed4aa}</style>
-        </body></html>`);
-      await page.addStyleTag({ content: await readFile(xtermCss, "utf8") });
-      await page.addScriptTag({ content: await readFile(xtermScript, "utf8") });
-      await page.evaluate(() => {
-        const fixture = window as unknown as BrowserFixture;
-        fixture.terminal = new fixture.Terminal({ cols: 90, rows: 16, fontSize: 14 });
-        fixture.terminal.open(document.getElementById("terminal")!);
-      });
+      const page = await browser.newPage({ viewport: { width: 1180, height: 820 } });
+      try {
+        await page.setContent(`<!doctype html><html><body>
+          <h1>Terminal viewer recovery · same tab, same process</h1>
+          <div id="terminal"></div><p id="result">Waiting for terminal output</p>
+          <style>body{margin:32px;background:#17191c;color:#e6e8ec;font:16px system-ui}
+          h1{font-size:22px}p{color:#abb2be}#terminal{padding:16px;background:#101114;border-radius:8px}
+          #result{font-family:monospace;color:#9ed4aa}</style>
+          </body></html>`);
+        await page.addStyleTag({ content: await readFile(xtermCss, "utf8") });
+        await page.addScriptTag({ content: await readFile(xtermScript, "utf8") });
+        await page.evaluate(() => {
+          const fixture = window as unknown as BrowserFixture;
+          fixture.terminal = new fixture.Terminal({ cols: 90, rows: 16, fontSize: 14 });
+          fixture.terminal.open(document.getElementById("terminal")!);
+        });
 
-      // Phase 1: the first viewer attaches and renders live output.
-      const first = f.attach("first", 0);
-      await vi.waitFor(() => expect(first.frames.some((frame) => frame.type === "replay-end")).toBe(true));
-      f.emit("matrix:~$ echo before-expiry\r\nbefore-expiry\r\nmatrix:~$ ");
-      await vi.waitFor(() => expect(first.frames.some((frame) => frame.type === "output" && frame.data.includes("before-expiry"))).toBe(true));
-      await render(page, first.frames, 0);
-      expect(await screenLines(page)).toEqual(["matrix:~$ echo before-expiry", "before-expiry", "matrix:~$"]);
-      // The host checkpoints the screen the viewer has already seen: the cursor
-      // rests on the prompt row, as a Zellij screen dump records it.
-      await f.store.checkpointTab(f.ref, {
-        ansi: "matrix:~$ echo before-expiry\r\nbefore-expiry\r\nmatrix:~$ ",
-        viewport: ["matrix:~$ echo before-expiry", "before-expiry", "matrix:~$ "], scrollback: [],
-      });
+        // Phase 1: the first viewer attaches and renders live output.
+        const first = f.attach("first", 0);
+        await vi.waitFor(() => expect(first.frames.some((frame) => frame.type === "replay-end")).toBe(true));
+        f.emit("matrix:~$ echo before-expiry\r\nbefore-expiry\r\nmatrix:~$ ");
+        await vi.waitFor(() => expect(first.frames.some((frame) => frame.type === "output" && frame.data.includes("before-expiry"))).toBe(true));
+        await render(page, first.frames, 0);
+        expect(await screenLines(page)).toEqual(["matrix:~$ echo before-expiry", "before-expiry", "matrix:~$"]);
+        // The host checkpoints the screen the viewer has already seen: the cursor
+        // rests on the prompt row, as a Zellij screen dump records it.
+        await f.store.checkpointTab(f.ref, {
+          ansi: "matrix:~$ echo before-expiry\r\nbefore-expiry\r\nmatrix:~$ ",
+          viewport: ["matrix:~$ echo before-expiry", "before-expiry", "matrix:~$ "], scrollback: [],
+        });
 
-      // Phase 2: the viewer goes untouched past its TTL. Eviction must reach
-      // the transport instead of leaving a silently unsubscribed socket.
-      await new Promise((done) => setTimeout(done, VIEWER_TTL_MS + 150));
-      await f.keepAlive();
-      await vi.waitFor(() => expect(first.onClose).toHaveBeenCalled());
-      f.emit("while-detached\r\n");
-      await new Promise((done) => setTimeout(done, 50));
-      expect(first.frames.some((frame) => frame.type === "output" && frame.data.includes("while-detached"))).toBe(false);
+        // Phase 2: the viewer goes untouched past its TTL. Eviction must reach
+        // the transport instead of leaving a silently unsubscribed socket.
+        await new Promise((done) => setTimeout(done, VIEWER_TTL_MS + 150));
+        await f.keepAlive();
+        await vi.waitFor(() => expect(first.onClose).toHaveBeenCalled());
+        f.emit("while-detached\r\n");
+        await new Promise((done) => setTimeout(done, 50));
+        expect(first.frames.some((frame) => frame.type === "output" && frame.data.includes("while-detached"))).toBe(false);
 
-      // Phase 3: the same tab reattaches from its last cursor and output continues.
-      const resumed = f.attach("resumed", lastOutputSeq(first.frames) + 1);
-      await vi.waitFor(() => expect(resumed.frames.some((frame) => frame.type === "replay-end")).toBe(true));
-      expect(resumed.frames).toContainEqual(expect.objectContaining({ type: "attached", terminalRef: f.ref }));
-      expect(resumed.frames.some((frame) => frame.type === "snapshot")).toBe(true);
-      f.emit("echo after-reattach\r\nafter-reattach\r\nmatrix:~$ ");
-      await vi.waitFor(() => expect(resumed.frames.some((frame) => frame.type === "output" && frame.data.includes("after-reattach"))).toBe(true));
-      await render(page, resumed.frames, 0);
-      expect(await screenLines(page)).toEqual([
-        "matrix:~$ echo before-expiry", "before-expiry",
-        "matrix:~$ echo after-reattach", "after-reattach", "matrix:~$",
-      ]);
-      expect(resumed.onError).not.toHaveBeenCalled();
-      expect(resumed.onClose).not.toHaveBeenCalled();
-      expect(f.createTab).toHaveBeenCalledTimes(1);
-      expect(f.closeTab).not.toHaveBeenCalled();
+        // Phase 3: the same tab reattaches from its last cursor and output continues.
+        const resumed = f.attach("resumed", lastOutputSeq(first.frames) + 1);
+        await vi.waitFor(() => expect(resumed.frames.some((frame) => frame.type === "replay-end")).toBe(true));
+        expect(resumed.frames).toContainEqual(expect.objectContaining({ type: "attached", terminalRef: f.ref }));
+        expect(resumed.frames.some((frame) => frame.type === "snapshot")).toBe(true);
+        f.emit("echo after-reattach\r\nafter-reattach\r\nmatrix:~$ ");
+        await vi.waitFor(() => expect(resumed.frames.some((frame) => frame.type === "output" && frame.data.includes("after-reattach"))).toBe(true));
+        await render(page, resumed.frames, 0);
+        expect(await screenLines(page)).toEqual([
+          "matrix:~$ echo before-expiry", "before-expiry",
+          "matrix:~$ echo after-reattach", "after-reattach", "matrix:~$",
+        ]);
+        expect(resumed.onError).not.toHaveBeenCalled();
+        expect(resumed.onClose).not.toHaveBeenCalled();
+        expect(f.createTab).toHaveBeenCalledTimes(1);
+        expect(f.closeTab).not.toHaveBeenCalled();
 
-      await page.locator("#result").evaluate((node) => {
-        node.textContent = "PASS · expired viewer disconnected · same tab reattached · live output continues";
-      });
-      await mkdir(evidenceDirectory, { recursive: true });
-      await page.screenshot({ path: join(evidenceDirectory, "reattached-output-continues.png") });
+        await page.locator("#result").evaluate((node) => {
+          node.textContent = "PASS · expired viewer disconnected · same tab reattached · live output continues";
+        });
+        await mkdir(evidenceDirectory, { recursive: true });
+        await page.screenshot({ path: join(evidenceDirectory, "reattached-output-continues.png") });
+      } finally {
+        await page.close();
+      }
     } finally {
-      await page.close();
       await f.cleanup();
     }
   });
