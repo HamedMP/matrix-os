@@ -1,3 +1,4 @@
+import { registerClientErrorRoute } from "./client-errors.js";
 import { DesktopPatchSchema, mergeDesktopDefaults } from "../../gateway/src/desktop-settings.js";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -53,6 +54,7 @@ export function createWorkspaceRoutes(options: WorkspaceRouteOptions) {
     console.error("[workspace-api] request failed", error instanceof Error ? error.name : "UnknownError");
     return c.json({ error: "Workspace service unavailable" }, 503);
   });
+  registerClientErrorRoute(app);
   const bounded = bodyLimit({ maxSize: MAX_TEXT_BYTES + 2048, onError: (c) => c.json({ error: "Request too large" }, 413) });
   // The desktop's data connection is available even when execution is asleep.
   app.get("/health", async (c) => {

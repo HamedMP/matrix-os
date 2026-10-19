@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { usesSharedWorkspaceTransport } from "@/lib/shared-workspace";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import { createSocketHealth, MessageQueue, reconnectDelay } from "@/lib/socket-health";
 import { classifySocketClose, recordConnectionDiagnostic } from "@/lib/connection-diagnostics";
@@ -130,6 +131,7 @@ function notifyStateListeners() {
 }
 
 function isConnectionUsable() {
+  if (usesSharedWorkspaceTransport()) return false;
   const health = useConnectionHealth.getState();
   return connectionState === "connected"
     || (health.state === "reconnecting" && health.hasConnected && !health.reconnectQuietElapsed);
@@ -178,6 +180,7 @@ function scheduleReconnect() {
 }
 
 function connect() {
+  if (usesSharedWorkspaceTransport()) return;
   if (globalSocket?.readyState === WebSocket.OPEN) return;
   if (globalSocket?.readyState === WebSocket.CONNECTING) return;
 
@@ -216,7 +219,7 @@ function connect() {
       return null;
     })
     .then((wsUrl) => {
-      if (!wsUrl) return;
+      if (!wsUrl || usesSharedWorkspaceTransport()) return;
       if (globalSocket?.readyState === WebSocket.OPEN || globalSocket?.readyState === WebSocket.CONNECTING) {
         return;
       }
@@ -334,6 +337,11 @@ type ClientMessage = {
 export function sendMessage(msg: ClientMessage) {
   const data = JSON.stringify(msg);
   const metadata = actionMetadataFromRaw(data);
+  if (usesSharedWorkspaceTransport()) {
+    // Native actions cannot be delivered through the saved-data REST transport.
+    setDeliveryState(metadata, "failed", false);
+    return;
+  }
   if (globalSocket?.readyState === WebSocket.OPEN) {
     globalSocket.send(data);
     setDeliveryState(metadata, "sent", false);
@@ -344,6 +352,7 @@ export function sendMessage(msg: ClientMessage) {
 }
 
 export function manualReconnect() {
+  if (usesSharedWorkspaceTransport()) return;
   reconnectAttempt = 0;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);

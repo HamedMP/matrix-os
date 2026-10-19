@@ -7,6 +7,8 @@ import { z } from "zod/v4";
 import { MatrixComputerListSchema, MatrixComputerRuntimeSlotSchema, type MatrixComputerList } from "@matrix-os/contracts";
 import { DesktopActivityInbox, DesktopTopBarActions } from "@matrix-os/ui";
 import { CheckIcon, ChevronDownIcon, MonitorIcon, RefreshCwIcon } from "@/lib/hugeicons";
+import { SHARED_WORKSPACE_PREFIX } from "@/lib/shared-workspace";
+import { SharedWorkspaceComputerMenu } from "../workspace/SharedWorkspaceComputerMenu";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { UserButton } from "../UserButton";
@@ -54,6 +56,7 @@ async function loadWebComputers(gateway: string, signal: AbortSignal) {
 const rowClass = "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[13px] outline-none data-[highlighted]:bg-foreground/5 data-[disabled]:opacity-50";
 
 function WebComputerMenu({ gateway }: { gateway: string }) {
+  if (gateway.endsWith(SHARED_WORKSPACE_PREFIX)) return <SharedWorkspaceComputerMenu />;
   return <ScopedComputerMenu key={gateway} gateway={gateway} />;
 }
 

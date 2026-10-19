@@ -1,0 +1,200 @@
+{
+  "capturedAt": "2026-10-18T12:45:25.844Z",
+  "scope": "Local native Cloudflare APIs via Wrangler/Miniflare and Docker; real Neon Postgres and real Anthropic Agent SDK. No remote Cloudflare runtime was deployed.",
+  "baseGitSha": "12f538a9a44ccf818625d78d59a4569c7e008ae7",
+  "sdkVersion": "@cloudflare/sandbox@1.0.0",
+  "wranglerVersion": "4.149.0",
+  "imageDigest": "sha256:993e2a131afff4c79f14f0a4cfd118e697e1506d370d68f43c092e1248f93839",
+  "harnessSha256": "c786751f3bfc10d8c3221782ebc5d371db9e82b8307852d12d77d3ba65b94c7d",
+  "native": {
+    "at": "2026-10-18T12:39:24.636Z",
+    "environment": "wrangler-local",
+    "reads": [
+      {
+        "path": "bootstrap",
+        "ms": 195,
+        "body": {
+          "layout": {
+            "windows": []
+          },
+          "modules": [],
+          "apps": [],
+          "icons": {},
+          "revision": 0
+        }
+      }
+    ],
+    "phases": [
+      {
+        "at": 1792327167365,
+        "state": "running",
+        "generation": 3,
+        "activeRuns": 1
+      },
+      {
+        "at": 1792327227236,
+        "state": "ready",
+        "generation": 3,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792327228032,
+        "state": "ready",
+        "generation": 3,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792327243761,
+        "state": "checkpointing",
+        "generation": 3,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792327245480,
+        "state": "sleeping",
+        "generation": 4,
+        "activeRuns": 0
+      },
+      {
+        "phase": "completed-and-slept",
+        "executionMs": 62335,
+        "totalMs": 80355,
+        "revision": 1
+      },
+      {
+        "at": 1792327247569,
+        "state": "running",
+        "generation": 4,
+        "activeRuns": 1
+      },
+      {
+        "at": 1792327289935,
+        "state": "ready",
+        "generation": 4,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792327290663,
+        "state": "ready",
+        "generation": 4,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792327304717,
+        "state": "checkpointing",
+        "generation": 4,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792327306430,
+        "state": "sleeping",
+        "generation": 5,
+        "activeRuns": 0
+      },
+      {
+        "phase": "completed-and-slept",
+        "executionMs": 44679,
+        "totalMs": 60953,
+        "revision": 2
+      }
+    ],
+    "result": {
+      "passed": true,
+      "sharedInputHydrated": true,
+      "nativePrivateFileRestored": true,
+      "duplicateDidNotWake": true,
+      "browserAttached": false
+    }
+  },
+  "directGateway": {
+    "scope": "Actual Matrix gateway createGateway -> authenticated /api/message -> real dispatcher -> Claude Agent SDK V1; local linux/amd64 Docker on OrbStack, not deployed Cloudflare measurements",
+    "imageBytes": 956010594,
+    "actualAgent": {
+      "model": "claude-haiku-4-5",
+      "taskElapsedMs": 30724,
+      "requestedToolWaitSeconds": 20,
+      "events": 17,
+      "tools": [
+        "Bash",
+        "Write"
+      ],
+      "costUsd": 0.0453432,
+      "artifactPath": "spike-result.txt",
+      "artifactContent": "Matrix gateway real Agent SDK task survived model and tool wait.",
+      "browserAttached": false,
+      "exitCode": 0
+    },
+    "memorySamples": [
+      {
+        "phase": "gateway idle before task",
+        "gatewayRssKiB": 697832,
+        "cgroupBytes": 800391168,
+        "cgroupPeakBytes": 862502912
+      },
+      {
+        "phase": "during actual agent task",
+        "gatewayRssKiB": 791012,
+        "cgroupBytes": 1183662080,
+        "cgroupPeakBytes": 1510256640
+      },
+      {
+        "phase": "settled after task",
+        "gatewayRssKiB": 484496,
+        "cgroupBytes": 609169408,
+        "cgroupPeakBytes": 1510256640
+      }
+    ],
+    "restart": {
+      "gatewayStopMs": 492,
+      "gatewayRestartMs": 29523,
+      "exitCode": 0,
+      "containerMemoryLimitBytes": 2147483648
+    },
+    "runtimeCredential": "Canonical owner credential created only inside isolated compute at start, revoked on gateway drain, excluded together with staging and .claude auth/session tree from checkpoints; never image or tracked config",
+    "limitations": [
+      "These are source/tsx gateway timings under local amd64 emulation, not a production compiled gateway or Cloudflare remote wake measurement.",
+      "One task per owner in spike.",
+      "Runtime DSN static and safe only for one explicitly allowlisted spike owner; production requires owner-specific database/role resolution.",
+      "Full home uses native DirectoryBackup; only spike-result.txt and assistant output are projected into shared read APIs.",
+      "No full Chat websocket proxy; only explicitly tracked Queue actions may execute."
+    ]
+  },
+  "nativeKernel": {
+    "kernel": {
+      "fileUpdatedAt": "2026-10-18T12:41:26.693Z",
+      "events": 12,
+      "tools": [
+        "Read",
+        "Write",
+        "Read",
+        "Write"
+      ],
+      "costUsd": 0.03411745,
+      "turns": 5,
+      "tokensIn": 146163,
+      "tokensOut": 879,
+      "successfulResult": true
+    },
+    "metrics": {
+      "cgroupMemoryBytes": 308113408,
+      "cgroupPeakBytes": 1431158784,
+      "gatewayAlive": false,
+      "rssKiB": 0,
+      "timestamp": 1792327289628
+    }
+  },
+  "limitations": [
+    "Local timings include linux/amd64 emulation on an Apple Silicon host, source/tsx imports and development tooling. They are not remote Cloudflare latency or p95 measurements.",
+    "Direct gateway image size in the earlier sample is superseded by the later Dockerfile image; do not compare those image sizes as the same artifact.",
+    "Additional recovery-path hardening was tested after the live normal-path sample; the benchmark is not a measurement of a committed final head.",
+    "Single allowlisted compute owner; separate kernel and shared-control test databases. No production Free signup, billing, full Chat/Terminal WebSocket bridge or automatic SDK-session resume shipped."
+  ],
+  "browser": {
+    "at": "2026-10-18T12:51:14.847Z",
+    "environment": "local Next development, warm modules",
+    "desktopVisibleMs": 1759,
+    "savedFileVisibleMs": 2726,
+    "savedFileListed": "spike-result.txt",
+    "computeStateAtSavedRead": "sleeping"
+  }
+}

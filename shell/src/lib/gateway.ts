@@ -1,3 +1,5 @@
+import { isSharedWorkspacePath, SHARED_WORKSPACE_PREFIX } from "./shared-workspace";
+
 /**
  * Resolve the gateway URL for API calls.
  * Browser: use the current origin, plus the explicit `/vm/<handle>` prefix when
@@ -24,6 +26,10 @@ export function getGatewayUrl(): string {
  */
 export function getGatewayWs(): string {
   if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    if (isSharedWorkspacePath(window.location.pathname)) {
+      return `${proto}://${window.location.host}${SHARED_WORKSPACE_PREFIX}/ws`;
+    }
     const configured = process.env.NEXT_PUBLIC_GATEWAY_WS;
     if (configured && process.env.NEXT_PUBLIC_E2E_AUTHENTICATE_WS === "1") {
       try {
@@ -37,7 +43,6 @@ export function getGatewayWs(): string {
         if (!(error instanceof TypeError)) throw error;
       }
     }
-    const proto = window.location.protocol === "https:" ? "wss" : "ws";
     return `${proto}://${window.location.host}${getExplicitVmPrefix()}/ws`;
   }
   return process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:4000/ws";
@@ -58,6 +63,7 @@ export function gatewayAssetUrl(path: string | null | undefined): string | undef
 /** The `/vm/<handle>` prefix of the current explicit vm route, or "" at the root. */
 function getExplicitVmPrefix(): string {
   const pathname = window.location.pathname ?? "";
+  if (isSharedWorkspacePath(pathname)) return SHARED_WORKSPACE_PREFIX;
   const match = pathname.match(/^\/vm\/([A-Za-z0-9_-]{1,64})(?:\/|$)/);
   if (!match) return "";
   const runtimeSlot = new URLSearchParams(window.location.search ?? "").get("runtime");

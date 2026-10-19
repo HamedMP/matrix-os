@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { RefreshCwIcon } from "@/lib/hugeicons";
 import { useConnectionHealth } from "@/hooks/useConnectionHealth";
 import { manualReconnect } from "@/hooks/useSocket";
+import { usesSharedWorkspaceTransport } from "@/lib/shared-workspace";
 import { getGatewayUrl } from "@/lib/gateway";
 import { resolveConnectionCopy, type RuntimeStatus } from "./connection-indicator-copy";
 import { ShellNotificationCard } from "./ShellNotificationCard";
@@ -59,7 +60,17 @@ async function loadRuntimeStatus(): Promise<RuntimeStatus> {
   }
 }
 
+function subscribeTransport(listener: () => void) {
+  window.addEventListener("popstate", listener);
+  return () => window.removeEventListener("popstate", listener);
+}
+
 export function ConnectionIndicator() {
+  const sharedTransport = useSyncExternalStore(subscribeTransport, usesSharedWorkspaceTransport, () => false);
+  return sharedTransport ? null : <NativeConnectionIndicator />;
+}
+
+function NativeConnectionIndicator() {
   const state = useConnectionHealth((s) => s.state);
   const hasConnected = useConnectionHealth((s) => s.hasConnected);
   const reconnectQuietElapsed = useConnectionHealth((s) => s.reconnectQuietElapsed);
