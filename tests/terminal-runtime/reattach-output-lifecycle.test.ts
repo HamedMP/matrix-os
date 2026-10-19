@@ -162,6 +162,10 @@ it("delivers numbered markers in the snapshot-to-live handoff exactly once while
     await f.start(racing);
     const resumed = f.attach("handoff");
     await reached.promise;
+    // The handshake opens before native admission so startup input can queue;
+    // replay framing waits for the admitted baseline.
+    await vi.waitFor(() => expect(resumed.frames.some((frame) => frame.type === "attached")).toBe(true));
+    expect(resumed.frames.some((frame) => frame.type === "replay-end")).toBe(false);
     f.emit("gap-001\r\ngap-002\r\n");
     await f.store.checkpointTab(f.ref, {
       ansi: "before\r\ngap-001\r\ngap-002\r\n",
