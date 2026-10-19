@@ -162,6 +162,24 @@ describe("physical identity admission for existing resource grants", () => {
     expect(await catalog.get(fileId)).toMatchObject({ path: "shared/note.txt", revision: 0 });
   });
 
+  it.each([false, true])("checks higher destination ancestors when the immediate parent has no catalog row (replaced=%s)", async replaced => {
+    const projectId = "project_identity", projectScope = randomUUID();
+    const existingScope = await db.db.selectFrom("collaboration_scopes").selectAll().where("id", "=", fileScope).executeTakeFirstOrThrow();
+    const existingMember = await db.db.selectFrom("collaboration_members").selectAll().where("scope_id", "=", fileScope).executeTakeFirstOrThrow();
+    await db.db.insertInto("collaboration_scopes").values({ ...existingScope, id: projectScope, kind: "project", resource_id: projectId }).execute();
+    await db.db.insertInto("collaboration_members").values({ ...existingMember, scope_id: projectScope }).execute();
+    incarnations.set("origin.txt", "c".repeat(64)); files.set("origin.txt", Buffer.from("authorized original"));
+    const source = await catalog.register({ ownerId, projectId, kind: "file", path: "origin.txt", incarnation: "c".repeat(64) });
+    await catalog.register({ ownerId, projectId, kind: "folder", path: "docs", incarnation: "d".repeat(64) });
+    incarnations.set("docs", (replaced ? "e" : "d").repeat(64));
+    incarnations.set("docs/nested", "f".repeat(64));
+    expect(await catalog.getLiveByPath({ ownerId, projectId, kind: "folder", path: "docs/nested" })).toBeNull();
+    const response = await action(projectScope, { type: "rename", fileId: source.id, path: "docs/nested/moved.txt", expectedRevision: "0", clientRequestId: randomUUID() });
+    expect(response.status).toBe(replaced ? 404 : 200);
+    if (replaced) expect(driver.rename).not.toHaveBeenCalled();
+    expect(await catalog.get(source.id)).toMatchObject({ path: replaced ? "origin.txt" : "docs/nested/moved.txt", incarnation: "c".repeat(64) });
+  });
+
   it("never rebinds a standalone file grant when a concurrent replacement wins before rename", async () => {
     const rename = driver.rename.bind(driver);
     vi.mocked(driver.rename).mockImplementationOnce(async input => {

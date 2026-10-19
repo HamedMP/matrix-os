@@ -51,7 +51,7 @@
     "test:integration": "node packages/gateway/native/build.mjs && vitest run --config vitest.integration.config.ts",
     "test:coverage": "node packages/gateway/native/build.mjs && sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && vitest run --coverage \"$@\"' --",
     "test:e2e": "node packages/gateway/native/build.mjs && sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/brand build && pnpm --filter @matrix-os/kernel build && vitest run --config vitest.e2e.config.ts \"$@\"' --",
-    "test:e2e:run": "node packages/gateway/native/build.mjs && vitest run --config vitest.e2e.config.ts",
+    "test:e2e:run": "vitest run --config vitest.e2e.config.ts",
     "typecheck:build-kernel": "pnpm --filter '@matrix-os/observability' build && pnpm --filter '@matrix-os/kernel' build && pnpm --filter '@matrix-os/integrations-mcp' build",
     "typecheck": "bun run typecheck:build-kernel && bun run typecheck:run",
     "typecheck:run": "node scripts/typecheck.mjs",

@@ -76,9 +76,35 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
   await writeFile(store.configurationPath, JSON.stringify(configuration));
   const terminal = { ensureWorkspace: vi.fn(), createTab: vi.fn(), terminateTab: vi.fn(), attach: vi.fn(), listWorkspaces: vi.fn(async () => []), getCommandResult: vi.fn() };
   const handoff = createProviderTerminalLoginHandoff(store, async () => { throw new Error("No Terminal handoff for device login"); });
+  // Observe real completion I/O without shortening it to vi.waitFor's default
+  // one-second polling window. Every store call still executes unchanged.
+  type CompletionBoundary = { kind: "revision_read"; revision: number }
+    | { kind: "native_completion"; error?: unknown };
+  let signalCompletionBoundary!: (boundary: CompletionBoundary) => void;
+  const completionBoundary = new Promise<CompletionBoundary>(resolve => { signalCompletionBoundary = resolve; });
+  const nativeCompletions = vi.fn(async (input: Parameters<NonNullable<typeof handoff.completeCodexNativeLogin>>[0]) => {
+    try {
+      const result = await handoff.completeCodexNativeLogin!(input);
+      signalCompletionBoundary({ kind: "native_completion" });
+      return result;
+    } catch (error: unknown) {
+      signalCompletionBoundary({ kind: "native_completion", error });
+      throw error;
+    }
+  });
+  const workflowStore = {
+    ...handoff,
+    async getSnapshot(options?: Parameters<typeof handoff.getSnapshot>[0]) {
+      const snapshot = await handoff.getSnapshot(options);
+      if (mode === "hold-release" && options?.refresh && options.includeNativeAccountMetadata)
+        signalCompletionBoundary({ kind: "revision_read", revision: snapshot.revision });
+      return snapshot;
+    },
+    completeCodexNativeLogin: nativeCompletions,
+  };
   const app = new Hono();
-  const lifecycle = await createNativeProviderWorkflowRuntime({ app, homePath: home, ownerId: "owner", getPrincipal: c => c.req.header("x-test-actor") === "other" ? { userId: "other" } : { userId: "owner" }, store: handoff, terminal: terminal as never, profileGuard: guard, inventory: async () => ({ drivers: [driver] }) }); closes.push(lifecycle.close);
-  return { app, store, home, terminal, harness, guard, rollback, proofReady, resumeCompletion, rotateGeneration,
+  const lifecycle = await createNativeProviderWorkflowRuntime({ app, homePath: home, ownerId: "owner", getPrincipal: c => c.req.header("x-test-actor") === "other" ? { userId: "other" } : { userId: "owner" }, store: workflowStore, terminal: terminal as never, profileGuard: guard, inventory: async () => ({ drivers: [driver] }) }); closes.push(lifecycle.close);
+  return { app, store, home, terminal, harness, guard, rollback, proofReady, resumeCompletion, rotateGeneration, completionBoundary, nativeCompletions,
     setVersion: (value: string) => writeFile(join(home, 'version'), value) };
 }
 
@@ -184,20 +210,28 @@ it("cancels the official native operation before releasing its writer and preser
   expect(methods).toContain("account/login/cancel"); expect(methods).not.toContain("account/logout");
 });
 it("does not let delayed Settings completion override an intervening owner Off", async () => {
-  const f = await fixture("0.162.1", "slow-success");
-  const input = { harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "late-completion" };
-  const started = await (await f.app.request(`${route}/start`, post(input))).json();
-  const before = await f.store.getSnapshot();
-  await f.store.mutate({ type: "set_harness_enabled", harnessInstanceId: f.harness.id, enabled: false, expectedRevision: before.revision, idempotencyKey: "off-during-device-login" });
-  await vi.waitFor(async () => expect(await (await f.app.request(`${route}/${started.id}`)).json()).toMatchObject({ state: "failed", safeFailure: "unavailable" }));
-  expect((await f.store.getSnapshot()).harnesses.find(row => row.id === f.harness.id)).toMatchObject({ configuredEnabled: false, configuredAccessSourceId: "owner_openai_key" });
-  expect(await (await f.app.request(`${route}/start`, post(input))).json()).toMatchObject({ id: started.id, state: "failed" });
+  const f = await fixture("0.162.1", "hold-release");
+  try {
+    const input = { harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "late-completion" };
+    const started = await (await f.app.request(`${route}/start`, post(input))).json();
+    await f.proofReady;
+    const before = await f.store.getSnapshot();
+    await f.store.mutate({ type: "set_harness_enabled", harnessInstanceId: f.harness.id, enabled: false, expectedRevision: before.revision, idempotencyKey: "off-during-device-login" });
+    expect(await (await f.app.request(`${route}/${started.id}`)).json()).toMatchObject({ state: "running" });
+    f.resumeCompletion();
+    expect(await f.completionBoundary).toMatchObject({ kind: "revision_read", revision: before.revision + 1 });
+    await vi.waitFor(async () => expect(await (await f.app.request(`${route}/${started.id}`)).json()).toMatchObject({ state: "failed", safeFailure: "unavailable" }));
+    expect((await f.store.getSnapshot()).harnesses.find(row => row.id === f.harness.id)).toMatchObject({ configuredEnabled: false, configuredAccessSourceId: "owner_openai_key" });
+    expect(await (await f.app.request(`${route}/start`, post(input))).json()).toMatchObject({ id: started.id, state: "failed" });
+    expect(f.nativeCompletions).not.toHaveBeenCalled();
+  } finally { f.resumeCompletion(); }
 });
 
 it.each(["rotate-on-release", "rotate-before-persist"])("rejects same-email native credential generation drift at %s and preserves saved source/Off", async mode => {
   const f = await fixture("0.162.1", mode);
   const before = await f.store.getSnapshot();
   const started = await (await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "generation-fence" }))).json();
+  expect(await f.completionBoundary).toMatchObject({ kind: "native_completion", error: { code: "invalid_route" } });
   await vi.waitFor(async () => expect(await (await f.app.request(`${route}/${started.id}`)).json()).toMatchObject({ state: "failed", safeFailure: "unavailable" }));
   const after = await f.store.getSnapshot();
   expect(after.revision).toBe(before.revision);

@@ -178,11 +178,7 @@ export function createFileActionExecutor(options: {
         } else if (action.type === "rename") {
           if (namespace.root && namespace.root.id === locked.id) throw new ResourceCatalogError("forbidden");
           if (namespace.root && !action.path.startsWith(`${namespace.root.path}/`)) throw new ResourceCatalogError("not_found");
-          const slash = action.path.lastIndexOf("/");
-          if (slash >= 0) {
-            const parent = await options.catalog.getLiveByPath({ ...ns, kind: "folder", path: action.path.slice(0, slash) }, trx);
-            await assertResourceIdentity(options.catalog, options.driver, namespace, parent, trx);
-          }
+          await assertResourceIdentity(options.catalog, options.driver, namespace, null, trx, action.path);
           await options.driver.rename({ ...ns, from: locked.path, to: action.path });
           if (await options.driver.fingerprint({ ...ns, path: action.path }) !== locked.incarnation) throw new ResourceCatalogError("not_found");
           entry = await options.catalog.rename({ id: locked.id, path: action.path, expectedRevision, incarnation: locked.incarnation, executor: trx });

@@ -13,14 +13,18 @@ export async function assertResourceIdentity(
   namespace: CatalogNamespace,
   entry: CatalogEntryRecord | null,
   executor: Executor = catalog.db,
+  destinationPath?: string,
 ): Promise<void> {
   const seen = new Set<string>();
-  for (const start of [namespace.root, entry]) {
-    if (!start) continue;
-    if (start.path.length > 4096) throw new ResourceCatalogError("not_found");
-    const segments = start.path.split("/");
-    for (let length = segments.length; length > 0; length--) {
-      const current = length === segments.length ? start : await catalog.getLiveByPath({
+  const starts = [namespace.root, entry].filter((value): value is CatalogEntryRecord => value !== null);
+  const candidates: { path: string; entry: CatalogEntryRecord | null; includeSelf: boolean }[] =
+    starts.map(start => ({ path: start.path, entry: start, includeSelf: true }));
+  if (destinationPath !== undefined) candidates.push({ path: destinationPath, entry: null, includeSelf: false });
+  for (const candidate of candidates) {
+    if (candidate.path.length > 4096) throw new ResourceCatalogError("not_found");
+    const segments = candidate.path.split("/");
+    for (let length = segments.length - (candidate.includeSelf ? 0 : 1); length > 0; length--) {
+      const current = candidate.includeSelf && length === segments.length ? candidate.entry : await catalog.getLiveByPath({
         ownerId: namespace.ownerId, projectId: namespace.projectId, kind: "folder", path: segments.slice(0, length).join("/"),
       }, executor);
       if (!current) continue;
