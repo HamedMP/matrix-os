@@ -140,7 +140,7 @@ describe("desktop provider settings transport", () => {
       const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
       const transport = createDesktopProviderSettingsTransport(client);
       await transport.getSnapshot(new AbortController().signal);
-      expect(timeout).toHaveBeenLastCalledWith(15_000);
+      expect(timeout).toHaveBeenLastCalledWith(32_000);
       await client.get("/api/auth/status");
       expect(timeout).toHaveBeenLastCalledWith(10_000);
       await transport.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_hermes", enabled: false,
@@ -158,7 +158,7 @@ describe("desktop provider settings transport", () => {
     expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true", {
       maxBytes: 1024 * 1024,
       signal: abort.signal,
-      timeoutMs: 15_000,
+      timeoutMs: 32_000,
     });
   });
 
@@ -603,5 +603,24 @@ describe("desktop provider connection actions", () => {
       openExternal,
     })).resolves.toBe(false);
     expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("quiet managed credit desktop transport", () => {
+  it.each([404, 405, 401, 403])("preserves HTTP%s classification through the actual API", async status => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response("unsupported or denied", { status }));
+    const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
+    const transport = createDesktopProviderSettingsTransport(client);
+    await expect(transport.getManagedCredit!(new AbortController().signal)).rejects.toMatchObject({ code: status === 404 || status === 405 ? "managed_credit_unsupported" : "managed_credit_unauthorized" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(fetchFn.mock.calls[0]?.[0]).toBe("https://runtime.example.test/api/ai/provider-settings/managed-credit");
+    expect(fetchFn.mock.calls[0]?.[1]).toMatchObject({ cache: "no-store" });
+  });
+  it("uses a bounded authenticated runtime read for a strict credit observation", async () => {
+    const { observation } = await import("../ui/provider-managed-credit-fixture");
+    const response = observation(); const get = vi.fn().mockResolvedValue(response);
+    const transport = createDesktopProviderSettingsTransport(api({ get })); const abort = new AbortController();
+    await expect(transport.getManagedCredit!(abort.signal)).resolves.toEqual(response);
+    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings/managed-credit", { maxBytes: 16 * 1024, signal: abort.signal, timeoutMs: 10_000, cache: "no-store", omitErrorBody: true });
   });
 });

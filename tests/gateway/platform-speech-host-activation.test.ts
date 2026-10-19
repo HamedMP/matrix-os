@@ -26,7 +26,7 @@ const configurationRevision = createHash("sha256")
 describe("gateway platform speech host activation", () => {
   it("requires the host's independent upgrade bearer", async () => {
     const applyConfig = vi.fn();
-    const app = createPlatformSpeechHostConfigRoutes({ env: { ...baseEnv }, applyConfig });
+    const app = createPlatformSpeechHostConfigRoutes({ env: { ...baseEnv }, applyConfig, scheduleRestart: vi.fn() });
     const response = await app.request("/config", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -38,7 +38,7 @@ describe("gateway platform speech host activation", () => {
 
   it("binds activation to the exact host identity and platform origin", async () => {
     const applyConfig = vi.fn();
-    const app = createPlatformSpeechHostConfigRoutes({ env: { ...baseEnv }, applyConfig });
+    const app = createPlatformSpeechHostConfigRoutes({ env: { ...baseEnv }, applyConfig, scheduleRestart: vi.fn() });
     for (const body of [
       { ...config, machineId: "machine-2" },
       { ...config, runtimeSlot: "secondary" },

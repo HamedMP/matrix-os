@@ -140,8 +140,126 @@ export function TrafficLights({
   );
 }
 
+function PaneTitle({ title, titleLayout, icon, leftActions, alignedLeftWidth, showSidebarTrigger, sidebarTriggerLabel, windowControls }: {
+  title?: ReactNode; titleLayout?: "identity"; icon?: ReactNode; leftActions?: ReactNode;
+  alignedLeftWidth: number; showSidebarTrigger: boolean; sidebarTriggerLabel?: string; windowControls: ReactNode;
+}) {
+  return (
+    <div className={`flex min-w-0 items-center justify-start gap-1.5 text-[15px] font-medium ${showSidebarTrigger ? "px-1" : "px-3"}`} style={{ color: "var(--text-primary)" }}>
+      {alignedLeftWidth === 0 || titleLayout === "identity" ? (
+        <div className="pointer-events-auto flex shrink-0 items-center gap-2">
+          {windowControls ? <div className={`w-16 shrink-0 ${alignedLeftWidth > 0 ? "hidden @max-[42rem]/window-chrome:block" : ""}`} aria-hidden="true" /> : null}
+          {leftActions}
+        </div>
+      ) : null}
+      {title || showSidebarTrigger ? (
+        <div className={`flex min-w-0 flex-1 items-center justify-start text-[15px] font-medium ${showSidebarTrigger ? "gap-1" : "gap-1.5"}`}>
+          {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
+          {icon}
+          <div data-slot="os-window-title" className="block min-w-0 flex-1 truncate">{title}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Stable pane-aligned toolbar; shares the same parent window container. */
+function PaneAlignedChrome({
+  title, titleLayout, icon, leftActions, rightActions, chromePlacement,
+  alignedLeftWidth, alignedRightWidth, showSidebarTrigger, sidebarTriggerLabel, windowControls,
+}: {
+  title?: ReactNode;
+  titleLayout?: "identity";
+  icon?: ReactNode;
+  leftActions?: ReactNode;
+  rightActions?: ReactNode;
+  chromePlacement: OSWindowChromePlacement;
+  alignedLeftWidth: number;
+  alignedRightWidth: number;
+  showSidebarTrigger: boolean;
+  sidebarTriggerLabel?: string;
+  windowControls: ReactNode;
+}) {
+  return (
+    <>
+      {windowControls ? (
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-40 flex items-center px-4">
+          <div data-os-window-traffic-lights className="pointer-events-auto z-30 flex shrink-0 items-center">
+            {windowControls}
+          </div>
+        </div>
+      ) : null}
+      <div
+        data-os-window-chrome-placement={chromePlacement}
+        data-testid="os-window-chrome-grid"
+        className={`pointer-events-none absolute inset-0 z-30 grid ${titleLayout === "identity" ? "@max-[42rem]/window-chrome:[--os-window-leading-width:0px]" : ""}`}
+        style={{
+          gridTemplateColumns: `${titleLayout === "identity" ? `var(--os-window-leading-width, ${alignedLeftWidth}px)` : `${alignedLeftWidth}px`} minmax(0, 1fr) ${rightActions ? `minmax(${alignedRightWidth}px, max-content)` : `${alignedRightWidth}px`}`,
+        }}
+      >
+        <div
+          className={`flex min-w-0 items-center gap-2 px-3 ${alignedLeftWidth === 0 ? "overflow-visible" : ""}`}
+          style={{ borderColor: "var(--border-subtle)" }}
+        >
+          {alignedLeftWidth > 0 && titleLayout !== "identity" ? <div className="pointer-events-auto ml-auto flex items-center gap-1">{leftActions}</div> : null}
+        </div>
+        <PaneTitle title={title} titleLayout={titleLayout} icon={icon} leftActions={leftActions}
+          alignedLeftWidth={alignedLeftWidth} showSidebarTrigger={showSidebarTrigger}
+          sidebarTriggerLabel={sidebarTriggerLabel} windowControls={windowControls} />
+        <div
+          data-os-window-actions
+          className={`pointer-events-auto flex min-w-0 items-center justify-end ${rightActions ? "px-1" : ""} ${alignedRightWidth > 0 ? "border-l" : ""}`}
+          style={{ borderColor: "var(--border-subtle)" }}
+        >
+          {rightActions}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function CenteredChrome({ title, icon, leftActions, rightActions, chromePlacement, controlsWidth, showSidebarTrigger, sidebarTriggerLabel, windowControls }: {
+  title?: ReactNode; icon?: ReactNode; leftActions?: ReactNode; rightActions?: ReactNode;
+  chromePlacement: OSWindowChromePlacement; controlsWidth: string;
+  showSidebarTrigger: boolean; sidebarTriggerLabel?: string; windowControls: ReactNode;
+}) {
+  return (
+    <>
+      <div
+        data-os-window-chrome-placement={chromePlacement}
+        className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-center px-3"
+        style={{ width: controlsWidth }}
+      >
+        {title || showSidebarTrigger ? (
+          <>
+            <div className="w-28 shrink-0" aria-hidden="true" />
+            <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+              {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
+              {icon}
+              <span className="min-w-0 truncate">{title}</span>
+            </div>
+            <div className="w-28" aria-hidden="true" />
+          </>
+        ) : null}
+      </div>
+      <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-between px-3">
+        <div className="pointer-events-auto flex items-center gap-2">
+          {windowControls ? (
+            <div data-os-window-traffic-lights className="z-30 flex items-center px-1">
+              {windowControls}
+            </div>
+          ) : null}
+          {leftActions}
+        </div>
+        <div className="pointer-events-auto flex items-center gap-1">{rightActions}</div>
+      </div>
+    </>
+  );
+}
+
 export function TopBar({
   title,
+  titleLayout,
   icon,
   leftActions,
   rightActions,
@@ -158,6 +276,7 @@ export function TopBar({
   onDragStart,
 }: {
   title?: ReactNode;
+  titleLayout?: "identity";
   icon?: ReactNode;
   leftActions?: ReactNode;
   rightActions?: ReactNode;
@@ -179,6 +298,7 @@ export function TopBar({
   const alignedLeftWidth = Math.max(0, showSidebarTrigger && sidebar?.available && !sidebar.sidebarShown ? 0 : leftPaneWidth ?? 0);
   const alignedRightWidth = Math.max(0, rightPaneWidth ?? 0);
   const hasWindowControls = showWindowControls && onClose && onMinimize && onMaximize;
+  const windowControls = hasWindowControls ? <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} /> : null;
   const handleDoubleClick = (event: ReactPointerEvent<HTMLDivElement>) => {
     const target = event.target;
     if (target instanceof Element && target.closest("button,[role='button'],input,a")) return;
@@ -186,7 +306,7 @@ export function TopBar({
   };
 
   return (
-    <div className="relative shrink-0" style={{ height: OS_WINDOW_GESTURE_HEIGHT, pointerEvents: "none" }}>
+    <div className="@container/window-chrome relative shrink-0" style={{ height: OS_WINDOW_GESTURE_HEIGHT, pointerEvents: "none" }}>
       {onDragStart ? (
         <div
           data-os-window-gesture-layer
@@ -197,83 +317,16 @@ export function TopBar({
         />
       ) : null}
       {paneAligned ? (
-        <>
-          {hasWindowControls ? (
-            <div className="pointer-events-none absolute inset-y-0 left-0 z-40 flex items-center px-4">
-              <div data-os-window-traffic-lights className="pointer-events-auto z-30 flex shrink-0 items-center">
-                <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
-              </div>
-            </div>
-          ) : null}
-          <div
-            data-os-window-chrome-placement={chromePlacement}
-            data-testid="os-window-chrome-grid"
-            className="pointer-events-none absolute inset-0 z-30 grid"
-            style={{
-              gridTemplateColumns: `${alignedLeftWidth}px minmax(0, 1fr) ${rightActions ? `minmax(${alignedRightWidth}px, max-content)` : `${alignedRightWidth}px`}`,
-            }}
-          >
-            <div
-              className={`flex min-w-0 items-center gap-2 px-3 ${alignedLeftWidth === 0 ? "overflow-visible" : ""}`}
-              style={{ borderColor: "var(--border-subtle)" }}
-            >
-              {alignedLeftWidth > 0 ? <div className="pointer-events-auto ml-auto flex items-center gap-1">{leftActions}</div> : null}
-            </div>
-            <div className={`flex min-w-0 items-center justify-start gap-1.5 text-[15px] font-medium ${showSidebarTrigger ? "px-1" : "px-3"}`} style={{ color: "var(--text-primary)" }}>
-              {alignedLeftWidth === 0 ? (
-                <div className="pointer-events-auto flex shrink-0 items-center gap-2">
-                  {hasWindowControls ? <div className="w-16 shrink-0" aria-hidden="true" /> : null}
-                  {leftActions}
-                </div>
-              ) : null}
-              {title || showSidebarTrigger ? (
-                <div className={`flex min-w-0 flex-1 items-center justify-start text-[15px] font-medium ${showSidebarTrigger ? "gap-1" : "gap-1.5"}`}>
-                  {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
-                  {icon}
-                  <span className="block min-w-0 flex-1 truncate">{title}</span>
-                </div>
-              ) : null}
-            </div>
-            <div
-              data-os-window-actions
-              className={`pointer-events-auto flex min-w-0 items-center justify-end ${rightActions ? "px-1" : ""} ${alignedRightWidth > 0 ? "border-l" : ""}`}
-              style={{ borderColor: "var(--border-subtle)" }}
-            >
-              {rightActions}
-            </div>
-          </div>
-        </>
+        <PaneAlignedChrome title={title} titleLayout={titleLayout} icon={icon}
+          leftActions={leftActions} rightActions={rightActions} chromePlacement={chromePlacement}
+          alignedLeftWidth={alignedLeftWidth} alignedRightWidth={alignedRightWidth}
+          showSidebarTrigger={showSidebarTrigger} sidebarTriggerLabel={sidebarTriggerLabel}
+          windowControls={windowControls} />
       ) : (
-        <>
-          <div
-            data-os-window-chrome-placement={chromePlacement}
-            className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-center px-3"
-            style={{ width: controlsWidth }}
-          >
-            {title || showSidebarTrigger ? (
-              <>
-                <div className="w-28 shrink-0" aria-hidden="true" />
-                <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "var(--text-primary)" }}>
-                  {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
-                  {icon}
-                  <span className="min-w-0 truncate">{title}</span>
-                </div>
-                <div className="w-28" aria-hidden="true" />
-              </>
-            ) : null}
-          </div>
-          <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-between px-3">
-            <div className="pointer-events-auto flex items-center gap-2">
-              {showWindowControls && onClose && onMinimize && onMaximize ? (
-                <div data-os-window-traffic-lights className="z-30 flex items-center px-1">
-                  <TrafficLights onClose={onClose} onMinimize={onMinimize} onMaximize={onMaximize} />
-                </div>
-              ) : null}
-              {leftActions}
-            </div>
-            <div className="pointer-events-auto flex items-center gap-1">{rightActions}</div>
-          </div>
-        </>
+        <CenteredChrome title={title} icon={icon} leftActions={leftActions} rightActions={rightActions}
+          chromePlacement={chromePlacement} controlsWidth={controlsWidth}
+          showSidebarTrigger={showSidebarTrigger} sidebarTriggerLabel={sidebarTriggerLabel}
+          windowControls={windowControls} />
       )}
     </div>
   );

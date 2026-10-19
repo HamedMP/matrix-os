@@ -2,7 +2,7 @@ import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
-import { FundedAiChatAvailabilitySchema } from "#funded-ai";
+import { FundedAiChatAvailabilitySchema, isManagedWorkersAiModel } from "#funded-ai";
 import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 import { MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "#bots/model-choice";
 
@@ -362,10 +362,17 @@ export const ProviderGatewayPolicySchema = z.object({
   accessSourceId: ReferenceIdSchema,
   monthlyBudgetMicrousd: MicrousdSchema.nullable(),
   allowedModelIds: z.array(ProviderModelReferenceSchema).max(256),
+  /** Quiet observations may narrow runtime choices without deleting saved routes. */
+  effectiveAllowedModelIds: z.array(ProviderModelReferenceSchema).max(256).optional(),
   topUpEnabled: z.boolean(),
 }).strict().superRefine((policy, ctx) => {
   if (!unique(policy.allowedModelIds)) {
     ctx.addIssue({ code: "custom", path: ["allowedModelIds"], message: "Duplicate allowed model" });
+  }
+  if (policy.effectiveAllowedModelIds !== undefined
+    && (!unique(policy.effectiveAllowedModelIds)
+      || policy.effectiveAllowedModelIds.some(model => !policy.allowedModelIds.includes(model)))) {
+    ctx.addIssue({ code: "custom", path: ["effectiveAllowedModelIds"], message: "Effective models must narrow configured models" });
   }
 });
 
@@ -682,7 +689,7 @@ export function isPortableGenericHarnessCredentialRoute(
   if (source.kind === "matrix_gateway") {
     return ((source.id === "matrix_included" && source.providerId === "anthropic")
       || (source.id === "matrix_cloudflare" && source.providerId === "cloudflare"
-        && harness.route.modelId === "@cf/zai-org/glm-5.3-flash"))
+        && isManagedWorkersAiModel(harness.route.modelId)))
       && source.accountId === null
       && (source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
   }

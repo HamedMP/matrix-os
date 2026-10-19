@@ -33,3 +33,16 @@ it("an explicit managed model bypasses an operator Codex pin and never acquires 
   expect(await resolve({ instanceId: "matrix_pi_default", model: "@cf/zai-org/glm-5.3-flash" })).toMatchObject({ route: { api: "openai-completions", modelId: "@cf/zai-org/glm-5.3-flash" } });
   expect(identity).not.toHaveBeenCalled();
 });
+
+it("resolves a concrete Bot managed model without unrelated native discovery", async () => {
+  const getSnapshot = vi.fn(async (options?: { admissionScope?: string }) => {
+    if (options?.admissionScope !== "managed_matrix") throw new Error("Native inventory unavailable");
+    return {
+      accessSources: [{ id: "matrix_cloudflare", state: "ready", staleAfter: null, eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"] }],
+      models: [{ id: "@cf/zai-org/glm-5.3-flash", vendor: "cloudflare", capabilities: ["tools"], status: "current", eligibleAccessSourceIds: ["matrix_cloudflare"] }],
+    } as never;
+  });
+  const resolve = createBotModelRouteResolver({ providers: { getSnapshot } });
+  await expect(resolve({ instanceId: "matrix_pi_default", model: "@cf/zai-org/glm-5.3-flash" }))
+    .resolves.toMatchObject({ accessSourceId: "matrix_included", route: { modelId: "@cf/zai-org/glm-5.3-flash" } });
+});

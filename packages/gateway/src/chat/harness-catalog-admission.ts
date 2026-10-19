@@ -81,10 +81,18 @@ export function applyHarnessSettings(input: {
       if (input.settingsRequired && !input.settingsAvailable && instance.availability !== "setup_required") {
         return unavailableInstance(instance, "settings_unavailable");
       }
-      const saved = input.settings?.harnesses.filter((harness) => harness.harness === harnessKind) ?? [];
+      const saved = input.settings?.harnesses.filter((harness) => harness.harness === harnessKind
+        && !(harnessKind === "claude" && harness.id === "harness_kernel")) ?? [];
       const enabled = saved.filter((harness) => harness.configuredEnabled ?? harness.enabled);
       if (input.settingsAvailable && saved.length > 0 && enabled.length === 0) {
         return unavailableInstance(instance, "disabled_in_settings");
+      }
+      if (instance.driverKind === "claude_code" && saved.length > 0
+        && (enabled.length !== 1 || enabled[0]!.accessSourceId !== "owner_claude_profile"
+          || enabled[0]!.selectedAccountId !== "owner_claude_profile"
+          || (enabled[0]!.configuredAccessSourceId !== undefined
+            && enabled[0]!.configuredAccessSourceId !== "owner_claude_profile"))) {
+        return unavailableInstance(instance, "runtime_not_runnable");
       }
       const selectedSourceMatches = instance.driverKind === "codex" && input.settingsAvailable
         && enabled.length === 1
@@ -254,7 +262,8 @@ export function applyHarnessSettings(input: {
     return unavailableInstance(configuredInstance, "runtime_not_runnable");
   });
   return projected.map(instance => {
-    const kind = instance.driverKind === "claude_code" ? "claude" : instance.driverKind;
+    if (instance.driverKind === "claude_code") return instance;
+    const kind = instance.driverKind;
     const harnesses = input.settings?.harnesses.filter(harness => harness.harness === kind) ?? [];
     if (harnesses.length !== 1) return instance;
     const source = input.settings?.accessSources.find(candidate => candidate.id === harnesses[0]!.accessSourceId);

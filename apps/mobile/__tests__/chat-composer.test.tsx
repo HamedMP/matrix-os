@@ -56,7 +56,7 @@ describe("Composer", () => {
       paddingHorizontal: 14,
       paddingBottom: 10,
       // One 22pt line of text between the two paddings, which also makes the
-      // input a 46pt target.
+      // empty input a 46pt target.
       minHeight: 14 + 22 + 10,
     });
     expect(flat(screen.getByTestId("composer-toolbar"))).toMatchObject({
@@ -85,16 +85,31 @@ describe("Composer", () => {
     expect(screen.getByPlaceholderText(placeholder)).toBeTruthy();
   });
 
-  it("stays a single line whose return key sends", () => {
+  it("takes several lines, where the return key starts a new line and only the button sends", () => {
     const { onSend, onChangeDraft } = renderComposer({ draft: "Ship it", canSend: true });
 
     const input = screen.getByLabelText("Message Matrix");
-    expect(input.props.multiline).toBeFalsy();
-    expect(input.props.returnKeyType).toBe("send");
-    fireEvent(input, "submitEditing");
-    expect(onSend).toHaveBeenCalledTimes(1);
-    fireEvent.changeText(input, "Ship it now");
-    expect(onChangeDraft).toHaveBeenCalledWith("Ship it now");
+    expect(input.props.multiline).toBe(true);
+    // The keyboard shows its ordinary return key, which adds a line break.
+    expect(input.props.returnKeyType).toBeUndefined();
+    expect(input.props.submitBehavior).toBeUndefined();
+    expect(input.props.onSubmitEditing).toBeUndefined();
+    fireEvent.changeText(input, "Ship it\nand tag the release");
+    expect(onChangeDraft).toHaveBeenCalledWith("Ship it\nand tag the release");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("grows with the draft up to six 22pt lines, then scrolls inside", () => {
+    renderComposer({ draft: "One\nTwo\nThree\nFour\nFive\nSix\nSeven" });
+
+    const input = screen.getByLabelText("Message Matrix");
+    expect(flat(input)).toMatchObject({
+      lineHeight: 22,
+      // The first line sits at the top, as the following ones do, on Android too.
+      textAlignVertical: "top",
+      maxHeight: 14 + 6 * 22 + 10,
+    });
+    expect(input.props.scrollEnabled).not.toBe(false);
   });
 
   it("cannot be typed in while it is not editable", () => {

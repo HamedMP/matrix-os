@@ -1,8 +1,4 @@
-"""Trusted stdlib bootstrap: execute only independently pinned, sealed Node bytes.
-
-Never invoke sudo on a binary beneath the writable Matrix runtime hierarchy.
-This source is sent inline, not installed; CLI paths and inherited fds are fixed.
-"""
+"""Execute pinned sealed Node bytes; see funded-chat-config-repair.md."""
 import fcntl
 import grp
 import hashlib

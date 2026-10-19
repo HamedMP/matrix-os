@@ -1,5 +1,5 @@
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useRouter } from "expo-router";
 
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
@@ -12,11 +12,14 @@ import {
 } from "@/lib/canonical-chat-transcript";
 import type { SentAttachmentUris } from "@/lib/chat-attachments";
 import { useCancelRun } from "@/lib/queries/use-cancel-run";
+import { useRetryChatTurn } from "@/lib/queries/use-retry-chat-turn";
+import { canonicalChatRequestId } from "@/lib/requests";
 
 import { activeChatRun, allowsHomeRelativeAppPaths } from "./chat-screen-state";
 import { ComputerPhoto } from "./ComputerPhoto";
 import type { ComputerPhotoRequest } from "./MessageAttachments";
 import { ReplyResultApps } from "./ReplyResultApps";
+import { RunNotice } from "./RunNotice";
 import type { ChatResultApp } from "./types";
 
 type OptimisticMessage = Parameters<typeof optimisticTranscriptMessage>[0];
@@ -43,8 +46,9 @@ interface ChatThreadInput {
 
 /**
  * What a screen draws for one chat and offers on it: the messages, the
- * requests and result cards inside them, and stopping the run. The Chats tab
- * and an agent's chat both read their chat through this.
+ * requests, failures and result cards inside them, stopping the run, and
+ * running a failed turn again. The Chats tab and an agent's chat both read
+ * their chat through this.
  */
 export function useChatThread({
   chatId,
@@ -56,6 +60,16 @@ export function useChatThread({
 }: ChatThreadInput) {
   const router = useRouter();
   const { mutate: requestCancel, isPending: cancelPending } = useCancelRun();
+  const {
+    mutate: requestRetry,
+    isPending: retryPending,
+    isError: retryFailed,
+    variables: retried,
+  } = useRetryChatTurn();
+  // One request id per failed run, so a retry whose answer was lost is taken
+  // as the same retry when it is pressed again. A later failure is a new run
+  // with a notice of its own, and gets a new id.
+  const retryRequest = useRef<{ noticeId: string; clientRequestId: string } | null>(null);
 
   const messages = useMemo(() => {
     const transcript = withLocalAttachments(buildTranscript(detail), sentAttachments);
@@ -65,6 +79,23 @@ export function useChatThread({
   }, [detail, optimisticMessages, sentAttachments]);
 
   const activeRunId = activeChatRun(detail)?.id;
+  // A message on its way starts a turn after the failed one, which is then no
+  // longer the turn the computer would run again.
+  const sendOnItsWay = optimisticMessages.some((message) => !message.failed);
+
+  const retryTurn = useCallback((notice: TranscriptMessage) => {
+    const turnId = notice.notice?.retryTurnId;
+    if (!chatId || !detail || !turnId || activeRunId || retryPending) return;
+    if (retryRequest.current?.noticeId !== notice.id) {
+      retryRequest.current = { noticeId: notice.id, clientRequestId: canonicalChatRequestId() };
+    }
+    requestRetry({
+      chatId,
+      turnId,
+      baseRevision: detail.record.chat.revision,
+      clientRequestId: retryRequest.current.clientRequestId,
+    });
+  }, [chatId, detail, activeRunId, retryPending, requestRetry]);
 
   // A failed request changes nothing here: the run is still listed as active,
   // so the button is simply there to be pressed again.
@@ -75,6 +106,19 @@ export function useChatThread({
   ), [chatId, activeRunId, cancelPending, requestCancel]);
 
   const renderRequest = useCallback((item: TranscriptMessage) => {
+    if (item.notice?.tone === "failed") {
+      const turnId = item.notice.retryTurnId;
+      const thisTurn = turnId !== undefined && retried?.chatId === chatId && retried?.turnId === turnId;
+      return (
+        <RunNotice
+          text={item.text}
+          onRetry={turnId && chatId ? () => retryTurn(item) : undefined}
+          retrying={retryPending && thisTurn}
+          retryDisabled={!gatewayUrl || activeRunId !== undefined || sendOnItsWay}
+          retryFailed={retryFailed && thisTurn}
+        />
+      );
+    }
     if (!chatId || !gatewayUrl) return null;
     if (item.input) {
       return (
@@ -99,7 +143,7 @@ export function useChatThread({
       );
     }
     return null;
-  }, [chatId, gatewayUrl, refresh]);
+  }, [chatId, gatewayUrl, refresh, retryTurn, retryPending, retryFailed, retried, activeRunId, sendOnItsWay]);
 
   const openApp = useCallback((app: ChatResultApp) => {
     router.push({
