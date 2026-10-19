@@ -31,6 +31,10 @@ export function createProviderKeyVerifier(options: {
   const verify = async (input: ProviderWorkflowKey, commit?: () => Promise<void>): Promise<void> => {
     if (input.providerId !== options.providerId)
       throw new ProviderKeyPreflightError('rejected');
+    // A Claude subscription OAuth token is never an API key; refuse it locally
+    // instead of sending a subscription credential to the key endpoint.
+    if (options.providerId === 'anthropic' && input.apiKey.trimStart().startsWith('sk-ant-oat'))
+      throw new ProviderKeyPreflightError('rejected');
     if (options.profileGuard && options.profile) {
       const release = await options.profileGuard.acquire(options.profile, { kind: "write" });
       await release();
@@ -40,8 +44,17 @@ export function createProviderKeyVerifier(options: {
       const response = await (options.fetchFn ?? fetch)(url, { redirect: 'error', signal: AbortSignal.timeout(10000), headers: options.providerId === 'anthropic' ? { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01' } : { Authorization: `Bearer ${input.apiKey}` } });
       // Never buffer an upstream body, account information or error text.
       await response.body?.cancel();
-      if (response.status !== 200)
+      // Only an explicit auth refusal proves a bad key; rate limits, overload,
+      // edge blocks and provider outages must not tell the owner to replace a
+      // working key. Headers alone classify a 403; the body is never read.
+      const providerRefusal = response.headers.get('content-type')?.toLowerCase().startsWith('application/json') === true
+        && !response.headers.has('cf-mitigated');
+      if (response.status === 401 || (response.status === 403 && providerRefusal))
         throw new ProviderKeyPreflightError('rejected');
+      if (response.status !== 200) {
+        console.warn('[provider-workflow] Key probe unavailable:', options.providerId, response.status);
+        throw new ProviderKeyPreflightError('unavailable');
+      }
     }
     catch (error) {
       if (error instanceof ProviderWorkflowError)

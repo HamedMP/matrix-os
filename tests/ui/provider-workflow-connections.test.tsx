@@ -27,6 +27,15 @@ it("chooses an exact provider/method before native key saving", async () => {
  await waitFor(() => expect(client.submitConnectionKey).toHaveBeenCalledWith({harnessInstanceId: "pi", optionId: "pi:anthropic:key", apiKey: "synthetic-only-key"}, expect.any(AbortSignal)));
  expect(client.submitKey).not.toHaveBeenCalled();
 });
+it("explains a pasted Claude subscription token without sending it", async () => {
+ const client = setup();
+ fireEvent.click(screen.getByRole("button", {name: /Anthropic API key/}));
+ fireEvent.change(screen.getByLabelText("Paste your Anthropic API key"), {target: {value: "  sk-ant-oat01-synthetic"}});
+ fireEvent.click(screen.getByRole("button", {name: "Connect"}));
+ expect(await screen.findByText(/subscription sign-in token, not an API key/)).toBeInTheDocument();
+ expect(client.submitConnectionKey).not.toHaveBeenCalled();
+ expect(client.submitKey).not.toHaveBeenCalled();
+});
 it("keeps unsupported runtime options unavailable with safe copy", () => {
  const client = setup();
  const unsupported = screen.getByRole("button", {name: /OpenRouter API key/});

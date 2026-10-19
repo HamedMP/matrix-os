@@ -13,6 +13,45 @@ describe('key verification boundary', () => {
     await verify({ harnessInstanceId: 'codex', providerId: 'openai', apiKey: 'sk-test-secret' });
     expect(save).toHaveBeenCalledWith('sk-test-secret');
   });
+  it.each([401])('rejects an Anthropic key the provider refuses with %i', async status => {
+    const save = vi.fn(); const fetchFn = vi.fn(async () => new Response('{}', { status }));
+    const verify = createProviderKeyVerifier({ providerId: 'anthropic', save, fetchFn });
+    await expect(verify({ harnessInstanceId: 'claude', providerId: 'anthropic', apiKey: 'sk-ant-api03-test' })).rejects.toMatchObject({ code: 'rejected' });
+    expect(save).not.toHaveBeenCalled();
+    expect(fetchFn.mock.calls[0]![0]).toBe('https://api.anthropic.com/v1/models');
+    expect(fetchFn.mock.calls[0]![1]).toMatchObject({ headers: { 'x-api-key': 'sk-ant-api03-test', 'anthropic-version': '2023-06-01' } });
+  });
+  it('rejects an Anthropic JSON 403 as a key verdict', async () => {
+    const save = vi.fn();
+    const verify = createProviderKeyVerifier({ providerId: 'anthropic', save, fetchFn: async () => new Response('{}', { status: 403, headers: { 'content-type': 'application/json' } }) });
+    await expect(verify({ harnessInstanceId: 'claude', providerId: 'anthropic', apiKey: 'sk-ant-api03-test' })).rejects.toMatchObject({ code: 'rejected' });
+    expect(save).not.toHaveBeenCalled();
+  });
+  it.each([{ 'content-type': 'text/html' }, { 'content-type': 'application/json', 'cf-mitigated': 'challenge' }])('reports an edge-blocked 403 (%o) as unavailable, not a bad key', async headers => {
+    const save = vi.fn(); const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const verify = createProviderKeyVerifier({ providerId: 'anthropic', save, fetchFn: async () => new Response('<html></html>', { status: 403, headers }) });
+      await expect(verify({ harnessInstanceId: 'claude', providerId: 'anthropic', apiKey: 'sk-ant-api03-test' })).rejects.toMatchObject({ code: 'unavailable' });
+      expect(save).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith('[provider-workflow] Key probe unavailable:', 'anthropic', 403);
+    } finally { warn.mockRestore(); }
+  });
+  it('refuses a Claude subscription token without sending it to the provider', async () => {
+    const save = vi.fn(); const fetchFn = vi.fn();
+    const verify = createProviderKeyVerifier({ providerId: 'anthropic', save, fetchFn });
+    await expect(verify({ harnessInstanceId: 'claude', providerId: 'anthropic', apiKey: ' sk-ant-oat01-test' })).rejects.toMatchObject({ code: 'rejected' });
+    expect(fetchFn).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled();
+  });
+  it.each([408, 429, 500, 502, 503, 529])('reports an Anthropic %i as unavailable, not a bad key', async status => {
+    const save = vi.fn(); const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const verify = createProviderKeyVerifier({ providerId: 'anthropic', save, fetchFn: async () => new Response('{}', { status }) });
+      await expect(verify({ harnessInstanceId: 'claude', providerId: 'anthropic', apiKey: 'sk-ant-api03-test' })).rejects.toMatchObject({ code: 'unavailable' });
+      expect(save).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith('[provider-workflow] Key probe unavailable:', 'anthropic', status);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('sk-ant-api03-test');
+    } finally { warn.mockRestore(); }
+  });
 });
 
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
