@@ -16,10 +16,14 @@ export NEXT_PUBLIC_POSTHOG_KEY=phc_ci_shell_build NEXT_PUBLIC_POSTHOG_PROJECT_TO
 export NEXT_PUBLIC_POSTHOG_HOST=https://eu.posthog.com NEXT_PUBLIC_POSTHOG_API_HOST=/relay
 mkdir -p /work/results
 measure() {
- local lane=$1 label=$2 start status=0
- shift 2;start=$(date +%s)
+ local lane=$1 label=$2 start finished started_ms finished_ms status=0
+ shift 2;start=$(date +%s);started_ms=$((start * 1000))
  "$@" || status=$?
- printf '%s\t%s\t%s\n' "$label" "$(( $(date +%s)-start ))" "$status" >>"/work/results/timing-$lane.tsv"
+ finished=$(date +%s);finished_ms=$((finished * 1000))
+ printf '%s\t%s\t%s\n' "$label" "$((finished-start))" "$status" >>"/work/results/timing-$lane.tsv"
+ if ! printf '%s\t%s\t%s\n' "$label" "$started_ms" "$finished_ms" >>"/work/results/timeline-$lane.tsv"; then
+  echo 'Advisory phase timeline unavailable' >&2
+ fi
  return "$status"
 }
 prepare_checkout() {

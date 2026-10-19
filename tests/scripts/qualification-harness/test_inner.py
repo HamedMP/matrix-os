@@ -49,6 +49,7 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
    result=subprocess.run(['bash',str(script),'1'*40,str(work/'qualification-input.json'),'2'*64],env=env,capture_output=True,text=True,timeout=20)
    calls=[json.loads(line) for line in (root/'log').read_text().splitlines()]
    times={p.name:dict((f[0],int(f[2])) for line in p.read_text().splitlines() for f in [line.split('\t')]) for p in (work/'results').glob('timing-*.tsv')}
+   self.timelines={p.name:[line.split('\t') for line in p.read_text().splitlines()] for p in (work/'results').glob('timeline-*.tsv')}
    return result,calls,times
  def test_fixture_interpreter_ignores_lane_python_caches_but_records_environment(self):
   result,calls,_=self.invoke()
@@ -62,7 +63,11 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
  def test_all_inner_phases_native_pg_and_four_cold_installs(self):
   result,calls,times=self.invoke();self.assertEqual(result.returncode,0,result.stderr)
   for lane,phases in PHASES.items():
-   if lane!='smoke':self.assertEqual(list(times['timing-'+lane+'.tsv']),list(phases))
+   if lane!='smoke':
+    self.assertEqual(list(times['timing-'+lane+'.tsv']),list(phases))
+    spans=self.timelines['timeline-'+lane+'.tsv']
+    self.assertEqual([span[0] for span in spans],list(phases))
+    self.assertTrue(all(len(span)==3 and int(span[1])>0 and int(span[2])>=int(span[1]) for span in spans))
   installs=[c for c in calls if c['cmd']=='pnpm' and c['args']==['install','--frozen-lockfile']];self.assertEqual(len(installs),4);self.assertEqual({Path(c['cwd']).name for c in installs},{'unit','mechanical','web','e2e'})
   unit=next(c for c in calls if c['cmd']=='pnpm' and '--maxWorkers=16' in c['args']);self.assertTrue(unit['pg'].startswith('postgresql://'));self.assertIn('/work/pnpm-store',unit['store'])
   self.assertFalse(any('--exclude' in arg or '--shard' in arg or '--testNamePattern' in arg for c in calls for arg in c['args']))

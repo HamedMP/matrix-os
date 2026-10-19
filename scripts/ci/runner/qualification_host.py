@@ -4,6 +4,7 @@ import datetime
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -18,13 +19,15 @@ from lease_config import read_owned, read_owned_json
 from lease_contract import canonical_digest, hex_value, LIMITS
 from lease_store import LeaseStore
 from lease_outcome import InfrastructureUnavailable
+from lease_diagnostics import create_diagnostics, sample_memory
 
 MAX_FILE = 50 * 1024 * 1024
 MAX_TOTAL = 150 * 1024 * 1024
 MAX_MANIFEST = 2 * 1024 * 1024
+DIAGNOSTIC_CLEANUP_RESERVE = 90
 HOST_FILES = {'qualification.json','source-sha','image-id','inventory-sha256','exit-code',
               'benchmark-exit-code','smoke-exit-code','smoke.json','smoke.stderr.log','output.log',
-              'trace','timing-smoke.tsv',
+              'trace','timing-smoke.tsv','timeline-smoke.tsv','diagnostic-memory.json',
               *('host-source-'+lane+'.json' for lane in ('unit','mechanical','web','e2e'))}
 
 
@@ -48,14 +51,14 @@ def write_json(path, value):
     exclusive(path, json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode() + b'\n')
 
 
-def copy_member(data, destination, expected):
+def copy_member(data, destination, expected, max_bytes=MAX_FILE):
     created = False
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode='r|') as archive:
             count = 0
             for member in archive:
                 count += 1
-                if count != 1 or not member.isreg() or member.name != expected or not 0 <= member.size <= MAX_FILE:
+                if count != 1 or not member.isreg() or member.name != expected or not 0 <= member.size <= max_bytes:
                     raise ValueError('Invalid fixed regular artifact')
                 source = archive.extractfile(member)
                 if source is None:
@@ -87,6 +90,8 @@ class QualificationHost:
         queued_utc = datetime.datetime.fromtimestamp(queued_epoch, datetime.timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
         self.root, self.lease, self.request = Path(root), lease, request
         self.execute = execute
+        self.diagnostic_phases = None
+        self.diagnostics_deadline = None
         self.name = 'matrix-ci-lease-' + lease
         self.digest = canonical_digest(request)
         private_dir(self.root)
@@ -95,12 +100,14 @@ class QualificationHost:
         cleanup_results(self.root)
         self.lease_dir = self.root / 'results' / ('lease.' + lease)
         self.result = self.lease_dir / 'evidence'
+        self.diagnostic_dir = self.lease_dir / 'diagnostics'
         # Root-owned cleanup-host.sh has recurring retention. Never silently
         # evict uncertain active/replay evidence to make space for new requests.
         if not self.lease_dir.exists() and len(list((self.root / 'results').iterdir())) >= 32:
             raise ValueError('Qualification result directory cap; operator retention required')
         private_dir(self.lease_dir)
         private_dir(self.result)
+        private_dir(self.diagnostic_dir)
         filename = self.lease_dir / 'request.json'
         if filename.exists():
             if read_owned_json(filename, os.getuid()) != request:
@@ -147,7 +154,8 @@ class QualificationHost:
         queued = read_owned_json(self.lease_dir / 'queued.json', os.getuid())
         started = time.time()
         write_json(self.lease_dir / 'started.json', dict(startedUtc=utc(), startedEpoch=started,
-            queueStartedUtc=queued['queueStartedUtc'], queueSeconds=int(started - queued['queueStartedEpoch'])))
+            queueStartedUtc=queued['queueStartedUtc'], queueSeconds=int(started - queued['queueStartedEpoch']),
+            diagnosticsDeadlineMonotonic=time.monotonic()+1800))
         return True
 
     def create_args(self):
@@ -200,6 +208,30 @@ class QualificationHost:
             if total > MAX_TOTAL:
                 raise ValueError('Qualification artifact aggregate exceeds bound')
 
+    def diagnostic_command(self, args, **options):
+        # Preflight's root-owned monotonic deadline precedes the manager's
+        # execution deadline. Never spend the required cleanup/reaping reserve.
+        deadline = self.diagnostics_deadline
+        if type(deadline) not in (int, float) or not math.isfinite(deadline):
+            raise TimeoutError('Optional diagnostic budget unavailable')
+        remaining = deadline - time.monotonic() - DIAGNOSTIC_CLEANUP_RESERVE
+        if remaining <= 0:
+            raise TimeoutError('Optional diagnostic budget exhausted')
+        return self.execute(args, **dict(options, timeout=min(options['timeout'], remaining)))
+
+    def collect_timelines(self):
+        # Separate directory/bounds preserve the validator's exact evidence set.
+        for lane in ('setup', 'unit', 'mechanical', 'web', 'e2e', 'cleanup'):
+            name = 'timeline-' + lane + '.tsv'
+            try:
+                result = self.diagnostic_command(['docker','exec','--user','10001:10001',self.name,
+                    '/usr/bin/tar','-cf','-','-C','/work/results','--',name], timeout=5, cap=16384+65536)
+                if result.returncode:
+                    raise ValueError('Timeline unavailable')
+                copy_member(result.stdout, self.diagnostic_dir / name, name, max_bytes=16384)
+            except Exception as error:
+                print('Advisory timeline unavailable: ' + type(error).__name__, file=sys.stderr)
+
     def final_source_checks(self, inventory_sha):
         clean = True
         for lane in ('unit','mechanical','web','e2e'):
@@ -248,6 +280,7 @@ class QualificationHost:
         benchmark_status, smoke_status = 70, 70
         failure = None
         benchmark_finished = False
+        self.diagnostics_deadline = read_owned_json(self.lease_dir / 'started.json', os.getuid()).get('diagnosticsDeadlineMonotonic')
         try:
             created = self.execute(self.create_args(), timeout=30, cap=1024)
             if created.returncode or not re.fullmatch(rb'[a-f0-9]{64}\n?', created.stdout):
@@ -278,6 +311,7 @@ class QualificationHost:
             exclusive(self.result / 'output.log', execution.stdout + execution.stderr)
             self.collect(ARTIFACTS)
             smoke_started = time.monotonic()
+            smoke_started_ms = time.time_ns() // 1_000_000
             if web_phase_ready(self.result, manifest):
                 smoke = self.execute(['docker','exec','--user','10001:10001',self.name,
                     '/usr/local/bin/node','/opt/matrix-ci/qualification/smoke.mjs',
@@ -296,6 +330,10 @@ class QualificationHost:
             else:
                 print('Icon measurement unavailable: Web phase/provenance failed', file=sys.stderr)
             exclusive(self.result / 'timing-smoke.tsv', ('icons\t'+str(int(time.monotonic()-smoke_started))+'\t'+str(smoke_status)+'\n').encode())
+            try:
+                exclusive(self.diagnostic_dir / 'timeline-smoke.tsv', f'icons\t{smoke_started_ms}\t{time.time_ns() // 1_000_000}\n'.encode())
+            except OSError as error:
+                print('Host smoke timeline unavailable: ' + type(error).__name__, file=sys.stderr)
         except Exception as error:
             failure = error
             if not (self.result / 'timing-smoke.tsv').exists():
@@ -303,6 +341,15 @@ class QualificationHost:
             print('Qualification workload failed: ' + type(error).__name__, file=sys.stderr)
         finally:
             source_clean = self.final_source_checks(inventory_sha) if manifest is not None and benchmark_finished else False
+            self.collect_timelines()
+            # Sample the host's kernel cgroup before container removal. Candidate
+            # reports cannot provide this root-owned file or change qualification.
+            try:
+                memory = sample_memory(self.diagnostic_command, self.name, self.lease, self.digest,
+                                       self.request['limits']['memoryMiB'] * 1024 * 1024)
+                write_json(self.diagnostic_dir / 'diagnostic-memory.json', memory)
+            except Exception as error:
+                print('Host memory diagnostic unavailable: ' + type(error).__name__, file=sys.stderr)
             cleaned = self.cleanup()
             status = 0 if failure is None and benchmark_status == 0 and smoke_status == 0 and source_clean and cleaned else 70
             for name, value in (('benchmark-exit-code',benchmark_status),('smoke-exit-code',smoke_status)):
@@ -332,6 +379,7 @@ class QualificationHost:
         metadata = read_owned_json(self.result / 'qualification.json', os.getuid())
         if sum(p.lstat().st_size for p in self.result.iterdir()) > MAX_TOTAL:
             raise ValueError('Accepted evidence storage exceeds bound')
+        self.diagnostic_phases = proof['phasesSeconds']
         fields = {key:proof[key] for key in ('phaseCount','guardCount','allPhasesPassed','allGuardsClean',
             'reports','requiredElectronFiles','smoke','lockSha256','inventorySha256','independentHostSourceChecks')}
         return dict(schemaVersion=1,leaseId=self.lease,requestDigest=self.digest,request=self.request,
@@ -339,6 +387,10 @@ class QualificationHost:
             imageDigest=self.request['imageDigest'],harnessDigest=self.request['harnessDigest'],
             startedUtc=metadata['startedUtc'],finishedUtc=metadata['finishedUtc'],
             queueSeconds=metadata['queueSeconds'],wallSeconds=metadata['wallSeconds'],containerGone=True,**fields)
+
+    def diagnostics(self, receipt):
+        # Called only after the unchanged complete receipt and cleanup succeed.
+        return create_diagnostics(receipt, dict(phasesSeconds=self.diagnostic_phases), self.diagnostic_dir)
 
 
 if __name__ == '__main__':

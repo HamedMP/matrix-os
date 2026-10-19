@@ -176,6 +176,17 @@ parallel jobs. Metadata-only and superseded skips are not full qualifications.
 A passed Linux workload with failed orchestration is a failed end-to-end sample.
 A single same-source pair cannot establish median/tail latency or throughput.
 
+After its reviewed host/image/controller activation, qualification diagnostics
+add a separate Actions summary and `dedicated-diagnostics-*` JSON artifact:
+all 55 validated phase durations, queue/workload seconds, optional phase
+intervals, and container cgroup-v2 peak/limit/swap/OOM counters. Lane spans show
+overlap and gaps; phase sums do not establish the critical path. Memory includes
+tmpfs/file cache and excludes separate host helpers. Unsupported measurements
+are explicitly unavailable. The original receipt and every required check stay
+authoritative; missing diagnostics or an advisory upload failure cannot change
+qualification. This first export accompanies successful receipts only.
+See [measurement scope and activation](../../specs/631-qualification-under-ten/diagnostics.md).
+
 Pagination and pending-state repairs are pinned controller helpers. Merge alone
 does not activate them: after reviewed green main, approve that controller on
 the host and advance `MATRIX_CI_CONTROLLER_SHA` using the existing operator

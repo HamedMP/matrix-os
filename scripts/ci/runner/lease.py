@@ -68,9 +68,11 @@ def main():
         if host is None:
             raise ValueError('Qualification outputs not allocated')
         return host.receipt()
+    def diagnostics(receipt):
+        return host.diagnostics(receipt)
     return LeaseManager(value, config, STATE,
         ['/usr/bin/python3', '-I', str(INSTALL / 'qualification_host.py'), 'run', lease],
-        cleanup=cleanup, verify=verify, preflight=preflight, pipe=pipe).run()
+        cleanup=cleanup, verify=verify, preflight=preflight, pipe=pipe, diagnostics=diagnostics).run()
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 """Root-controlled single-use lease, shared flock and owned cancellation lifecycle."""
 import fcntl
+import json
 import os
 from pathlib import Path
 import signal
@@ -17,7 +18,7 @@ from lease_outcome import InfrastructureUnavailable
 
 class LeaseManager:
     def __init__(self, envelope, config, root, command, *, cleanup, verify, preflight=lambda: True,
-                 pipe=None, protocol=None):
+                 pipe=None, protocol=None, diagnostics=None):
         self.envelope = validate_envelope(envelope, config)
         self.root = Path(root)
         self.store = LeaseStore(self.root / 'leases')
@@ -27,6 +28,7 @@ class LeaseManager:
         self.cleanup = cleanup
         self.verify = verify
         self.preflight = preflight
+        self.diagnostics = diagnostics
         self.child = None
         self.signalled = False
         self.workload_started = False
@@ -198,6 +200,17 @@ class LeaseManager:
                 fields.update(stage=infrastructure.stage, workloadStarted=False, containerGone=True)
             if receipt is not None and status == 0:
                 fields['receipt'] = receipt
+                if self.diagnostics is not None:
+                    try:
+                        diagnostic = self.diagnostics(receipt)
+                        if not isinstance(diagnostic, dict) or len(json.dumps(diagnostic, allow_nan=False).encode()) > 16384:
+                            raise ValueError('Diagnostic bound exceeded')
+                        fields['diagnostics'] = diagnostic
+                        if len(json.dumps(self.protocol.record(kind, **fields), ensure_ascii=False, allow_nan=False).encode()) + 1 > 32768:
+                            raise ValueError('Diagnostic control record bound exceeded')
+                    except Exception as error:
+                        fields.pop('diagnostics', None)
+                        print('Advisory qualification diagnostics unavailable: ' + type(error).__name__, file=__import__('sys').stderr)
             if reason:
                 fields['reason'] = reason
             try:
