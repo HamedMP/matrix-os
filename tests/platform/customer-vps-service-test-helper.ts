@@ -8,39 +8,24 @@ import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './cus
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
 export function createTestConfig(overrides: Partial<ReturnType<typeof loadCustomerVpsConfig>> = {}) {
-    return {
-      ...loadCustomerVpsConfig({
-        PLATFORM_PORT: '9000', PLATFORM_SECRET: 'platform-secret',
-        HETZNER_API_TOKEN: 'token',
-        S3_ACCESS_KEY_ID: 'r2-access-key', S3_SECRET_ACCESS_KEY: 'r2-secret-key',
-        S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'matrixos-sync',
-        POSTHOG_TOKEN: 'phc_public', POSTHOG_PROJECT_TOKEN: 'phc_project',
-        POSTHOG_HOST: 'https://eu.i.posthog.com',
-        NEXT_PUBLIC_POSTHOG_HOST: 'https://eu.posthog.com',
-        NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',
-      }),
-      ...overrides,
-    };
-  }
-
-export function activeEntitlement(overrides: Partial<BillingEntitlement> = {}): BillingEntitlement {
-    return {
-      clerkUserId: 'user_123',
-      source: 'stripe',
-      planSlug: 'matrix_builder',
-      status: 'active',
-      maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
-      defaultServerType: 'cpx32',
-      allowedServerTypes: ['cpx22', 'cpx32'],
-      stripeSubscriptionId: 'sub_123',
-      stripePriceId: 'price_builder_monthly',
-      gracePeriodEndsAt: '2026-05-30T00:00:00.000Z',
-      effectiveFrom: '2026-05-01T00:00:00.000Z',
-      effectiveUntil: null,
-      updatedAt: '2026-05-30T00:00:00.000Z',
-      ...overrides,
-    };
-  }
+  return { ...loadCustomerVpsConfig({
+    PLATFORM_PORT: '9000', PLATFORM_SECRET: 'platform-secret', HETZNER_API_TOKEN: 'token',
+    S3_ACCESS_KEY_ID: 'r2-access-key', S3_SECRET_ACCESS_KEY: 'r2-secret-key',
+    S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'matrixos-sync',
+    POSTHOG_TOKEN: 'phc_public', POSTHOG_PROJECT_TOKEN: 'phc_project', NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',
+    POSTHOG_HOST: 'https://eu.i.posthog.com', NEXT_PUBLIC_POSTHOG_HOST: 'https://eu.posthog.com',
+  }), ...overrides };
+}
+export const activeEntitlement = (overrides: Partial<BillingEntitlement> = {}): BillingEntitlement => ({
+  clerkUserId: 'user_123', source: 'stripe',
+  planSlug: 'matrix_builder', status: 'active',
+  maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
+  defaultServerType: 'cpx32', allowedServerTypes: ['cpx22', 'cpx32'],
+  stripeSubscriptionId: 'sub_123', stripePriceId: 'price_builder_monthly',
+  gracePeriodEndsAt: '2026-05-30T00:00:00.000Z', effectiveFrom: '2026-05-01T00:00:00.000Z',
+  effectiveUntil: null, updatedAt: '2026-05-30T00:00:00.000Z',
+  ...overrides,
+});
 
 export function useCustomerVpsFixture(assign: (value: PlatformDB | undefined) => void = () => {}) {
   let db: PlatformDB | undefined;
@@ -51,13 +36,9 @@ export function useCustomerVpsFixture(assign: (value: PlatformDB | undefined) =>
     const hetzner = createMockHetznerClient(overrides.hetzner);
     const systemStore = createMockCustomerVpsSystemStore(overrides.systemStore);
     const service = createCustomerVpsService({
-      db,
-      config: createTestConfig(),
-      hetzner,
-      systemStore,
+      db, config: createTestConfig(), hetzner, systemStore,
       tokenFactory: () => ({
-        token: 'registration-token',
-        hash: hashRegistrationToken('registration-token'),
+        token: 'registration-token', hash: hashRegistrationToken('registration-token'),
         expiresAt: '2099-01-01T00:00:00.000Z',
       }),
       machineIdFactory: () => '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
