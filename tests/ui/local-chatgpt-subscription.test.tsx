@@ -25,7 +25,9 @@ it("shows only the personal ChatGPT card in Matrix AI without a Claude subscript
 it("does not advertise a login action in unsupported Web or Canvas surfaces", () => {
   render(<LocalChatgptSubscription disabled={false} readOnly={false} onChanged={vi.fn()}/>);
   expect(screen.queryByRole("button", { name: "Continue with ChatGPT" })).toBeNull();
-  expect(screen.getByText(/Available in Electron Desktop/)).toBeVisible();
+  expect(screen.getByText(/ChatGPT subscription management requires Electron Desktop on the owner’s device\./)).toBeVisible();
+  expect(screen.getByText(/The paired device must stay connected while chats and Matrix Bots run\./)).toBeVisible();
+  expect(screen.getByText("Electron Desktop required")).toBeVisible();
 });
 it("connecting authorizes interactive Bots without extra checkbox or grant controls", async () => {
   const native = client(); const changed = vi.fn();

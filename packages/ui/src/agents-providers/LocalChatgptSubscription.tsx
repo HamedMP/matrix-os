@@ -123,8 +123,8 @@ export function LocalChatgptSubscription({ client, runtimeSource, disabled, read
     <div className="matrix-ap-subscription-head"><strong>Codex · ChatGPT subscription</strong>
       <span className="matrix-ap-status-chip" data-state={(client ? connected : runtimeReady) ? "ready" : "attention"}><i aria-hidden="true"/>{label}</span>
     </div>
-    <p className="matrix-ap-help">Use your ChatGPT plan for chats and Matrix Bots. Keep this device connected while they run.</p>
-    {!client ? <p className="matrix-ap-help">Available in Electron Desktop on your personal device. ChatGPT subscription management requires Electron Desktop on the owner’s device. The paired device must stay connected while chats and Matrix Bots run. Native Codex login and API keys are managed separately.</p> : null}
+    <p className="matrix-ap-help">Use your ChatGPT plan for chats and Matrix Bots.{client ? " Keep this device connected while they run." : ""}</p>
+    {!client ? <p className="matrix-ap-help">ChatGPT subscription management requires Electron Desktop on the owner’s device. The paired device must stay connected while chats and Matrix Bots run. Native Codex login and API keys are managed separately.</p> : null}
     {!client && runtimeReady ? <p className="matrix-ap-help">Available for chats and interactive Matrix Bots on this Computer.</p> : null}
     {connected ? <><p className="matrix-ap-help">{status.account!.label}</p>
       <p className="matrix-ap-help">{status.bridgeConnected ? !status.models.length ? "No subscription models are available. Check subscription models." : status.grant.enabled ? "Available for chats and interactive Matrix Bots on this Computer." : "Reconnect ChatGPT to resume chats and interactive Matrix Bots on this Computer." : status.bridgeFailure === "device_conflict" ? "Another device is connected to this Computer. Using this device will replace that connection and stop its active Chat and Bot requests." : "Device connection to this Computer is unavailable. Chat and Bot requests cannot start."}</p>

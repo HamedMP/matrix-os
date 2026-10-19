@@ -277,7 +277,7 @@ it("does not let an older mutation revision replace a newer authoritative connec
 
 it("places the API connection inside Matrix AI without invoking native Claude setup", async () => {
   const native = client(); const openNative = vi.fn(); const changed = vi.fn();
-  render(<YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [], matrixAnthropicConnection: disconnected } as never} capabilities={[]}
+  render(<YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [], accounts: [], accessSources: [], matrixAnthropicConnection: disconnected } as never} capabilities={[]}
     matrixAnthropicClient={native} operationIds={{}} workflowStatus={{}} forbidden={false} disabled={false} onOpen={openNative} onRefresh={changed}/>);
   const connections = screen.getByRole("region", { name: "Your connections" });
   expect(within(connections).getAllByRole("article")).toHaveLength(2);
@@ -356,7 +356,7 @@ it("retains an accepted Connect when the real subscriptions consumer requests re
     const [refreshRevision, setRefreshRevision] = React.useState(0);
     // AgentsProvidersView increments this counter when refresh starts, before
     // the canonical Settings request publishes its new observation.
-    return <YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [], matrixAnthropicConnection: projection } as never}
+    return <YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [], accounts: [], accessSources: [], matrixAnthropicConnection: projection } as never}
       capabilities={[]} matrixAnthropicClient={native} localChatgptRefreshRevision={refreshRevision}
       operationIds={{}} workflowStatus={{}} forbidden={false} disabled={false} onOpen={vi.fn()}
       onRefresh={() => { setRefreshRevision(value => value + 1); refresh(); }}/>;
