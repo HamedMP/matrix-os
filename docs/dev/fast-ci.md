@@ -176,6 +176,25 @@ parallel jobs. Metadata-only and superseded skips are not full qualifications.
 A passed Linux workload with failed orchestration is a failed end-to-end sample.
 A single same-source pair cannot establish median/tail latency or throughput.
 
+### Completion races and release gates
+
+GitHub can report a workflow as successful before every job has its final
+status and conclusion. The host-bundle same-SHA gate retries empty inventories
+and pending job results within its existing 90-minute deadline. A terminal
+failed, cancelled, timed-out or neutral required job still blocks publication.
+Only the explicitly nonblocking shadow verifier is excluded.
+
+Full hosted main recovery can finish while a delayed dedicated lease is still
+running. After authenticating the exact requester, attempt, source and newest
+controller, a successful completed requester revokes redundant delegated work.
+Its controller settles neutral without a receipt or qualification credit.
+Failed requesters and failed Linux workloads remain failures; shadow work keeps
+its existing policy. This helper change needs the reviewed controller-pin
+activation described above, after merge and green-main verification.
+
+The 19 October regressions and validation are recorded in
+[completion recovery](../../specs/630-ci-check-attribution/completion-recovery.md).
+
 Pagination and pending-state repairs are pinned controller helpers. Merge alone
 does not activate them: after reviewed green main, approve that controller on
 the host and advance `MATRIX_CI_CONTROLLER_SHA` using the existing operator
