@@ -86,6 +86,11 @@ export function composeAgentPlan(body, oldBody, { repo, pr, plan, now = Date.now
   const selected = plan ? validateAgentPlan(plan, context) : readAgentPlan(body, context) ?? readAgentPlan(oldBody, context);
   if (!selected) return base;
   const result = `${base}\n\n${render(selected)}`;
-  if (result.length > 60000) fail();
+  if (result.length > 60000) {
+    // Status is authoritative; optional inherited advice must not block it.
+    // Explicit plan publishers still need a visible rejection when it cannot fit.
+    if (plan) fail();
+    return base;
+  }
   return result;
 }

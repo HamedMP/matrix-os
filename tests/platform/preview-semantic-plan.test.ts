@@ -44,6 +44,28 @@ describe("source-bound semantic preview plans", () => {
     expect(readAgentPlan(refreshed, { repo, pr: 2764, head, now })).toEqual(plan());
     expect(refreshed.match(/Agent test plan/g)).toHaveLength(1);
   });
+  it("drops optional inherited plans when a growing queue needs the comment capacity", () => {
+    const previous = composeAgentPlan(status, "", {repo, pr: 2764, plan: plan(), now});
+    const waiting = `${status.replace("Ready", "Waiting")}\nQueue: ${"x".repeat(59000)}`;
+    expect(waiting.length).toBeLessThan(60000);
+    expect(composeAgentPlan(waiting, previous, {repo, pr: 2764, now})).toBe(waiting);
+    // The current body may also carry the optional plan during a status refresh.
+    const embedded = previous.replace(status, waiting);
+    expect(composeAgentPlan(embedded, "", {repo, pr: 2764, now})).toBe(waiting);
+    // An explicit plan publication must still report that the plan cannot fit.
+    expect(() => composeAgentPlan(waiting, previous, {repo, pr: 2764, plan: plan(), now})).toThrow();
+  });
+  it("publishes fresh REST and GraphQL status even when the inherited plan no longer fits", async () => {
+    const previous = composeAgentPlan(status, "", {repo, pr: 2764, plan: plan(), now});
+    const waiting = `${status.replace("Ready", "Waiting")}\nQueue: ${"x".repeat(59000)}`;
+    const f = fixture(previous);
+    await upsertComment(f.github, repo, 2764, waiting);
+    expect(f.comments[0].body).toBe(waiting);
+    await publishReviewComment(f.github, repo, 2764, waiting.replace("Waiting", "Building"), {old: {databaseId: 7, body: previous}});
+    expect(f.comments[0].body).toBe(waiting.replace("Waiting", "Building"));
+    expect(f.comments).toHaveLength(1);
+    expect(f.github.rest.issues.updateComment).toHaveBeenCalledTimes(2);
+  });
   it("drops prior-head, expired, malformed and wrong-repository envelopes", () => {
     const first = composeAgentPlan(status, "", { repo, pr: 2764, plan: plan(), now });
     expect(composeAgentPlan(status.replace(head, other), first, { repo, pr: 2764, now })).not.toContain("Agent test plan");

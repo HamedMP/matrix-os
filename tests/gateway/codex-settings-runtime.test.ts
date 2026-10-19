@@ -87,7 +87,7 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
       const result = await handoff.completeCodexNativeLogin!(input);
       signalCompletionBoundary({ kind: "native_completion" });
       return result;
-    } catch (error: unknown) {
+    } catch (error) {
       signalCompletionBoundary({ kind: "native_completion", error });
       throw error;
     }
