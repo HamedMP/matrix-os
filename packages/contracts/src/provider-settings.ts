@@ -362,10 +362,17 @@ export const ProviderGatewayPolicySchema = z.object({
   accessSourceId: ReferenceIdSchema,
   monthlyBudgetMicrousd: MicrousdSchema.nullable(),
   allowedModelIds: z.array(ProviderModelReferenceSchema).max(256),
+  /** Quiet observations may narrow runtime choices without deleting saved routes. */
+  effectiveAllowedModelIds: z.array(ProviderModelReferenceSchema).max(256).optional(),
   topUpEnabled: z.boolean(),
 }).strict().superRefine((policy, ctx) => {
   if (!unique(policy.allowedModelIds)) {
     ctx.addIssue({ code: "custom", path: ["allowedModelIds"], message: "Duplicate allowed model" });
+  }
+  if (policy.effectiveAllowedModelIds !== undefined
+    && (!unique(policy.effectiveAllowedModelIds)
+      || policy.effectiveAllowedModelIds.some(model => !policy.allowedModelIds.includes(model)))) {
+    ctx.addIssue({ code: "custom", path: ["effectiveAllowedModelIds"], message: "Effective models must narrow configured models" });
   }
 });
 

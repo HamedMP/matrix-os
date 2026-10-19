@@ -1,3 +1,4 @@
+import Script from "next/script";
 import type { Metadata, Viewport } from "next";
 import "./fonts.css";
 import { ClerkProvider } from "@clerk/nextjs";
@@ -72,6 +73,7 @@ export default function RootLayout({
       data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
     >
       <body className="matrix-shell-fonts">
+        {!selfHostedMode ? <Script {...{ src: "/billing/tracking.js" }} strategy="beforeInteractive" /> : null}
         {content}
         {includePostHogIdentify ? <PostHogIdentify /> : null}
         <PwaRegister />

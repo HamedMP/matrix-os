@@ -2,6 +2,7 @@ import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
+import * as provenanceHelpers from '../../scripts/ci/dedicated-main-provenance.mjs';
 import * as outcomeHelpers from '../../scripts/ci/dedicated-outcome.mjs';
 import * as admissionHelpers from '../../scripts/ci/dedicated-admission.mjs';
 import * as configurationHelpers from '../../scripts/ci/dedicated-config-token.mjs';
@@ -15,7 +16,7 @@ async function execute(name:string,github:unknown,context:unknown,core:unknown,h
  // Vitest's VM has no native dynamic-import callback. Inject only that loader,
  // checking the actual workflow-resolved path and executing the real helper.
  const script=source.replaceAll('await import(', 'await loadHelper(');
- const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers,'scripts/ci/dedicated-config-token.mjs':configurationHelpers,...helperOverrides};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
+ const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-main-provenance.mjs':provenanceHelpers,'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers,'scripts/ci/dedicated-config-token.mjs':configurationHelpers,...helperOverrides};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
  return new AsyncFunction('github','context','core','require','loadHelper',script)(github,context,core,nodeRequire,loadHelper);
 }
@@ -38,14 +39,14 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   expect(outputs).toEqual({sha:merge,source_kind:'',merge_parents:JSON.stringify([base,head]),head_sha:head,base_sha:base,base_ref:'main',merge_parent_sha:base,pr_number:'2440',check_id:'123',admitted:'true',mode:'delegated',requesting_run_id:'77',requesting_run_attempt:'1'});
   const args=github.rest.checks.create.mock.calls[0][0];
   expect(args).toMatchObject({head_sha:head,status:'in_progress',name:'Dedicated CI Results'});
-  expect(JSON.parse(args.output.summary)).toMatchObject({schemaVersion:3,baseRef:'main',controllerSha:controller,controllerRef:'refs/heads/main',controllerAttempt:1});
+  expect(JSON.parse(args.output.summary)).toMatchObject({schemaVersion:3,baseRef:'main',controllerSha:controller,controllerRef:'refs/heads/main',controllerRunId:1,controllerAttempt:1});
  });
  it.each([{state:'closed'},{base:{ref:'other',sha:base,repo:{full_name:'HamedMP/matrix-os'}}},{draft:true},{labels:[]},{head:{sha:base,repo:{full_name:'HamedMP/matrix-os'}}},{head:{sha:head,repo:{full_name:'other/matrix-os'}}}])('rejects an obsolete or unadmitted snapshot %j',async patch=>{
   const {outputs,github}=await admit(patch);
   expect(outputs).toEqual({admitted:'false'});expect(github.rest.checks.create).not.toHaveBeenCalled();expect(github.rest.repos.getCommit).not.toHaveBeenCalled();
  });
- it.each([{merge_commit_sha:null},{merge_commit_sha:'e'.repeat(40)}])('rejects unavailable or mismatched merge provenance %j',async patch=>{
-  await expect(admit(patch)).rejects.toThrow(/merge commit|Merge commit/i);
+ it.each([{merge_commit_sha:null},{merge_commit_sha:'e'.repeat(40)}])('retains the immutable event source despite a later mutable merge %j',async patch=>{
+  const f=await admit(patch);expect(f.outputs).toMatchObject({admitted:'true',sha:merge,base_sha:base});
  });
  it('rejects a controller outside default main before creating a source check',async()=>{
   await expect(admit({},'refs/heads/stack/parent')).rejects.toThrow(/default.branch/);
@@ -66,11 +67,11 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   const value=workflow();expect(value.on.pull_request_target.types).toEqual(expect.arrayContaining(['edited','reopened','closed','unlabeled','converted_to_draft']));
   const text=readFileSync('.github/workflows/ci-dedicated.yml','utf8');expect(text).toContain('dispatch fresh main-defined CI');expect(text).toContain('the root lease kills owned CPU');
  });
- it('revalidates after admission and refuses dispatch when the parent moved',async()=>{
+ it('revalidates after admission and refuses dispatch when the target branch changes',async()=>{
   const {outputs,github,pull,context,core}=await admit();vi.stubEnv('SNAPSHOT',JSON.stringify(outputs));
   await execute('Revalidate exact PR snapshot before dispatch',github,context,core);expect(outputs.current).toBe('true');
-  pull.base.sha='e'.repeat(40);delete outputs.current;
-  // A moved parent stands the controller down: no dispatch credit, neutral settlement.
+  pull.base.ref='another-parent';delete outputs.current;
+  // A retarget stands the controller down: no dispatch credit, neutral settlement.
   await execute('Revalidate exact PR snapshot before dispatch',github,context,core);
   expect(outputs.current).toBeUndefined();expect(outputs.superseded).toBe('true');
  });
@@ -191,7 +192,7 @@ it('dispatches PR qualification through the two-phase authenticated lease and ne
 });
 it('boots the all-PR N/A reconciler from authenticated main without execution configuration',async()=>{
  const value=workflow().jobs.reconcile,origin=value.steps[0];const source=origin.with.script;
- vi.stubEnv('CONTROLLER_SHA','');vi.stubEnv('CONTROLLER_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');
+ vi.stubEnv('CONTROLLER_SHA','');vi.stubEnv('CONTROLLER_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');vi.stubEnv('ISOLATED_EXECUTION','');vi.stubEnv('EXECUTION_WORKFLOW_PATH','.github/workflows/ci-dedicated.yml');vi.stubEnv('EXECUTION_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');
  const core={setOutput:vi.fn()},github={rest:{repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:controller}}})),compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'identical',merge_base_commit:{sha:controller}}}))}}};
  const context={repo:{owner:'HamedMP',repo:'matrix-os'},ref:'refs/heads/main',sha:controller};
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
@@ -208,7 +209,7 @@ it('supersedes obsolete CI for arbitrary parent branch names without executing t
 });
 it('restricts App keys to authenticated main helpers and creates a checks-only separate gate client',()=>{
  const value=workflow(),job=value.jobs.reconcile;expect(job.environment).toBe('matrix-ci');expect(job.permissions.checks).toBe('read');
- const token=job.steps.find((step:{id?:string})=>step.id==='gate-token');expect(token.uses).toBe('actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349');expect(token.with).toEqual(expect.objectContaining({'app-id':'${{ vars.MATRIX_CI_GATE_APP_ID }}','private-key':'${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}',owner:'${{ github.repository_owner }}',repositories:'${{ github.event.repository.name }}','permission-checks':'write'}));expect(Object.keys(token.with).filter(key=>key.startsWith('permission-'))).toEqual(['permission-checks']);
+ const token=job.steps.find((step:{id?:string})=>step.id==='gate-token');const pinnedAction=/^actions\/create-github-app-token@[a-f0-9]{40}$/;expect(token.uses).toMatch(pinnedAction);expect('actions/create-github-app-token@v7').not.toMatch(pinnedAction);expect('untrusted/create-github-app-token@'+'a'.repeat(40)).not.toMatch(pinnedAction);expect(token.with).toEqual(expect.objectContaining({'app-id':'${{ vars.MATRIX_CI_GATE_APP_ID }}','private-key':'${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}',owner:'${{ github.repository_owner }}',repositories:'${{ github.event.repository.name }}','permission-checks':'write'}));expect(Object.keys(token.with).filter(key=>key.startsWith('permission-'))).toEqual(['permission-checks']);
  const gate=job.steps.find((step:{name?:string})=>step.name==='Reconcile completed child source checks');expect(gate.env.GATE_TOKEN).toBe('${{ steps.gate-token.outputs.token }}');expect(gate.with.script).toContain('new github.constructor({auth:process.env.GATE_TOKEN');expect(gate.with.script).toContain('gateGithub');expect(gate.with.script).toContain('gateAppId');
  const benchmark=value.jobs.benchmark;expect(benchmark.if).toContain("github.ref == 'refs/heads/main'");expect(benchmark.steps.filter((step:any)=>JSON.stringify(step).includes('MATRIX_CI_GATE_APP_PRIVATE_KEY')).map((step:any)=>step.name)).toEqual(['Dispatch authenticated PR qualification lease','Settle source-head check']);expect(JSON.stringify(benchmark)).not.toContain('GATE_TOKEN');expect(JSON.stringify(parse(readFileSync('.github/workflows/ci.yml','utf8')))).not.toContain('GATE_TOKEN');
 });
@@ -216,10 +217,19 @@ it('restricts App keys to authenticated main helpers and creates a checks-only s
 it.each(['Authenticate reviewed controller pin before helper or secret use','Authenticate default-main reconciliation source'])('rejects renamed branch in workflow bootstrap %s',async name=>{
  const all=Object.values(workflow().jobs).flatMap((job:any)=>job.steps);
  const step:any=all.find((step:any)=>step.name===name);
- vi.stubEnv('CONTROLLER_SHA',controller);vi.stubEnv('CONTROLLER_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');
+ vi.stubEnv('CONTROLLER_SHA',controller);vi.stubEnv('CONTROLLER_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');vi.stubEnv('EXECUTION_WORKFLOW_PATH','.github/workflows/ci-dedicated.yml');vi.stubEnv('EXECUTION_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');
  const github={rest:{repos:{getBranch:vi.fn(async()=>({data:{name:'renamed',commit:{sha:controller}}})),compareCommitsWithBasehead:vi.fn()}}};
  const context={repo:{owner:'HamedMP',repo:'matrix-os'},ref:'refs/heads/main',sha:controller},core={setOutput:vi.fn()};
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
  await expect(new AsyncFunction('github','context','core',step.with.script)(github,context,core)).rejects.toThrow(/branch identity/);
  expect(github.rest.repos.compareCommitsWithBasehead).not.toHaveBeenCalled();expect(core.setOutput).not.toHaveBeenCalled();
+});
+
+it.each(['head','target','draft','closed','labels'])('stands down before waiting for provenance when %s changes after admission',async kind=>{
+ const f=await admit();vi.stubEnv('SNAPSHOT',JSON.stringify(f.outputs));
+ if(kind==='head')f.pull.head.sha='e'.repeat(40);if(kind==='target')f.pull.base.ref='another-parent';if(kind==='draft')f.pull.draft=true;if(kind==='closed')f.pull.state='closed';if(kind==='labels')f.pull.labels=[];
+ f.pull.merge_commit_sha='f'.repeat(40);
+ await execute('Revalidate exact PR snapshot before dispatch',f.github,f.context,f.core);
+ expect(f.outputs.superseded).toBe('true');expect(f.outputs.current).toBeUndefined();
+ expect(f.core.setFailed).not.toHaveBeenCalled();
 });

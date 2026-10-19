@@ -2,6 +2,7 @@ import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
 import {
+  botImageTotalMaximumForSelection, botAttachmentInputError, type BotAttachmentMetadata,
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatSkillDescriptorSchema,
@@ -701,6 +702,7 @@ export function createChatProviderCatalogService(options: {
 
 export interface ProviderSelectionRequirements {
   attachments?: CanonicalChatAttachmentKind[];
+  attachmentInputs?: BotAttachmentMetadata[];
   resources?: CanonicalChatResourceKind[];
   interactionMode?: string;
   permissionMode?: string;
@@ -799,6 +801,13 @@ export function validateChatProviderSelection(input: {
   const model = instance.models.find((candidate) => candidate.id === selection.data.model);
   if (model?.availability !== "available") {
     return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
+  }
+  if (["matrix_pi", "matrix_bot"].includes(instance.driverKind)) {
+    const inputError = botAttachmentInputError(input.requirements?.attachmentInputs ?? [], model.supportsVision === true, botImageTotalMaximumForSelection(instance.id, selection.data.options));
+    if (inputError) return selectionError("capability_mismatch", inputError);
+  }
+  if (["matrix_pi", "matrix_bot"].includes(instance.driverKind) && input.requirements?.attachments?.includes("image") && !model.supportsVision) {
+    return selectionError("capability_mismatch", "The selected model does not support images.");
   }
   if (!optionsMatch(selection.data, instance)
     || !supportsRequirements(instance.supports, input.requirements ?? {})) {

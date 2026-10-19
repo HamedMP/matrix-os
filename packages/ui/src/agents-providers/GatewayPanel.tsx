@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { checkoutUnavailablePresentation } from "./checkout-unavailable-presentation.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import type {
   ProviderAccessSource,
   ProviderGatewayPolicy,
@@ -9,7 +10,7 @@ import type {
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
-import { gatewayChatAvailableMicrousd, gatewayCreditLines, money, shortDate, titleCase } from "./utils.js";
+import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, gatewayPolicyAllowsModel, money, shortDate, titleCase } from "./utils.js";
 
 const capabilityLabels = {
   tools: "Tools",
@@ -34,16 +35,17 @@ export function matrixGatewayEligibleModels(
   if (source?.kind !== "matrix_gateway" || !policy || !provider) return [];
   return provider.models.filter((model) => model.enabled
     && source.eligibleModelIds.includes(model.id)
-    && policy.allowedModelIds.includes(model.id));
+    && gatewayPolicyAllowsModel(policy, model.id));
 }
 
 export function isMatrixGatewaySourceReady(
   source: ProviderAccessSource | null,
   policy: ProviderGatewayPolicy | null,
   provider: ProviderModelProvider | null,
+  now = Date.now(),
 ): boolean {
   return isMatrixGatewayRouteVerified(source, policy, provider)
-    && (gatewayChatAvailableMicrousd(source) ?? 0) > 0;
+    && (gatewayChatAvailableMicrousd(source, now) ?? 0) > 0;
 }
 
 /** Purchase verification remains independent of spendable Chat capacity. */
@@ -122,8 +124,9 @@ export function GatewayPanel({
   const offeredModels = modelInventory?.filter((model, index, inventory) => model.enabled
     && inventory.findIndex(candidate => candidate.providerId === model.providerId && candidate.id === model.id) === index)
     ?? provider?.models.filter(model => model.enabled
-    && source?.eligibleModelIds.includes(model.id) && policy?.allowedModelIds.includes(model.id)) ?? [];
+    && source?.eligibleModelIds.includes(model.id) && gatewayPolicyAllowsModel(policy, model.id)) ?? [];
   const budget = policy?.monthlyBudgetMicrousd ?? null;
+  const previousBudget = useRef(budget);
   const [budgetUsd, setBudgetUsd] = useState(
     budget === null ? "" : String(budget / 1_000_000),
   );
@@ -135,23 +138,29 @@ export function GatewayPanel({
   const [creditError, setCreditError] = useState(false);
   const [creditRequestId, setCreditRequestId] = useState("");
   // Scope identity prevents an old machine's checkout from settling a new dialog.
-  const checkoutScope = useRef<{ sourceId: string | undefined; submit: typeof onAddCredit } | null>({ sourceId: source?.id, submit: onAddCredit });
-  if (checkoutScope.current?.sourceId !== source?.id || checkoutScope.current?.submit !== onAddCredit) {
+  const checkoutScope = useRef<{ sourceId: string | undefined; submit: typeof onAddCredit } | null>(null);
+  useLayoutEffect(() => {
+    // Suspended replacement renders must not invalidate the committed checkout.
     checkoutScope.current = { sourceId: source?.id, submit: onAddCredit };
     setCreditDialogOpen(false); setCreditBusy(false); setCreditError(false); setCreditRequestId("");
-  }
-  useEffect(() => {
-    if (!checkoutScope.current) checkoutScope.current = { sourceId: source?.id, submit: onAddCredit };
     return () => { checkoutScope.current = null; };
   }, [onAddCredit, source?.id]);
   useEffect(() => {
-    setBudgetUsd(budget === null ? "" : String(budget / 1_000_000));
+    const previous = previousBudget.current;
+    previousBudget.current = budget;
+    // An authoritative renewal must not discard an unsaved local edit.
+    setBudgetUsd(draft => draft === (previous === null ? "" : String(previous / 1_000_000))
+      ? budget === null ? "" : String(budget / 1_000_000)
+      : draft);
   }, [budget]);
+  const now = useLocalObservationExpiry([gatewayCreditStaleAfter(source)]) ?? Number.NaN;
   const credit = source
-    ? gatewayCreditLines(source)
+    // Display samples the real clock during deadline synchronization; actions
+    // retain the conservative NaN clock until the expiry effect is synchronized.
+    ? gatewayCreditLines(source, Number.isNaN(now) ? Date.now() : now)
     : { primary: "Chat credit unavailable", secondary: null, stale: false };
   const usageAsOf = source?.usage.asOf ?? null;
-  const ready = isMatrixGatewaySourceReady(source, policy, provider);
+  const ready = isMatrixGatewaySourceReady(source, policy, provider, now);
   const creditRequired = source?.readiness.safeReason === "credit_required";
   const creditReserved = source?.readiness.safeReason === "credit_reserved"
     && source.usage.kind === "managed_credit" && source.usage.state === "current";
@@ -247,7 +256,7 @@ export function GatewayPanel({
 
       <div className="matrix-ap-credit-row">
         <div>
-          <span>Chat credit available</span>
+          <span>Chat credit</span>
           <strong>{credit.primary}</strong>
           {credit.secondary ? <span>{credit.secondary}</span> : null}
           {reservedCredit ? <span>{reservedCredit}</span> : null}

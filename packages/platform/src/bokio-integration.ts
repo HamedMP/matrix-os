@@ -1,4 +1,4 @@
-import { BOKIO_ACTIONS, BOKIO_ACTION_SPECS, BokioUuid } from "@matrix-os/contracts/bokio-integration";
+import { BOKIO_ACTIONS, BOKIO_ACTION_SPECS, BOKIO_WRITE_ACTION_SPECS, BokioUuid } from "@matrix-os/contracts/bokio-integration";
 export { BOKIO_ACTIONS, BokioUuid } from "@matrix-os/contracts/bokio-integration";
 
 export const BOKIO_PRESET = { id: "bokio", name: "Bokio", url: "https://api.bokio.se/v1" } as const;
@@ -16,6 +16,31 @@ export function planBokioRead(actionId: string, params: unknown, companyId: stri
     const url = new URL(`${BOKIO_PRESET.url}/companies/${BokioUuid.parse(companyId)}/${spec.path}${spec.id ? `/${BokioUuid.parse(input[spec.id])}` : ""}`);
     if (Object.hasOwn(BOKIO_ACTIONS[actionId].params, "page")) { url.searchParams.set("page", String(input.page ?? 1)); url.searchParams.set("pageSize", String(input.pageSize ?? 25)); }
     return { url: url.href };
+  } catch (error: unknown) {
+    if (error instanceof BokioIntegrationError) throw error;
+    throw new BokioIntegrationError("invalid");
+  }
+}
+
+/** Only draft creation/addition and customer profiles: no issuance or accounting mutations. */
+export function planBokioWrite(actionId: string, params: unknown, companyId: string): { url: string; body: string; scope: string } {
+  try {
+    if (!Object.hasOwn(BOKIO_WRITE_ACTION_SPECS, actionId)) throw new BokioIntegrationError("invalid");
+    const spec = BOKIO_WRITE_ACTION_SPECS[actionId as keyof typeof BOKIO_WRITE_ACTION_SPECS];
+    const input = spec.schema.parse(params ?? {}) as Record<string, unknown>;
+    const base = `${BOKIO_PRESET.url}/companies/${BokioUuid.parse(companyId)}/${spec.path}`;
+    let url = base; let body: unknown = input;
+    if (actionId === "create_draft_invoice") {
+      const value = BOKIO_WRITE_ACTION_SPECS.create_draft_invoice.schema.parse(input);
+      body = { type: "invoice", currency: "SEK", currencyRate: 1, customerRef: { id: value.customerId }, invoiceDate: value.invoiceDate,
+        ...(value.dueDate ? { dueDate: value.dueDate } : {}), lineItems: value.lineItems.map(item => ({ ...item, itemType: "salesItem" })) };
+    } else if (actionId === "append_draft_line_item") {
+      const value = BOKIO_WRITE_ACTION_SPECS.append_draft_line_item.schema.parse(input);
+      url += `/${value.invoiceId}/line-items`; body = { ...value.lineItem, itemType: "salesItem" };
+    }
+    const serialized = JSON.stringify(body);
+    if (Buffer.byteLength(serialized, "utf8") > 64 * 1024) throw new BokioIntegrationError("invalid");
+    return { url, body: serialized, scope: spec.scope };
   } catch (error: unknown) {
     if (error instanceof BokioIntegrationError) throw error;
     throw new BokioIntegrationError("invalid");

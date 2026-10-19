@@ -3,6 +3,7 @@ import { Alert, type AlertButton } from "react-native";
 
 import * as mockRoutes from "./project-route-test-utils";
 import ProjectRoute from "../app/(drawer)/(tabs)/(chats)/projects/[projectId]";
+import { ToastHost } from "../components/ui/Toast";
 import { ProjectRequestError } from "../lib/requests/projects";
 
 jest.mock("@clerk/clerk-expo", () => ({
@@ -107,6 +108,19 @@ describe("project route options", () => {
       expect(save().props.accessibilityState).toMatchObject({ disabled: true });
       fireEvent.press(save());
       expect(requests.renameProject).not.toHaveBeenCalled();
+    });
+
+    it("says so with a toast once the project is renamed", async () => {
+      requests.renameProject.mockResolvedValue(renamed);
+      await mockRoutes.renderPortfolio(<><ProjectRoute /><ToastHost /></>);
+      fireEvent.press(options());
+      fireEvent.press(menuRow("Rename"));
+
+      fireEvent.changeText(nameField(), "Case studies");
+      requests.fetchProjects.mockResolvedValue([renamed, matrix, admin]);
+      fireEvent.press(save());
+
+      await waitFor(() => expect(screen.getByText("Project renamed")).toBeTruthy());
     });
 
     it("renames the project by its slug, shows the request in flight, then closes the sheet with the new name on screen", async () => {

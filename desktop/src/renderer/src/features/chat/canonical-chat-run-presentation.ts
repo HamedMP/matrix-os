@@ -234,7 +234,7 @@ export function runPresentation(
     if (entry.type === "agent") {
       const activity = agentActivities.get(entry.id);
       if (!activity) continue;
-      const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId));
+      const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId), activity.previewKind === "command" ? activity.preview : undefined);
       activityGroups.push({
         kind: "activity-group",
         id: `${run.id}:activities:${activity.subagent ? activity.activityId : activity.id}`,

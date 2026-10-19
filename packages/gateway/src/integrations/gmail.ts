@@ -27,6 +27,20 @@ function mapPagination(p: Record<string, unknown>): Record<string, string> {
 // Strip CR/LF only from headers. Body newlines are legitimate message content.
 const stripCrLf = (s: unknown): string => String(s).replace(/[\r\n]/g, "");
 const toBase64Url = (msg: string): string => Buffer.from(msg, "utf-8").toString("base64url");
+const messageFields = {
+  to: z.string().min(1).max(4096), subject: z.string().max(4096),
+  body: z.string().max(60000), cc: z.string().max(4096).optional(),
+};
+
+function encodeMessage(p: Record<string, unknown>): string {
+  const headers = [
+    ...(p.to !== undefined ? [`To: ${stripCrLf(p.to)}`] : []),
+    `Subject: ${stripCrLf(p.subject)}`,
+    ...(p.cc ? [`Cc: ${stripCrLf(p.cc)}`] : []),
+    'Content-Type: text/plain; charset="UTF-8"', "MIME-Version: 1.0",
+  ];
+  return toBase64Url(`${headers.join("\r\n")}\r\n\r\n${String(p.body)}`);
+}
 
 export const GMAIL_SERVICE: ServiceDefinition = {
   connectorKind: "pipedream",
@@ -84,20 +98,23 @@ export const GMAIL_SERVICE: ServiceDefinition = {
         to: { type: "string", required: true }, subject: { type: "string", required: true },
         body: { type: "string", required: true }, cc: { type: "string" },
       },
-      paramsSchema: z.strictObject({
-        to: z.string().min(1).max(4096), subject: z.string().max(4096),
-        body: z.string().max(60000), cc: z.string().max(4096).optional(),
-      }),
+      paramsSchema: z.strictObject(messageFields),
       directApi: {
         method: "POST", url: `${BASE}/messages/send`,
-        mapBody: (p) => {
-          const headers = [
-            `To: ${stripCrLf(p.to)}`, `Subject: ${stripCrLf(p.subject)}`,
-            ...(p.cc ? [`Cc: ${stripCrLf(p.cc)}`] : []),
-            'Content-Type: text/plain; charset="UTF-8"', "MIME-Version: 1.0",
-          ];
-          return { raw: toBase64Url(`${headers.join("\r\n")}\r\n\r\n${String(p.body)}`) };
-        },
+        mapBody: (p) => ({ raw: encodeMessage(p) }),
+      },
+    },
+    create_draft: {
+      risk: "write",
+      description: "Save a plain-text Gmail draft for review without sending; to and cc are optional. Returns the draft id and message.id",
+      params: {
+        to: { type: "string" }, subject: { type: "string", required: true },
+        body: { type: "string", required: true }, cc: { type: "string" },
+      },
+      paramsSchema: z.strictObject({ ...messageFields, to: messageFields.to.optional() }),
+      directApi: {
+        method: "POST", url: `${BASE}/drafts`,
+        mapBody: (p) => ({ message: { raw: encodeMessage(p) } }),
       },
     },
     search: {

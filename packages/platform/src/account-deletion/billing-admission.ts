@@ -23,6 +23,8 @@ export function createAccountDeletionGuardedStripeClient(
     ...(client.expireCheckoutSession
       ? { expireCheckoutSession: client.expireCheckoutSession.bind(client) }
       : {}),
+    ...(client.retrieveTrackingCheckout ? { retrieveTrackingCheckout: client.retrieveTrackingCheckout.bind(client) } : {}),
+    ...(client.retrieveTrackingInvoice ? { retrieveTrackingInvoice: client.retrieveTrackingInvoice.bind(client) } : {}),
     retrieveCheckoutSession: client.retrieveCheckoutSession.bind(client),
     retrieveRecurringPrice: client.retrieveRecurringPrice.bind(client),
     constructWebhookEvent: client.constructWebhookEvent.bind(client),

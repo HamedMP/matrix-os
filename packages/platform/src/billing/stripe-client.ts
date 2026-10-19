@@ -1,6 +1,7 @@
 import type { MatrixBillingInterval, MatrixBillingPlanSlug } from '../billing.js';
 import type { DeveloperToolId } from '../developer-tools.js';
 import type { MatrixHostedBillingRegionSlug } from '@matrix-os/contracts';
+import type { GoogleAnalyticsAttribution } from './checkout-schemas.js';
 import type { MarketingAttribution } from './checkout-schemas.js';
 
 /** Extracted verbatim from packages/platform/src/billing-routes.ts (S01 / T007): Stripe client and webhook event contracts. */
@@ -22,6 +23,9 @@ export interface StripeCheckoutSessionInput {
   paymentMethodMode?: 'card_required' | 'dynamic';
   prebillingIntentId?: string;
   attribution?: MarketingAttribution;
+  googleAnalytics?: GoogleAnalyticsAttribution;
+  planSlug?: MatrixBillingPlanSlug;
+  interval?: MatrixBillingInterval;
   expiresAt?: string;
   successUrl: string;
   cancelUrl: string;
@@ -75,6 +79,8 @@ export interface StripeBillingClient {
     id: string;
   }>;
   expireCheckoutSession?(id: string): Promise<StripeCheckoutSessionProjection>;
+  retrieveTrackingCheckout?(id: string): Promise<unknown>;
+  retrieveTrackingInvoice?(id: string): Promise<unknown>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;
   retrieveRecurringPrice(id: string): Promise<StripeRecurringPriceProjection>;
   createPortalSession(input: {

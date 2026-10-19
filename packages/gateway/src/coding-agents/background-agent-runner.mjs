@@ -20,7 +20,7 @@ const logPath = join(dirname(launchPath), "output.log");
 let log = await open(logPath, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
 let size = (await log.stat()).size;
 let writes = Promise.resolve();
-const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+const child = spawn(command, args, { cwd, env: parsed.launch.inheritEnv === false ? env : { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
 function consume(stream) {
   stream.on("data", chunk => {
     stream.pause();
