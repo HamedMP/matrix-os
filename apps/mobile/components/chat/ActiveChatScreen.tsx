@@ -1,25 +1,15 @@
-import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { TextInput } from "react-native";
-import { useAuth } from "@clerk/clerk-expo";
 
-import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agents/chat-draft-request";
 import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
-import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
-import { supportedAttachmentKinds } from "@/lib/chat-attachments";
-import { useBotChat } from "@/lib/queries/use-bot-chat";
-import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
-import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
-import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
-import { HOSTED_GATEWAY_URL } from "@/lib/storage";
-import { useChatComposer } from "@/lib/use-chat-composer";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 import { useOpenSidePanel } from "@/lib/use-shell-navigation";
 
+import { useActiveChat } from "./active-chat";
 import { ChatScreenView } from "./ChatScreenView";
-import { activeChatRun, chatLoadState, chatScreenTitle, composerPlaceholder } from "./chat-screen-state";
+import { chatLoadState, chatScreenTitle, composerPlaceholder } from "./chat-screen-state";
 import { CHAT_SUGGESTIONS } from "./chat-suggestions";
 import { composerAddProps } from "./composer-add";
 import { ModelTrigger } from "./ModelTrigger";
@@ -40,62 +30,17 @@ export interface ActiveChatScreenProps {
  * a chat opened from a project, above the project.
  */
 export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
-  const { isSignedIn, userId } = useAuth();
   const warmSessionToken = useSessionTokenWarmup();
   const openSidePanel = useOpenSidePanel();
+  const { startDraftChat, draftChatRequests } = useCanonicalChatSession();
   const {
-    activeChatId,
-    startDraftChat,
-    draftChatRequests,
-    selectionOverride,
-    setSelectionOverride,
-    selectedProjectId,
-  } = useCanonicalChatSession();
-
-  const {
-    detail, computer, refresh, isError: chatReadFailed, reload: reloadChat,
-  } = useCanonicalChatDetail(activeChatId);
-  // An open chat is sent to at the revision it was read at, so nothing is
-  // sent to it before it has been read -- nor while a run is active, which
-  // the computer would refuse. Holding sends back holds Retry of a message
-  // that was not sent as well as the Send button.
-  const chatUnread = activeChatId !== null && !detail;
-  const runActive = activeChatRun(detail) !== undefined;
-  const { chats } = useCanonicalChats();
-  const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
-  const botChat = useBotChat(activeChatId, gatewayUrl);
-  const { catalog, isPending: catalogPending, isFetching: catalogFetching } = useChatProviderCatalog();
-
-  // An agent's chat is read and answered in the Agents tab. One opened here
-  // all the same keeps its fixed model, so a message can still be sent.
-  const directBot = Boolean(botChat.snapshot);
-  // The picker marks the catalog as being checked whenever it is fetched.
-  // Sending only waits when there is no catalog to choose a model from yet:
-  // one that is merely being re-checked already gives the selection, and the
-  // computer validates that selection when it admits the turn.
-  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching);
-  const providerCatalogLoading = !directBot && catalogPending;
-  const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
-    ?? detail?.record.chat.currentSelection
-    ?? defaultCatalogSelection(catalog);
-  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
-
-  const attachmentKinds = supportedAttachmentKinds(catalog, selection);
-
+    connected: isConnected, activeChatId, detail, refresh, chatReadFailed, reloadChat, chatUnread, chats, gatewayUrl,
+    catalog, directBot, providerCatalogChecking, selection, setSelectionOverride, attachmentKinds, composer,
+  } = useActiveChat();
   const {
     draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments,
     sentAttachments, canSend: composerCanSend, send, isSending, optimisticMessages, retrySend, editUnsent,
-  } = useChatComposer({
-    scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
-    activeChatId,
-    detail,
-    selection,
-    turnModes,
-    projectId: selectedProjectId,
-    attachmentKinds,
-    // The selection is not final until the provider catalog has loaded.
-    disabled: providerCatalogLoading || chatUnread || runActive,
-  });
+  } = composer;
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
 
   const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
@@ -107,7 +52,6 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
     sentAttachments,
   });
   const busy = isSending || running;
-  const isConnected = Boolean(isSignedIn);
   const canSend = composerCanSend && isConnected;
   const chatState = chatLoadState({
     chatId: activeChatId,
@@ -119,26 +63,19 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
   const inputRef = useRef<TextInput>(null);
   // The composer takes the cursor, and with it the keyboard, only when the
   // person asks for a new chat. Opening the screen or a chat leaves the
-  // keyboard closed, so the tabs stay in view.
+  // keyboard closed, so the tabs stay in view. A screen that starts its new
+  // chats elsewhere leaves the request to the screen that starts them.
   const answeredDraftRequest = useRef(draftChatRequests);
+  const startsNewChats = !onNewChat;
   useEffect(() => {
     if (answeredDraftRequest.current === draftChatRequests) return;
     answeredDraftRequest.current = draftChatRequests;
+    if (!startsNewChats) return;
     // A turn later: the side panel puts the keyboard away as it starts to
     // close, which would otherwise undo this.
     const timer = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(timer);
-  }, [draftChatRequests]);
-
-  // Another screen can ask for text in the new chat's composer, as "Set up in
-  // chat instead" does. It is taken once, and only by the new chat: while a
-  // chat is still open it waits for the new chat that was asked for with it.
-  const draftRequest = useChatDraftRequest();
-  useEffect(() => {
-    if (!draftRequest || activeChatId !== null) return;
-    setDraft(draftRequest.text);
-    consumeChatDraftRequest(draftRequest.id);
-  }, [draftRequest, activeChatId, setDraft]);
+  }, [draftChatRequests, startsNewChats]);
 
   const handleDraftChange = useCallback((text: string) => {
     setDraft(text);
