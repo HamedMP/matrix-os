@@ -1,119 +1,110 @@
-// Appearance state: the unified theme id plus the light/dark/system mode, and
-// the app-wide zoom factor. Persisted through the bounded state IPC under the
-// existing "appearance" key ({ theme } stays the mode for backwards
-// compatibility with stored values).
-//
-// Zoom single source of truth: this store owns the persisted factor. It
-// applies it once per boot via app:set-zoom after hydration; main only applies
-// factors to webContents and reports menu-driven steps back through
-// app:zoom-changed, which this store mirrors and persists.
-import { create } from "zustand";
-import { applyUnifiedTheme, resolveThemeMode, type ThemeMode } from "../design/themes/apply";
-import { DEFAULT_THEME_ID, isThemeId } from "../design/themes";
-import { invoke, onEvent } from "../lib/operator";
+import { create } from 'zustand';
+import { applyUnifiedTheme, resolveThemeMode, type ThemeMode } from '../design/themes/apply';
+import { FONT_OPTIONS, MONO_FONT_OPTIONS, isThemeId } from '../design/themes';
+import { DEFAULT_APPEARANCE, normalizeAppearance, type AppearancePreferences } from '@matrix-os/brand/themes/preferences';
+import { invoke, onEvent } from '../lib/operator';
 
 export const MIN_ZOOM = 0.5;
 export const MAX_ZOOM = 2;
 export const DEFAULT_ZOOM = 1;
 export const ZOOM_STEP = 0.1;
-
 function clampZoom(factor: number): number {
-  if (!Number.isFinite(factor)) return DEFAULT_ZOOM;
-  const rounded = Math.round(factor * 10) / 10;
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, rounded));
+  return Number.isFinite(factor) ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(factor * 10) / 10)) : DEFAULT_ZOOM;
 }
-
-interface AppearanceState {
-  mode: ThemeMode;
-  themeId: string;
-  zoom: number;
-  hydrated: boolean;
+interface AppearanceState extends AppearancePreferences {
+  resolvedMode: "light" | "dark"; zoom: number; hydrated: boolean; pending: boolean; error: string | null;
   load: () => Promise<void>;
-  setMode: (mode: ThemeMode) => void;
-  setThemeId: (themeId: string) => void;
+  update: (patch: Partial<AppearancePreferences>) => Promise<void>;
+  setMode: (mode: ThemeMode) => Promise<void>;
+  setThemeId: (themeId: string) => Promise<void>;
   setZoom: (factor: number) => void;
 }
-
-function isThemeMode(value: unknown): value is ThemeMode {
-  return value === "dark" || value === "light" || value === "system";
+function apply(value: AppearancePreferences): void {
+  applyUnifiedTheme(value.themeId, value.mode, value.customTheme);
+  const root = document.documentElement;
+  root.style.setProperty('--font-ui', FONT_OPTIONS.find(f => f.id === value.fontId)!.family);
+  root.style.setProperty('--font-mono', MONO_FONT_OPTIONS.find(f => f.id === value.monoFontId)!.family);
 }
-
-function persist(mode: ThemeMode, themeId: string, zoom: number): void {
-  void invoke("state:set", { key: "appearance", value: { theme: mode, themeId, zoom } }).catch((err: unknown) => {
-    console.warn("[appearance] persist failed:", err instanceof Error ? err.message : String(err));
-  });
+function payload(value: AppearancePreferences, zoom: number) {
+  return { theme: value.mode, themeId: value.themeId, fontId: value.fontId, monoFontId: value.monoFontId, customTheme: value.customTheme, zoom };
 }
-
 function applyZoomFactor(zoom: number): void {
-  void invoke("app:set-zoom", { factor: zoom }).catch((err: unknown) => {
-    console.warn("[appearance] zoom apply failed:", err instanceof Error ? err.message : String(err));
-  });
+  void invoke('app:set-zoom', { factor: zoom }).catch(error => console.warn('[appearance] zoom failed:', error));
 }
-
 export const useAppearance = create<AppearanceState>()((set, get) => {
   let unsubscribeZoom: (() => void) | null = null;
-
-  // Menu/shortcut zoom steps land here; main already applied the factor, so
-  // only mirror and persist — re-invoking app:set-zoom would be redundant.
-  function wireZoomEvents(): void {
-    unsubscribeZoom?.();
-    unsubscribeZoom = onEvent("app:zoom-changed", ({ factor }) => {
-      const zoom = clampZoom(factor);
-      set({ zoom });
-      persist(get().mode, get().themeId, zoom);
-    });
-  }
-
-  return {
-    mode: "system",
-    themeId: DEFAULT_THEME_ID,
-    zoom: DEFAULT_ZOOM,
-    hydrated: false,
-
-    load: async () => {
-      let zoom = get().zoom;
-      try {
-        const result = await invoke("state:get", { key: "appearance" });
-        const value = result.value as { theme?: unknown; themeId?: unknown; zoom?: unknown } | null;
-        const mode = isThemeMode(value?.theme) ? value.theme : get().mode;
-        const themeId = isThemeId(value?.themeId) ? value.themeId : get().themeId;
-        zoom = typeof value?.zoom === "number" ? clampZoom(value.zoom) : zoom;
-        set({ mode, themeId, zoom, hydrated: true });
-        applyUnifiedTheme(themeId, mode);
-      } catch (err: unknown) {
-        console.warn("[appearance] load failed:", err instanceof Error ? err.message : String(err));
-        set({ hydrated: true });
-        applyUnifiedTheme(get().themeId, get().mode);
+  let media: MediaQueryList | null = null;
+  let unsubscribeMode: (() => void) | null = null;
+  let revision = 0;
+  // Bounded, coalesced zoom writes; appearance edits wait for this writer.
+  let zoomWriter: Promise<void> = Promise.resolve();
+  let zoomDirty = false;
+  let zoomWriting = false;
+  function persistZoom(): void {
+    zoomDirty = true;
+    if (zoomWriting) return;
+    zoomWriting = true;
+    zoomWriter = (async () => {
+      while (zoomDirty) {
+        zoomDirty = false;
+        try { await invoke('state:set', { key: 'appearance', value: payload(get(), get().zoom) }); }
+        catch (error) { console.warn('[appearance] persist failed:', error); set({ error: 'Could not save appearance. Please try again.' }); }
       }
-      // Apply the persisted factor once per boot, then start mirroring
-      // menu-driven zoom changes.
-      applyZoomFactor(zoom);
-      wireZoomEvents();
+      zoomWriting = false;
+    })();
+  }
+  function wireEvents(): void {
+    unsubscribeZoom?.();
+    unsubscribeZoom = onEvent('app:zoom-changed', ({ factor }) => {
+      set({ zoom: clampZoom(factor) });
+      if (!get().hydrated) return;
+      zoomDirty = true;
+      if (!get().pending) persistZoom();
+    });
+    unsubscribeMode?.();
+    media = window.matchMedia?.('(prefers-color-scheme: dark)') ?? null;
+    const listener = () => { if (get().mode === 'system') { apply(get()); set({ resolvedMode: resolveThemeMode(get().mode) }); } };
+    media?.addEventListener?.('change', listener);
+    unsubscribeMode = () => media?.removeEventListener?.('change', listener);
+  }
+  return {
+    ...DEFAULT_APPEARANCE, resolvedMode: "light", zoom: DEFAULT_ZOOM, hydrated: false, pending: false, error: null,
+    load: async () => {
+      const loadRevision = revision;
+      try {
+        const result = await invoke('state:get', { key: 'appearance' });
+        if (revision !== loadRevision) return;
+        const value = result.value && typeof result.value === 'object' ? result.value as Record<string, unknown> : {};
+        const preferences = normalizeAppearance({ ...value, mode: value.theme });
+        const zoom = typeof value.zoom === 'number' ? clampZoom(value.zoom) : 1;
+        set({ ...preferences, resolvedMode: resolveThemeMode(preferences.mode), zoom, hydrated: true }); apply(preferences); applyZoomFactor(zoom);
+      } catch (error) {
+        console.warn('[appearance] load failed:', error);
+        set({ hydrated: false, error: 'Could not load appearance. Reload before making changes.' }); apply(get()); applyZoomFactor(get().zoom);
+      }
+      wireEvents();
     },
-
-    setMode: (mode) => {
-      set({ mode });
-      applyUnifiedTheme(get().themeId, mode);
-      persist(mode, get().themeId, get().zoom);
+    update: async patch => {
+      if (get().pending || !get().hydrated) return;
+      const next = normalizeAppearance({ ...get(), ...patch });
+      revision++;
+      set({ pending: true, error: null });
+      try {
+        await zoomWriter;
+        const savedZoom = get().zoom;
+        await invoke('state:set', { key: 'appearance', value: payload(next, savedZoom) });
+        set({ ...next, resolvedMode: resolveThemeMode(next.mode), pending: false }); apply(next);
+        if (get().zoom !== savedZoom) zoomDirty = true;
+      } catch (error) {
+        console.warn('[appearance] persist failed:', error);
+        set({ pending: false, error: 'Could not save appearance. Please try again.' });
+      } finally {
+        if (zoomDirty) persistZoom();
+      }
     },
-
-    setThemeId: (themeId) => {
-      if (!isThemeId(themeId)) return;
-      set({ themeId });
-      applyUnifiedTheme(themeId, get().mode);
-      persist(get().mode, themeId, get().zoom);
-    },
-
-    setZoom: (factor) => {
-      const zoom = clampZoom(factor);
-      set({ zoom });
-      applyZoomFactor(zoom);
-      persist(get().mode, get().themeId, zoom);
-    },
+    setMode: mode => get().update({ mode }),
+    setThemeId: async themeId => { if (isThemeId(themeId)) await get().update({ themeId }); },
+    setZoom: factor => { if (get().pending || !get().hydrated) return; const zoom = clampZoom(factor); set({ zoom }); applyZoomFactor(zoom); persistZoom(); },
   };
 });
-
-/** The resolved dark/light variant currently in effect. */
-export function resolvedAppearanceMode(): "dark" | "light" {
-  return resolveThemeMode(useAppearance.getState().mode);
-}
+export function resolvedAppearanceMode(): 'dark' | 'light' { return resolveThemeMode(useAppearance.getState().mode); }

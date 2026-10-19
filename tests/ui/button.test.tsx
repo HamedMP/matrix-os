@@ -47,6 +47,7 @@ describe("Button", () => {
     render(<Button disabled onClick={onClick}>Disabled</Button>);
     const btn = screen.getByRole("button");
     expect(btn).toBeDisabled();
+    expect(btn.style.background).toContain("--muted");
     fireEvent.click(btn);
     expect(onClick).not.toHaveBeenCalled();
   });
