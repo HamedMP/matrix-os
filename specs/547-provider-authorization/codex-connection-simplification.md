@@ -63,3 +63,5 @@ Log out/Change account must await that work stopping before CLI logout and the
 successful Settings receipt. Failed or uncertain stops retain the durable fence;
 only manager-proved clean failures release a reference. This lifecycle bookkeeping
 does not grant subscription authority or affect the independent Matrix AI grant.
+
+Device-code completion carries cancellation through the fresh account read. Cancellation before the private completion write starts must not select or enable Codex or publish success; once that write has dispatched, cleanup waits for its actual outcome. Barrier-based workflow tests cover both sides of this boundary.

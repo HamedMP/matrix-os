@@ -24,7 +24,7 @@ export function createCodexSettingsLogin(options: {
   acquire: () => Promise<() => void | Promise<void>>;
   captureAccountProof?: (spawnObserver: SpawnObserver) => Promise<NativeAccountCompletionProof>;
 }) {
-  return async ({ publish, onSuccess, registerCleanup }: { publish: Publish; onSuccess: (proof?: NativeAccountCompletionProof) => Promise<void>; registerCleanup?: (cancel: () => Promise<void>) => void }) => {
+  return async ({ publish, onSuccess, registerCleanup }: { publish: Publish; onSuccess: (proof: NativeAccountCompletionProof | undefined, current: () => boolean) => Promise<void>; registerCleanup?: (cancel: () => Promise<void>) => void }) => {
     const release = await options.acquire();
     let releaseTask: Promise<void> | undefined;
     let child: ReturnType<typeof spawn> | undefined;
@@ -86,7 +86,7 @@ export function createCodexSettingsLogin(options: {
           finally { await reap(); await releaseProfile(); }
           if (cancelled) return true;
           if (!success) throw new ProviderWorkflowError("unavailable");
-          await onSuccess(proof); publish({ state: "succeeded", safeFailure: null });
+          await onSuccess(proof, () => !cancelled); publish({ state: "succeeded", safeFailure: null });
           return true;
         } catch (error) {
           console.warn("[provider-workflow] Codex connection unavailable:", error instanceof Error ? error.name : "UnknownError");
@@ -99,7 +99,7 @@ export function createCodexSettingsLogin(options: {
     const stop = () => {
       // Native authentication is not yet the canonical private completion.
       // Fence cancellation while proof/lease cleanup is still awaiting; once
-      // onSuccess has actually dispatched, await its real terminal outcome.
+      // the private completion write has actually dispatched, await its real outcome.
       cancelled = true;
       if (completed) return finishTask?.then(async success => {
         if (!success && !allClosed()) throw new ProviderWorkflowError("unavailable");

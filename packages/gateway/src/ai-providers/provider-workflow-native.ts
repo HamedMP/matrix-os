@@ -167,9 +167,9 @@ export async function createNativeProviderWorkflowAdapters(options: {
           const exact = fresh.harnesses.find(row => row.id === harness.id && row.harness === 'codex');
           if (!exact || exact.installState !== 'installed' || fresh.access.mode !== 'writable') throw new ProviderWorkflowNotStartedError();
           return options.codexSettingsConnection.start({ publish, registerCleanup,
-            onSuccess: proof => {
+            onSuccess: (proof, current) => {
               if (!proof) throw new ProviderWorkflowError("unavailable");
-              return confirmNativeLogin(request.idempotencyKey, fresh.revision, () => true, proof);
+              return confirmNativeLogin(request.idempotencyKey, fresh.revision, current, proof);
             } });
         }
         if (request.kind === 'login' && request.method === 'browser') {
