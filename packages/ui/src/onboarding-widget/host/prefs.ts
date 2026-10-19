@@ -4,6 +4,7 @@ import { DEFAULT_ONBOARDING_POSITION, ONBOARDING_POSITION_MAX, onboardingCornerP
 
 const STORAGE_PREFIX = "matrix:onboarding-widget:v1";
 const MAX_STORED_CHARS = 8_192;
+const MAX_TITLE_CHARS = 200;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
 
 const PendingRunSchema = z.strictObject({
@@ -12,7 +13,8 @@ const PendingRunSchema = z.strictObject({
   appConnected: z.boolean(),
   simpler: z.boolean(),
   context: z.string().max(400).optional(),
-  title: z.string().max(200).optional(),
+  // Follow-ups keep their result's title, which can be a whole research topic; shorten it rather than drop the save.
+  title: z.string().transform((title) => (title.length > MAX_TITLE_CHARS ? `${title.slice(0, MAX_TITLE_CHARS - 1)}…` : title)).optional(),
   runId: z.string().min(1).max(128).regex(SAFE_ID),
 });
 
