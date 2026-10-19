@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { registerSharedPreviewRuntime, resolveFundedRuntimeMachine } from "../../packages/platform/src/shared-preview-runtime.js";
-import { createAiFundedRuntimeRoutes } from "../../packages/platform/src/ai-funded-policy-routes.js";
+import { createAiFundedRuntimeRoutes, createAiFundedOperatorRoutes } from "../../packages/platform/src/ai-funded-policy-routes.js";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { buildPlatformRuntimeVerificationToken } from "../../packages/platform/src/platform-token.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getActiveUserMachineByClerkId, getAccessibleActiveUserMachineByClerkId,
   getRunningUserMachineByClerkId, getRunningUserMachineByHandle,
@@ -75,6 +75,39 @@ describe("shared preview runtime authority", () => {
     const result = await response.json();
     expect(result.identity).toMatchObject({ ownerId: "user_alice", machineId: machine.machineId, runtimeSlot: machine.runtimeSlot });
     expect(result.requestClass).toBe("background");
+  });
+
+  it.each(["read", "revoke", "grant", "release"])("allows authenticated operators to %s a registered Starter runtime", async operation => {
+    const machine = await registerSharedPreviewRuntime(db, { ownerId: "user_alice", sourcePr: 2758, workerOrigin: "https://alice.example.workers.dev" });
+    const repository = createAiFundedPolicyRepository({ db, credentialHashSecret: "h".repeat(40) });
+    const identity = { ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot };
+    const model = "anthropic/claude-sonnet-5";
+    await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [model] });
+    await repository.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true,
+      allowedModelIds: [model], monthlyBudgetMicrousd: 1_000_000, expiresAt: null });
+    const release = vi.spyOn(repository, "releaseExecutionAdmission").mockResolvedValue({ contractVersion: 1,
+      executionAdmissionReleased: true, usageKnown: false, reservedMicrousd: 100, maximumLiabilityMicrousd: 100,
+      releasedAt: new Date().toISOString() });
+    const secret = "o".repeat(40);
+    const app = createAiFundedOperatorRoutes({ db, repository, operatorSecret: secret,
+      promotionalGrant: { enabled: true, campaignId: "starter-test", amountMicrousd: 1000,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString() } });
+    const headers = { authorization: `Bearer ${secret}`, "content-type": "application/json" };
+    let path = "policy"; let method = "GET"; let body;
+    if (operation === "revoke") { method = "PUT"; body = { expectedRevision: 1, enabled: false,
+      allowedModelIds: [model], monthlyBudgetMicrousd: 1_000_000, expiresAt: null }; }
+    if (operation === "grant") { path = "promotional-grant"; method = "POST"; body = {}; }
+    if (operation === "release") { path = "policy-execution-release"; method = "POST"; body = {
+      expectedOwnerId: machine.clerkUserId, reservationId: "reservation_test", tokenId: "token_test", expectedRequestId: "request_test",
+      expectedStartedAt: "2026-10-01T00:00:00.000Z", expectedExpiresAt: "2026-10-01T00:10:00.000Z", maximumLiabilityMicrousd: 100,
+      localRunId: "run_test", localRunState: "completed", localRunEndedAt: "2026-10-01T00:10:00.000Z",
+      evidenceRef: "test:termination", reviewer: "test:operator", acceptUnknownUpstreamLiability: true }; }
+    const url = `/runtimes/${machine.handle}/${path}`;
+    expect((await app.request(url, { method, headers: { ...headers, authorization: "Bearer wrong" }, body: body === undefined ? undefined : JSON.stringify(body) })).status).toBe(401);
+    const response = await app.request(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    expect(response.status).toBe(200);
+    if (operation === "release") expect(release).toHaveBeenCalledWith(identity, body);
+    if (operation === "revoke") expect((await repository.getRuntimePolicy(identity)).enabled).toBe(false);
   });
 
   it("serializes repeated registrations and never revives a retired authority", async () => {

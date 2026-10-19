@@ -73,18 +73,20 @@ export async function registerSharedPreviewRuntime(db: PlatformDB, input: z.inpu
 }
 
 /** Existing funded auth can resolve logical Workers; personal/VPS readers cannot. */
-export async function resolveFundedRuntimeMachine(db: PlatformDB, handle: string, runtimeSlot: string): Promise<UserMachineRecord | undefined> {
+export async function resolveFundedRuntimeMachine(db: PlatformDB, handle: string, runtimeSlot?: string): Promise<UserMachineRecord | undefined> {
   const legacy = await getRunningUserMachineByHandle(db, handle, runtimeSlot);
   if (legacy) return legacy;
   await db.ready;
-  const row = await db.executor.selectFrom('user_machines as machine')
+  let query = db.executor.selectFrom('user_machines as machine')
     .innerJoin('shared_preview_runtime_bindings as binding', join => join
       .onRef('binding.machine_id', '=', 'machine.machine_id')
       .onRef('binding.owner_id', '=', 'machine.clerk_user_id')
       .onRef('binding.source_pr', '=', 'machine.source_pr'))
     .selectAll('machine').where('machine.provisioning_class', '=', 'shared-preview')
-    .where('machine.handle', '=', handle).where('machine.runtime_slot', '=', runtimeSlot)
+    .where('machine.handle', '=', handle)
     .where('machine.status', '=', 'running').where('machine.activation_state', '=', 'authorized')
-    .where('machine.deleted_at', 'is', null).executeTakeFirst();
+    .where('machine.deleted_at', 'is', null);
+  if (runtimeSlot !== undefined) query = query.where('machine.runtime_slot', '=', runtimeSlot);
+  const row = await query.executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }

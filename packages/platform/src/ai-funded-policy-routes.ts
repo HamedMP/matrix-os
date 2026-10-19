@@ -475,7 +475,7 @@ export function createAiFundedOperatorRoutes(options: {
     const query = EmptyQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
     if (!handle.success || !query.success) return c.json(safeError("invalid_request"), 400);
     try {
-      const machine = await getRunningUserMachineByHandle(options.db, handle.data);
+      const machine = await resolveFundedRuntimeMachine(options.db, handle.data);
       if (!machine) return c.json(safeError("not_found"), 404);
       const policy = await options.repository.getRuntimePolicy({
         ownerId: machine.clerkUserId,
@@ -506,7 +506,7 @@ export function createAiFundedOperatorRoutes(options: {
     const request = FundedAiOperatorRuntimePolicyUpdateRequestSchema.safeParse(await readStrictJson(c));
     if (!handle.success || !query.success || !request.success) return c.json(safeError("invalid_request"), 400);
     try {
-      const machine = await getRunningUserMachineByHandle(options.db, handle.data);
+      const machine = await resolveFundedRuntimeMachine(options.db, handle.data);
       if (!machine) return c.json(safeError("not_found"), 404);
       const updated = await options.repository.setRuntimePolicy({
         identity: {
@@ -529,7 +529,7 @@ export function createAiFundedOperatorRoutes(options: {
     if (!handle.success || !query.success || !request.success
       || Date.parse(request.data.localRunEndedAt) > now().getTime()) return c.json(safeError("invalid_request"), 400);
     try {
-      const machine = await getRunningUserMachineByHandle(options.db, handle.data);
+      const machine = await resolveFundedRuntimeMachine(options.db, handle.data);
       if (!machine) return c.json(safeError("not_found"), 404);
       return c.json(await options.repository.releaseExecutionAdmission({
         ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
@@ -546,7 +546,7 @@ export function createAiFundedOperatorRoutes(options: {
     const createdAt = now().toISOString();
     if (options.promotionalGrant.expiresAt <= createdAt) return c.json(safeError("access_disabled"), 403);
     try {
-      const machine = await getRunningUserMachineByHandle(options.db, handle.data);
+      const machine = await resolveFundedRuntimeMachine(options.db, handle.data);
       if (!machine) return c.json(safeError("not_found"), 404);
       const identity = {
         ownerId: machine.clerkUserId,

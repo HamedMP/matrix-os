@@ -22,7 +22,7 @@ The existing SDK harness cannot use a relay URL alone: its normal kernel credent
 | Worker credentials | Exact preview owner/generation, fixed server configuration, separate owner database and runtime identity; no browser-selected credential or URL |
 | Runtime lease issuance | Existing runtime verification token, exact owner/machine/slot identity, expiry and bounded response |
 | Inference | Opaque Matrix lease, exact model policy, owner credit reservation/settlement, fixed relay origin and server-set background class |
-| Operator bootstrap | Trusted operator only; no new public registration/grant endpoint; staging database and explicit test window |
+| Operator bootstrap and existing funded controls | Trusted operator bootstrap; existing operator bearer for policy, grant and audited hold recovery; registered shared-aware identity, no new public endpoint; isolated database and explicit test window |
 | Legacy personal routing | Existing customer/preview classes and routes; no implicit selection of shared metadata |
 
 Account deletion fails closed while any shared Worker authority remains active. The pilot operator must first revoke policy, stop and verify Cloudflare compute, remove the owner Worker/storage/databases, and mark its logical record retired. The VPS adapter skips only already retired shared records; transactional metadata erasure cascades their bindings. Automatic Cloudflare account-deletion orchestration is deferred.
