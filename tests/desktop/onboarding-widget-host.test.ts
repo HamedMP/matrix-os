@@ -315,11 +315,11 @@ describe("onboarding turn admission", () => {
       getDetail: vi.fn().mockResolvedValue({ record: { chat: { revision: 4, currentSelection: bound }, providerBinding: { instanceId: "claude_default" } } }),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_old")),
     };
-    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Follow up", selection, requestIds });
+    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", title: "Research: AI agent pricing", prompt: "Follow up", selection, requestIds });
     expect(client.admitTurn).toHaveBeenCalledWith("chat_old", expect.objectContaining({ baseRevision: 4, selection: bound }), { chatScope: "global" });
 
     client.getDetail.mockResolvedValue({ record: { chat: { revision: 5, currentSelection: { instanceId: "claude_default", model: "claude-sonnet" } } } });
-    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Unbound", selection, requestIds });
+    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", title: "Research: AI agent pricing", prompt: "Unbound", selection, requestIds });
     expect(client.admitTurn).toHaveBeenLastCalledWith("chat_old", expect.objectContaining({ selection: { instanceId: "hermes_default", model: "default" } }), { chatScope: "global" });
   });
 
