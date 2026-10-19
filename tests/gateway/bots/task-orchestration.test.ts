@@ -617,7 +617,7 @@ it("forwards image/file-only recipe Bot turns through the real broker and image-
 });
 
 describe("group Pi run isolation", () => {
-  it.each((["resolve", "authorize"] as const).flatMap(stage => (["signal", "cancel", "deadline"] as const).map(stop => ({ stage, stop }))))("settles stalled group $stage on $stop before late authority", async ({ stage, stop }) => {
+  it.each((["resolve", "authorize", "route"] as const).flatMap(stage => (["signal", "cancel", "deadline"] as const).map(stop => ({ stage, stop }))))("settles stalled group $stage on $stop before late authority", async ({ stage, stop }) => {
     await insertChat(db, "chat_company1");
     await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
     const group = { scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project" as const, projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" };
@@ -627,7 +627,8 @@ describe("group Pi run isolation", () => {
     const gate = new Promise<void>(resolve => { release = resolve; });
     const resolveGroupRun = vi.fn(async () => { if (stage === "resolve") await gate; return group; });
     const authorizeGroup = vi.fn(async () => { if (stage === "authorize") await gate; return authority; });
-    const service = setup({ resolveGroupRun, authorizeGroup });
+    const resolveGroupRoute = vi.fn(async () => { if (stage === "route") await gate; return { route: ROUTE, accessSourceId: "matrix_included" as const }; });
+    const service = setup({ resolveGroupRun, authorizeGroup, resolveGroupRoute });
     const originalTimeout = AbortSignal.timeout;
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 10_000 ? deadline.signal : originalTimeout(ms));
     const runId = `run_prelaunch_${stage}_${stop}`;
@@ -637,7 +638,7 @@ describe("group Pi run isolation", () => {
     let observed: Awaited<typeof result> | { kind: "still_waiting" };
     let slotReleased = false;
     try {
-      await vi.waitFor(() => expect(stage === "resolve" ? resolveGroupRun : authorizeGroup).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(stage === "resolve" ? resolveGroupRun : stage === "authorize" ? authorizeGroup : resolveGroupRoute).toHaveBeenCalledOnce());
       if (stop === "signal") input.abort();
       else if (stop === "cancel") await service.orchestrator.cancel(runId);
       else deadline.abort(new DOMException("Synthetic authorization deadline", "TimeoutError"));
