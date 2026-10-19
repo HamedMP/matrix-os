@@ -1,4 +1,4 @@
-import { supervisedToolApproval, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { supervisedToolApproval, supervisedToolRetryDraft, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { ConversationPresentationCallbacks } from "../../components/conversation/presentation";
 import type { canonicalChatPresentation } from "./canonical-chat-presentation";
 import type { CanonicalComposerSelection } from "./canonical-composer-state";
@@ -30,18 +30,19 @@ export function supervisedToolCallbacks(input: {
   catalog: CanonicalProviderCatalog | null | undefined;
   directBot: boolean;
   onSelectionChange: (selection: CanonicalComposerSelection) => void;
+  draft: string;
   setDraft: (text: string) => void;
 }): Pick<ConversationPresentationCallbacks, "permissionMode" | "onPermissionMode" | "onTryAgain"> {
-  const { selection, catalog, directBot, onSelectionChange, setDraft } = input;
+  const { selection, catalog, directBot, onSelectionChange, draft, setDraft } = input;
   const fullAccess = !directBot && selection && catalog?.instances.some((instance) => (
     instance.id === selection.instanceId && instance.supports.permissionModes.includes("full_access")
   ));
   return {
     permissionMode: selection?.permissionMode,
     ...(fullAccess ? { onPermissionMode: (mode) => onSelectionChange({ ...selection, permissionMode: mode }) } : {}),
-    // Try again fills the composer so the owner can resend; nothing is sent on their behalf.
+    // Try again adds to the composer so the owner can resend; unsent text stays and nothing is sent for them.
     onTryAgain: (prompt) => {
-      setDraft(prompt);
+      setDraft(supervisedToolRetryDraft(draft, prompt));
       if (typeof document === "undefined") return;
       document.querySelector<HTMLElement>("[data-slot=shared-chat-composer] :is(textarea, [contenteditable=true])")?.focus();
     },

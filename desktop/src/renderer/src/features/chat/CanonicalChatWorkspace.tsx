@@ -1001,7 +1001,7 @@ export function CanonicalChatWorkspace({
               submitInput: controller.submitInput,
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
-              ...supervisedToolCallbacks({ selection: providerSelection, catalog: providerCatalog, directBot: Boolean(directBotId), onSelectionChange, setDraft }),
+              ...supervisedToolCallbacks({ selection: providerSelection, catalog: providerCatalog, directBot: Boolean(directBotId), onSelectionChange, draft, setDraft }),
             }} />
             </div>
             </ChatContextMenu>

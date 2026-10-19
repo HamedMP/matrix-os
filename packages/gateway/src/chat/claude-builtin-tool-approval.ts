@@ -28,10 +28,12 @@ interface Pending {
   expireAfterDecision?: boolean;
 }
 
-function toolSubject(input: Record<string, unknown>): string | undefined {
+function toolSubject(input: Record<string, unknown>, homePath: string): string | undefined {
   const raw = input.query ?? input.url ?? input.command ?? input.file_path ?? input.path;
   if (typeof raw !== "string") return undefined;
-  const subject = raw.replace(/\s+/g, " ").trim().slice(0, 80).replaceAll("\"", "'");
+  // Redact credentials and private paths before truncating, so a cut cannot split a secret past the redactor.
+  const safe = sanitizeAssistantText(raw, { homePath });
+  const subject = safe.replace(/\s+/g, " ").trim().slice(0, 80).replaceAll("\"", "'");
   return subject.length > 0 ? subject : undefined;
 }
 
@@ -88,7 +90,7 @@ export function createClaudeBuiltinToolApprovalControl(options: {
         deny(respond, UNAVAILABLE);
         return true;
       }
-      const subject = toolSubject(request.input)?.replace(/^https?:\/\//i, "");
+      const subject = toolSubject(request.input, options.homePath)?.replace(/^https?:\/\//i, "");
       const titled = subject ? `${copy.title} · “${subject}”` : copy.title;
       const safeTitle = canonicalChatApprovalTitle(titled);
       const title = safeTitle === titled ? titled : canonicalChatApprovalTitle(copy.title);

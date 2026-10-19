@@ -253,6 +253,23 @@ describe("Claude built-in tool approval control", () => {
     }
   });
 
+  it("keeps credentials and private paths out of the approval title", () => {
+    const { approval, events, respond } = control();
+    approval.onToolPermission({
+      nativeRequestId: "native_secret", toolName: "Bash",
+      input: { command: "API_KEY=example-secret npm publish" },
+    }, respond);
+    approval.onToolPermission({
+      nativeRequestId: "native_path", toolName: "Read", input: { file_path: "/home/matrix/home/private/notes.md" },
+    }, respond);
+    const titles = events.flatMap((event) => event.type === "approval.requested" ? [event.title] : []);
+    expect(titles).toHaveLength(2);
+    expect(titles.join(" ")).not.toContain("example-secret");
+    expect(titles.join(" ")).not.toContain("/home/matrix/home");
+    // The redacted subject still names the command.
+    expect(titles[0]).toMatch(/^Run a command · “.*npm publish”$/);
+  });
+
   it("offers only one-time decisions and refuses a chat-wide grant", async () => {
     const { approval, events, responses, respond } = control();
     approval.onToolPermission({ nativeRequestId: "native_web", toolName: "WebSearch", input: { query: "pricing" } }, respond);

@@ -73,6 +73,15 @@ describe("Supervised tool approval card", () => {
     expect(onDecision).not.toHaveBeenCalled();
   });
 
+  it("moves focus into the menu when it opens and back to its trigger after a choice", () => {
+    render(<SupervisedToolApprovalCard approval={waiting} permissionMode="supervised" onDecision={vi.fn()} onPermissionMode={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: "Always allow → Full access" });
+    fireEvent.click(trigger);
+    expect(document.activeElement).toBe(screen.getByRole("menuitemradio", { name: /Supervised/ }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Supervised/ }));
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("closes the permission menu on Escape and returns focus to its trigger", () => {
     render(<SupervisedToolApprovalCard approval={waiting} permissionMode="supervised" onDecision={vi.fn()} onPermissionMode={vi.fn()} />);
     const trigger = screen.getByRole("button", { name: "Always allow → Full access" });

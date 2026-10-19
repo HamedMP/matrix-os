@@ -137,6 +137,14 @@ export function supervisedToolRetryPrompt(title: string): string {
   return tool ? `Try again: ${tool.title}` : "Try again";
 }
 
+/** Composer text after Try again: unsent text is kept, with the retry prompt added after it once. */
+export function supervisedToolRetryDraft(current: string, prompt: string): string {
+  const kept = current.trimEnd();
+  if (!kept.trim()) return prompt;
+  if (kept.endsWith(prompt)) return kept;
+  return `${kept}\n\n${prompt}`;
+}
+
 /** The Desktop tool-approval card, or null when this approval is some other request. */
 export function supervisedToolApproval(source: SupervisedToolApprovalSource): SupervisedToolApproval | null {
   const tool = matchTool(source.title);

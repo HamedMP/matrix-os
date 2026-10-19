@@ -10,7 +10,7 @@ import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } fro
 
 import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
-import { supervisedToolApproval } from "@matrix-os/contracts";
+import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { ChatQueuedRequests } from "./chat/ChatQueuedRequests";
@@ -721,7 +721,7 @@ function ChatAppContent({
                           })()}
                           permissionMode={approvalPermissionMode}
                           onPermissionMode={onApprovalPermissionMode}
-                          onTryAgain={(prompt) => { composer.setText(prompt); document.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
+                          onTryAgain={(prompt) => { composer.setText(supervisedToolRetryDraft(composer.text, prompt)); document.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
                           onSubmit={onSubmitApproval ? async (runId, approvalId, decision) => {
                             const submissionId = `${runId}\0${approvalId}`;
                             setSubmittingApprovalId(submissionId);

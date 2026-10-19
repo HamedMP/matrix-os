@@ -56,6 +56,10 @@ function AccessMenu({
     { value: "supervised" as const, title: "Supervised", body: "Asks before using tools like web search." },
     { value: "full_access" as const, title: "Full access", body: "Uses tools without asking. Switch back anytime." },
   ];
+  const selectedRef = useRef<HTMLButtonElement>(null);
+  // Focus enters the menu on open, landing on the current mode (UX guide).
+  useEffect(() => { selectedRef.current?.focus(); }, []);
+  const current = mode === "full_access" ? "full_access" : "supervised";
   return (
     <div role="menu" aria-label="Permission mode" className="absolute bottom-8 right-0 z-10 w-[280px] rounded-xl border p-1.5 shadow-lg" style={{ borderColor: line, background: paper }}>
       {options.map((option) => {
@@ -63,6 +67,7 @@ function AccessMenu({
         return (
           <button
             key={option.value}
+            ref={option.value === current ? selectedRef : undefined}
             type="button"
             role="menuitemradio"
             aria-checked={selected}
@@ -114,7 +119,7 @@ function PermissionModeControl({
       <button ref={triggerRef} type="button" className="h-6 px-2 text-[12px] font-medium" style={{ color: muted }} aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((current) => !current)}>
         Always allow → Full access
       </button>
-      {open ? <AccessMenu mode={mode} onSelect={(next) => { setOpen(false); onSelect(next); }} /> : null}
+      {open ? <AccessMenu mode={mode} onSelect={(next) => { setOpen(false); triggerRef.current?.focus(); onSelect(next); }} /> : null}
     </div>
   );
 }
