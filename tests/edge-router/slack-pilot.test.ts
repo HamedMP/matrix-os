@@ -51,6 +51,13 @@ describe('bounded legacy Slack pilot sign-in route', () => {
       headers: { origin, 'next-action': 'a'.repeat(40) }, body: '{}' }), env)).status).toBe(200);
     expect((fetch.mock.calls[0]![0] as Request).headers.has('next-action')).toBe(false);
   });
+  it('keeps collaboration session creation off the Slack sign-in alias',async()=>{
+    clock();const fetch=vi.spyOn(globalThis,'fetch');
+    const response=await handleSlackPilotRequest(request('/api/collaboration/direct-sessions',{
+      method:'POST',headers:{origin,authorization:'Bearer synthetic-owner'},body:'{}',
+    }),env);
+    expect(response.status).toBe(404);expect(fetch).not.toHaveBeenCalled();
+  });
   it.each(['/vm/pr-2079/api/files', '/api/integrations', '/api/terminal/run', '/api/slack/context',
     '/_next/data/secret', '/api/slack/install/extra', '/sign-injected', '/slack/link/extra', '/slack/oauth/complete/extra'])('denies unrelated path %s', async (path) => {
     clock(); const fetch = vi.spyOn(globalThis, 'fetch');

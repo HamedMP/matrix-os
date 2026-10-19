@@ -44,7 +44,7 @@ function validate(overrides: Record<string, string>) {
   return spawnSync("bash", ["-euc", validation], { env: baseEnvironment(overrides), encoding: "utf8", timeout: 5_000 });
 }
 
-function deployedArguments(overrides: Record<string, string> = {}) {
+function deployedArguments(overrides: Record<string, string> = {}, apiOrigin = "https://synthetic-preview.example.test") {
   const directory = mkdtempSync(join(tmpdir(), "preview-collaboration-deploy-"));
   const capture = join(directory, "arguments");
   try {
@@ -52,11 +52,12 @@ function deployedArguments(overrides: Record<string, string> = {}) {
     // no Cloud Run, credentials, network or database is used.
     const functionEnd = deployment.indexOf("\nservice_base_url=");
     expect(functionEnd).toBeGreaterThan(0);
-    const script = `gcloud() { printf '%s\\0' "$@" > "$CAPTURE"; }\ndate() { printf '%s\\n' '2026-09-28T00:00:00.000Z'; }\n${deployment.slice(0, functionEnd)}\ndeploy_preview https://synthetic-preview.example.test`;
+    const script = `gcloud() { if [ "$1 $2 $3" = "secrets versions describe" ]; then printf '%s' '{"state":"ENABLED","name":"projects/synthetic-project/secrets/platform-preview-secret/versions/7"}'; else printf '%s\\0' "$@" > "$CAPTURE"; fi; }\ndate() { printf '%s\\n' '2026-09-28T00:00:00.000Z'; }\n${deployment.slice(0, functionEnd)}\ndeploy_preview "$DEPLOY_API_ORIGIN"`;
     const result = spawnSync("bash", ["-euc", script], { encoding: "utf8", timeout: 5_000, env: {
       ...baseEnvironment(overrides), CAPTURE: capture, CUSTOM_MCP_ENABLED: "false",
       GCP_PROJECT_ID: "synthetic-project", GCP_REGION: "synthetic-region", PR_NUMBER: "1990",
       IMAGE: "synthetic-image:603751f4885c",
+      DEPLOY_API_ORIGIN: apiOrigin,
     } });
     expect(result.status, result.stderr).toBe(0);
     const args = readFileSync(capture, "utf8").split("\0");
@@ -67,11 +68,13 @@ function deployedArguments(overrides: Record<string, string> = {}) {
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
-function revisionContract(revision: unknown) {
+function revisionContract(revision: unknown, overrides: Record<string, string> = {}, apiOrigin?: string) {
   const functionEnd = deployment.indexOf("\nservice_base_url=");
-  const script = `date() { printf '%s\\n' '2026-09-28T00:00:00.000Z'; }\n${deployment.slice(0, functionEnd)}\nverify_collaboration_revision <<< "$REVISION_JSON"`;
+  const script = `gcloud() { if [ "$1 $2 $3" = "secrets versions describe" ]; then printf '%s' '{"state":"ENABLED","name":"projects/synthetic-project/secrets/platform-preview-secret/versions/7"}'; fi; }\ndate() { printf '%s\\n' '2026-09-28T00:00:00.000Z'; }\n${deployment.slice(0, functionEnd)}\n${apiOrigin ? 'deploy_preview "$DEPLOY_API_ORIGIN"' : ''}\nverify_collaboration_revision <<< "$REVISION_JSON"`;
   return spawnSync("bash", ["-euc", script], { encoding: "utf8", timeout: 5_000, env: {
-    ...baseEnvironment(), REVISION_JSON: JSON.stringify(revision),
+    ...baseEnvironment(overrides), REVISION_JSON: JSON.stringify(revision), DEPLOY_API_ORIGIN: apiOrigin,
+    CUSTOM_MCP_ENABLED: "false", GCP_PROJECT_ID: "synthetic-project", GCP_REGION: "synthetic-region",
+    CLOUD_RUN_PREVIEW_SERVICE: "matrix-platform-preview", PR_NUMBER: "2079", IMAGE: "synthetic-image:pinned",
   } });
 }
 
@@ -146,6 +149,37 @@ describe("preview platform collaboration authority", () => {
     expect(health.config.relayOrigin).toBe(PREVIEW_HOST);
     expect(health.config.allowedOrigins).toEqual([PREVIEW_HOST]);
     expect(health.config.ticketKeyring?.activeKeyId).toBe(ACTIVE_KEY_ID);
+  });
+
+  const pilotAlias="https://pr-2079-preview.matrix-os.com";
+  const pilotBackend="https://pr-2079---matrix-platform-preview-example-ey.a.run.app";
+  const pilotBrowser="https://app.matrix-os.com";
+  const pilotOverrides={SLACK_PREVIEW_ENABLED:"true",SLACK_PREVIEW_BROWSER_ORIGIN:pilotBrowser,PREVIEW_PUBLIC_URL:pilotAlias};
+
+  it("advertises the exact pilot backend for collaboration while preserving the sign-in alias",()=>{
+    const bindings=deployedArguments(pilotOverrides,pilotBackend).env.split("|");
+    expect(bindings).toContain(`PLATFORM_PUBLIC_URL=${pilotAlias}`);
+    expect(bindings).toContain(`MATRIX_APP_ORIGIN=${pilotAlias}`);
+    expect(bindings).toContain(`MATRIX_API_ORIGIN=${pilotBackend}`);
+    expect(bindings).toContain(`MATRIX_COLLABORATION_ALLOWED_ORIGINS=${pilotAlias},${pilotBrowser}`);
+    expect(bindings).toContain(`MATRIX_COLLABORATION_RELAY_ORIGIN=${pilotBackend}`);
+    const values=Object.fromEntries(bindings.filter(binding=>binding.includes("=")).map(binding=>{
+      const separator=binding.indexOf("=");return [binding.slice(0,separator),binding.slice(separator+1)];
+    }));
+    const health=describePlatformCollaborationConfiguration({...values,MATRIX_COLLABORATION_TICKET_KEYS:JSON.stringify({[ACTIVE_KEY_ID]:seed()})});
+    expect(health.configured).toBe(true);
+    if(health.configured){expect(health.config.relayOrigin).toBe(pilotBackend);expect(health.config.allowedOrigins).toEqual([pilotAlias,pilotBrowser]);}
+  });
+
+  it("requires the pilot revision readback to match the reachable collaboration backend",()=>{
+    const revision=(relay:string)=>({spec:{containers:[{env:[
+      {name:"MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID",value:ACTIVE_KEY_ID},
+      {name:"MATRIX_COLLABORATION_ALLOWED_ORIGINS",value:`${pilotAlias},${pilotBrowser}`},
+      {name:"MATRIX_COLLABORATION_RELAY_ORIGIN",value:relay},
+      {name:"MATRIX_COLLABORATION_TICKET_KEYS",valueFrom:{secretKeyRef:{name:PREVIEW_SECRET,key:"latest"}}},
+    ]}]}});
+    expect(revisionContract(revision(pilotBackend),pilotOverrides,pilotBackend).status).toBe(0);
+    expect(revisionContract(revision(pilotAlias),pilotOverrides,pilotBackend).status).not.toBe(0);
   });
 
   it.each([
