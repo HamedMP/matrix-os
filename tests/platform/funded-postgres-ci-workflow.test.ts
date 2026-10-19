@@ -2,8 +2,10 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { sourceChangeScript } from "../../scripts/ci/dedicated-changes.mjs";
 
 type PostgreSqlJob = {
   needs: string; if: string; "timeout-minutes": number;
@@ -15,6 +17,18 @@ const job = (parse(readFileSync(".github/workflows/ci.yml", "utf8")) as {
   jobs: { "funded-postgres": PostgreSqlJob };
 }).jobs["funded-postgres"];
 const settlementStep = job.steps.find((step) => step.name === "Verify funded settlement on PostgreSQL")!;
+
+function postgresLaneRuns(shouldRun: string, result = "success", wasCancelled = false): boolean {
+  // Model only this job's boolean/status expression, including GitHub's implicit
+  // success() guard: https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions
+  const hasStatus = /\b(?:always|success|failure|cancelled)\s*\(/.test(job.if);
+  const condition = hasStatus ? job.if : `success() && (${job.if})`;
+  return Boolean(runInNewContext(condition, {
+    always: () => true, cancelled: () => wasCancelled,
+    success: () => result === "success" && !wasCancelled, failure: () => result === "failure",
+    needs: { changes: { result, outputs: { should_run: shouldRun } } },
+  }, { timeout: 100 }));
+}
 
 function executeSettlementStep(url: string | undefined, step = settlementStep) {
   const directory = mkdtempSync(join(tmpdir(), "matrix-funded-pg-ci-"));
@@ -84,6 +98,7 @@ describe("funded PostgreSQL CI coverage", () => {
       "tests/platform/ai-funded-recovery-migration.test.ts",
       "tests/platform/ai-funded-usage-waiver.test.ts", "tests/platform/ai-funded-usage-waiver-cli.test.ts",
       "tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts",
+      "tests/workspace-worker/data-compute-budget-postgres.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
     ]);
   });
@@ -130,6 +145,40 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
       expect(absent.status).toBe(1);
       expect(absent.stderr).toContain("Disposable PostgreSQL test URL required");
       expect(absent.commands).toEqual(["bun run test:prepare"]);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+  it.each([
+    "packages/workspace-worker/src/data/compute-budget.ts",
+    "tests/workspace-worker/data-compute-budget-postgres.test.ts",
+  ])("schedules the disposable PostgreSQL lane for %s", changedPath => {
+    const directory = mkdtempSync(join(tmpdir(), "matrix-workspace-pg-admission-"));
+    try {
+      const git = join(directory, "git");
+      writeFileSync(git, `#!/usr/bin/env bash
+case "$1" in
+  fetch) exit 0 ;;
+  diff) printf '%s\\n' "$CI_CHANGED_PATH" ;;
+  *) exit 1 ;;
+esac
+`);
+      chmodSync(git, 0o700);
+      const output = join(directory, "outputs");
+      const result = spawnSync("bash", ["-eu", "-c", sourceChangeScript], {
+        encoding: "utf8", timeout: 5_000,
+        env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, CI_CHANGED_PATH: changedPath,
+          GITHUB_EVENT_NAME: "pull_request", GITHUB_BASE_REF: "stack-parent", GITHUB_SHA: "reviewed-head",
+          GITHUB_OUTPUT: output, PR_DRAFT: "false", PR_ACTION: "synchronize" },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toContain("should_run=true");
+      expect(postgresLaneRuns("true")).toBe(true);
+      expect(postgresLaneRuns("false")).toBe(false);
+      expect(postgresLaneRuns("true", "failure")).toBe(false);
+      expect(postgresLaneRuns("true", "skipped")).toBe(false);
+      expect(postgresLaneRuns("true", "success", true)).toBe(false);
+      const invocation = executeSettlementStep(job.env.MATRIX_TEST_POSTGRES_URL);
+      expect(invocation.status, invocation.diagnostics).toBe(0);
+      expect(invocation.args).toContain("tests/workspace-worker/data-compute-budget-postgres.test.ts");
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
   it("keeps the existing scoped service credentials, trigger and ten-minute limit", () => {
