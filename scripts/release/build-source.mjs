@@ -6,6 +6,12 @@ import { isDeepStrictEqual } from "node:util";
 const COMMIT = /^[a-f0-9]{40}$/;
 const MAX_ANCESTORS = 256;
 
+// A trusted preview workflow can build a different immutable checkout while
+// GITHUB_SHA continues to identify its execution controller.
+export function readDesktopBuildSource(root, env = process.env) {
+  return readBuildSource(root, env.MATRIX_DESKTOP_BUILD_SOURCE_SHA || env.GITHUB_SHA);
+}
+
 /** Capture the checkout being built; never infer ancestry from release dates. */
 export function readBuildSource(root, expectedCommit) {
   const git = (...args) => execFileSync("git", args, {

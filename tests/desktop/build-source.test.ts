@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readBuildSource } from "../../scripts/release/build-source.mjs";
+import YAML from "yaml";
+import { readBuildSource, readDesktopBuildSource } from "../../scripts/release/build-source.mjs";
 
 let root: string;
 function git(...args: string[]) {
@@ -23,10 +25,44 @@ beforeEach(() => {
 });
 afterEach(() => {
   rmSync(`${root}-shallow`, { recursive: true, force: true });
+  rmSync(`${root}-bin`, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
 });
 
 describe("automatic build provenance", () => {
+  it("runs legacy PR build provenance in a source-bound child while retaining the controller environment", () => {
+    const controller = commit("build: reviewed workflow controller");
+    const source = commit("feat: legacy preview source");
+    const bin = `${root}-bin`;
+    mkdirSync(bin);
+    const helper = pathToFileURL(join(process.cwd(), "scripts/release/build-source.mjs")).href;
+    writeFileSync(join(bin, "bun"), `#!${process.execPath}\nimport(${JSON.stringify(helper)}).then(({readBuildSource}) => console.log(JSON.stringify(readBuildSource(${JSON.stringify(root)}, process.env.GITHUB_SHA))));\n`);
+    chmodSync(join(bin, "bun"), 0o755);
+    const workflow = YAML.parse(readFileSync(".github/workflows/desktop-build.yml", "utf8"));
+    const build = workflow.jobs.linux.steps.find((step: {name?: string}) => step.name === "Build desktop app");
+    const command = build.run.trim().match(/^node --input-type=module -e "(.*)"$/s);
+    expect(command, "trusted child process launcher is required for legacy PR source").not.toBeNull();
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, GITHUB_SHA: controller, MATRIX_DESKTOP_BUILD_SOURCE_SHA: source };
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", command![1]], { cwd: root, env, encoding: "utf8", timeout: 10_000 });
+    expect(JSON.parse(output)).toEqual({ commit: source, ancestors: [controller] });
+    expect(env.GITHUB_SHA).toBe(controller);
+  });
+  it("binds a preview to its explicit checkout source while preserving the controller identity", () => {
+    const controller = commit("build: reviewed controller");
+    const source = commit("feat: preview source");
+    const env = { GITHUB_SHA: controller, MATRIX_DESKTOP_BUILD_SOURCE_SHA: source };
+    expect(readDesktopBuildSource(root, env)).toEqual({ commit: source, ancestors: [controller] });
+    expect(env.GITHUB_SHA).toBe(controller);
+    expect(() => readDesktopBuildSource(root, { GITHUB_SHA: controller })).toThrow(/checkout/i);
+  });
+  it("preserves ordinary release provenance and rejects an invalid explicit preview source", () => {
+    const source = commit("build: source");
+    expect(readDesktopBuildSource(root, { GITHUB_SHA: source })?.commit).toBe(source);
+    expect(readDesktopBuildSource(root, { GITHUB_SHA: source, MATRIX_DESKTOP_BUILD_SOURCE_SHA: "" })?.commit).toBe(source);
+    expect(readDesktopBuildSource(root, {})?.commit).toBe(source);
+    expect(() => readDesktopBuildSource(root, { GITHUB_SHA: source, MATRIX_DESKTOP_BUILD_SOURCE_SHA: "main" })).toThrow(/commit/i);
+    expect(() => readDesktopBuildSource(root, { GITHUB_SHA: source, MATRIX_DESKTOP_BUILD_SOURCE_SHA: "a".repeat(40) })).toThrow(/checkout/i);
+  });
   it("captures the actual built commit and includes earlier merged changes", () => {
     const old = commit("fix: first change (#1)");
     const current = commit("feat: paired change (#2)");
