@@ -75,3 +75,9 @@ AI preparation preserves the complete source through bounded batches (48KiB seri
 - Preparation should use the canonical Matrix AI Gateway when no saved owner API key is available. Preview runtimes retain their own legitimate funding identity; primary-runtime tokens are not copied.
 - Hamed explicitly deferred Native Mobile live testing and the positive second-owner rating check. Automated Native tests and self-rating denial remain in scope. These deferrals are not passing live evidence.
 - Live product captures, current review status and the Slack tech-channel handoff must remain explicit before review-readiness is claimed.
+
+## Compact edits and interrupted conflict moves
+
+AI preparation supports short exact replacements in existing UTF-8 source files, so a small change does not require echoing a large file through the 8,192-token Matrix response budget. Matches must be unique, replacements run in order, and paths retain the current-batch/shared-manifest allowlist. New-file, bundle, scan and source-preservation checks still apply. Compact response sizing is prompt guidance; token and parsing limits remain the enforced boundary.
+
+Conflict preservation uses a single directory rename. Legacy empty reservations are recoverable; occupied directories and symlinks are preserved while a bounded alternate destination is selected. Linux crash and collision proofs cover both owner backups and unrelated install recovery.
