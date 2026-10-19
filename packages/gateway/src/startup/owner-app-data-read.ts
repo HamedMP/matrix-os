@@ -15,6 +15,17 @@ const AuditSchema = z.strictObject({
   action: z.enum(["listApps", "schema", "find"]).optional(), outcome: z.enum(["allowed", "denied", "error"]),
 });
 
+/** Installed-app discovery runs before every native Chat turn; a hung registry query must not stall Chat. */
+export const APP_READ_DISCOVERY_TIMEOUT_MS = 5_000;
+
+function withDeadline<T>(work: Promise<T>, ms: number, name: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { const error = new Error(name); error.name = name; reject(error); }, ms);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
 /** Owns no pool. Startup owns DDL; security audits are the only writes. */
 export async function createOwnerAppDataReadRuntime(options: {
   apps: AppRegistry | null; queryEngine: QueryEngine | null; kysely: Kysely<any> | null;
@@ -43,7 +54,7 @@ export async function createOwnerAppDataReadRuntime(options: {
   };
   async function resolveGrant(owner: { type: string; ownerId: string }): Promise<OwnerAppReadGrant | null> {
     if (owner.type !== "personal" || owner.ownerId !== ownerId) return null;
-    const installed = await apps!.listApps(65);
+    const installed = await withDeadline(apps!.listApps(65), APP_READ_DISCOVERY_TIMEOUT_MS, "AppReadDiscoveryTimeout");
     const eligible: OwnerAppReadGrant["apps"] = [];
     for (const app of installed) {
       if (!app.tables || typeof app.tables !== "object" || Array.isArray(app.tables)) continue;

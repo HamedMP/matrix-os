@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { createOwnerAppDataReadRuntime } from "../../packages/gateway/src/startup/owner-app-data-read.js";
+import { APP_READ_DISCOVERY_TIMEOUT_MS, createOwnerAppDataReadRuntime } from "../../packages/gateway/src/startup/owner-app-data-read.js";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import { readFile } from "node:fs/promises";
 import { ownerReadFixture, OWNER, RUN, RUNTIME, READ_PATH, MACHINE_SECRET, DATABASE_SECRET } from "./owner-app-data-read-fixture.js";
@@ -41,6 +41,25 @@ describe("ENG-289 production owner read composition", () => {
     const grant = await runtime.resolveGrant(OWNER);
     expect(grant?.apps).toHaveLength(64);
     expect(grant?.apps[0]?.app).toBe("notes");
+  });
+
+  it("bounds installed-app discovery so a hung registry query cannot stall a Chat turn", async () => {
+    const f = await ownerReadFixture();
+    const runtime = await createOwnerAppDataReadRuntime({ apps: f.apps, queryEngine: f.engine,
+      kysely: f.kysely, ownerId: OWNER.ownerId, runtimeHandle: RUNTIME });
+    vi.spyOn(f.apps, "listApps").mockReturnValueOnce(new Promise(() => { /* never settles */ }));
+    vi.useFakeTimers();
+    try {
+      const pending = runtime.resolveGrant(OWNER);
+      const settled = vi.fn();
+      pending.then(settled, settled);
+      await vi.advanceTimersByTimeAsync(APP_READ_DISCOVERY_TIMEOUT_MS - 1);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).rejects.toThrow("AppReadDiscoveryTimeout");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each(["ready", "unavailable"])("delegates only available reads without blocking native Chat (%s)", async state => {
