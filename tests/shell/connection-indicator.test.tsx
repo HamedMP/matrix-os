@@ -32,6 +32,7 @@ describe("ConnectionIndicator", () => {
   });
 
   afterEach(() => {
+    window.history.replaceState({}, "", "/");
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -39,6 +40,18 @@ describe("ConnectionIndicator", () => {
     act(() => {
       resetConnectionHealthState();
     });
+  });
+
+  it("leaves Starter status to the shared runtime controller without native probes", async () => {
+    window.history.replaceState({}, "", "/workspace");
+    vi.useFakeTimers();
+    const network = vi.fn();
+    vi.stubGlobal("fetch", network);
+    act(() => setConnectionHealthState("disconnected"));
+    render(<ConnectionIndicator />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(network).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: /matrix connection status/i })).toBeNull();
   });
 
   it("stays hidden and does not probe health during normal initial connection", () => {

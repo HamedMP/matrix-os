@@ -329,3 +329,56 @@ describe("useSocket heartbeat and resilience", () => {
     );
   });
 });
+
+
+describe("shared saved-data transport", () => {
+  beforeEach(() => vi.doMock("@/lib/posthog-client", () => ({ capturePostHogEvent: vi.fn() })));
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.resetModules();
+    vi.doUnmock("@/lib/posthog-client");
+    vi.unstubAllGlobals();
+  });
+
+  it("does not open a personal socket when credentials resolve after switching to Starter", async () => {
+    vi.resetModules();
+    MockWebSocket.instances = [];
+    const location = new URL("https://app.matrix-os.com/vm/personal");
+    let resolveToken!: (response: Response) => void;
+    vi.stubGlobal("window", { location });
+    vi.stubGlobal("document", { addEventListener: vi.fn(), visibilityState: "visible" });
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { resolveToken = resolve; })));
+    const socket = await import("../../shell/src/hooks/useSocket.js");
+    socket.ensureConnected();
+    location.pathname = "/workspace";
+    resolveToken(new Response(JSON.stringify({ token: "personal-token", expiresAt: Date.now() + 60_000 })));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
+
+  it("never requests native credentials or reconnects from mount, retry or visibility", async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    MockWebSocket.instances = [];
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    const listeners: (() => void)[] = [];
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal("window", { location: new URL("https://starter-preview.matrix-os.com/workspace") });
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      addEventListener: (_name: string, listener: () => void) => listeners.push(listener),
+    });
+    const socket = await import("../../shell/src/hooks/useSocket.js");
+    socket.ensureConnected();
+    socket.manualReconnect();
+    for (const listener of listeners) listener();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(MockWebSocket.instances).toHaveLength(0);
+    expect(socket.getConnectionState()).not.toBe("connected");
+    socket.sendMessage({ type: "message", text: "unsupported native send", requestId: "shared-native" });
+    expect(socket.getDeliveryState("shared-native")).toMatchObject({ state: "failed", retryable: false });
+  });
+});

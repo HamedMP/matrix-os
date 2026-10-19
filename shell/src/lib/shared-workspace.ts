@@ -6,6 +6,11 @@ export function isSharedWorkspacePath(pathname: string): boolean {
     || pathname === SHARED_WORKSPACE_PREFIX || pathname.startsWith(`${SHARED_WORKSPACE_PREFIX}/`);
 }
 
+/** Saved-data transport has its own runtime status and no native gateway socket. */
+export function usesSharedWorkspaceTransport(): boolean {
+  return typeof window !== "undefined" && isSharedWorkspacePath(window.location.pathname);
+}
+
 export type SharedRuntimeState = "sleeping" | "queued" | "starting" | "ready" | "running" | "checkpointing" | "interrupting" | "failed" | "disabled";
 export function parseSharedRuntimeState(value: unknown): SharedRuntimeState {
   return typeof value === "string" && ["sleeping", "queued", "starting", "ready", "running", "checkpointing", "interrupting", "failed", "disabled"].includes(value)

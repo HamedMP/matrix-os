@@ -201,3 +201,23 @@ node scripts/spikes/cloudflare-workspace/verify.mjs
 The harness validates bootstrap without compute, R2/SQL data publication, two real
 agent tasks, private-file restoration, sleep and duplicate delivery. It requires
 Node 24+ and a fresh fixed preview owner. It never prints credentials.
+
+
+### Starter transport regression (ENG-319)
+
+The saved-data desktop does not expose the personal gateway WebSocket or its
+`/api/auth/ws-token` endpoint. Shell mount, reconnect, and visibility recovery
+must not start that transport on `/workspace`; native socket actions fail locally
+without being queued. The shared runtime controller remains the compute status
+authority, independent of saved-data access. Personal gateway authentication and
+reconnect behavior are unchanged.
+
+| Route | Authentication | Limits | Purpose |
+| --- | --- | --- | --- |
+| `POST /api/client-errors` | Existing verified workspace owner bearer/Clerk middleware | 16 KiB body; strict shell reporter schema; 1,000-character message and 4,000-character stack | Private operator exception diagnostics, never returned to clients or sent to compute |
+
+Crash reports omit browser user agent and strip route queries/fragments from
+operator logs. Regression tests cover auth, input bounds, spoofed owner rejection,
+no compute admission, and native socket suppression. Live browser confirmation
+remains required; removing unsupported requests alone does not prove the reported
+shell crash is resolved.
