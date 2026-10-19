@@ -146,16 +146,16 @@ jobs:
             /desktop/electron-builder.windows-preview.mjs
             /scripts/ci/preview-windows-smoke.ps1
 
-      - name: Verify and stage reviewed Windows preview tools
+      - name: Verify and isolate reviewed Windows preview tools
         shell: pwsh
         env:
           PREVIEW_CONTROLLER_SHA: ${{ needs.request.outputs.controller_sha }}
         run: |
           node --input-type=module -e "import { execFileSync } from 'node:child_process'; const actual = execFileSync('git', ['-C', '.preview-tools', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); if (actual !== process.env.PREVIEW_CONTROLLER_SHA) throw new Error('Preview tools controller mismatch');"
           if ($LASTEXITCODE -ne 0) { throw "Cannot verify Windows preview tools" }
-          # A generated config beside the candidate base YAML supports PRs that
-          # predate these helpers without replacing any tracked candidate file.
-          Copy-Item .preview-tools/desktop/electron-builder.windows-preview.mjs desktop/.matrix-preview-windows-config.mjs
+          # Compilation rejects any untracked source, including a nested tools
+          # checkout. Isolate helpers before installing or building candidate code.
+          Move-Item .preview-tools (Join-Path $env:RUNNER_TEMP "matrix-windows-preview-tools")
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -191,7 +191,10 @@ jobs:
       - name: Package unsigned Windows preview
         working-directory: desktop
         shell: pwsh
-        run: pnpm exec electron-builder --config .matrix-preview-windows-config.mjs --win nsis --x64 --publish never
+        run: |
+          # Source provenance was captured before this packaging-only overlay.
+          Copy-Item (Join-Path $env:RUNNER_TEMP "matrix-windows-preview-tools/desktop/electron-builder.windows-preview.mjs") .matrix-preview-windows-config.mjs
+          pnpm exec electron-builder --config .matrix-preview-windows-config.mjs --win nsis --x64 --publish never
 
       - name: Smoke test unsigned Windows preview
         shell: pwsh
@@ -199,7 +202,7 @@ jobs:
           DESKTOP_SOURCE_SHA: ${{ needs.request.outputs.head }}
           PREVIEW_ARTIFACT_PREFIX: ${{ needs.request.outputs.artifact_prefix }}
           PREVIEW_CONTROLLER_SHA: ${{ needs.request.outputs.controller_sha }}
-        run: ./.preview-tools/scripts/ci/preview-windows-smoke.ps1
+        run: '& (Join-Path $env:RUNNER_TEMP "matrix-windows-preview-tools/scripts/ci/preview-windows-smoke.ps1")'
 
       - name: Upload unsigned Windows preview
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

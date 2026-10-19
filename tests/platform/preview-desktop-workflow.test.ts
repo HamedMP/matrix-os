@@ -224,8 +224,7 @@ describe("source-bound preview desktop builds", () => {
     expect(tools.with.path).toBe(".preview-tools");
     expect(tools.with["persist-credentials"]).toBe(false);
     expect(tools.with["sparse-checkout"]).toContain("electron-builder.windows-preview.mjs");
-    expect(step(job, "Verify and stage reviewed Windows preview tools").run).toContain("'.preview-tools', 'rev-parse', 'HEAD'");
-    expect(step(job, "Verify and stage reviewed Windows preview tools").run).toContain("desktop/.matrix-preview-windows-config.mjs");
+    expect(step(job, "Verify and isolate reviewed Windows preview tools").run).toContain("'.preview-tools', 'rev-parse', 'HEAD'");
     expect(step(job, "Package unsigned Windows preview").run).toContain("--config .matrix-preview-windows-config.mjs");
     expect(step(job, "Package unsigned Windows preview").run).toContain("--publish never");
     expect(job.env.CSC_IDENTITY_AUTO_DISCOVERY).toBe("false");
@@ -239,5 +238,20 @@ describe("source-bound preview desktop builds", () => {
     expect(release.environment).toBe("desktop-release");
     expect(release.permissions["id-token"]).toBe("write");
     expect(step(release, "Verify Windows artifacts and Authenticode signatures").run).toContain("::Valid");
+  });
+  it("isolates controller tools and stages generated config only after immutable-source compilation", () => {
+    const job = workflow("preview-desktop.yml").jobs.windows;
+    const build = job.steps.indexOf(step(job, "Build desktop app"));
+    const isolate = step(job, "Verify and isolate reviewed Windows preview tools");
+    expect(isolate).toBeDefined();
+    expect(job.steps.indexOf(isolate)).toBeLessThan(build);
+    expect(isolate.run).toContain("Move-Item .preview-tools");
+    expect(isolate.run).toContain("$env:RUNNER_TEMP");
+    expect(isolate.run).not.toContain("desktop/.matrix-preview-windows-config.mjs");
+    const pack = step(job, "Package unsigned Windows preview");
+    expect(job.steps.indexOf(pack)).toBeGreaterThan(build);
+    expect(pack.run).toContain("Copy-Item");
+    expect(pack.run).toContain("$env:RUNNER_TEMP");
+    expect(step(job, "Smoke test unsigned Windows preview").run).toContain("$env:RUNNER_TEMP");
   });
 });
