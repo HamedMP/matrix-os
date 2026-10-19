@@ -324,6 +324,38 @@ describe("Hermes agent runtime services", () => {
     expect(openClawRpc.close).toHaveBeenCalledOnce();
   });
 
+  it("keeps the runtime inventory when the host control plane is missing and Hermes is not installed", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "agent-runtime-services-"));
+    cleanupPaths.push(homePath);
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(join(homePath, "system/config.json"), JSON.stringify({
+      agent: { messagingRuntime: "hermes", revision: 0 },
+    }));
+    const services = createAgentRuntimeServices({
+      homePath,
+      client: {
+        readJson: async () => { throw new Error("down"); },
+        requestJson: async () => ({ ok: true }),
+      },
+      hostControl: {
+        status: async () => { throw new Error("missing"); },
+        switch: async () => {},
+        stop: async () => {},
+      },
+    });
+
+    await expect(services.source(new AbortController().signal)).resolves.toMatchObject({
+      runtime: {
+        selected: "hermes",
+        options: [
+          { id: "hermes", installState: "unknown", selectionState: "action_required" },
+          { id: "openclaw", installState: "unknown", selectionState: "action_required" },
+        ],
+      },
+    });
+    await services.controller.close();
+  });
+
   it("does not disable runtimes when startup inventory is temporarily unhealthy", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "agent-runtime-services-"));
     cleanupPaths.push(homePath);
