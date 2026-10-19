@@ -207,13 +207,19 @@ function ApprovalActions({
   onPermissionMode?: (mode: "supervised" | "full_access") => void;
 }) {
   const disabled = submitting || !onDecision;
+  // Full access applies from the next request, so it also approves this one; Supervised changes nothing.
+  const choosePermission = (mode: "supervised" | "full_access") => {
+    if (mode !== "full_access" || !onPermissionMode) return;
+    onPermissionMode("full_access");
+    if (!disabled) onDecision?.("approve");
+  };
   return (
     <div className="relative flex items-center gap-2">
       {approval.allowOnce ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: ink, color: paper }} onClick={() => onDecision?.("approve")}>Allow once</button> : null}
       {approval.allowInChat ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: paper, color: ink, border: `1px solid ${line}` }} onClick={() => onDecision?.("approve_for_session")}>Allow in this chat</button> : null}
       {approval.decline ? <button type="button" disabled={disabled} style={{ ...buttonBase, background: "transparent", color: ink }} onClick={() => onDecision?.("decline")}>Not now</button> : null}
       <span className="flex-1" />
-      {onPermissionMode ? <PermissionModeControl mode={permissionMode} onSelect={onPermissionMode} /> : null}
+      {onPermissionMode ? <PermissionModeControl mode={permissionMode} onSelect={choosePermission} /> : null}
     </div>
   );
 }

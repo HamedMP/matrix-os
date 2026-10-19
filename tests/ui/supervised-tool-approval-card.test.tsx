@@ -29,12 +29,36 @@ describe("Supervised tool approval card", () => {
     expect(onDecision.mock.calls.map((call) => call[0])).toEqual(["approve", "approve_for_session", "decline"]);
   });
 
-  it("opens Full access without approving the current tool", () => {
-    const onDecision = vi.fn();
-    const onPermissionMode = vi.fn();
+  it("switches to Full access and approves the current request so the run continues", () => {
+    const calls: string[] = [];
+    const onDecision = vi.fn((decision: string) => { calls.push(`decision:${decision}`); });
+    const onPermissionMode = vi.fn((mode: string) => { calls.push(`mode:${mode}`); });
     render(<SupervisedToolApprovalCard approval={waiting} permissionMode="supervised" onDecision={onDecision} onPermissionMode={onPermissionMode} />);
     fireEvent.click(screen.getByRole("button", { name: "Always allow → Full access" }));
     expect(onDecision).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Full access/ }));
+    expect(calls).toEqual(["mode:full_access", "decision:approve"]);
+    expect(screen.queryByRole("menu", { name: "Permission mode" })).toBeNull();
+  });
+
+  it("only closes the menu when the owner picks Supervised", () => {
+    const onDecision = vi.fn();
+    const onPermissionMode = vi.fn();
+    render(<SupervisedToolApprovalCard approval={waiting} permissionMode="supervised" onDecision={onDecision} onPermissionMode={onPermissionMode} />);
+    const trigger = screen.getByRole("button", { name: "Always allow → Full access" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Supervised/ }));
+    expect(onDecision).not.toHaveBeenCalled();
+    expect(onPermissionMode).not.toHaveBeenCalled();
+    expect(screen.queryByRole("menu", { name: "Permission mode" })).toBeNull();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("does not approve through Full access while a decision is already being sent", () => {
+    const onDecision = vi.fn();
+    const onPermissionMode = vi.fn();
+    render(<SupervisedToolApprovalCard approval={waiting} submitting permissionMode="supervised" onDecision={onDecision} onPermissionMode={onPermissionMode} />);
+    fireEvent.click(screen.getByRole("button", { name: "Always allow → Full access" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: /Full access/ }));
     expect(onPermissionMode).toHaveBeenCalledWith("full_access");
     expect(onDecision).not.toHaveBeenCalled();
