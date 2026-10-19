@@ -24,7 +24,11 @@ jobs:
     concurrency:
       group: preview-review-scheduler
       cancel-in-progress: false
-    if: vars.MATRIX_PREVIEW_REVIEW_ENABLED != 'true' && github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'preview'
+    if: >-
+      vars.MATRIX_PREVIEW_REVIEW_ENABLED != 'true' && github.event_name == 'pull_request_target' &&
+      ((github.event.action == 'labeled' && github.event.label.name == 'preview') ||
+       ((github.event.action == 'synchronize' || github.event.action == 'reopened') &&
+        contains(github.event.pull_request.labels.*.name, 'preview')))
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:

@@ -8,7 +8,8 @@ const MAX_BYTES = 16000;
 const TTL = 72 * 60 * 60 * 1000;
 const SURFACES = ["GitHub orchestration", "Platform API", "Runtime/API", "Web Desktop", "Web Canvas", "Web Mobile", "Electron Desktop", "Native Mobile iOS", "Native Mobile Android", "CLI", "Windows build"];
 const repository = (repo) => `${repo?.owner}/${repo?.repo}`.toLowerCase();
-function fail() { throw new Error("Agent test plan unavailable or stale"); }
+class AgentPlanValidationError extends Error {}
+function fail() { throw new AgentPlanValidationError("Agent test plan unavailable or stale"); }
 function keys(value, expected) {
   if (!value || typeof value !== "object" || Array.isArray(value)
     || Object.keys(value).sort().join() !== [...expected].sort().join()) fail();
@@ -48,11 +49,22 @@ export function readAgentPlan(body, context) {
   if (typeof body !== "string" || body.length > 60000) return null;
   const matches = [...body.matchAll(/<!-- matrix-preview-agent-plan-v1:([A-Za-z0-9_-]{1,22000}) -->/g)];
   if (matches.length !== 1) return null;
+  const bytes = Buffer.from(matches[0][1], "base64url");
+  if (bytes.length > MAX_BYTES || bytes.toString("base64url") !== matches[0][1]) return null;
+  let decoded;
   try {
-    const bytes = Buffer.from(matches[0][1], "base64url");
-    if (bytes.length > MAX_BYTES || bytes.toString("base64url") !== matches[0][1]) return null;
-    return validateAgentPlan(JSON.parse(bytes.toString("utf8")), context);
-  } catch { return null; } // Untrusted optional metadata; malformed plans are discarded.
+    decoded = JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+  try {
+    return validateAgentPlan(decoded, context);
+  } catch (error) {
+    // Only known untrusted-data validation failures are expected absence.
+    if (error instanceof AgentPlanValidationError) return null;
+    throw error;
+  }
 }
 // Numeric entities keep agent text literal: no HTML, Markdown, mentions or autolinks.
 const literal = (value) => value.replace(/[^\p{L}\p{N} ]/gu, (c) => `&#${c.codePointAt(0)};`);

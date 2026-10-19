@@ -14,6 +14,27 @@ function fixture(body?: string) {
   return { github, comments, pr };
 }
 describe("source-bound semantic preview plans", () => {
+  it("drops stale plans on disabled source refresh and then accepts the new head plan", async () => {
+    const f = fixture(composeAgentPlan(status, "", {repo, pr: 2764, plan: plan(), now}));
+    f.pr.labels = [{name: "preview"}];
+    f.pr.head.sha = other;
+    await expect(publishAgentTestPlan(f.github, repo, 2764, {...plan(), head: other})).rejects.toThrow("refresh status first");
+    await publishAwaitingPreviewActivation(f.github, repo, 2764, other);
+    expect(f.comments[0].body).toContain(`Source: \`${other}\``);
+    expect(f.comments[0].body).not.toContain("Physical deletion");
+    await publishAgentTestPlan(f.github, repo, 2764, {...plan(), head: other});
+    expect(f.comments).toHaveLength(1);
+    expect(f.comments[0].body).toContain("Physical deletion");
+  });
+  it("rejects malformed optional envelopes while surfacing unexpected parser failures", () => {
+    const body = composeAgentPlan(status, "", {repo, pr: 2764, plan: plan(), now});
+    const invalid = `<!-- matrix-preview-agent-plan-v1:${Buffer.from("{").toString("base64url")} -->`;
+    expect(readAgentPlan(invalid, {repo, pr: 2764, head, now})).toBeNull();
+    for (const unexpected of [new Error("unexpected trusted context failure"), new SyntaxError("unexpected trusted context syntax failure")]) {
+      const context = {repo, pr: 2764, now, get head() {throw unexpected}};
+      expect(() => readAgentPlan(body, context)).toThrow(unexpected);
+    }
+  });
   it("preserves a valid plan across status refresh without replacing authoritative links", () => {
     const first = composeAgentPlan(status, "", { repo, pr: 2764, plan: plan(), now });
     expect(first).toContain("Actual provider absence");

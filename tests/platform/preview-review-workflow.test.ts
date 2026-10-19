@@ -59,6 +59,30 @@ it("forwards manual comment priority without turning it into an admission allowl
     }
 });
 describe("unified preview workflow authorization and retained checks", () => {
+  it("refreshes disabled source on labeled pushes and reopen without processing unrelated events", () => {
+    const condition = workflow.jobs.disabled.if.replace(
+      "github.event.pull_request.labels.*.name",
+      "github.event.pull_request.labels.map(label => label.name)",
+    );
+    for (const [action, label, labels, enabled, expected] of [
+      ["labeled", "preview", ["preview"], "false", true],
+      ["synchronize", "", ["preview"], "false", true],
+      ["reopened", "", ["preview"], "false", true],
+      ["synchronize", "", [], "false", false],
+      ["labeled", "ready-for-ci", ["preview"], "false", false],
+      ["unlabeled", "preview", [], "false", false],
+      ["closed", "", ["preview"], "false", false],
+      ["synchronize", "", ["preview"], "true", false],
+    ] as const) {
+      expect(runInNewContext(condition, {
+        github: { event_name: "pull_request_target", event: {
+          action, label: {name: label}, pull_request: {labels: labels.map(name => ({name}))},
+        } },
+        vars: { MATRIX_PREVIEW_REVIEW_ENABLED: enabled },
+        contains: (values: string[], value: string) => values.includes(value),
+      })).toBe(expected);
+    }
+  });
   it("routes metadata-only events while keeping actual scheduler secrets off Main", () => {
     expect(
       allowed("route", {
