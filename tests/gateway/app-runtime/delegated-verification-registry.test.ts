@@ -101,7 +101,10 @@ describe("delegated verification registry", () => {
 
   it("cleans expired entries periodically and drains on shutdown", async () => {
     await issue();
+    audit.mockClear();
     vi.advanceTimersByTime(60_000);
+    // The interval sweep must have audited expiry before size() runs its own sweep.
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ event: "expired", binding }));
     expect(registry.size()).toBe(0);
     await issueExpiredApprovalControl();
     registry.close();
@@ -166,6 +169,58 @@ describe("delegated verification registry", () => {
     expect(await registry.authorize(grant.capability, binding)).toBeNull();
     release(authority);
     await pending;
+  });
+
+  it("keeps an issuance awaiting authority when an unrelated run is revoked", async () => {
+    let release!: (value: VerificationAuthority) => void;
+    const waiting = new Promise<VerificationAuthority>(resolve => { release = resolve; });
+    registry.close();
+    registry = new DelegatedVerificationRegistry({
+      ownerId: binding.ownerId, runtimeId: binding.runtimeId, ttlMs: 30_000, maxEntries: 2,
+      readAuthority: () => waiting, audit,
+    });
+    const pending = registry.issue(binding.ownerId, binding);
+    registry.revokeRun("run_other");
+    release(authority);
+    const grant = await pending;
+    expect(grant).toMatchObject({ binding });
+    expect(registry.size()).toBe(1);
+  });
+
+  it("completes a redemption awaiting authority when an unrelated run is revoked", async () => {
+    let release!: (value: VerificationAuthority) => void;
+    let waiting: Promise<VerificationAuthority> | null = null;
+    registry.close();
+    registry = new DelegatedVerificationRegistry({
+      ownerId: binding.ownerId, runtimeId: binding.runtimeId, ttlMs: 30_000, maxEntries: 2,
+      readAuthority: () => waiting ?? Promise.resolve(authority), audit,
+    });
+    const grant = await issue();
+    waiting = new Promise(resolve => { release = resolve; });
+    const pending = registry.redeem(grant.capability, binding);
+    registry.revokeRun("run_other");
+    release(authority);
+    const session = await pending;
+    expect(session).toMatchObject({ binding, expiresAt: grant.expiresAt });
+    waiting = null;
+    expect(await registry.authorize(session!.credential, binding)).toEqual(binding);
+  });
+
+  it("bounds concurrent issuances awaiting authority by the registry cap", async () => {
+    let release!: (value: VerificationAuthority) => void;
+    const waiting = new Promise<VerificationAuthority>(resolve => { release = resolve; });
+    registry.close();
+    registry = new DelegatedVerificationRegistry({
+      ownerId: binding.ownerId, runtimeId: binding.runtimeId, ttlMs: 30_000, maxEntries: 2,
+      readAuthority: () => waiting, audit,
+    });
+    const first = registry.issue(binding.ownerId, binding);
+    const second = registry.issue(binding.ownerId, binding);
+    // The third caller is denied before any await so the in-flight set stays capped.
+    expect(await registry.issue(binding.ownerId, binding)).toBeNull();
+    release(authority);
+    expect((await Promise.all([first, second])).filter(Boolean)).toHaveLength(2);
+    expect(registry.size()).toBe(2);
   });
 
   it("fences an issuance already awaiting authority when the run is revoked", async () => {

@@ -7,9 +7,13 @@ PR: https://github.com/HamedMP/matrix-os/pull/2607
 
 An explicitly approved automation run can verify an eligible owner's exact app
 through production routing and the Matrix bridge without receiving owner credentials.
-The registry foundation is implemented. Production issuance, routing, bridge hosting,
-owner approval UI/API and lifecycle wiring are **not implemented or qualified**.
-The route acceptance suite therefore remains Red. No readiness claim is permitted.
+PR #2607 delivers only the registry foundation, its tests and this spec. Production
+issuance, routing, bridge hosting, owner approval UI/API and lifecycle wiring are
+**explicitly deferred to follow-up PRs tracked under ENG-290**; nothing in #2607
+mounts the registry or changes production auth paths. The route acceptance suite
+remains Red and is skipped in the default unit run; run it with
+`ENG_290_ROUTE_ACCEPTANCE=1` to see the pending contract. No end-user readiness
+claim is permitted until the follow-up gates below are satisfied.
 
 Recommend review of the authority sources and journey by runtime/security and shell
 owners. Implementation authorization is recorded in the task conversation; this
@@ -54,9 +58,14 @@ Redemption reserves its entry synchronously before any awaited authority lookup.
 Only one concurrent redemption wins. It rotates to an independent credential and
 preserves the original deadline. Every authorized access rechecks approval, active
 run, origin and build fingerprint. Approval replacement, expiry and build changes
-invalidate existing authority. Revocation removes pending/redeemed records and
-fences outstanding issuance; shutdown drains entries and cancels the cleanup timer.
-Periodic TTL cleanup prevents stale growth. A process restart revokes all records.
+invalidate existing authority. Revocation removes pending/redeemed records for the
+affected run and fences that run's outstanding issuances through per-run in-flight
+fence tokens; an awaited redemption is fenced by the absence of its reserved record.
+Cancelling one run never denies another run's in-flight launch. The in-flight set is
+capped at `maxEntries`, so concurrent awaited issuances cannot grow unbounded.
+Shutdown fences every in-flight operation, drains entries and cancels the cleanup
+timer. Periodic TTL cleanup prevents stale growth and audits each expiry. A process
+restart revokes all records.
 
 The registry's in-process atomic boundary is not a distributed transaction. A
 multi-worker deployment requires owner Postgres/Kysely coordination, not separate
@@ -93,9 +102,11 @@ Route adapters must map dependency errors to generic 5xx responses.
 ## Validation and parity
 
 Registry unit tests cover tuple isolation, cap/cleanup, deadlines, replay,
-concurrent redemption, approval/build/origin changes, revocation races, shutdown
-and audit redaction. Route tests require production entry, bridge dispatch and
-cookie protections, but are not yet Green. Adapter spies are not Postgres evidence.
+concurrent redemption, in-flight issuance cap, approval/build/origin changes,
+same-run and cross-run revocation races, shutdown and audit redaction. Route tests
+require production entry, bridge dispatch and full cookie protections (`HttpOnly`,
+`Secure`, `SameSite=Strict`, slug-scoped `Path`) and early approval expiry after
+open, but are not yet Green and are env-gated. Adapter spies are not Postgres evidence.
 
 Platform-to-gateway tests must exercise actual production auth, routing and scope
 denials. Exact reviewed staging/live-app evidence must open Notes and a newly built
@@ -122,7 +133,9 @@ Create a companion PR in `FinnaAI/matrix-os-site` under `content/docs/` document
 owner approval, revocation, policy denial and truthful verification. Update builder
 guidance only after the supported path exists. This docs PR is not yet created.
 
-Keep #2607 in draft until route, bridge and live evidence gates are satisfied.
-`worktree-pr-monitor` requires authenticated `gh`, current-head Greptile 5/5 and
-existing `ready-for-ci` label followed by passing label-triggered checks. No merge
-is authorized.
+#2607 may be reviewed as the registry foundation. The route, bridge, surface
+parity and live evidence gates apply to the follow-up implementation PRs that mount
+issuance; those PRs must remove the `ENG_290_ROUTE_ACCEPTANCE` gate and turn the
+acceptance suite Green. Every PR in this series requires current-head Greptile 5/5,
+the `ready-for-ci` label followed by passing label-triggered checks, and the
+surface matrix with real evidence before merge.

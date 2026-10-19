@@ -26,6 +26,11 @@ interface RecordEntry {
   expiresAt: number;
   phase: "pending" | "redeeming" | "session";
 }
+/** Tracks one awaited issuance so revocation or shutdown can fence exactly the affected run. */
+interface InflightFence {
+  runId: string;
+  fenced: boolean;
+}
 interface RegistryOptions {
   ownerId: string;
   runtimeId: string;
@@ -45,14 +50,16 @@ const same = (a: VerificationBinding, b: VerificationBinding) =>
  * Process-local single-purpose authority. Pending and redeemed entries share one
  * bounded registry. Only digests persist in memory; a restart revokes everything.
  * Redemption takes its entry synchronously before awaiting the authority source,
- * so concurrent callers have one winner. Shutdown/revocation also fence awaited
- * operations by requiring the original record still to be present.
+ * so concurrent callers have one winner. Revocation fences awaited operations per
+ * run: an awaited redemption requires its original record still to be present,
+ * and an awaited issuance carries a run-scoped fence token. Cancelling one run
+ * never denies another run's in-flight launch.
  */
 export class DelegatedVerificationRegistry {
   private readonly records = new Map<string, RecordEntry>(); // cap from validated options; periodic TTL cleanup
   private readonly timer: ReturnType<typeof setInterval>;
   private closed = false;
-  private generation = 0; // revocation fences outstanding issuance without retaining unbounded tombstones
+  private readonly inflight = new Set<InflightFence>(); // capped at maxEntries; cleared when each issuance settles
 
   constructor(private readonly options: RegistryOptions) {
     Id.parse(options.ownerId);
@@ -89,22 +96,31 @@ export class DelegatedVerificationRegistry {
       this.emit("denied", binding);
       return null;
     }
-    const generation = this.generation;
-    const authority = await this.authority(binding);
-    // Recheck the cap after awaited source reads; concurrent issuance cannot overflow.
-    this.sweep();
-    if (!authority || this.closed || generation !== this.generation || this.records.size >= this.options.maxEntries) {
-      this.emit("denied", binding);
+    if (this.inflight.size >= this.options.maxEntries) {
+      this.emit("denied", binding); // bound concurrent awaited issuance like stored entries
       return null;
     }
-    const expiresAt = Math.min(Date.now() + this.options.ttlMs, authority.approvalExpiresAt);
-    const capability = randomBytes(32).toString("base64url");
-    this.emit("issued", binding); // failed audit cannot publish a credential
-    if (this.closed || generation !== this.generation) return null;
-    this.records.set(hash(capability), {
-      binding, expiresAt, approvalId: authority.approvalId, fingerprint: authority.fingerprint, phase: "pending",
-    });
-    return { capability, binding: { ...binding }, expiresAt };
+    const fence: InflightFence = { runId: binding.runId, fenced: false };
+    this.inflight.add(fence);
+    try {
+      const authority = await this.authority(binding);
+      // Recheck the cap after awaited source reads; concurrent issuance cannot overflow.
+      this.sweep();
+      if (!authority || this.closed || fence.fenced || this.records.size >= this.options.maxEntries) {
+        this.emit("denied", binding);
+        return null;
+      }
+      const expiresAt = Math.min(Date.now() + this.options.ttlMs, authority.approvalExpiresAt);
+      const capability = randomBytes(32).toString("base64url");
+      this.emit("issued", binding); // failed audit cannot publish a credential
+      if (this.closed || fence.fenced) return null;
+      this.records.set(hash(capability), {
+        binding, expiresAt, approvalId: authority.approvalId, fingerprint: authority.fingerprint, phase: "pending",
+      });
+      return { capability, binding: { ...binding }, expiresAt };
+    } finally {
+      this.inflight.delete(fence);
+    }
   }
 
   async redeem(capability: string, rawBinding: VerificationBinding) {
@@ -116,7 +132,6 @@ export class DelegatedVerificationRegistry {
     if (!entry || entry.phase !== "pending") return null;
     // Reserve by changing phase before await. The original key is never redeemable again.
     entry.phase = "redeeming";
-    const generation = this.generation;
     if (!this.scoped(parsed.data) || !same(entry.binding, parsed.data)) {
       this.records.delete(key);
       this.emit("denied", entry.binding);
@@ -129,6 +144,7 @@ export class DelegatedVerificationRegistry {
       this.records.delete(key);
       throw error; // route boundary must log error kind and return a generic 5xx
     }
+    // Revocation of this run deletes the reserved record, so its absence is the per-run fence.
     if (!authority || this.closed || this.records.get(key) !== entry || entry.expiresAt <= Date.now()) {
       this.records.delete(key);
       this.emit("denied", entry.binding);
@@ -140,7 +156,7 @@ export class DelegatedVerificationRegistry {
     } finally {
       this.records.delete(key); // audit failure burns the grant, never restores replayability
     }
-    if (this.closed || generation !== this.generation) return null;
+    if (this.closed) return null;
     entry.phase = "session";
     this.records.set(hash(credential), entry);
     return { credential, binding: { ...entry.binding }, expiresAt: entry.expiresAt };
@@ -163,7 +179,9 @@ export class DelegatedVerificationRegistry {
   }
 
   revokeRun(runId: string) {
-    this.generation += 1;
+    for (const fence of this.inflight) {
+      if (fence.runId === runId) fence.fenced = true;
+    }
     const removed: VerificationBinding[] = []; // bounded by the registry cap
     for (const [key, entry] of this.records) {
       if (entry.binding.runId === runId) {
@@ -191,7 +209,7 @@ export class DelegatedVerificationRegistry {
 
   close() {
     this.closed = true;
-    this.generation += 1;
+    for (const fence of this.inflight) fence.fenced = true;
     clearInterval(this.timer);
     const entries = [...this.records.values()];
     this.records.clear();
