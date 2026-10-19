@@ -892,6 +892,18 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/platform/preview-drive-postgres-concurrency.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Collaboration PostgreSQL qualification
+        run: node scripts/ci/collaboration-postgres.mjs
+
+      - name: Upload collaboration PostgreSQL qualification
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: collaboration-postgres-qualification
+          path: output/ci/collaboration-postgres/*.json
+          if-no-files-found: error
+          retention-days: 7
+
   docs-contract:
     name: Docs Contract Tests
     needs: [changes, ci-backend]
