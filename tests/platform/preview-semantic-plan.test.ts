@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { composeAgentPlan, validateAgentPlan, readAgentPlan } from "../../scripts/ci/preview-semantic-plan.mjs";
-import { publishAgentTestPlan, upsertComment, publishReviewComment } from "../../scripts/ci/preview-review-api.mjs";
+import { publishAgentTestPlan, publishAwaitingPreviewActivation, upsertComment, publishReviewComment } from "../../scripts/ci/preview-review-api.mjs";
 const head = "a".repeat(40), other = "b".repeat(40);
 const repo = { owner: "HamedMP", repo: "matrix-os" };
 const now = Date.now();
@@ -58,6 +58,18 @@ describe("source-bound semantic preview plans", () => {
     expect(f.github.rest.issues.createComment).not.toHaveBeenCalled();
     await publishAgentTestPlan(f.github, repo, 2764, plan());
     expect(f.github.rest.issues.updateComment).toHaveBeenCalledTimes(1);
+  });
+  it("preserves plans through disabled status and accepts plans after disabled status", async () => {
+    const f = fixture(composeAgentPlan(status, "", {repo, pr: 2764, plan: plan(), now}));
+    f.pr.labels = [{name: "preview"}];
+    await publishAwaitingPreviewActivation(f.github, repo, 2764, head);
+    expect(f.comments[0].body).toContain("awaiting reviewed controller activation");
+    expect(f.comments[0].body).toContain("Physical deletion");
+    const g = fixture(); g.pr.labels = [{name: "preview"}];
+    await publishAwaitingPreviewActivation(g.github, repo, 2764, head);
+    await publishAgentTestPlan(g.github, repo, 2764, plan());
+    expect(g.comments).toHaveLength(1);
+    expect(g.comments[0].body).toContain("Physical deletion");
   });
   it("creates only one clearly advisory comment when no status exists", async () => {
     const f = fixture(); await publishAgentTestPlan(f.github, repo, 2764, plan()); await publishAgentTestPlan(f.github, repo, 2764, plan());

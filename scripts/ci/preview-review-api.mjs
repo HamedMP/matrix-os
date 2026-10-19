@@ -118,7 +118,7 @@ export async function deploymentStates(github, repo, rows) {
     return { ...row, ...states.get(row.node_id) };
   });
 }
-export async function upsertComment(github, repo, pr, body) {
+export async function upsertComment(github, repo, pr, body, beforeWrite) {
   const rows = await pages(github.rest.issues.listComments, {
     ...repo,
     issue_number: pr,
@@ -130,6 +130,7 @@ export async function upsertComment(github, repo, pr, body) {
   );
   body = composeAgentPlan(body, old?.body, { repo, pr });
   if (old?.body === body) return;
+  if (beforeWrite && !(await beforeWrite())) return;
   if (old)
     await github.rest.issues.updateComment({
       ...repo,
@@ -251,4 +252,21 @@ export async function publishAgentTestPlan(github, repo, number, plan) {
   if (old?.body === body) return;
   if (old) await github.rest.issues.updateComment({ ...repo, comment_id: old.id, body, request });
   else await github.rest.issues.createComment({ ...repo, issue_number: number, body, request });
+}
+
+export async function publishAwaitingPreviewActivation(github, repo, number, head) {
+  if (`${repo.owner}/${repo.repo}`.toLowerCase() !== "hamedmp/matrix-os" ||
+    !Number.isSafeInteger(number) || number < 1 || !/^[a-f0-9]{40}$/.test(head ?? ""))
+    throw new Error("Invalid preview request");
+  const current = async () => {
+    const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number, request });
+    return pr.state === "open" && pr.head?.sha === head &&
+      pr.head.repo?.full_name?.toLowerCase() === "hamedmp/matrix-os" &&
+      pr.labels?.some((label) => label.name === "preview");
+  };
+  if (!(await current())) return;
+  await upsertComment(github, repo, number,
+    `${PREVIEW_COMMENT}\n**PR preview: awaiting reviewed controller activation**\n\n` +
+    `Source: \`${head}\`\n\nThe preview queue is not enabled. Existing CI checks remain required. ` +
+    "No runtime has been qualified by this status. Follow ENG-325 activation instructions before requesting runtime capacity.", current);
 }
