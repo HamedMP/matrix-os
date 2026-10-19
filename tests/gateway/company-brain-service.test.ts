@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import { Hono } from "hono";
 import { createCompanyBrainRoutes } from "../../packages/gateway/src/company-brain/routes.js";
@@ -292,6 +293,79 @@ describe("owner-hosted Company Brain durable sources", () => {
     }}});
     await expect(disappearing.captureSlackMention(projectScope,childScope,actors.editor,{...input,eventId:"Ev124"})).rejects.toMatchObject({code:"forbidden"});
     expect(await db.selectFrom("company_brain_documents").select("source_id").execute()).toHaveLength(1);
+  });
+
+  async function slackCaptureFixture() {
+    const projectScope="10000000-0000-4000-8000-000000000020";
+    const repository=new CollaborationRepository(fixture.db,{now:()=>at});
+    await repository.createDirectScope({scopeId:projectScope,organizationId:"org_team",ownerId:actors.owner,kind:"project",resourceId:"company_capture",authorityRuntimeId:ids.runtime});
+    await fixture.db.updateTable("collaboration_scopes").set({lifecycle:"shared"}).where("id","=",projectScope).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({membership_mode:"inherited",parent_scope_id:projectScope}).where("id","=",ids.scope).execute();
+    await fixture.db.insertInto("collaboration_members").values({scope_id:projectScope,actor_id:actors.editor,organization_id:"org_team",role:"editor",status:"accepted",invitation_id:null,invited_by:actors.owner,accepted_at:at,expires_at:null,joined_at:at,updated_at:at,dispositioned_at:null}).execute();
+    return {projectScope,childScope:ids.scope,input:{approval:{ownerId:actors.owner,organizationId:"org_team",scopeId:projectScope},appId:"A123",teamId:"T123",channelId:"C123",eventId:"Ev123",ts:"1790766000.000001",text:"Erased synthetic Slack decision"}};
+  }
+
+  it.each(["live","removed"] as const)("never recaptures an erased %s Slack event after service recreation",async(state)=>{
+    const {projectScope,childScope,input}=await slackCaptureFixture();
+    const first=await service.captureSlackMention(projectScope,childScope,actors.editor,input);
+    expect(await service.captureSlackMention(projectScope,childScope,actors.editor,input)).toEqual(first);
+    if(state==="removed") await service.remove(projectScope,actors.owner,first.sourceId,first.revision);
+    await service.erase(projectScope,actors.owner);
+    await service.erase(projectScope,actors.owner);
+    const restarted=new CompanyBrainService({db,authority,ownerId:actors.owner,now:()=>at});
+    await expect(restarted.captureSlackMention(projectScope,childScope,actors.editor,input)).rejects.toMatchObject({code:"conflict"});
+    expect(await db.selectFrom("company_brain_documents").selectAll().execute()).toEqual([]);
+    expect(await db.selectFrom("company_brain_scopes").selectAll().execute()).toEqual([]);
+    const fences=await sql<{capture_hash:string}>`SELECT * FROM company_brain_erased_captures`.execute(db);
+    expect(fences.rows).toEqual([{capture_hash:createHash("sha256").update(`${projectScope}:${first.sourceId}`).digest("hex")}]);
+  });
+
+  it("rejects an old Slack retry whose authorization settles after erasure",async()=>{
+    const {projectScope,childScope,input}=await slackCaptureFixture();
+    await service.captureSlackMention(projectScope,childScope,actors.editor,input);
+    let release!:()=>void,entered!:()=>void;
+    const waiting=new Promise<void>(resolve=>{entered=resolve;});
+    const gate=new Promise<void>(resolve=>{release=resolve;});
+    const delayed=new CompanyBrainService({db,ownerId:actors.owner,now:()=>at,authority:{organizationPrecondition:authority.organizationPrecondition,authorize:async(request)=>{
+      const context=await authority.authorize(request);
+      if(request.scopeId===childScope && request.action==="request_ai"){entered();await gate;}
+      return context;
+    }}});
+    const retry=delayed.captureSlackMention(projectScope,childScope,actors.editor,input)
+      .then(()=>({accepted:true}),error=>({accepted:false,error}));
+    await waiting;
+    try { await service.erase(projectScope,actors.owner); } finally { release(); }
+    expect(await retry).toMatchObject({accepted:false,error:{code:"conflict"}});
+    expect(await db.selectFrom("company_brain_documents").selectAll().execute()).toEqual([]);
+  });
+
+  it("allows fresh Slack events and explicit owner publication after erasure",async()=>{
+    const {projectScope,childScope,input}=await slackCaptureFixture();
+    const first=await service.captureSlackMention(projectScope,childScope,actors.editor,input);
+    await service.erase(projectScope,actors.owner);
+    const fresh=await service.captureSlackMention(projectScope,childScope,actors.editor,{...input,eventId:"EvFresh",text:"New owner-approved decision"});
+    expect(fresh).toMatchObject({revision:1,provenance:"slack_thread"});
+    expect(await service.captureSlackMention(projectScope,childScope,actors.editor,{...input,eventId:"EvFresh",text:"New owner-approved decision"})).toEqual(fresh);
+    const published=await service.publish(projectScope,actors.owner,{...document,sourceId:first.sourceId,audienceScopeId:projectScope});
+    expect(published).toMatchObject({revision:1,provenance:"manually_published"});
+    expect((await service.export(projectScope,actors.owner)).documents).toHaveLength(2);
+    await expect(service.captureSlackMention(projectScope,childScope,actors.editor,{...input,approval:{...input.approval,ownerId:actors.editor},eventId:"EvDenied"})).rejects.toMatchObject({code:"forbidden"});
+  });
+
+  it("rolls back the erasure replay fence with a failed scope deletion",async()=>{
+    const {projectScope,childScope,input}=await slackCaptureFixture();
+    const first=await service.captureSlackMention(projectScope,childScope,actors.editor,input);
+    const failingDb=new Proxy(db,{get(target,property){
+      if(property==="transaction") return ()=>({execute:<T>(operation:(trx:unknown)=>Promise<T>)=>target.transaction().execute(trx=>operation(new Proxy(trx,{get(transaction,key){
+        if(key==="deleteFrom") return (table:string)=>{if(table==="company_brain_scopes") throw new Error("Synthetic scope deletion failure");return transaction.deleteFrom(table as "company_brain_documents");};
+        const value=Reflect.get(transaction,key,transaction);return typeof value==="function" ? value.bind(transaction) : value;
+      }})))});
+      const value=Reflect.get(target,property,target);return typeof value==="function" ? value.bind(target) : value;
+    }});
+    const failing=new CompanyBrainService({db:failingDb,authority,ownerId:actors.owner,now:()=>at});
+    await expect(failing.erase(projectScope,actors.owner)).rejects.toThrow("Synthetic scope deletion failure");
+    expect(await service.captureSlackMention(projectScope,childScope,actors.editor,input)).toEqual(first);
+    expect((await service.export(projectScope,actors.owner)).documents).toHaveLength(1);
   });
 
   it.each(["documents","bytes"] as const)("bounds export when an existing owner dataset exceeds the %s ceiling",async(ceiling)=>{
