@@ -16,18 +16,74 @@ function fixture() {
   const backups = {restore:vi.fn(async () => undefined), backup:vi.fn(async () => ({id:'backup'}))};
   const publish = vi.fn(async () => undefined); const saved = vi.fn(async () => undefined);
   const hydrate = vi.fn(async () => [{path:'note.txt',content:'durable edit'}]);
-  const driver = new NativeRuntimeDriver(container as any,backups as any,{
-    ANTHROPIC_API_KEY:'execution-secret',RUNTIME_AUTH_SECRET:'runtime-secret',RUNTIME_DATABASE_URL:'postgres://owner@db/runtime',
-  },publish,saved,hydrate);
-  return {driver,container,backups,publish,saved,hydrate,commands};
+  const resolveCredentials=vi.fn(async ({ownerId,generation})=>({ownerId,generation,expiresAt:Date.now()+30*60_000,
+    inferenceKey:'execution-secret',authToken:'runtime-secret',databaseUrl:'postgres://owner@db/runtime'}));
+  const driver = new NativeRuntimeDriver(container as any,backups as any,{},publish,saved,hydrate,resolveCredentials);
+  return {driver,container,backups,publish,saved,hydrate,commands,resolveCredentials};
 }
 
 describe('native Cloudflare runtime adapter', () => {
+  it('does not touch the container when owner credentials are denied', async () => {
+    const f=fixture(); f.resolveCredentials.mockRejectedValue(new Error('private-resolver-secret'));
+    await expect(f.driver.start('owner',null,1)).rejects.toThrow('Runtime credentials unavailable');
+    expect(f.container.start).not.toHaveBeenCalled(); expect(f.container.exec).not.toHaveBeenCalled();
+    expect(f.backups.restore).not.toHaveBeenCalled(); expect(f.container.setInactivityTimeout).not.toHaveBeenCalled();
+  });
+  it('cannot reuse one driver for another owner or execute another generation', async () => {
+    const f=fixture(); await f.driver.start('owner',null,1);
+    await expect(f.driver.start('other',null,2)).rejects.toThrow('Runtime credentials unavailable');
+    await expect(f.driver.execute({ownerId:'owner',jobId:'job',type:'wake'},{ownerId:'owner',jobId:'job',generation:2,expiresAt:Date.now()+1000,maxRunAt:Date.now()+1000})).rejects.toThrow('Runtime credentials unavailable');
+  });
+  it('requires credentials to cover the complete execution deadline', async () => {
+    const f=fixture(); f.resolveCredentials.mockImplementation(async ({ownerId,generation})=>({ownerId,generation,expiresAt:Date.now()+1000,inferenceKey:'execution-secret',authToken:'runtime-secret',databaseUrl:'postgres://owner@db/runtime'}));
+    await f.driver.start('owner',null,1);
+    await expect(f.driver.execute({ownerId:'owner',jobId:'job',type:'wake'},{ownerId:'owner',jobId:'job',generation:1,expiresAt:Date.now()+1000,maxRunAt:Date.now()+2000})).rejects.toThrow('Runtime credentials unavailable');
+  });
+  it('does not begin execution after its hard deadline elapsed during startup',async()=>{
+    const f=fixture(); await f.driver.start('owner',null,1); f.commands.length=0;
+    await expect(f.driver.execute({ownerId:'owner',jobId:'job',type:'wake'},{ownerId:'owner',jobId:'job',generation:1,expiresAt:Date.now()+1000,maxRunAt:Date.now()-1})).rejects.toThrow('Runtime credentials unavailable');
+    expect(f.commands).toHaveLength(0);
+  });
+  it.each(['checkpoint','stop','cancel'] as const)('clears credential references on %s, even after failure',async operation=>{
+    const f=fixture(); await f.driver.start('owner',null,1);
+    f.container.destroy.mockRejectedValue(new Error('execution-secret'));
+    if(operation==='checkpoint') {f.backups.backup.mockRejectedValue(new Error('execution-secret')); await expect(f.driver.checkpoint('owner',1)).rejects.not.toThrow('execution-secret');}
+    if(operation==='stop') await expect(f.driver.stop()).rejects.not.toThrow('execution-secret');
+    if(operation==='cancel') await expect(f.driver.cancel({ownerId:'owner',jobId:'job',generation:1,expiresAt:0,maxRunAt:0})).rejects.not.toThrow('execution-secret');
+    expect((f.driver as any).executionEnv).toEqual({}); expect((f.driver as any).credentials).toBeUndefined();
+  });
   it('preserves a sanitized startup restore diagnostic through RPC', async () => {
     const f=fixture(); f.backups.restore.mockRejectedValue(Object.assign(new Error('execution-secret postgres://owner@db/runtime'),{code:'EACCES'}));
     const error=await f.driver.start('owner',{generation:1,createdAt:0,backup:{}},2).catch(error=>error);
     expect(error.message).toContain('"phase":"restore"'); expect(error.message).toContain('"code":"EACCES"');
     expect(error.message).not.toContain('execution-secret'); expect(error.message).not.toContain('postgres://');
+  });
+  it('redacts actual resolved secrets even when an upstream error is already tagged',async()=>{
+    const f=fixture();
+    f.backups.restore.mockRejectedValue(new Error('Workspace execution interrupted: '+JSON.stringify({phase:'restore',name:'Error',detail:'runtime-secret execution-secret'})));
+    const error=await f.driver.start('owner',{generation:1,createdAt:0,backup:{}},2).catch(error=>error);
+    expect(error.message).not.toContain('runtime-secret'); expect(error.message).not.toContain('execution-secret');
+  });
+  it('releases control-process credentials after a wake-only job completes',async()=>{
+    const f=fixture(); await f.driver.start('owner',null,1);
+    await f.driver.execute({ownerId:'owner',jobId:'job',type:'wake'},{ownerId:'owner',jobId:'job',generation:1,expiresAt:Date.now()+1000,maxRunAt:Date.now()+1000});
+    expect((f.driver as any).executionEnv).toEqual({}); expect((f.driver as any).credentials).toBeUndefined();
+  });
+  it('drains the warm gateway before replacing credentials even when hydration is empty',async()=>{
+    const f=fixture(); f.hydrate.mockResolvedValue([]);
+    await f.driver.start('owner',null,1);
+    await f.driver.execute({ownerId:'owner',jobId:'job',type:'wake'},{ownerId:'owner',jobId:'job',generation:1,expiresAt:Date.now()+1000,maxRunAt:Date.now()+1000});
+    f.resolveCredentials.mockImplementation(async ({ownerId,generation})=>({ownerId,generation,expiresAt:Date.now()+30*60_000,
+      inferenceKey:'rotated-inference-secret',authToken:'rotated-runtime-secret',databaseUrl:'postgres://owner@db/rotated'}));
+    await f.driver.start('owner',null,1);
+    expect(f.commands.map(command=>command.args.at(-1))).toEqual(['stop','start','execute','stop','start']);
+    const starts=f.commands.filter(command=>command.args.at(-1)==='start');
+    expect(starts[0].options.env.MATRIX_AUTH_TOKEN).toBe('runtime-secret');
+    expect(starts[1].options.env).toMatchObject({MATRIX_AUTH_TOKEN:'rotated-runtime-secret',ANTHROPIC_API_KEY:'rotated-inference-secret',DATABASE_URL:'postgres://owner@db/rotated'});
+    expect(f.container.start).toHaveBeenCalledOnce();
+    f.resolveCredentials.mockRejectedValue(new Error('denied'));
+    await expect(f.driver.start('owner',null,1)).rejects.toThrow('Runtime credentials unavailable');
+    expect(f.commands).toHaveLength(5);
   });
   it('restores and overlays shared files before starting the actual gateway', async () => {
     const f=fixture(); await f.driver.start('owner',{generation:1,createdAt:0,backup:{id:'old'}},2);
@@ -42,6 +98,7 @@ describe('native Cloudflare runtime adapter', () => {
   });
   it('drains writers, saves R2 backup, and publishes output before completion', async () => {
     const f=fixture(); const lease={ownerId:'owner',jobId:'job',generation:1,expiresAt:Date.now()+60000,maxRunAt:Date.now()+60000};
+    await f.driver.start('owner',null,1); f.commands.length=0;
     await f.driver.execute({ownerId:'owner',jobId:'job',type:'chat',message:'save'},lease);
     expect(f.commands.map(c=>c.args.at(-1))).toEqual(['execute','stop','export']);
     expect(f.backups.backup).toHaveBeenCalledWith(expect.objectContaining({exclude:expect.arrayContaining(['system/ai-providers/anthropic-key.json'])}));
