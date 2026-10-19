@@ -11,6 +11,7 @@ import http.client
 import io
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import runpy
@@ -56,7 +57,10 @@ class GeneratedProgramTests(unittest.TestCase):
         except KeyError:
             subprocess.run(['/usr/sbin/groupadd', 'matrix'], check=True)
             gid = grp.getgrnam('matrix').gr_gid
-        subprocess.run(['/usr/sbin/useradd', '-M', '-g', 'matrix', 'matrix'], check=True)
+        try:
+            pwd.getpwnam('matrix')
+        except KeyError:
+            subprocess.run(['/usr/sbin/useradd', '-M', '-g', 'matrix', 'matrix'], check=True)
         for name, mode in [('opt/matrix', 0o770), ('opt/matrix/env', 0o750),
                            ('opt/matrix/staging', 0o755), ('opt/matrix/app', 0o755)]:
             path = Path('/') / name
@@ -67,6 +71,9 @@ class GeneratedProgramTests(unittest.TestCase):
                     '\nMATRIX_CLERK_USER_ID=user_test\nMATRIX_HANDLE=test-main\nMATRIX_RUNTIME_SLOT=primary\n'
                     'MATRIX_RUNTIME_TOKEN_EPOCH=2\nMATRIX_SYNC_RUNTIME_TOKEN=' + 'd' * 64 +
                     '\nPLATFORM_INTERNAL_URL=https://app.matrix-os.com\nUNRELATED="literal $value"\n').encode()
+        epoch_absent = getattr(self, 'epoch_absent', False)
+        if epoch_absent:
+            original = original.replace(b'MATRIX_RUNTIME_TOKEN_EPOCH=2\n', b'')
         env = Path('/opt/matrix/env/host.env')
         env.write_bytes(original)
         os.chown(env, 0, gid)
@@ -107,6 +114,7 @@ class GeneratedProgramTests(unittest.TestCase):
         delayed_start, delayed_stop, failed_resume, restore_clock, pending = False, False, False, [0], {}
         pending_stops = {}
         unsafe_environment = False
+        platform_available = True
         version = A
         def metadata(selected):
             query = urlencode({'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
@@ -124,18 +132,26 @@ class GeneratedProgramTests(unittest.TestCase):
                 self.assertNotIn('Authorization', headers)
                 data = archive_bytes
             else:
+                if not platform_available:
+                    raise OSError('synthetic Platform outage')
                 self.assertEqual(headers['Authorization'], 'Bearer ' + 'd' * 64)
                 import datetime
                 stamp = lambda value: datetime.datetime.fromtimestamp(value, datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
-                data = json.dumps({'contractVersion': 1, 'kind': 'matrix-funded-host-config', 'source': 'platform',
+                response = {'contractVersion': 1, 'kind': 'matrix-funded-host-config', 'source': 'platform',
                     'sourceSha': SHA, 'issuedAt': stamp(time.time() - .1), 'expiresAt': stamp(time.time() + 20),
                     'identity': IDENTITY, 'configuration': {'MATRIX_FUNDED_AI_ENABLED': 'true',
                     'MATRIX_FUNDED_AI_RELAY_URL': 'https://matrix-ai-relay-production-jqxkjdhtkq-ey.a.run.app',
-                    'MATRIX_FUNDED_AI_RUNTIME_TOKEN': 'c' * 64, 'MATRIX_FUNDED_AI_PLATFORM_URL': 'https://app.matrix-os.com'}}).encode()
+                    'MATRIX_FUNDED_AI_RUNTIME_TOKEN': 'c' * 64, 'MATRIX_FUNDED_AI_PLATFORM_URL': 'https://app.matrix-os.com'}}
+                if path.endswith('/funded-host-epoch'):
+                    self.assertNotIn('x-matrix-runtime-token-epoch', headers)
+                    response.pop('configuration')
+                    response['kind'] = 'matrix-funded-host-epoch'
+                    response['identity'] = dict(IDENTITY, ownerId='user_test')
+                data = json.dumps(response).encode()
             client.mock_response = type('Response', (), {'status': 200, 'read': io.BytesIO(data).read})()
         real_run = subprocess.run
         def systemctl(args, **kwargs):
-            nonlocal fail_after_journal
+            nonlocal fail_after_journal, platform_available
             if args[0] != '/usr/bin/systemctl':
                 return real_run(args, **kwargs)
             calls.append(tuple(args[1:]))
@@ -149,6 +165,8 @@ class GeneratedProgramTests(unittest.TestCase):
             if fail_after_journal and action == 'is-active' and service == 'matrix-gateway.service' \
                     and list(env.parent.glob('host.env.funded-*.json')):
                 fail_after_journal = False
+                if epoch_absent:
+                    platform_available = False
                 raise RuntimeError('synthetic late post-journal guard rejection')
             output = ''
             if action == 'show': output = 'loaded' if 'LoadState' in args[2] else 'control-group'
@@ -534,6 +552,7 @@ recover_interrupted_update
                 installed('--maintenance')
             self.assertEqual(env.read_bytes(), original)
             self.assertFalse(Path('/var/lib/matrix-funded-host-config/applied.json').exists())
+            platform_available = True
             preserved = {p.name: p.read_bytes() for p in env.parent.glob('host.env.funded-*.json')}
             self.assertEqual(len(preserved), 1)
             # Run actual installed ExecStopPost entry after a failed restoration;
@@ -597,7 +616,10 @@ recover_interrupted_update
             self.assertEqual(Path('/var/lib/matrix-funded-host-config/applied.json').read_bytes(), unknown_applied)
             for service in states:
                 states[service] = 'inactive'
+            if epoch_absent:
+                platform_available = False
             installed('--rollback')
+            platform_available = True
             for service in states:
                 states[service] = 'inactive' if service == 'matrix-symphony.service' else 'active'
             preserved = unknown_journals
@@ -978,6 +1000,8 @@ recover_interrupted_update
             self.assertEqual(json.loads(receipt_file.read_text())['version'], 'v-test-successful-e')
             self.assertEqual(env.read_bytes(), applied)
             self.assertTrue(applied_file.exists())
+            if epoch_absent:
+                return  # Version-3 lifecycle complete; legacy version-1 IDs are covered by the original case.
             # Historical release-derived IDs still select their complete journal
             # for read-only recovery and subsequent guarded field rollback.
             marker = json.loads(applied_file.read_text())

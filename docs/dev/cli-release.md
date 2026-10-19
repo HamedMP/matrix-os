@@ -4,15 +4,14 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 ## Current Prepared Release
 
-`0.3.21` is the prepared CLI patch release after `0.3.20`. It:
+`0.3.22` is the prepared CLI patch release after `0.3.21`. It:
 
-- adds metadata discovery with `matrix chats discover`, including archived and subagent transcripts;
-- imports selected Codex and Claude Code transcripts with `matrix chats import codex|claude <file> --apply`;
-- uploads original bytes in resumable parts and verifies source size, SHA-256, and canonical Chat read-back;
-- preserves readable messages, tool activity, supported embedded media, and a separate private original archive; and
-- keeps imports private until the owner chooses sharing. External local files are not followed automatically.
+- adds `matrix update --check` for read-only stable CLI release discovery;
+- adds `matrix update` with verified standalone downloads, atomic replacement and rollback;
+- delegates Homebrew and recognized pnpm global installations to their package manager; and
+- preserves existing profiles, settings and sign-ins.
 
-Publication depends on the matching gateway importer release. The CLI reports a generic unavailable error against older gateways. Distinct changed snapshots and upgrades of prior text-only imports require the follow-up reconciliation flow; do not claim those are deduplicated by this release.
+The updater changes only the invoking CLI. It does not update a Matrix computer or promote an OS release channel. CLI 0.3.21 users need the documented installer or package-manager path once to obtain the new command. Existing npm-global packaging limitations remain tracked in ENG-300; this release does not claim to fix them.
 
 ## Versioning
 
@@ -61,7 +60,7 @@ the repository's npm ban: installs still use pnpm and scripts still use bun,
 while the npm CLI is invoked only because npm trusted publishing performs the
 OIDC exchange during `npm publish`.
 
-Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.21` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
+Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.22` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
 
 1. Validates the requested semver, local package version, npm availability, and `cli-v<version>` tag availability.
 2. Installs the workspace and runs the sync-client build, tests, and publish-shape check.
@@ -83,8 +82,10 @@ npm view @finnaai/matrix dist.tarball
 npx --yes @finnaai/matrix --version
 pnpm dlx @finnaai/matrix --version
 brew update && brew info finnaai/tap/matrix
-MATRIX_VERSION=0.3.21 sh scripts/install.sh
+MATRIX_VERSION=0.3.22 sh scripts/install.sh
 matrix --version
+matrix update --help
+matrix update --check --json
 matrix login --help
 matrix instance info --json
 matrix run --help
@@ -103,12 +104,12 @@ matrix forward 5173
 
 For standalone binaries, also verify the GitHub release contains:
 
-- `matrix-0.3.21-linux-x64`
-- `matrix-0.3.21-linux-arm64`
-- `matrix-0.3.21-darwin-x64`
-- `matrix-0.3.21-darwin-arm64`
+- `matrix-0.3.22-linux-x64` and its `.sha256`
+- `matrix-0.3.22-linux-arm64` and its `.sha256`
+- `matrix-0.3.22-darwin-x64` and its `.sha256`
+- `matrix-0.3.22-darwin-arm64` and its `.sha256`
 
-For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.21.pkg` when the macOS job was enabled.
+For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.22.pkg` when the macOS job was enabled.
 
 ## Rollback
 

@@ -89,14 +89,15 @@ This view is authoritative: it is derived from server state, never from model ou
 {
   "agentId": "bot_...", "revision": 7,
   "grants": [{ "grantId": "gr_...", "service": "gmail", "accountLabel": "test@...", "effects": ["read"], "audience": "direct", "expiresAt": null }],
-  "connections": [{ "service": "google_calendar", "state": "not_connected|connected_not_granted|granted" }],
+  "connections": [{ "service": "google_calendar", "serviceName": "Google Calendar", "logoUrl": "https://...", "state": "not_connected|connected_not_granted|granted", "accounts": [{ "label": "Work", "email": "owner@example.com", "state": "connected_not_granted|granted" }] }],
   "routines": [{ "routineId": "rt_...", "summary": "string<=200", "status": "active|paused", "nextFireAt": "iso" }],
   "pendingInteractions": [{ "interactionId": "in_...", "kind": "question|account_choice|connect_request|approval", "chatId": "chat_...", "expiresAt": "iso" }],
   "memory": { "items": [{ "itemId": "mem_...", "kind": "preference|fact|episode", "scope": "bot|chat", "content": "string<=4096", "source": { "messageId": "optional", "url": "optional", "at": "iso" }, "confirmed": true }], "nextCursor": "optional" }
 }
 ```
 
-- Account labels are the owner-visible labels already shown in Integrations. External account IDs are never returned.
+- Service names and logo URLs come from the trusted integration registry. The owner-scoped inventory supplies at most ten account labels and optional emails per service. External connection IDs and credentials are never returned. A saved grant is shown as usable only when its exact connected service, account label, and connection ID still match; when inventory is unavailable, the view cannot verify the connection.
+- `integration.inventory` opens one transactional owner account choice for a required service without usable bot access, or a connection request when no account is connected. Repeated calls while the request is pending reuse it; an expired request may be replaced. Optional services request access when explicitly selected. The bot waits for the owner's answer and never grants access from an OAuth connection alone.
 - The group-visible subset (M3) omits private grants, private memory, and direct-chat interactions.
 
 ## `POST /api/chats/:chatId/interactions/:interactionId/resolve` (M1)

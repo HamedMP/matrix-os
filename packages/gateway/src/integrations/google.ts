@@ -2,6 +2,7 @@ import type { ServiceDefinition } from "./types.js";
 import { listValidation } from "./list-validation.js";
 import { DriveFileId, DriveReadParams } from "./drive-validation.js";
 import { z } from "zod/v4";
+import { DRIVE_UPLOAD_ACTION } from "./missing-managed-actions.js";
 import { CALENDAR_DEPTH_ACTIONS } from "./calendar-depth.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
@@ -101,27 +102,7 @@ export const GOOGLE_SERVICES: Record<string, ServiceDefinition> = {
         // The execution seam uses capped raw bytes, never the SDK JSON parser.
         directApi: { method: "GET", url: p => `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(String(p.fileId))}` },
       },
-      // upload_file deliberately has NO directApi block. Drive's single-
-      // request media upload (POST /upload/drive/v3/files?uploadType=multipart)
-      // requires a hand-built multipart/related body with boundary framing,
-      // a metadata JSON part, and a content part with correct
-      // Content-Transfer-Encoding. That's ~25 lines of careful code that only
-      // handles text content cleanly -- binary uploads need base64 plus
-      // re-encoding. Not worth the complexity here. upload_file falls through
-      // to the google_drive-upload-file Pipedream component, which requires
-      // a paid Pipedream plan. On a free plan, agents should fall back to
-      // get_file + share_file workflows instead. Documented in the
-      // integrations skill at home/.agents/skills/matrix-integrations/SKILL.md.
-      upload_file: {
-        description: "Upload a file to Google Drive (requires paid Pipedream plan)",
-        risk: "write",
-        params: {
-          name: { type: "string", required: true },
-          content: { type: "string", required: true },
-          mimeType: { type: "string" },
-          folderId: { type: "string" },
-        },
-      },
+      upload_file: DRIVE_UPLOAD_ACTION,
       // Drive API v3: permissions.create. Defaults to role=reader for least
       // privilege; caller can override with `role` (writer, commenter, owner).
       // sendNotificationEmail=false avoids spamming the recipient -- if they

@@ -4,6 +4,7 @@ import { parseConfigFileTextToJson } from "typescript";
 
 type MobileAppConfig = {
   expo?: {
+    icon?: string;
     orientation?: string;
     updates?: {
       url?: string;
@@ -14,8 +15,18 @@ type MobileAppConfig = {
     };
     android?: {
       package?: string;
+      adaptiveIcon?: {
+        foregroundImage?: string;
+        backgroundImage?: string;
+        monochromeImage?: string;
+      };
     };
     ios?: {
+      icon?: {
+        light?: string;
+        dark?: string;
+        tinted?: string;
+      };
       supportsTablet?: boolean;
       usesAppleSignIn?: boolean;
       bundleIdentifier?: string;
@@ -85,6 +96,67 @@ if (parsedEasConfig.error) {
 }
 
 const easConfig = parsedEasConfig.config as MobileEasConfig;
+
+function readPngHeader(assetPath: string | undefined) {
+  if (!assetPath) {
+    throw new Error("The app config does not declare this image");
+  }
+  const header = readFileSync(join(__dirname, "..", assetPath)).subarray(0, 26);
+  const colorType = header[25];
+  return {
+    width: header.readUInt32BE(16),
+    height: header.readUInt32BE(20),
+    // PNG colour types 4 and 6 carry an alpha channel; 2 is plain RGB.
+    hasAlpha: colorType === 4 || colorType === 6,
+  };
+}
+
+describe("mobile app icon configuration", () => {
+  const iosIcon = appConfig.expo?.ios?.icon;
+  const adaptiveIcon = appConfig.expo?.android?.adaptiveIcon;
+  const master = { width: 1024, height: 1024 };
+
+  it("ships opaque 1024px artwork for every iOS look", () => {
+    // The App Store rejects an icon with an alpha channel, an opaque dark icon
+    // stops iOS from drawing its own dark ground behind the mark, and Expo
+    // flattens the tinted variant onto white, which would erase a light mark
+    // delivered on a clear ground.
+    for (const icon of [appConfig.expo?.icon, iosIcon?.light, iosIcon?.dark, iosIcon?.tinted]) {
+      expect(readPngHeader(icon)).toEqual({ ...master, hasAlpha: false });
+    }
+  });
+
+  it("gives Android separate foreground, background and themed layers", () => {
+    // Android cuts the two colour layers into the launcher's shape and recolours
+    // the themed layer, so the mark needs a clear ground and the background none.
+    expect(readPngHeader(adaptiveIcon?.foregroundImage)).toEqual({ ...master, hasAlpha: true });
+    expect(readPngHeader(adaptiveIcon?.monochromeImage)).toEqual({ ...master, hasAlpha: true });
+    expect(readPngHeader(adaptiveIcon?.backgroundImage)).toEqual({ ...master, hasAlpha: false });
+  });
+
+  it("ships splash artwork with a clear ground for both colour schemes", () => {
+    // The native splash paints a background colour and centres the image on
+    // it, so an opaque image would show as a square in the wrong shade.
+    const plugin = (appConfig.expo?.plugins ?? []).find(
+      (entry) => Array.isArray(entry) && entry[0] === "expo-splash-screen",
+    );
+    const options = (Array.isArray(plugin) ? plugin[1] : undefined) as
+      | { image?: string; dark?: { image?: string } }
+      | undefined;
+
+    expect(readPngHeader(options?.image)).toEqual({ ...master, hasAlpha: true });
+    expect(readPngHeader(options?.dark?.image)).toEqual({ ...master, hasAlpha: true });
+  });
+
+  it("ships a status bar icon Android can draw from its alpha channel", () => {
+    const plugin = (appConfig.expo?.plugins ?? []).find(
+      (entry) => Array.isArray(entry) && entry[0] === "expo-notifications",
+    );
+    const options = (Array.isArray(plugin) ? plugin[1] : undefined) as { icon?: string } | undefined;
+
+    expect(readPngHeader(options?.icon)).toEqual({ width: 96, height: 96, hasAlpha: true });
+  });
+});
 
 describe("mobile native orientation configuration", () => {
   it("allows portrait and landscape on phones and tablets", () => {

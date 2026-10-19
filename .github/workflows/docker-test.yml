@@ -10,10 +10,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main, "stack/**"]
-    types: [labeled, ready_for_review, synchronize]
+    types: [opened, ready_for_review, synchronize, reopened]
 
 concurrency:
-  group: docker-test-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
+  group: docker-test-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -35,8 +35,7 @@ jobs:
         id: changed
         env:
           PR_ACTION: ${{ github.event.action || '' }}
-          PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}
-          PR_LABEL_NAME: ${{ github.event.label.name || '' }}
+          PR_DRAFT: ${{ github.event.pull_request.draft == true }}
           GITHUB_EVENT_BEFORE: ${{ github.event.before || '' }}
         run: |
           set -euo pipefail
@@ -50,14 +49,15 @@ jobs:
           should_run_trigger=true
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             should_run_trigger=false
-            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && [ "$PR_LABEL_NAME" = "ready-for-ci" ]; } || { [ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; then
+            # Drafts never run Docker classification; every non-draft head does.
+            if [ "${PR_DRAFT:-true}" = "false" ]; then
               should_run_trigger=true
             fi
           fi
 
           if [ "$should_run_trigger" != "true" ]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Docker trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually. Later commits rerun automatically while ready-for-ci remains applied."
+            echo "Docker trigger not requested: drafts do not run Docker CI. Mark the PR ready for review or run manually."
             exit 0
           fi
 

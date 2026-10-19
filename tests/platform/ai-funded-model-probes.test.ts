@@ -1,6 +1,6 @@
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createFundedModelProbeService, loadFundedModelProbeLimits, reserveFundedModelProbe } from "../../packages/platform/src/ai-funded-model-probes.js";
+import { createFundedModelProbeService, loadFundedModelProbeLimits, reserveFundedModelProbe, FUNDED_PROBE_MODELS } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 import type { PlatformDB } from "../../packages/platform/src/db.js";
 
@@ -37,6 +37,17 @@ describe("fleet funded model probe budget", () => {
     `.execute(db.executor);
     expect(unchanged.rows).toEqual([{ day_used: 2, minute_used: 2 }]);
     expect(await reserveFundedModelProbe({ db, now: new Date(now.getTime() + 60_000), dailyLimit: 4, minuteLimit: 3 })).toBe(false);
+  });
+
+  it("can admit one bounded cold fanout for every reviewed text model", async () => {
+    const reserved = await Promise.all(FUNDED_PROBE_MODELS.map(() =>
+      reserveFundedModelProbe({ db, now, dailyLimit: 3000, minuteLimit: 20 })));
+    expect(reserved).toHaveLength(10);
+    expect(reserved.every(Boolean)).toBe(true);
+    const rows = await sql<{ day_used: number; minute_used: number }>`
+      select day_used, minute_used from ai_funded_model_probe_budget
+    `.execute(db.executor);
+    expect(rows.rows).toEqual([{ day_used: 10, minute_used: 10 }]);
   });
 
   it("coalesces repeated probes and retains the fleet count after service restart", async () => {

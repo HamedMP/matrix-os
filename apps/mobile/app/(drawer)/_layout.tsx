@@ -1,8 +1,7 @@
-import { useAuth } from "@clerk/clerk-expo";
+import { useAuth, useOrganizationList } from "@clerk/clerk-expo";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
-import * as Haptics from "expo-haptics";
 import { useSegments } from "expo-router";
 import {
   Drawer,
@@ -13,6 +12,7 @@ import {
 
 import { SidePanel } from "@/components/shell/SidePanel";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { tapHaptic } from "@/lib/haptics";
 import { useAgentStatuses } from "@/lib/queries/use-agent-statuses";
 import { useAgents } from "@/lib/queries/use-agents";
 import { useCanonicalChatPages } from "@/lib/queries/use-canonical-chats";
@@ -29,17 +29,6 @@ import {
   sharedScreenParams,
 } from "@/lib/shell-routes";
 import { agentChatIds, withoutAgentChats } from "@/lib/side-panel-chats";
-
-function triggerDrawerHaptic() {
-  void Promise.resolve(
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium),
-  ).catch((error: unknown) => {
-    console.warn(
-      "[mobile] drawer haptic unavailable",
-      error instanceof Error ? error.name : "unknown",
-    );
-  });
-}
 
 /**
  * Puts the keyboard away when the panel closes. The search field keeps it up
@@ -62,6 +51,9 @@ function DismissKeyboardOnClose() {
 
 export default function DrawerLayout() {
   const { getToken } = useAuth();
+  const { isLoaded: organizationsLoaded, userMemberships } = useOrganizationList({
+    userMemberships: { infinite: true },
+  });
   const getTokenRef = useRef(getToken);
   const drawerStatusRef = useRef<ReturnType<typeof getDrawerStatusFromState> | null>(null);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
@@ -78,6 +70,16 @@ export default function DrawerLayout() {
   // every other screen keeps the swipe for its own lists and for going back.
   const chatScreenFocused = isChatScreen(useSegments());
   const collaborationEnabled = systemInfo?.capabilities?.collaboration === true;
+  // Fail open while Clerk's listing is incomplete or unavailable so a real member
+  // does not lose the destination because of a transient identity request. Only a
+  // complete empty listing proves that this is an individual account.
+  const confirmedNoOrganizations = organizationsLoaded
+    && Boolean(userMemberships)
+    && !userMemberships?.hasNextPage
+    && !userMemberships?.isFetching
+    && !userMemberships?.isError
+    && userMemberships?.data.length === 0;
+  const sharedAvailable = collaborationEnabled && !confirmedNoOrganizations;
   const [pendingInvitationCount, setPendingInvitationCount] = useState(0);
 
   // An agent's own conversation belongs to the Agents tab. Until the agents'
@@ -88,7 +90,7 @@ export default function DrawerLayout() {
   const projectCountKnown = !projects.isPending && !(projects.isError && projects.projects.length === 0);
 
   useEffect(() => {
-    if (!collaborationEnabled) return;
+    if (!sharedAvailable) return;
     let current = true;
     const load = () => void (async () => {
       try {
@@ -103,7 +105,7 @@ export default function DrawerLayout() {
     load();
     const unsubscribe = subscribeCollaborationDiscoveryChanged(load);
     return () => { current = false; unsubscribe(); };
-  }, [collaborationEnabled]);
+  }, [sharedAvailable]);
 
   return (
     <Drawer
@@ -116,7 +118,7 @@ export default function DrawerLayout() {
             const status = getDrawerStatusFromState(data.state);
             if (status !== drawerStatusRef.current) {
               drawerStatusRef.current = status;
-              triggerDrawerHaptic();
+              tapHaptic();
             }
           },
         };
@@ -134,8 +136,8 @@ export default function DrawerLayout() {
               chatsLoading={chatPages.isPending}
               chatsFailed={chatPages.isError}
               projectCount={projectCountKnown ? projects.projects.length : undefined}
-              collaborationEnabled={collaborationEnabled}
-              pendingInvitationCount={collaborationEnabled ? pendingInvitationCount : 0}
+              collaborationEnabled={sharedAvailable}
+              pendingInvitationCount={sharedAvailable ? pendingInvitationCount : 0}
               searchQuery={searchQuery}
               searchResults={searchResults}
               searching={search.isSearching}

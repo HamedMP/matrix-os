@@ -8,6 +8,7 @@ import { projectChatGptPlanSnapshot } from "../app-ai/chatgpt-plan-projection.js
 import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   AiProviderDriverViewSchema,
   type AiAccessSourceView,
   type AiProviderAccountView,
@@ -21,6 +22,7 @@ import type { KernelCredentialObservationState } from "../kernel-credentials.js"
 import { KERNEL_DEFAULTS } from "../kernel-settings.js";
 import { ProviderCredentialStore } from "./credential-store.js";
 import { ProviderHealthCache } from "./health.js";
+import { fundedSourceObservation } from "./funded-source-observation.js";
 import {
   AI_PROVIDER_CATALOG_VERSION,
   buildBundledModelCatalog,
@@ -54,6 +56,8 @@ export interface AiProviderSnapshotReader {
 }
 
 interface AiProviderServiceOptions {
+  /** Server phase validation runs before any observation; never renderer input. */
+  observationScope?: () => "canonical_matrix" | undefined;
   /** Registered native Claude profile uses a separate account from owner API keys. */
   exposeClaudeProfileAccount?: boolean;
   nativeHarnessCatalogReader?: GenericHarnessModelCatalogReader;
@@ -197,6 +201,7 @@ function readinessForDriver(
 }
 
 export class AiProviderService implements AiProviderSnapshotReader {
+  readonly #observationScope?: AiProviderServiceOptions["observationScope"];
   readonly #credentials: ProviderCredentialStore;
   readonly #exposeClaudeProfileAccount: boolean;
   readonly #now: () => Date;
@@ -219,6 +224,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       env: options.env,
       fundedCredentialProvider: options.fundedCredentialProvider,
     });
+    this.#observationScope = options.observationScope;
     this.#exposeClaudeProfileAccount = options.exposeClaudeProfileAccount === true;
     this.#now = options.now ?? (() => new Date());
     this.#healthProbe = options.healthProbe;
@@ -392,10 +398,18 @@ export class AiProviderService implements AiProviderSnapshotReader {
 
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
     options.signal?.throwIfAborted();
-    const managedMatrixOnly = options.admissionScope === "managed_matrix";
+    const canonicalOnly = this.#observationScope?.() === "canonical_matrix" || options.admissionScope === "canonical_matrix";
+    const managedMatrixOnly = canonicalOnly || options.admissionScope === "managed_matrix";
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
-    const nativeScope = { signal: options.signal, deadline: +snapshotTime + 13000, deferRenewal: true };
+    // Aggregate funding can outlive native evidence. Renew within the outer
+    // observation budget; discovery and each renewal retain their own caps.
+    const nativeScope = {
+      signal: options.signal,
+      deadline: Math.min(+snapshotTime + FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs,
+        Number.isFinite(options.nativeObservationDeadline) ? options.nativeObservationDeadline! : Infinity),
+      deferRenewal: true,
+    };
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
@@ -438,33 +452,31 @@ export class AiProviderService implements AiProviderSnapshotReader {
       "matrix",
       now,
     );
-    const fundedSourceReadiness = (modelId: string): AiProviderReadiness =>
-      funded !== undefined && (matrixReadiness.state === "ready" ? !funded.allowedModelIds.includes(modelId)
-        : !funded.discoverableModelIds?.includes(modelId) && !funded.allowedModelIds.includes(modelId))
-        ? { state: "unavailable", checkedAt: matrixReadiness.checkedAt, staleAfter: null,
-          action: "retry", safeReason: "provider_unavailable" }
-        : matrixReadiness;
     const catalog = buildBundledModelCatalog();
+    const observeFundedSource = (sourceId: string) => fundedSourceObservation(
+      eligibleModelsForSource(sourceId, catalog).map(model => model.id), matrixReadiness, funded,
+    );
+    const fundedSources = {
+      matrix_cloudflare: observeFundedSource("matrix_cloudflare"),
+      matrix_included: observeFundedSource("matrix_included"),
+    };
 
     const accessSources: AiAccessSourceView[] = [
       sourceFromReadiness({
         id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
         vendor: "cloudflare", accountLabel: "Included",
-        eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
-          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id)).map((model) => model.id),
+        eligibleModelIds: fundedSources.matrix_cloudflare.eligibleModelIds,
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
-      }, fundedSourceReadiness("@cf/zai-org/glm-5.3-flash")),
+      }, fundedSources.matrix_cloudflare.readiness),
       sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",
         fundingKind: "matrix_included",
         vendor: "anthropic",
         accountLabel: "Included",
-        eligibleModelIds: eligibleModelsForSource("matrix_included", catalog)
-          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id))
-          .map((model) => model.id),
+        eligibleModelIds: fundedSources.matrix_included.eligibleModelIds,
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
-      }, fundedSourceReadiness("claude-sonnet-5")),
+      }, fundedSources.matrix_included.readiness),
       sourceFromReadiness({
         id: "owner_anthropic_key",
         displayName: "Anthropic API key",
@@ -620,7 +632,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         }
       : { providerInstanceId: null, accessSourceId: null, modelId: null };
 
-    const matrixAnthropicConnection = await this.#matrixAnthropicConnection?.();
+    const matrixAnthropicConnection = canonicalOnly ? undefined : await this.#matrixAnthropicConnection?.();
     options.signal?.throwIfAborted();
     const snapshot = AiProviderSnapshotV3Schema.parse({
       contractVersion: 3,
@@ -636,6 +648,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       active,
     });
     // Observe after other bounded discovery so those waits do not age peer truth.
+    this.#observationScope?.();
     if (managedMatrixOnly) return snapshot;
     const plan = await this.#readChatGptPlanObservation(options.signal);
     options.signal?.throwIfAborted();

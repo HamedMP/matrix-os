@@ -1,3 +1,5 @@
+import { projectManagedCreditUsage } from "./provider-managed-credit-usage.js";
+import { nativeAccountPrincipalFingerprint } from "./native-account-metadata-binding.js";
 import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
 import { projectClaudeNativeAccount } from "./claude-native-account-projection.js";
 import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
@@ -176,39 +178,7 @@ function projectAccessSources(
       eligibleModelIds: fundedModelIds
         ? [...new Set(fundedModelIds)]
         : [...source.eligibleModelIds],
-      usage: matrix && fundingSummary ? {
-        kind: "managed_credit" as const,
-        authority: "matrix_ledger" as const,
-        state: fundingState(fundingSummary.asOf, now),
-        scope: "owner_entitlement" as const,
-        currency: "USD",
-        usedMicrousd: fundingSummary.settledThisMonthMicrousd,
-        remainingMicrousd: Math.min(
-          fundingSummary.remainingBalanceMicrousd,
-          fundingSummary.remainingBudgetMicrousd,
-        ),
-        limitMicrousd: fundingSummary.monthlyBudgetMicrousd,
-        periodStartedAt: fundingSummary.periodStart,
-        resetsAt: nextUtcMonth(fundingSummary.periodStart),
-        asOf: fundingSummary.asOf,
-        ...(chatAvailability ? { chatAvailability } : {}),
-        credit: {
-          promotionalBalanceMicrousd: fundingSummary.promotionalBalanceMicrousd,
-          addonBalanceMicrousd: fundingSummary.addonBalanceMicrousd,
-          creditBalanceMicrousd: fundingSummary.creditBalanceMicrousd,
-          reservedMicrousd: fundingSummary.reservedMicrousd,
-          ...(fundingSummary.fundingShortfallMicrousd === undefined
-            ? {}
-            : { fundingShortfallMicrousd: fundingSummary.fundingShortfallMicrousd }),
-          remainingBalanceMicrousd: fundingSummary.remainingBalanceMicrousd,
-        },
-        budget: {
-          monthlyBudgetMicrousd: fundingSummary.monthlyBudgetMicrousd,
-          settledThisMonthMicrousd: fundingSummary.settledThisMonthMicrousd,
-          reservedThisMonthMicrousd: fundingSummary.reservedThisMonthMicrousd,
-          remainingBudgetMicrousd: fundingSummary.remainingBudgetMicrousd,
-        },
-      } : {
+      usage: matrix && fundingSummary ? projectManagedCreditUsage(fundingSummary, chatAvailability, now) : {
         kind: "unavailable" as const,
         authority: "unavailable" as const,
         state: "unavailable" as const,
@@ -220,16 +190,6 @@ function projectAccessSources(
     };
   });
   return { sources, sourceByAccount };
-}
-
-function nextUtcMonth(periodStart: string): string {
-  const start = new Date(periodStart);
-  return new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1)).toISOString();
-}
-
-function fundingState(asOf: string, now: Date): "current" | "stale" {
-  const age = now.getTime() - Date.parse(asOf);
-  return Number.isFinite(age) && age >= -60_000 && age <= 5 * 60_000 ? "current" : "stale";
 }
 
 function fallbackRouteLabel(reference: string, fallback: string): string {
@@ -399,6 +359,7 @@ function projectHarness(input: {
     displayName: input.stored.displayName,
     accentColor: input.stored.accentColor,
     enabled: Boolean(executionRouteAvailable
+      && !(nativeCredentialAuthenticated && source?.readiness.state === "auth_required")
       && input.stored.enabled && driver?.installState === "installed"),
     configuredEnabled: generatedNative ? true : input.stored.enabled,
     configuredAccessSourceId: input.stored.accessSourceId,
@@ -498,10 +459,22 @@ export async function projectProviderSettings(input: {
       delete nativeAccount.connectionDetails;
     } else if (metadata.connectionDetails) nativeAccount.connectionDetails = metadata.connectionDetails;
     if (metadata.authMethod === "terminal") {
+      nativeAccount.authMethod = "terminal";
       nativeAccount.authState = "authenticated";
       nativeAccount.lastCheckedAt = metadata.checkedAt;
     }
     if (metadata.authMethod === "terminal" && metadata.usage) nativeSource.usage = metadata.usage;
+  }
+  if (nativeAuthenticatedAccountId && nativeSource?.kind === "provider_account" && nativeSource.fundingKind === "owner_account") {
+    const saved = input.config.harnesses.find(row => row.harness === "codex" && row.accessSourceId === nativeSource.id);
+    const fingerprint = metadataFresh && metadata?.authMethod === "terminal" ? nativeAccountPrincipalFingerprint(metadata) : null;
+    const missingConsent = !saved?.nativeAccountGeneration || saved.nativeAccountConsentRevision === undefined;
+    const changedPrincipal = fingerprint !== null && saved?.nativeAccountGeneration !== fingerprint;
+    if (missingConsent || changedPrincipal) {
+      nativeSource.readiness = { state: "auth_required", action: "connect", safeReason: "auth", checkedAt: metadata?.checkedAt ?? null, staleAfter: metadata?.staleAfter ?? null };
+    } else if (fingerprint !== null && nativeAuthenticatedAccountId) {
+      nativeSource.readiness = { state: "ready", action: "none", safeReason: null, checkedAt: metadata!.checkedAt, staleAfter: metadata!.staleAfter };
+    }
   }
   const hermesMetadata = input.hermesNativeAccountMetadata;
   const hermesSource = sources.find(source => source.kind === "harness_profile" && source.harness === "hermes" && source.providerId === "openai-codex");

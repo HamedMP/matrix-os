@@ -43,7 +43,7 @@ describe("production local Chat integration wiring", () => {
   it("also supplies verified server-side identity to the in-process app and bot transport", async () => {
     const f = await fixture();
     try {
-      await expect(f.localClient.inventory(owner.ownerId)).resolves.toEqual([{ connectionId: "connection-local", service: "google_drive", label: "brain" }]);
+      await expect(f.localClient.inventory(owner.ownerId)).resolves.toEqual([{ connectionId: "connection-local", service: "google_drive", label: "brain", email: null }]);
       expect((await f.localClient.describe(owner.ownerId, { service: "google_drive", readOnly: true })).every(action => action.risk === "read")).toBe(true);
       await expect(f.localClient.callAppAction(owner.ownerId, { service: "google_drive", action: "read_file", label: "brain", connectionId: "connection-local", params: { fileId: "brain_file" }, read: true })).resolves.toMatchObject({ data: { text: "owner brain contents" } });
       expect(f.db.listConnectedServices).toHaveBeenCalledWith(rowId);

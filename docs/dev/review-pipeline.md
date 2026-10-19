@@ -238,6 +238,72 @@ PRs touching these areas must include adversarial tests, not just happy-path:
 | Container env | Verify secrets not forwarded to user containers |
 | Shutdown | Cleanup verification (no leaked watchers/connections) |
 
+## Greptile Review Carry-Over
+
+The merge gate is a Greptile `5/5` on the current head, or on an earlier head
+whose review still covers the current one. Updating a PR with its base under the
+strict up-to-date ruleset, restacking a stack after a parent changes, or
+retargeting a child to `main` after its parent lands all produce a new head
+without changing what the PR itself adds or removes. Re-reviewing those heads
+costs a paid review each and finds nothing new, which adds up quickly on long
+stacks.
+
+```bash
+node scripts/review/review-carryover.mjs check <pr>
+# 0: the review covers the head   1: request a fresh review   3: could not decide (gh, git, or tool error); fix and rerun
+```
+
+How it decides:
+
+1. `.github/workflows/review-receipt.yml` runs on Greptile summary comments.
+   It records only when the edit introduces a review (the footer's
+   `Reviews (N)` count rises or the reviewed commit changes, compared with the
+   event's previous body), the reviewed commit is still the PR head, and the
+   PR base was not retargeted or force-pushed in the last 30 minutes, so the
+   recorded base is the one Greptile reviewed against. Receipts live in a
+   single `github-actions[bot]` PR comment (newest 30) and carry the review
+   count they belong to; a receipt only counts for that exact review, so an
+   unrecorded later review never inherits an older base. The base
+   must be captured at review time: a restack force-pushes the parent, so the
+   old fork point is no longer on any branch afterwards.
+2. `check` reads Greptile's score heading and `Last reviewed commit` footer
+   (anything ambiguous fails closed) and stops early unless the score is `5/5`.
+   With a receipt for the latest review, it requires both:
+   - the head tree is exactly `git merge-tree --merge-base=<recorded base>
+     <head's base> <reviewed>`, the clean replay of the reviewed change onto
+     the head's current base; and
+   - the PR's own diff with three context lines (line numbers and blob ids
+     stripped) is unchanged.
+
+   Without a receipt, a review that names the head passes as it always has,
+   and an older reviewed commit needs a fresh review.
+
+Restacks, retargets after a parent lands, base merges, and message-only
+amends pass. New PR work, conflict resolutions, an identical edit moved
+elsewhere (even between repeated blocks), base edits within three lines of a
+PR change, and a retarget that pulls parent commits into an unchanged head
+fail. The context check exists because git merges a base edit one line away
+from a PR change cleanly, such as a removed guard above an inserted call.
+Merge and diff run with an empty attribute source, so a PR's `.gitattributes`
+cannot change the outcome. The live base is fetched into a ref unique to each run
+(refs are shared across worktrees and concurrent checks), resolved, and
+deleted. A fetched live base always wins over GitHub's reported base SHA,
+which can lag a reset parent; the reported SHA is used only when the base
+branch cannot be fetched, never an older or another run's tip.
+
+Limits:
+
+- A child layer's review covers its own diff, not the parent it sits on. The
+  parent has its own review, and CI covers how the layers interact.
+- The context check compares text, so deleting one of several identical
+  adjacent lines (blank lines, repeated braces) within three lines of a PR
+  change is not detected. CI still covers the result.
+- Missing receipts, unfetchable commits, ambiguous or criss-cross bases all
+  fail closed (exit 1). A failed record run leaves no receipt.
+- A receipt only names two commits; it never vouches for content. Fork PRs
+  cannot post as `github-actions[bot]`. Repository writers can, but they can
+  already merge without Greptile, so the tool does not defend against them.
+
 ## For AI Agents
 
 If you are an AI agent (Claude, Copilot, etc.) writing or reviewing code for Matrix OS:

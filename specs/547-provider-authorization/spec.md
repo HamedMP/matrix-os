@@ -1,14 +1,17 @@
 # Codex and Claude subscription connections
 
-Tracking: ENG-117 / PR2198. Revised subscription-first scope approved: 2026-10-06.
+Tracking: ENG-117 / PR2198. Native CLI dual-entry correction: ENG-268, 2026-10-13.
+
+The native Codex restoration contract is [Independent native Codex and Matrix AI subscriptions](./codex-dual-entry.md). It supersedes the former blanket Terminal-login exclusion. The subsequently authorized [native Settings device-code restoration](./native-codex-settings-device-login.md) also supersedes Terminal-only native capability for the qualified owner-scoped official workflow.
 
 ## Outcome
 
 The Matrix AI Settings area exposes **Connect Codex** and **Connect Claude** for
 the qualified native connection workflows on the selected Computer. Claude Code
-uses its unmodified official login; Codex subscription login is excluded on managed
-Computers under current hosted-access restrictions, while API-key connection and
-existing nonsecret native account display remain supported. Hermes, Pi and
+uses its unmodified official login; Codex exposes the owner-operated official CLI
+Terminal fallback and qualified in-Settings official device-code login on the
+selected Computer under the native restoration contract. API-key connection
+and existing nonsecret native account display remain supported. Hermes, Pi and
 OpenCode expose qualified permitted connection methods and **Log in in Terminal**
 where the installed native protocol supports it. Selecting a
 provider binds that provider to validation, native persistence, readback, catalog
@@ -28,7 +31,8 @@ agent delegation or a Terminal workaround.
 | --- | --- | --- |
 | Matrix AI credit | Existing private Pi inference broker | Preserve current funded admission and model proof |
 | Owner API key | Qualified native harness or explicit Pi broker route | Fixed provider, current credentials, catalog and exact owner selection |
-| ChatGPT subscription login through native Codex in hosted Matrix | Excluded | App-server authentication is not permitted for commercial or hosted services; existing account display is not new login eligibility |
+| Owner-operated native Codex login | Official Terminal or qualified Settings device-code flow | Current writable Computer owner, qualified installed protocol, profile fencing and private exact native completion |
+| Separate hosted Codex OAuth integration | Outside this restoration | The qualified owner-scoped native Settings flow does not establish eligibility for unrelated hosted integrations |
 | ChatGPT subscription for Matrix Pi | Deferred from this delivery | Own issued client and confirmed deployment/access eligibility required; native Codex login alone is insufficient |
 | Claude subscription for Bot tasks | Unmodified official Claude Code child executor | Existing end-user native login, explicit Bot grant and scoped child authority |
 | Claude subscription for direct Pi/Hermes/OpenCode inference | Excluded | No native credential import, login advertisement or Terminal workaround |
@@ -44,11 +48,12 @@ valid authorization is reused for the exact permitted consumer. Missing Matrix a
 consent or Bot permission asks only for that missing step. A login on another
 Computer or in the provider's website does not establish runtime authorization.
 
-The Matrix AI subscription shortcuts and existing native cards share one canonical
-authorization operation and current account state. Valid same-route native login
-shows its observed connection state rather than reopening sign-in. Codex has no
-new subscription login/Terminal workaround in hosted Matrix. Keep the Matrix credit balance and
-owner subscription usage visibly separate; do not add another Pi account.
+Matrix AI SIWC and native Codex retain independent authorization operations,
+accounts and credential custody. Valid same-route native login shows its verified
+connection state rather than destructively reopening sign-in. Native Codex uses
+the qualified official owner-scoped Settings device-code flow or CLI Terminal fallback.
+Neither path imports the upper subscription entry's credentials.
+Keep Matrix credit and owner subscription usage visibly separate.
 
 Use existing account cards, verified identity and supported Connect/Reconnect/
 Change account actions. Ordinary setup does not require saved-account management
@@ -199,74 +204,33 @@ error, not permission to fall back or authenticate. Cover connected/logged-out
 status, malformed/timeouts, legacy browser completion/cancellation/disconnect and
 late account/Computer changes with focused regressions and real Electron tests.
 
-## Executable contract: hosted subscription eligibility
+## Executable contract: native CLI and hosted integration boundaries
 
-### 1. Scope / Trigger
+The detailed signatures, authority matrix and validation requirements live in
+[codex-dual-entry.md](./codex-dual-entry.md). Backend and shared UI admit the
+qualified current `openai_device_code` Codex subscription option and explicit
+`openai_terminal` fallback. Browser, legacy and unqualified methods remain
+unavailable. Direct Settings starts use the same native
+owner/harness/profile authority. Existing accounts are preserved and cannot be
+silently replaced by an official CLI command that clears credentials before consent.
 
-The provider/method catalog must honor both native protocol qualification and
-current product eligibility. OpenAI's app-server authentication is not permitted
-for commercial or hosted services; an installed official CLI is insufficient.
-Claude Code's unmodified hosted binary follows its distinct documented conditions.
+Private completion requires exact fresh independently verified native identity,
+serialized source/account selection, revision checks and compensation. Completion
+replay respects subsequent owner Off. Native launch, continuation and steering must
+recheck exact authority; revocation cannot target a replaced principal. Native
+subscription execution cannot inherit a key/funded fallback or Matrix AI grant.
 
-### 2. Signatures
+Tests cover current terminal handoff, stale embedded methods, readonly owners,
+existing accounts, exact completion, identity drift, native lifecycle isolation,
+and no-fallback child execution. Real Electron Desktop and selected Computer
+acceptance remains distinct from fixtures. API-key and Claude native behavior
+remain compatible.
 
-- `nativeWorkflowConnectionOptions({harness, methods, keyProviders})` produces
-  bounded exact provider/method options from the trusted registry.
-- `createNativeProviderWorkflowAdapters(options)` must advertise no available
-  Codex subscription method and reject forged/stale login starts before effects.
-- Provider Settings `start_login` and the Terminal coordinator apply the same
-  prohibition; an older client cannot bypass the V2 catalog.
-- `authenticatedNativeHarness(snapshot, id, kind)` validates exact installed
-  harness, writable owner scope and fresh authenticated account/source linkage
-  before a permitted native completion enables its route.
-
-### 3. Contracts
-
-Preserve strict V1 DTOs and V2 option identity. Codex API-key saving uses the
-registered OpenAI key adapter and separate provider billing. Existing account
-metadata remains nonsecret; observed connected state grants no new subscription
-permission. Do not ship a new app-server login helper or substitute a Terminal
-`codex login` command. Claude login remains owner-direct through the unmodified
-binary; it does not expose subscription tokens to Matrix's inference transport.
-
-### 4. Validation & Error Matrix
-
-| Condition | Outcome |
-| --- | --- |
-| Codex subscription request by any hosted Settings/workflow/Terminal entry | Unavailable before native launch or auth mutation |
-| Unknown/stale provider/method/option | Reject before effects |
-| Codex API-key option qualified and owner writable | Preserve exact provider saver/readback |
-| Existing native account | Display observed state; no implied new login eligibility |
-| Permitted native completion, stale owner/account/readback | Fail safely; do not enable from another snapshot |
-| Fresh exact permitted authenticated readback | Enable using that validated revision |
-
-### 5. Good/Base/Bad Cases
-
-- Good: a user connects their own Codex API key or logs in directly to unmodified
-  Claude Code using a currently qualified native method.
-- Base: an existing same-Computer native account remains visible and manageable
-  through actions that are actually permitted.
-- Bad: a CLI version, local profile file, generic OAuth token or Terminal command
-  is treated as approval for hosted ChatGPT subscription authentication.
-
-### 6. Tests Required
-
-Cover V1/V2 and direct Settings starts, forged/stale/Terminal methods and no native
-spawn on rejected Codex subscription requests. Retain key-save and existing account
-regressions. Shared shortcut tests assert truthful billing/copy and no subscription
-login action. Permitted Claude completion requires exact current account readback.
-Real Electron/Main Computer acceptance remains distinct from fixtures.
-
-### 7. Wrong vs Correct
-
-Wrong: expose app-server device login because the native CLI is installed, or
-hide the same forbidden authorization behind Log in in Terminal.
-Correct: omit hosted Codex subscription methods, reject all alternate entry paths
-before effects, preserve qualified API-key/native account state and require
-separately verified eligibility before any future Matrix ChatGPT integration.
-
-Official boundaries: [Codex app-server authentication](https://learn.chatgpt.com/docs/app-server)
-and [Claude Code hosted-binary conditions](https://code.claude.com/docs/en/legal-and-compliance).
+Official sources distinguish [owner CLI remote/headless login](https://learn.chatgpt.com/docs/auth#login-on-headless-devices)
+from [app-server authentication](https://learn.chatgpt.com/docs/app-server#auth-endpoints).
+The CLI route does not confer permission to implement an otherwise excluded
+hosted OAuth service. Matrix SIWC registration is not a universal prerequisite
+for an owner's official CLI login.
 
 ## Deferred scope
 

@@ -1,3 +1,4 @@
+import { JIRA_ACTIONS, POSTHOG_ACTIONS } from "./missing-managed-actions.js";
 import { NOTION_DEPTH_ACTIONS, STRIPE_DEPTH_ACTIONS, NOTION_SEARCH_SCHEMA, NOTION_DATABASE_QUERY_SCHEMA } from "./finance-notion-depth.js";
 import type { IntegrationActionRisk, ServiceAction, ServiceDefinition } from "./types.js";
 
@@ -212,12 +213,7 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
     pipedreamApp: "posthog",
     icon: "chart",
     logoUrl: `${LOGO_BASE}/posthog/logo/48`,
-    actions: {
-      list_projects: { description: "List PostHog projects", risk: "read", params: {} },
-      list_insights: { description: "List insights in a PostHog project", risk: "read", params: { projectId: { type: "number", required: true }, limit: { type: "number" } } },
-      get_insight: { description: "Get a PostHog insight", risk: "read", params: { projectId: { type: "number", required: true }, insightId: { type: "number", required: true } } },
-      query: { description: "Run a read-only PostHog query", risk: "read", params: { projectId: { type: "number", required: true }, query: { type: "object", required: true } } },
-    },
+    actions: POSTHOG_ACTIONS,
   },
 
   jira: {
@@ -227,14 +223,7 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
     pipedreamApp: "jira",
     icon: "check-list",
     logoUrl: `${LOGO_BASE}/jira/logo/48`,
-    actions: {
-      list_projects: { description: "List Jira projects", risk: "read", params: { maxResults: { type: "number" } } },
-      search_issues: { description: "Search Jira issues with JQL", risk: "read", params: { jql: { type: "string", required: true }, maxResults: { type: "number" } } },
-      get_issue: { description: "Get a Jira issue", risk: "read", params: { issueKey: { type: "string", required: true } } },
-      create_issue: { description: "Create a Jira issue", risk: "write", params: { projectKey: { type: "string", required: true }, issueType: { type: "string", required: true }, summary: { type: "string", required: true }, description: { type: "object" } } },
-      update_issue: { description: "Update a Jira issue", risk: "write", params: { issueKey: { type: "string", required: true }, fields: { type: "object", required: true } } },
-      add_comment: { description: "Add a comment to a Jira issue", risk: "write", params: { issueKey: { type: "string", required: true }, body: { type: "object", required: true } } },
-    },
+    actions: JIRA_ACTIONS,
   },
 
   stripe: {

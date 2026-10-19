@@ -7,7 +7,7 @@ export const MANAGED_SERVICE_REGISTRY: Record<string, ServiceDefinition> = Objec
     mcpPreset: { url: p.url, authMode: "oauth" as const }, authType: "oauth" as const,
     icon: p.id, logoUrl: p.id === "loops" ? "https://pipedream.com/s.v0/app_WnhP8N/logo/96" : p.id === "lemlist" ? "https://pipedream.com/s.v0/app_1gKhnN/logo/96" : "https://pipedream.com/s.v0/app_mo7h7A/logo/96",
     actions: Object.fromEntries(Object.entries(p.actions).map(([id, action]) => [id, {
-      description: action.description, risk: "read" as const, params: action.params, paramsSchema: action.schema,
+      description: action.description, risk: action.risk, params: action.params, paramsSchema: action.schema,
     }])),
   }]),
 );

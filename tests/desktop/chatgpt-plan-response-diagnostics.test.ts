@@ -4,13 +4,13 @@ import { PlanFailure, logPlanFailure } from '../../desktop/src/main/chatgpt-plan
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 const secret = 'private input token and provider /path';
 const body = JSON.stringify({model:'fixture-model',input:[{role:'user',content:'fixture only'}],store:false,stream:true});
-async function run(response:Response, signal:AbortSignal=new AbortController().signal) {
+async function run(response:Response, signal:AbortSignal=new AbortController().signal, category?: string) {
  const fetchFn=vi.fn(async()=>response);
  const result=await requestPlanResponse({fetchFn,body,model:'fixture-model',signal,accessToken:async()=> 'fixture-token',validate:()=>{}}).then(value=>value,error=>error);
  expect(fetchFn).toHaveBeenCalledOnce();
  expect(result).toBeInstanceOf(PlanFailure);
  const failure=result as PlanFailure;
- expect(failure).toMatchObject({stage:'responses',category:response.ok?'invalid_stream':'http_error',httpStatus:response.status});
+ expect(failure).toMatchObject({stage:'responses',category:category ?? (response.ok?'invalid_stream':'http_error'),httpStatus:response.status});
  return failure;
 }
 describe('bounded unexpected Responses MIME diagnostics',()=>{
@@ -112,4 +112,90 @@ it.each([
  logPlanFailure('catalog', new Error(message));
  expect(warn).toHaveBeenCalledExactlyOnceWith(`[chatgpt-plan] catalog: ${category}`);
  expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+});
+
+describe('safe failure metadata from bounded SSE frames', () => {
+ const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+ it.each(['max_output_tokens', 'max_messages', 'content_filter', 'steered'])('projects HTTP200 incomplete reason %s without provider details', async reason => {
+  const value = {type: 'response.incomplete', response: {status: 'incomplete', incomplete_details: {reason}, id: secret, output: [{text: secret}], error: {code: 'invalid_request_error', message: secret}}, detail: secret};
+  const failure = await run(new Response(frame(value), {headers: {'content-type': 'text/event-stream'}}), undefined, 'incomplete_stream');
+  expect(failure.responseDiagnostic).toMatchObject({responseType: 'response.incomplete', responseStatus: 'incomplete', incompleteReason: reason, errorCode: 'invalid_request_error', sseFraming: true, sseCompleted: false});
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); logPlanFailure('responses', failure);
+  expect(JSON.stringify(warn.mock.calls)).not.toContain(secret); expect(JSON.stringify(warn.mock.calls)).not.toContain('fixture-token');
+ });
+ it('projects an allowlisted stream error code and nested failed response', async () => {
+  for (const event of [{type: 'error', code: 'rate_limit_exceeded', message: secret}, {type: 'response.failed', response: {status: 'failed', error: {code: 'invalid_request_error', message: secret}}}]) {
+   const failure = await run(new Response(frame(event)), undefined, 'incomplete_stream');
+   expect(failure.responseDiagnostic).toMatchObject({responseType: event.type, errorCode: event.type === 'error' ? 'rate_limit_exceeded' : 'invalid_request_error'});
+   expect(JSON.stringify(failure)).not.toContain(secret);
+  }
+ });
+ it.each(['server_error', 'invalid_prompt', 'invalid_image'])('projects documented SSE response failure code %s only', async code => {
+  const failure = await run(new Response(frame({type: 'response.failed', response: {status: 'failed', error: {code, message: secret}}})), undefined, 'incomplete_stream');
+  expect(failure.responseDiagnostic).toMatchObject({responseType: 'response.failed', responseStatus: 'failed', errorCode: code});
+  expect(JSON.stringify(failure)).not.toContain(secret);
+ });
+ it('drops unknown reasons, statuses, codes, IDs and private SSE text', async () => {
+  const failure = await run(new Response(frame({type: 'response.incomplete', response: {status: secret, incomplete_details: {reason: secret}, error: {code: secret, message: secret}, output: secret, id: secret}})), undefined, 'incomplete_stream');
+  expect(failure.responseDiagnostic?.responseType).toBe('response.incomplete');
+  expect(failure.responseDiagnostic).not.toHaveProperty('incompleteReason'); expect(failure.responseDiagnostic).not.toHaveProperty('responseStatus'); expect(failure.responseDiagnostic).not.toHaveProperty('errorCode');
+  expect(JSON.stringify(failure)).not.toContain(secret);
+ });
+ it('finds a safe terminal failure after a large delta while diagnostic parsing stays bounded', async () => {
+  const prefix = frame({type: 'response.output_text.delta', delta: secret.repeat(1200)});
+  const failure = await run(new Response(prefix + frame({type: 'response.incomplete', response: {status: 'incomplete', incomplete_details: {reason: 'max_output_tokens'}}})), undefined, 'incomplete_stream');
+  expect(failure.responseDiagnostic).toMatchObject({bodyRead: 'oversize', responseType: 'response.incomplete', incompleteReason: 'max_output_tokens'});
+  expect(JSON.stringify(failure)).not.toContain(secret);
+ });
+ it('ignores malformed or oversized event metadata without logging its body', async () => {
+  for (const text of ['data: { malformed ' + secret + ' }\n\n', frame({type: 'response.incomplete', response: {status: 'incomplete', incomplete_details: {reason: secret.repeat(1200)}}})]) {
+   const failure = await run(new Response(text), undefined, text.includes('malformed') ? 'invalid_stream' : 'incomplete_stream');
+   expect(failure.responseDiagnostic).not.toHaveProperty('incompleteReason'); expect(JSON.stringify(failure)).not.toContain(secret);
+  }
+ });
+ it('retains the first terminal failure even if a later completed event follows', async () => {
+  const failure = await run(new Response(frame({type: 'response.incomplete', response: {status: 'incomplete', incomplete_details: {reason: 'content_filter'}}}) + frame({type: 'response.completed', response: {status: 'completed', model: 'fixture-model'}})), undefined, 'incomplete_stream');
+  expect(failure.responseDiagnostic).toMatchObject({responseType: 'response.incomplete', responseStatus: 'incomplete', incompleteReason: 'content_filter', sseCompleted: true});
+ });
+ it('handles malformed non-string event types without losing the original safe failure', async () => {
+  const failure = await run(new Response(frame({type: {toString: null}, message: secret})), undefined, 'invalid_stream');
+  expect(failure.responseDiagnostic).not.toHaveProperty('responseType'); expect(JSON.stringify(failure)).not.toContain(secret);
+ });
+ it('sanitizes new reason fields again at the actual logger boundary', () => {
+  const failure = new PlanFailure('responses', 'incomplete_stream', 200);
+  Object.assign(failure, {responseDiagnostic: {incompleteReason: secret, errorCode: secret, output: secret, responseType: 'response.incomplete'}});
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); logPlanFailure('responses', failure);
+  expect(JSON.stringify(warn.mock.calls)).not.toContain(secret); expect(JSON.stringify(warn.mock.calls)).not.toContain('output');
+ });
+});
+
+describe('failure-only safe inference correlation', () => {
+ const requestId = '10000000-0000-4000-8000-000000000001';
+ const runId = '20000000-0000-4000-8000-000000000001';
+ const computerId = '30000000-0000-4000-8000-000000000001';
+ it('retains strict UUID correlation with a generated UTC observation timestamp', () => {
+  vi.useFakeTimers({toFake: ['Date']}); vi.setSystemTime('2026-10-13T06:30:00.000Z');
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  logPlanFailure('responses', new PlanFailure('responses', 'incomplete_stream', 200), {requestId, runId, computerId, requestClass: 'interactive', observedAt: secret});
+  expect(warn).toHaveBeenCalledExactlyOnceWith(`[chatgpt-plan] responses: incomplete_stream (http 200) ${JSON.stringify({correlation: {requestId, runId, computerId, requestClass: 'interactive', observedAt: '2026-10-13T06:30:00.000Z'}})}`);
+  expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+ });
+ it('retains the exact canonical opaque run ID grammar', () => {
+  vi.useFakeTimers({toFake: ['Date']}); vi.setSystemTime('2026-10-13T06:30:00.000Z');
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const canonicalRunId = 'run_0123456789abcdef0123456789abcdef';
+  logPlanFailure('responses', new PlanFailure('responses', 'incomplete_stream', 200), {runId: canonicalRunId});
+  expect(warn).toHaveBeenCalledExactlyOnceWith(`[chatgpt-plan] responses: incomplete_stream (http 200) ${JSON.stringify({correlation: {runId: canonicalRunId, observedAt: '2026-10-13T06:30:00.000Z'}})}`);
+ });
+ it.each(['run_credential', 'run_0123456789abcdef0123456789abcdef_suffix', 'run_0123456789abcdef0123456789abcdef\n', 'run_0123456789ABCDEF0123456789ABCDEF'])('drops noncanonical run references %j', runId => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  logPlanFailure('responses', new PlanFailure('responses', 'incomplete_stream', 200), {runId});
+  expect(warn).toHaveBeenCalledExactlyOnceWith('[chatgpt-plan] responses: incomplete_stream (http 200)');
+ });
+ it('drops arbitrary references, malformed UUIDs, unknown classes and private context fields', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  logPlanFailure('responses', new PlanFailure('responses', 'incomplete_stream', 200), {requestId: secret, runId: 'run_private_reference', computerId: '30000000-0000-0000-0000-000000000001', requestClass: secret, model: secret, accountId: secret, body: secret, authorization: secret});
+  expect(warn).toHaveBeenCalledExactlyOnceWith('[chatgpt-plan] responses: incomplete_stream (http 200)');
+  expect(JSON.stringify(warn.mock.calls)).not.toContain(secret); expect(JSON.stringify(warn.mock.calls)).not.toContain('run_private_reference');
+ });
 });
