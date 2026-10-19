@@ -1,4 +1,4 @@
-import { useChatReadState, mergeChatReadState } from "@matrix-os/ui";
+import { useChatReadState, mergeChatReadState, mergeLoadedChatHistory, useCanonicalChatHistory } from "@matrix-os/ui";
 import { canonicalChatApprovals, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
@@ -101,6 +101,8 @@ export function useCanonicalChatRouteController({
     detailRef.current = next;
     setDetail(next);
   }, []);
+  const loadHistoryPage = useCallback((chatId: string, cursor: string) => client.getDetail(chatId, { limit: 200, cursor }), [client]);
+  const history = useCanonicalChatHistory({ detail, activeChatId, loadPage: loadHistoryPage, update: updateDetail });
   const acknowledgementAttemptRef = useRef<{
     client: CanonicalChatClient;
     chatId: string;
@@ -129,6 +131,7 @@ export function useCanonicalChatRouteController({
       let loaded = await client.getDetail(chatId, { limit: 200 });
       if (sequence !== detailRequestSequence.current) return null;
       const current = detailRef.current;
+      loaded = mergeLoadedChatHistory(loaded, current);
       if (current?.record.chat.id === loaded.record.chat.id
         && current.record.chat.revision > loaded.record.chat.revision) {
         return current;
@@ -910,6 +913,7 @@ export function useCanonicalChatRouteController({
   });
 
   return {
+    history,
     updateReadState,
     items,
     activeChatId,

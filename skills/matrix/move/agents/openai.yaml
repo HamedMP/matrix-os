@@ -1,0 +1,4 @@
+interface:
+  display_name: "Move to Matrix"
+  short_description: "Move a chat or project into private Matrix work"
+  default_prompt: "Use $matrix-move to transfer this chat or project to my Matrix computer and report verified results and any missing items."

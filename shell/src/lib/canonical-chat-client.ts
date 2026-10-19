@@ -39,6 +39,7 @@ import {
   type CanonicalUpdateChatTitleRequest,
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
+import { importedAttachments, importedToolProjector } from "./imported-chat-history";
 import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -49,7 +50,7 @@ export interface CanonicalShellChatClient {
   list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
-  detail(chatId: string): Promise<CanonicalChatDetailResponse>;
+  detail(chatId: string, cursor?: string): Promise<CanonicalChatDetailResponse>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
@@ -219,9 +220,9 @@ export function createCanonicalShellChatClient(options: {
         body: JSON.stringify(body),
       }));
     },
-    async detail(chatId) {
+    async detail(chatId, cursor) {
       const id = CanonicalChatIdSchema.parse(chatId);
-      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
+      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)));
     },
     async updateReadState(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
@@ -368,12 +369,15 @@ function partText(part: CanonicalChatMessage["parts"][number]): string | null {
 }
 
 export function projectCanonicalMessages(messages: CanonicalChatMessage[]): ChatMessage[] {
+  const projectTool = importedToolProjector(messages);
   const resolvedApprovals = new Set(messages.flatMap((message) => message.parts.flatMap((part) =>
     part.type === "approval_result" && message.runId
       ? [`${message.runId}\0${part.approvalId}`]
       : [])));
   return messages.flatMap((message) => {
-    const attachments = message.parts.flatMap((part) => {
+    const historicalTools = projectTool(message);
+    if (historicalTools) return historicalTools;
+    const attachments = [...importedAttachments(message), ...message.parts.flatMap((part) => {
       if (part.type !== "attachment_reference") return [];
       const resource = part.resource ?? (part.ownerReference
         ? { kind: "home" as const, path: part.ownerReference }
@@ -385,7 +389,7 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
         path: part.ownerReference,
         ...(part.kind === "image" && resource ? { src: filePreviewContentUrl(resource) } : {}),
       }];
-    });
+    })];
     const content = message.parts.map(partText).filter((part): part is string => part !== null).join("\n");
     if (!content && !attachments.length) return [];
     const toolRequest = message.parts.find((part) => part.type === "tool_request");

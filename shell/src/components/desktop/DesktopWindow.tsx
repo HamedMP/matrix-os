@@ -222,6 +222,7 @@ export function DesktopWindow({
                 active={focusedWindowId === win.id && !win.minimized}
                 visible={!win.minimized}
                 readState={chat.readState}
+                history={chat.history}
                 displayedThroughSeq={chat.displayedThroughSeq}
                 onUpdateReadState={chat.updateReadState}
                 messages={chat.messages}

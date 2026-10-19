@@ -27,7 +27,7 @@ function gatewayPreviewUrl(url: string): string {
   return `${getGatewayUrl()}${url}`;
 }
 
-async function readBoundedBlob(response: Response, maxBytes: number): Promise<Blob> {
+export async function readBoundedChatBlob(response: Response, maxBytes: number): Promise<Blob> {
   if (!response.ok || !response.body) throw new Error("ChatFileUnavailable");
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) throw new Error("ChatFileTooLarge");
@@ -56,7 +56,7 @@ async function fetchPreview(url: string, signal?: AbortSignal): Promise<Response
 
 export async function loadChatFile(path: string, signal?: AbortSignal): Promise<Blob> {
   const resource = resourceForChatPath(path);
-  return readBoundedBlob(await fetchPreview(filePreviewContentUrl(resource), signal), CHAT_FILE_LIMIT_BYTES);
+  return readBoundedChatBlob(await fetchPreview(filePreviewContentUrl(resource), signal), CHAT_FILE_LIMIT_BYTES);
 }
 
 async function loadDescriptor(path: string, signal?: AbortSignal): Promise<FilePreviewDescriptor> {
@@ -67,7 +67,7 @@ async function loadDescriptor(path: string, signal?: AbortSignal): Promise<FileP
 }
 
 async function loadPreviewBlob(url: string, maxBytes: number): Promise<Blob> {
-  return readBoundedBlob(await fetchPreview(url), Math.min(maxBytes, CHAT_FILE_LIMIT_BYTES));
+  return readBoundedChatBlob(await fetchPreview(url), Math.min(maxBytes, CHAT_FILE_LIMIT_BYTES));
 }
 
 async function loadPreviewText(url: string, maxBytes: number): Promise<string> {

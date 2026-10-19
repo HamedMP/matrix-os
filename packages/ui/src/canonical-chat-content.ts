@@ -1,4 +1,5 @@
 import { mergeCanonicalChatRecord } from "./canonical-chat-record";
+import { MAX_LOADED_CHAT_MESSAGES } from "./chat/use-canonical-chat-history";
 import type { CanonicalChatContentFrame, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 
 function upsert<T extends { id: string }>(current: T[], incoming: T[] = []): T[] {
@@ -40,20 +41,22 @@ export function applyCanonicalChatContent(
     }
   }
   const sortedMessages = messages.sort((a, b) => a.seq - b.seq);
-  const windowMessages = sortedMessages.slice(-200);
+  // Keep a loaded prefix across streaming updates. Silently sliding a 200-row
+  // window also invalidates its opaque server cursor and hides human messages.
+  if (sortedMessages.length > MAX_LOADED_CHAT_MESSAGES) return null;
+  const windowMessages = sortedMessages;
   const turnIds = windowMessages.flatMap((message) => message.turnId ? [message.turnId] : []);
   const turns = upsert(detail.turns, content.turns).filter((turn) => turnIds.includes(turn.id))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-100);
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const runIds = windowMessages.flatMap((message) => message.runId ? [message.runId] : []);
   const runs = upsert(detail.runs, content.runs)
     .filter((run) => runIds.includes(run.id) || turns.some((turn) => turn.id === run.turnId))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-100);
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const visibleRunIds = runs.map((run) => run.id);
   const next = {
     ...detail,
     record: mergeCanonicalChatRecord(detail.record, content.record),
     messages: windowMessages,
-    ...(messages.length > 200 ? { nextBeforeSeq: windowMessages[0]!.seq } : {}),
     turns,
     runs,
     activities: upsert(detail.activities.filter((activity) => !content.removedActivityIds?.includes(activity.id)), content.activities)

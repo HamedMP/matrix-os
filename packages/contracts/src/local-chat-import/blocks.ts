@@ -43,6 +43,8 @@ export function isInjectedContext(text: string | undefined): boolean {
   if (!text) return false;
   const trimmed = text.trimStart();
   return /^# AGENTS\.md instructions for [^\n]+\n[\s\S]*<INSTRUCTIONS>/.test(trimmed)
+    || /^<skill>\s*<name>[^<]+<\/name>\s*<path>[^<]+<\/path>[\s\S]*<\/skill>\s*$/.test(trimmed)
+    || /^<external_codex_apps_open_page>[^<]*<\/external_codex_apps_open_page>\s*$/.test(trimmed)
     || /^(?:<recommended_plugins>[\s\S]*?<\/recommended_plugins>\s*)?<environment_context>/.test(trimmed)
     || /^<recommended_plugins>[\s\S]*?<\/recommended_plugins>\s*# AGENTS\.md instructions for /.test(trimmed);
 }

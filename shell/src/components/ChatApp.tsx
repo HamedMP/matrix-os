@@ -8,7 +8,7 @@ import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigati
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
-import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
+import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm, ChatHistoryControl } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
@@ -27,6 +27,7 @@ import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { resolveChatMessageLink } from "@matrix-os/contracts";
 import { ChatFilePanel, loadChatFile } from "./chat/ChatFilePanel";
+import { useImportedChatAssets } from "./chat/useImportedChatAssets";
 import type {
   CanonicalChatApprovalDecision,
   CanonicalChatModelSelection,
@@ -128,6 +129,7 @@ function writeHermesSetup(channels: string[]) {
 }
 
 interface ChatAppProps {
+  history?: import("@matrix-os/ui").CanonicalChatHistoryControls;
   collaborationView?: ChatCollaborationView;
   onOpenSharedChat?: (scopeId: string) => void;
   onOpenSharedProject?: (scopeId: string) => void;
@@ -188,6 +190,7 @@ export function ChatApp(props: ChatAppProps) {
 }
 
 function ChatAppContent({
+  history,
   collaborationView, onOpenSharedChat, onOpenSharedProject, onOpenSharedHome,
   filterUnreadOnly, onUnreadFilterChange,
   active = true, visible = true, readState, displayedThroughSeq = 0, onUpdateReadState,
@@ -214,6 +217,9 @@ function ChatAppContent({
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
+  const importedAssets = useImportedChatAssets(sessionId, authorityKey);
+  const loadMessageImage = useCallback((src: string) => src.startsWith("/api/chats/")
+    ? importedAssets.loadImportedImage(src) : loadShellChatImage(src), [importedAssets.loadImportedImage]);
   const agentsNavigation = useChatAgentsNavigation();
   const summaryClient = agentSummaryClient ?? agentClient;
   const [localUnreadOnly, setUnreadOnly] = useState(false);
@@ -676,16 +682,17 @@ function ChatAppContent({
             <div className="contents">
             <Conversation>
               <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
+                <ChatHistoryControl history={history} />
                 {grouped.map((group, groupIndex) => {
                   if (group.type === "tool_group") {
-                    return <div key={`tg-${group.messages[0].id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/></div>;
+                    return <div key={`tg-${group.messages[0].id}`}><ToolCallGroup tools={group.messages} openImportedAsset={importedAssets.openImportedAsset} loadImage={loadMessageImage} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/></div>;
                   }
                   const msg = group.message;
                   return (
                     <div key={msg.id}>
                       {msg.role === "user" ? (
                         <Message from="user">
-                          {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
+                          {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadMessageImage} openImportedAsset={importedAssets.openImportedAsset} /> : null}
                           {msg.content.trim() ? <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
                             <span className="whitespace-pre-wrap">{msg.content}</span>
                           </MessageContent> : null}
@@ -719,7 +726,8 @@ function ChatAppContent({
                       content={msg.content}
                       attachments={msg.attachments}
                       openAttachment={openMessageFile}
-                      loadImage={loadShellChatImage}
+                      loadImage={loadMessageImage}
+                      openImportedAsset={importedAssets.openImportedAsset}
                       onAction={submitWithHermesSetup}
                     />
                       )}
@@ -864,6 +872,7 @@ function EmptyState({
 }
 
 function AssistantBubble({
+  openImportedAsset,
   content,
   attachments,
   openAttachment,
@@ -872,6 +881,7 @@ function AssistantBubble({
 }: {
   content: string;
   attachments?: ChatMessage["attachments"];
+  openImportedAsset?: (ref: import("@matrix-os/contracts").ImportedChatAssetRef) => Promise<void>;
   openAttachment?: (path: string) => boolean | void;
   loadImage?: (src: string) => Promise<Blob>;
   onAction?: (text: string) => void;
@@ -888,7 +898,7 @@ function AssistantBubble({
   return (
     <Message from="assistant">
       <MessageContent>
-        {attachments?.length ? <ChatAttachments align="start" attachments={attachments} open={openAttachment} loadImage={loadImage} /> : null}
+        {attachments?.length ? <ChatAttachments align="start" attachments={attachments} open={openAttachment} loadImage={loadImage} openImportedAsset={openImportedAsset} /> : null}
         {thinking && <Reasoning content={thinking} />}
         {planSteps && <Plan steps={planSteps} />}
         {taskData && <Task task={taskData} />}

@@ -642,6 +642,7 @@ function MobileAppFrame({
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 readState={chat.readState}
+                history={chat.history}
                 displayedThroughSeq={chat.displayedThroughSeq}
                 onUpdateReadState={chat.updateReadState}
         mobile

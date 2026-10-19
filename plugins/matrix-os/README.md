@@ -1,7 +1,12 @@
 # Matrix OS plugin
 
-One package for Codex and Claude Code: 15 remote-computer MCP tools plus four
+One package for Codex and Claude Code: 15 remote-computer MCP tools plus five
 workflow skills. Both manifests load the same `.mcp.json` and `skills/` directory.
+
+`matrix-move` transfers a selected chat or project into private Matrix work,
+using saved transcript import, a verified workspace snapshot, and product project
+registration. Cloud sources without full exports remain explicit partial handoffs.
+Private resource deep links remain a follow-up; the skill does not publish chats.
 
 ## Availability
 

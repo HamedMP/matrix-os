@@ -30,6 +30,15 @@ function counts(events: Awaited<ReturnType<typeof project>>) {
   };
 }
 describe("local Codex and Claude history reconstruction", () => {
+  it("retains injected skill and app selection envelopes as context, without hiding the human request", async () => {
+    const envelopes = ['<skill>\n<name>example</name>\n<path>/skills/example/SKILL.md</path>\nInstructions\n</skill>', '<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>'];
+    const events = await project("codex", [wrapped("session_meta", { id: session }),
+      ...envelopes.map(value => wrapped("response_item", { type: "message", role: "user", content: [text("input_text", value)] })),
+      wrapped("response_item", { type: "message", role: "user", content: [text("input_text", "Move this chat")] }),
+    ]);
+    expect(events.filter(event => event.kind === "context")).toHaveLength(2);
+    expect(counts(events).messages).toBe(1);
+  });
   it("enforces the whole Claude record block budget before per-block projection", async () => {
     const content = Array.from({ length: 10_001 }, () => text("text", "synthetic"));
     await expect(project("claude", [{ type: "assistant", sessionId: session, message: { id: "many", content } }])).rejects.toThrow("block count");

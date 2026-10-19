@@ -48,6 +48,22 @@ describe("verified private archives publish canonical Chat atomically", () => {
     const assets = await chats.kysely.selectFrom("local_chat_import_assets").selectAll().where("job_id", "=", jobId).execute();
     expect(assets[0]).toMatchObject({ cleanup_pending: true, chat_id: null });
   });
+  it("publishes a transcript ending in a tool request without a blank Chat preview", async () => {
+    const raw = transcript([header,
+      { type: "response_item", payload: { type: "message", role: "user", id: "user", content: [{ type: "input_text", text: "Inspect the project" }] } },
+      { type: "response_item", payload: { type: "function_call", call_id: "pending", name: "read_file", arguments: "{}" } },
+    ]);
+    const jobId = await uploaded(raw);
+    const result = await publisher(raw).publish(owner, jobId);
+    const exported = await chats.exportChat(owner, result.chatId);
+    expect(exported?.messages).toHaveLength(2);
+    expect(exported?.messages.at(-1)?.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "tool_request", name: "read_file" }),
+    ]));
+    expect(exported?.chat.lastMessagePreview).toBeUndefined();
+    expect((await chats.list(owner, { limit: 10 })).items.map(item => item.chat.id)).toEqual([result.chatId]);
+    expect((await publisher(raw).publish(owner, jobId)).chatId).toBe(result.chatId);
+  });
   it("keeps a human Turn, all 37 results, and actual source ordering without live execution", async () => {
     const records: unknown[] = [header, { type: "response_item", payload: { type: "message", role: "user", id: "user", content: [{ type: "input_text", text: "Synthetic prompt" }] } },
       { type: "response_item", payload: { type: "function_call", call_id: "call", name: "synthetic", arguments: "{}" } }];

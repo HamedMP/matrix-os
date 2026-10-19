@@ -34,7 +34,7 @@ export interface ChatMessage {
   toolInput?: Record<string, unknown>;
   toolDisplay?: import("@matrix-os/contracts").CanonicalToolActivity;
   requestId?: string;
-  attachments?: Array<{ id: string; label: string; kind: "image" | "file"; path?: string; src?: string }>;
+  attachments?: import("@matrix-os/ui").ChatMessageAttachment[];
   metadata?: Record<string, unknown>;
   timestamp: number;
 }
