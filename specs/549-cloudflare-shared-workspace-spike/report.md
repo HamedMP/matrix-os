@@ -22,6 +22,19 @@ This is a spike, not a released Free plan or a production onboarding change.
 - Personal `/vm/<handle>` routing and gateway isolation regressions passed;
   the direct gateway test also exercised the existing authenticated message path.
 
+## Starter Help popover crash regression
+
+The signed-in pilot crash report identified `PopoverAnchor` without its owning
+`Popover` (the original screenshot's `mx-18mp5k4` error). The shared Help menu
+created an unscoped checklist anchor using its own Radix import, while the Web
+checklist's provider came from the shell's `radix-ui` import. The checklist
+renderer now supplies the anchor from the same import as its provider; Help
+retains its independent scope. Both Web and Electron callers use this contract.
+A real-component regression first reproduced the exact exception with a trigger
+ref and no ambient provider, then passed after the fix. Existing Web/Electron
+Help/checklist switching and inbox tests remain part of validation. This does
+not substitute for live surface captures or a signed-in post-deploy retest.
+
 ## Measurements and limits
 
 The remote Worker, Queue, Durable Object, Container, R2 and Hyperdrive path passed
