@@ -685,9 +685,12 @@ describe("S12 direct resource policy", () => {
       const nested = await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "folder", path: "docs/sub/nested", incarnation: "inc-nested" });
       driver.folders.add(`${owner}:${PROJECT_ID}:docs/sub`);
       driver.folders.add(`${owner}:${PROJECT_ID}:docs/sub/nested`);
+      driver.incarnations.set(`${owner}:${PROJECT_ID}:docs/sub`, sub.incarnation);
+      driver.incarnations.set(`${owner}:${PROJECT_ID}:docs/sub/nested`, nested.incarnation);
       for (const extra of input.extras ?? []) {
         await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "file", path: `docs/sub/${extra}`, incarnation: `inc-${extra}` });
         driver.files.set(`${owner}:${PROJECT_ID}:docs/sub/${extra}`, new TextEncoder().encode(extra));
+        driver.incarnations.set(`${owner}:${PROJECT_ID}:docs/sub/${extra}`, `inc-${extra}`);
       }
       const childPath = `docs/sub/nested/${input.name}`;
       const release = deferred();
