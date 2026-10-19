@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { CheckIcon } from "@/lib/hugeicons";
-import { DEFAULT_THEME, saveTheme, useTheme, type Theme } from "@/hooks/useTheme";
+import { DEFAULT_THEME, saveTheme, useThemeState, type Theme } from "@/hooks/useTheme";
 import {
   saveDesktopConfigPatch,
   type DesktopConfig,
@@ -203,13 +203,13 @@ const PREVIEWS: Record<DesignStyle, () => React.ReactElement> = {
 /* ── Component ─────────────────────────────────── */
 
 export function DesignPicker() {
-  const theme = useTheme();
+  const { theme, writePending } = useThemeState();
   const activeId: DesignStyle = theme?.style ?? "flat";
   const [pendingId, setPendingId] = useState<DesignStyle | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSelect(option: DesignOption) {
-    if (pendingId) return;
+    if (pendingId || writePending) return;
     setError(null);
     setPendingId(option.id);
     try {
@@ -263,7 +263,7 @@ export function DesignPicker() {
               key={option.id}
               type="button"
               aria-pressed={isActive}
-              disabled={pendingId !== null}
+              disabled={pendingId !== null || writePending}
               onClick={() => handleSelect(option)}
               className={`rounded-lg border-2 p-2 text-left transition-all ${
                 isActive
