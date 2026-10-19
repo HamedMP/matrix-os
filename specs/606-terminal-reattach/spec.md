@@ -10,9 +10,12 @@ ENG-293, #2599, process restart/recreation and terminal redesign.
 - Expiring a viewer removes its subscription and disconnects its transport.
   A captured viewer handle cannot renew a replacement with the same viewer ID
   or acknowledge a heartbeat after eviction.
-- Admit the live subscriber before obtaining the handshake snapshot. Buffer
-  output while the snapshot read is pending, then send attached/replay/snapshot/
-  replay-end before draining each buffered output chunk once in order.
+- Send `attached` before native admission so startup input queues at the socket
+  boundary and a slow native attachment cannot stall the client (the existing
+  startup-input contract). Admit the live subscriber before reading the replay
+  baseline. Buffer output while that read is pending, then send replay-start/
+  snapshot/replay-end before draining each buffered output chunk once in order;
+  `replay-end` carries the admitted cursor.
 - Snapshots replace the rendered presentation; Zellij output is a screen
   presentation stream, not an append-only stdout log. This repair does not
   invent a global equivalence between snapshot and per-connection counters.
@@ -34,11 +37,12 @@ socket server and orphan sweeper before draining the runtime.
 configured socket and injects it into `registerTerminalWebSocketRoutes`.
 The browser's authenticated `/ws/terminal/tab` route authorizes owner/runtime,
 Chat and live-ownership access before calling that client's `attach`. The
-owner-only Unix server admits the runtime viewer, buffers its output, reads the
-snapshot, sends replay framing, then drains the handoff. Gateway frame
+owner-only Unix server opens the handshake, admits the runtime viewer, buffers its
+output, reads the snapshot, sends replay framing, then drains the handoff. Gateway frame
 forwarding and close propagation remain unchanged. Lifecycle tests construct
-the same store/runtime/server/client path with a deterministic Zellij adapter;
-the sandbox-only net substitute is explicitly not production startup evidence.
+the same store/runtime/server/client path over a native Unix socket with a
+deterministic Zellij adapter; that test transport is not production startup
+evidence.
 
 | Boundary | Authorization / validation |
 | --- | --- |
@@ -66,12 +70,16 @@ regressions plus bounded handoff, socket protocol, viewer isolation, attachment
 bootstrap and runtime suites to pass. Derive persisted incarnation through the
 canonical helper, not an absent internal-store field.
 
-Local sandbox execution substitutes only the OS socket transport; production
-runtime, protocol/framing, decoder and store execute unchanged. Native Unix
-socket binding, real process PID retention and live surfaces remain unqualified.
-Validate Web Canvas, Web Desktop and Electron Desktop separately, plus mobile
-where applicable, on a reviewed runtime. Record exact releases, output/heartbeat
-frames, process identity and screenshots/recordings before closing ENG-294.
+The lifecycle regressions run over a native Unix socket on a Linux host with the
+production runtime, protocol/framing, decoder and store unchanged, and the same
+tests fail against the pre-fix code. `tests/e2e/terminal-reattach-output.e2e.test.ts`
+drives a real xterm renderer in Chromium through the real socket server and
+client: the expired viewer's transport closes, the same tab reattaches from its
+last cursor, the checkpointed screen is restored and live output continues on the
+same Zellij pane. Real process PID retention and the live Web Canvas, Web Desktop,
+Electron Desktop and mobile surfaces remain unqualified. Validate them separately
+on a reviewed runtime and record exact releases, output/heartbeat frames, process
+identity and screenshots/recordings before closing ENG-294.
 
 ## Delivery plan
 
