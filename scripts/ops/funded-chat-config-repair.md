@@ -20,14 +20,53 @@ The snapshot holds both bounded binary bytes and sealed-memory backing during pr
 
 ## Execution contract
 
+For a separately reviewed routing alignment on an already configured customer
+primary, use `action: align-routing` with exactly `config: { relayUrl,
+platformUrl }`. Both values must be normal HTTPS origins, without paths,
+Preview/tag hosts, credentials or query parameters. No runtime token is supplied
+in this request. The helper preserves the installed token, enabled assignment
+(including disabled states), epoch and all excluded assignments. Missing or
+ambiguous enabled/token assignments defer the machine; alignment never repairs
+them or enables funding.
+
+Routing actions additionally require `expectedRelease: { version, gitCommit }`
+with a full 40-character source SHA. The anchored, root-owned 0644
+`/opt/matrix/release.json` supports both root:matrix and legacy root:root group
+ownership. Its version and commit must match before preparation, immediately before
+rename and after commit. This is a local installed-metadata guard, not an
+independent artifact attestation or proof of loaded Gateway source. Fresh normal
+owner inventory, loaded source/config, registry/slot/epoch, authority compatibility
+and reviewed destination revision/image/default-origin binding remain independent
+preconditions. Alignment does not probe a provider, issue credentials or establish
+that an existing token is accepted by a different Platform authority.
+
+Use `action: rollback-routing`, the same rollout ID and release binding, plus
+fresh identity and full-file guards. Routing journals use version 2; the legacy
+`rollback` action cannot consume them. Rollback refuses independently changed
+target URLs, installed funded token, enabled state, epoch or release, and preserves
+later unrelated assignments. Exact unchanged post-images restore original bytes;
+partial or already restored target states follow the same conflict/no-op rules as
+the legacy repair. Failures after rename can represent an unknown commit: inspect
+independently before taking further action and never replay stale requests.
+
+The same encrypted owner transport carries routing requests and redacts both
+the existing transport bearer and installed funded token from receipts. Its
+existing normal-owner/recipient trust, sealed interpreter, timeout, private
+journal, sole-writer and resource prerequisites still apply. Code availability
+does not authorize a host execution. Gateway restart remains a separately
+coordinated delayed `systemd-run` operation after a changed receipt and fresh idle
+check; it can disconnect clients and interrupt active work. No restart occurs
+inside the helper, and rollback requires the same controlled restart/readback.
+
 `repair-funded-chat-config.py` accepts at most 4096 bytes of JSON on stdin with exactly:
 
-- `action`: `apply` or `rollback`.
+- `action`: `apply`, `rollback`, `align-routing` or `rollback-routing`.
 - `rolloutId`: a unique lower-case slug, 1–48 characters.
 - `identity`: `machineId`, `ownerId`, `handle`, `runtimeSlot` (`primary`) and integer `epoch` from the current authoritative record.
 - `expectedFile`: SHA-256, inode and device from a fresh private host preflight.
 - `quiescentWindow`: `true`, attesting the coordinated window described above.
 - For `apply` only, `config`: reviewed HTTPS `relayUrl`, machine-specific `runtimeToken`, and optional origin-only `platformUrl`. General `PLATFORM_INTERNAL_URL` is preserved. The effective funded Platform origin must be valid before enabling.
+- For `align-routing` only, `config`: exactly the two origin-only `relayUrl` and `platformUrl` fields. Both routing actions require the `expectedRelease` fields described above.
 
 The Python helper accepts no command-line payload or paths, makes no network request and never restarts services. Its CLI uses fixed production paths. Local file/ownership injection is available only through the imported test function, not the stdin schema.
 
@@ -53,4 +92,4 @@ Run the focused Vitest process suites through Flox:
 flox activate -- bun run test tests/deploy/customer-vps/funded-config-repair.test.ts tests/deploy/customer-vps/funded-config-transport.test.ts tests/deploy/customer-vps/funded-config-launcher.test.ts
 ```
 
-Tests use synthetic identities, tokens and local temporary directories. They exercise real file locks and atomic writes, supported provisioned modes, symlink/ancestor rebinding before and after the final guard, no-op behavior, wrong identities/epochs/file guards, unsafe syntax/files, writer races, rollback conflicts/unrelated edits, write failures, authenticated decryption/tampering/expiry, fixed bootstrap reconstruction, descriptor inheritance, accidental output redaction and actual helper request size. The sealed execution case requires Linux and is skipped on macOS. `tests/deploy/customer-vps/funded-config-linux.mjs` additionally verifies the whole generated command's repair/no-op/rollback and adversarial runtime/rebind behavior in a fresh, disposable Linux container; it refuses existing Matrix installations and requires its explicit disposable-test flag. Docker is only a local test fixture, never the customer deployment path. These tests do not constitute production deployment, paid inference or customer surface acceptance.
+Tests use synthetic identities, tokens and local temporary directories. They exercise real file locks and atomic writes, supported provisioned modes, symlink/ancestor rebinding before and after the final guard, no-op behavior, wrong identities/epochs/file guards, unsafe syntax/files, writer races, rollback conflicts/unrelated edits, write failures, authenticated decryption/tampering/expiry, fixed bootstrap reconstruction, descriptor inheritance, accidental output redaction and actual helper request size. The sealed execution case requires Linux and is skipped on macOS. `tests/deploy/customer-vps/funded-config-linux.mjs` additionally verifies the whole generated command's repair/no-op/rollback and adversarial runtime/rebind behavior in a fresh, disposable Linux container; it refuses existing Matrix installations and requires its explicit disposable-test flag. The required Protected Funded Host Root Contracts CI job runs that fixture in a separate, network-disabled container on an x64 Ubuntu runner, asserts the Node architecture and fails on any fixture error. Docker is a disposable test fixture, never the customer deployment path. These tests do not constitute production deployment, paid inference or customer surface acceptance.

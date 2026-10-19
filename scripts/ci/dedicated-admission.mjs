@@ -4,6 +4,8 @@ import {readCurrentBranchSha} from './dedicated-branch.mjs';
 import {verifyMainSource} from './dedicated-main.mjs';
 import {resolveDedicatedMergeParents} from './dedicated-merge.mjs';
 import {admitRefreshController} from './dedicated-refresh.mjs';
+import {verifiedSourceController,isolatedTrigger} from './dedicated-isolated.mjs';
+import {verifyMainPrSnapshot,resolveMainPrSnapshot} from './dedicated-main-pr.mjs';
 const shaPattern = /^[a-f0-9]{40}$/;
 const request = {timeout: 10_000};
 const sameRepo = (value, repo) => typeof value === 'string' && value.toLowerCase() === repo.toLowerCase();
@@ -41,6 +43,11 @@ function eventRequested(payload) {
 
 export async function admitDedicatedSource(github, input) {
   const {repo, controller, eventName, payload, inputSha} = input;
+  if(eventName==='workflow_dispatch'&&payload.inputs?.controller_mode){
+    await verifiedSourceController(github,repo,controller,input.executionContext);
+    if(payload.inputs.controller_mode!=='qualification')throw new Error('Maintenance cannot execute a qualification lease');
+    return admitRefreshController(github,repo,await isolatedTrigger(github,repo,payload.inputs,'qualification'));
+  }
   assertDefaultController(repo, controller);
   if(eventName==='workflow_run')return admitRefreshController(github,repo,payload);
   if (eventName === 'workflow_dispatch') {
@@ -58,8 +65,12 @@ export async function admitDedicatedSource(github, input) {
       !branchRef(eventPull.base?.ref)) throw new Error('Invalid PR revision snapshot');
   const {data: pull} = await github.rest.pulls.get({...repo, pull_number: eventPull.number, request});
   if (pull.number !== eventPull.number || !admittedPull(pull, repository(repo)) ||
-      pull.head.sha !== eventPull.head.sha || pull.base.sha !== eventPull.base.sha ||
+      pull.head.sha !== eventPull.head.sha || (eventPull.base.ref!=='main'&&pull.base.sha !== eventPull.base.sha) ||
       pull.base.ref !== eventPull.base.ref) return null;
+  if(eventPull.base.ref==='main'){
+    if(!shaPattern.test(eventPull.merge_commit_sha||''))throw new Error('Current merge commit unavailable');
+    return resolveMainPrSnapshot(github,repo,pull,{eventPull});
+  }
   if(await liveParentRefSha(github,repo,pull.base.ref)!==pull.base.sha)throw new Error('Current parent ref has changed');
   const snapshot = {sourceSha: pull.merge_commit_sha, headSha: pull.head.sha,
     baseSha: pull.base.sha, baseRef: pull.base.ref, prNumber: pull.number,...(typeof pull.head.ref==='string'?{headRef:pull.head.ref}:{})};
@@ -68,9 +79,8 @@ export async function admitDedicatedSource(github, input) {
   return snapshot;
 }
 
-// Revalidate before dispatch, settlement and waiter acceptance. A parent move
-// without a child commit requires a fresh main-defined requesting run; an old
-// Actions rerun retains its event snapshot and cannot certify the new candidate.
+// Revalidate before dispatch, settlement and waiter acceptance. Main advances
+// preserve the tested source for an unchanged head; stack-parent moves do not.
 export async function verifyCurrentDedicatedSource(github,repo,snapshot){return verifyCurrentSource(github,repo,snapshot,true);}
 export async function verifyCurrentHostedSource(github,repo,snapshot){return verifyCurrentSource(github,repo,snapshot,false);}
 async function verifyCurrentSource(github, repo, snapshot,requireLabels) {
@@ -78,6 +88,10 @@ async function verifyCurrentSource(github, repo, snapshot,requireLabels) {
   if(snapshot?.sourceKind!==undefined)throw new Error('Unsupported source kind');
   if (!validSnapshot(snapshot)) throw new Error('Invalid dedicated qualification revision');
   const {data: pull} = await github.rest.pulls.get({...repo, pull_number: snapshot.prNumber, request});
+  if(snapshot.baseRef==='main'){
+    if(requireLabels&&!admittedPull(pull,repository(repo)))throw new Error('Dedicated qualification revision or admission is stale');
+    return verifyMainPrSnapshot(github,repo,pull,snapshot);
+  }
   if (pull.number !== snapshot.prNumber || pull.state!=='open'||pull.draft!==false||!sameRepo(pull.head?.repo?.full_name,repository(repo))||!sameRepo(pull.base?.repo?.full_name,repository(repo))||(requireLabels&&!admittedPull(pull,repository(repo))) ||
       pull.head.sha !== snapshot.headSha || (snapshot.headRef !== undefined && pull.head.ref !== snapshot.headRef) ||
       pull.base.sha !== snapshot.baseSha ||
@@ -95,3 +109,5 @@ export {verifyDedicatedLeaseGrant,newestRequestingCiRun} from './dedicated-lease
 export {runDedicatedLeaseSession,dispatchDedicatedLease,validateLeaseRequest,canonicalRequest,verifyLeaseReceipt} from './dedicated-ssh.mjs';
 
 export {reconcileSourceQualification} from './dedicated-source-gate.mjs';
+
+export {assertMainPrIdentity,waitForCurrentMainSource} from './dedicated-main-pr.mjs';

@@ -25,7 +25,7 @@ describe("Agent SDK compatibility CI gate", () => {
     expect(workflow.on.pull_request.branches).toBeUndefined();
     expect(workflow.on.pull_request["branches-ignore"]).toBeUndefined();
     expect(workflow.on.pull_request.types).toEqual(
-      expect.arrayContaining(["labeled", "synchronize", "edited"]),
+      expect.arrayContaining(["opened", "synchronize", "edited"]),
     );
     expect(compatibility?.name).toBe("Agent SDK 0.3.251 Compatibility");
     expect(compatibility?.needs).toEqual(["changes", "ci-backend"]);

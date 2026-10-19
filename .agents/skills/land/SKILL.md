@@ -37,7 +37,7 @@ Before using the standalone commands below, check whether the PR belongs to a
 native stack or targets another feature branch. Dependent PRs always follow
 `docs/dev/stacked-prs.md`: use the official `gh stack` extension, validate native
 membership and the `main` stack base, and require current-head Greptile 5/5,
-zero unresolved blockers, `ready-for-ci` and passing CI for every included PR.
+zero unresolved blockers, ready for review (not a draft) and passing CI for every included PR.
 Use `gh stack merge <stack-number> --yes --squash`; never loop `gh pr merge` or
 merge a child individually into its parent. Resolve lower-layer feedback in its
 own branch and rebase descendants through `gh stack rebase`, preserving remote

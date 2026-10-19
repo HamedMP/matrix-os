@@ -1,3 +1,5 @@
+import { createSessionStartGuard, SessionStartBusyError, type CleanSessionStartFailure, type SessionStartScope } from "./session-start-guard.js";
+import { markSessionStartClean, markSessionStopConfirmed } from "./coding-agents/session-start-cleanup-proof.js";
 import { stopLegacySession, type LegacySessionRuntime } from "./legacy-session-stop.js";
 import { deleteProjectSessionFiles } from "./project-session-deletion.js";
 import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
@@ -31,6 +33,8 @@ import { agentTerminalCwd } from "./agent-terminal-cwd.js";
 import { logSessionStartupFailure } from "./session-startup-diagnostics.js";
 
 import type { BackgroundAgentRuntime, BackgroundAgentRef } from "./background-agent-runtime.js";
+import { agentLaunchTerminalCommand } from "./coding-agents/agent-launch-environment.js";
+import type { NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { startBackgroundSession } from "./background-session-lifecycle.js";
 
 export type SessionKind = "shell" | "agent";
@@ -333,6 +337,8 @@ export function createAgentSessionManager(options: {
   agentLauncher: AgentLauncher;
   terminalRuntime: TerminalRuntimeClient;
   backgroundRuntime?: BackgroundAgentRuntime;
+  beforeProjectSessionRemove?: (input: { ownerId: string; sessionId: string; proof: object }) => Promise<void>;
+  resolveNativeCodexSubscription?: (ownerId: string, sessionId: string) => Promise<NativeCodexSubscriptionLaunch | undefined>;
   legacyZellij?: LegacySessionRuntime;
   now?: () => string;
   idGenerator?: () => string;
@@ -369,24 +375,31 @@ export function createAgentSessionManager(options: {
     startupReconcileTimer.unref();
   };
 
-  const manager = {
-    async startSession(input: unknown, lockedRuntime?: BackgroundAgentRuntime): Promise<
-      { ok: true; status: 201; session: WorkspaceSessionView } | Failure
-    > {
-      const parsed = sanitizeStartupInput(input);
-      if (!parsed.ok) return parsed;
-      const request = parsed.value;
-      if (request.runtimePreference === "background" && (request.kind !== "agent" || request.agent !== "codex" || !options.backgroundRuntime)) {
-        return failure(503, "runtime_unavailable", "Session runtime is unavailable");
-      }
-      if (request.runtimePreference === "background" && !lockedRuntime && options.backgroundRuntime?.withLock) {
-        return options.backgroundRuntime.withLock(runtime => manager.startSession(input, runtime));
-      }
-      const sessionId = request.sessionId ?? idGenerator();
-      if (!SessionIdSchema.safeParse(sessionId).success) {
-        return failure(500, "session_id_invalid", "Session could not be created");
-      }
-
+  const guardStart = createSessionStartGuard(homePath, async sessionId => {
+    try { await lstat(sessionPath(homePath, sessionId)); return true; }
+    catch (error: unknown) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+      throw error;
+    }
+  });
+  type StartResult = { ok: true; status: 201; session: WorkspaceSessionView } | Failure;
+  async function startOwned(request: z.infer<typeof StartSessionSchema>, sessionId: string,
+    cleanFailure: CleanSessionStartFailure): Promise<StartResult> {
+    if (request.runtimePreference === "background" && (request.kind !== "agent" || request.agent !== "codex" || !options.backgroundRuntime)) {
+      return cleanFailure(failure(503, "runtime_unavailable", "Session runtime is unavailable"));
+    }
+    // Native admission can wait for a revocation queue that itself needs the
+    // background lock. Capture it before acquiring that lock; the child still
+    // checks current private authority immediately before spawn and inference.
+    let nativeCodexSubscription: NativeCodexSubscriptionLaunch | undefined;
+    try {
+      nativeCodexSubscription = request.kind === "agent" && request.agent === "codex"
+        ? await options.resolveNativeCodexSubscription?.(request.ownerId, sessionId) : undefined;
+    } catch (error: unknown) {
+      await logSessionStartupFailure("launch_preflight", sessionId, error);
+      return cleanFailure(failure(400, "sandbox_unavailable", "Agent sandbox is unavailable"));
+    }
+    const startAdmitted = async (lockedRuntime?: BackgroundAgentRuntime): Promise<{ ok: true; status: 201; session: WorkspaceSessionView } | Failure> => {
       if (request.runtimePreference === "background") {
         const previous = await readSession(homePath, sessionId);
         if (previous?.runtime.type === "background") {
@@ -408,19 +421,19 @@ export function createAgentSessionManager(options: {
       let leaseAcquired = false;
       if (request.workspaceRoot) {
         const workspaceRoot = await resolveInternalWorkspaceRoot(homePath, request.workspaceRoot);
-        if (!workspaceRoot) return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
+        if (!workspaceRoot) return cleanFailure(failure(400, "sandbox_unavailable", "Agent sandbox is unavailable"));
         cwd = workspaceRoot;
       }
       if (request.projectSlug) {
         const project = await readProject(homePath, request.projectSlug);
-        if (!project) return failure(404, "not_found", "Project was not found");
+        if (!project) return cleanFailure(failure(404, "not_found", "Project was not found"));
         cwd = project.localPath;
         projectId = project.id;
       }
       if (request.projectSlug && request.worktreeId) {
         worktree = await resolveWorktree(options.worktreeManager, request.projectSlug, request.worktreeId);
         if (!worktree || !await pathExists(worktree.path)) {
-          return failure(404, "not_found", "Worktree was not found");
+          return cleanFailure(failure(404, "not_found", "Worktree was not found"));
         }
         cwd = worktree.path;
         const lease = await options.worktreeManager.acquireLease({
@@ -431,7 +444,7 @@ export function createAgentSessionManager(options: {
         });
         if (!lease.ok) {
           const holderId = "holderId" in lease ? lease.holderId : undefined;
-          return failure(lease.status, "worktree_locked", "Worktree is locked", holderId);
+          return cleanFailure(failure(lease.status, "worktree_locked", "Worktree is locked", holderId));
         }
         leaseAcquired = true;
       }
@@ -442,6 +455,7 @@ export function createAgentSessionManager(options: {
         launch = request.kind === "agent"
           ? options.agentLauncher.buildLaunch({
             agent: request.agent!,
+            ...(nativeCodexSubscription ? { nativeCodexSubscription } : {}),
             cwd,
             prompt: launchPromptWithReferences(request.prompt, request.attachments),
             providerThreadId: request.providerThreadId,
@@ -460,7 +474,8 @@ export function createAgentSessionManager(options: {
         if (leaseAcquired) {
           await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
         }
-        return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
+        const result = failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
+        return cleanFailure(result);
       }
 
       const session: WorkspaceSession = {
@@ -491,18 +506,16 @@ export function createAgentSessionManager(options: {
         if (started.ok) return { ok: true, status: 201, session: decorateSession(started.session) };
         if (!started.retainWorkspace && leaseAcquired) await releaseSessionLease(options.worktreeManager, session);
         scheduleStartupReconciliation();
-        return failure(503, started.retainWorkspace ? "runtime_ownership_retained" : "runtime_unavailable", "Session runtime is unavailable");
+        const result = failure(503, started.retainWorkspace ? "runtime_ownership_retained" : "runtime_unavailable", "Session runtime is unavailable");
+        return started.retainWorkspace ? result : markSessionStartClean(result, request.ownerId, sessionId);
       }
       let terminalRef: TerminalRef | undefined;
+      let childAcquisitionAttempted = false;
       try {
         const terminalCwd = await agentTerminalCwd(homePath, launch.cwd);
         const workspace = await options.terminalRuntime.ensureWorkspace(projectId ? { projectId } : {});
-        const command = [
-          "env",
-          ...Object.entries(launch.env).map(([key, value]) => `${key}=${value}`),
-          launch.command,
-          ...launch.args,
-        ];
+        const command = agentLaunchTerminalCommand(launch);
+        childAcquisitionAttempted = true;
         const tab = await options.terminalRuntime.createTab(workspace.id, {
           name: request.agent ?? "shell",
           cwd: terminalCwd,
@@ -515,7 +528,8 @@ export function createAgentSessionManager(options: {
         if (leaseAcquired) {
           await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
         }
-        return failure(503, "runtime_unavailable", "Session runtime is unavailable");
+        const result = failure(503, "runtime_unavailable", "Session runtime is unavailable");
+        return !childAcquisitionAttempted ? cleanFailure(result) : result;
       }
 
       session.terminalRef = terminalRef;
@@ -532,6 +546,55 @@ export function createAgentSessionManager(options: {
         return failure(500, "session_persist_failed", "Session could not be created");
       }
       return { ok: true, status: 201, session: decorateSession(session) };
+    };
+    return request.runtimePreference === "background" && options.backgroundRuntime?.withLock
+      ? options.backgroundRuntime.withLock(startAdmitted) : startAdmitted();
+  }
+
+  const manager = {
+    async startSession(input: unknown): Promise<
+      { ok: true; status: 201; session: WorkspaceSessionView } | Failure
+    > {
+      const parsed = sanitizeStartupInput(input);
+      if (!parsed.ok) return parsed;
+      const request = parsed.value;
+      const sessionId = request.sessionId ?? idGenerator();
+      if (!SessionIdSchema.safeParse(sessionId).success) {
+        return failure(500, "session_id_invalid", "Session could not be created");
+      }
+
+      return guardStart<{ ok: true; status: 201; session: WorkspaceSessionView } | Failure>(
+        sessionId, request.ownerId, failure(503, "runtime_ownership_retained", "Session runtime is unavailable"), async cleanFailure => {
+          return startOwned(request, sessionId, cleanFailure);
+      });
+    },
+
+    async withSessionStart<T>(ownerId: string, sessionId: string,
+      operation: (scope: SessionStartScope<unknown, StartResult>) => Promise<T>): Promise<T> {
+      if (!SessionIdSchema.safeParse(sessionId).success) throw new SessionStartBusyError();
+      return guardStart.reserve(sessionId, ownerId, async cleanFailure => {
+        let active = true;
+        let dispatched = false;
+        let dispatchedTask: Promise<StartResult> | undefined;
+        try {
+          return await operation({
+            cleanFailure: (result, stillAllowed) => cleanFailure(result,
+              () => active && !dispatched && (!stillAllowed || stillAllowed())),
+            startSession: async input => {
+              if (!active || dispatched) throw new SessionStartBusyError();
+              const parsed = sanitizeStartupInput(input);
+              if (!parsed.ok) return parsed;
+              if (parsed.value.ownerId !== ownerId || parsed.value.sessionId !== sessionId) throw new SessionStartBusyError();
+              dispatched = true;
+              dispatchedTask = startOwned(parsed.value, sessionId, cleanFailure);
+              return dispatchedTask;
+            },
+          });
+        } finally {
+          active = false;
+          if (dispatchedTask) await Promise.allSettled([dispatchedTask]);
+        }
+      });
     },
 
     async getSession(sessionId: string): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
@@ -611,6 +674,9 @@ export function createAgentSessionManager(options: {
           const stopped = await manager.killSession(session.id);
           if (!stopped.ok) return stopped;
         }
+        // Only confirmed stopped/exited records reach this hook, before their files disappear.
+        await options.beforeProjectSessionRemove?.({ ownerId: session.ownerId, sessionId: session.id,
+          proof: markSessionStopConfirmed({}, session.ownerId, session.id) });
       }
       await input.beforeRemove?.(sessions);
       for (const session of sessions) await deleteProjectSessionFiles(homePath, session);

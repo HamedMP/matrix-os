@@ -12,6 +12,7 @@ import {
 import { z } from "zod/v4";
 import { terminalRuntimeErrorFromDetails } from "./errors.js";
 import { TerminalCommandStateRefSchema, TerminalCommandStateSchema, type TerminalCommandState } from "./terminal-command-state.js";
+import { TerminalCommandResultRefSchema, TerminalCommandResultSchema, type TerminalCommandResult } from './terminal-command-state.js';
 import { TerminalEndedTabArchiveRequestSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
 import {
@@ -68,6 +69,11 @@ export class TerminalRuntimeSocketClient {
   async getCommandState(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<TerminalCommandState> {
     const input = TerminalCommandStateRefSchema.parse({ ...ref, expectedIncarnation });
     return TerminalCommandStateSchema.parse(await this.call("GetCommandState", input));
+  }
+
+  async getCommandResult(ref: { workspaceId: string; tabId: string }, expectedIncarnation: string): Promise<TerminalCommandResult> {
+    const input = TerminalCommandResultRefSchema.parse({ ...ref, expectedIncarnation });
+    return TerminalCommandResultSchema.parse(await this.call('GetCommandResult', input));
   }
 
   async archiveEndedTab(ref: { workspaceId: string; tabId: string }, input: TerminalEndedTabArchiveInput): Promise<TerminalTab> {

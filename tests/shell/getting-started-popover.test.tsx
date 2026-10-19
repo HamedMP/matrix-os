@@ -136,8 +136,14 @@ describe("web getting started status", () => {
     const trigger = await screen.findByRole("button", { name: "Getting started — 5 of 5" });
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
-    fireEvent.click(trigger);
+    expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Support chat" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
+    expect(screen.getByRole("dialog", { name: "Help" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Getting started —/ }));
+    expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
   });
 
   it("stays open until its title-bar trigger is clicked and offers the detected desktop download", async () => {

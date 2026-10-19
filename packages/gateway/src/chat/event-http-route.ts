@@ -7,6 +7,7 @@ import {
   ChatEventWireVersionSchema,
   ChatInputWireVersionSchema,
   ChatMessageWireVersionSchema,
+  ChatCommandPreviewWireVersionSchema,
   projectChatEventFrame,
   projectChatMessageFrame,
 } from "@matrix-os/contracts";
@@ -70,6 +71,10 @@ export function registerCanonicalChatEventHttpRoute(options: {
     if (!messageVersion.success) return context.json({ error: "Unsupported message version" }, 400);
     const inputVersion = ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion"));
     if (!inputVersion.success) return context.json({ error: "Unsupported input version" }, 400);
+    const commandPreviewVersion = ChatCommandPreviewWireVersionSchema.safeParse(context.req.query("commandPreviewVersion"));
+    if (!commandPreviewVersion.success || (context.req.queries("commandPreviewVersion")?.length ?? 0) > 1) {
+      return context.json({ error: "Unsupported command preview version" }, 400);
+    }
     const metadataVersion = ChatMetadataVersionSchema.safeParse(context.req.header("x-matrix-chat-metadata"));
     if (!metadataVersion.success) return context.json({ error: "Unsupported metadata version" }, 400);
     const fundingVersion = ChatFundingWireVersionSchema.safeParse(context.req.query("fundingVersion"));
@@ -117,7 +122,7 @@ export function registerCanonicalChatEventHttpRoute(options: {
       send(frame: CanonicalChatTransportFrame): boolean {
         if (closed || (controller.desiredSize ?? 0) <= 0) return false;
         try {
-          const projected = projectChatMessageFrame(projectChatEventFrame(frame, eventVersion.data), messageVersion.data, inputVersion.data);
+          const projected = projectChatMessageFrame(projectChatEventFrame(frame, eventVersion.data), messageVersion.data, inputVersion.data, commandPreviewVersion.data);
           const readProjected = projected.type === "chat.content" ? {
             ...projected, content: projectChatReadStateResponse(projected.content, readStateVersion.data),
           } : projected;

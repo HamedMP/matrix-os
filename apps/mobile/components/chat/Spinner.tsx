@@ -3,7 +3,7 @@ import { Animated, Easing } from "react-native";
 
 import { Icon, LoadingIcon } from "@/components/ui";
 
-import { useReduceMotion } from "./use-reduce-motion";
+import { useReduceMotion } from "@/lib/use-reduce-motion";
 
 const TURN_MS = 900;
 

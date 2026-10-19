@@ -2,6 +2,7 @@ import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
 import {
+  botImageTotalMaximumForSelection, botAttachmentInputError, type BotAttachmentMetadata,
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatSkillDescriptorSchema,
@@ -37,7 +38,7 @@ import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
-import { managedChatInstances, managedPiChatInstances } from "./managed-chat-catalog.js";
+import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
 import { fundedSelectionError } from "./funded-chat-error.js";
 
@@ -227,6 +228,7 @@ function codingInstance(
     id,
     driverKind,
     displayName: provider.displayName,
+    ...(driverKind === "claude_code" ? { connectionLabel: "Claude subscription" } : {}),
     availability,
     workspaceRequirement: "project_optional",
     models: visibleModels,
@@ -503,6 +505,7 @@ function projectSkills(
 }
 
 export function createChatProviderCatalogService(options: {
+  observationScope?: (principal: RequestPrincipal) => "canonical_matrix" | undefined;
   codingProviders: Pick<CodingAgentProviderRegistry, "listProviders" | "invalidate">;
   agentRuntimeSource: AgentRuntimeSource;
   systemRuntimeSources?: Partial<Record<SystemDriverKind, AgentRuntimeSource>>;
@@ -525,8 +528,9 @@ export function createChatProviderCatalogService(options: {
   // Keep refresh mode local to this call; never cache owner/funding authority.
   async function readCatalog(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions,
     refreshAiProvider = false, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
-    const scope = chatCatalogDiscoveryScope(selection);
-    const systemRuntimeReads = Promise.all(scope.systems.map(async (kind) => {
+    const observationScope = options.observationScope?.(principal);
+    const scope = chatCatalogDiscoveryScope(selection, observationScope);
+    const systemRuntimeReads = Promise.all(scope.readSystems.map(async (kind) => {
       const source = options.systemRuntimeSources?.[kind];
       if (!source) return [kind, null] as const;
       try {
@@ -537,10 +541,10 @@ export function createChatProviderCatalogService(options: {
       }
     }));
     const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
-      scope.coding.length > 0 ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
+      scope.readCoding ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
       scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
       scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot(selection ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
+      options.harnessSettingsSource?.getSnapshot(selection || observationScope ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
       systemRuntimeReads,
     ]);
     if (codingResult.status === "rejected") {
@@ -622,16 +626,11 @@ export function createChatProviderCatalogService(options: {
       ? aiProviderResult.value
       : undefined;
     const executableDriverKinds = options.executableDriverKinds;
-    const fundedClaudeExecutable = coding.some((provider) =>
-      codingDriverKind(provider) === "claude_code" && provider.installStatus === "installed")
-      && (executableDriverKinds === undefined || executableDriverKinds.includes("claude_code"));
     const instances = applyHarnessSettings({
       systemRepairAction,
       now: options.now?.() ?? new Date(),
       instances: [
       ...(!selection || scope.managedMatrix ? managedPiChatInstances(aiSnapshot, (options.now?.() ?? new Date()).getTime()) : []),
-      ...managedChatInstances(aiSnapshot, skills, options.now?.().getTime() ?? Date.now(), fundedClaudeExecutable)
-        .filter(instance => instance.id === "claude_code_matrix_included"),
       ...systemInstances,
       ...completeCodingInstances,
       ],
@@ -679,15 +678,18 @@ export function createChatProviderCatalogService(options: {
       console.warn(`[chat-providers] Canonical Provider projection failed validation: ${safeIssuePaths.join(",")}`);
       throw new ProviderCatalogUnavailableError(false);
     }
+    options.observationScope?.(principal);
     return parsed.data;
   }
   const service: ChatProviderCatalogService = {
     async refresh(principal, readOptions) {
-      options.invalidateCodingModelCatalog?.(principal);
-      options.codingProviders.invalidate(principal.userId);
-      options.agentRuntimeSource.invalidate?.();
-      for (const source of Object.values(options.systemRuntimeSources ?? {})) {
-        source?.invalidate?.();
+      if (!options.observationScope?.(principal)) {
+        options.invalidateCodingModelCatalog?.(principal);
+        options.codingProviders.invalidate(principal.userId);
+        options.agentRuntimeSource.invalidate?.();
+        for (const source of Object.values(options.systemRuntimeSources ?? {})) {
+          source?.invalidate?.();
+        }
       }
       return readCatalog(principal, readOptions, true);
     },
@@ -700,6 +702,7 @@ export function createChatProviderCatalogService(options: {
 
 export interface ProviderSelectionRequirements {
   attachments?: CanonicalChatAttachmentKind[];
+  attachmentInputs?: BotAttachmentMetadata[];
   resources?: CanonicalChatResourceKind[];
   interactionMode?: string;
   permissionMode?: string;
@@ -775,6 +778,9 @@ export function validateChatProviderSelection(input: {
   if (isRetiredMatrixSdkInstance(selection.data.instanceId)) {
     return { ok: false, error: matrixSdkRetirementError() };
   }
+  if (selection.data.instanceId === "claude_code_matrix_included") {
+    return selectionError("provider_unavailable", "Choose Matrix AI or Claude subscription in a new Chat.", ["start_new_chat"]);
+  }
   const instance = input.catalog.instances.find((candidate) =>
     candidate.id === selection.data.instanceId
   );
@@ -795,6 +801,13 @@ export function validateChatProviderSelection(input: {
   const model = instance.models.find((candidate) => candidate.id === selection.data.model);
   if (model?.availability !== "available") {
     return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
+  }
+  if (["matrix_pi", "matrix_bot"].includes(instance.driverKind)) {
+    const inputError = botAttachmentInputError(input.requirements?.attachmentInputs ?? [], model.supportsVision === true, botImageTotalMaximumForSelection(instance.id, selection.data.options));
+    if (inputError) return selectionError("capability_mismatch", inputError);
+  }
+  if (["matrix_pi", "matrix_bot"].includes(instance.driverKind) && input.requirements?.attachments?.includes("image") && !model.supportsVision) {
+    return selectionError("capability_mismatch", "The selected model does not support images.");
   }
   if (!optionsMatch(selection.data, instance)
     || !supportsRequirements(instance.supports, input.requirements ?? {})) {

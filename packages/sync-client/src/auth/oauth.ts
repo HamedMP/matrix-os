@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { platform } from "node:os";
+import { z } from "zod/v4";
 import { AuthDataSchema, saveAuth, type AuthData } from "./token-store.js";
 import { cliError, cliFetchError } from "../cli/output.js";
 
@@ -15,6 +16,39 @@ export interface OAuthConfig {
   platformUrl: string;
   clientId: string;
 }
+
+function verificationUrl(value: string): URL | null {
+  // Reject characters URL parsing would silently trim or normalize away.
+  if (value.length > 4096 || /[\s\u0000-\u001f\u007f-\u009f]/u.test(value)) return null;
+  if (!/^https?:\/\//i.test(value)) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.username || parsed.password ? null : parsed;
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return null;
+    throw err;
+  }
+}
+
+const UserCodeSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9-]+$/);
+const DeviceCodeResponseSchema = z.object({
+  deviceCode: z.string().min(1).max(4096).regex(/^[^\s\u0000-\u001f\u007f-\u009f]+$/u),
+  userCode: UserCodeSchema,
+  // The platform may serve approval at a separately configured public origin.
+  verificationUri: z.string().refine((value) => verificationUrl(value) !== null),
+  expiresIn: z.number().int().min(1).max(86_400),
+  interval: z.number().int().min(1).max(3600),
+});
+
+// Only this fixed script is interpreted; the verification URI is environment
+// data assigned to the graphical shell's filename, never command/script text.
+const WINDOWS_BROWSER_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  "$info = New-Object System.Diagnostics.ProcessStartInfo",
+  "$info.FileName = $env:MATRIXOS_DEVICE_VERIFICATION_URI",
+  "$info.UseShellExecute = $true",
+  "[void][System.Diagnostics.Process]::Start($info)",
+].join("; ");
 
 export async function requestDeviceCode(
   config: OAuthConfig,
@@ -36,25 +70,45 @@ export async function requestDeviceCode(
     throw Object.assign(new Error("Request failed"), { code: "login_failed" });
   }
 
-  return (await res.json()) as DeviceCodeResponse;
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) throw cliError("login_failed");
+    throw cliFetchError(err, {
+      timeout: "request_timeout", network: "platform_unreachable", fallback: "login_failed",
+    });
+  }
+  const parsed = DeviceCodeResponseSchema.safeParse(body);
+  if (!parsed.success) throw cliError("login_failed");
+  return parsed.data;
 }
 
 export function openBrowser(url: string, userCode?: string): void {
-  const parsed = new URL(url);
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`Refusing to open non-http(s) verification URL: ${parsed.protocol}`);
+  const parsed = verificationUrl(url);
+  if (!parsed || (userCode !== undefined && !UserCodeSchema.safeParse(userCode).success)) {
+    throw cliError("login_failed");
   }
-  // execFile (not exec) so the URL is passed as argv -- no shell, no command
-  // injection. The URL comes from the platform but treat it as untrusted.
-  const os = platform();
-  const cmd = os === "darwin" ? "open" : os === "win32" ? "cmd" : "xdg-open";
-  const args = os === "win32" ? ["/c", "start", "", url] : [url];
-
-  execFile(cmd, args, (err) => {
+  const browserUrl = parsed.href;
+  const onOpen = (err: Error | null) => {
     if (err) {
-      console.error(`Could not open browser. Visit: ${url}${userCode ? `\nEnter code: ${userCode}` : ""}`);
+      console.error(`Could not open browser. Visit: ${browserUrl}${userCode ? `\nEnter code: ${userCode}` : ""}`);
     }
-  });
+  };
+  const os = platform();
+  if (os === "win32") {
+    execFile("powershell.exe", [
+      "-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand",
+      Buffer.from(WINDOWS_BROWSER_SCRIPT, "utf16le").toString("base64"),
+    ], {
+      shell: false,
+      windowsHide: true,
+      timeout: 10_000,
+      env: { ...process.env, MATRIXOS_DEVICE_VERIFICATION_URI: browserUrl },
+    }, onOpen);
+    return;
+  }
+  execFile(os === "darwin" ? "open" : "xdg-open", [browserUrl], onOpen);
 }
 
 /**

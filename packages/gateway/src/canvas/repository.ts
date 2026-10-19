@@ -1,3 +1,4 @@
+import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
 import { randomUUID } from "node:crypto";
 import { Kysely, PostgresDialect, sql, type ColumnType, type Dialect, type Selectable, type Transaction } from "kysely";
 import pg from "pg";
@@ -149,8 +150,8 @@ export class CanvasRepository {
 
   static fromConnectionString(connectionString: string): CanvasRepository {
     const pool = new pg.Pool({ connectionString, max: 10 });
-    pool.on("error", (err) => {
-      console.error("[canvas-repository] Idle pool client error:", err.message);
+    observePostgresPoolErrors(pool, (err) => {
+      console.error("[canvas-repository] Postgres connection error:", err.message);
     });
     return new CanvasRepository(new PostgresDialect({ pool }), pool);
   }

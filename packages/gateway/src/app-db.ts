@@ -1,3 +1,4 @@
+import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import pg from "pg";
 import { parseAppSlug, isSafeName, type AppSlug } from "./app-db-types.js";
@@ -50,11 +51,12 @@ export interface AppDbWithKysely {
 export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
   let kysely: Kysely<any>;
   let pool: pg.Pool | null = null;
+  let destroyPromise: Promise<void> | undefined;
 
   if (typeof opts === "string") {
     pool = new pg.Pool({ connectionString: opts, max: 10 });
-    pool.on("error", (err) => {
-      console.error("[app-db] Idle pool client error:", err.message);
+    observePostgresPoolErrors(pool, (err) => {
+      console.error("[app-db] Postgres connection error:", err.message);
     });
     kysely = new Kysely<any>({ dialect: new PostgresDialect({ pool }) });
   } else {
@@ -210,8 +212,14 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
       return { rows: (result.rows ?? []) as Record<string, unknown>[] };
     },
 
-    async destroy(): Promise<void> {
-      await kysely.destroy();
+    destroy(): Promise<void> {
+      destroyPromise ??= (async () => {
+        await kysely.destroy();
+        // raw() can use the pool before Kysely initializes its lazy driver.
+        // In that case Kysely never owns a live driver to close this pool.
+        if (pool && !pool.ending) await pool.end();
+      })();
+      return destroyPromise;
     },
   };
 

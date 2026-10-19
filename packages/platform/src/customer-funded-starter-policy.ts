@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import { FundedAiGlobalPolicySchema, IsoTimestampSchema } from '@matrix-os/contracts';
+import { FundedAiGlobalPolicySchema, IsoTimestampSchema, MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
 import type { PlatformDB } from './db.js';
 import { AccountDeletionAdmissionError, withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { createAiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { parseModels } from './ai-funded-metering-helpers.js';
 
-const ORDINARY_MODELS = ['anthropic/claude-sonnet-5', '@cf/zai-org/glm-5.3-flash'];
+const ORDINARY_MODELS = ['anthropic/claude-sonnet-5', ...MANAGED_WORKERS_AI_MODEL_IDS];
 const STARTER_MICROUSD = 5_000_000;
 const STARTER_SOURCE = 'matrix-ai-lifetime-starter';
 // Compatibility with the permanent starter entitlement issued before onboarding

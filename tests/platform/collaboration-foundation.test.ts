@@ -247,7 +247,7 @@ describe('personal billing seams (S01 foundation)', () => {
       null,
     )).toBe(true);
     expect(checkoutSupport.resolveBillingReturnUrl({ MATRIX_APP_ORIGIN: 'https://app.example.test' } as NodeJS.ProcessEnv, 'success'))
-      .toBe('https://app.example.test/?billing=success&checkout=success');
+      .toBe('https://app.example.test/?billing=success&checkout=success&session_id={CHECKOUT_SESSION_ID}');
     // Off-allowlist return paths collapse to "/" through resolveReturnPath (guard preserved).
     expect(checkoutSupport.resolveBillingReturnUrl({ MATRIX_APP_ORIGIN: 'https://app.example.test' } as NodeJS.ProcessEnv, 'canceled', '/settings'))
       .toBe('https://app.example.test/?billing=canceled');

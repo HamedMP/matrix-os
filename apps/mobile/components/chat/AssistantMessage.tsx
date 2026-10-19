@@ -1,7 +1,8 @@
 import { useMemo, type ReactNode } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
+import { ChatContextMenu } from "@/components/ChatContextMenu";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { renderChatMarkdown } from "@/lib/chat-markdown";
 import { useStreamedTextReveal } from "@/lib/streamed-text-reveal";
@@ -11,12 +12,14 @@ import { StepsBlock } from "./StepsBlock";
 
 export interface AssistantMessageProps {
   message: TranscriptMessage;
+  /** The chat the text's long-press menu offers to copy the ID of. */
+  chatId?: string | null;
   /** What belongs under the reply, such as its result cards. */
   results?: ReactNode;
 }
 
 /** A reply: its text across the full width, then its steps, then its results. */
-export function AssistantMessage({ message, results }: AssistantMessageProps) {
+export function AssistantMessage({ message, chatId, results }: AssistantMessageProps) {
   const { theme } = useUnistyles();
   // While the reply streams, show it at a steady pace with each new chunk
   // fading in, rather than in the uneven bursts the network delivers.
@@ -30,7 +33,19 @@ export function AssistantMessage({ message, results }: AssistantMessageProps) {
 
   return (
     <View testID="assistant-message" style={styles.message}>
-      {message.text ? <View testID="assistant-text" style={styles.text}>{markdownNodes}</View> : null}
+      {message.text ? (
+        // A long press lifts the text alone, not the steps and results under
+        // it. The text is offered once the reply has finished.
+        <ChatContextMenu
+          chatId={chatId}
+          messageText={message.isRunning ? null : message.text}
+          cornerRadius={theme.v2.radius.card}
+          inset={theme.v2.space[10]}
+          backgroundColor={theme.v2.colors.background}
+        >
+          <Pressable accessible={false} testID="assistant-text" style={styles.text}>{markdownNodes}</Pressable>
+        </ChatContextMenu>
+      ) : null}
       <StepsBlock message={message} />
       {results}
     </View>

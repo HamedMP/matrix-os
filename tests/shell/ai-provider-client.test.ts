@@ -1,3 +1,4 @@
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AiProviderClientError,
@@ -47,7 +48,7 @@ describe("shell AI provider client", () => {
       expect.stringContaining("/api/ai/providers?refresh=true"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(timeout).toHaveBeenCalledWith(15_000);
+    expect(timeout).toHaveBeenCalledWith(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs);
 
     const oversized = vi.fn(async () => new Response("x".repeat(1_048_577)));
     await expect(loadAiProviderSnapshot({ fetcher: oversized })).rejects

@@ -1,7 +1,6 @@
 import { Children, Fragment, type ReactNode, type Ref } from "react";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import {
-  Pressable,
   ScrollView,
   Text as NativeText,
   View,
@@ -10,7 +9,8 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { Divider, Icon, Spacer, type IconData } from "@/components/ui";
+import { Divider, Icon, PressableScale, Spacer, type IconData } from "@/components/ui";
+import { motion } from "@/lib/theme-v2";
 
 export function SettingsPage({ children, scrollRef }: {
   children: ReactNode;
@@ -113,14 +113,15 @@ export function SettingsRow({
 
   if (!onPress) return <View style={rowStyle}>{content}</View>;
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? `Open ${title}`}
       onPress={onPress}
-      style={({ pressed }) => [rowStyle, pressed ? styles.pressed : null]}
+      pressedScale={motion.rowPressScale}
+      style={rowStyle}
     >
       {content}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -179,8 +180,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   danger: {
     color: theme.v2.palette.coral[600],
-  },
-  pressed: {
-    opacity: 0.7,
   },
 }));

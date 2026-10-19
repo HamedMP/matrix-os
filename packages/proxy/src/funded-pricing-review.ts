@@ -1,8 +1,9 @@
+import { WORKERS_AI_PRICE_SNAPSHOTS, WORKERS_AI_PRICING_VERSIONS } from "./funded-workers-pricing.js";
 /** Numeric rates are immutable code snapshots; operator configuration only
  * re-attests their validity after checking the official provider price pages. */
 export const FUNDED_PRICING_VERSIONS = Object.freeze({
   "anthropic/claude-sonnet-5": "anthropic-2026-08-31-standard",
-  "@cf/zai-org/glm-5.3-flash": "cloudflare-2026-09-10-glm-flash",
+  ...WORKERS_AI_PRICING_VERSIONS,
 });
 export interface FundedPricingReview {
   canonicalModelId: keyof typeof FUNDED_PRICING_VERSIONS;
@@ -33,7 +34,11 @@ export function validateFundedPricingReview(review: FundedPricingReview): void {
   }
 }
 export function readFundedPricingReviews(env: NodeJS.ProcessEnv): FundedPricingReviews {
-  const models = [["SONNET", "anthropic/claude-sonnet-5"], ["GLM", "@cf/zai-org/glm-5.3-flash"]] as const;
+  const models: readonly (readonly [string, keyof typeof FUNDED_PRICING_VERSIONS])[] = [
+    ["SONNET", "anthropic/claude-sonnet-5"],
+    ...Object.entries(WORKERS_AI_PRICE_SNAPSHOTS).map(([id, price]) =>
+      [price.prefix, id as keyof typeof WORKERS_AI_PRICE_SNAPSHOTS] as const),
+  ];
   const reviews: Readonly<FundedPricingReview>[] = [];
   for (const [prefix, canonicalModelId] of models) {
     const version = env[`MATRIX_FUNDED_${prefix}_PRICING_REVIEW_VERSION`];
@@ -48,6 +53,25 @@ export function readFundedPricingReviews(env: NodeJS.ProcessEnv): FundedPricingR
     const review = { canonicalModelId, version, reviewedAt, validThrough };
     validateFundedPricingReview(review);
     reviews.push(Object.freeze(review));
+  }
+  const bundleVersion = env.MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION || undefined;
+  const bundleReviewedAt = env.MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT || undefined;
+  const bundleValidThrough = env.MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH || undefined;
+  if (bundleVersion !== undefined || bundleReviewedAt !== undefined || bundleValidThrough !== undefined) {
+    if (bundleVersion !== "cloudflare-2026-10-15-workers-eight" || !bundleReviewedAt || !bundleValidThrough) {
+      throw new Error("Invalid bundled Workers AI pricing review");
+    }
+    for (const [id, price] of Object.entries(WORKERS_AI_PRICE_SNAPSHOTS)) {
+      if (price.prefix === "GLM") continue; // Existing Flash review stays independent.
+      const canonicalModelId = id as keyof typeof WORKERS_AI_PRICE_SNAPSHOTS;
+      if (reviews.some(review => review.canonicalModelId === canonicalModelId)) {
+        throw new Error("Duplicate funded AI pricing review");
+      }
+      const review = { canonicalModelId, version: price.version,
+        reviewedAt: bundleReviewedAt, validThrough: bundleValidThrough };
+      validateFundedPricingReview(review);
+      reviews.push(Object.freeze(review));
+    }
   }
   return Object.freeze(reviews);
 }

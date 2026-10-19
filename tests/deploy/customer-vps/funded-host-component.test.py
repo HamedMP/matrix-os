@@ -28,6 +28,7 @@ def load(name, path):
 installer = load('installer', 'distro/customer-vps/funded-host-config/install.py')
 runtime = load('runtime', 'distro/customer-vps/funded-host-config/reconcile.py')
 runtime.__dict__.update({name: value for name, value in vars(installer).items() if not name.startswith('__')})
+exec(compile((ROOT / 'distro/customer-vps/funded-host-config/epoch.py').read_text(), '<protected-epoch>', 'exec'), runtime.__dict__)
 exec(compile((ROOT / 'distro/customer-vps/funded-host-config/recovery.py').read_text(), '<protected-recovery>', 'exec'), runtime.__dict__)
 SHA = 'a' * 40
 VERSION = 'v-test-repair'
@@ -327,6 +328,11 @@ class RootLifecycleTests(unittest.TestCase):
             self.assertEqual(headers['Authorization'], 'Bearer ' + 'd' * 64)
             now = runtime.time.time()
             stamp = lambda n: runtime.datetime.datetime.fromtimestamp(n, runtime.datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+            if path.endswith('/funded-host-epoch'):
+                self.assertNotIn('x-matrix-runtime-token-epoch', headers)
+                return json.dumps({'contractVersion': 1, 'kind': 'matrix-funded-host-epoch', 'source': 'platform',
+                    'sourceSha': SHA, 'issuedAt': stamp(now - .1), 'expiresAt': stamp(now + 20),
+                    'identity': dict(self.identity, ownerId='user_test')}).encode()
             return json.dumps({'contractVersion': 1, 'kind': 'matrix-funded-host-config', 'source': 'platform',
                 'sourceSha': SHA, 'issuedAt': stamp(now - .1), 'expiresAt': stamp(now + 20), 'identity': self.identity,
                 'configuration': {'MATRIX_FUNDED_AI_ENABLED': 'true', 'MATRIX_FUNDED_AI_RELAY_URL':
@@ -352,6 +358,64 @@ class RootLifecycleTests(unittest.TestCase):
                     'kind': 'explicit-update', 'createdAt': now, 'expiresAt': now + 30,
                     'operation': 'apply', 'priorVersion': None}).encode(), 0o600)
         state.close()
+
+    def test_missing_epoch_is_one_complete_image_and_guarded_rollback_restores_absence(self):
+        self.original = self.original.replace(b'MATRIX_RUNTIME_TOKEN_EPOCH=2\n', b'')
+        Path(self.env).write_bytes(self.original)
+        installer.install(VERSION, SHA)
+        self.assertEqual(Path(self.env).read_bytes(), self.original)
+        self.assertEqual(self.calls, [])
+        self.admission()
+        runtime.maintenance()
+        complete = Path(self.env).read_bytes()
+        self.assertIn(b'MATRIX_RUNTIME_TOKEN_EPOCH=2\n', complete)
+        self.assertIn(b'MATRIX_FUNDED_AI_ENABLED=true\n', complete)
+        self.assertEqual(self.responses, 4)
+        journal = next(Path(self.env).parent.glob('host.env.funded-epoch-*.json'))
+        self.assertEqual(json.loads(journal.read_bytes())['version'], 3)
+        self.admission()
+        runtime.maintenance()  # Present epoch follows normal idempotent path.
+        self.assertEqual(len(list(Path(self.env).parent.glob('host.env.funded-*.json'))), 1)
+        for name in self.states:
+            self.states[name] = 'inactive'
+        runtime.run('rollback')
+        self.assertEqual(Path(self.env).read_bytes(), self.original)
+
+    def test_failed_unpublished_bootstrap_cleans_attempt_without_platform(self):
+        self.original = self.original.replace(b'MATRIX_RUNTIME_TOKEN_EPOCH=2\n', b'')
+        Path(self.env).write_bytes(self.original)
+        installer.install(VERSION, SHA)
+        self.admission()
+        def fail(*args, **kwargs):
+            self.enabled = False
+            raise installer.ConfigError('injected Platform outage before publish')
+        with patch.object(runtime, 'apply_missing_epoch', fail), self.assertRaises(installer.ConfigError):
+            runtime.maintenance()
+        self.assertEqual(Path(self.env).read_bytes(), self.original)
+        self.assertFalse(Path(self.root + '/var/lib/matrix-funded-host-config/applied.json').exists())
+        self.assertFalse(Path(self.root + '/var/lib/matrix-funded-host-config/resume.json').exists())
+        self.assertEqual(self.states['matrix-gateway.service'], 'active')
+        self.enabled = True
+        self.admission()
+        runtime.maintenance()
+        self.assertIn(b'MATRIX_FUNDED_AI_ENABLED=true\n', Path(self.env).read_bytes())
+
+    def test_failed_bootstrap_after_publish_rolls_back_whole_image_and_resumes(self):
+        self.original = self.original.replace(b'MATRIX_RUNTIME_TOKEN_EPOCH=2\n', b'')
+        Path(self.env).write_bytes(self.original)
+        installer.install(VERSION, SHA)
+        self.admission()
+        original = runtime.apply_missing_epoch
+        def fail(*args, **kwargs):
+            original(*args, **kwargs)
+            raise installer.ConfigError('injected post-commit failure')
+        with patch.object(runtime, 'apply_missing_epoch', fail), self.assertRaises(installer.ConfigError):
+            runtime.maintenance()
+        self.assertEqual(Path(self.env).read_bytes(), self.original)
+        self.assertFalse(Path(self.root + '/var/lib/matrix-funded-host-config/applied.json').exists())
+        self.assertFalse(Path(self.root + '/var/lib/matrix-funded-host-config/resume.json').exists())
+        self.assertEqual(self.states['matrix-gateway.service'], 'active')
+        self.assertEqual(self.states['matrix-sync-agent.service'], 'active')
 
     def test_two_hops_install_apply_noop_guarded_rollback_preserve_owner_state(self):
         # First hop installs code but no config write or service operation.
