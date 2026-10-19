@@ -71,3 +71,26 @@ it("does not treat a failed declaration read as a publication mutation conflict"
   expect(screen.queryByRole("button", { name: "Refresh publication" })).toBeNull();
   expect(screen.getByRole("button", { name: "Save URL and details" })).toHaveProperty("disabled", false);
 });
+
+it("binds the first publication to revision zero and preserves the draft on a concurrent publication conflict", async () => {
+  const api = client({
+    get: vi.fn(async () => null),
+    deploy: vi.fn(async () => { throw new SiteClientError(409); }),
+  });
+  render(<AppSitePanel appSlug="launch" client={api} />);
+  await screen.findByText("This app is private.");
+  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "My first publication" } });
+  fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Keep this optimistic draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Review deployment" }));
+  fireEvent.click(await screen.findByLabelText("I reviewed this deployment"));
+  fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+  await screen.findByRole("alert");
+  expect(api.deploy).toHaveBeenCalledWith("launch", {
+    title: "My first publication", description: "Keep this optimistic draft", slug: null,
+    baseRevision: 0, reviewedConfig: site.config,
+  }, expect.any(AbortSignal));
+  expect(screen.getByLabelText("Title")).toHaveProperty("value", "My first publication");
+  expect(screen.getByLabelText("Description")).toHaveProperty("value", "Keep this optimistic draft");
+  expect(screen.getByRole("button", { name: "Refresh publication" })).toHaveProperty("disabled", false);
+  expect(screen.getByRole("button", { name: "Publish app" })).toHaveProperty("disabled", true);
+});
