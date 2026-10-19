@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { sourceChangeScript } from "../../scripts/ci/dedicated-changes.mjs";
@@ -16,6 +17,18 @@ const job = (parse(readFileSync(".github/workflows/ci.yml", "utf8")) as {
   jobs: { "funded-postgres": PostgreSqlJob };
 }).jobs["funded-postgres"];
 const settlementStep = job.steps.find((step) => step.name === "Verify funded settlement on PostgreSQL")!;
+
+function postgresLaneRuns(shouldRun: string, result = "success", wasCancelled = false): boolean {
+  // Model only this job's boolean/status expression, including GitHub's implicit
+  // success() guard: https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions
+  const hasStatus = /\b(?:always|success|failure|cancelled)\s*\(/.test(job.if);
+  const condition = hasStatus ? job.if : `success() && (${job.if})`;
+  return Boolean(runInNewContext(condition, {
+    always: () => true, cancelled: () => wasCancelled,
+    success: () => result === "success" && !wasCancelled, failure: () => result === "failure",
+    needs: { changes: { result, outputs: { should_run: shouldRun } } },
+  }, { timeout: 100 }));
+}
 
 function executeSettlementStep(url: string | undefined, step = settlementStep) {
   const directory = mkdtempSync(join(tmpdir(), "matrix-funded-pg-ci-"));
@@ -158,7 +171,11 @@ esac
       });
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(output, "utf8")).toContain("should_run=true");
-      expect(job.if).toBe("needs.changes.outputs.should_run == 'true'");
+      expect(postgresLaneRuns("true")).toBe(true);
+      expect(postgresLaneRuns("false")).toBe(false);
+      expect(postgresLaneRuns("true", "failure")).toBe(false);
+      expect(postgresLaneRuns("true", "skipped")).toBe(false);
+      expect(postgresLaneRuns("true", "success", true)).toBe(false);
       const invocation = executeSettlementStep(job.env.MATRIX_TEST_POSTGRES_URL);
       expect(invocation.status, invocation.diagnostics).toBe(0);
       expect(invocation.args).toContain("tests/workspace-worker/data-compute-budget-postgres.test.ts");
