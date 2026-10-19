@@ -49,9 +49,14 @@ export async function admitOnboardingTurn({ port, chatId, prompt, selection, req
   };
   let targetId = chatId;
   let baseRevision = 0;
+  let turnSelection: typeof modelSelection = modelSelection;
   if (targetId) {
     try {
-      baseRevision = (await port.detail(targetId)).record.chat.revision;
+      const { record } = await port.detail(targetId);
+      baseRevision = record.chat.revision;
+      // A chat stays on the AI it first ran on, so follow-ups and retries keep that route
+      // even if the widget's AI choice has changed since.
+      if (record.providerBinding && record.chat.currentSelection) turnSelection = record.chat.currentSelection;
     } catch (error: unknown) {
       if (!port.isNotFound(error)) throw error;
       targetId = null;
@@ -66,7 +71,7 @@ export async function admitOnboardingTurn({ port, chatId, prompt, selection, req
     clientRequestId: requestIds.turn,
     baseRevision,
     parts: [{ type: "text", text: prompt }],
-    selection: modelSelection,
+    selection: turnSelection,
     interactionMode: selection.interactionMode,
     permissionMode: selection.permissionMode,
   });

@@ -268,6 +268,21 @@ describe("onboarding turn admission", () => {
     expect(client.admitTurn).toHaveBeenCalledWith("chat_old", expect.objectContaining({ baseRevision: 9 }), { chatScope: "global" });
   });
 
+  it("keeps a follow-up on the AI its chat is bound to, even after the widget's choice changes", async () => {
+    const bound = { instanceId: "claude_default", model: "claude-sonnet", options: [{ id: "effort", value: "high" }] };
+    const client = {
+      create: vi.fn(),
+      getDetail: vi.fn().mockResolvedValue({ record: { chat: { revision: 4, currentSelection: bound }, providerBinding: { instanceId: "claude_default" } } }),
+      admitTurn: vi.fn().mockResolvedValue(admitted("chat_old")),
+    };
+    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Follow up", selection, requestIds });
+    expect(client.admitTurn).toHaveBeenCalledWith("chat_old", expect.objectContaining({ baseRevision: 4, selection: bound }), { chatScope: "global" });
+
+    client.getDetail.mockResolvedValue({ record: { chat: { revision: 5, currentSelection: { instanceId: "claude_default", model: "claude-sonnet" } } } });
+    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Unbound", selection, requestIds });
+    expect(client.admitTurn).toHaveBeenLastCalledWith("chat_old", expect.objectContaining({ selection: { instanceId: "hermes_default", model: "default" } }), { chatScope: "global" });
+  });
+
   it("starts a new chat when the remembered one is gone, but surfaces other failures", async () => {
     const client = {
       create: vi.fn().mockResolvedValue({ chat: { id: "chat_new", revision: 1 } }),
