@@ -6,7 +6,6 @@ import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
-
 export const createTestConfig = (overrides: Partial<ReturnType<typeof loadCustomerVpsConfig>> = {}) => ({ ...loadCustomerVpsConfig({
     PLATFORM_PORT: '9000', PLATFORM_SECRET: 'platform-secret', HETZNER_API_TOKEN: 'token',
     S3_ACCESS_KEY_ID: 'r2-access-key', S3_SECRET_ACCESS_KEY: 'r2-secret-key',
