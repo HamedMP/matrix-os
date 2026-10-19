@@ -1,12 +1,19 @@
 // Read-only backend handoff; only authenticated cleanup-proved infrastructure selects hosted recovery.
 import {resolveMainSource} from './dedicated-main.mjs';
 import {waitForDedicatedResult} from './dedicated-result.mjs';
+import {assertMainPrIdentity,resolveMainPrSnapshot} from './dedicated-main-pr.mjs';
 export async function requestingSnapshot(github,context,refresh){
  if(refresh)return refresh;
  if(context.eventName==='push'&&context.ref==='refs/heads/main')return resolveMainSource(github,context.repo,context.sha);
  const pull=context.payload?.pull_request;
  if(!pull)throw new Error('Unsupported dedicated requesting source');
- return {sourceSha:context.sha,headSha:pull.head.sha,headRef:pull.head.ref,baseSha:pull.base.sha,baseRef:pull.base.ref,prNumber:pull.number};
+ const snapshot={sourceSha:context.sha,headSha:pull.head.sha,headRef:pull.head.ref,baseSha:pull.base.sha,baseRef:pull.base.ref,prNumber:pull.number};
+ if(snapshot.baseRef==='main'){
+  const {data:live}=await github.rest.pulls.get({...context.repo,pull_number:pull.number,request:{timeout:10_000,signal:AbortSignal.timeout(10_000)}});
+  assertMainPrIdentity(context.repo,live,snapshot);
+  return resolveMainPrSnapshot(github,context.repo,live,{sourceSha:context.sha});
+ }
+ return snapshot;
 }
 // Main is Linux-first: anything short of a verified Linux pass inside these bounds runs full hosted CI instead.
 export const MAIN_LINUX_ADMISSION_ATTEMPTS=10;

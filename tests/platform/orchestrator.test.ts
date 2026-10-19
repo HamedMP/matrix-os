@@ -70,6 +70,7 @@ describe('platform/orchestrator', () => {
   it('uses platform internal auth helpers instead of injecting PLATFORM_DATABASE_URL', async () => {
     const { docker } = createMockDocker();
     const mockClient = {
+      on: vi.fn(),
       connect: vi.fn().mockResolvedValue(undefined),
       query: vi.fn().mockResolvedValue({ rows: [{ 1: 1 }] }),
       end: vi.fn().mockResolvedValue(undefined),
@@ -138,6 +139,7 @@ describe('platform/orchestrator', () => {
     const { docker } = createMockDocker();
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const mockClient = {
+      on: vi.fn(),
       connect: vi.fn().mockResolvedValue(undefined),
       query: vi.fn().mockImplementation(async (sql: string, params?: unknown[]) => {
         queries.push({ sql, params });
@@ -319,6 +321,7 @@ describe('platform/orchestrator', () => {
   it('uses a sanitized database identifier for per-user Postgres databases', async () => {
     const { docker } = createMockDocker();
     const mockClient = {
+      on: vi.fn(),
       connect: vi.fn().mockResolvedValue(undefined),
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })
@@ -341,6 +344,11 @@ describe('platform/orchestrator', () => {
       connectionString: 'postgres://postgres@db:5432/matrixos',
       connectionTimeoutMillis: 10_000,
     });
+
+    expect(mockClient.on).toHaveBeenCalledWith('error', expect.any(Function));
+    expect(mockClient.on.mock.invocationCallOrder[0]).toBeLessThan(
+      mockClient.connect.mock.invocationCallOrder[0],
+    );
 
     expect(mockClient.query).toHaveBeenNthCalledWith(
       1,
@@ -365,6 +373,7 @@ describe('platform/orchestrator', () => {
   it('uses a Postgres connection timeout when dropping a user database', async () => {
     const { docker } = createMockDocker();
     const mockClient = {
+      on: vi.fn(),
       connect: vi.fn().mockResolvedValue(undefined),
       query: vi.fn().mockResolvedValue({ rows: [{ 1: 1 }] }),
       end: vi.fn().mockResolvedValue(undefined),
@@ -379,8 +388,14 @@ describe('platform/orchestrator', () => {
     });
 
     await orch.provision('alice', 'clerk_1');
+    mockClient.on.mockClear();
+    mockClient.connect.mockClear();
     await orch.destroy('alice');
 
+    expect(mockClient.on).toHaveBeenCalledWith('error', expect.any(Function));
+    expect(mockClient.on.mock.invocationCallOrder[0]).toBeLessThan(
+      mockClient.connect.mock.invocationCallOrder[0],
+    );
     expect(clientSpy).toHaveBeenCalledWith({
       connectionString: 'postgres://postgres@db:5432/matrixos',
       connectionTimeoutMillis: 10_000,

@@ -6,6 +6,7 @@ import { getClerkInstance, useAuth } from "@clerk/clerk-expo";
 import { useEffect, useState } from "react";
 import { HOSTED_GATEWAY_URL, getMobileJourneyGatewayUrl, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
 import { JourneyGate } from "@/components/JourneyGate";
+import { StartupLoading } from "@/components/StartupScreen";
 import { SignInScreen } from "@/components/auth/SignInScreen";
 import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
 import { forgetJourneyConnectable, rememberJourneyConnectable, wasJourneyConnectable } from "@/lib/journey-cache";
@@ -190,15 +191,8 @@ export default function Index() {
     return <SignedInJourneyGate />;
   }
 
-  if (checkingSelfHosted) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.content}>
-          <Text style={styles.wordmark}>MATRIX OS</Text>
-        </View>
-      </View>
-    );
-  }
+  // The same startup screen as every other wait at launch.
+  if (checkingSelfHosted) return <StartupLoading />;
 
   return <SignInScreen />;
 }
@@ -227,21 +221,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.v2.colors.textDefault,
     opacity: 0.8,
     textDecorationLine: "underline",
-  },
-  container: {
-    flex: 1,
-    backgroundColor: theme.v2.appColors.canvas,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: theme.v2.spacing.xl,
-    justifyContent: "center",
-  },
-  wordmark: {
-    fontFamily: theme.v2.fonts.semibold,
-    fontSize: 12,
-    color: theme.v2.appColors.muted,
-    letterSpacing: 2.6,
-    textAlign: "center",
   },
 }));

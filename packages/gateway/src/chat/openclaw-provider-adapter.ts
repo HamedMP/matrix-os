@@ -11,6 +11,7 @@ import {
   type CanonicalProviderRunEvent,
   type CanonicalProviderRunInput,
 } from "./provider-adapter.js";
+import { projectPlaintextToolPreview } from "./plaintext-tool-preview.js";
 import { safeToolActivity } from "./safe-activity-projection.js";
 
 const SafeSessionReferenceSchema = z.string().min(1).max(512);
@@ -141,7 +142,8 @@ function normalizeEvent(
     const name = rawName.trim().toLowerCase() === "exec" ? "execute" : rawName;
     let activity = options.toolActivities.get(toolCallId);
     if (phase === "start" || activity === undefined) {
-      activity = safeToolActivity(name, payload.data.args, options);
+      // Optional rejected preview evidence must not abort the tool lifecycle.
+      activity = projectPlaintextToolPreview(safeToolActivity(name, payload.data.args, options));
       if (!options.toolActivities.has(toolCallId) && options.toolActivities.size >= 128) {
         const oldest = options.toolActivities.keys().next().value;
         if (oldest !== undefined) options.toolActivities.delete(oldest);

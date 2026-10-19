@@ -110,7 +110,10 @@ def recovery_proof(preflight=False):
         require(journal.get('afterSha256') == applied['afterSha256'])
         # Validate complete original bytes, patch, identity and post-image without
         # executing a rollback or changing either journal or environment.
-        repair.rollback_image(anchor.fds[-1], journal_name, data, values, applied['identity'], 0, 0, info)
+        if re.fullmatch(r'epoch-[a-f0-9]{32}', applied['rolloutId']):
+            epoch_rollback_image(repair, anchor.fds[-1], journal_name, data, values, applied['identity'], 0, 0, info)
+        else:
+            repair.rollback_image(anchor.fds[-1], journal_name, data, values, applied['identity'], 0, 0, info)
         staging = os.open('staging', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=anchor.fds[-2])
         # The phase is an updater-owned bounded hint; authority comes from the
         # root-sealed transaction and committed receipt, not this mutable hint.

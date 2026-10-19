@@ -1,3 +1,4 @@
+import { integrationWriteActions } from "./registry-writes.js";
 import { INTEGRATION_PRESENTATION } from "@matrix-os/contracts/integration-marketplace";
 import { INTEGRATION_LOGOS } from "./registry-logos.js";
 import { OAUTH_SERVICE_REGISTRY } from "./registry-oauth.js";
@@ -80,6 +81,7 @@ function defineServiceRegistry(
     serviceId,
     {
       ...service,
+      actions: { ...service.actions, ...integrationWriteActions(serviceId) },
       ...INTEGRATION_PRESENTATION[serviceId],
       logoUrl: INTEGRATION_LOGOS[serviceId] ?? service.logoUrl,
       connectorKind: service.connectorKind ?? "pipedream",

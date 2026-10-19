@@ -14,6 +14,7 @@ import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
 import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
+import { resolvePlatformObjectStorage } from './object-storage-config.js';
 import { runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -27,6 +28,7 @@ import {
 } from './db.js';
 import { createAtsDb, resolveAtsDatabaseUrl, type AtsDB } from './ats-db.js';
 import { startAtsBackgroundWorker } from './ats-background-worker.js';
+import { startGooglePurchaseWorker } from './billing/google-purchases.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import { createClerkAuth, createClerkSessionRevoker } from './clerk-auth.js';
@@ -68,6 +70,8 @@ import {
   type CustomerVpsReconciliationWorker,
 } from './customer-vps-reconciliation-worker.js';
 import { createPrivatePreviewSweep } from './private-preview-sweep.js';
+import { createFundedHostActivationRoutes } from './funded-host-activation.js';
+import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, type ManagedFeatureActivator } from './managed-feature-activation.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
@@ -210,15 +214,7 @@ interface GatewayIntegrationRegistryModule {
 type GatewayR2Client = import("./r2-client.js").R2Client;
 
 interface GatewayR2ClientModule {
-  createR2Client(config: {
-    accountId?: string;
-    accessKeyId: string;
-    secretAccessKey: string;
-    bucket: string;
-    endpoint?: string;
-    publicEndpoint?: string;
-    forcePathStyle?: boolean;
-  }): Promise<GatewayR2Client>;
+  createR2Client(config: import('./r2-client.js').R2ClientConfig): Promise<GatewayR2Client>;
 }
 
 type CreatePlatformApp = (deps: {
@@ -245,6 +241,7 @@ type CreatePlatformApp = (deps: {
   fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
+  activateManagedFeatures?: ManagedFeatureActivator;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
@@ -738,27 +735,15 @@ async function startPlatformServerWithCleanup(
   let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
   let primaryStorageGate: R2CapabilityGate | undefined;
-  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
-  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
-  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
-  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? 'matrixos-sync';
-  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
+  const storageConfig = resolvePlatformObjectStorage(process.env);
   let createR2Client: GatewayR2ClientModule['createR2Client'] | undefined;
-  if (s3AccessKey && s3SecretKey && platformSecret) {
+  if (storageConfig.primary && platformSecret) {
     const [r2ClientModule, { createInternalSyncRoutes }] = await Promise.all([
       importRuntimeModule<GatewayR2ClientModule>('./r2-client.js'),
       import('./internal-sync-routes.js'),
     ]);
     createR2Client = r2ClientModule.createR2Client;
-    const r2 = await createR2Client({
-      accessKeyId: s3AccessKey,
-      secretAccessKey: s3SecretKey,
-      bucket: s3Bucket,
-      endpoint: s3Endpoint,
-      publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
-      accountId: process.env.R2_ACCOUNT_ID,
-      forcePathStyle: s3ForcePathStyle,
-    });
+    const r2 = await createR2Client(storageConfig.primary);
     internalSyncRoutes = createInternalSyncRoutes({
       db,
       r2,
@@ -770,28 +755,19 @@ async function startPlatformServerWithCleanup(
     primaryStorageGate = createR2CapabilityGate({ storage: r2 });
   }
 
-  const bundleS3Bucket = process.env.S3_BUNDLES_BUCKET ?? process.env.R2_BUNDLES_BUCKET;
-  const bundleS3AccessKey = process.env.S3_BUNDLES_ACCESS_KEY_ID ?? process.env.R2_BUNDLES_ACCESS_KEY_ID;
-  const bundleS3SecretKey = process.env.S3_BUNDLES_SECRET_ACCESS_KEY ?? process.env.R2_BUNDLES_SECRET_ACCESS_KEY;
-  if (bundleS3Bucket && bundleS3AccessKey && bundleS3SecretKey) {
+  if (storageConfig.bundles) {
     createR2Client ??= (
       await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js')
     ).createR2Client;
-    hostBundleObjectStore = await createR2Client({
-      accessKeyId: bundleS3AccessKey,
-      secretAccessKey: bundleS3SecretKey,
-      bucket: bundleS3Bucket,
-      endpoint: process.env.S3_BUNDLES_ENDPOINT ?? process.env.R2_BUNDLES_ENDPOINT,
-      publicEndpoint: process.env.S3_BUNDLES_PUBLIC_ENDPOINT ?? process.env.R2_BUNDLES_PUBLIC_ENDPOINT,
-      accountId: process.env.S3_BUNDLES_ACCOUNT_ID ?? process.env.R2_BUNDLES_ACCOUNT_ID ?? process.env.R2_ACCOUNT_ID,
-      forcePathStyle: process.env.S3_BUNDLES_FORCE_PATH_STYLE === 'true',
-    });
+    hostBundleObjectStore = await createR2Client(storageConfig.bundles);
   }
 
   let customerVpsService: CustomerVpsService | undefined;
+  let activateManagedFeatures: ManagedFeatureActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
   let customerVpsReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
+  let managedFeatureReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
   let goldenSnapshotInterval: ReturnType<typeof setInterval> | undefined;
   let goldenSnapshotPromise: Promise<void> | undefined;
   let billingRuntimeCaptureEvent: ((
@@ -841,6 +817,22 @@ async function startPlatformServerWithCleanup(
           )
         : undefined,
     });
+    activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
+      relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
+      speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
+      fetchDispatcher: customerVpsProxyDispatcher });
+    if (customerVpsConfig.fundedAiEnabled && internalFundedAiRuntimeRoutes) {
+      internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
+        platformSecret: customerVpsConfig.platformSecret, relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
+    }
+    const reconcileManagedFeatures = createManagedFeatureReconciliationPass(activateManagedFeatures);
+    if (backgroundWorkersEnabled) {
+      managedFeatureReconciliationWorker = startCustomerVpsReconciliationWorker({ intervalMs: 60_000, runPass: reconcileManagedFeatures });
+      registerCustomMcpStartupCleanup(async () => {
+        managedFeatureReconciliationWorker?.stop();
+        await managedFeatureReconciliationWorker?.drain();
+      });
+    }
     goldenSnapshotConfig = customerVpsConfig.goldenSnapshots;
     {
       const [
@@ -1015,6 +1007,8 @@ async function startPlatformServerWithCleanup(
   });
 
   const appEnv = process.env;
+  const stopGooglePurchaseWorker = startGooglePurchaseWorker(db, appEnv, backgroundWorkersEnabled);
+  registerCustomMcpStartupCleanup(stopGooglePurchaseWorker);
   const whatsappRuntime = createConfiguredWhatsAppRuntime({ db, env: appEnv, clerkAuth });
   registerCustomMcpStartupCleanup(async () => { await whatsappRuntime?.shutdown(); });
   const legacyContainerRoutingEnabled =
@@ -1053,6 +1047,7 @@ async function startPlatformServerWithCleanup(
     fundedModelProbes,
     collaboration,
     customerVpsService,
+    activateManagedFeatures,
     goldenSnapshotService,
     goldenSnapshotConfig,
     customerVpsObjectStore,
@@ -1083,6 +1078,7 @@ async function startPlatformServerWithCleanup(
     console.log(`[platform] Received ${signal}, shutting down`);
     accountDeletion?.stop();
     customerVpsReconciliationWorker?.stop();
+    managedFeatureReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
     if (previewDriveSweepInterval) clearInterval(previewDriveSweepInterval);
@@ -1103,8 +1099,10 @@ async function startPlatformServerWithCleanup(
         accountDeletion?.close();
         await atsBackgroundWorker?.shutdown();
         await customerVpsReconciliationWorker?.drain();
+        await managedFeatureReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
+          stopGooglePurchaseWorker(),
           collaboration?.shutdown(),
           whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),

@@ -1,3 +1,4 @@
+import type { ExecutionAdmissionFence } from "../execution-admission-fence.js";
 import { contextForChatSession } from "./session-history.js";
 import { admitCanonicalRetry } from "./retry-admission.js";
 import { createOrderedRunControls } from "./ordered-run-controls.js";
@@ -157,6 +158,7 @@ export class CanonicalChatOrchestrator {
   private readonly orderedControls = createOrderedRunControls();
 
   constructor(private readonly options: {
+    executionAdmissionFence?: ExecutionAdmissionFence;
     repository: Pick<ChatRepository,
       | "getDetailPage"
       | "get"
@@ -251,7 +253,13 @@ export class CanonicalChatOrchestrator {
     return this.active.size;
   }
 
+  /** Accepted admissions and claimed queue preparation have not registered active Runs yet. */
+  get pendingCount(): number {
+    return this.pendingDispatch.size + this.queueDispatches.size + this.sharedExecution.pendingCount;
+  }
+
   private atCapacity(owner: ChatOwner): boolean {
+    if (this.options.executionAdmissionFence?.blocked) return true;
     if (this.active.size >= MAX_ACTIVE_RUNS_GLOBAL) return true;
     let ownerActive = 0;
     for (const entry of this.active.values()) {
@@ -261,6 +269,12 @@ export class CanonicalChatOrchestrator {
   }
 
   private assertOpen(): void {
+    if (this.options.executionAdmissionFence?.blocked) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "Chat execution is temporarily unavailable.", true, ["retry"]),
+        503,
+      );
+    }
     if (this.closing) {
       throw new CanonicalChatOrchestrationError(
         safeError("run_unavailable", "Chat execution is shutting down.", true, ["retry"]),
@@ -367,6 +381,7 @@ export class CanonicalChatOrchestrator {
     sharedScopeId?: string,
     onComplete?: () => Promise<void>,
   ): Promise<void> {
+    this.assertOpen();
     const controller = new AbortController();
     const completion = this.dispatch(
       owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId,
@@ -455,6 +470,15 @@ export class CanonicalChatOrchestrator {
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
             mode: "follow_up",
           });
+          this.startDispatch(
+            owner,
+            claimed.message,
+            { ...claimed.run, context: contextForChatSession(claimed.run.context, resumeState) },
+            adapter,
+            resolvedRoot,
+            resumeState,
+          );
+          return;
         } catch (error: unknown) {
           console.warn(
             "[chat/orchestrator] Queued Run preparation failed:",
@@ -469,15 +493,6 @@ export class CanonicalChatOrchestrator {
           });
           continue;
         }
-        this.startDispatch(
-          owner,
-          claimed.message,
-          { ...claimed.run, context: contextForChatSession(claimed.run.context, resumeState) },
-          adapter,
-          resolvedRoot,
-          resumeState,
-        );
-        return;
       }
     } finally {
       this.queueDispatches.delete(key);

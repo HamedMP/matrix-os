@@ -1,0 +1,164 @@
+import { act, cleanup, render, screen } from "@testing-library/react-native";
+import * as Haptics from "expo-haptics";
+import { AccessibilityInfo, Platform, StyleSheet } from "react-native";
+import { FullWindowOverlay } from "react-native-screens";
+
+import { Icon } from "../components/ui/Icon";
+import { AlertIcon, CheckIcon } from "../components/ui/icons";
+import { ToastHost } from "../components/ui/Toast";
+import { TOAST_DURATION_MS, dismissToast, showToast } from "../lib/toast";
+
+const SHOWN_FOR = TOAST_DURATION_MS;
+
+beforeEach(() => jest.useFakeTimers());
+afterEach(() => {
+  // Ends the toast on screen, so the next test starts without one.
+  act(() => jest.runOnlyPendingTimers());
+  cleanup();
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
+
+describe("ToastHost", () => {
+  it("draws nothing, and takes no taps, until there is a toast", () => {
+    render(<ToastHost />);
+
+    expect(screen.queryByTestId("toast")).toBeNull();
+    expect(screen.toJSON()).toMatchObject({ props: { pointerEvents: "box-none" } });
+  });
+
+  // iOS draws a native modal (a sheet such as Installed integrations) over the
+  // whole app, this host included; a toast shown there has to go above it.
+  it("draws a toast above native modals on iOS, only while there is one", () => {
+    render(<ToastHost />);
+    expect(screen.UNSAFE_queryByType(FullWindowOverlay)).toBeNull();
+
+    act(() => showToast("Connection deleted"));
+    expect(screen.UNSAFE_getByType(FullWindowOverlay)).toBeTruthy();
+    expect(screen.getByText("Connection deleted")).toBeTruthy();
+
+    act(() => jest.advanceTimersByTime(SHOWN_FOR));
+    expect(screen.UNSAFE_queryByType(FullWindowOverlay)).toBeNull();
+  });
+
+  it("draws it in place on Android, where a modal screen is part of the app's own window", () => {
+    const platform = Platform.OS;
+    Platform.OS = "android";
+    try {
+      render(<ToastHost />);
+      act(() => showToast("Connection deleted"));
+
+      expect(screen.getByText("Connection deleted")).toBeTruthy();
+      expect(screen.UNSAFE_queryByType(FullWindowOverlay)).toBeNull();
+    } finally {
+      Platform.OS = platform;
+    }
+  });
+
+  it("shows a toast with a tick, says it aloud, and takes it away by itself", () => {
+    const announce = jest.spyOn(AccessibilityInfo, "announceForAccessibility");
+    render(<ToastHost />);
+
+    act(() => showToast("Text copied"));
+
+    expect(screen.getByText("Text copied")).toBeTruthy();
+    expect(screen.UNSAFE_getByType(Icon).props.icon).toBe(CheckIcon);
+    expect(screen.getByTestId("toast").props.accessibilityRole).toBeUndefined();
+    expect(announce).toHaveBeenCalledWith("Text copied");
+
+    act(() => jest.advanceTimersByTime(SHOWN_FOR - 1));
+    expect(screen.getByText("Text copied")).toBeTruthy();
+    act(() => jest.advanceTimersByTime(1));
+    expect(screen.queryByTestId("toast")).toBeNull();
+  });
+
+  it("is felt as well as seen: the success pattern for a success, the warning one for a failure", () => {
+    jest.mocked(Haptics.notificationAsync).mockClear();
+    render(<ToastHost />);
+
+    act(() => showToast("Terminal renamed"));
+    expect(Haptics.notificationAsync).toHaveBeenLastCalledWith(Haptics.NotificationFeedbackType.Success);
+    act(() => showToast("Could not rename terminal. Try again.", "error"));
+    expect(Haptics.notificationAsync).toHaveBeenLastCalledWith(Haptics.NotificationFeedbackType.Warning);
+    expect(Haptics.notificationAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("plays nothing when there is no host to show the toast", () => {
+    jest.mocked(Haptics.notificationAsync).mockClear();
+
+    showToast("Terminal renamed");
+
+    expect(Haptics.notificationAsync).not.toHaveBeenCalled();
+  });
+
+  it("marks a failure as an alert, with its own icon", () => {
+    render(<ToastHost />);
+
+    act(() => showToast("Could not copy text. Try again.", "error"));
+
+    expect(screen.getByTestId("toast").props.accessibilityRole).toBe("alert");
+    expect(screen.UNSAFE_getByType(Icon).props.icon).toBe(AlertIcon);
+  });
+
+  it("lets a later toast take the place of an earlier one, for its whole time", () => {
+    render(<ToastHost />);
+
+    act(() => showToast("Text copied"));
+    act(() => jest.advanceTimersByTime(SHOWN_FOR - 100));
+    act(() => showToast("Chat ID copied"));
+
+    expect(screen.queryByText("Text copied")).toBeNull();
+    // The first toast's timers end with it and do not hide the second early.
+    act(() => jest.advanceTimersByTime(200));
+    expect(screen.getByText("Chat ID copied")).toBeTruthy();
+    act(() => jest.advanceTimersByTime(SHOWN_FOR - 200));
+    expect(screen.queryByTestId("toast")).toBeNull();
+  });
+
+  it("drops the toast, and its timer, when its host goes", () => {
+    const view = render(<ToastHost />);
+    act(() => showToast("Text copied"));
+    expect(jest.getTimerCount()).toBeGreaterThan(0);
+
+    view.unmount();
+
+    expect(jest.getTimerCount()).toBe(0);
+    render(<ToastHost />);
+    expect(screen.queryByTestId("toast")).toBeNull();
+  });
+
+  it("shows nothing when no host is mounted", () => {
+    act(() => showToast("Text copied"));
+    expect(jest.getTimerCount()).toBe(0);
+
+    render(<ToastHost />);
+    expect(screen.queryByTestId("toast")).toBeNull();
+  });
+
+  it("keeps a toast whose dismissal names an earlier one", () => {
+    render(<ToastHost />);
+
+    act(() => showToast("Text copied"));
+    act(() => dismissToast(-1));
+
+    expect(screen.getByText("Text copied")).toBeTruthy();
+  });
+
+  it("sits under the status bar, across the width of the screen", () => {
+    render(<ToastHost />);
+
+    act(() => showToast("Text copied"));
+
+    expect(StyleSheet.flatten(screen.getByTestId("toast-host").props.style)).toMatchObject({
+      position: "absolute",
+      left: 0,
+      right: 0,
+      alignItems: "center",
+    });
+    expect(StyleSheet.flatten(screen.getByTestId("toast").props.style)).toMatchObject({
+      flexDirection: "row",
+      borderRadius: 9999,
+      backgroundColor: "#171717",
+    });
+  });
+});

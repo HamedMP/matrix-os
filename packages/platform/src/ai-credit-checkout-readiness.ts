@@ -4,6 +4,12 @@ import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-m
 
 const MAX_LEDGER_AGE_MS = 5 * 60_000;
 const MAX_PENDING_FUNDING_READS = 4;
+const MAX_CONCURRENT_CHECKOUT_PROBES = 2;
+const CHECKOUT_PROBE_HEDGE_MS = 100;
+const CHECKOUT_PROBE_PRIORITY: Readonly<Record<string, number>> = {
+  [FUNDED_PROBE_MODELS[0]]: 0,
+  "anthropic/claude-sonnet-5": 1,
+};
 const pendingFundingReads = new Set<Promise<unknown>>();
 
 /** A new payment must be useful to this owner and exact computer. Zero balance is allowed. */
@@ -17,6 +23,7 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
 }): Promise<boolean> {
   let expired = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let hedge: ReturnType<typeof setTimeout> | undefined;
   const controller = new AbortController();
   let cancel: ((value: false) => void) | undefined;
   const onAbort = () => { expired = true; controller.abort(); cancel?.(false); };
@@ -47,13 +54,15 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
       const first = await fundingRead;
       const current = (input.now ?? (() => new Date()))().getTime();
       if (expired || !validFunding(first, current)) return false;
-      // This fixed generic catalog bounds concurrency to two. A slow failed
-      // model must not consume a healthy alternative's shared request window.
-      const eligible = FUNDED_PROBE_MODELS.filter(model => first.policy.allowedModelIds.includes(model));
-      return await Promise.any(eligible.map(async model => {
+      // Try the default first, then hedge one backup within the same deadline.
+      // Prefer an already-eligible independent route for the backup so a shared
+      // Workers outage cannot hide it behind the rest of that catalog.
+      const eligible = FUNDED_PROBE_MODELS.filter(model => first.policy.allowedModelIds.includes(model))
+        .sort((left, right) => (CHECKOUT_PROBE_PRIORITY[left] ?? 2) - (CHECKOUT_PROBE_PRIORITY[right] ?? 2));
+      const candidate = async (model: typeof eligible[number]): Promise<"ready" | "revoked"> => {
         const result = await input.modelProbes!.probe(model, { signal: controller.signal, deadlineAtMs });
         const afterProbe = (input.now ?? (() => new Date()))().getTime();
-        if (!result.ready || expired || !(Date.parse(result.checkedAt) <= afterProbe)
+        if (!result.ready || expired || controller.signal.aborted || !(Date.parse(result.checkedAt) <= afterProbe)
           || !(Date.parse(result.staleAfter) > afterProbe)) throw new Error("Funded model unavailable");
         // Each ready candidate must complete its own final validation. An
         // early result expiring during its read cannot discard a fresh peer.
@@ -61,20 +70,60 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
         const latestNow = (input.now ?? (() => new Date()))().getTime();
         if (expired || !latest.policy.enabled
           || latest.policy.globalRevision !== first.policy.globalRevision
-          || latest.policy.runtimeRevision !== first.policy.runtimeRevision) return false;
+          || latest.policy.runtimeRevision !== first.policy.runtimeRevision) return "revoked";
         if (!validFunding(latest, latestNow) || !latest.policy.allowedModelIds.includes(model)
           || !(Date.parse(result.checkedAt) <= latestNow) || !(Date.parse(result.staleAfter) > latestNow)) {
           throw new Error("Funded model unavailable");
         }
-        return true;
-      }));
+        return "ready";
+      };
+      if (eligible.length === 0) return false;
+      return await new Promise<boolean>((resolve, reject) => {
+        let next = 0;
+        let active = 0;
+        let settled = false;
+        let lastFailure: unknown;
+        const finish = (ready: boolean) => {
+          if (settled) return;
+          settled = true;
+          if (hedge !== undefined) clearTimeout(hedge);
+          controller.abort();
+          resolve(ready);
+        };
+        const startNext = () => {
+          if (settled || expired || controller.signal.aborted
+            || active >= MAX_CONCURRENT_CHECKOUT_PROBES || next >= eligible.length) return;
+          const model = eligible[next++]!;
+          active++;
+          void candidate(model).then(result => { finish(result === "ready"); }, error => {
+            lastFailure = error;
+          }).finally(() => {
+            active--;
+            if (settled) return;
+            if (expired || controller.signal.aborted) { finish(false); return; }
+            startNext();
+            if (active === 0 && next === eligible.length) {
+              settled = true;
+              if (hedge !== undefined) clearTimeout(hedge);
+              reject(lastFailure);
+            }
+          });
+        };
+        startNext();
+        if (eligible.length > 1) {
+          hedge = setTimeout(startNext, Math.min(CHECKOUT_PROBE_HEDGE_MS,
+            Math.max(0, (deadlineAtMs - Date.now()) / 4)));
+        }
+      });
     };
     return await Promise.race([check(), deadline, cancelled]);
   } catch (error) {
     console.warn("[billing] Matrix AI checkout readiness unavailable:", error instanceof Error ? error.name : typeof error);
     return false;
   } finally {
+    expired = true;
     if (timeout !== undefined) clearTimeout(timeout);
+    if (hedge !== undefined) clearTimeout(hedge);
     input.signal?.removeEventListener("abort", onAbort);
     controller.abort();
   }

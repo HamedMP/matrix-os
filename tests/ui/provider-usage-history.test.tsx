@@ -73,6 +73,29 @@ it("keeps history chrome outside the scroll region and uses readable model label
   expect(screen.getByText("1 activity")).toBeInTheDocument();
 });
 
+it("labels added managed models while retaining historical names and identifiers", async () => {
+  const load = vi.fn().mockResolvedValue({
+    entries: [
+      "@cf/deepseek-ai/deepseek-v4-flash-0731",
+      "anthropic/claude-sonnet-5",
+      "historical-model-id",
+    ].map(modelId => ({
+      occurredAt: "2026-10-02T17:07:21Z",
+      kind: "usage",
+      amountMicrousd: -111,
+      modelId,
+    })),
+    nextCursor: null,
+  });
+  render(<UsageHistoryDialog load={load} onClose={vi.fn()} />);
+  expect(await screen.findByText("DeepSeek V4 Flash 0731"))
+    .toHaveAttribute("title", "@cf/deepseek-ai/deepseek-v4-flash-0731");
+  expect(screen.getByText("Claude Sonnet 5"))
+    .toHaveAttribute("title", "anthropic/claude-sonnet-5");
+  expect(screen.getByText("historical-model-id"))
+    .toHaveAttribute("title", "historical-model-id");
+});
+
 it("keeps loaded activity during pagination and traps keyboard focus in the dialog", async () => {
   let finish!: (value: AiCreditHistoryResponse) => void;
   const entry = {occurredAt: "2026-10-02T17:07:21Z", kind: "usage" as const, amountMicrousd: -111, modelId: "@cf/zai-org/glm-5.3-flash"};

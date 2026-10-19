@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConversationContextPicker from "../../desktop/src/renderer/src/features/chat/ConversationContextPicker";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -24,6 +24,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+async function cleanupContextPicker() {
+  cleanup();
+  // Radix defers unmount autofocus. Finish it before jsdom restores another Event realm.
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  vi.restoreAllMocks();
+}
+
 describe("ConversationContextPicker", () => {
   beforeEach(() => {
     useBoard.setState(useBoard.getInitialState(), true);
@@ -32,9 +39,19 @@ describe("ConversationContextPicker", () => {
     useConnection.setState({ api: { get: vi.fn() } as never });
   });
 
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
+  afterEach(cleanupContextPicker);
+
+  it("settles deferred focus cleanup before the test environment is released", async () => {
+    useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "github" }] });
+    render(<ConversationContextPicker context={null} onSelect={vi.fn()} onRemove={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add to project" }));
+    const content = screen.getByLabelText("Project context picker");
+    const onUnmountAutoFocus = vi.fn();
+    content.addEventListener("focusScope.autoFocusOnUnmount", onUnmountAutoFocus);
+
+    await cleanupContextPicker();
+
+    expect(onUnmountAutoFocus).toHaveBeenCalledTimes(1);
   });
 
   it("lists active projects with safe kind and repository labels", async () => {

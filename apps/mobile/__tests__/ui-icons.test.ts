@@ -1,11 +1,14 @@
 import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
+import AlertCircleIcon from "@hugeicons/core-free-icons/AlertCircleIcon";
 import Archive02Icon from "@hugeicons/core-free-icons/Archive02Icon";
 import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
 import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
+import ArrowReloadHorizontalIcon from "@hugeicons/core-free-icons/ArrowReloadHorizontalIcon";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import ArrowUp02Icon from "@hugeicons/core-free-icons/ArrowUp02Icon";
 import BlocksIcon from "@hugeicons/core-free-icons/BlocksIcon";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
+import CloudOffIcon from "@hugeicons/core-free-icons/CloudOffIcon";
 import CommandLineIcon from "@hugeicons/core-free-icons/CommandLineIcon";
 import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
 import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
@@ -46,6 +49,7 @@ describe("role icons", () => {
       InfoIcon: InformationCircleIcon,
       MoreIcon: MoreHorizontalIcon,
       CloseIcon: Cancel01Icon,
+      AlertIcon: AlertCircleIcon,
       AddIcon: Add01Icon,
       PhotoIcon: Image01Icon,
       SkillIcon: CubeIcon,
@@ -58,6 +62,8 @@ describe("role icons", () => {
       SearchIcon: Search01Icon,
       CheckIcon: Tick02Icon,
       LoadingIcon: Loading03Icon,
+      RetryIcon: ArrowReloadHorizontalIcon,
+      OfflineIcon: CloudOffIcon,
       ChatIcon: Message01Icon,
       FolderIcon: Folder01Icon,
       ConnectAppsIcon: BlocksIcon,
@@ -71,8 +77,8 @@ describe("role icons", () => {
     });
   });
 
-  it("exports nothing but the 33 roles", () => {
-    expect(Object.keys(icons)).toHaveLength(33);
+  it("exports nothing but the 36 roles", () => {
+    expect(Object.keys(icons)).toHaveLength(36);
     for (const icon of Object.values(icons)) {
       expect(Array.isArray(icon)).toBe(true);
     }

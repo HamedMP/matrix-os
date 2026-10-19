@@ -1,7 +1,7 @@
 import type { BotInteraction, BotTaskSummary, ResolveBotInteractionRequest, ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import { createContext, useContext } from "react";
 import { InteractionCard } from "./InteractionCard.js";
-import { BotCurrentTaskStatus } from "./BotCurrentTaskStatus.js";
+import { BotCurrentTaskStatus, currentBotAttentionTask } from "./BotCurrentTaskStatus.js";
 
 export interface BotMessageState {
   chatId: string;
@@ -35,7 +35,7 @@ function MessageBody({ runIds, requestIds = [], unassigned = false }: {
   const interactions = body.interactions.filter(interaction => !requestIds.includes(interaction.interactionId));
   const error = state.error && (unassigned ? !state.tasks.some(task => task.runId && runIds.includes(task.runId))
     : body.tasks.length > 0);
-  if (!interactions.length && !body.tasks.length && !error) return null;
+  if (!interactions.length && !currentBotAttentionTask(body.tasks) && !error) return null;
   return <div data-bot-message-state className="grid min-w-0 gap-3 py-2">
     {interactions.map(interaction => <InteractionCard key={interaction.interactionId} interaction={interaction}
       actionsAvailable={state.interactionsFresh} onResolve={input => state.resolve(interaction.interactionId, input)} onResolved={state.refresh}/>)}

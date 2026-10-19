@@ -30,7 +30,7 @@ describe('dedicated Linux routing preserves protected hosted contracts',()=>{
   });
   it('requires successful verified Linux result in CI Results whenever hosted lanes delegate',()=>{
     expect(ci.jobs['ci-results'].needs).toContain('dedicated-linux');
-    const step=ci.jobs['ci-results'].steps[0];
+    const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs');
     expect(step.env.DEDICATED_ELIGIBLE).toContain('needs.changes.outputs.dedicated_eligible');
     expect(step.run).toContain('"$DEDICATED_LINUX_RESULT" != "success"');
   });
@@ -72,16 +72,17 @@ describe('executable delegation and aggregate admission',()=>{
     }finally{rmSync(dir,{recursive:true,force:true});}
   });
   it.each([
-    ['reopened','false','true',true],['reopened','false','false',false],
-    ['edited','true','true',true],['edited','false','true',false],['edited','true','false',false],
-    ['synchronize','false','true',true],['ready_for_review','false','false',true],
-  ])('preserves ready-gated source classification for %s baseEdit=%s ready=%s',(action,baseEdit,ready,requested)=>{
+    ['reopened','false','false',true],['reopened','false','true',false],
+    ['edited','true','false',true],['edited','false','false',false],['edited','true','true',false],
+    ['synchronize','false','false',true],['synchronize','false','true',false],['ready_for_review','false','false',true],
+    ['opened','false','false',true],['opened','false','true',false],['labeled','false','false',false],
+  ])('runs source classification for non-draft heads only: %s baseEdit=%s draft=%s',(action,baseEdit,draft,requested)=>{
     const dir=mkdtempSync(resolve(tmpdir(),'matrix-ci-stack-trigger-'));
     try{
       // Inert source discovery: exercise the real gating shell without network.
       writeFileSync(resolve(dir,'git'),'#!/bin/sh\nif [ "$1" = diff ]; then printf "%s\\n" "packages/kernel/src/index.ts"; fi\n',{mode:0o755});
       const step=ci.jobs.changes.steps.find((value:{id?:string})=>value.id==='changed');
-      const env={...process.env,PATH:`${dir}:${process.env.PATH}`,GITHUB_EVENT_NAME:'pull_request',GITHUB_BASE_REF:'stack/parent',GITHUB_SHA:'a'.repeat(40),GITHUB_OUTPUT:resolve(dir,'output'),PR_ACTION:action,PR_BASE_EDIT:baseEdit,PR_HAS_READY_FOR_CI:ready,PR_LABEL_NAME:''};
+      const env={...process.env,PATH:`${dir}:${process.env.PATH}`,GITHUB_EVENT_NAME:'pull_request',GITHUB_BASE_REF:'stack/parent',GITHUB_SHA:'a'.repeat(40),GITHUB_OUTPUT:resolve(dir,'output'),PR_ACTION:action,PR_BASE_EDIT:baseEdit,PR_DRAFT:draft};
       const execution=spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000});
       expect(execution.status,execution.stderr).toBe(0);
       const outputs=readFileSync(resolve(dir,'output'),'utf8');
@@ -92,7 +93,7 @@ describe('executable delegation and aggregate admission',()=>{
   it.each(['success','failure','cancelled','skipped','unknown'])('aggregate accepts only verified dedicated success (%s)',outcome=>{
     const dir=mkdtempSync(resolve(tmpdir(),'matrix-linux-aggregate-'));
     try{
-      const step=ci.jobs['ci-results'].steps[0];
+      const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs');
       const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};
       for(const key of Object.keys(step.env))env[key]='success';
       Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'true',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:'skipped',CI_BACKEND_RESULT:outcome,CI_BACKEND_PROVIDER:'linux',INFRASTRUCTURE_FALLBACK:'false'});
@@ -109,13 +110,13 @@ it('observes shadow qualification without letting it block the aggregate',()=>{
  expect(ci.jobs['dedicated-linux'].if).toContain("dedicated_required == 'true'");
  // Shadow never makes CI Results wait on the Linux verifier.
  expect(ci.jobs['dedicated-linux'].if).toContain("needs.changes.outputs.dedicated_mode == 'delegated'");
- const step=ci.jobs['ci-results'].steps[0];expect(step.env.DEDICATED_REQUIRED).toContain('needs.changes.outputs.dedicated_required');
+ const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs');expect(step.env.DEDICATED_REQUIRED).toContain('needs.changes.outputs.dedicated_required');
  expect(step.env.DEDICATED_MODE).toBe("${{ needs.changes.outputs.dedicated_mode == 'delegated' && 'delegated' || 'shadow' }}");
  expect(step.run).toContain('"$DEDICATED_REQUIRED" = "true"');
 });
 it.each([['shadow','failure',0],['shadow','skipped',0],['delegated','failure',1],['delegated','skipped',1],['delegated','success',0]])('aggregate with required Linux in %s mode and Linux %s exits %i',(mode,linux,code)=>{
  const dir=mkdtempSync(resolve(tmpdir(),'matrix-shadow-aggregate-'));
- try{const step=ci.jobs['ci-results'].steps[0],env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};for(const key of Object.keys(step.env))env[key]='success';
+ try{const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs'),env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};for(const key of Object.keys(step.env))env[key]='success';
  Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:linux,DEDICATED_MODE:mode});
  expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(code);
  }finally{rmSync(dir,{recursive:true,force:true});}
@@ -139,12 +140,12 @@ it.each(['true','false'])('runs all hosted lanes and no Linux waiter for hosted-
  const dir=mkdtempSync(resolve(tmpdir(),'matrix-hosted-recovery-route-'));
  try{writeFileSync(resolve(dir,'event.json'),'{}');const body=ci.jobs.changes.steps.find((step:{id?:string})=>step.id==='route').run.match(/^node --input-type=module <<'NODE'\n([\s\S]*)\nNODE\s*$/)![1];
  const result=spawnSync(process.execPath,['--input-type=module','-e',body],{env:{...process.env,REFRESH_SNAPSHOT:JSON.stringify({executionMode:'hosted-only'}),MATRIX_CI_DEDICATED_ENABLED:enabled,MATRIX_CI_DEDICATED_SHADOW:'true',SHOULD_RUN:'true',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')},encoding:'utf8',timeout:10000});expect(result.status,result.stderr).toBe(0);expect(readFileSync(resolve(dir,'output'),'utf8')).toBe('eligible=false\nrequired=false\nmode=shadow\n');
- const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')},step=ci.jobs['ci-results'].steps[0];for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_LINUX_RESULT:'skipped',DOCS_CONTRACT_RESULT:'skipped'});expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(0);
+ const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')},step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs');for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_LINUX_RESULT:'skipped',DOCS_CONTRACT_RESULT:'skipped'});expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(0);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 it.each(['success','skipped','failure','cancelled'])('hosted infrastructure recovery aggregate requires every delegated lane: %s',outcome=>{
  const dir=mkdtempSync(resolve(tmpdir(),'matrix-ci-infra-aggregate-'));
- try{const step=ci.jobs['ci-results'].steps[0],env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'true',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:'skipped',CI_BACKEND_RESULT:'success',CI_BACKEND_PROVIDER:'hosted',INFRASTRUCTURE_FALLBACK:'true',E2E_RESULT:outcome});
+ try{const step=ci.jobs['ci-results'].steps.find((step:any)=>step.name==='Summarize required CI jobs'),env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'true',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:'skipped',CI_BACKEND_RESULT:'success',CI_BACKEND_PROVIDER:'hosted',INFRASTRUCTURE_FALLBACK:'true',E2E_RESULT:outcome});
  expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(outcome==='success'?0:1);
  env.INFRASTRUCTURE_FALLBACK='false';expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(1);
  }finally{rmSync(dir,{recursive:true,force:true});}
@@ -168,4 +169,21 @@ describe('shadow Linux failures outside the verifier script',()=>{
   expect(failedJob('false',[linux,unit])).toBe('Verified Dedicated Linux Qualification (failure)');
   expect(failedJob('true',[linux,{...unit,conclusion:'failure'}])).toBe('Unit Tests (1/4) (failure)');
  });
+});
+
+
+it.each(['ci-backend','patterns','react-doctor','sync-client','funded-postgres','funded-host-root','dedicated-linux'])('admits %s after a skipped auxiliary router only for successful uncanceled real source detection',key=>{
+ const condition=ci.jobs[key].if;
+ // Explicit status functions prevent GitHub's implicit success() from inheriting
+ // a skipped routing ancestor; cancellation and failed detection still close admission.
+ expect(condition).toContain('always()');expect(condition).toContain('!cancelled()');
+ expect(condition).toContain("needs.changes.result == 'success'");
+ const expression=condition.replace(/^\$\{\{\s*|\s*\}\}$/g,'');
+ const evaluate=(changes:any,canceled=false)=>Function('needs','always','cancelled',`return (${expression});`)({redirect:{result:'skipped'},changes},()=>true,()=>canceled);
+ const changes={result:'success',outputs:{should_run:'true',dedicated_required:'true',dedicated_eligible:'false',dedicated_mode:'delegated'}};
+ expect(evaluate(changes)).toBe(true);
+ expect(evaluate({...changes,result:'failure'})).toBe(false);
+ expect(evaluate({...changes,outputs:{...changes.outputs,should_run:'false'}})).toBe(false);
+ expect(evaluate(changes,true)).toBe(false);
+ if(key==='dedicated-linux')expect(evaluate({...changes,outputs:{...changes.outputs,dedicated_eligible:'true'}})).toBe(false);
 });

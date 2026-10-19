@@ -33,6 +33,7 @@ jest.mock("@clerk/clerk-expo", () => ({
 jest.mock("expo-splash-screen", () => ({
   preventAutoHideAsync: jest.fn(() => Promise.resolve(true)),
   hideAsync: jest.fn(() => Promise.resolve()),
+  setOptions: jest.fn(),
 }));
 
 jest.mock("expo-status-bar", () => ({ StatusBar: () => null }));
@@ -208,6 +209,13 @@ describe("GatewayShell", () => {
   afterEach(() => {
     global.WebSocket = OriginalWebSocket;
     jest.restoreAllMocks();
+  });
+
+  it("fades the native splash out instead of cutting it away", () => {
+    loadRootLayout();
+
+    expect(jest.requireMock<typeof import("expo-splash-screen")>("expo-splash-screen").setOptions)
+      .toHaveBeenCalledWith({ fade: true, duration: 300 });
   });
 
   it("gives a signed-in hosted computer a gateway client without opening the legacy chat socket", async () => {
