@@ -18,6 +18,11 @@ const shared = vi.hoisted(() => ({
 
 vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => ({ mode: "dark" }),
+  useThemeState: () => ({
+    theme: { name: "matrix", mode: "dark", colors: { background: "#0d0c0c" }, fonts: {}, radius: "0.5rem" },
+    loaded: true,
+    loadError: null,
+  }),
   saveTheme: vi.fn(),
 }));
 
@@ -73,6 +78,7 @@ describe("AppearanceSection warning logs", () => {
       ok: true,
       json: async () => ({ wallpapers: ["forest.png"] }),
     })));
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
     vi.stubGlobal("FileReader", FileReaderMock as unknown as typeof FileReader);
   });
 
