@@ -6,7 +6,7 @@ import {
 } from "@matrix-os/contracts";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import { CanonicalProviderRunEventSchema, type CanonicalProviderRunEvent } from "./provider-adapter.js";
-import { sanitizeAssistantText } from "./safe-activity-projection.js";
+import { safePublishedText } from "./safe-activity-projection.js";
 
 const PENDING_LIMIT = 16;
 const INPUT_LIMIT = 4_000;
@@ -28,11 +28,22 @@ interface Pending {
   expireAfterDecision?: boolean;
 }
 
+// Stricter than the shared preview rule: any assignment or flag whose name mentions a credential
+// (AWS_SECRET_ACCESS_KEY=, GITHUB_TOKEN=, --password) hides the text. False positives only hide details.
+const CREDENTIAL_NAME = /[A-Za-z0-9_-]*(?:key|token|secret|passw(?:or)?d|credential|auth)[A-Za-z0-9_-]*\s*[:=]|--?(?:key|token|secret|passw(?:or)?d|credential|auth)[A-Za-z0-9_-]*\b/i;
+
+/** Agent-written text the approval card may show, or undefined when it could carry a secret. */
+function cardText(value: string, homePath: string, maxChars: number): string | undefined {
+  if (CREDENTIAL_NAME.test(value)) return undefined;
+  return safePublishedText(value, { homePath, maxChars });
+}
+
 function toolSubject(input: Record<string, unknown>, homePath: string): string | undefined {
   const raw = input.query ?? input.url ?? input.command ?? input.file_path ?? input.path;
   if (typeof raw !== "string") return undefined;
-  // Redact credentials and private paths before truncating, so a cut cannot split a secret past the redactor.
-  const safe = sanitizeAssistantText(raw, { homePath });
+  // Secret-looking text is dropped whole, never partially redacted.
+  const safe = cardText(raw, homePath, INPUT_LIMIT);
+  if (!safe) return undefined;
   const subject = safe.replace(/\s+/g, " ").trim().slice(0, 80).replaceAll("\"", "'");
   return subject.length > 0 ? subject : undefined;
 }
@@ -94,9 +105,9 @@ export function createClaudeBuiltinToolApprovalControl(options: {
       const titled = subject ? `${copy.title} · “${subject}”` : copy.title;
       const safeTitle = canonicalChatApprovalTitle(titled);
       const title = safeTitle === titled ? titled : canonicalChatApprovalTitle(copy.title);
-      const sanitized = sanitizeAssistantText(raw, { homePath: options.homePath });
+      // The whole input is checked before any of it is shown: one secret anywhere hides all details.
       const room = Math.max(0, INPUT_LIMIT - copy.summary.length - 2);
-      const details = room > 0 ? sanitized.slice(0, room) : "";
+      const details = room > 0 ? cardText(raw, options.homePath, room) ?? "" : "";
       const safeDescription = details && details !== "{}" ? `${copy.summary}\n\n${details}` : copy.summary;
       const id = `tool_${randomUUID()}`;
       const current: Pending = {

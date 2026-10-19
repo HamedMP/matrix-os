@@ -25,6 +25,7 @@ import type {
   ConversationWorkPresentation,
 } from "./presentation";
 import { supervisedToolApproval, type SupervisedToolApproval } from "@matrix-os/contracts";
+import { offeredApprovalAction } from "./approval-actions";
 
 function formatTurnDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
@@ -196,6 +197,8 @@ function SupervisedToolRequest({
   callbacks: ConversationPresentationCallbacks;
   perform: (action: ConversationActionPresentation) => Promise<void>;
 }) {
+  // Same gate as the generic request view: no active buttons for a viewer who cannot act.
+  const canAct = (["approve", "decline"] as const).some((decision) => offeredApprovalAction(request, callbacks, decision));
   return (
     <ConversationItem messageId={`request:${request.id}`}>
       <SupervisedToolApprovalCard
@@ -205,10 +208,9 @@ function SupervisedToolRequest({
         permissionMode={callbacks.permissionMode}
         onPermissionMode={callbacks.onPermissionMode}
         onTryAgain={callbacks.onTryAgain}
-        onDecision={callbacks.performAction ? (decision) => {
-          const action = (request.actions ?? []).find((candidate) => candidate.kind === "approval" && candidate.decision === decision)
-            ?? { kind: "approval" as const, requestId: request.requestId, decision, label: decision };
-          void perform(action);
+        onDecision={canAct ? (decision) => {
+          const action = offeredApprovalAction(request, callbacks, decision);
+          if (action) void perform(action);
         } : undefined}
       />
     </ConversationItem>

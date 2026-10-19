@@ -266,8 +266,23 @@ describe("Claude built-in tool approval control", () => {
     expect(titles).toHaveLength(2);
     expect(titles.join(" ")).not.toContain("example-secret");
     expect(titles.join(" ")).not.toContain("/home/matrix/home");
-    // The redacted subject still names the command.
-    expect(titles[0]).toMatch(/^Run a command · “.*npm publish”$/);
+    // A secret-bearing subject is dropped whole; the card falls back to the fixed tool name.
+    expect(titles[0]).toBe("Run a command");
+  });
+
+  it.each([
+    ["Bash", { command: "ANTHROPIC_API_KEY=sk-ant-abc123secret npm publish" }, "sk-ant-abc123secret"],
+    ["Bash", { command: "curl -H 'Authorization: token ghp_0123456789abcdefghijABCDEFGHIJ' https://api.github.com/user" }, "ghp_0123456789abcdefghij"],
+    ["Bash", { command: "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI aws s3 ls" }, "wJalrXUtnFEMI"],
+    ["WebFetch", { url: "https://example.com/hook?token=topsecretvalue" }, "topsecretvalue"],
+  ])("never shows a secret-bearing %s input on the card", (toolName, input, secret) => {
+    const { approval, events, respond } = control();
+    approval.onToolPermission({ nativeRequestId: "native_secret", toolName, input }, respond);
+    const requested = events[0];
+    if (requested?.type !== "approval.requested") throw new Error("Approval was not requested");
+    expect(JSON.stringify(requested)).not.toContain(secret);
+    // The card falls back to the fixed tool name and summary, with no agent-written text.
+    expect(requested.title).not.toContain("·");
   });
 
   it("offers only one-time decisions and refuses a chat-wide grant", async () => {
