@@ -298,7 +298,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       if (group) {
         if (!deps.resolveGroupRoute) throw new BotRouteError("model_unavailable");
-        resolved = await deps.resolveGroupRoute({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group });
+        resolved = await groupWait(run, () => deps.resolveGroupRoute!({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group: group! }));
       } else {
         resolved = await deps.resolveRoute(isolatedModel ? selection : recipeCoordinatorSelection(input.selection, agent.selection));
         if (isolatedModel) {
@@ -308,6 +308,8 @@ export function createBotTaskOrchestrator(deps: {
         }
       }
     } catch (error: unknown) {
+      if (group && run.signal.aborted) return settle(task, "cancelled");
+      if (group && error instanceof Error && error.name === "TimeoutError") return settle(task, "blocked", "deadline_reached");
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
     }
