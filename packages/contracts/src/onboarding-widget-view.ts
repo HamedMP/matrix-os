@@ -2,7 +2,7 @@ import { onboardingTask, onboardingWorkingLine } from "#onboarding-widget-catalo
 import { onboardingRunTitle, type OnboardingWidgetState } from "#onboarding-widget";
 
 export const ONBOARDING_WORK_LOG_MAX_STEPS = 6;
-const RESULT_SUMMARY_MAX_CHARS = 160;
+const RESULT_SUMMARY_MAX_CHARS = 600;
 
 type RunSourcePart =
   | { type: "text"; text: string }
@@ -81,13 +81,27 @@ export function deriveOnboardingRunView(
     ];
   }
   if (status !== "completed" || !resultText) return { status, steps: view };
-  const firstLine = resultText.split("\n").find((line) => line.trim())?.trim() ?? resultText;
   return {
     status,
     steps: view,
     resultText,
-    resultSummary: plainSummaryLine(firstLine).slice(0, RESULT_SUMMARY_MAX_CHARS),
+    resultSummary: resultSummaryFrom(resultText),
   };
+}
+
+/** More than the first line, cut on a sentence, line, or word once it passes the cap. */
+function resultSummaryFrom(text: string): string {
+  const plain = text
+    .split("\n")
+    .map((line) => plainSummaryLine(line))
+    .filter((line) => line.length > 0)
+    .join("\n");
+  if (plain.length <= RESULT_SUMMARY_MAX_CHARS) return plain;
+  const room = RESULT_SUMMARY_MAX_CHARS - 1;
+  const cut = plain.slice(0, room);
+  const boundary = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("\n"), cut.lastIndexOf(" "));
+  const end = boundary >= Math.floor(room * 0.6) ? boundary + (cut[boundary] === "." ? 1 : 0) : room;
+  return `${plain.slice(0, end).trimEnd()}…`;
 }
 
 function plainSummaryLine(line: string): string {

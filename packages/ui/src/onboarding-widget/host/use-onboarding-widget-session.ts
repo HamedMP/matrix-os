@@ -111,12 +111,12 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     openChat(state.chatId);
     dispatch({ type: "size.changed", size: "bubble" });
   }, [dispatch, openChat, state.chatId]);
-  useOnboardingChatHandoff(state, showChat);
+  const openNamedChat = useOnboardingChatHandoff(state, showChat);
 
   const actions = useMemo<OnboardingWidgetActions>(() => ({
     dispatch,
     connectApp: appConnect.connectApp,
-    openResult: showChat,
+    openResult: openNamedChat,
     openFullChat: showChat,
     openSettings: () => openSettings("agents-providers"),
     addCredits: () => openSettings("billing"),
@@ -126,7 +126,7 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     submitAiKey: ai.submitKey,
     submitAiCode: ai.submitCode,
     changePrefs: setPrefs,
-  }), [ai.cancelSignIn, ai.reopenSignIn, ai.startSignIn, ai.submitCode, ai.submitKey, appConnect.connectApp, dispatch, openSettings, setPrefs, showChat]);
+  }), [ai.cancelSignIn, ai.reopenSignIn, ai.startSignIn, ai.submitCode, ai.submitKey, appConnect.connectApp, dispatch, openNamedChat, openSettings, setPrefs, showChat]);
 
   const userName = onboardingFirstName(input.displayName);
   return {

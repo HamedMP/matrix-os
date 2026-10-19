@@ -85,7 +85,7 @@ export function ResultCard({ title, subtitle, onOpen }: { title: string; subtitl
         <span className="mxo-result__title">{title}</span>
         {subtitle ? <span className="mxo-muted">{subtitle}</span> : null}
       </span>
-      <button type="button" className="mxo-btn mxo-btn--outline" onClick={onOpen}>Open</button>
+      <button type="button" className="mxo-btn mxo-btn--outline" onClick={onOpen}>Open in Chats</button>
     </div>
   );
 }

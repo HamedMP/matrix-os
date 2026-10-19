@@ -91,10 +91,10 @@
   border-radius: 16px;
   box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.22);
   transform-origin: var(--mxo-origin-x) var(--mxo-origin-y);
-  animation: mxo-enter 260ms var(--mxo-ease) backwards;
+  animation: mxo-enter 400ms var(--mxo-ease) backwards;
   /* Lets the card grow and shrink between its compact and tall sizes where the browser supports it. */
   interpolate-size: allow-keywords;
-  transition: height 280ms var(--mxo-ease);
+  transition: height 400ms var(--mxo-ease);
 }
 
 /* Conversation screens hold their height so the card does not jump as steps arrive. */
@@ -232,8 +232,9 @@
 
 .mxo-echo,
 .mxo-done-line,
-.mxo-log__step,
-.mxo-result { animation: mxo-rise 240ms var(--mxo-ease) backwards; }
+.mxo-log__step { animation: mxo-rise 240ms var(--mxo-ease) backwards; }
+
+.mxo-result { animation: mxo-rise 400ms var(--mxo-ease) backwards; }
 
 .mxo-tasks > *,
 .mxo-chips > * { animation: mxo-rise 280ms var(--mxo-ease) backwards; }
@@ -268,6 +269,11 @@
   margin: 0;
   font-size: 14px;
   line-height: 1.45;
+}
+
+.mxo-summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .mxo-muted {
@@ -827,7 +833,7 @@
   touch-action: none;
   transform-origin: var(--mxo-origin-x) var(--mxo-origin-y);
   transition: box-shadow 150ms ease, transform 150ms ease;
-  animation: mxo-enter 240ms var(--mxo-ease) backwards;
+  animation: mxo-enter 400ms var(--mxo-ease) backwards;
 }
 
 .mxo-bubble:hover {

@@ -1,18 +1,21 @@
 import type { OnboardingWidgetState } from "@matrix-os/contracts";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
-/** Calls `handOff` once for each run a chat accepts, so the work continues in the main Chat. */
-export function useOnboardingChatHandoff(state: OnboardingWidgetState, handOff: () => void): void {
-  const runId = state.screen.kind === "run" && state.screen.phase === "running" ? state.screen.runId ?? null : null;
-  const handedOff = useRef<string | null>(null);
+/**
+ * Opens the task's named chat in Chats. The widget stays up while the run works
+ * and when the result arrives; only the result button calls this.
+ * Electron Desktop, Web Desktop, and Web Canvas share this caller.
+ */
+export function useOnboardingChatHandoff(state: OnboardingWidgetState, handOff: () => void): () => void {
+  const stateRef = useRef(state);
   const handOffRef = useRef(handOff);
   useEffect(() => {
+    stateRef.current = state;
     handOffRef.current = handOff;
   });
 
-  useEffect(() => {
-    if (!runId || handedOff.current === runId) return;
-    handedOff.current = runId;
+  return useCallback(() => {
+    if (stateRef.current.screen.kind !== "run") return;
     handOffRef.current();
-  }, [runId]);
+  }, []);
 }

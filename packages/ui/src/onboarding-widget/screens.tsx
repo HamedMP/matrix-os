@@ -319,10 +319,11 @@ function RunDone({ run, state, runView, creditsExhausted, activeAi, actions }: R
   return (
     <>
       <WorkLog steps={steps} />
-      <p className="mxo-text">{task?.readyLine ?? runView?.resultSummary ?? "Done."}</p>
-      {run.taskId !== "work-on-code" ? (
-        <ResultCard title={onboardingRunTitle(run)} subtitle={task ? runView?.resultSummary : undefined} onOpen={actions.openResult} />
-      ) : null}
+      {task?.readyLine ? <p className="mxo-text">{task.readyLine}</p> : null}
+      {runView?.resultSummary
+        ? <p className="mxo-text mxo-summary">{runView.resultSummary}</p>
+        : task?.readyLine ? null : <p className="mxo-text">Done.</p>}
+      <ResultCard title={onboardingRunTitle(run)} onOpen={actions.openResult} />
       {creditsExhausted ? <CreditsOffer actions={actions} /> : null}
       {followUp ? <FollowUpOffer run={run} followUp={followUp} aiChoice={activeAi} actions={actions} /> : null}
     </>

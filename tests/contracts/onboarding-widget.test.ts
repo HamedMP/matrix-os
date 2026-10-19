@@ -409,17 +409,17 @@ describe("deriveOnboardingRunView", () => {
     ]), "run_1");
     expect(view.status).toBe("completed");
     expect(view.resultText).toBe("Prices range from $0 to $200 per seat.\n\nMore detail.");
-    expect(view.resultSummary).toBe("Prices range from $0 to $200 per seat.");
+    expect(view.resultSummary).toBe("Prices range from $0 to $200 per seat.\nMore detail.");
   });
 
-  it("joins every text part of the final answer and summarizes its headline", () => {
+  it("joins every text part of the final answer and keeps the following detail", () => {
     const view = deriveOnboardingRunView(source({ status: "completed" }, [
       { runId: "run_1", role: "assistant", parts: [{ type: "text", text: "Let me look that up." }, { type: "tool_request", toolCallId: "t1", name: "web_search", label: "Searched 24 sources" }] },
       { runId: "run_1", role: "tool", parts: [{ type: "tool_result", toolCallId: "t1", outcome: "success", truncated: false }] },
       { runId: "run_1", role: "assistant", parts: [{ type: "text", text: "Prices range from $0 to " }, { type: "text", text: "$200 per seat.\n\nMore detail." }] },
     ]), "run_1");
     expect(view.resultText).toBe("Prices range from $0 to $200 per seat.\n\nMore detail.");
-    expect(view.resultSummary).toBe("Prices range from $0 to $200 per seat.");
+    expect(view.resultSummary).toBe("Prices range from $0 to $200 per seat.\nMore detail.");
   });
 
   it("strips markdown from the summary line", () => {
@@ -430,8 +430,22 @@ describe("deriveOnboardingRunView", () => {
     expect(summary("## Lisbon in `3 days`")).toBe("Lisbon in 3 days");
     expect(summary("- See [Time Out](https://example.com/lisbon) for ~~old~~ picks")).toBe("See Time Out for old picks");
     expect(summary("> **Top pick:** Alfama")).toBe("Top pick: Alfama");
-    expect(summary("1. Belém\n2. Sintra")).toBe("Belém");
+    expect(summary("1. Belém\n2. Sintra")).toBe("Belém\nSintra");
     expect(summary("snake_case_name stays")).toBe("snake_case_name stays");
+  });
+
+  it("keeps more than the first line, then stops around 600 characters", () => {
+    const first = `${"Lisbon".repeat(30)}.`;
+    const second = `${"Alfama".repeat(30)}.`;
+    const third = `${"Belem".repeat(80)}.`;
+    const summary = deriveOnboardingRunView(source({ status: "completed" }, [
+      { runId: "run_1", role: "assistant", parts: [{ type: "text", text: `${first}\n${second}\n${third}` }] },
+    ]), "run_1").resultSummary ?? "";
+    expect(summary.startsWith(first)).toBe(true);
+    expect(summary).toContain(second);
+    expect(summary.length).toBeGreaterThan(160);
+    expect(summary.length).toBeLessThanOrEqual(600);
+    expect(summary.endsWith("…")).toBe(true);
   });
 
   it("marks the failing step red and never fails silently", () => {

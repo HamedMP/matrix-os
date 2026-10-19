@@ -18,7 +18,7 @@ function requestIdOf(state: OnboardingWidgetState): number {
 }
 
 describe("useOnboardingChatHandoff", () => {
-  it("opens the main Chat once for each run the chat accepts", () => {
+  it("stays on the widget until the result button opens that chat", () => {
     const handOff = vi.fn();
     const started = run(
       initialOnboardingWidgetState({ size: "corner", firstTaskCompleted: false }),
@@ -29,18 +29,16 @@ describe("useOnboardingChatHandoff", () => {
     const next = run(done, { type: "freeform.submitted", text: "Summarize today" });
     const nextAdmitted = run(next, { type: "run.admitted", requestId: requestIdOf(next), chatId: "chat_today", runId: "run_2" });
 
-    const { rerender } = renderHook(({ state }) => useOnboardingChatHandoff(state, handOff), { initialProps: { state: started } });
+    const { rerender, result } = renderHook(({ state }) => useOnboardingChatHandoff(state, handOff), { initialProps: { state: started } });
+    rerender({ state: admitted });
+    rerender({ state: done });
+    rerender({ state: next });
+    rerender({ state: nextAdmitted });
     expect(handOff).not.toHaveBeenCalled();
 
-    rerender({ state: admitted });
+    result.current();
     expect(handOff).toHaveBeenCalledTimes(1);
-    rerender({ state: { ...admitted } });
-    rerender({ state: done });
-    expect(handOff).toHaveBeenCalledTimes(1);
-
-    rerender({ state: next });
-    expect(handOff).toHaveBeenCalledTimes(1);
-    rerender({ state: nextAdmitted });
+    result.current();
     expect(handOff).toHaveBeenCalledTimes(2);
   });
 });
