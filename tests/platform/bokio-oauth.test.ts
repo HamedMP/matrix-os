@@ -50,13 +50,14 @@ describe("Bokio OAuth", () => {
     await expect(oauth.start("owner", "server")).rejects.toThrow();
     expect(fixture.fetcher).not.toHaveBeenCalled();
   });
-  it("creates one-use encrypted state and requests only reviewed read scopes", async () => {
+  it("creates one-use encrypted state and requests reviewed scopes only on explicit consent", async () => {
     const fixture = setup();
     const url = new URL(await fixture.oauth.start("owner", "server"));
     expect(url.origin + url.pathname).toBe("https://api.bokio.se/v1/authorize");
     expect(url.searchParams.get("client_id")).toBe(clientId);
     expect(url.searchParams.get("scope")).toContain("journal-entries:read");
-    expect(url.searchParams.get("scope")).not.toContain(":write");
+    expect(url.searchParams.get("scope")).toContain("customers:write");
+    expect(url.searchParams.get("scope")).not.toContain("journal-entries:write");
     expect(url.searchParams.get("state")).not.toContain("owner");
     expect(fixture.row().encrypted_credentials).not.toContain("access");
     expect(fixture.row().enabled).toBe(false);
@@ -247,7 +248,8 @@ describe("Bokio read broker", () => {
     expect(() => planBokioRead("list_invoices", { companyId: "other" }, tenant)).toThrow();
     expect(() => planBokioRead("list_invoices", { pageSize: 101 }, tenant)).toThrow();
     expect(() => planBokioRead("get_customer", { customerId: "../secret" }, tenant)).toThrow();
-    expect(Object.values(BOKIO_ACTIONS).every((action) => action.risk === "read")).toBe(true);
+    expect(Object.entries(BOKIO_ACTIONS).filter(([id]) => id.startsWith("list_") || id.startsWith("get_")).every(([, action]) => action.risk === "read")).toBe(true);
+    expect(() => planBokioRead("create_customer", { name: "Example", type: "company" }, tenant)).toThrow();
   });
   it("executes a selected read and denies wrong-owner or account override", async () => {
     const fixture = setup(); await connect(fixture);

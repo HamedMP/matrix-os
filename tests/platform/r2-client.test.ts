@@ -5,6 +5,7 @@ import { createR2Client } from "../../packages/platform/src/r2-client.js";
 describe("platform R2 client", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("trims object-store secrets and endpoints before creating the S3 client", async () => {
@@ -20,6 +21,45 @@ describe("platform R2 client", () => {
     expect(url.pathname).toContain("system-bundles/dev.tar.gz");
     expect(url.searchParams.get("X-Amz-Credential")).toContain("bundle-key");
     client.destroy();
+  });
+
+  it.each([false, true])("signs temporary credentials with the session token (public endpoint: %s)", async (publicEndpoint) => {
+    const client = await createR2Client({
+      endpoint: "https://storage.example.com",
+      ...(publicEndpoint ? { publicEndpoint: "https://public.example.com" } : {}),
+      accessKeyId: "temporary-key",
+      secretAccessKey: "temporary-secret",
+      bucket: "isolated-bucket",
+      forcePathStyle: true,
+      ...{ sessionToken: "  synthetic-session-token\n" },
+    });
+    try {
+      const get = new URL(await client.getPresignedGetUrl("fixture.txt"));
+      const put = new URL(await client.getPresignedPutUrl("fixture.txt", 3));
+      expect(get.searchParams.get("X-Amz-Security-Token")).toBe("synthetic-session-token");
+      expect(put.searchParams.get("X-Amz-Security-Token")).toBe("synthetic-session-token");
+      expect(get.origin).toBe(publicEndpoint ? "https://public.example.com" : "https://storage.example.com");
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("preserves permanent credentials without inheriting an ambient AWS session token", async () => {
+    vi.stubEnv("AWS_SESSION_TOKEN", "unrelated-ambient-token");
+    const client = await createR2Client({
+      endpoint: "https://storage.example.com",
+      accessKeyId: "permanent-key",
+      secretAccessKey: "permanent-secret",
+      bucket: "permanent-bucket",
+      forcePathStyle: true,
+    });
+    try {
+      const url = new URL(await client.getPresignedGetUrl("fixture.txt"));
+      expect(url.searchParams.has("X-Amz-Security-Token")).toBe(false);
+      expect(url.searchParams.get("X-Amz-Credential")).toContain("permanent-key/");
+    } finally {
+      client.destroy();
+    }
   });
 
   it("rejects blank credentials after trimming", async () => {

@@ -75,3 +75,52 @@ it('binds an empty fork association to the live PR source, and rejects changed s
  pull.head.sha='a'.repeat(40);await expect(verifyMetadataCoverage(f.github,repo,fork,21)).rejects.toThrow();
  pull.head.sha=head;pull.head.repo.full_name='attacker/matrix-os';await expect(verifyMetadataCoverage(f.github,repo,fork,21)).rejects.toThrow();
 });
+
+function isolatedMetadataFixture(baseRef:string){
+ const f=fixture(),pin='a'.repeat(40),execution='c'.repeat(40),tree='d'.repeat(40);
+ f.pull.base.ref=baseRef;f.run.pull_requests[0]!.base.ref=baseRef;
+ const isolated={...f.run,id:22,event:'workflow_dispatch',head_sha:execution,head_branch:`ci-execution/${pin}`,
+  head_repository:{...f.run.head_repository},pull_requests:[],display_title:`CI refresh-v1 pr=2575 head=${head} base=${base} merge=${source}`};
+ const isolatedJob={...f.job,id:31,run_id:22,head_sha:execution,check_run_url:'https://api.github.com/repos/HamedMP/matrix-os/check-runs/34'};
+ const isolatedCheck={...f.check,id:34,head_sha:execution,details_url:'https://github.com/HamedMP/matrix-os/actions/runs/22/job/31'};
+ const commits:Record<string,{sha:string;tree:{sha:string};parents:{sha:string}[]}>= {
+  [pin]:{sha:pin,tree:{sha:tree},parents:[]},[execution]:{sha:execution,tree:{sha:tree},parents:[{sha:pin}]},
+ };
+ const github={rest:{...f.github.rest,
+  git:{getCommit:vi.fn(async({commit_sha}:{commit_sha:string})=>({data:commits[commit_sha]}))},
+  repos:{...f.github.rest.repos,
+   getBranch:vi.fn(async({branch}:{branch:string})=>({data:{name:branch,commit:{sha:branch==='main'?base:execution}}})),
+   compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'ahead',merge_base_commit:{sha:pin}}})),
+  },
+  actions:{...f.github.rest.actions,
+   // Respect the real API branch/event filters: an omitted isolated stream must
+   // not accidentally see its rows through an unrealistically broad fixture.
+   listWorkflowRuns:vi.fn(async({event,branch}:{event:string;branch:string})=>({data:{workflow_runs:
+    event==='pull_request'&&branch==='child'?[f.run]:event==='workflow_dispatch'&&branch===isolated.head_branch?[isolated]:[]}})),
+   listJobsForWorkflowRun:vi.fn(async({run_id}:{run_id:number})=>({data:{total_count:1,jobs:[run_id===22?isolatedJob:f.job]}})),
+  },
+  checks:{get:vi.fn(async({check_run_id}:{check_run_id:number})=>({data:check_run_id===34?isolatedCheck:f.check}))},
+ }};
+ return{github,isolated,commits,pin,execution,snapshot:{...snapshot,baseRef,executionControllerSha:pin}};
+}
+
+describe.each(['main','stack/parent'])('isolated metadata coverage for %s',baseRef=>{
+ it('uses the newest authenticated isolated coverage and its actual execution aggregate',async()=>{
+  const f=isolatedMetadataFixture(baseRef);
+  expect(await verifyMetadataCoverage(f.github,repo,f.snapshot,23)).toEqual({runId:22,runAttempt:1,sourceSha:source,baseSha:base});
+  expect(f.github.rest.actions.listWorkflowRuns).toHaveBeenCalledWith(expect.objectContaining({event:'workflow_dispatch',branch:`ci-execution/${f.pin}`}));
+  expect(f.github.rest.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({commit_sha:f.execution}));
+  expect(f.github.rest.checks.get).toHaveBeenCalledWith(expect.objectContaining({check_run_id:34}));
+ });
+ it.each(['failure','in_progress'])('does not reuse older green PR coverage when newer isolated coverage is %s',async state=>{
+  const f=isolatedMetadataFixture(baseRef);
+  if(state==='failure')f.isolated.conclusion='failure';else f.isolated.status='in_progress';
+  await expect(verifyMetadataCoverage(f.github,repo,f.snapshot,23)).rejects.toThrow('No successful exact-source CI coverage');
+  expect(f.github.rest.actions.listJobsForWorkflowRun).not.toHaveBeenCalled();
+ });
+ it('rejects a changed isolated execution tree before reusing any green result',async()=>{
+  const f=isolatedMetadataFixture(baseRef);f.commits[f.execution]!.tree.sha='e'.repeat(40);
+  await expect(verifyMetadataCoverage(f.github,repo,f.snapshot,23)).rejects.toThrow('Execution tree differs');
+  expect(f.github.rest.actions.listJobsForWorkflowRun).not.toHaveBeenCalled();
+ });
+});

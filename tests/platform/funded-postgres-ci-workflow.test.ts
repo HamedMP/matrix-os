@@ -91,10 +91,10 @@ describe("funded PostgreSQL CI coverage", () => {
     const result = executeSettlementStep(undefined);
     expect(result, result.diagnostics).toMatchObject({ status: 1, args: [] });
   });
-  it("prepares funded test prerequisites once before all four lanes and stops at a missing database URL", () => {
+  it("prepares funded test prerequisites once before all five lanes and stops at a missing database URL", () => {
     const selected = job.steps.filter(step => step.name === "Build test prerequisites once"
       || step.run?.includes("pnpm exec vitest run"));
-    expect(selected).toHaveLength(5);
+    expect(selected).toHaveLength(6);
     const directory = mkdtempSync(join(tmpdir(), "matrix-funded-pg-order-"));
     try {
       const log = join(directory, "commands");
@@ -118,13 +118,14 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
       };
       const valid = execute(job.env.MATRIX_TEST_POSTGRES_URL);
       expect(valid.status, valid.stderr).toBe(0);
-      expect(valid.commands).toHaveLength(5);
+      expect(valid.commands).toHaveLength(6);
       expect(valid.commands[0]).toBe("bun run test:prepare");
       expect(valid.commands.slice(1).every(command => command.startsWith("pnpm exec vitest run "))).toBe(true);
       expect(valid.commands[1]).toContain("tests/platform/ai-funded-model-probes-postgres.test.ts");
-      expect(valid.commands[2]).toContain("tests/platform/account-deletion-");
-      expect(valid.commands[3]).toContain("tests/gateway/bots/funded-inference-timeout.test.ts");
-      expect(valid.commands[4]).toContain("tests/platform/preview-drive-postgres-concurrency.test.ts");
+      expect(valid.commands[2]).toContain("tests/platform/customer-funded-paid-recovery-postgres.test.ts");
+      expect(valid.commands[3]).toContain("tests/platform/account-deletion-");
+      expect(valid.commands[4]).toContain("tests/gateway/bots/funded-inference-timeout.test.ts");
+      expect(valid.commands[5]).toContain("tests/platform/preview-drive-postgres-concurrency.test.ts");
       const absent = execute(undefined);
       expect(absent.status).toBe(1);
       expect(absent.stderr).toContain("Disposable PostgreSQL test URL required");
@@ -133,7 +134,7 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
   });
   it("keeps the existing scoped service credentials, trigger and ten-minute limit", () => {
     expect(job.needs).toBe("changes");
-    expect(job.if).toBe("needs.changes.outputs.should_run == 'true'");
+    expect(job.if).toBe("always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')");
     expect(job["timeout-minutes"]).toBe(10);
     expect(job.services.postgres.image).toBe("mirror.gcr.io/library/postgres:16");
     expect(job.services.postgres.env).toEqual({ POSTGRES_USER: "matrix_test",

@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type { Kysely } from "kysely";
 import { afterEach, expect, it, vi } from "vitest";
 import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
-import type { InstantiateBotResponse, BotRunSpec, IsolatedChatEnvelope } from "@matrix-os/contracts";
+import type { InstantiateBotResponse, BotRunSpec, IsolatedChatEnvelope, CanonicalChatMessagePart } from "@matrix-os/contracts";
 import { createScopeRuntimeBrokerServer } from "../../../packages/gateway/src/collaboration/scope-runtime-broker.js";
 import { startInferenceBridge, inferenceActionForPath } from "../../../packages/scope-runtime/src/inference-bridge.js";
 import { createBotModelRouteResolver } from "../../../packages/gateway/src/bots/codex-route.js";
@@ -41,7 +41,10 @@ import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selecti
 import { OWNER, OTHER_OWNER, createBotStateDatabase, createRealBotStateDatabase } from "./bot-state-support.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
-afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+afterEach(async () => {
+  try { for (const close of cleanup.splice(0).reverse()) await close(); }
+  finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); }
+});
 
 interface InferenceContext {
   db: Awaited<ReturnType<typeof createBotStateDatabase>>["db"];
@@ -52,7 +55,7 @@ interface InferenceContext {
   setClock(date: Date): void;
 }
 
-async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean; isolated?: boolean; realPostgres?: boolean; unixSdk?: boolean; realResolver?: boolean; duplicateFrames?: boolean; reusePhase?: boolean; beforeInference?(context: InferenceContext): Promise<void>; finalFailure?: "capacity" | "unknown" | "abort" } = {}) {
+async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean; isolated?: boolean; visionRoute?: boolean; realPostgres?: boolean; unixSdk?: boolean; realResolver?: boolean; duplicateFrames?: boolean; reusePhase?: boolean; beforeInference?(context: InferenceContext): Promise<void>; finalFailure?: "capacity" | "unknown" | "abort" } = {}) {
   const { db, destroy } = await (options.realPostgres ? createRealBotStateDatabase() : createBotStateDatabase()); cleanup.push(destroy);
   const home = await mkdtemp(join(tmpdir(), "matrix-bot-soul-")); cleanup.push(() => rm(home, { recursive: true, force: true }));
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
@@ -78,7 +81,7 @@ async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean
     return await response.json() as InstantiateBotResponse;
   };
   const created = await create();
-  const faux = fauxProvider({ models: [{ id: "claude-sonnet-5", input: ["text"], contextWindow: 128000, maxTokens: 8192 }] });
+  const faux = fauxProvider({ models: [{ id: "claude-sonnet-5", input: options.visionRoute ? ["text", "image"] : ["text"], contextWindow: 128000, maxTokens: 8192 }] });
   faux.setResponses(Array.from({ length: 10 }, (_, index) => fauxAssistantMessage(fauxText(`SYNTHETIC_REPLY_${index}`))));
   const registry = new BotRuntimeRegistry();
   const sessions = createBotSessionsRepository(db);
@@ -155,8 +158,8 @@ async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean
     consume: (...args: Parameters<IsolatedChatAuthority["consume"]>) => authority!.consume(...args),
     selectCanonical: (candidate: never) => (authority as unknown as { selectCanonical(candidate: unknown): unknown }).selectCanonical(candidate),
   } : undefined;
-  const resolved = { route: { api: "anthropic-messages" as const, modelId: "claude-sonnet-5", input: ["text" as const], contextWindow: 128000, maxOutputTokens: 8192 }, accessSourceId: "matrix_included" as const };
-  const orchestrator = createBotTaskOrchestrator({ bindings: createBotBindingsRepository(db), transact: createBotStateTransactions(repository),
+  const resolved = { route: { api: "anthropic-messages" as const, modelId: "claude-sonnet-5", input: options.visionRoute ? ["text" as const, "image" as const] : ["text" as const], contextWindow: 128000, maxOutputTokens: 8192 }, accessSourceId: "matrix_included" as const };
+  const orchestrator = createBotTaskOrchestrator({ homePath: home, expectedOwnerId: OWNER, bindings: createBotBindingsRepository(db), transact: createBotStateTransactions(repository),
     ...(isolated ? { isolatedChat: isolated } : {}),
     agents, recipes, resolveRoute: options.unixSdk || options.realResolver ? createBotModelRouteResolver({ providers: { getSnapshot: async snapshotOptions => {
       expect(snapshotOptions?.admissionScope).toBe("managed_matrix");
@@ -190,7 +193,7 @@ async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean
   const catalog = withBotProviderInstance({ getCatalog: async () => ({ revision: "matrix-bot-soul", drivers: [], instances: [] }) });
   const canonical = new CanonicalChatOrchestrator({ repository, catalog, adapters: new CanonicalChatProviderRegistry([adapter]) });
   cleanup.push(async () => { release(); await canonical.drain(); await canonical.close(); });
-  const turn = async (text: string, chatId = created.chatId) => {
+  const turn = async (text: string, chatId = created.chatId, parts?: CanonicalChatMessagePart[]) => {
     if (options.isolated) {
       const at = Date.now();
       phaseConfig = options.reusePhase && phase > 0 ? phaseConfig : {
@@ -204,7 +207,7 @@ async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean
     }
     const detail = await repository.get(owner, chatId);
     await canonical.admitTurn({ userId: OWNER, source: "jwt" }, owner, chatId, { clientRequestId: `req_${randomUUID()}`, baseRevision: detail!.chat.revision,
-      parts: [{ type: "text", text }], selection: MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" });
+      parts: parts ?? [{ type: "text", text }], selection: MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" });
   };
   const wait = async (chatId = created.chatId) => vi.waitFor(async () => expect((await repository.get(owner, chatId))?.activeRun).toBeUndefined(), { timeout: 5000 });
   return { db, home, agents, recipes, created, create, repository, orchestrator, registry, runBot, specs, agentPrompts, save, turn, wait, release, sessions, fetchImpl, inferenceBodies, brokerReplies, resolveCredentials };
@@ -386,5 +389,22 @@ it.runIf(Boolean(process.env.MATRIX_TEST_POSTGRES_URL))("never rebinds a spent c
   await f.turn("How will you help me?"); await f.wait();
   expect(f.fetchImpl).toHaveBeenCalledTimes(1);
   expect(f.runBot).toHaveBeenCalledTimes(1);
+  expect(f.registry.size).toBe(0);
+});
+
+// A merged attachment-capable catalog must not broaden the fixed text-only phase.
+it("refuses image inputs before native dispatch in the canonical isolated phase", async () => {
+  const f = await fixture({ isolated: true, visionRoute: true });
+  await mkdir(join(f.home, "temporary/desktop-chat"), { recursive: true });
+  const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64");
+  await writeFile(join(f.home, "temporary/desktop-chat/photo.png"), image);
+  await f.turn("Inspect this image", f.created.chatId, [
+    { type: "text", text: "Inspect this image" },
+    { type: "attachment_reference", attachmentId: "att_phase_image", label: "photo.png", kind: "image", mimeType: "image/png", sizeBytes: image.length, ownerReference: "temporary/desktop-chat/photo.png" },
+  ]);
+  await f.wait();
+  expect(f.runBot).not.toHaveBeenCalled();
+  expect(f.specs).toHaveLength(0);
+  expect(f.resolveCredentials).not.toHaveBeenCalled();
   expect(f.registry.size).toBe(0);
 });

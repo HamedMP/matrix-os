@@ -26,13 +26,15 @@ export class AppError extends Error {
   // "invalid_session_request", "not_found"). Never a raw provider/DB/path
   // string — only short slugs the gateway emits as { error: { code } }.
   readonly detail?: string;
+  readonly httpStatus?: number;
 
-  constructor(category: AppErrorCategory, options?: { cause?: unknown; detail?: string }) {
+  constructor(category: AppErrorCategory, options?: { cause?: unknown; detail?: string; httpStatus?: number }) {
     // The message is always the generic copy — the cause stays internal.
     super(CATEGORY_MESSAGES[category], options);
     this.name = "AppError";
     this.category = category;
     if (options?.detail) this.detail = options.detail;
+    if (options?.httpStatus !== undefined) this.httpStatus = options.httpStatus;
   }
 }
 

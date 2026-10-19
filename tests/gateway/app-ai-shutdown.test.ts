@@ -18,6 +18,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   const logBestEffortFailure = vi.fn();
   const dependencies = {
     appAiRuntime, closeAppAiCapabilities, logBestEffortFailure,
+    managedFeatureRestart: service("managed feature restart"),
     jevInboxRuntime: null, chatDriveContext: service("drive"), matrixMcpCapabilities: service("mcp"),
     workspaceStartupRecoveryController: service("recovery"), terminalPasteAssetCleanup: service("paste"),
     chatIdleReaper: null, chatAttachmentCleanup: service("attachments"),
@@ -66,6 +67,7 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
     "app database.destroy", "platform database.destroy", "telemetry.shutdown", "HTTP.close",
   ]));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
+  expect(shutdown.calls[0]).toBe("managed feature restart.close");
 });
 
 it("continues shutdown while retaining the real Pi writer fence after forced worker termination", async () => {
@@ -103,6 +105,7 @@ export class ModelRuntime {
     expect(shutdown.logBestEffortFailure).toHaveBeenCalledWith("App AI adapter shutdown failed", expect.any(Error));
     expect(shutdown.calls).toContain("platform database.destroy");
     expect(shutdown.calls.at(-1)).toBe("HTTP.close");
+    expect(shutdown.calls[0]).toBe("managed feature restart.close");
     const fence = join(dirname(home), ".matrix-private", basename(home), "native-writers/pi.json");
     expect(await readFile(fence, "utf8")).toBeTruthy();
     await expect(createGenericNativeWriter(home).acquire("pi")).rejects.toThrow();

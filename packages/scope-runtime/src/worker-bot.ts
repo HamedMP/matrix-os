@@ -237,6 +237,7 @@ export async function runScopeRuntimeBotWorker(options: {
     runtimeHandle: invocation.runtimeHandle,
     executionGeneration: invocation.executionGeneration,
     actionFor: botInferenceAction,
+    botImages: true,
     brokerTimeoutMs: BOT_INFERENCE_TIMEOUT_MS,
   });
   let commands: Awaited<ReturnType<typeof startBotCommandServer>> | undefined;

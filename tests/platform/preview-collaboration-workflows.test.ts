@@ -42,7 +42,7 @@ describe("preview VPS collaboration owner", () => {
       const output = join(directory, "output");
       writeFileSync(output, "");
       executable(directory, "gh", `printf '%s' "$PULL_REQUEST"\n`);
-      const result = spawnSync("bash", ["-euc", decide], { encoding: "utf8", timeout: 5_000, env: {
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-euc", decide], { encoding: "utf8", timeout: 5_000, env: {
         PATH: `${directory}:${process.env.PATH}`, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: "HamedMP/matrix-os",
         GITHUB_REF: "refs/heads/main", PR_NUMBER: "1990", EVENT_HEAD_SHA: "a".repeat(40), EVENT_HEAD_REF: "feature",
         EVENT_HEAD_REPO: "HamedMP/matrix-os", EVENT_AUTHOR: "octo-dev", HAS_LABEL: "false", HAS_BUNDLE_LABEL: "false",
@@ -119,7 +119,7 @@ if [ -n "$out" ]; then printf '%s' "$body" > "$out"; else printf '%s' "$body"; f
 if [ -n "$write" ]; then printf '202'; fi
 `);
       const script = provision.replaceAll("/tmp/provision.json", join(directory, "provision.json"));
-      const result = spawnSync("bash", ["-euc", script], { encoding: "utf8", timeout: 10_000, env: {
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-euc", script], { encoding: "utf8", timeout: 10_000, env: {
         PATH: `${directory}:${process.env.PATH}`, PLATFORM_PUBLIC_URL: "https://platform.example.test", PLATFORM_SECRET: "synthetic",
         HANDLE, VERSION: "v2026.09.28-pr1990-1-1-aaaaaaa", PREVIEW_CLERK_USER_ID: PREVIEW_OWNER,
         PREVIEW_CLERK_ACCESS_USER_IDS: JSON.stringify(["user_collaboratorone"]), PREVIEW_COLLABORATION: "false",
@@ -176,7 +176,7 @@ describe("preview platform collaboration home connection", () => {
     expect(jobs["connect-share-preview"]!.if)
       .toBe("github.event_name == 'workflow_dispatch' && inputs.connect_share_preview && !inputs.connect_collaboration_preview");
     const validation = stepRun(jobs.preview!, "Check preview configuration");
-    const refused = spawnSync("bash", ["-euc", validation], { encoding: "utf8", timeout: 5_000, env: {
+    const refused = spawnSync("bash", ["--noprofile", "--norc", "-euc", validation], { encoding: "utf8", timeout: 5_000, env: {
       PATH: process.env.PATH, GITHUB_OUTPUT: "/dev/null", CONNECT_COLLABORATION_PREVIEW: "true",
       CLOUD_RUN_PREVIEW_SERVICE: "matrix-platform-preview", CLOUD_RUN_SERVICE_ACCOUNT: "runner",
     } });
@@ -205,7 +205,7 @@ describe("preview platform collaboration home connection", () => {
     const directory = mkdtempSync(join(tmpdir(), "preview-collaboration-check-"));
     try {
       executable(directory, "gh", `printf '%s' "$PULL_REQUEST"\n`);
-      return spawnSync("bash", ["-euc", check], { encoding: "utf8", timeout: 5_000, env: {
+      return spawnSync("bash", ["--noprofile", "--norc", "-euc", check], { encoding: "utf8", timeout: 5_000, env: {
         PATH: `${directory}:${process.env.PATH}`, GITHUB_REPOSITORY: "HamedMP/matrix-os", PR_NUMBER: "1990",
         GCP_PROJECT_ID: "project", GCP_REGION: "region", CLOUD_RUN_PREVIEW_SERVICE: "matrix-platform-preview",
         ARTIFACT_REPOSITORY: "repository", PREVIEW_CLERK_USER_ID: PREVIEW_OWNER, PREVIEW_COLLABORATION_OWNER_USER_ID: OWNER,
@@ -306,7 +306,7 @@ printf '%s\\n' "$op" >> "$LOG"
 if [ "$ok" = true ]; then code=0; else code=1; fi
 jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:false,truncated:false,signal:null,stdout:$stdout}' > "$out"
 `);
-      const result = spawnSync("bash", ["-euc", connectStep], { cwd: directory, encoding: "utf8", timeout: 20_000, env: {
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-euc", connectStep], { cwd: directory, encoding: "utf8", timeout: 20_000, env: {
         PATH: `${bin}:${process.env.PATH}`, LOG: log, GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1", GITHUB_STEP_SUMMARY: "/dev/null",
         PR_NUMBER: "1990", PREVIEW_VPS_CONTROL_URL: "https://control.example.test", GCP_PROJECT_ID: "project",
         PREVIEW_COLLABORATION_OWNER_USER_ID: OWNER, CLERK_SECRET_KEY: "sk_synthetic",
@@ -341,7 +341,7 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
       const script = join(directory, "echo.py");
       // Longer than one chunk, so the loader must join several arguments.
       writeFileSync(script, `${"# padding\n".repeat(900)}import json, sys\nprint(json.dumps({"argv": sys.argv[1:], "name": __name__, "source": len(LOADED_SOURCE)}))\n`);
-      const built = spawnSync("bash", ["-euc", `${connectStep.slice(start, end)}\nscript_command root "$SCRIPT" 5000 first "second arg"`], {
+      const built = spawnSync("bash", ["--noprofile", "--norc", "-euc", `${connectStep.slice(start, end)}\nscript_command root "$SCRIPT" 5000 first "second arg"`], {
         encoding: "utf8", env: { PATH: process.env.PATH, SCRIPT: script },
       });
       expect(built.status, built.stderr).toBe(0);

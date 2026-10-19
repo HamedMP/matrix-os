@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   activateSpeechFleet,
+  activateManagedFeaturesFleet,
   selectTargetMachine,
 } from '../../scripts/ci/targeted-fleet-maintenance.mjs';
 
@@ -19,6 +20,11 @@ function fleetMachine(overrides: Record<string, unknown> = {}) {
 }
 
 describe('targeted fleet maintenance', () => {
+  it('verifies managed features independently of speech-only rollout flags', async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ activated: 1, failed: 0, complete: true, nextCursor: null }));
+    expect(await activateManagedFeaturesFleet({ platformUrl: 'https://app.matrix-os.com', platformSecret: 'secret', fetchImpl })).toEqual({ activated: 1 });
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://app.matrix-os.com/vps/managed-features/activate');
+  });
   it('selects exactly one complete, authorized customer fixture', () => {
     expect(selectTargetMachine({
       truncated: false,
