@@ -117,4 +117,10 @@ screens and actions look, move and feel.
   React Native's Modal. Moving them into the shared native sheet needs their
   list and keyboard layout reworked inside it, and they only appear in
   shared sessions; it is left for its own change, checked on a shared session.
+- Other screens with a text field (sign-in, shared chats, the terminal
+  session, the text-entry dialog and the discussion sheet) still use React
+  Native's keyboard-avoiding view with no Android behaviour, so on Android
+  the keyboard can cover what sits at their bottom edge. The terminal
+  session's key row also sits under Android's navigation bar, on `main` too.
+  Both are left for their own change.
 - Public docs: none. No user-facing capability or setting changes.
