@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode, Ref } from "react";
 import { useEffect, useState } from "react";
 import { RuntimeSummarySchema, type RuntimeSummary } from "@matrix-os/contracts";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -36,20 +36,29 @@ export function DesktopTopBarActions({ onSearch, inbox, help, computer, update, 
   </nav>;
 }
 
-export function DesktopHelpMenu({ gettingStarted, incomplete, onSupport, discordIcon, overlay }: {
-  gettingStarted: ReactNode; incomplete: boolean; onSupport(): void; discordIcon: ReactNode; overlay?: MenuOverlay;
+export function DesktopHelpMenu({ gettingStarted, gettingStartedOpen = false, onGettingStartedClose, triggerRef, incomplete, onSupport, discordIcon, overlay }: {
+  gettingStarted: ReactNode | ((closeHelp: () => void) => ReactNode);
+  gettingStartedOpen?: boolean; onGettingStartedClose?(): void; triggerRef?: Ref<HTMLButtonElement>;
+  incomplete: boolean; onSupport(): void; discordIcon: ReactNode; overlay?: MenuOverlay;
 }) {
   const helpScope = useHelpPopoverScope(undefined);
   const [open, setOpen] = useState(false);
-  useMenuOverlay(open, overlay);
-  return <Popover.Root {...helpScope} open={open} onOpenChange={setOpen}>
-    <Popover.Trigger {...helpScope} asChild><button type="button" aria-label="Help" className={actionClass}>
+  const helpOpen = open && !gettingStartedOpen;
+  useMenuOverlay(helpOpen, overlay);
+  const trigger = <Popover.Trigger {...helpScope} asChild><button ref={triggerRef} type="button" aria-label="Help" className={actionClass}>
       <CircleHelp size={14} aria-hidden="true" />
       {incomplete ? <span aria-hidden="true" className="absolute right-1 top-1 size-1.5 rounded-full" style={{ background: "var(--accent, var(--primary))" }} /> : null}
-    </button></Popover.Trigger>
-    <Popover.Portal {...helpScope} forceMount><Popover.Content {...helpScope} hidden={!open} aria-label="Help" side="bottom" align="end" sideOffset={6} collisionPadding={8}
+    </button></Popover.Trigger>;
+  return <Popover.Root {...helpScope} open={helpOpen} onOpenChange={(nextOpen) => {
+    if (nextOpen) onGettingStartedClose?.();
+    setOpen(nextOpen);
+  }}>
+    {/* Keep the checklist anchored to the title bar when its Help row is hidden. */}
+    {triggerRef ? <Popover.Anchor asChild>{trigger}</Popover.Anchor> : trigger}
+    <Popover.Portal {...helpScope} forceMount><Popover.Content {...helpScope} hidden={!helpOpen} aria-label="Help" side="bottom" align="end" sideOffset={6} collisionPadding={8}
+      onCloseAutoFocus={(event) => { if (gettingStartedOpen) event.preventDefault(); }}
       forceMount className="data-[state=closed]:hidden no-drag w-[240px] rounded-xl border p-1.5 shadow-lg outline-none" style={{ ...colors, zIndex: "var(--desktop-menu-z, 11000)" }}>
-      {gettingStarted}
+      {typeof gettingStarted === "function" ? gettingStarted(() => setOpen(false)) : gettingStarted}
       <div className="my-0.5 h-px" style={{ background: colors.borderColor }} />
       <button type="button" className={rowClass} onClick={() => { setOpen(false); onSupport(); }}><MessageCircle size={14} aria-hidden="true" />Support chat</button>
       <a href="https://discord.gg/WHbvTG33w" target="_blank" rel="noopener noreferrer" className={rowClass} onClick={() => setOpen(false)}>

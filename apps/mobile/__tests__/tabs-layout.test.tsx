@@ -197,20 +197,10 @@ describe("tabs layout", () => {
     expect(TAB_BAR_HIDDEN_ROUTES).toEqual({ agents: ["new", "[agentId]"] });
   });
 
-  it("is hidden on Android while the keyboard is open, and returns when it closes", () => {
-    Platform.OS = "android";
-    mockKeyboardVisible = true;
-    renderTabBar(tabState("(chats)"));
-    expect(screen.queryByRole("tab")).toBeNull();
-    cleanup();
-
-    mockKeyboardVisible = false;
-    renderTabBar(tabState("(chats)"));
-    expect(screen.getAllByRole("tab")).toHaveLength(5);
-  });
-
-  it("stays in place on iOS while the keyboard is open, where the keyboard covers it", () => {
-    Platform.OS = "ios";
+  // Neither platform shrinks the window for the keyboard (Android because the
+  // app is edge to edge), so the keyboard covers the bar where it stands.
+  it.each(["ios", "android"] as const)("stays in place on %s while the keyboard is open, where the keyboard covers it", (os) => {
+    Platform.OS = os;
     mockKeyboardVisible = true;
     renderTabBar(tabState("(chats)"));
 

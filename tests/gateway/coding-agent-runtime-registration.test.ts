@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AgentRuntimeSource } from "../../packages/gateway/src/agent-config/service.js";
 import { createChatProviderCatalogService } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createCodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
@@ -91,6 +94,8 @@ function harnessSettings(): ProviderSettingsSnapshot {
 
 describe("customer coding-agent runtime registration", () => {
   it("carries the VPS env registration through catalog selection and a structured OpenCode run", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-runtime-registration-"));
+    onTestFinished(() => rm(homePath, { recursive: true, force: true }));
     const configured = resolveWorkspaceProviderRuntime({
       MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS: "claude,codex,pi,opencode",
       MATRIX_NODE_PREFIX: "/opt/matrix/runtime/node",
@@ -123,7 +128,7 @@ describe("customer coding-agent runtime registration", () => {
     const providers = createWorkspaceCodingAgentProviderSet({
       agents: configured.agents,
       runtime: { startSession: vi.fn(), stopSession: vi.fn() },
-      homePath: "/home/matrix/home",
+      homePath,
       pi: {
         resolveCredentialLaunch: credentialLaunch,
         runCommand: async () => ({ stdout: "0.81.0", stderr: "" }),

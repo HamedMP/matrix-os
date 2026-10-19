@@ -48,4 +48,16 @@ describe("contracts native Node runtime", () => {
     `], { cwd: process.cwd(), encoding: "utf8", timeout: 10_000, env: { ...process.env, NODE_OPTIONS: "" } });
     expect(output.trim()).toBe("true false 960000");
   });
+  it("loads managed activation schemas through the public entrypoint without a TypeScript resolver", () => {
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const { FundedHostActivationIdentitySchema, FundedHostActivationRequestSchema, FundedHostActivationResponseSchema } = await import("@matrix-os/contracts");
+      const identity = { handle: "test-computer", machineId: "test_machine", ownerId: "test_owner",
+        runtimeSlot: "primary", runtimeTokenEpoch: 2 };
+      console.log(typeof FundedHostActivationRequestSchema.safeParse, typeof FundedHostActivationResponseSchema.safeParse,
+        FundedHostActivationIdentitySchema.safeParse(identity).success,
+        FundedHostActivationIdentitySchema.safeParse({ ...identity, runtimeTokenEpoch: 0 }).success);
+    `], { cwd: process.cwd(), encoding: "utf8", timeout: 10_000, env: { ...process.env, NODE_OPTIONS: "" } });
+    expect(output.trim()).toBe("function function true false");
+  });
+
 });

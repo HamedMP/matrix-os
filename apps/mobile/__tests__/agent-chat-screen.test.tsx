@@ -186,13 +186,16 @@ describe("agent chat screen", () => {
       expect(flat(screen.getByTestId("composer")).paddingBottom).toBe(8);
     });
 
-    it("gives the space up on Android while the keyboard is open, where the window itself shrinks", () => {
+    it("makes the same room on Android, which draws the app under the keyboard too", () => {
       Platform.OS = "android";
       mockKeyboardVisible = true;
       renderScreen();
 
-      expect(screen.UNSAFE_getByType(KeyboardAvoidingView).props.behavior).toBeUndefined();
-      expect(flat(screen.getByTestId("agent-chat-bottom-inset")).height).toBe(0);
+      expect(screen.UNSAFE_getByType(KeyboardAvoidingView).props).toMatchObject({
+        behavior: "padding",
+        keyboardVerticalOffset: -34,
+      });
+      expect(flat(screen.getByTestId("agent-chat-bottom-inset")).height).toBe(34);
       expect(flat(screen.getByTestId("composer")).paddingBottom).toBe(8);
     });
 

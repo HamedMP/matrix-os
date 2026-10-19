@@ -84,6 +84,14 @@ describe("ItemRow", () => {
     });
   });
 
+  it("lets the text shrink to the row, so a long title ends in an ellipsis and the time stays in view", () => {
+    // Hosted in the iOS chat menu, a text column that could only grow kept
+    // its full title's width and pushed the time off the side panel.
+    render(<ItemRow testID="row" title={"Improve the recruitment app ".repeat(4)} meta="11h" />);
+
+    expect(flat(screen.getByTestId("row-text"))).toMatchObject({ flex: 1, flexShrink: 1, minWidth: 0 });
+  });
+
   it("renders a trailing node after the text", () => {
     render(<ItemRow testID="row" title="Portfolio" trailing={<View testID="chevron" />} />);
 

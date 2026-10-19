@@ -20,7 +20,7 @@ export const MatrixAnthropicConnectionSchema = z.object({
   executionKind: z.literal("direct_pi"), billingKind: z.literal("api_key"),
   revision, enabled: z.boolean(), credentialGeneration: generation, sourceCredentialGeneration: generation,
   state: z.enum(["unsupported", "read_only", "disconnected", "auth_required", "refresh_required", "ready", "unavailable"]),
-  models: z.array(z.object({ id: ref, displayName: z.string().min(1).max(120).regex(/^[^\u0000-\u001f\u007f]+$/) }).strict()).max(256),
+  models: z.array(z.object({ id: ref, displayName: z.string().min(1).max(120).regex(/^[^\u0000-\u001f\u007f]+$/), input: z.array(z.enum(["text", "image"])).min(1).max(2).refine(input => input.includes("text") && new Set(input).size === input.length).optional() }).strict()).max(256),
   actions: z.array(z.enum(["connect", "refresh", "disconnect"])).max(3),
   checkedAt: z.iso.datetime().nullable(), staleAfter: z.iso.datetime().nullable(),
   supports: z.object({ rootChat: z.boolean(), recipeBots: z.boolean() }).strict(),

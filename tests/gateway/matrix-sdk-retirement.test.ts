@@ -94,11 +94,13 @@ describe("Matrix AI SDK retirement", () => {
     expect(spawnFn).not.toHaveBeenCalled();
     expect(getCredential).not.toHaveBeenCalled();
     writeFileSync(join(homePath, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "connected-owner-key" } }));
-    await expect(resolveClaudeCredentialLaunch()).resolves.toMatchObject({ env: { ANTHROPIC_API_KEY: "connected-owner-key" } });
+    await expect(resolveClaudeCredentialLaunch()).rejects.toThrow();
+    await expect(buildKernelCredentialLaunch(homePath, {}, "owner_anthropic_key", undefined,
+      { requestClass: "interactive" })).resolves.toMatchObject({ env: { ANTHROPIC_API_KEY: "connected-owner-key" } });
     expect(getCredential).not.toHaveBeenCalled();
   });
 
-  it.each(["key", "profile"] as const)("keeps production native Claude %s execution owner-scoped with ambient auth present", async (kind) => {
+  it.each(["key", "profile"] as const)("admits only subscription profiles from native Claude %s credentials with ambient auth present", async (kind) => {
     vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "ambient-token");
     vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "ambient-oauth-token");
     vi.stubEnv("ANTHROPIC_CUSTOM_HEADERS", "x-matrix-funded-claim-key: old-run");
@@ -123,6 +125,13 @@ describe("Matrix AI SDK retirement", () => {
       return child;
     });
     const adapter = createClaudeChatProviderAdapter({ homePath, spawnFn, resolveCredentialLaunch: resolveClaudeCredentialLaunch });
+    if (kind === "key") {
+      await expect(adapter.start({ ...input(), selection: { instanceId: "claude_code_default", model: "claude-sonnet-5" } })
+        [Symbol.asyncIterator]().next()).rejects.toThrow();
+      expect(spawnFn).not.toHaveBeenCalled();
+      expect(getCredential).not.toHaveBeenCalled();
+      return;
+    }
     const events = [];
     for await (const event of adapter.start({ ...input(), selection: { instanceId: "claude_code_default", model: "claude-sonnet-5" } })) events.push(event);
     const env = spawnFn.mock.calls[0]?.[2]?.env;
@@ -130,8 +139,7 @@ describe("Matrix AI SDK retirement", () => {
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
     expect(env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
     expect(env).not.toHaveProperty("ANTHROPIC_CUSTOM_HEADERS");
-    if (kind === "key") expect(env?.ANTHROPIC_API_KEY).toBe("owner-key");
-    else expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
     expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
     expect(getCredential).not.toHaveBeenCalled();
   });

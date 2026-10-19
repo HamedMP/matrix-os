@@ -1,4 +1,4 @@
-import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
+import { KeyboardAvoidingView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
@@ -52,7 +52,7 @@ export function ProjectScreen({ state, project, chats, composer, onBack, onOpenO
     <KeyboardAvoidingView
       testID="project-screen"
       style={[styles.screen, { paddingTop: insets.top }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior="padding"
     >
       {shown ? (
         <>

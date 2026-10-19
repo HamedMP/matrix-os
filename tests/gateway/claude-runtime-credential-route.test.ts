@@ -8,6 +8,7 @@ import { AiProviderService } from "../../packages/gateway/src/ai-providers/servi
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { createGatewayChatProviderCatalog } from "../../packages/gateway/src/chat/runtime-provider-catalog.js";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
+import { buildKernelCredentialLaunch } from "../../packages/gateway/src/kernel-credentials.js";
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
@@ -92,9 +93,11 @@ describe("production native Claude credential resolver", () => {
     expect(f.getCredential).not.toHaveBeenCalled();
   });
 
-  it("preserves the historical owner key route when no native source was selected", async () => {
+  it("rejects a saved API-key source for native Claude without removing the independent owner key", async () => {
     const f = await fixture("owner_anthropic_key");
-    await expect(f.compose().resolveClaudeCredentialLaunch()).resolves.toMatchObject({ env: { ANTHROPIC_API_KEY: "synthetic-owner-key" } });
+    await expect(f.compose().resolveClaudeCredentialLaunch()).rejects.toThrow("Selected AI access is unavailable");
+    await expect(buildKernelCredentialLaunch(f.homePath, {}, "owner_anthropic_key", undefined,
+      { requestClass: "interactive" })).resolves.toMatchObject({ env: { ANTHROPIC_API_KEY: "synthetic-owner-key" } });
     expect(f.getCredential).not.toHaveBeenCalled();
   });
 

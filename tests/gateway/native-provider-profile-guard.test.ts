@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { createNativeProviderProfileGuard } from '../../packages/gateway/src/ai-providers/native-provider-profile-guard.js';
+import { bindNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/native-account-metadata-binding.js';
+import { normalizeCodexNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
+vi.mock('../../packages/gateway/src/ai-providers/codex-native-terminal-command.js', () => ({ resolveCodexNativeExecutable: () => '/fixture/bin/codex' }));
 let home = ''; let root = '';
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 async function fixture() { root = await mkdtemp(join(tmpdir(), 'profile-guard-')); home = join(root, 'home'); await mkdir(join(home, 'system/ai-providers'), { recursive: true }); }
@@ -76,8 +79,9 @@ it('holds the shared native profile while historical logout waits for process co
   await fixture(); let release!: () => void; const gate = new Promise<void>(r => { release = r; });
   const guard = createNativeProviderProfileGuard({ homePath: home, registry: { get: vi.fn(), observeAgentLiveness: vi.fn() } });
   const run = vi.fn(async () => { await gate; return { stdout: '', stderr: '' }; });
-  const lifecycle = createProviderCliAccountLifecycleCoordinator({ homePath: home, enabledDriverIds: ['codex'], profileGuard: guard, run });
-  const logout = lifecycle.logout({ account: { id: 'owner_codex', providerId: 'openai', authMethod: 'api_key', accessSourceId: 'owner_openai_profile', driverId: 'codex', harness: 'codex', installState: 'installed', authenticated: true, driverAccountCount: 1 }, idempotencyKey: 'logout_gate' });
+  const metadata = bindNativeAccountMetadata(normalizeCodexNativeAccountMetadata({ account: { type: 'apiKey' } }, {}, new Date())!, async () => true, 'synthetic-key-identity', { credentialIdentityBound: true });
+  const lifecycle = createProviderCliAccountLifecycleCoordinator({ homePath: home, enabledDriverIds: ['codex'], profileGuard: guard, run, readCodexAccountUnderLease: async () => metadata });
+  const logout = lifecycle.logout({ account: { id: 'owner_codex', providerId: 'openai', authMethod: 'api_key', accessSourceId: 'owner_openai_profile', driverId: 'codex', harness: 'codex', installState: 'installed', authenticated: true, driverAccountCount: 1, nativeCodexAccount: metadata }, idempotencyKey: 'logout_gate' });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   const save = vi.fn(); const fetchFn = vi.fn(async () => new Response('{}'));
   const verify = createProviderKeyVerifier({ providerId: 'openai', profile: 'codex', profileGuard: guard, fetchFn, save });
@@ -90,4 +94,14 @@ it('discovers a receipt-evicted historical native login and permits only its can
   const guard = createNativeProviderProfileGuard({ homePath: home, registry: { get: vi.fn(), listProfileSessions: async () => [{ name, agent: 'codex' }], observeAgentLiveness: async () => 'running' } });
   await expect(guard.run('codex', { kind: 'write' }, async () => 'key')).rejects.toThrow();
   expect(await guard.run('codex', { kind: 'login', recoveryKey }, async () => 'replay')).toBe('replay');
+});
+it('denies read admission during a live native login even after handoff released its writer marker', async () => {
+  await fixture();
+  let state: 'running' | 'stopped' = 'running';
+  const guard = createNativeProviderProfileGuard({ homePath: home, registry: {
+    listProfileSessions: async () => [{ name: 'native-login', agent: 'codex' }],
+    get: async () => ({ name: 'native-login', agent: 'codex' }), observeAgentLiveness: async () => state,
+  } });
+  await expect(guard.assertReadable('codex')).rejects.toBeDefined();
+  state = 'stopped'; await expect(guard.assertReadable('codex')).resolves.toBeUndefined();
 });

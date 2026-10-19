@@ -45,6 +45,7 @@ import { StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
 import { useStartupColors } from "@/lib/use-startup-colors";
 import { OtaUpdatePrompt } from "@/components/OtaUpdatePrompt";
+import { ToastHost } from "@/components/ui/Toast";
 import {
   captureScreen,
   getAnalyticsClient,
@@ -407,6 +408,7 @@ function GatewayShell() {
               }}
             />
           </Stack>
+          <ToastHost />
           <NotificationRouter />
           <OtaUpdatePrompt />
           <AnalyticsScreenTracker />

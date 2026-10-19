@@ -49,7 +49,7 @@ export function ItemRow({
           {leading}
         </View>
       ) : null}
-      <View style={styles.text}>
+      <View testID={testID ? `${testID}-text` : undefined} style={styles.text}>
         <View testID={testID ? `${testID}-title-line` : undefined} style={styles.titleLine}>
           <Text numberOfLines={1} style={styles.title}>{title}</Text>
           {titleAccessory}
@@ -96,6 +96,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   text: {
     flex: 1,
+    // Spelled out because a row hosted in the iOS chat menu is laid out on
+    // its own, where a column that may only grow keeps its text's full width.
+    flexShrink: 1,
     minWidth: 0,
   },
   titleLine: {

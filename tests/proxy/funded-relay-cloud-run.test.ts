@@ -247,9 +247,7 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain('[ "$candidate_digest" = "$expected_digest" ]');
     expect(workflow).toContain("sleep 3");
     expect(workflow).toContain("Candidate relay metadata did not become ready.");
-    expect(workflow).toContain(
-      "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
-    );
+    expect(workflow).toMatch(/^\s+(?:-\s+)?uses: actions\/checkout@[a-f0-9]{40}(?:\s+#.*)?$/m);
     expect(workflow).toContain(
       "google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3",
     );
@@ -305,7 +303,7 @@ describe("funded relay Cloud Run service", () => {
   });
 });
 
-function runDeploymentValidation(reviewedAt: string, validThrough: string) {
+function runDeploymentValidation(reviewedAt: string, validThrough: string, extra: NodeJS.ProcessEnv = {}) {
   const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
   const block = workflow.split("- name: Validate deployment configuration")[1]!
     .split("- name: Authenticate to Google Cloud")[0]!.split("run: |\n")[1]!;
@@ -323,6 +321,7 @@ function runDeploymentValidation(reviewedAt: string, validThrough: string) {
     MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: new Date(Date.now() + dayMs).toISOString(),
     MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT: new Date(Date.now() - dayMs).toISOString(),
     MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH: new Date(Date.now() + dayMs).toISOString(),
+    ...extra,
   } });
 }
 it("rejects a format-correct nonexistent review date before Cloud Run authentication", () => {
@@ -349,4 +348,13 @@ it("accepts a current bounded deployment review without altering its attested ti
   const result = runDeploymentValidation(new Date(now - dayMs).toISOString(), new Date(now + dayMs).toISOString());
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(0);
+});
+
+it("validates the optional Workers review bundle before Cloud Run authentication",()=>{
+  const start=new Date(Date.now()-dayMs).toISOString(), end=new Date(Date.now()+dayMs).toISOString();
+  const env={MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:'cloudflare-2026-10-15-workers-eight',MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT:start,MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH:end};
+  expect(runDeploymentValidation(start,end,env).status).toBe(0);
+  for(const extra of [{...env,MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:'bad'},{...env,MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT:'2026-02-30T00:00:00.000Z'},{...env,MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH:new Date(Date.now()+40*dayMs).toISOString()},{MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:env.MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION}]){
+    const result=runDeploymentValidation(start,end,extra);expect(result.status).toBe(1);expect(result.stderr).toContain('Workers AI review');
+  }
 });

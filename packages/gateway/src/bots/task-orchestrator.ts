@@ -1,3 +1,6 @@
+import type { BotInputHistoryReader } from "./historical-input.js";
+import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
+import { prepareBotInputs, type PreparedBotInputs } from "./admitted-input.js";
 import { isolatedChatModelMatches, isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
 import { sameCustomCoordinatorSelection } from "./custom-procedure.js";
 import { recipeCoordinatorSelection } from "./coordinator-selection.js";
@@ -65,6 +68,7 @@ export interface BotChatRunState {
 export interface BotTurnResult {
   status: BotRunStatus;
   blockedReason?: BotBlockedReason;
+  inputUnavailable?: boolean;
 }
 
 export interface BotTurnHandle {
@@ -74,6 +78,9 @@ export interface BotTurnHandle {
 
 interface ActiveRun {
   ownerId: string;
+  chatId: string;
+  inputs?: PreparedBotInputs;
+  signal: AbortSignal;
   spec?: BotRunSpec;
   runtime?: { runtimeHandle: string; executionGeneration: string };
   queue: CanonicalCliEventQueue<BotTurnEvent>;
@@ -90,6 +97,8 @@ export class BotTurnError extends Error {
 }
 
 export function createBotTaskOrchestrator(deps: {
+  homePath?: string; expectedOwnerId?: string | null; inputHistory?: BotInputHistoryReader;
+  assertSource?(binding: import("./runtime-registry.js").PiRuntimeBinding, signal: AbortSignal): Promise<void>;
   bindings: Pick<BotBindingsRepository, "forChat">;
   /** Task writes and their `bot.task.updated` events commit together. */
   transact: BotStateTransactions;
@@ -182,6 +191,7 @@ export function createBotTaskOrchestrator(deps: {
    */
   async function stopRuntime(run: ActiveRun, runId: string, reason: "cancelled" | "deadline"): Promise<void> {
     run.stopping ??= reason;
+    run.inputs?.dispose();
     const runtime = run.runtime;
     if (!runtime || run.finished) return;
     const binding = deps.registry.lookupRun({ ...runtime, runId });
@@ -202,7 +212,7 @@ export function createBotTaskOrchestrator(deps: {
     run.grace.unref?.();
   }
 
-  async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
+  async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
     const owner = { type: "personal" as const, ownerId: input.ownerId };
     const botId = await directBot(input.ownerId, input.chatId);
     const agent = botId ? await deps.agents.get(owner, botId) : null;
@@ -224,6 +234,7 @@ export function createBotTaskOrchestrator(deps: {
         selection = recipeCoordinatorSelection(input.selection, agent.selection);
         deps.isolatedChat?.selectCanonical?.({ ownerId: input.ownerId, chatId: input.chatId,
           botId, recipeRef: agent.recipeRef, ...(selection ? { modelId: selection.model } : {}) });
+        if (input.parts?.some(part => part.type !== "text")) throw new Error("Isolated Bot unavailable");
         if (recipe.identitySource !== "owner_soul" || selection && (selection.instanceId !== "matrix_pi_default" || selection.options?.length)) throw new Error("Isolated Bot unavailable");
         selection = { instanceId: "matrix_pi_default", model: isolatedModel === "anthropic/claude-sonnet-5"
           ? "claude-sonnet-5" : isolatedModel };
@@ -256,7 +267,15 @@ export function createBotTaskOrchestrator(deps: {
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
     }
+    try {
+      run.inputs = await prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, history: isolatedModel ? undefined : deps.inputHistory, historyFileRead: recipe.capabilities.includes("artifact.read"), parts: input.parts ?? [], route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal: input.signal,
+        assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } });
+    } catch (error: unknown) {
+      if (!(error instanceof BotBrokerActionError)) console.warn("[bots] submitted input unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return { ...await settle(task, input.signal.aborted ? "cancelled" : "blocked", "policy_denied"), inputUnavailable: !input.signal.aborted };
+    }
     const capabilities = isolatedModel ? [] : recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
+    if (run.inputs.fileAliases.length && !capabilities.includes("artifact.read")) return settle(task, "blocked", "policy_denied");
     try { if (!isolatedModel && await deps.executorReady?.(input.ownerId, botId)) capabilities.push('agent.task'); }
     catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return settle(task, 'blocked', 'policy_denied'); }
     let memory: string[];
@@ -279,7 +298,7 @@ export function createBotTaskOrchestrator(deps: {
         systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, now: new Date(now()) }),
         capabilities,
         limits: isolatedModel ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
-        turn: { kind: "prompt", text: input.text },
+        turn: { kind: "prompt", text: run.inputs.prompt(input.text), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) },
       });
     } catch (error: unknown) {
       if (error instanceof OwnerPersonalityError) console.warn("[bots] personality unavailable:", error.code);
@@ -289,6 +308,7 @@ export function createBotTaskOrchestrator(deps: {
 
     let runtime;
     try {
+      await run.inputs.revalidate();
       runtime = await deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
         ...(isolatedModel ? { recipeRef: agent.recipeRef } : {}),
@@ -299,6 +319,8 @@ export function createBotTaskOrchestrator(deps: {
       if (!(error instanceof BotAdmissionError)) throw error;
       return settle(task, "blocked", error.code === "capacity_exceeded" ? "capacity_unavailable" : "root_unavailable");
     }
+    const binding = deps.registry.lookupRun({ runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration, runId: input.runId });
+    if (!binding) { await deps.admission.release(runtime.runtimeHandle); return settle(task, "failed"); }
     run.runtime = { runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration };
     run.queue.push({ kind: "state", state: { taskId: task.taskId, ...run.runtime } });
 
@@ -308,6 +330,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       // Cancelled while the runtime was being admitted: the run never starts.
       if (input.signal.aborted || run.stopping) return await settle(task, "cancelled");
+      run.inputs.bind(binding);
       if (isolatedModel) {
         const binding = deps.registry.lookupRun({ ...run.runtime, runId: input.runId });
         if (!binding) return await settle(task, "blocked", "policy_denied");
@@ -315,6 +338,9 @@ export function createBotTaskOrchestrator(deps: {
         if (!isolatedTurn?.target) return await settle(task, "blocked", "policy_denied");
         run.spec = BotRunSpecSchema.parse({ ...run.spec, isolatedTurn });
       }
+      await run.inputs.revalidate();
+      await deps.assertSource?.(binding, input.signal);
+      if (input.signal.aborted || run.stopping) return await settle(task, "cancelled");
       const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId } });
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
       // Past the deadline only a finished reply stands; anything else would need more time.
@@ -338,13 +364,21 @@ export function createBotTaskOrchestrator(deps: {
 
   const runSource: BotRunSource = {
     async loadRunSpec(binding) {
-      const spec = active.get(binding.runId)?.spec;
-      if (!spec) throw new BotBrokerActionError("stale_generation");
+      const run = active.get(binding.runId);
+      const spec = run?.spec;
+      if (!spec || run.stopping || run.finished || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
+        || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration) throw new BotBrokerActionError("stale_generation");
       return spec;
     },
-    async readImageChunk() {
-      // Image turns arrive with attachment support; no admitted run carries images yet.
-      throw new BotBrokerActionError("invalid_arguments");
+    async readImageChunk(binding, request) {
+      const run = active.get(binding.runId);
+      if (!run?.inputs) throw new BotBrokerActionError("stale_generation");
+      run.inputs.assertAuthorized(binding);
+      await deps.assertSource?.(binding, run.signal);
+      const chunk = await run.inputs.readImageChunk(binding, request);
+      await deps.assertSource?.(binding, run.signal);
+      run.inputs.assertAuthorized(binding);
+      return chunk;
     },
   };
 
@@ -360,13 +394,24 @@ export function createBotTaskOrchestrator(deps: {
     runSource,
     eventSink,
     directBot,
+    async readSubmittedArtifact(binding: import("./runtime-registry.js").PiRuntimeBinding, args: Extract<import("@matrix-os/contracts").BotToolRequest, { capability: "artifact.read" }>["args"]) {
+      const run = active.get(binding.runId);
+      if (!run?.inputs) throw new BotBrokerActionError("stale_generation");
+      run.inputs.assertAuthorized(binding);
+      await deps.assertSource?.(binding, run.signal);
+      const result = await run.inputs.readArtifact(binding, args);
+      await deps.assertSource?.(binding, run.signal);
+      run.inputs.assertAuthorized(binding);
+      return result;
+    },
     /** Starts one turn. Events stream until the run's outcome is known. */
-    start(input: { ownerId: string; chatId: string; runId: string; text: string; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }): BotTurnHandle {
-      if (!input.text.trim()) throw new BotTurnError("invalid_request");
+    start(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }): BotTurnHandle {
+      if (!input.text.trim() && !input.parts?.some(part => part.type === "attachment_reference")) throw new BotTurnError("invalid_request");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new BotTurnError("capacity_exceeded");
-      const run: ActiveRun = { ownerId: input.ownerId, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
+      const run: ActiveRun = { ownerId: input.ownerId, chatId: input.chatId, signal: input.signal, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
       active.set(input.runId, run);
       const result = execute(input, run).finally(() => {
+        run.inputs?.dispose();
         active.delete(input.runId);
         deps.onRunFinished?.(input.runId);
         run.queue.finish();

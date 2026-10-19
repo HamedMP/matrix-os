@@ -15,6 +15,7 @@ function execute(fixture: string, testClass?: string) {
 }
 
 describe("portable protected funded host contracts", () => {
+  it("executes absent-epoch atomicity and rollback contracts", () => execute("funded-host-epoch.test.py"));
   it("executes archive and transport cases", () => execute("funded-host-component.test.py", "ComponentTests"));
   it("rejects missing or skipped root evidence", () => execute("funded-host-root-runner.test.py"));
 });
@@ -22,6 +23,7 @@ describe("portable protected funded host contracts", () => {
 describe.skipIf(!disposableRootLinux)("protected funded host root contracts (explicit disposable Linux only)", () => {
   it("executes root lifecycle cases", () => execute("funded-host-component.test.py", "RootLifecycleTests"));
   it.each([
+    "funded-host-generated-epoch.test.py",
     "funded-host-restoration.test.py",
     "funded-host-artifact-repair.test.py",
     "funded-host-install-serialization.test.py",
