@@ -27,7 +27,7 @@ function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: Site
   const [config, setConfig] = useState<SitePublishing | null>(null);
   const [previewReady, setPreviewReady] = useState(false);
   const invalidateReview = () => { setReviewed(false); setReviewOpen(false); setPreviewReady(false); setConfig(null); };
-  const metadata = { title: title.trim(), description: description.trim(), slug: slug.trim() || null, ...(site ? { baseRevision: site.revision } : {}) };
+  const metadata = { title: title.trim(), description: description.trim(), slug: slug.trim() || null, baseRevision: site?.revision ?? 0 };
   const invalid = !metadata.title || (metadata.slug !== null && !SiteSlugSchema.safeParse(metadata.slug).success);
   const disabled = pending || loading || loadFailed;
   async function review() {

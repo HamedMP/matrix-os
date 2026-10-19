@@ -200,7 +200,7 @@ export default function EmbedHost({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {slug ? <div className="flex shrink-0 justify-end border-b px-3 py-1.5"><DesktopAppSiteButton key={slug} appSlug={slug} /></div> : null}
+      {slug && requestedActive ? <div className="flex shrink-0 justify-end border-b px-3 py-1.5"><DesktopAppSiteButton key={slug} appSlug={slug} /></div> : null}
     <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
       {snapshotDataUrl ? (
         <img
