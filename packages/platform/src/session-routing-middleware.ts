@@ -113,24 +113,8 @@ import {
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
 
-export function isPlatformRuntimeShellPath(path: string): boolean {
-  return path === '/runtime' || path === '/onboarding/computer';
-}
-
-export function shouldServePlatformRuntimeShell(input: {
-  isAppDomain: boolean;
-  path: string;
-  userId: string;
-  identitySource?: AppDomainIdentity['source'];
-}): boolean {
-  return Boolean(
-    input.isAppDomain &&
-    input.userId &&
-    isPlatformRuntimeShellPath(input.path) &&
-    input.identitySource !== 'mobile-session' &&
-    input.identitySource !== 'static-route'
-  );
-}
+import { isPlatformRuntimeShellPath, shouldServePlatformRuntimeShell, platformRuntimeShellRetryPath } from './runtime-shell-paths.js';
+export { isPlatformRuntimeShellPath, shouldServePlatformRuntimeShell } from './runtime-shell-paths.js';
 
 export async function authenticatedApprovalProxyProof(input: {
   request: Request; method: string; path: string; handle: string;
@@ -242,7 +226,7 @@ function platformRuntimeShellUnavailableResponse(
   c: Context,
   applyNoStoreHeaders: (c: Context) => void,
 ): Response {
-  const retryPath = isPlatformRuntimeShellPath(c.req.path) ? c.req.path : '/runtime';
+  const retryPath = platformRuntimeShellRetryPath(c.req.path);
   applyNoStoreHeaders(c);
   c.header('Retry-After', '5');
   c.header('X-Frame-Options', 'DENY');

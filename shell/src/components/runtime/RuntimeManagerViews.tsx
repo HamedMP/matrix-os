@@ -1,7 +1,7 @@
 "use client";
 
 import { BrandCard, Eyebrow } from "@matrix-os/brand";
-import type { MatrixComputer } from "@matrix-os/contracts";
+import type { WebComputer as MatrixComputer } from '@matrix-os/contracts/starter-computers';
 import {
   ArrowLeftIcon,
   CheckCircle2Icon,
@@ -151,16 +151,25 @@ const COMPUTER_TONES = [
 ] as const;
 
 function computerIdentity(computer: MatrixComputer): { emoji: string; tone: string } {
+  if (computer.kind === 'starter') return { emoji: '🌱', tone: 'bg-forest/10' };
   if (computer.kind === "preview") return { emoji: "🧪", tone: "bg-[#E8E8E1]" };
   if (computer.runtimeSlot === "primary") return { emoji: "🐇", tone: "bg-[#F4E4CF]" };
   const index = [...computer.runtimeSlot].reduce((total, character) => total + character.codePointAt(0)!, 0) % COMPUTER_EMOJIS.length;
   return { emoji: COMPUTER_EMOJIS[index]!, tone: COMPUTER_TONES[index]! };
 }
 
+function computerDisplayTitle(computer: MatrixComputer): string {
+  return computer.kind === 'starter' ? computer.label : computer.runtimeSlot === 'primary' ? 'Main Computer' : runtimeSlotTitle(computer.runtimeSlot);
+}
+const COMPUTER_STATUS = {
+  available: { label: 'Ready', dotClass: 'bg-[#6F8E58]' },
+  starting: { label: 'Building', dotClass: 'bg-ember' },
+  unavailable: { label: 'Unavailable', dotClass: 'bg-forest/25' },
+} as const;
 function ComputerProfile({ computer, current }: { computer: MatrixComputer; current: boolean }) {
-  const title = computer.runtimeSlot === "primary" ? "Main Computer" : runtimeSlotTitle(computer.runtimeSlot);
+  const title = computerDisplayTitle(computer);
   const available = computer.availability === "available";
-  const status = available ? "Ready" : computer.availability === "starting" ? "Building" : "Unavailable";
+  const { label: status, dotClass } = COMPUTER_STATUS[computer.availability];
   const identity = computerIdentity(computer);
 
   return (
@@ -174,7 +183,7 @@ function ComputerProfile({ computer, current }: { computer: MatrixComputer; curr
         <span className={`grid size-24 place-items-center rounded-full border text-[2.7rem] shadow-[0_16px_40px_rgba(50,53,46,0.09)] transition duration-200 ${identity.tone} ${current ? "border-ember ring-4 ring-ember/10" : "border-white/65 group-hover:scale-[1.03] group-hover:border-white"}`}>
           <span aria-hidden="true">{identity.emoji}</span>
         </span>
-        <span className={`absolute bottom-1 right-1 size-4 rounded-full border-[3px] border-[#F2F1E8] ${available ? "bg-[#6F8E58]" : computer.availability === "starting" ? "bg-ember" : "bg-forest/25"}`} aria-label={status} />
+        <span className={`absolute bottom-1 right-1 size-4 rounded-full border-[3px] border-[#F2F1E8] ${dotClass}`} aria-label={status} />
       </span>
       <span className="mt-4 block max-w-full">
         <strong className="block text-[15px] font-medium leading-5 tracking-[-0.015em] text-deep">{title}</strong>

@@ -6,12 +6,11 @@ import {
   MATRIX_HOSTED_BILLING_PLAN_SLUGS,
   MATRIX_HOSTED_BILLING_REGION_SLUGS,
   MatrixBillingStatusSchema,
-  MatrixComputerListSchema,
   type MatrixBillingStatus,
-  type MatrixComputerList,
   type MatrixHostedBillingPlanSlug,
   type MatrixHostedBillingRegionSlug,
 } from "@matrix-os/contracts";
+import { WebComputerListSchema as MatrixComputerListSchema, WEB_COMPUTER_INVENTORY_PATH, type WebComputerList as MatrixComputerList } from '@matrix-os/contracts/starter-computers';
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import { ArrowLeftIcon, LogOutIcon, SettingsIcon, UserIcon } from "@/lib/hugeicons";
 import Image from "next/image";
@@ -248,7 +247,7 @@ function parseJourneyState(value: unknown): JourneyState | null {
 
 async function readOverview(): Promise<{ inventory: MatrixComputerList; billing: BillingStatus }> {
   const [computerResult, billingResult] = await Promise.all([
-    fetchJson("/api/auth/computers"),
+    fetchJson(WEB_COMPUTER_INVENTORY_PATH),
     fetchJson("/billing/status"),
   ]);
   if (!computerResult.response.ok || !billingResult.response.ok) throw new Error("overview_unavailable");

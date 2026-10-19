@@ -11,6 +11,8 @@ export type EdgeRouteClass = "platform" | "app" | "code" | "unknown";
 export interface EdgeRouterEnv {
   EDGE_ROUTER_SECRET?: string;
   PLATFORM_ORIGIN?: string;
+  /** One explicitly configured Matrix app subdomain for an isolated preview. */
+  APP_HOSTNAME?: string;
   /** Temporary, exact-chat route to a zero-traffic production-data Platform candidate. */
   PREVIEW_CHAT_CANDIDATE_ORIGIN?: string;
   PREVIEW_CHAT_CANDIDATE_HANDLE?: string;
@@ -22,11 +24,13 @@ export type EdgeResponseInit = ResponseInit & {
   webSocket?: WebSocket | null;
 };
 
-export function classifyEdgeRoute(host: string): EdgeRouteClass {
+export function classifyEdgeRoute(host: string, appHostname?: string): EdgeRouteClass {
   const normalized = normalizeHost(host);
   if (normalized === "api.matrix-os.com") return "platform";
   if (normalized === "app.matrix-os.com") return "app";
   if (normalized === "code.matrix-os.com") return "code";
+  if (appHostname && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.matrix-os\.com$/.test(appHostname)
+    && normalized === appHostname) return "app";
   return "unknown";
 }
 
@@ -35,7 +39,7 @@ export async function handleEdgeRouterRequest(
   env: EdgeRouterEnv,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const routeClass = classifyEdgeRoute(url.host);
+  const routeClass = classifyEdgeRoute(url.host, env.APP_HOSTNAME);
   if (routeClass === "unknown") {
     return new Response("not found", {
       status: 404,

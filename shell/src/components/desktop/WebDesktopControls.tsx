@@ -4,11 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { DropdownMenu as Menu } from "radix-ui";
 import { z } from "zod/v4";
-import { MatrixComputerListSchema, MatrixComputerRuntimeSlotSchema, type MatrixComputerList } from "@matrix-os/contracts";
+import { MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
+import { WebComputerListSchema, WEB_COMPUTER_INVENTORY_PATH, type WebComputerList, type WebComputer } from '@matrix-os/contracts/starter-computers';
 import { DesktopActivityInbox, DesktopTopBarActions } from "@matrix-os/ui";
 import { CheckIcon, ChevronDownIcon, MonitorIcon, RefreshCwIcon } from "@/lib/hugeicons";
 import { SHARED_WORKSPACE_PREFIX } from "@/lib/shared-workspace";
-import { SharedWorkspaceComputerMenu } from "../workspace/SharedWorkspaceComputerMenu";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { UserButton } from "../UserButton";
@@ -45,8 +45,11 @@ async function loadWebComputers(gateway: string, signal: AbortSignal) {
     if (!response.ok) throw new Error("Computer inventory unavailable");
     return response.json();
   }
-  const [list, context] = await Promise.all([read("/api/auth/computers"), read(`${gateway}/api/system/info`)]);
-  const inventory = MatrixComputerListSchema.parse(list);
+  if (gateway.endsWith(SHARED_WORKSPACE_PREFIX)) {
+    return { inventory: WebComputerListSchema.parse(await read(WEB_COMPUTER_INVENTORY_PATH)), slot: 'starter' };
+  }
+  const [list, context] = await Promise.all([read(WEB_COMPUTER_INVENTORY_PATH), read(`${gateway}/api/system/info`)]);
+  const inventory = WebComputerListSchema.parse(list);
   const slot = ComputerContextSchema.parse(context).runtime.runtimeSlot;
   // Installed runtime identity wins over the account's stored primary selection.
   // A bounded list may omit this verified installed slot; keep its valid choices.
@@ -56,14 +59,34 @@ async function loadWebComputers(gateway: string, signal: AbortSignal) {
 const rowClass = "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[13px] outline-none data-[highlighted]:bg-foreground/5 data-[disabled]:opacity-50";
 
 function WebComputerMenu({ gateway }: { gateway: string }) {
-  if (gateway.endsWith(SHARED_WORKSPACE_PREFIX)) return <SharedWorkspaceComputerMenu />;
   return <ScopedComputerMenu key={gateway} gateway={gateway} />;
+}
+
+interface ComputerMenuState { status: 'loading' | 'ready' | 'error'; inventory: WebComputerList | null; slot: string | null }
+function isCurrentComputer(computer: WebComputer, slot: string | null, shared: boolean) {
+  return shared ? computer.kind === 'starter' : computer.kind !== 'starter' && computer.runtimeSlot === slot;
+}
+function computerMenuPresentation(state: ComputerMenuState, shared: boolean) {
+  const current = state.inventory?.items.find((computer) => isCurrentComputer(computer, state.slot, shared));
+  const label = current?.label ?? (shared ? 'Shared workspace' : state.status === 'loading' ? 'Loading computers…' : state.status === 'ready' ? 'Current computer' : 'Computer unavailable');
+  const triggerLabel = shared ? `Change computer, currently ${label}` : state.status === 'loading' ? 'Loading computers' : state.status === 'error' ? 'Computer list unavailable' : `Change computer, currently ${label}`;
+  return { label, triggerLabel };
+}
+
+function ComputerChoice({ computer, selected }: { computer: WebComputer; selected: boolean }) {
+  const statuses = { available: 'Available', starting: 'Starting', unavailable: 'Unavailable' };
+  const status = selected ? 'Current' : statuses[computer.availability];
+  const contents = <><MonitorIcon className="size-3.5 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1"><span className="block truncate">{computer.label}</span><span className="block text-[11px] text-muted-foreground">{status} · {computer.handle}</span></span>{selected ? <CheckIcon className="size-3.5" aria-hidden="true" /> : null}</>;
+  if (computer.availability !== 'available' || selected) return <Menu.Item disabled className={rowClass}>{contents}</Menu.Item>;
+  // react-doctor-disable-next-line react-doctor/nextjs-no-a-element -- Computer switching reloads the document to discard the old runtime's sockets and state.
+  return <Menu.Item asChild><a href={computer.gatewayPath} className={rowClass}>{contents}</a></Menu.Item>;
 }
 
 function ScopedComputerMenu({ gateway }: { gateway: string }) {
   const [open, setOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const [state, setState] = useState<{ status: "loading" | "ready" | "error"; inventory: MatrixComputerList | null; slot: string | null }>({ status: "loading", inventory: null, slot: null });
+  const [state, setState] = useState<ComputerMenuState>({ status: "loading", inventory: null, slot: null });
+  const shared = gateway.endsWith(SHARED_WORKSPACE_PREFIX);
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- This client-only computer inventory has bounded validated results, a 10s deadline, explicit abort cleanup and a gateway-keyed remount. Late responses are discarded; switching computers must not share a cached connection context.
   useEffect(() => {
     const controller = new AbortController();
@@ -78,9 +101,7 @@ function ScopedComputerMenu({ gateway }: { gateway: string }) {
     });
     return () => controller.abort();
   }, [gateway, refresh]);
-  const current = state.inventory?.items.find(computer => computer.runtimeSlot === state.slot);
-  const label = current?.label ?? (state.status === "loading" ? "Loading computers…" : state.status === "ready" ? "Current computer" : "Computer unavailable");
-  const triggerLabel = state.status === "loading" ? "Loading computers" : state.status === "error" ? "Computer list unavailable" : `Change computer, currently ${label}`;
+  const { label, triggerLabel } = computerMenuPresentation(state, shared);
   const requestRefresh = useCallback(() => { setState({ status: "loading", inventory: null, slot: null }); setRefresh(value => value + 1); }, []);
   return <Menu.Root open={open} onOpenChange={setOpen}><Menu.Trigger asChild>
     <button type="button" aria-label={triggerLabel} className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-[13px] hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-primary">
@@ -90,14 +111,7 @@ function ScopedComputerMenu({ gateway }: { gateway: string }) {
     <div className="flex items-center justify-between px-2 py-1 text-[11px] text-muted-foreground"><span>COMPUTERS</span><button type="button" aria-label="Refresh computers" onClick={requestRefresh} className="rounded p-1 focus-visible:outline-2 focus-visible:outline-primary"><RefreshCwIcon className="size-3.5" aria-hidden="true" /></button></div>
     {state.status === "loading" ? <p role="status" className="p-2 text-xs">Loading computers…</p> : null}
     {state.status === "error" ? <p role="alert" className="p-2 text-xs">Your computer list is unavailable. Try refreshing.</p> : null}
-    {state.inventory?.items.map(computer => {
-      const selected = computer.runtimeSlot === state.slot;
-      const contents = <><MonitorIcon className="size-3.5 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1"><span className="block truncate">{computer.label}</span><span className="block text-[11px] text-muted-foreground">{selected ? "Current" : computer.availability === "available" ? "Available" : computer.availability === "starting" ? "Starting" : "Unavailable"} · {computer.handle}</span></span>{selected ? <CheckIcon className="size-3.5" aria-hidden="true" /> : null}</>;
-      return computer.availability === "available" && !selected
-        ? /* react-doctor-disable-next-line react-doctor/nextjs-no-a-element -- Switching computers deliberately reloads the document to discard the previous owner/runtime connection, sockets and state. Next client navigation would retain that context. */
-          <Menu.Item key={computer.runtimeSlot} asChild><a href={computer.gatewayPath} className={rowClass}>{contents}</a></Menu.Item>
-        : <Menu.Item key={computer.runtimeSlot} disabled className={rowClass}>{contents}</Menu.Item>;
-    })}
-    <Link href="/runtime" className={rowClass}>All computers</Link>
+    {state.inventory?.items.map(computer => <ComputerChoice key={computer.runtimeSlot} computer={computer} selected={isCurrentComputer(computer, state.slot, shared)} />)}
+    <Link href="/runtime" className={rowClass}>{shared ? 'Personal computers' : 'All computers'}</Link>
   </Menu.Content></Menu.Portal></Menu.Root>;
 }
