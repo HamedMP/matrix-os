@@ -165,7 +165,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
                       void switchComputer(computer.runtimeSlot);
                     }}
                   >
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md" style={{ background: selected ? "var(--accent-muted)" : "var(--bg-hover)", color: selected ? "var(--accent)" : "var(--text-secondary)" }}>
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md" style={{ background: selected ? "var(--accent-muted)" : "var(--bg-hover)", color: selected ? "var(--accent-text)" : "var(--text-secondary)" }}>
                       {switching ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> : <Monitor size={14} aria-hidden="true" />}
                     </span>
                     <span className="min-w-0 flex-1">
@@ -176,7 +176,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
                     </span>
                     <span className="flex w-4 items-center justify-center">
                       <DropdownMenu.ItemIndicator>
-                        <Check size={13} className="shrink-0" style={{ color: "var(--accent)" }} aria-hidden="true" />
+                        <Check size={13} className="shrink-0" style={{ color: "var(--text-primary)" }} aria-hidden="true" />
                       </DropdownMenu.ItemIndicator>
                     </span>
                   </DropdownMenu.RadioItem>

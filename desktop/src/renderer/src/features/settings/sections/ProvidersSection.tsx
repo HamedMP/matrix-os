@@ -86,7 +86,7 @@ function ProviderCard({
               {isDefault ? (
                 <span
                   className="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                  style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+                  style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}
                 >
                   Default
                 </span>
