@@ -103,7 +103,7 @@ jobs:
     env:
       # Duplicate workflow_run events start several controllers; only the newest may
       # qualify. These exact helper errors mean another controller or source won.
-      RACE_LOST_ERRORS: '["A newer controller superseded this lease", "A newer requesting CI attempt superseded this lease", "Dedicated qualification revision or admission is stale", "Current parent ref has changed", "Current ordered merge parents are stale", "Current main source is stale", "Main moved during source attestation"]'
+      RACE_LOST_ERRORS: '["A newer controller superseded this lease", "A newer requesting CI attempt superseded this lease", "Requesting CI attempt already completed successfully", "Dedicated qualification revision or admission is stale", "Current parent ref has changed", "Current ordered merge parents are stale", "Current main source is stale", "Main moved during source attestation"]'
     steps:
       - name: Authenticate reviewed controller pin before helper or secret use
         id: origin
