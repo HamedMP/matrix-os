@@ -39,7 +39,7 @@ async function metadata(source: DiscoveredLocalChat, signal: AbortSignal): Promi
             else chunks.push(bytes);
         }
         let sessionId: string | undefined; let subagent = false;
-        let title: string | undefined; let explicitTitle: string | undefined; let recordedDirectory: string | undefined;
+        let title: string | undefined; let customTitle: string | undefined; let summaryTitle: string | undefined; let recordedDirectory: string | undefined;
         for (const chunk of chunks) for (const line of chunk.toString("utf8").split("\n")) {
             signal.throwIfAborted();
             let value: unknown;
@@ -49,10 +49,10 @@ async function metadata(source: DiscoveredLocalChat, signal: AbortSignal): Promi
             if (source.harness === "codex") { sessionId ??= label(meta.id ?? meta.session_id,128); subagent ||= Boolean(object(meta.source).subagent); }
             recordedDirectory ??= label(record.cwd ?? object(record.payload).cwd,4096);
             title ??= userText(record,source.harness);
-            if (record.type === "custom-title") explicitTitle = label(record.customTitle,160) ?? explicitTitle;
-            if (record.type === "summary") explicitTitle = label(record.summary,160) ?? explicitTitle;
+            if (record.type === "custom-title") customTitle = label(record.customTitle,160) ?? customTitle;
+            if (record.type === "summary") summaryTitle = label(record.summary,160) ?? summaryTitle;
         }
-        return {...source,sessionId,subagent,title:explicitTitle ?? title ?? source.title,...(recordedDirectory ? {recordedDirectory} : {})};
+        return {...source,sessionId,subagent,title:customTitle ?? summaryTitle ?? title ?? source.title,...(recordedDirectory ? {recordedDirectory} : {})};
     } catch (error: unknown) {
         if (signal.aborted) throw signal.reason;
         if (!missing(error) && !(error instanceof Error && "code" in error && error.code === "ELOOP")) console.warn("[chat-import] discovery metadata unavailable",error instanceof Error ? error.name : "UnknownError");
