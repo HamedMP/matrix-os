@@ -318,7 +318,10 @@ export function createClaudeChatProviderAdapter(options: {
       emit: event => queue.push(event), onError: () => processController.abort(),
     }) : undefined;
     const verifyBuiltinToolDecision = options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient);
-    const builtinToolApproval = verifyBuiltinToolDecision && selectedPermission === "default" && input.interactionMode === "default"
+    // Auto Accept Edits still asks for non-edit tools; Auto's classifier refusals are deliberate and stay denied.
+    const builtinToolApproval = verifyBuiltinToolDecision
+      && (selectedPermission === "default" || selectedPermission === "acceptEdits")
+      && input.interactionMode === "default"
       ? createClaudeBuiltinToolApprovalControl({
         runId: input.runId, chatId: input.chatId, homePath: options.homePath, verify: verifyBuiltinToolDecision,
         emit: event => queue.push(event),

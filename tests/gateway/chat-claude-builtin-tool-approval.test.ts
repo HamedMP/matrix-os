@@ -130,7 +130,30 @@ describe("Claude Supervised built-in tool approval", () => {
     expect(responses).toEqual([{ behavior: "deny", message: "The owner declined this tool request." }]);
   });
 
-  it("keeps the immediate denial when the run is not Supervised or no proof verifier exists", async () => {
+  it("asks the owner before a web search in Auto Accept Edits", async () => {
+    const responses: unknown[] = [];
+    const verify = vi.fn(async () => true);
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home", spawnFn: spawnTool("WebSearch", { query: "matrix os" }, responses),
+      customMcpApprovalClient: approvalClient(verify), resolveCredentialEnv: async () => ({}),
+    });
+    const events: string[] = [];
+    for await (const event of adapter.start({ ...input, permissionMode: "auto_accept_edits" })) {
+      events.push(event.type);
+      if (event.type !== "approval.requested") continue;
+      expect(event.title).toBe("Search the web · “matrix os”");
+      expect(responses).toEqual([]);
+      await adapter.submitApproval?.({
+        owner: input.owner, chatId: input.chatId, runId: input.runId,
+        approvalId: event.approvalId, decision: "approve", clientRequestId: "req_edits",
+        platformApprovalProof: "signed-human-decision",
+      });
+    }
+    expect(events).toContain("approval.requested");
+    expect(responses).toEqual([{ behavior: "allow", updatedInput: { query: "matrix os" } }]);
+  });
+
+  it("keeps the immediate denial in Auto or when no proof verifier exists", async () => {
     const unsupervised: unknown[] = [];
     const unsupervisedAdapter = createClaudeChatProviderAdapter({
       homePath: "/home/matrix/home", spawnFn: spawnTool("WebSearch", { query: "matrix os" }, unsupervised),

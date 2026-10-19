@@ -4,7 +4,7 @@
 
 ## Outcome
 
-A Supervised Claude built-in tool request waits for the owner instead of ending on "Tool approval is unavailable in this Chat connection." The run emits the existing `approval.requested` event. Needs you stays the one attention lane. The card matches the Desktop tool-approval frame: Allow once, Allow in this chat, Not now, and Always allow, which opens the permission menu for the next request. The in-flight turn stays Supervised.
+In Supervised and Auto Accept Edits, a Claude built-in tool request that Claude asks about waits for the owner instead of ending on "Tool approval is unavailable in this Chat connection." Auto Accept Edits already applies file edits on its own, so the card appears there for other tools such as web search. The run emits the existing `approval.requested` event. Needs you stays the one attention lane. The card matches the Desktop tool-approval frame: Allow once, Allow in this chat, Not now, and Always allow, which opens the permission menu for the next request. The in-flight turn keeps its mode.
 
 Allow once continues that call. Allow in this chat continues it and remembers that exact tool for the rest of this run, until Undo. Not now lets the model continue without the tool. An unanswered request expires after 10 minutes, drops the allow buttons, and can be tried again as a new request.
 
@@ -20,7 +20,7 @@ At most 16 pending built-in approvals per run. Tool input over 4,000 characters 
 
 ## Deferred
 
-Full access applies to the next request because `permissionMode` is already frozen for the in-flight turn. Other harnesses and `agent_full_access_required` stay follow-ups.
+Full access applies to the next request because `permissionMode` is already frozen for the in-flight turn. Auto keeps its immediate denial: its classifier refusals are deliberate, and a card there would let one click override them. Other harnesses and `agent_full_access_required` stay follow-ups.
 
 Web Canvas, Web Desktop, and Electron Desktop render this card from the same approval view. They do not grow a second attention lane. Web Mobile and Native Mobile are out of scope for this change; Native Mobile keeps its existing approval message until a follow-up brings it the same card.
 
