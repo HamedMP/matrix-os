@@ -26,7 +26,9 @@ it.each(["legacy", "managed"] as const)("%s preflight works without optional Ant
       await rename(join(root, "venv"), generation);
       await writeFile(join(state, "facts.json"), JSON.stringify({ packages: { venv: { environment: generation } } }));
     }
-    await verifyJevHermesDependencies(root, mode, new AbortController().signal);
+    const checkedPython = await verifyJevHermesDependencies(root, mode, new AbortController().signal);
+    expect(checkedPython).toBe(layout === "legacy" ? join(root, "venv/bin/python")
+      : join(rootsToClean[0]!, "environments/test-generation/bin/python"));
     await expect(verifyJevHermesDependencies(root, "anthropic_messages", new AbortController().signal)).rejects.toThrow();
     await expect(access(marker)).rejects.toThrow();
   } finally { await rm(root, { recursive: true, force: true }); await Promise.all(rootsToClean.map(path => rm(path, { recursive: true, force: true }))); }

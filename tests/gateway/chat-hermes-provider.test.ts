@@ -152,7 +152,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
     try {
       const gateway = fakeGateway();
       const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn, jev: {
-        verifyRuntime: async () => undefined, resolveCredentials: async () => ({ provider: "anthropic", model: "claude-sonnet-4-6",
+        verifyRuntime: async () => "/home/matrix/home/.hermes/hermes-agent/venv/bin/python", resolveCredentials: async () => ({ provider: "anthropic", model: "claude-sonnet-4-6",
           apiMode: "anthropic_messages", baseUrl: "https://api.anthropic.com", env: { ANTHROPIC_API_KEY: "synthetic-key" } }),
         preflight: async () => undefined, clearRun: () => undefined, summary: () => null,
       } });

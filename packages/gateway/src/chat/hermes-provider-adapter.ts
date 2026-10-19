@@ -234,7 +234,7 @@ export function createHermesChatProviderAdapter(options: {
   requestTimeoutMs?: number;
   jev?: {
     resolveCredentials(ownerId: string, selection: unknown, signal: AbortSignal): Promise<JevHermesCredentials>;
-    verifyRuntime(root: string, signal: AbortSignal, apiMode: JevHermesCredentials["apiMode"]): Promise<void>;
+    verifyRuntime(root: string, signal: AbortSignal, apiMode: JevHermesCredentials["apiMode"]): Promise<string>;
     preflight(ownerId: string, scope: HermesJevScope, signal: AbortSignal): Promise<void>;
     clearRun(ownerId: string, runId: string): void;
     summary(ownerId: string, scope: HermesJevScope): string | null;
@@ -635,8 +635,10 @@ export function createHermesChatProviderAdapter(options: {
 
     const hermesRoot = join(options.homePath, ".hermes", "hermes-agent");
     const credentials = jevScope ? await options.jev!.resolveCredentials(input.owner.ownerId, input.selection, input.signal) : undefined;
-    if (credentials) await options.jev!.verifyRuntime(hermesRoot, input.signal, credentials.apiMode);
-    const python = await resolveHermesPython(hermesRoot);
+    // Keep the checked generation through startup even if PM commits a new selection.
+    const python = credentials
+      ? await options.jev!.verifyRuntime(hermesRoot, input.signal, credentials.apiMode)
+      : await resolveHermesPython(hermesRoot);
     const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId, jevScope);
     let restrictedProfile: Awaited<ReturnType<typeof createJevHermesProfile>> | undefined;
     let browserRun: ReturnType<typeof openHermesSharedBrowserRun> | undefined;

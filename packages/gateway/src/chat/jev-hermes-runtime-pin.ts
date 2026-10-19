@@ -49,9 +49,9 @@ export async function verifyJevHermesDependencies(root: string, apiMode: JevHerm
     const result = await run(executable, args, { timeout: 10_000, maxBuffer: 4096, signal: deadline,
       env: { PATH: "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" } });
     return result.stdout;
-  }): Promise<void> {
+  }): Promise<string> {
   signal.throwIfAborted();
-  await boundedOperation(async (deadline) => {
+  return await boundedOperation(async (deadline) => {
     const cachePrefix = await mkdtemp(join(tmpdir(), "matrix-jev-dependency-cache-"));
     try {
       deadline.throwIfAborted();
@@ -59,6 +59,7 @@ export async function verifyJevHermesDependencies(root: string, apiMode: JevHerm
       const version = await runPython(python, hermesDependencyArguments(root, cachePrefix, apiMode, python), deadline);
       deadline.throwIfAborted();
       if (version !== hermesSdkRequirements(apiMode).map(sdk => `${sdk.version}\n`).join("")) throw new Error("Restricted runtime setup required");
+      return python;
     } finally { await rm(cachePrefix, { recursive: true, force: true }); }
   }, 10_000, signal);
 }
