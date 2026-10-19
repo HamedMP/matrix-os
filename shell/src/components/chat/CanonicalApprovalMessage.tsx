@@ -1,10 +1,12 @@
 import {
   CanonicalChatRunIdSchema,
   canonicalChatApprovalOutcome,
+  supervisedToolApproval,
   type CanonicalChatApprovalDecision,
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
 import { Button } from "@/components/ui/button";
+import { SupervisedToolApprovalCard } from "@matrix-os/ui";
 
 const APPROVAL_DECISIONS = new Set<CanonicalChatApprovalDecision>([
   "approve", "approve_for_session", "decline", "cancel",
@@ -19,6 +21,7 @@ interface CanonicalApprovalView {
   allowedDecisions: CanonicalChatApprovalDecision[];
   pending: boolean;
   decision?: CanonicalChatApprovalDecision;
+  reason?: "expired";
 }
 
 export function canonicalApproval(message: ChatMessage): CanonicalApprovalView | null {
@@ -33,7 +36,11 @@ export function canonicalApproval(message: ChatMessage): CanonicalApprovalView |
     typeof decision === "string" && APPROVAL_DECISIONS.has(decision as CanonicalChatApprovalDecision));
   if (allowedDecisions.length === 0) return null;
   const decision = candidate.decision && APPROVAL_DECISIONS.has(candidate.decision) ? candidate.decision : undefined;
-  return { ...candidate, runId: runId.data, allowedDecisions, decision } as CanonicalApprovalView;
+  const reason = candidate.reason === "expired" ? candidate.reason : undefined;
+  return {
+    ...candidate, runId: runId.data, allowedDecisions, decision,
+    ...(reason ? { reason } : {}),
+  } as CanonicalApprovalView;
 }
 
 function approvalLabel(decision: CanonicalChatApprovalDecision): string {
@@ -44,15 +51,35 @@ function approvalLabel(decision: CanonicalChatApprovalDecision): string {
 export function CanonicalApprovalMessage({
   message,
   submitting,
+  permissionMode,
+  onPermissionMode,
+  onTryAgain,
   onSubmit,
 }: {
   message: ChatMessage;
   submitting: boolean;
+  permissionMode?: string;
+  onPermissionMode?: (mode: "supervised" | "full_access") => void;
+  onTryAgain?: (prompt: string) => void;
   onSubmit?: (runId: string, approvalId: string, decision: CanonicalChatApprovalDecision) => Promise<void>;
 }) {
   const approval = canonicalApproval(message);
   if (!approval) {
     return <div className="rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">{message.content}</div>;
+  }
+  const tool = supervisedToolApproval(approval);
+  if (tool) {
+    return (
+      <SupervisedToolApprovalCard
+        approval={tool}
+        anchorId={`tool-approval-${approval.approvalId}`}
+        submitting={submitting}
+        permissionMode={permissionMode}
+        onPermissionMode={onPermissionMode}
+        onTryAgain={onTryAgain}
+        onDecision={onSubmit ? (decision) => void onSubmit(approval.runId, approval.approvalId, decision) : undefined}
+      />
+    );
   }
   return (
     <div className="space-y-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs">

@@ -38,6 +38,8 @@ import type {
   CanonicalProviderCatalog,
   CanonicalChatQueuedTurn,
 } from "@matrix-os/contracts";
+import { SupervisedToolApprovalBar } from "@matrix-os/ui";
+import { pendingSupervisedTool, supervisedToolCallbacks } from "./supervised-tool-approval-wiring";
 import { Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -180,8 +182,9 @@ export function CanonicalChatWorkspace({
     void client.getDetail(event.chatId, { limit: 1 }).then((fresh) => {
       if (fresh.record.chat.collaboration || fresh.record.chat.lifecycle !== "active") return;
       setCredentialSuspendedChatId((current) => current === event.chatId ? null : current);
-    }).catch(() => {
+    }).catch((error: unknown) => {
       // Keep disclosure suspended until a fresh private-owner read succeeds.
+      console.warn("[chat] credential refresh failed", error instanceof Error ? error.name : "UnknownError");
     });
   }, [client]);
   const controller = useCanonicalChatRouteController({
@@ -384,6 +387,7 @@ export function CanonicalChatWorkspace({
     ...controller.detail,
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
+  const pendingTool = pendingSupervisedTool(transcript);
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
   const privateOwner = controller.detail?.record.chat.ownerScope;
   const credentialScopeKey = active && live && api && authStatus === "signed-in" && actorId
@@ -997,10 +1001,19 @@ export function CanonicalChatWorkspace({
               submitInput: controller.submitInput,
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
+              ...supervisedToolCallbacks({ selection: providerSelection, catalog: providerCatalog, directBot: Boolean(directBotId), onSelectionChange, draft, setDraft }),
             }} />
             </div>
             </ChatContextMenu>
-            <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>{composer}</div>
+            <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>
+              {pendingTool ? (
+                <SupervisedToolApprovalBar
+                  label={`Waiting for you · ${pendingTool.bar}`}
+                  onReview={() => document.getElementById(`tool-approval-${pendingTool.id}`)?.scrollIntoView({ block: "center" })}
+                />
+              ) : null}
+              {composer}
+            </div>
             </BotChatPanel>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
