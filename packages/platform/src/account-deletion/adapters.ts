@@ -163,7 +163,11 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       if (machineRows.length > 1000) throw new Error('Runtime cleanup capacity exceeded');
       // PostgreSQL returns BIGINT columns as strings. Normalize before calling
       // the provider or comparing the same ID from inventory and queued rows.
-      const machines = machineRows.map(machine => ({ ...machine,
+      // Cloudflare retirement is operator-confirmed for this bounded pilot.
+      // Never treat shared metadata as a VPS or erase an active Worker authority.
+      if (machineRows.some(machine => machine.provisioning_class === 'shared-preview'
+        && (machine.status !== 'deleted' || machine.deleted_at === null))) throw new Error('Shared runtime cleanup required');
+      const machines = machineRows.filter(machine => machine.provisioning_class !== 'shared-preview').map(machine => ({ ...machine,
         hetzner_server_id: parseNullableProviderActionId(machine.hetzner_server_id),
         recovery_old_server_id: parseNullableProviderActionId(machine.recovery_old_server_id),
         recovery_create_action_id: parseNullableProviderActionId(machine.recovery_create_action_id),

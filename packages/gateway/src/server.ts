@@ -903,6 +903,7 @@ export async function createGateway(config: GatewayConfig) {
     model: config.model,
     maxTurns: config.maxTurns,
     spawnFn: config.spawnFn,
+    kernelCredentialResolver: config.kernelCredentialResolver,
     onAiGeneration: recordAiGeneration,
     fundedCredentialProvider,
     osViewTools,

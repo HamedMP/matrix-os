@@ -148,6 +148,14 @@ async function resolveKernelCredentials(
   return { mode: selectedMode, sources };
 }
 
+/** Trusted server wiring, never accepted from a request or environment fallback. */
+export type KernelCredentialResolver = (input: {
+  model?: string;
+  accessSourceId?: KernelCredentialAccessSourceId;
+  requestClass: FundedAiRequestClass;
+  signal?: AbortSignal;
+}) => Promise<KernelCredentialLaunch>;
+
 export interface KernelCredentialLaunch {
   env?: Record<string, string | undefined>;
   fundedRunTimeoutMs?: number;

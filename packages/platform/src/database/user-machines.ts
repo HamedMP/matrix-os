@@ -30,6 +30,7 @@ export async function getUserMachine(db: PlatformDB, machineId: string): Promise
   await db.ready;
   const row = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('machine_id', '=', machineId)
     .executeTakeFirst();
@@ -44,6 +45,7 @@ export async function getActiveUserMachineByClerkId(
   await db.ready;
   let query = db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
     .where('deleted_at', 'is', null);
@@ -78,6 +80,7 @@ export async function getAccessibleActiveUserMachineByClerkId(
   await db.ready;
   let query = db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where(accessibleUserMachinePredicate(clerkUserId))
     .where('activation_state', '=', 'authorized')
@@ -101,6 +104,7 @@ export async function getActiveUserMachineByHandle(
   await db.ready;
   let query = db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('handle', '=', handle)
     .where('deleted_at', 'is', null);
@@ -123,6 +127,7 @@ export async function getRunningUserMachineByHandle(
   await db.ready;
   let query = db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('handle', '=', handle)
     .where('status', '=', 'running')
@@ -147,6 +152,7 @@ export async function getRunningUserMachineByClerkId(
   await db.ready;
   const row = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
     .where('runtime_slot', '=', runtimeSlot)
@@ -165,6 +171,7 @@ export async function getAccessibleRunningUserMachineByClerkId(
   await db.ready;
   const row = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where(accessibleUserMachinePredicate(clerkUserId))
     .where('runtime_slot', '=', runtimeSlot)
@@ -183,6 +190,7 @@ export async function getRunningUserMachineByClerkIdForUpdate(
   await db.ready;
   const row = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
     .where('runtime_slot', '=', runtimeSlot)
@@ -202,6 +210,7 @@ export async function getAccessibleRunningUserMachineByClerkIdForUpdate(
   await db.ready;
   const row = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where(accessibleUserMachinePredicate(clerkUserId))
     .where('runtime_slot', '=', runtimeSlot)
@@ -220,6 +229,7 @@ export async function listUserMachines(
   await db.ready;
   let query = db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .orderBy('provisioned_at', 'desc');
   if (!options.includeDeleted) {
@@ -236,6 +246,7 @@ export async function listActiveUserMachinesByClerkId(
   await db.ready;
   const rows = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
     .where('deleted_at', 'is', null)
@@ -261,6 +272,7 @@ export async function listAccessibleActiveUserMachinesByClerkId(
   await db.ready;
   const rows = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where(accessibleUserMachinePredicate(clerkUserId))
     .where('deleted_at', 'is', null)
@@ -278,6 +290,7 @@ export async function listNonDeletedUserMachinesByClerkId(
   await db.ready;
   const rows = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
     .where('deleted_at', 'is', null)
@@ -295,6 +308,7 @@ export async function updateUserMachine(
   await db.ready;
   await db.executor
     .updateTable('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .set(toUserMachineUpdate(values))
     .where('machine_id', '=', machineId)
     .execute();
@@ -312,6 +326,7 @@ export async function listRunningUserMachines(
   await db.ready;
   let query = db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('status', '=', 'running')
     .where('deleted_at', 'is', null);
@@ -347,7 +362,8 @@ export async function* iterateRunningUserMachinePages(
   await db.ready;
   let afterMachineId = filters.afterMachineId;
   while (true) {
-    let query = db.executor.selectFrom('user_machines').selectAll()
+    let query = db.executor.selectFrom('user_machines')
+      .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview']).selectAll()
       .where('status', '=', 'running').where('deleted_at', 'is', null);
     if (filters.handle !== undefined) query = query.where('handle', '=', filters.handle);
     if (filters.provisioningClass !== undefined) {
@@ -372,6 +388,7 @@ export async function listAllUserMachines(
   await db.ready;
   const rows = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('status', '!=', 'deleted')
     .where('deleted_at', 'is', null)
@@ -391,6 +408,7 @@ export async function listStaleUserMachines(
   if (statuses.length === 0) return [];
   const rows = await db.executor
     .selectFrom('user_machines')
+    .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
     .selectAll()
     .where('status', 'in', statuses)
     .where('provisioned_at', '<', olderThanIso)
