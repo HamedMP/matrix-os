@@ -53,6 +53,16 @@ describe("Supervised tool approval card", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("does not approve through Full access when Allow once is not offered", () => {
+    const onDecision = vi.fn();
+    const onPermissionMode = vi.fn();
+    render(<SupervisedToolApprovalCard approval={{ ...waiting, allowOnce: false }} permissionMode="supervised" onDecision={onDecision} onPermissionMode={onPermissionMode} />);
+    fireEvent.click(screen.getByRole("button", { name: "Always allow → Full access" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Full access/ }));
+    expect(onPermissionMode).toHaveBeenCalledWith("full_access");
+    expect(onDecision).not.toHaveBeenCalled();
+  });
+
   it("does not approve through Full access while a decision is already being sent", () => {
     const onDecision = vi.fn();
     const onPermissionMode = vi.fn();
@@ -96,7 +106,7 @@ describe("Supervised tool approval card", () => {
     }} onTryAgain={onTryAgain} />);
     expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(onTryAgain).toHaveBeenCalledWith("Try again: Search the web · “AI agent pricing”");
+    expect(onTryAgain).toHaveBeenCalledWith("Try again: Search the web");
   });
 
   it("settles an allowed request into one line with no further actions", () => {

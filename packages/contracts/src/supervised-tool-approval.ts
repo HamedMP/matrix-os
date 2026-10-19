@@ -128,9 +128,13 @@ function detailsFor(tool: ToolCopy, description: string | undefined): string | u
   return split.length > 0 ? split : undefined;
 }
 
-/** Composer text that asks Claude to retry an expired tool request; the owner still sends it. */
+/**
+ * Composer text that asks Claude to retry an expired tool request; the owner still sends it.
+ * Uses only the fixed tool name: the request subject is agent-written and must not become owner-authored text.
+ */
 export function supervisedToolRetryPrompt(title: string): string {
-  return `Try again: ${title}`;
+  const tool = matchTool(title);
+  return tool ? `Try again: ${tool.title}` : "Try again";
 }
 
 /** The Desktop tool-approval card, or null when this approval is some other request. */

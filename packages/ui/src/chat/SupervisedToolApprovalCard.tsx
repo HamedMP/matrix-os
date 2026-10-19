@@ -201,7 +201,7 @@ function ApprovalActions({
   const choosePermission = (mode: "supervised" | "full_access") => {
     if (mode !== "full_access" || !onPermissionMode) return;
     onPermissionMode("full_access");
-    if (!disabled) onDecision?.("approve");
+    if (!disabled && approval.allowOnce) onDecision?.("approve");
   };
   return (
     <div className="relative flex items-center gap-2">
