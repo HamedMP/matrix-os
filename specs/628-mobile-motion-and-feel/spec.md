@@ -68,10 +68,11 @@ screens and actions look, move and feel.
 
 ### Keyboard and sending (layer 5)
 
-- On iOS the chat, project and agent screens follow the keyboard frame by
-  frame (`react-native-keyboard-controller`), so the composer travels with
-  the keyboard instead of jumping to where it will end. The composer's
-  smaller gap above the keyboard applies as the keyboard starts to move.
+- The chat, project and agent screens follow the keyboard frame by frame on
+  iOS and Android (`react-native-keyboard-controller`), so the composer
+  travels with the keyboard instead of jumping to where it will end, or on
+  Android after it has landed. The composer's smaller gap above the keyboard
+  applies as the keyboard starts to move, on both platforms.
 - A message sent from the phone rises into place above the composer as it
   fades in, and a reply fades in as it starts. The greeting fades out as the
   first message takes its place. Only messages still arriving animate, so
@@ -79,9 +80,12 @@ screens and actions look, move and feel.
 - The messages already there move as before. Gliding them was tried: in a long
   chat it ran only some of the time, and it made a streaming reply wobble as
   each line was added.
-- Android keeps resizing the window for the keyboard, as before: in an
-  edge-to-edge app the package's provider turns that off for every screen,
-  so it is mounted on iOS only.
+- The package's provider is mounted on both platforms. The app is edge to
+  edge, so Android draws the keyboard over the screen as iOS does, and these
+  screens already make room for it themselves (HamedMP/matrix-os#2706). The
+  provider sees the edge-to-edge setup and keeps the status and navigation
+  bars translucent by itself, so its `statusBarTranslucent`,
+  `navigationBarTranslucent` and `preserveEdgeToEdge` options stay unset.
 
 ## Acceptance checks
 
@@ -92,6 +96,9 @@ screens and actions look, move and feel.
   page pushed and swiped back, the Files sheet swiped down, a dark-mode
   cold launch, and the keyboard opening and a message sent in a chat, each
   recorded and checked frame by frame.
+- On the Android emulator with the on-screen keyboard: the keyboard opening
+  and closing on a new chat, an open chat, a project and an agent chat, with
+  the status bar, tab bar and terminal unchanged.
 
 ## Risks and limits
 
