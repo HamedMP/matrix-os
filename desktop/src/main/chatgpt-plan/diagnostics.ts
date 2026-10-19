@@ -4,7 +4,9 @@ const RESPONSE_DIAGNOSTIC_VALUES = {
     bodyShape: ['object', 'array', 'string', 'number', 'boolean', 'null', 'empty', 'non_json'],
     responseType: ['response', 'error', 'response.completed', 'response.failed', 'response.incomplete'],
     responseStatus: ['completed', 'failed', 'incomplete', 'in_progress', 'queued', 'cancelled'],
-    errorCode: ['insufficient_quota', 'rate_limit_exceeded', 'invalid_api_key', 'model_not_found', 'invalid_request_error',
+    incompleteReason: ['max_output_tokens', 'max_messages', 'content_filter', 'steered'],
+    errorCode: ['server_error', 'invalid_prompt', 'invalid_image', 'invalid_image_format', 'invalid_base64_image', 'image_parse_error', 'image_too_large',
+        'insufficient_quota', 'rate_limit_exceeded', 'invalid_api_key', 'model_not_found', 'invalid_request_error',
         'authentication_error', 'permission_denied', 'unsupported_parameter', 'unsupported_value', 'invalid_scope',
         'subscription_sharing_user_not_eligible', 'subscription_sharing_usage_limit_exceeded', 'subscription_sharing_usage_unavailable',
         'subscription_sharing_unsupported_capability', 'subscription_sharing_route_not_supported', 'subscription_sharing_invalid_user',
@@ -48,7 +50,23 @@ export class PlanFailure extends Error {
         this.name = 'PlanFailure';
     }
 }
-export function logPlanFailure(stage: string, error: unknown): void {
+/** Correlation is failure-only: strict UUIDs or the exact opaque canonical run grammar. */
+function safeFailureCorrelation(value: unknown): Record<string, string> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const input = value as Record<string, unknown>;
+    const result: Record<string, string> = {};
+    for (const key of ['requestId', 'runId', 'computerId']) {
+        const item = input[key];
+        if (typeof item !== 'string' || item.length !== 36) continue;
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item)
+            || key === 'runId' && /^run_[0-9a-f]{32}$/.test(item)) result[key] = item;
+    }
+    if (input.requestClass === 'interactive' || input.requestClass === 'background') result.requestClass = input.requestClass;
+    if (!Object.keys(result).length) return null;
+    result.observedAt = new Date().toISOString();
+    return result;
+}
+export function logPlanFailure(stage: string, error: unknown, context?: unknown): void {
     const failure = error instanceof PlanFailure ? error : null;
     const category = failure?.category ?? (error instanceof DOMException ? error.name === 'AbortError' ? 'cancelled' : error.name === 'TimeoutError' ? 'timeout' : 'transport_error'
         : error instanceof Error && error.name === 'ZodError' ? 'invalid_schema'
@@ -60,5 +78,6 @@ export function logPlanFailure(stage: string, error: unknown): void {
                 ].includes(error.message) ? 'stale_source'
                     : error instanceof Error && error.message === 'background not permitted' ? 'background_denied' : localFailureCategory(error));
     const diagnostic = failure?.responseDiagnostic ? safePlanResponseDiagnostic(failure.responseDiagnostic) : null;
-    console.warn(`[chatgpt-plan] ${failure?.stage ?? stage}: ${category}${failure?.httpStatus !== undefined ? ` (http ${failure.httpStatus})` : ''}${diagnostic ? ` ${JSON.stringify(diagnostic)}` : ''}`);
+    const correlation = safeFailureCorrelation(context);
+    console.warn(`[chatgpt-plan] ${failure?.stage ?? stage}: ${category}${failure?.httpStatus !== undefined ? ` (http ${failure.httpStatus})` : ''}${diagnostic ? ` ${JSON.stringify(diagnostic)}` : ''}${correlation ? ` ${JSON.stringify({ correlation })}` : ''}`);
 }

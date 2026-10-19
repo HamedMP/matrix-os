@@ -33,7 +33,7 @@ import type { ChatRunContext } from "@matrix-os/contracts";
 import type { ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
 const cleanup: Array<() => Promise<unknown>> = [];
-afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); vi.restoreAllMocks(); });
+afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 const GLM = "@cf/zai-org/glm-5.3-flash";
 
 const privateMarker = "PRIVATE_DIAGNOSTIC_CANARY";
@@ -167,6 +167,7 @@ it("passes the already prepared canonical Agent prompt to Pi exactly once", asyn
 });
 
 it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered artifact tools and isolated resumed transcript", async () => {
+  vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", "2");
   const { db, destroy } = await createBotStateDatabase(); cleanup.push(destroy);
   const home = await mkdtemp(join(tmpdir(), "managed-pi-")); cleanup.push(() => rm(home, { recursive: true, force: true }));
   const snapshot = makeAiProviderSnapshot();
@@ -225,6 +226,7 @@ it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered 
     await vi.waitFor(async () => expect((await repository.get(owner, chat.chat.id))?.activeRun).toBeUndefined(), { timeout: 5000 });
   }
   expect(specs).toHaveLength(2); expect(specs).toEqual([expect.objectContaining({ route: expect.objectContaining({ modelId: GLM, api: "openai-completions" }) }), expect.objectContaining({ route: expect.objectContaining({ modelId: GLM }) })]);
+  expect(specs).toEqual([expect.objectContaining({ limits: { maxToolActions: 60, maxInferenceCalls: 2 } }), expect.objectContaining({ limits: { maxToolActions: 60, maxInferenceCalls: 2 } })]);
   const root = await managedPiWorkspace(home, OWNER, chat.chat.id); expect(await readFile(join(root.path, "proof.txt"), "utf8")).toBe("PI_MANAGED_PROOF");
   expect(await createManagedPiSessionsRepository(db).load({ ownerId: OWNER, chatId: chat.chat.id })).toMatchObject({ revision: 2, messages: expect.arrayContaining([expect.objectContaining({ role: "toolResult" })]) });
   expect(await db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);

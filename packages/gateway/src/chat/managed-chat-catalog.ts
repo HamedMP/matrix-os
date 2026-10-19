@@ -10,7 +10,6 @@ export function managedChatInstances(
   snapshot: AiProviderSnapshotV3 | undefined,
   skills: CanonicalChatSkillDescriptor[],
   now = Date.now(),
-  claudeExecutable = false,
 ): Array<Omit<CanonicalProviderInstanceDescriptor, "catalogRevision">> {
   if (!snapshot) return [];
   return snapshot.instances.flatMap((instance) => {
@@ -67,33 +66,13 @@ export function managedChatInstances(
       },
       ...(available && defaultModel ? { defaultSelection: { instanceId: instance.id, model: defaultModel } } : {}),
     };
-    if (!claudeExecutable) return [kernelInstance];
-    const fundedClaude: Omit<CanonicalProviderInstanceDescriptor, "catalogRevision"> = {
-      ...kernelInstance,
-      id: "claude_code_matrix_included",
-      driverKind: "claude_code",
-      displayName: "Claude Chat · Matrix AI",
-      workspaceRequirement: "project_optional",
-      supports: {
-        rootChat: true, resume: true, cancellation: true, steering: "same_run",
-        attachments: ["file", "image", "structured_ref"],
-        tools: ["integrations", "custom_mcp"], approvals: true, userInput: true,
-        worktrees: "optional",
-        resources: ["file", "folder", "project", "task", "app", "terminal_session"],
-        interactionModes: ["default", "review"],
-        permissionModes: ["supervised", "auto_accept_edits", "auto", "full_access"],
-      },
-      ...(available && defaultModel ? { defaultSelection: {
-        instanceId: "claude_code_matrix_included", model: defaultModel,
-      } } : { defaultSelection: undefined }),
-    };
-    return [kernelInstance, fundedClaude];
+    return [kernelInstance];
   });
 }
 
 /** Both managed Pi sources use the same Chat permission and workspace policy. */
 export const MANAGED_PI_CHAT_SUPPORTS: CanonicalProviderInstanceDescriptor["supports"] = {
-  rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: [], tools: [],
+  rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: ["file", "image"], tools: [],
   approvals: true, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
   permissionModes: ["supervised", "full_access"],
 };
@@ -126,9 +105,9 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
     availability: available ? "available" : "unavailable", connectionState: available ? "ready" : fundingState,
     workspaceRequirement: "project_optional",
     models: [...eligible.map((model) => ({ id: model.id, displayName: model.displayName, availability: "available" as const,
-      capabilities: ["tools" as const], supportsVision: false, supportsToolUse: true })), ...unavailableModels.map(model => ({
+      capabilities: model.capabilities, supportsVision: model.capabilities.includes("vision"), supportsToolUse: true })), ...unavailableModels.map(model => ({
         id: model.id, displayName: model.displayName, availability: "unavailable" as const,
-        capabilities: ["tools" as const], supportsVision: false, supportsToolUse: true }))],
+        capabilities: model.capabilities, supportsVision: model.capabilities.includes("vision"), supportsToolUse: true }))],
     options: [], skills: [], commands: [],
     setupActions: available ? [] : [{ id: "matrix_ai_settings", kind: "open_settings" as const, label: "Agents & providers" }],
     supports: MANAGED_PI_CHAT_SUPPORTS,

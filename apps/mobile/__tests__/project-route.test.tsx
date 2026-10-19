@@ -254,7 +254,7 @@ describe("project route", () => {
       expect(modelPickerProps()).toMatchObject({ catalog: null, catalogLoading: true, selection: null });
       fireEvent.changeText(input(), "Draft the case study");
       expect(sendButton().props.accessibilityState).toMatchObject({ disabled: true });
-      fireEvent(input(), "submitEditing");
+      fireEvent.press(sendButton());
 
       expect(requests.createChat).not.toHaveBeenCalled();
     });
@@ -271,9 +271,9 @@ describe("project route", () => {
     it("cannot send a blank message", async () => {
       await renderPortfolio();
 
-      fireEvent.changeText(input(), "   ");
+      fireEvent.changeText(input(), "  \n ");
       expect(sendButton().props.accessibilityState).toMatchObject({ disabled: true });
-      fireEvent(input(), "submitEditing");
+      fireEvent.press(sendButton());
 
       expect(requests.createChat).not.toHaveBeenCalled();
     });

@@ -52,9 +52,9 @@ describe('trusted default controller admits exact stacked merge candidates',()=>
   input.payload.action='reopened';await expect(admitDedicatedSource(github,input)).resolves.toMatchObject({sourceSha:merge});
  });
  it('rejects unavailable, incorrect and reversed merge parent order',async()=>{
-  const {github,input,pull}=fixture();pull.merge_commit_sha='';
+  const {github,input,pull}=fixture();input.payload.pull_request.merge_commit_sha='';
   await expect(admitDedicatedSource(github,input)).rejects.toThrow(/merge commit/);
-  pull.merge_commit_sha=merge;github.rest.repos.getCommit.mockResolvedValue({data:{sha:merge,parents:[{sha:head},{sha:moved}]}});
+  input.payload.pull_request.merge_commit_sha=merge;github.rest.repos.getCommit.mockResolvedValue({data:{sha:merge,parents:[{sha:head},{sha:moved}]}});
   await expect(admitDedicatedSource(github,input)).rejects.toThrow(/Merge commit/);
   github.rest.repos.getCommit.mockResolvedValue({data:{sha:merge,parents:[{sha:head},{sha:base}]}});
   await expect(admitDedicatedSource(github,input)).rejects.toThrow(/Merge commit/);

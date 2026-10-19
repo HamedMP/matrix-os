@@ -88,7 +88,8 @@ describe("owned Pi default funded credential path", () => {
       expect(fixture.fetchImpl).toHaveBeenCalledOnce();
       const [url, init] = fixture.fetchImpl.mock.calls[0];
       expect(url).toBe(`${relay}${fixture.request.path}`);
-      expect(init).toMatchObject({ method: "POST", body: fixture.request.body, redirect: "error", signal: expect.any(AbortSignal) });
+      expect(init).toMatchObject({ method: "POST", redirect: "error", signal: expect.any(AbortSignal) });
+      expect(JSON.parse(String(init?.body))).toEqual({ ...JSON.parse(fixture.request.body), max_tokens: 4_096 });
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBe(`Bearer ${leaseToken}`);
       expect(headers.get("x-api-key")).toBeNull();

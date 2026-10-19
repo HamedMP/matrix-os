@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
-import { KeyboardAvoidingView, Text } from "react-native";
+import { KeyboardAvoidingView, Platform, Text } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { Composer } from "../components/chat/Composer";
@@ -66,9 +66,12 @@ const list = () => screen.getByTestId("project-chats");
 const listContent = () => flat({ props: { style: list().props.contentContainerStyle } });
 
 describe("project screen", () => {
+  const originalPlatform = Platform.OS;
+
   afterEach(() => {
     cleanup();
     mockKeyboardVisible = false;
+    Platform.OS = originalPlatform;
   });
 
   it("starts below the status bar on the background colour and makes room for the keyboard", () => {
@@ -76,6 +79,13 @@ describe("project screen", () => {
 
     const frame = screen.getByTestId("project-screen");
     expect(flat(frame)).toMatchObject({ flex: 1, paddingTop: 62, backgroundColor: "#FFFEFC" });
+    expect(screen.UNSAFE_getByType(KeyboardAvoidingView).props.behavior).toBe("padding");
+  });
+
+  it.each(["ios", "android"] as const)("makes room for the keyboard itself on %s, as on the chat screen", (os) => {
+    Platform.OS = os;
+    renderScreen();
+
     expect(screen.UNSAFE_getByType(KeyboardAvoidingView).props.behavior).toBe("padding");
   });
 

@@ -188,11 +188,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
   async function getCheckoutFundingSummary(
     identityInput: z.input<typeof IdentitySchema>,
     deadlineAtMs: number,
+    projection: { includeChatAvailability?: true; projectExpiredCredit?: true } = {},
   ) {
     const identity = IdentitySchema.parse(identityInput);
     return readCheckoutFundingSnapshot({
       db: options.db, identity, checked: options.now(),
-      policyFreshnessMs: options.policyFreshnessMs, deadlineAtMs,
+      policyFreshnessMs: options.policyFreshnessMs, deadlineAtMs, ...projection,
     });
   }
 

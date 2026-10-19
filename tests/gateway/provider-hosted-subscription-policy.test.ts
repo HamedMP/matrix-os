@@ -10,7 +10,7 @@ import { createProviderTerminalLoginCoordinator } from '../../packages/gateway/s
 import { ProviderSettingsStore } from '../../packages/gateway/src/ai-providers/provider-settings-store.js';
 import { providerSettingsCanonicalFixture, PROVIDER_SETTINGS_NOW } from './provider-settings-test-support.js';
 
-const methods = ['browser', 'device_code', 'terminal', 'existing_codex'] as const;
+const methods = ['browser', 'device_code', 'existing_codex'] as const;
 function nativeFixture() {
   const row = { id: 'harness_codex', harness: 'codex', displayName: 'Codex', installState: 'installed', enabled: true,
     authState: 'authenticated', loginMethods: ['terminal'], selectedAccountId: 'owner_openai',
@@ -24,10 +24,17 @@ function nativeFixture() {
 function registryFixture() {
   return { create: vi.fn(), get: vi.fn(), delete: vi.fn(), rename: vi.fn(), observeAgentLiveness: vi.fn() };
 }
-describe('hosted Codex subscription exclusion', () => {
-  it('does not turn stale registry methods into subscription options; API keys remain available', () => {
-    expect(nativeWorkflowConnectionOptions({ harness: 'codex', methods: [...methods], keyProviders: ['openai'] }))
+describe('embedded Codex subscription exclusion', () => {
+  it('excludes unsupported browser and legacy methods while retaining API keys', () => {
+    expect(nativeWorkflowConnectionOptions({ harness: 'codex', methods: ['browser', 'existing_codex'], keyProviders: ['openai'] }))
       .toEqual([expect.objectContaining({ id: 'openai_api_key', authKind: 'api_key', availability: 'available' })]);
+  });
+  it('projects the qualified native device-code method without restoring browser or legacy login', () => {
+    expect(nativeWorkflowConnectionOptions({ harness: 'codex', methods: [...methods], keyProviders: ['openai'] }))
+      .toEqual([
+        expect.objectContaining({ id: 'openai_device_code', method: 'device_code', authKind: 'subscription', availability: 'available' }),
+        expect.objectContaining({ id: 'openai_api_key', authKind: 'api_key', availability: 'available' }),
+      ]);
   });
   it('retains existing native account state and API key verification while denying every login entry point', async () => {
     const f = nativeFixture();
@@ -35,8 +42,8 @@ describe('hosted Codex subscription exclusion', () => {
     const legacyOptions = { store: f.store as never, terminal: f.terminal as never, codexSettingsLogin: legacyLogin,
       hostControl: { available: false, run: vi.fn() }, verifyKeys: { codex: f.verify } };
     const [adapter] = await createNativeProviderWorkflowAdapters(legacyOptions);
-    expect(adapter!.loginMethods).toEqual([]);
-    expect(adapter!.connectionOptions).toEqual([expect.objectContaining({ authKind: 'api_key' })]);
+    expect(adapter!.loginMethods).toEqual(['terminal']);
+    expect(adapter!.connectionOptions).toEqual([expect.objectContaining({ id: 'openai_terminal', method: 'terminal' }), expect.objectContaining({ authKind: 'api_key' })]);
     expect(f.row.authState).toBe('authenticated');
     const service = createProviderWorkflowService({ ownerId: 'owner', adapters: async () => [adapter!] });
     try {
@@ -62,7 +69,7 @@ describe('hosted Codex subscription exclusion', () => {
     const acquire = vi.fn();
     const run = vi.fn();
     try {
-      const login = createProviderTerminalLoginCoordinator({ homePath, registry: registry as never, enabledHarnesses: ['codex', 'claude'], profileGuard: { acquire, run } as never });
+      const login = createProviderTerminalLoginCoordinator({ homePath, registry: registry as never, enabledHarnesses: ['claude'], profileGuard: { acquire, run } as never });
       const harness = { id: 'harness_codex', driverId: 'codex', harness: 'codex' as const, installState: 'installed' as const, providerId: 'openai', modelId: 'gpt-test' };
       expect(login.supportedMethods(harness)).toEqual([]);
       await expect(login.startLogin({ harness, mutation: { type: 'start_login', harnessInstanceId: harness.id, accountId: null, method: 'terminal', expectedRevision: 0, idempotencyKey: 'legacy' } })).rejects.toMatchObject({ code: 'lifecycle_unavailable' });
@@ -78,7 +85,7 @@ describe('hosted Codex subscription exclusion', () => {
     try {
       const base = providerSettingsCanonicalFixture();
       const canonical = AiProviderSnapshotV3Schema.parse(JSON.parse(JSON.stringify(base).replaceAll('anthropic', 'openai').replaceAll('claude_code', 'codex')));
-      const login = createProviderTerminalLoginCoordinator({ homePath, registry: registry as never, enabledHarnesses: ['codex', 'claude'] });
+      const login = createProviderTerminalLoginCoordinator({ homePath, registry: registry as never, enabledHarnesses: ['claude'] });
       const store = new ProviderSettingsStore({ homePath, providerSnapshotReader: { getSnapshot: async () => canonical }, loginCoordinator: login, now: () => PROVIDER_SETTINGS_NOW });
       const snapshot = await store.getSnapshot();
       expect(snapshot.harnesses.find(row => row.id === 'harness_codex')?.loginMethods).toEqual([]);

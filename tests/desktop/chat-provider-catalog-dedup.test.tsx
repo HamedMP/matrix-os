@@ -66,7 +66,7 @@ it("does not start expired discovery on foreground events and keeps explicit ref
   act(() => result.current.refresh());
   await waitFor(() => expect(result.current.status).toBe("ready"));
   expect(get).toHaveBeenCalledTimes(3);
-  expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
+  expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 32_000 }));
 });
 
 it.each(["pending", "ready"] as const)("does not restart %s same-scope discovery when a fallback presentation is rebuilt", async status => {

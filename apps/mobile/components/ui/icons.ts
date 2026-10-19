@@ -13,6 +13,7 @@ export { default as BackIcon } from "@hugeicons/core-free-icons/ArrowLeft01Icon"
 export { default as InfoIcon } from "@hugeicons/core-free-icons/InformationCircleIcon";
 export { default as MoreIcon } from "@hugeicons/core-free-icons/MoreHorizontalIcon";
 export { default as CloseIcon } from "@hugeicons/core-free-icons/Cancel01Icon";
+export { default as AlertIcon } from "@hugeicons/core-free-icons/AlertCircleIcon";
 
 export { default as AddIcon } from "@hugeicons/core-free-icons/Add01Icon";
 export { default as PhotoIcon } from "@hugeicons/core-free-icons/Image01Icon";
@@ -27,6 +28,8 @@ export { default as ChevronRightIcon } from "@hugeicons/core-free-icons/ArrowRig
 export { default as SearchIcon } from "@hugeicons/core-free-icons/Search01Icon";
 export { default as CheckIcon } from "@hugeicons/core-free-icons/Tick02Icon";
 export { default as LoadingIcon } from "@hugeicons/core-free-icons/Loading03Icon";
+export { default as RetryIcon } from "@hugeicons/core-free-icons/ArrowReloadHorizontalIcon";
+export { default as OfflineIcon } from "@hugeicons/core-free-icons/CloudOffIcon";
 export { default as ChatIcon } from "@hugeicons/core-free-icons/Message01Icon";
 export { default as FolderIcon } from "@hugeicons/core-free-icons/Folder01Icon";
 export { default as ConnectAppsIcon } from "@hugeicons/core-free-icons/BlocksIcon";

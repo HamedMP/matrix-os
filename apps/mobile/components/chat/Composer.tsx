@@ -9,6 +9,8 @@ import { AttachmentTray } from "./AttachmentTray";
 
 const TOOLBAR_ICON_SIZE = 18;
 const STOP_ICON_SIZE = 16;
+/** How many lines the input grows to before its text scrolls inside it. */
+const MAX_INPUT_LINES = 6;
 
 export interface ComposerProps {
   inputRef?: Ref<TextInput>;
@@ -76,12 +78,13 @@ export function Composer({
             {attachmentNotice}
           </Text>
         ) : null}
+        {/* Return starts a new line; only the button sends. */}
         <TextInput
           ref={inputRef}
           accessibilityLabel="Message Matrix"
+          multiline
           value={draft}
           onChangeText={onChangeDraft}
-          onSubmitEditing={onSend}
           onFocus={onFocus}
           onBlur={onBlur}
           placeholder={placeholder}
@@ -91,7 +94,6 @@ export function Composer({
           cursorColor={colors.success}
           editable={editable}
           autoFocus={autoFocus}
-          returnKeyType="send"
           style={styles.input}
         />
         <View testID="composer-toolbar" style={styles.toolbar}>
@@ -146,16 +148,20 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.v2.space[14],
   },
   // The card's top and side padding, and the space above the toolbar, belong
-  // to the input so that a tap anywhere in them focuses it. The line height is
-  // left to the system: a single-line iOS input sets its text low when given one.
+  // to the input so that a tap anywhere in them focuses it. It is one line
+  // high when empty and grows with the draft up to MAX_INPUT_LINES, after
+  // which the text scrolls inside it.
   input: {
     fontFamily: theme.v2.text.body.fontFamily,
     fontSize: theme.v2.text.body.fontSize,
+    lineHeight: theme.v2.text.body.lineHeight,
     color: theme.v2.colors.textDefault,
+    textAlignVertical: "top",
     paddingTop: theme.v2.space[14],
     paddingHorizontal: theme.v2.space[14],
     paddingBottom: theme.v2.space[10],
     minHeight: theme.v2.space[14] + theme.v2.text.body.lineHeight + theme.v2.space[10],
+    maxHeight: theme.v2.space[14] + MAX_INPUT_LINES * theme.v2.text.body.lineHeight + theme.v2.space[10],
   },
   toolbar: {
     flexDirection: "row",

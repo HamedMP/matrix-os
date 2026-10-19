@@ -1,3 +1,4 @@
+import { shellChatAttachmentPolicy } from "../../shell/src/components/chat/attachment-policy.js";
 // @vitest-environment jsdom
 import React,{useState} from "react";
 import {cleanup,fireEvent,render,screen,waitFor} from "@testing-library/react";
@@ -13,13 +14,13 @@ const instance:CanonicalProviderInstanceDescriptor={...createCanonicalProviderCa
  {id:"research",displayName:"Research",description:"Research sources",invocation:"/research"},
 ]};
 const capture={isSupported:()=>false,start:vi.fn()};
-function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/"}: {
- selected?:CanonicalProviderInstanceDescriptor;scope?:string;loading?:boolean;submit?:(text:string)=>void;initial?:string;
+function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy}: {
+ selected?:CanonicalProviderInstanceDescriptor;scope?:string;loading?:boolean;submit?:(text:string)=>void;initial?:string;attachmentPolicy?:(files:readonly File[])=>string|null;
 }) {
  const [text,setText]=useState(initial);
  const composer={text,setText,resources:[],setResources:vi.fn(),setDraft:vi.fn(),clear:vi.fn(),requestId:"req_web_slash"} as unknown as ChatComposerDraft;
  return <ChatInput composer={composer} scope={scope} permissionMode="supervised" connected busy={false} attachmentsEnabled
-  onSubmit={submit} slashInstance={selected} slashCatalogLoading={loading} speechCaptureAdapter={capture}/>;
+  onSubmit={submit} attachmentPolicy={attachmentPolicy} slashInstance={selected} slashCatalogLoading={loading} speechCaptureAdapter={capture}/>;
 }
 it("uses only selected runtime descriptors and inserts the selected Skill without submitting",()=>{
  const submit=vi.fn();render(<Harness submit={submit}/>);
@@ -145,4 +146,15 @@ it("keeps outside focus when refresh removes an unfocused Skill",()=>{
  const outside=screen.getByRole("button",{name:"Outside focus"});outside.focus();
  view.rerender(<><Harness loading/><button type="button">Outside focus</button></>);
  expect(document.activeElement).toBe(outside);
+});
+
+it("retains Web Chat/Bot text and attachments when the shared managed file limit refuses submission", async () => {
+ const selected = { ...instance, driverKind: "matrix_pi" as const, models: instance.models.map(model => ({ ...model, supportsVision: true })) };
+ const policy = shellChatAttachmentPolicy({ revision: "managed", drivers: [], instances: [selected] }, { instanceId: selected.id, model: selected.models[0]!.id });
+ const submit = vi.fn(); const view = render(<Harness initial="Unsent file draft" submit={submit} selected={selected} attachmentPolicy={policy.error}/>);
+ fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [new File(["x".repeat(1024 * 1024 + 1)], "notes.txt", { type: "text/plain" })] } });
+ fireEvent.click(screen.getByRole("button", { name: "Send" }));
+ expect((await screen.findByRole("alert")).textContent).toContain("1 MiB");
+ expect((screen.getByLabelText("Message chat") as HTMLTextAreaElement).value).toBe("Unsent file draft");
+ expect(screen.getByText("notes.txt")).toBeTruthy(); expect(submit).not.toHaveBeenCalled();
 });

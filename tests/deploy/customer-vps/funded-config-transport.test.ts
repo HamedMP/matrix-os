@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { deflateSync } from 'node:zlib';
 import { join, resolve } from 'node:path';
@@ -61,6 +62,47 @@ describe('authenticated stdin funding repair transport', () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
+  it('carries a URL-only request without exporting the installed funded token through the existing bridge', () => {
+    const { path } = supportedFixture();
+    const input = { ...request, action: 'align-routing',
+      expectedRelease: { version: 'v2026.10.11-test', gitCommit: 'e'.repeat(40) },
+      config: { relayUrl: 'https://relay.example.com', platformUrl: 'https://platform.example.com' } };
+    const routeSource = source.replace("r['config']['runtimeToken']=='a'*64",
+      "set(r['config'])=={'relayUrl','platformUrl'} and r['expectedRelease']['gitCommit']=='e'*40");
+    const result = bridge(sealFundedConfigRepair(input, routeSource, authToken), path, true);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: 'align-routing', changed: false });
+    expect(result.stdout + result.stderr).not.toContain(authToken);
+    const actual = readFileSync(resolve('scripts/ops/repair-funded-chat-config.py'), 'utf8');
+    expect(() => buildFundedConfigRepairCommand(input, actual, authToken, 'e'.repeat(64))).not.toThrow();
+  });
+
+  it('redacts an installed token accidentally returned in a URL-only helper receipt', () => {
+    const { path, contents } = supportedFixture();
+    writeFileSync(path, contents + `MATRIX_FUNDED_AI_RUNTIME_TOKEN=${runtimeToken}\n`);
+    const input = { ...request, action: 'align-routing',
+      expectedRelease: { version: 'v2026.10.11-test', gitCommit: 'e'.repeat(40) },
+      config: { relayUrl: 'https://relay.example.com', platformUrl: 'https://platform.example.com' } };
+    const bad = `import json,sys\nr=json.load(sys.stdin)\nt=[l.split('=',1)[1] for l in open(${JSON.stringify(path)}).read().splitlines() if l.startswith('MATRIX_FUNDED_AI_RUNTIME_TOKEN=')][0]\nprint(json.dumps({'action':r['action'],'changed':False,'restartRequired':False,'beforeSha256':t,'afterSha256':'c'*64,'backup':None}))`;
+    const result = bridge(sealFundedConfigRepair(input, bad, authToken), path, true);
+    expect(result.status).toBe(1);
+    expect(result.stdout + result.stderr).not.toContain(runtimeToken);
+  });
+
+  it('fits routing commands with realistic noncompressible CAS and two service origins', () => {
+    const actual = readFileSync(resolve('scripts/ops/repair-funded-chat-config.py'), 'utf8');
+    const input = { ...request, action: 'align-routing',
+      identity: { ...identity, machineId: '01234567-89ab-4cde-8fab-0123456789ab', ownerId: 'user_0123456789abcdefghijklmnopq' },
+      expectedFile: { sha256: 'de876b2c41ba7852b83c15d03cafd35d211917a5c32f37b02183c898c0fae768', inode: 123456789, device: 16777232 },
+      expectedRelease: { version: 'v2026.10.11-pr2503-38113907071-1-007c4e5', gitCommit: '007c4e560986ed0432ee7c385d21ca071f63ebed' },
+      config: { relayUrl: 'https://matrix-ai-relay-production-abcdefghij-ey.a.run.app', platformUrl: 'https://matrix-platform-abcdefghij-ey.a.run.app' } };
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const command = buildFundedConfigRepairCommand(input, actual, authToken, 'e'.repeat(64));
+      expect(command.every((arg: string) => arg.length <= 4096)).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify({ command, timeoutMs: 15_000 }))).toBeLessThanOrEqual(16_384);
+    }
+  });
+
   it('rejects canonical env rebinding and writable target directories with no secret output', () => {
     const a = supportedFixture(); chmodSync(join(a.root, 'opt/matrix/env'), 0o770);
     expect(bridge(sealFundedConfigRepair(request, source, authToken), a.path, true).status).toBe(1);
@@ -89,6 +131,39 @@ describe('authenticated stdin funding repair transport', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ action: 'apply', changed: false });
     expect(result.stdout + result.stderr).not.toContain(runtimeToken);
+  });
+
+  it('preserves legacy apply transport when the installed funded token is empty', () => {
+    const { path, contents } = fixture();
+    writeFileSync(path, contents + 'MATRIX_FUNDED_AI_RUNTIME_TOKEN=\n');
+    const result = bridge(sealFundedConfigRepair(request, source, authToken), path);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: 'apply', changed: false });
+  });
+
+  it.each(['a', 'apply', 'true', 'old.token', 'abc+def', 'legacy._/:@%+~-TOKEN'])('returns the actual successful apply receipt after replacing malformed token %s', installed => {
+    const { root, path, contents } = supportedFixture();
+    writeFileSync(path, contents + `PLATFORM_INTERNAL_URL=https://platform.example.com\nMATRIX_FUNDED_AI_RUNTIME_TOKEN=${installed}\n`);
+    const stat = lstatSync(path);
+    const beforeSha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
+    const input = { ...request, expectedFile: { sha256: beforeSha256, inode: stat.ino, device: stat.dev } };
+    // Invoke the real atomic Python helper against this owned temporary env.
+    const actual = `import importlib.util,json,os,sys\ns=importlib.util.spec_from_file_location('repair',${JSON.stringify(resolve('scripts/ops/repair-funded-chat-config.py'))})\nm=importlib.util.module_from_spec(s);s.loader.exec_module(m)\nr=json.load(sys.stdin)\nprint(json.dumps(m.execute(r,${JSON.stringify(join(root, 'opt/matrix/env'))},os.getuid(),os.getgid(),lambda:None)))\n`;
+    const result = bridge(sealFundedConfigRepair(input, actual, authToken), path, true);
+    expect(readFileSync(path, 'utf8')).toContain(`MATRIX_FUNDED_AI_RUNTIME_TOKEN=${runtimeToken}\n`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: 'apply', changed: true, restartRequired: true, beforeSha256,
+      afterSha256: createHash('sha256').update(readFileSync(path)).digest('hex'), backup: 'host.env.funded-example.json' });
+    expect(result.stdout + result.stderr).not.toContain(runtimeToken);
+    expect(result.stdout + result.stderr).not.toContain(authToken);
+  });
+
+  it.each(['bad token', 'bad;token', 'bad$token', '"quoted"'])('rejects non-literal installed token %s without changing the file', installed => {
+    const { path, contents } = supportedFixture();
+    const original = contents + `MATRIX_FUNDED_AI_RUNTIME_TOKEN=${installed}\n`;
+    writeFileSync(path, original);
+    expect(bridge(sealFundedConfigRepair(request, source, authToken), path, true).status).toBe(1);
+    expect(readFileSync(path, 'utf8')).toBe(original);
   });
 
   it.each(['ciphertext', 'tag', 'salt', 'iv'])('rejects tampered %s before executing', field => {

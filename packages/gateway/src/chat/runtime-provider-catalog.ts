@@ -1,9 +1,7 @@
-import { join } from "node:path";
-import { FundedAiClaimKeySchema } from "@matrix-os/contracts";
 import { loadSkills } from "@matrix-os/kernel";
 import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
 import { buildKernelCredentialLaunch } from "../kernel-credentials.js";
-import { FundedAiCredentialError, type MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import { type MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { createRuntimeClaudeModelCatalogSource } from "./claude-runtime-model-catalog.js";
 import { createCodexModelCatalogSource } from "./codex-model-catalog.js";
 import { createNativeCodingModelCatalogSource } from "./native-coding-model-catalog.js";
@@ -28,40 +26,16 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
     : undefined;
   const nativeCodingModelCatalogSource = createNativeCodingModelCatalogSource({ homePath });
   const resolveClaudeCredentialLaunch = async (context?: { runId: string; instanceId?: string }) => {
+    // Retired funded selections must never acquire a lease or fall back to a
+    // different billing source. Existing transcripts and profiles stay intact.
     if (context?.instanceId === "claude_code_matrix_included") {
-      // Native Claude has its own funded launch. The retired SDK route remains
-      // unavailable, and neither ambient credentials nor owner profiles enter it.
-      const claimKey = FundedAiClaimKeySchema.safeParse(context.runId);
-      if (!claimKey.success || !fundedCredentialProvider?.enabled) throw new FundedAiCredentialError();
-      const maxRunMs = fundedCredentialProvider.maxRunMs;
-      if (!Number.isSafeInteger(maxRunMs) || maxRunMs < 60_000 || maxRunMs > 600_000) throw new FundedAiCredentialError();
-      const lease = await fundedCredentialProvider.getCredential({ requestClass: "interactive", minValidityMs: maxRunMs + 60_000 });
-      const remainingMs = Date.parse(lease.expiresAt) - Date.now() - 60_000;
-      if (!lease.token || !lease.relayBaseUrl || lease.requestClass !== "interactive"
-        || !Number.isSafeInteger(lease.maxRunMs) || lease.maxRunMs < 60_000 || lease.maxRunMs > 600_000
-        || !Number.isFinite(remainingMs) || remainingMs < maxRunMs) throw new FundedAiCredentialError();
-      return {
-        fundedRunTimeoutMs: Math.min(maxRunMs, lease.maxRunMs),
-        env: {
-          ...buildAgentRuntimeEnvironment(homePath),
-          // Persistent, separate native session storage supports funded resume.
-          // It does not borrow or modify the subscription's Claude profile.
-          CLAUDE_CONFIG_DIR: join(homePath, "system/provider-profiles/claude-matrix"),
-          ANTHROPIC_AUTH_TOKEN: lease.token,
-          ANTHROPIC_BASE_URL: lease.relayBaseUrl,
-          ANTHROPIC_CUSTOM_HEADERS: `x-matrix-funded-claim-key: ${claimKey.data}`,
-          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-        },
-      };
+      throw new Error("Selected AI access is unavailable");
     }
-    // Native execution and discovery have no harness-instance context. Preserve
-    // legacy credential precedence unless an explicit native subscription route
-    // was saved; that route must be unique and must never fall back to a key.
     const settings = await catalogOptions.harnessSettingsSource?.getSnapshot({ suppressFundedProbes: true });
-    const claude = settings?.harnesses.filter(row => row.harness === "claude") ?? [];
+    const claude = settings?.harnesses.filter(row => row.harness === "claude" && row.id !== "harness_kernel") ?? [];
     const native = claude.filter(row => row.configuredAccessSourceId === "owner_claude_profile"
       || row.accessSourceId === "owner_claude_profile" || row.selectedAccountId === "owner_claude_profile");
-    let selectedSource: "owner_claude_profile" | undefined;
+    if (claude.length > 0 && native.length === 0) throw new Error("Selected AI access is unavailable");
     if (native.length > 0) {
       const enabled = claude.filter(row => row.configuredEnabled ?? row.enabled);
       const row = native[0];
@@ -79,10 +53,9 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
         || account.accessSourceId !== "owner_claude_profile") {
         throw new Error("Selected AI access is unavailable");
       }
-      selectedSource = "owner_claude_profile";
     }
     return buildKernelCredentialLaunch(
-      homePath, process.env, selectedSource, fundedCredentialProvider,
+      homePath, buildAgentRuntimeEnvironment(homePath), "owner_claude_profile", fundedCredentialProvider,
       { requestClass: "interactive", ...(context ? { claimKey: context.runId } : {}) },
     );
   };

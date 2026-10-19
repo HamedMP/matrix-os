@@ -26,6 +26,7 @@ import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { canonicalProviderAvailabilityLabel } from "../../packages/ui/src/canonical-provider-choice.js";
+import { deriveChatPickerEntries } from "../../packages/ui/src/chat-picker-entries.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
 import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
@@ -885,7 +886,22 @@ describe("canonical Chat Provider catalog", () => {
     expect((await service.getCatalog(principal)).instances.find((instance) => (
       instance.id === "claude_code_default"
     ))).toMatchObject({ availability: "available", displayName: "Claude",
+      connectionLabel: "Claude subscription",
       supports: { approvals: true, tools: ["integrations", "custom_mcp"] } });
+  });
+
+  it.each(["matrix_included", "owner_anthropic_key"])("does not advertise native Claude with the saved %s source", async accessSourceId => {
+    const settings = await harnessSettings([{ ...configuredHarness("claude", true), accessSourceId }]).getSnapshot();
+    const before = structuredClone(settings);
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider(), codingProvider({ id: "claude", kind: "claude" })]),
+      agentRuntimeSource: runtimeSource(), harnessSettingsSource: { getSnapshot: async () => settings },
+    });
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find(instance => instance.id === "claude_code_default"))
+      .toMatchObject({ availability: "unavailable", models: [], connectionLabel: "Claude subscription" });
+    expect(catalog.instances.find(instance => instance.id === "codex_default")?.availability).toBe("available");
+    expect(settings).toEqual(before);
   });
 
   it("keeps a configured Hermes runtime available without a duplicate settings row", async () => {
@@ -1243,7 +1259,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
   });
 
-  it("exposes a funded Claude Chat instance despite missing personal Claude login when the CLI is installed", async () => {
+  it("offers only subscription Claude Code while retaining Claude through Matrix Pi", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({
         id: "claude", kind: "claude", displayName: "Claude",
@@ -1251,19 +1267,27 @@ describe("canonical Chat Provider catalog", () => {
       })]),
       agentRuntimeSource: runtimeSource(),
       aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
-      executableDriverKinds: ["claude_code"],
+      executableDriverKinds: ["claude_code", "matrix_pi"],
     });
     const catalog = await service.getCatalog(principal);
     expect(catalog.instances.find((instance) => instance.id === "claude_code_default")?.availability)
       .toBe("auth_required");
     expect(catalog.instances.find((instance) => instance.id === "claude_code_matrix_included"))
-      .toMatchObject({ availability: "available", connectionState: "ready" });
+      .toBeUndefined();
+    expect(catalog.instances.find((instance) => instance.id === "matrix_pi_default"))
+      .toMatchObject({ availability: "available", models: [{ id: "claude-sonnet-5" }] });
+    const picker = deriveChatPickerEntries(catalog);
+    expect(picker.flatMap(entry => entry.instances).filter(instance => instance.driverKind === "claude_code")
+      .map(instance => instance.id)).toEqual(["claude_code_default"]);
     expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
     const selected = await service.getCatalog(principal, {
       instanceId: "claude_code_matrix_included", model: "claude-sonnet-5",
     });
-    expect(selected.instances.map(instance => instance.id)).toEqual(["claude_code_matrix_included"]);
-    expect(selected.drivers.map(driver => driver.kind)).toEqual(["claude_code"]);
+    expect(selected.instances).toEqual([]);
+    expect(selected.drivers).toEqual([]);
+    expect(validateChatProviderSelection({ catalog: selected,
+      selection: { instanceId: "claude_code_matrix_included", model: "claude-sonnet-5" } }))
+      .toMatchObject({ ok: false, error: { code: "provider_unavailable", recoveryActions: ["start_new_chat"] } });
   });
 
   it("retains unavailable Matrix AI without exposing models or acquiring credentials", async () => {

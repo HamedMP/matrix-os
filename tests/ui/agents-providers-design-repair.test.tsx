@@ -11,6 +11,11 @@ function fixture(): ProviderSettingsSnapshot {
   return { harnesses: [{ id: "codex", harness: "codex", displayName: "Codex", installState: "installed", authState: "unknown", connectivity: "online", enabled: true, configuredEnabled: true, accessSourceId: null, accountIds: [], selectedAccountId: null, loginMethods: ["terminal"], route: { kind: "fixed", providerId: "openai", modelId: "selected-in-codex" } }], accounts: [], accessSources: [], modelProviders: [], gatewayPolicy: null, configurationHarnessKinds: [], supportedActions: [], access: { mode: "writable" }, refreshedAt: "2026-10-01T00:00:00Z" } as unknown as ProviderSettingsSnapshot;
 }
 function props() { return { snapshot: fixture(), selectedHarnessId: "codex", onSelectHarness: vi.fn(), onMutate: vi.fn(), onRefresh: vi.fn(), onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit: vi.fn(), onSetupHarness: vi.fn().mockResolvedValue(true) }; }
+function claudeProps() {
+  const p = props(); p.selectedHarnessId = "claude";
+  Object.assign(p.snapshot.harnesses[0]!, { id: "claude", harness: "claude", displayName: "Claude" });
+  return p;
+}
 it("keeps unsupported Codex subscription setup absent on legacy computers", () => {
  const p=props(); render(<AgentsProvidersView {...p}/>);
  fireEvent.click(screen.getByRole("button",{name:/^Codex/}));
@@ -73,7 +78,7 @@ it("renders the connected card from source observation without a disabled connec
   p.snapshot.harnesses[0]!.selectedAccountId = "owner";
   p.snapshot.harnesses[0]!.accountIds = ["owner"];
   p.snapshot.accounts = [{ id: "owner", accessSourceId: "native", displayName: "owner@example.com", authState: "unknown", authMethod: "terminal", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } }] as never;
-  p.snapshot.accessSources = [{ id: "native", kind: "provider_account", eligibleModelIds: [], providerId: "openai", displayName: "owner@example.com", localObservation: observed, readiness: { state: "unknown" }, usage: { kind: "unavailable", reason: "unknown" } }] as never;
+  p.snapshot.accessSources = [{ id: "native", fundingKind: "owner_account", kind: "provider_account", eligibleModelIds: [], providerId: "openai", displayName: "owner@example.com", localObservation: observed, readiness: { state: "unknown" }, usage: { kind: "unavailable", reason: "unknown" } }] as never;
   render(<AgentsProvidersView {...p} />);
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
   expect(screen.getByRole("button", { name: /Codex.*Connected/ })).toBeVisible();
@@ -114,7 +119,7 @@ it("wires source-linked native profile identity and quota into the connected pag
   p.snapshot.harnesses[0]!.accountIds = ["native-owner"];
   p.snapshot.accounts = [{ id: "native-owner", providerId: "openai", accessSourceId: "native", displayName: "native@example.com", authMethod: "terminal", authState: "authenticated", connectionDetails: { email: "native@example.com", planName: "ChatGPT Pro" }, dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } },
     { id: "unrelated", providerId: "openai", accessSourceId: "other", displayName: "other@example.com", authMethod: "terminal", authState: "authenticated", connectionDetails: { email: "other@example.com", planName: "ChatGPT Plus" }, dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 } }] as never;
-  p.snapshot.accessSources = [{ id: "native", kind: "provider_account", providerId: "openai", accountId: "native-owner", displayName: "Codex account", localObservation: { state: "present_unverified", checkedAt: "2026-10-03T00:00:00Z", staleAfter: "2099-10-03T00:00:00Z" }, readiness: { state: "unknown" }, eligibleModelIds: [], usage: { kind: "subscription_allowance", authority: "provider_allowance", state: "current", scope: "account", usedBasisPoints: 2500, resetsAt: "2026-10-04T00:00:00Z", asOf: "2026-10-03T00:00:00Z" } }] as never;
+  p.snapshot.accessSources = [{ id: "native", fundingKind: "owner_account", kind: "provider_account", providerId: "openai", accountId: "native-owner", displayName: "Codex account", localObservation: { state: "present_unverified", checkedAt: "2026-10-03T00:00:00Z", staleAfter: "2099-10-03T00:00:00Z" }, readiness: { state: "unknown" }, eligibleModelIds: [], usage: { kind: "subscription_allowance", authority: "provider_allowance", state: "current", scope: "account", usedBasisPoints: 2500, resetsAt: "2026-10-04T00:00:00Z", asOf: "2026-10-03T00:00:00Z" } }] as never;
   render(<AgentsProvidersView {...p} />);
   fireEvent.click(screen.getByRole("button", { name: /^Codex.*Connected/ }));
   const card = within(screen.getByRole("region", { name: "Codex connection" }));
@@ -128,34 +133,34 @@ it("wires source-linked native profile identity and quota into the connected pag
   expect(screen.queryByText(/5 hour|weekly/i)).not.toBeInTheDocument();
 });
 it("disconnects the exact agent without depending on canonical account selection", async () => {
-  const p = props();
+  const p = claudeProps();
   Object.assign(p.snapshot.harnesses[0]!, { authState: "authenticated", accessSourceId: "native", accountIds: ["owner"], selectedAccountId: null });
   p.snapshot.supportedActions = ["set_harness_enabled"];
   p.snapshot.accounts = [{ id: "owner", accessSourceId: "native", displayName: "Owner", authMethod: "terminal", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } }] as never;
   p.snapshot.accessSources = [{ id: "native", accountId: "owner", eligibleModelIds: [], readiness: { state: "ready" }, usage: { kind: "unavailable", reason: "unknown" } }] as never;
-  const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["openai"], install: false, uninstall: false, logs: true }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
+  const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "claude", harness: "claude", displayName: "Claude", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["anthropic"], install: false, uninstall: false, logs: true }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
   render(<AgentsProvidersView {...p} workflowClient={client as never} />);
   // Wait for guided capabilities before retaining a control from the rendered row.
   await act(async () => {});
-  fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Claude/ }));
   const disconnect = await screen.findByRole("button", { name: "Disconnect" });
   expect(disconnect).toBeEnabled();
   fireEvent.click(disconnect);
   const confirmation = screen.getByRole("dialog");
   fireEvent.click(confirmation.querySelector("button.matrix-ap-button-danger")!);
-  await waitFor(() => expect(p.onMutate).toHaveBeenCalledWith({ type: "set_harness_enabled", harnessInstanceId: "codex", enabled: false }));
+  await waitFor(() => expect(p.onMutate).toHaveBeenCalledWith({ type: "set_harness_enabled", harnessInstanceId: "claude", enabled: false }));
 });
 
 it("disconnects only the selected Matrix agent and keeps failed disconnects connected", async () => {
-  const p = props();
+  const p = claudeProps();
   p.snapshot.harnesses[0]!.authState = "authenticated";
   p.snapshot.supportedActions = ["set_harness_enabled"];
   p.onMutate.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-  const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["openai"], install: false, uninstall: false, logs: false }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
+  const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "claude", harness: "claude", displayName: "Claude", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["anthropic"], install: false, uninstall: false, logs: false }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
   const { rerender } = render(<AgentsProvidersView {...p} workflowClient={client as never} />);
   // Wait for guided capabilities before retaining a control from the rendered row.
   await act(async () => {});
-  fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Claude/ }));
   const disconnect = await screen.findByRole("button", { name: "Disconnect" });
   expect(disconnect).toBeEnabled();
   expect(screen.queryByText("Manage saved accounts")).not.toBeInTheDocument();
@@ -163,30 +168,31 @@ it("disconnects only the selected Matrix agent and keeps failed disconnects conn
   expect(screen.getByRole("dialog")).toHaveTextContent("saved account login stays available for other agents");
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Disconnect" }));
   await screen.findByRole("alert");
-  expect(screen.getByRole("button", { name: /^Codex.*Connected/ })).toBeVisible();
-  expect(p.onMutate).toHaveBeenLastCalledWith({ type: "set_harness_enabled", harnessInstanceId: "codex", enabled: false });
+  expect(screen.getByRole("button", { name: /^Claude.*Connected/ })).toBeVisible();
+  expect(p.onMutate).toHaveBeenLastCalledWith({ type: "set_harness_enabled", harnessInstanceId: "claude", enabled: false });
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(screen.getByRole("button", { name: /^Codex.*Connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Claude.*Connected/ })).toBeVisible();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Disconnect" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   rerender(<AgentsProvidersView {...p} snapshot={{...p.snapshot, harnesses: [{...p.snapshot.harnesses[0]!, enabled: false, configuredEnabled: false}]}} workflowClient={client as never} />);
-  expect(screen.getByRole("button", { name: /^Codex.*Not connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Claude.*Not connected/ })).toBeVisible();
   expect(screen.getByRole("button", { name: /^API key/ })).toBeEnabled();
   expect(p.onMutate).not.toHaveBeenCalledWith(expect.objectContaining({type: "logout_account"}));
 });
 
 
 it("keeps grouped account actions guarded while replacement runs and restores them after cancellation", async () => {
-  const p = props(); p.snapshot.harnesses[0]!.authState = "authenticated";
+  const row = () => screen.getAllByRole("button", { name: /^Claude/ }).find(node => node.hasAttribute("aria-expanded"))!;
+  const p = claudeProps(); p.snapshot.harnesses[0]!.authState = "authenticated";
   p.snapshot.supportedActions = ["set_harness_enabled"];
-  const receipt = {id: "replacement", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), deviceCode: null, authorizationUrl: null, terminalSessionId: null, safeFailure: null};
-  const client = {capabilities: vi.fn().mockResolvedValue([{harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["openai"], install: false, uninstall: false, logs: false, activeOperationId: "replacement"}]), get: vi.fn().mockResolvedValue(receipt), cancel: vi.fn().mockResolvedValue({...receipt, state: "cancelled"}), start: vi.fn(), logs: vi.fn(), submitKey: vi.fn()};
+  const receipt = {id: "replacement", harnessInstanceId: "claude", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), deviceCode: null, authorizationUrl: null, terminalSessionId: null, safeFailure: null};
+  const client = {capabilities: vi.fn().mockResolvedValue([{harnessInstanceId: "claude", harness: "claude", displayName: "Claude", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["anthropic"], install: false, uninstall: false, logs: false, activeOperationId: "replacement"}]), get: vi.fn().mockResolvedValue(receipt), cancel: vi.fn().mockResolvedValue({...receipt, state: "cancelled"}), start: vi.fn(), logs: vi.fn(), submitKey: vi.fn()};
   render(<AgentsProvidersView {...p} workflowClient={client as never} />);
-  fireEvent.click(screen.getByRole("button", {name: /^Codex/}));
-  await waitFor(() => expect(screen.getByRole("button", {name: /^Codex/})).toHaveTextContent("Connecting"));
+  fireEvent.click(row());
+  await waitFor(() => expect(row()).toHaveTextContent("Connecting"));
   expect(screen.getAllByRole("button", {name: "Change account"})).toHaveLength(1);
   expect(screen.getByRole("button", {name: "Change account"})).toBeDisabled();
   expect(screen.getByRole("button", {name: "Disconnect"})).toBeDisabled();

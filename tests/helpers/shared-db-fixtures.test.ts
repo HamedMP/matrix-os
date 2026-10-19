@@ -9,6 +9,7 @@ import { createBotMemoryRepository } from '../../packages/gateway/src/bots/repos
 const fixtures: Array<{ destroy(): Promise<void> }> = [];
 beforeEach(() => { vi.resetModules(); vi.restoreAllMocks(); });
 afterEach(async () => {
+  vi.clearAllMocks();
   vi.restoreAllMocks();
   for (const fixture of fixtures.splice(0)) await fixture.destroy();
 });
