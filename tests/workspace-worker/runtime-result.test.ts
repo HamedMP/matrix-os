@@ -16,3 +16,18 @@ describe('actual gateway completion boundary', () => {
     expect(() => parseGatewayResult('x'.repeat(256_001))).toThrow('Agent result too large');
   });
 });
+
+describe('actual gateway session event identity', () => {
+  it('extracts matching init and result session identity', () => {
+    const sessionId = 'f46dd3a2-fb54-460c-883d-d8cce11f4fe3';
+    expect(parseGatewayResult(JSON.stringify({events:[{type:'init',sessionId},{type:'result',data:{sessionId,result:'Done'}}]}), { requireSession: true }).sessionId).toBe(sessionId);
+  });
+  it.each([
+    [{type:'init',sessionId:'wrong'}, {type:'result',data:{sessionId:'wrong',result:'Done'}}],
+    [{type:'result',data:{result:'Done'}}],
+    [{type:'init',sessionId:'f46dd3a2-fb54-460c-883d-d8cce11f4fe3'},{type:'result',data:{sessionId:'326f3235-4e3d-48e6-898f-a7b522c531b7',result:'Done'}}],
+    [null],
+  ].map(events => ({ events })))('rejects missing or inconsistent SDK identity', ({ events }) => {
+    expect(() => parseGatewayResult(JSON.stringify({events}), { requireSession: true })).toThrow('Agent execution failed');
+  });
+});
