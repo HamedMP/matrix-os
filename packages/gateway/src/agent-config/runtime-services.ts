@@ -312,12 +312,15 @@ function createUnifiedRuntimeSource(options: {
       if (probeResult.status === "fulfilled") {
         const probed = AgentRuntimeDescriptorSchema.parse(probeResult.value);
         const hostInstallState = descriptors.get(selected)?.installState;
+        const installState = hostStatus !== undefined && hostInstallState !== undefined
+          ? hostInstallState
+          : probed.installState;
         descriptors.set(selected, AgentRuntimeDescriptorSchema.parse({
           ...probed,
-          ...(hostStatus !== undefined && hostInstallState !== undefined
-            ? { installState: hostInstallState }
-            : {}),
-          selectionState: "active",
+          installState,
+          // A missing host control plane must not mark an uninstalled runtime
+          // active; that rejection drops the rest of the agent inventory.
+          ...(installState === "installed" ? { selectionState: "active" as const } : {}),
         }));
       }
       if (catalogResult.status === "fulfilled") {
