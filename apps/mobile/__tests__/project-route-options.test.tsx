@@ -18,7 +18,6 @@ jest.mock("react-native-safe-area-context", () => ({
 }));
 jest.mock("@/lib/use-keyboard-visible", () => ({ useKeyboardVisible: () => false }));
 jest.mock("@/lib/canonical-chat-session-context", () => ({ useCanonicalChatSession: () => mockRoutes.shell }));
-jest.mock("@/lib/use-shell-navigation", () => ({ useShowChatScreen: () => mockRoutes.shell.showChatScreen }));
 jest.mock("@/lib/use-session-token-warmup", () => ({
   useSessionTokenWarmup: () => mockRoutes.shell.warmSessionToken,
 }));

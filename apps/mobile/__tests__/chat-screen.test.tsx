@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-
 import { TextInput } from "react-native";
 
 import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
+import { ActiveChatScreen } from "../components/chat/ActiveChatScreen";
 import { CHAT_SUGGESTIONS } from "../components/chat/chat-suggestions";
 import { Icon } from "../components/ui/Icon";
 import { MicIcon } from "../components/ui/icons";
@@ -362,6 +363,25 @@ describe("chat screen: new chat", () => {
     mockKeyboardVisible = true;
     view.rerender(<ChatScreen />);
     expect(flat(screen.getByTestId("composer")).paddingBottom).toBe(8);
+  });
+});
+
+describe("chat screen: chat opened from a project", () => {
+  it("goes back to the project in place of opening the side panel, and starts new chats there", () => {
+    openChat();
+    const onBack = jest.fn();
+    const onNewChat = jest.fn();
+    render(<ActiveChatScreen onBack={onBack} onNewChat={onNewChat} />);
+
+    expect(screen.getByRole("header", { name: "Habit tracker app" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open chats and projects" })).toBeNull();
+
+    fireEvent.press(screen.getByRole("button", { name: "Back" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(screen.getByRole("button", { name: "New chat" }));
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+    expect(mockStartDraftChat).not.toHaveBeenCalled();
   });
 });
 

@@ -2,7 +2,7 @@ import { KeyboardAvoidingView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
-import { NewChatIcon, SidePanelIcon, TopBar, TopBarButton } from "@/components/ui";
+import { BackIcon, NewChatIcon, SidePanelIcon, TopBar, TopBarButton } from "@/components/ui";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
@@ -18,6 +18,11 @@ export interface ChatScreenViewProps
   /** "New chat", or the open chat's title. */
   title: string;
   onOpenSidePanel: () => void;
+  /**
+   * Given, the top bar goes back with it in place of opening the side panel,
+   * as on a chat opened from a project.
+   */
+  onBack?: () => void;
   /** Starts a new chat. Offered only while a chat is open. */
   onNewChat?: () => void;
   /** Nothing has been said yet: the greeting and suggestions take the messages' place. */
@@ -35,10 +40,13 @@ export interface ChatScreenViewProps
   composer: Omit<ComposerProps, "keyboardOpen">;
 }
 
+const BACK_ICON_SIZE = 22;
+
 /** The whole chat screen, drawn from what it is given. It sits above the tab bar. */
 export function ChatScreenView({
   title,
   onOpenSidePanel,
+  onBack,
   onNewChat,
   showHome,
   suggestions,
@@ -65,13 +73,15 @@ export function ChatScreenView({
     <KeyboardAvoidingView style={[styles.screen, { paddingTop: insets.top }]} behavior="padding">
       <TopBar
         title={title}
-        leading={
+        leading={onBack ? (
+          <TopBarButton icon={BackIcon} iconSize={BACK_ICON_SIZE} accessibilityLabel="Back" onPress={onBack} />
+        ) : (
           <TopBarButton
             icon={SidePanelIcon}
             accessibilityLabel="Open chats and projects"
             onPress={onOpenSidePanel}
           />
-        }
+        )}
         trailing={onNewChat ? (
           <TopBarButton icon={NewChatIcon} accessibilityLabel="New chat" onPress={onNewChat} />
         ) : null}
