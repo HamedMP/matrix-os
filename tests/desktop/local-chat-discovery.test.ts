@@ -8,6 +8,35 @@ afterEach(async () => { await Promise.all(dirs.splice(0).map(path => rm(path, {r
 async function fixture() { const home = await mkdtemp(join(tmpdir(), "matrix-discovery-")); dirs.push(home); return home; }
 async function transcript(home: string, relative: string, records: unknown[]) { const path = join(home, relative); await mkdir(path.slice(0,path.lastIndexOf("/")), {recursive:true}); await writeFile(path, records.map(record=>JSON.stringify(record)).join("\n")+"\n"); return path; }
 describe("local conversation discovery", () => {
+    it.each([
+        {
+            scenario: "saved custom title before an automatic summary",
+            records: [{type:"custom-title",customTitle:"Saved <command-name> title"}, {type:"summary",summary:"Later automatic summary"}],
+            expected: "Saved <command-name> title",
+        },
+        {
+            scenario: "saved custom title after an automatic summary",
+            records: [{type:"summary",summary:"Earlier automatic summary"}, {type:"custom-title",customTitle:"Saved title"}],
+            expected: "Saved title",
+        },
+        {
+            scenario: "latest custom title despite a newer automatic summary",
+            records: [{type:"custom-title",customTitle:"Old saved title"}, {type:"summary",summary:"Earlier summary"}, {type:"custom-title",customTitle:"Latest saved title"}, {type:"summary",summary:"Latest automatic summary"}],
+            expected: "Latest saved title",
+        },
+        {
+            scenario: "latest summary when no custom title exists",
+            records: [{type:"summary",summary:"Old automatic summary"}, {type:"summary",summary:"Latest automatic summary"}],
+            expected: "Latest automatic summary",
+        },
+    ])("preserves Claude title precedence: $scenario", async ({records, expected}) => {
+        const home = await fixture();
+        await transcript(home, ".claude/projects/project/title-precedence.jsonl", [
+            {type:"user",message:{content:"Original human prompt"}}, ...records,
+        ]);
+        const result = await discoverLocalChats({home}, new AbortController().signal);
+        expect(result.sources.map(source => source.title)).toEqual([expected]);
+    });
     it.each(["claude", "codex"] as const)("keeps a %s prompt spanning adjacent metadata reads", async (harness) => {
         const home = await fixture();
         const text = "Boundary prompt " + "x".repeat(80 * 1024);
