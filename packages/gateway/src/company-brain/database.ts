@@ -28,6 +28,7 @@ export interface CompanyBrainDocumentsTable {
 export interface CompanyBrainDatabase extends CollaborationDatabase {
   company_brain_scopes: CompanyBrainScopesTable;
   company_brain_documents: CompanyBrainDocumentsTable;
+  company_brain_erased_captures: { capture_hash: string };
 }
 
 /** Additive owner-Postgres schema. The caller owns the pool and its shutdown. */
@@ -65,6 +66,10 @@ export async function bootstrapCompanyBrainDatabase(db: Kysely<CompanyBrainDatab
     await sql`ALTER TABLE company_brain_documents ALTER COLUMN incarnation SET NOT NULL`.execute(trx);
     await sql`ALTER TABLE company_brain_documents DROP CONSTRAINT IF EXISTS company_brain_documents_provenance_check`.execute(trx);
     await sql`ALTER TABLE company_brain_documents ADD CONSTRAINT company_brain_documents_provenance_check CHECK (provenance IN ('manually_published', 'slack_thread'))`.execute(trx);
+    // No scope FK: deleting the dataset must not re-enable automatic replay of erased events.
+    await sql`CREATE TABLE IF NOT EXISTS company_brain_erased_captures (
+      capture_hash text PRIMARY KEY CHECK (capture_hash ~ '^[a-f0-9]{64}$')
+    )`.execute(trx);
     await sql`CREATE INDEX IF NOT EXISTS company_brain_documents_search
       ON company_brain_documents USING gin (to_tsvector('english', title || ' ' || text))
       WHERE deleted_at IS NULL`.execute(trx);

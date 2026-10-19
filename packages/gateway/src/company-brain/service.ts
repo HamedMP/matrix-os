@@ -158,6 +158,12 @@ export class CompanyBrainService {
       if(runContext) await this.fenceRun(runContext,trx);
       await this.fenceOwner(context,trx);
       await this.binding(context, trx);
+      if (provenance === "slack_thread") {
+        const captureHash=createHash("sha256").update(`${scopeId.toLowerCase()}:${input.sourceId}`).digest("hex");
+        const erased=await trx.selectFrom("company_brain_erased_captures").select("capture_hash")
+          .where("capture_hash","=",captureHash).executeTakeFirst();
+        if(erased) throw new CompanyBrainError("conflict");
+      }
       const existing = await trx.selectFrom("company_brain_documents").selectAll().where("scope_id", "=", scopeId).where("source_id", "=", input.sourceId).executeTakeFirst();
       if (existing && !existing.deleted_at && provenance === "slack_thread") {
         if (existing.provenance !== "slack_thread") throw new CompanyBrainError("conflict");
@@ -332,6 +338,12 @@ export class CompanyBrainService {
       await this.recheckOrganization(context);
       await this.fenceOwner(context,trx,deleted ? "deleted" : "erase");
       if (!await this.binding(context, trx) && deleted) throw new CompanyBrainError("not_found");
+      // Retain only scoped event hashes, including removed sources; never their content or raw IDs.
+      // The existing scope/authority locks serialize this fence with capture and erasure.
+      await sql`INSERT INTO company_brain_erased_captures (capture_hash)
+        SELECT encode(sha256(convert_to(scope_id::text || ':' || source_id, 'UTF8')), 'hex')
+        FROM company_brain_documents WHERE scope_id=${scopeId}::uuid AND provenance='slack_thread'
+        ON CONFLICT (capture_hash) DO NOTHING`.execute(trx);
       await trx.deleteFrom("company_brain_documents").where("scope_id", "=", scopeId).execute();
       await trx.deleteFrom("company_brain_scopes").where("scope_id", "=", scopeId).execute();
     });
