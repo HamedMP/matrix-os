@@ -18,6 +18,20 @@ describe('account export downloads', () => {
     await expect(listAccountExportFiles(store,'user_a','matrixos-sync')).rejects.toThrow('Storage ownership mismatch');
     expect(sign).not.toHaveBeenCalled();
   });
+  it('continues into the dedicated sites store and namespaces published assets',async()=>{
+    const primarySign=vi.fn(async(key:string)=>'https://primary.example.test/'+key);
+    const sitesSign=vi.fn(async(key:string)=>'https://sites.example.test/'+key);
+    const primary={listObjects:vi.fn(async()=>({keys:[],nextCursor:null})),getPresignedGetUrl:primarySign,
+      deleteObject:vi.fn(),abortOwnerMultipartUploads:vi.fn()};
+    const sites={listObjects:vi.fn(async()=>({keys:['sites/owners/user_a/site/version/index.html'],nextCursor:null})),
+      getPresignedGetUrl:sitesSign,deleteObject:vi.fn(),abortOwnerMultipartUploads:vi.fn()};
+    const files=[];let cursor:string|undefined;let page;
+    do{page=await listAccountExportFiles(primary,'user_a','matrixos-sync',cursor,sites);files.push(...page.files);cursor=page.nextCursor??undefined;}while(cursor);
+    expect(files).toEqual([{path:'sites/site/version/index.html',kind:'file',
+      downloadUrl:'https://sites.example.test/sites/owners/user_a/site/version/index.html',expiresIn:900}]);
+    expect(page.nextCursor).toBeNull();expect(primarySign).not.toHaveBeenCalled();
+    expect(sitesSign).toHaveBeenCalledWith('sites/owners/user_a/site/version/index.html',900);
+  });
 });
 
 import { sql } from 'kysely';
@@ -49,9 +63,20 @@ describe('portable account exports',()=>{
               ('22222222-2222-4222-8222-222222222222','user_b','other','Other','other@example.test','other-secret',null)`.execute(db.executor);
      await sql`INSERT INTO social_posts (id,author_id,content,type,created_at) VALUES
        ('mine-post','11111111-1111-4111-8111-111111111111','portable','text','2026-10-01'),('foreign','22222222-2222-4222-8222-222222222222','private other data','text','2026-10-01')`.execute(db.executor);
+     await sql`INSERT INTO public_sites (id,owner_id,machine_id,app_slug,title,description,slug,revision,status,active_version,created_at) VALUES
+       ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','user_a','machine-a','launch','Launch','Portable site','launch',1,'published','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','2026-10-01'),
+       ('cccccccc-cccc-4ccc-8ccc-cccccccccccc','user_b','machine-b','private','Private','Other owner','private',1,'published','dddddddd-dddd-4ddd-8ddd-dddddddddddd','2026-10-01')`.execute(db.executor);
+     await sql`INSERT INTO public_site_versions (id,site_id,created_at,config,files) VALUES
+       ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','2026-10-01',${JSON.stringify({data:{message:'portable site data'},forms:[]})}::jsonb,${JSON.stringify([{path:'index.html',contentType:'text/html',bytes:12}])}::jsonb),
+       ('dddddddd-dddd-4ddd-8ddd-dddddddddddd','cccccccc-cccc-4ccc-8ccc-cccccccccccc','2026-10-01',${JSON.stringify({data:{message:'private other site'},forms:[]})}::jsonb,${JSON.stringify([])}::jsonb)`.execute(db.executor);
+     await sql`INSERT INTO public_site_aliases (slug,site_id) VALUES
+       ('launch','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),('private','cccccccc-cccc-4ccc-8ccc-cccccccccccc')`.execute(db.executor);
      const result=await exportOwnerPlatformData(db,'user_a');
      expect(result.profile).toHaveLength(1);expect(result.posts.map(post=>post.content)).toEqual(['portable']);
-     expect(JSON.stringify(result)).not.toMatch(/private-runtime-token|secret-integration-id|other-secret|private other data/);
+     expect(result.publicSites.sites.map(site=>site.id)).toEqual(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']);
+     expect(result.publicSites.versions.map(version=>version.config)).toEqual([{data:{message:'portable site data'},forms:[]}]);
+     expect(result.publicSites.aliases).toEqual([{slug:'launch',site_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}]);
+     expect(JSON.stringify(result)).not.toMatch(/private-runtime-token|secret-integration-id|other-secret|private other data|private other site/);
      await expect(exportOwnerPlatformData(db,'user_b/../user_a')).rejects.toThrow();
    }finally{await db.destroy();}
  });

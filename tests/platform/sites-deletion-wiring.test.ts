@@ -9,8 +9,10 @@ const objects = vi.hoisted(() => new Map<string, Uint8Array>());
 const sitesStore = vi.hoisted(() => ({
     listObjects: vi.fn(async (prefix: string) => ({ keys: [...objects.keys()].filter(key => key.startsWith(prefix)), nextCursor: null })),
     deleteObject: vi.fn(async (key: string) => { objects.delete(key); }), abortOwnerMultipartUploads: vi.fn(async () => { }), destroy: vi.fn(),
+    getPresignedGetUrl:vi.fn(async(key:string)=>'https://sites.example.test/'+key),
 }));
-const syncStore = vi.hoisted(() => ({ listObjects: vi.fn(async () => ({ keys: [], nextCursor: null })), deleteObject: vi.fn(), abortOwnerMultipartUploads: vi.fn(), destroy: vi.fn() }));
+const syncStore = vi.hoisted(() => ({ listObjects: vi.fn(async () => ({ keys: [], nextCursor: null })), deleteObject: vi.fn(), abortOwnerMultipartUploads: vi.fn(), destroy: vi.fn(),
+    getPresignedGetUrl:vi.fn(async(key:string)=>'https://sync.example.test/'+key) }));
 const configured = vi.hoisted(() => vi.fn((config: {
     bucket: string;
 }) => config.bucket === 'private-sites' ? sitesStore : syncStore));
@@ -64,6 +66,17 @@ it('configured deletion revokes site immediately and durably erases dedicated as
 it('refuses partial or shared dedicated sites credentials before starting cleanup', async () => {
     await expect(createConfiguredAccountDeletionRuntime({ db, env: { ...env, R2_SITES_SECRET_ACCESS_KEY: '' }, backgroundWorkersEnabled: false })).rejects.toThrow('Dedicated sites');
     await expect(createConfiguredAccountDeletionRuntime({ db, env: { ...env, R2_SITES_BUCKET: 'matrixos-sync' }, backgroundWorkersEnabled: false })).rejects.toThrow('Dedicated sites');
+});
+
+it('wires dedicated publication assets into the owner export sequence',async()=>{
+ objects.set('sites/owners/user_sites_delete_wiring/site/version/index.html',new Uint8Array([1]));
+ const runtime=await createConfiguredAccountDeletionRuntime({db,env,backgroundWorkersEnabled:false});
+ try{
+  const downloads=[];let cursor:string|undefined;
+  do{const page=await runtime!.exportData('user_sites_delete_wiring',cursor);downloads.push(...page.downloads);cursor=page.nextCursor??undefined;}while(cursor);
+  expect(downloads).toEqual([{name:'sites/site/version/index.html',url:'https://sites.example.test/sites/owners/user_sites_delete_wiring/site/version/index.html'}]);
+  expect(sitesStore.getPresignedGetUrl).toHaveBeenCalledOnce();expect(syncStore.getPresignedGetUrl).not.toHaveBeenCalled();
+ }finally{runtime?.stop();await runtime?.drain();runtime?.close();}
 });
 
 it('signs deletion exports with only the explicit store session token', async () => {

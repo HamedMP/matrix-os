@@ -56,7 +56,7 @@ export async function createConfiguredAccountDeletionRuntime(input:{
  const service=createAccountDeletionService({db:input.db.kysely,adapters,secret});
  const worker=input.backgroundWorkersEnabled===false?undefined:startAccountDeletionWorker({service});
  return {service,
- async exportData(owner,cursor){const result=await listAccountExportFiles(store,owner,root,cursor);return {
+ async exportData(owner,cursor){const result=await listAccountExportFiles(store,owner,root,cursor,sitesStore);return {
  downloads:result.files.map(file=>({name:file.path,url:file.downloadUrl})),migrationUrl:'/runtime',
  instructions:[result.migrationInstructions],nextCursor:result.nextCursor};},
  exportPlatformData:owner=>exportOwnerPlatformData(input.db,owner),
