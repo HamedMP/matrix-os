@@ -89,3 +89,38 @@ describe("installed app identity and runtime sessions", () => {
     unmount();
   });
 });
+
+it("permits store routes only for the authenticated installed Gallery session", async () => {
+  const { fetch } = require("expo/fetch");
+  fetch.mockResolvedValue(new Response("{}"));
+  mockUseQuery.mockReset().mockReturnValueOnce({ data: { handle: "fixture", runtimeSlot: "live", gatewayPath: "/vm/fixture" } }).mockReturnValueOnce({ data: { launchUrl: "/apps/app-gallery/?session=fixture", appIdentity: "app-gallery", runtimeSlug: "app-gallery" } });
+  const { result, unmount } = renderHook(() => useComputerAppSession("app-gallery"));
+  const signal = new AbortController().signal;
+  await result.current.requestAppBridge("/api/app-store/status", { method: "GET", signal });
+  expect(fetch).toHaveBeenCalledWith("https://app.matrix-os.com/vm/fixture/api/app-store/status", expect.objectContaining({ headers: { "Content-Type": "application/json", Authorization: "Bearer owner-token" }, signal, redirect: "error" }));
+  await expect(result.current.requestAppBridge("/api/app-store/status?unexpected=1", { signal })).rejects.toThrow("App request unavailable");
+  unmount();
+  mockUseQuery.mockReset().mockReturnValueOnce({ data: { handle: "fixture", runtimeSlot: "live", gatewayPath: "/vm/fixture" } }).mockReturnValueOnce({ data: { launchUrl: "/apps/notes/?session=fixture", appIdentity: "notes", runtimeSlug: "notes" } });
+  const regular = renderHook(() => useComputerAppSession("notes"));
+  await expect(regular.result.current.requestAppBridge("/api/app-store/status", { signal })).rejects.toThrow("App request unavailable");
+  regular.unmount();
+});
+
+it("resolves Gallery opens against the fresh owner catalog instead of a renderer route hint", async () => {
+  mockUseQuery.mockReset().mockReturnValueOnce({ data: { handle: "fixture", runtimeSlot: "live", gatewayPath: "/vm/fixture" } }).mockReturnValueOnce({ data: { appIdentity: "app-gallery", runtimeSlug: "app-gallery" } });
+  mockFetchInstalledApps.mockResolvedValue([{ name: "Notes", slug: "notes", file: "notes/dist/index.html", path: "/files/apps/notes/dist/index.html" }]);
+  const { result, unmount } = renderHook(() => useComputerAppSession("app-gallery"));
+  await expect(result.current.resolveOpenApp("Untrusted title", "apps/notes")).resolves.toEqual({ app: "notes", runtimeSlug: "notes", name: "Notes" });
+  await expect(result.current.resolveOpenApp("Unknown", "apps/private")).rejects.toThrow("App unavailable");
+  await expect(result.current.resolveOpenApp("Escape", "apps/../system")).rejects.toThrow("Invalid Gallery action");
+  unmount();
+});
+
+it("denies Gallery routes and app opens when the authenticated session is community", async () => {
+  mockUseQuery.mockReset().mockReturnValueOnce({ data: { handle: "fixture", runtimeSlot: "live", gatewayPath: "/vm/fixture" } }).mockReturnValueOnce({ data: { appIdentity: "app-gallery", runtimeSlug: "app-gallery", distribution: { trust: "community" } } });
+  const { result, unmount } = renderHook(() => useComputerAppSession("app-gallery"));
+  await expect(result.current.requestAppBridge("/api/app-store/status", { signal: new AbortController().signal })).rejects.toThrow("App request unavailable");
+  await expect(result.current.resolveOpenApp("Notes", "apps/notes")).rejects.toThrow("App unavailable");
+  expect(result.current.distribution).toBe("community");
+  unmount();
+});

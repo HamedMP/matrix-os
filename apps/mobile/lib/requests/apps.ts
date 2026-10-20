@@ -27,6 +27,7 @@ const InstalledAppsSchema = z.array(AppEntrySchema).max(MAX_APPS);
 const AppSessionSchema = z.object({
   launchUrl: z.string().min(1).max(4_096).refine((value) => value.startsWith("/apps/")),
   expiresAt: z.number().int().positive(),
+  distribution: z.strictObject({ trust: z.enum(["owner", "community"]) }).optional(),
 });
 
 export type InstalledApp = z.infer<typeof AppEntrySchema>;
