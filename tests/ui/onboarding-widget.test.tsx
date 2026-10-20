@@ -47,7 +47,7 @@ const REPOS = [{ name: "portfolio", url: "https://github.com/sahar/portfolio", u
 
 function Harness({
   actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false,
-  appsUnavailable = false, apps = APPS, repos = REPOS, activeAi = "matrix", matrixAvailable = true, connectedProviders = [],
+  appsUnavailable = false, apps = APPS, repos = REPOS, activeAi = "matrix", followUpAi = null, matrixAvailable = true, connectedProviders = [],
   prefs = { keepInCorner: true, position: DEFAULT_ONBOARDING_POSITION, showOnLogin: true }, onSizeChange,
 }: {
   prefs?: OnboardingWidgetPrefs;
@@ -62,6 +62,7 @@ function Harness({
   aiSignInNeedsCode?: boolean;
   appsUnavailable?: boolean;
   activeAi?: OnboardingAiChoice;
+  followUpAi?: OnboardingAiChoice | null;
   matrixAvailable?: boolean;
   connectedProviders?: readonly OnboardingAiProvider[];
 }) {
@@ -86,6 +87,7 @@ function Harness({
       repos={repos}
       runView={runView}
       activeAi={activeAi}
+      followUpAi={followUpAi}
       matrixAvailable={matrixAvailable}
       connectedProviders={connectedProviders}
       creditsExhausted={creditsExhausted}
@@ -342,8 +344,14 @@ describe("OnboardingWidget", () => {
       { type: "run.admitted", requestId: 1, chatId: "chat_1", runId: "run_1" },
       { type: "run.settled", runId: "run_1", outcome: "completed" },
     ];
-    render(<Harness actions={makeActions()} activeAi="claude" matrixAvailable={false} connectedProviders={["claude"]} events={done} runView={{ status: "completed", steps: [] }} />);
-    expect(screen.getByText(/Using Claude Code ·/)).toBeInTheDocument();
+    // Matrix AI is ready again, but the code chat ran on Claude, so its follow-up stays there.
+    const { unmount } = render(<Harness actions={makeActions()} activeAi="matrix" followUpAi="claude" connectedProviders={["claude"]} events={done} runView={{ status: "completed", steps: [] }} />);
+    expect(screen.getByText("Using Claude Code")).toBeInTheDocument();
+    expect(screen.queryByText(/Using Matrix AI/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument();
+    unmount();
+    render(<Harness actions={makeActions()} activeAi="matrix" events={done} runView={{ status: "completed", steps: [] }} />);
+    expect(screen.queryByText(/^Using /)).not.toBeInTheDocument();
   });
 
   const claudeAccount: OnboardingWidgetEvent[] = [

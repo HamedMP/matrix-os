@@ -271,7 +271,7 @@ function CreditsOffer({ actions }: { actions: RunActions }) {
 function FollowUpOffer({ run, followUp, aiChoice, actions }: {
   run: OnboardingRunScreen;
   followUp: OnboardingTaskDefinition["followUp"];
-  aiChoice: OnboardingAiChoice;
+  aiChoice: OnboardingAiChoice | null;
   actions: RunActions;
 }) {
   return (
@@ -281,16 +281,13 @@ function FollowUpOffer({ run, followUp, aiChoice, actions }: {
         chips={followUp.chips}
         onPick={(choice) => actions.dispatch({ type: "followUp.chosen", choice, prompt: onboardingFollowUpPrompt(run.taskId, choice, run.answer) })}
       />
-      {run.taskId === "work-on-code" ? (
-        <p className="mxo-model-line">
-          Using {CODE_AGENT_LABELS[aiChoice]} · <button type="button" className="mxo-inline-link" data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
-        </p>
-      ) : null}
+      {/* The follow-up stays on its chat's AI, so this names it and offers no Change. */}
+      {run.taskId === "work-on-code" && aiChoice ? <p className="mxo-model-line">Using {CODE_AGENT_LABELS[aiChoice]}</p> : null}
     </>
   );
 }
 
-type RunScreenProps = { run: OnboardingRunScreen; state: OnboardingWidgetState } & Pick<OnboardingWidgetProps, "runView" | "creditsExhausted" | "activeAi" | "actions">;
+type RunScreenProps = { run: OnboardingRunScreen; state: OnboardingWidgetState; followUpAi: OnboardingAiChoice | null } & Pick<OnboardingWidgetProps, "runView" | "creditsExhausted" | "actions">;
 
 export function RunScreen(props: RunScreenProps) {
   const { run, runView, actions } = props;
@@ -312,7 +309,7 @@ export function RunScreen(props: RunScreenProps) {
   );
 }
 
-function RunDone({ run, state, runView, creditsExhausted, activeAi, actions }: RunScreenProps) {
+function RunDone({ run, state, runView, creditsExhausted, followUpAi, actions }: RunScreenProps) {
   const task = onboardingTask(run.taskId);
   const steps = runView?.steps ?? [];
   const followUp = task && !state.followUpUsed && !creditsExhausted ? task.followUp : null;
@@ -325,7 +322,7 @@ function RunDone({ run, state, runView, creditsExhausted, activeAi, actions }: R
         : task?.readyLine ? null : <p className="mxo-text">Done.</p>}
       <ResultCard title={onboardingRunTitle(run)} onOpen={actions.openResult} />
       {creditsExhausted ? <CreditsOffer actions={actions} /> : null}
-      {followUp ? <FollowUpOffer run={run} followUp={followUp} aiChoice={activeAi} actions={actions} /> : null}
+      {followUp ? <FollowUpOffer run={run} followUp={followUp} aiChoice={followUpAi} actions={actions} /> : null}
     </>
   );
 }

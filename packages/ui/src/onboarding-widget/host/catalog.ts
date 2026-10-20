@@ -26,6 +26,13 @@ export function onboardingSelection(catalog: CanonicalProviderCatalog, choice: O
   return null;
 }
 
+/** Which of the widget's AIs a provider instance is, to name it; null for one the widget does not offer. */
+export function onboardingAiForInstance(catalog: CanonicalProviderCatalog, instanceId: string): OnboardingAiChoice | null {
+  if (MATRIX_AI_INSTANCES.includes(instanceId)) return "matrix";
+  const driverKind = catalog.instances.find((instance) => instance.id === instanceId)?.driverKind;
+  return (Object.keys(DRIVER_FOR_PROVIDER) as OnboardingAiProvider[]).find((provider) => DRIVER_FOR_PROVIDER[provider] === driverKind) ?? null;
+}
+
 export function onboardingConnectedProviders(catalog: CanonicalProviderCatalog): OnboardingAiProvider[] {
   return (Object.keys(DRIVER_FOR_PROVIDER) as OnboardingAiProvider[]).filter((provider) =>
     catalog.instances.some((instance) => instance.driverKind === DRIVER_FOR_PROVIDER[provider] && instance.availability === "available"));

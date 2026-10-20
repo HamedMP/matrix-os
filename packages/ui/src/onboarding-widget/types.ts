@@ -56,6 +56,8 @@ export interface OnboardingWidgetProps {
   runView: OnboardingRunView | null;
   /** The AI a new task runs on; differs from `state.aiChoice` while Matrix AI can't run on this computer. */
   activeAi: OnboardingAiChoice;
+  /** The AI a follow-up runs on: the one its chat already uses, which `activeAi` can no longer change. Null when unknown. */
+  followUpAi?: OnboardingAiChoice | null;
   matrixAvailable: boolean;
   connectedProviders: readonly OnboardingAiProvider[];
   creditsExhausted: boolean;
