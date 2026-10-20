@@ -41,10 +41,10 @@ vi.mock("@desktop/renderer/src/features/settings/provider-workflow-transport", (
 const selection = { instanceId: "hermes_default", model: "default", options: [], interactionMode: "default", permissionMode: "default" } as never;
 const api = { openStream: vi.fn() } as unknown as ApiClient;
 
-function useHarness(init: OnboardingWidgetInit, client: unknown) {
+function useHarness(init: OnboardingWidgetInit, client: unknown, onRunInstance?: (instanceId: string | null) => void) {
   const [state, dispatch] = useReducer(reduceOnboardingWidget, init, initialOnboardingWidgetState);
   const port = useMemo(() => createDesktopOnboardingChatPort(api, client as never), [client]);
-  const runView = useOnboardingRun(state, dispatch, { port, selection, selectionPending: false });
+  const runView = useOnboardingRun(state, dispatch, { port, selection, selectionPending: false, ...(onRunInstance ? { onRunInstance } : {}) });
   return { state, dispatch, runView };
 }
 
@@ -112,6 +112,18 @@ describe("onboarding run recovery", () => {
     expect(result.current.state.screen).toMatchObject({ phase: "done" });
     expect(result.current.state.firstTaskCompleted).toBe(true);
     expect(client.admitTurn).not.toHaveBeenCalled();
+  });
+
+  it("reports which AI the watched run used, so its follow-up can name the chat's AI", async () => {
+    const onRunInstance = vi.fn();
+    const client = {
+      create: vi.fn(),
+      admitTurn: vi.fn(),
+      getDetail: vi.fn().mockResolvedValue({ runs: [{ id: "run_1", status: "completed", instanceId: "claude_code_default" }], messages: [] }),
+    };
+    renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client, onRunInstance));
+    await flush();
+    expect(onRunInstance).toHaveBeenCalledWith("claude_code_default");
   });
 
   it("fails a restored run that the chat no longer has", async () => {

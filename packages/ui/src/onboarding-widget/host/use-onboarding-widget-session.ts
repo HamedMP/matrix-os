@@ -10,7 +10,7 @@ import {
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { OnboardingWidgetActions, OnboardingWidgetPrefs, OnboardingWidgetProps, OnboardingWidgetRepo } from "../types.js";
-import { onboardingActiveAi, onboardingApps, onboardingConnectedProviders, onboardingCreditsExhausted, onboardingSelection } from "./catalog.js";
+import { onboardingActiveAi, onboardingAiForInstance, onboardingApps, onboardingConnectedProviders, onboardingCreditsExhausted, onboardingSelection } from "./catalog.js";
 import type { OnboardingChatPort } from "./chat-port.js";
 import { onboardingSessionInit, writeOnboardingPrefs, type OnboardingStoredPrefs } from "./prefs.js";
 import { loadOnboardingRepos, type OnboardingRepoSource } from "./repos.js";
@@ -68,7 +68,9 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
   const connectedProviders = useMemo(() => onboardingConnectedProviders(catalog), [catalog]);
   const creditsExhausted = useMemo(() => onboardingCreditsExhausted(catalog, selection), [catalog, selection]);
 
-  const runView = useOnboardingRun(state, dispatch, { port: input.chatPort, selection, selectionPending: loading });
+  const [runInstanceId, setRunInstanceId] = useState<string | null>(null);
+  const runView = useOnboardingRun(state, dispatch, { port: input.chatPort, selection, selectionPending: loading, onRunInstance: setRunInstanceId });
+  const followUpAi = useMemo(() => (runInstanceId ? onboardingAiForInstance(catalog, runInstanceId) : null), [catalog, runInstanceId]);
   const ai = useOnboardingAiConnect(input.aiPort, dispatch);
   const connectPanelOpen = state.ai?.step === "waiting" || state.ai?.step === "key";
   const abandonSignIn = ai.abandonSignIn;
@@ -136,6 +138,7 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     repos,
     runView,
     activeAi,
+    followUpAi,
     matrixAvailable,
     connectedProviders,
     creditsExhausted,

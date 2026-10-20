@@ -5,6 +5,7 @@ import { createLegacyGlobalProviderCatalog } from "../../desktop/src/renderer/sr
 import {
   DEFAULT_ONBOARDING_PREFS,
   onboardingActiveAi,
+  onboardingAiForInstance,
   onboardingLoginPresentation,
   onboardingPrefsKey,
   onboardingSessionInit,
@@ -118,6 +119,16 @@ describe("onboarding AI selection", () => {
     ({ ...createLegacyGlobalProviderCatalog({ hasProject: false }), instances });
   const hermesOff = harness("hermes_default", "hermes", "unavailable");
   const claude = harness("claude_code_default", "claude_code");
+
+  it("names the AI a chat's provider instance belongs to, or nothing for one the widget does not offer", () => {
+    const catalog = catalogOf(hermesOff, claude, harness("codex_default", "codex"), harness("pi_default", "pi"));
+    expect(onboardingAiForInstance(catalog, "hermes_default")).toBe("matrix");
+    expect(onboardingAiForInstance(catalog, "matrix_pi_default")).toBe("matrix");
+    expect(onboardingAiForInstance(catalog, "claude_code_default")).toBe("claude");
+    expect(onboardingAiForInstance(catalog, "codex_default")).toBe("codex");
+    expect(onboardingAiForInstance(catalog, "pi_default")).toBeNull();
+    expect(onboardingAiForInstance(catalog, "gone_instance")).toBeNull();
+  });
 
   it("runs Matrix AI only on Hermes or the managed Matrix route, never on whatever else is the default", () => {
     expect(onboardingSelection(catalogOf(hermesOff, claude), "matrix")).toBeNull();

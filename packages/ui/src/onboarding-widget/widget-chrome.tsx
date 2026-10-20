@@ -121,7 +121,7 @@ function ScreenView({ props, apps }: { props: OnboardingWidgetProps; apps: AppsV
     case "question": return <QuestionScreen taskId={screen.taskId} actions={actions} />;
     case "connect": return <ConnectScreen taskId={screen.taskId} status={props.appsUnavailable ? "unavailable" : screen.status} apps={props.apps} actions={actions} />;
     case "repo": return <RepoScreen repos={props.repos} actions={actions} />;
-    case "run": return <RunScreen run={screen} state={state} runView={props.runView} creditsExhausted={props.creditsExhausted} activeAi={props.activeAi} actions={actions} />;
+    case "run": return <RunScreen run={screen} state={state} runView={props.runView} creditsExhausted={props.creditsExhausted} followUpAi={props.followUpAi ?? null} actions={actions} />;
   }
 }
 

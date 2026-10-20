@@ -1,6 +1,7 @@
 export {
   ONBOARDING_MAX_APPS,
   onboardingActiveAi,
+  onboardingAiForInstance,
   onboardingApps,
   onboardingConnectedProviders,
   onboardingCreditsExhausted,

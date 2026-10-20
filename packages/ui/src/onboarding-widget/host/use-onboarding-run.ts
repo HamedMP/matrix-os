@@ -24,6 +24,8 @@ export interface OnboardingRunDeps {
   selection: CanonicalComposerSelection | null;
   /** The provider catalog is still loading, so a missing selection is not final yet. */
   selectionPending: boolean;
+  /** Told which provider instance the watched run uses, so a follow-up can name the AI its chat stays on. */
+  onRunInstance?: (instanceId: string | null) => void;
 }
 
 /** Executes the run the reducer asked for and projects its canonical Chat detail back into the widget. */
@@ -122,6 +124,7 @@ export function useOnboardingRun(
           if (disposed) return;
           cursor = detail.nextCursor;
         }
+        depsRef.current.onRunInstance?.(detail.runs.find((run) => run.id === runId)?.instanceId ?? null);
         const view = deriveOnboardingRunView(detail, runId, failedStepLabel ? { failedStepLabel } : {});
         setRunView(view);
         if (view.status === "completed" || view.status === "failed") {
