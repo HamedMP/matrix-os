@@ -5,6 +5,7 @@ import {
 } from "@matrix-os/ui";
 import { z } from "zod/v4";
 import { CanonicalShellChatRequestError, type CanonicalShellChatClient } from "@/lib/canonical-chat-client";
+import { boundedProviderSettingsJson } from "@/lib/provider-settings-transport";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REPO_RESPONSE_BYTES = 512 * 1024;
@@ -44,11 +45,10 @@ export function createShellOnboardingChatPort(client: CanonicalShellChatClient):
   };
 }
 
+/** Stops reading at the size limit, so an oversized repo list is never fully downloaded. */
 async function boundedJson(response: Response): Promise<unknown> {
   if (!response.ok) throw new Error(`OnboardingRepoRequestFailed:${response.status}`);
-  const text = await response.text();
-  if (text.length > MAX_REPO_RESPONSE_BYTES) throw new Error("OnboardingRepoResponseTooLarge");
-  return JSON.parse(text);
+  return boundedProviderSettingsJson(response, MAX_REPO_RESPONSE_BYTES);
 }
 
 export function createShellOnboardingRepoSource(gatewayUrl: string, fetchFn: typeof fetch = fetch): OnboardingRepoSource {

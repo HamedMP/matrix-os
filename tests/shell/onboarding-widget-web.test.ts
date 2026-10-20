@@ -203,6 +203,30 @@ describe("web onboarding repo source", () => {
     const source = createShellOnboardingRepoSource(GATEWAY, vi.fn().mockResolvedValue(json({ error: "nope" }, 502)));
     await expect(source.listComputerRepos(20, new AbortController().signal)).rejects.toThrow();
   });
+
+  it("stops downloading a repo list once it passes the size limit", async () => {
+    const chunk = new Uint8Array(64 * 1024).fill(0x20);
+    let pulled = 0;
+    const cancel = vi.fn();
+    // An endless body with no Content-Length: only reading with a limit can end this.
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { pulled += chunk.byteLength; controller.enqueue(chunk); },
+      cancel,
+    });
+    const source = createShellOnboardingRepoSource(GATEWAY, vi.fn().mockResolvedValue(new Response(body, { status: 200 })));
+    await expect(source.listComputerRepos(20, new AbortController().signal)).rejects.toThrow();
+    expect(cancel).toHaveBeenCalled();
+    expect(pulled).toBeLessThanOrEqual(512 * 1024 + 3 * chunk.byteLength);
+  });
+
+  it("refuses a repo list whose declared size is over the limit without reading it", async () => {
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({ pull(controller) { pulled += 1; controller.enqueue(new Uint8Array(8)); } });
+    const response = new Response(body, { status: 200, headers: { "content-length": String(2 * 1024 * 1024) } });
+    const source = createShellOnboardingRepoSource(GATEWAY, vi.fn().mockResolvedValue(response));
+    await expect(source.readGithubApp({ service: "github", action: "list_repos", label: "sahar", connectionId: "conn_1", params: { sort: "updated", per_page: 20 } }, new AbortController().signal)).rejects.toThrow();
+    expect(pulled).toBeLessThanOrEqual(1);
+  });
 });
 
 describe("web onboarding identity", () => {
