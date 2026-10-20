@@ -1,4 +1,4 @@
-import type { AppStoreCapabilities, AppStoreManifest, AppStoreScanReport, AppStoreGeneralizationReport, AppStoreListingSummary } from '@matrix-os/contracts/app-store';
+import type { AppStoreCapabilities, AppStoreManifest, AppStoreScanReport, AppStoreGeneralizationReport, AppStoreListingSummary, AppStoreListingDetail } from '@matrix-os/contracts/app-store';
 export interface StoreActor { userId: string; handle: string }
 export interface StoreListingRow {
   id: string; slug: string; publisher_clerk_user_id: string; publisher_handle: string;
@@ -12,9 +12,9 @@ export interface StoreVersionRow {
   submission_key: string; submitted_by_clerk_user_id: string; submission_digest: string;
   status: import('@matrix-os/contracts/app-store').AppStoreSubmissionSummary['status'];
   name: string; tagline: string; description: string; category: StoreListingRow['category']; changelog: string;
-  license: import('@matrix-os/contracts/app-store').AppStoreListingDetail['currentVersion'] extends infer T ? NonNullable<T> extends { license: infer L } ? L : never : never;
+  license: NonNullable<AppStoreListingDetail['currentVersion']>['license'];
   capabilities: AppStoreCapabilities; capabilities_digest: string; manifest: AppStoreManifest;
-  source_object_key: string; source_sha256: string; source_size: number;
+  source_object_key: string; upload_cleaned_at: string | null; source_sha256: string; source_size: number;
   approval_key_id: string | null; approval_signature: string | null; scan_report: AppStoreScanReport | null;
   generalization_report: AppStoreGeneralizationReport; reviewer_message: string | null;
   decided_by_clerk_user_id: string | null; decided_at: string | null; scanning_started_at: string | null;

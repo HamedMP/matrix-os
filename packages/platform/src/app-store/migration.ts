@@ -22,6 +22,7 @@ export async function migrateAppStore(db: PlatformMigrationExecutor): Promise<vo
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     UNIQUE(listing_id,version), CHECK(status NOT IN ('published','superseded') OR (approval_key_id IS NOT NULL AND approval_signature IS NOT NULL))
   )`.execute(db);
+  await sql`ALTER TABLE app_store_versions ADD COLUMN IF NOT EXISTS upload_cleaned_at TEXT`.execute(db);
   await sql`CREATE TABLE IF NOT EXISTS app_store_installs (
     listing_id TEXT NOT NULL REFERENCES app_store_listings(id), clerk_user_id TEXT NOT NULL,
     version_id TEXT NOT NULL REFERENCES app_store_versions(id), first_installed_at TEXT NOT NULL, last_installed_at TEXT NOT NULL, uninstalled_at TEXT,

@@ -32,7 +32,7 @@ export function storeOffset(cursor?: string): number {
 export const storeCursor = (offset: number) => Buffer.from(String(offset)).toString('base64url');
 export function createListingRepository(db: PlatformDB) {
   async function catalog(query: AppStoreCatalogQuery) {
-    let request = db.executor.selectFrom('app_store_listings').selectAll().where('status', '=', 'live');
+    let request = db.executor.selectFrom('app_store_listings').selectAll().where('status', '=', 'live').where('publisher_clerk_user_id', 'not like', 'deleted:%');
     if (query.q) { const pattern = `%${query.q.replace(/[\\%_]/g, '\\$&')}%`; request = request.where(eb => eb.or([eb('name', 'ilike', pattern), eb('tagline', 'ilike', pattern)])); }
     if (query.category) request = request.where('category', '=', query.category);
     if (query.sort === 'new') request = request.orderBy('created_at', 'desc');
@@ -58,7 +58,7 @@ export function createListingRepository(db: PlatformDB) {
   }
   async function downloadVersion(slug: string, owner: string, versionId: string) {
     const listing = await getStoreListing(db, slug); const version = await getStoreVersion(db, versionId);
-    if (listing.status === 'suspended') throw new AppStoreError('forbidden');
+    if (listing.status === 'suspended' || listing.publisher_clerk_user_id.startsWith('deleted:')) throw new AppStoreError('forbidden');
     if (version.listing_id !== listing.id || !['published', 'superseded'].includes(version.status)) throw new AppStoreError('not_found');
     const previous = await db.executor.selectFrom('app_store_installs').select('version_id').where('listing_id', '=', listing.id).where('clerk_user_id', '=', owner).executeTakeFirst();
     if (!(listing.status === 'live' && listing.current_version_id === version.id) && previous?.version_id !== version.id) throw new AppStoreError('forbidden');
