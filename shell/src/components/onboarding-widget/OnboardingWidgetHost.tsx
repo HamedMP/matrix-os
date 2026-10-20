@@ -15,8 +15,9 @@ import {
   type OnboardingWidgetBox,
 } from "@matrix-os/ui";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { useChatProviderState } from "@/components/chat-app-provider-setup";
+import { useSocket } from "@/hooks/useSocket";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { createCanonicalShellChatClient } from "@/lib/canonical-chat-client";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -30,6 +31,9 @@ import {
   type ShellOnboardingIdentity,
 } from "./shell-onboarding-ports";
 import { useShellOnboardingIntegrations } from "./use-shell-onboarding-integrations";
+
+/** Gateway messages sent when an app is connected, disconnected or expires anywhere, including Settings. */
+const CONNECTION_CHANGE_MESSAGES = new Set(["integration:connected", "integration:disconnected", "integration:expired"]);
 
 const IDENTITY_TIMEOUT_MS = 10_000;
 const IDENTITY_RETRIES = 5;
@@ -124,7 +128,11 @@ function OnboardingWidgetSession({ prefsKey, displayName, gatewayUrl, initialPre
   const chatPort = useMemo(() => createShellOnboardingChatPort(createCanonicalShellChatClient({ gatewayUrl })), [gatewayUrl]);
   const repoSource = useMemo(() => createShellOnboardingRepoSource(gatewayUrl), [gatewayUrl]);
   const aiPort = useMemo(() => createShellOnboardingAiPort(gatewayUrl), [gatewayUrl]);
-  const integrations = useShellOnboardingIntegrations(dispatch, { gatewayUrl });
+  const { subscribe } = useSocket();
+  const subscribeConnectionChanges = useCallback((onChange: () => void) => subscribe((message) => {
+    if (CONNECTION_CHANGE_MESSAGES.has(message.type)) onChange();
+  }), [subscribe]);
+  const integrations = useShellOnboardingIntegrations(dispatch, { gatewayUrl, subscribeConnectionChanges });
 
   const widget = useOnboardingWidgetSession({
     prefsKey, state, dispatch, prefs, setPrefs, displayName,

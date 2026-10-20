@@ -21,6 +21,8 @@ interface Options {
   pollIntervals?: number[];
   /** Overrides the delays before re-reading lists that failed to load; tests only. */
   listRetryDelays?: number[];
+  /** Calls back when an app is connected or disconnected elsewhere, such as in Settings; returns an unsubscribe. */
+  subscribeConnectionChanges?: (onChange: () => void) => () => void;
 }
 
 export interface ShellOnboardingIntegrations extends OnboardingAppConnect {
@@ -144,6 +146,26 @@ export function useShellOnboardingIntegrations(
       onServiceMissing: markAppsUnavailable,
     });
   }, [applyConnections, markAppsUnavailable, transport]);
+
+  // Settings and other clients change connections without this hook, so re-read the list when they do.
+  const subscribeConnectionChanges = options.subscribeConnectionChanges;
+  useEffect(() => {
+    if (!subscribeConnectionChanges) return;
+    let disposed = false;
+    const { gatewayUrl, fetchFn } = transport();
+    const unsubscribe = subscribeConnectionChanges(() => {
+      const startedAt = connectionsRevisionRef.current;
+      readJson(fetchFn, `${gatewayUrl}/api/integrations`).then((value) => {
+        if (!disposed && connectionsRevisionRef.current === startedAt) applyConnections(parseConnectedIntegrations(value));
+      }, (error: unknown) => {
+        if (!disposed) console.warn("[onboarding-widget] connections refresh failed:", errorName(error));
+      });
+    });
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [applyConnections, subscribeConnectionChanges, transport]);
 
   useEffect(() => () => {
     attemptRef.current += 1;
