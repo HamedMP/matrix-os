@@ -16,9 +16,11 @@ function installation(row: SlackDatabase["slack_installations"]): SlackInstallat
     botUserId: row.bot_user_id, encryptedBotToken: row.encrypted_bot_token, generation: row.generation, state: row.state };
 }
 
+export type SlackLinkTransaction = (actorId: string, work: (trx: Kysely<SlackDatabase>) => Promise<void>) => Promise<void>;
+
 export class SlackRepository {
   private readonly now: () => Date;
-  constructor(private readonly db: Kysely<SlackDatabase>, options: { now?: () => Date } = {}) { this.now = options.now ?? (() => new Date()); }
+  constructor(private readonly db: Kysely<SlackDatabase>, private readonly options: { now?: () => Date; linkTransaction?: SlackLinkTransaction } = {}) { this.now = options.now ?? (() => new Date()); }
 
   async getInstallation(appId: string, teamId: string): Promise<SlackInstallation | null> {
     const row = await this.db.selectFrom("slack_installations").selectAll().where("app_id", "=", appId).where("team_id", "=", teamId).executeTakeFirst();
@@ -124,7 +126,7 @@ export class SlackRepository {
     return row ? { appId: row.app_id, teamId: row.team_id, slackUserId: row.slack_user_id } : null;
   }
   async completeLink(input: { hash: string; actorId: string; organizationId: string }): Promise<void> {
-    await this.db.transaction().execute(async (trx) => {
+    const work = async (trx: Kysely<SlackDatabase>) => {
       const preview = await trx.selectFrom("slack_link_challenges").selectAll().where("hash", "=", input.hash).executeTakeFirst();
       if (!preview) throw new SlackRepositoryError("conflict");
       // Match installation-first lock ordering in challenge creation and uninstall.
@@ -139,7 +141,9 @@ export class SlackRepository {
         slack_user_id: challenge.slack_user_id, actor_id: input.actorId, organization_id: input.organizationId, created_at: this.now() })
         .onConflict((oc) => oc.columns(["app_id", "team_id", "slack_user_id"]).doNothing()).execute();
       await trx.updateTable("slack_link_challenges").set({ consumed_at: this.now() }).where("hash", "=", input.hash).execute();
-    });
+    };
+    if (this.options.linkTransaction) await this.options.linkTransaction(input.actorId, work);
+    else await this.db.transaction().execute(work);
   }
   async getLink(appId: string, teamId: string, slackUserId: string): Promise<SlackEmployeeLink | null> {
     const row = await this.db.selectFrom("slack_employee_links").selectAll().where("app_id", "=", appId).where("team_id", "=", teamId).where("slack_user_id", "=", slackUserId).executeTakeFirst();

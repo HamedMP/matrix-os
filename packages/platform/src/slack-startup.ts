@@ -1,3 +1,4 @@
+import { withAccountDeletionAdmission } from "./account-deletion/admission.js";
 import { Hono } from "hono";
 import type { Kysely } from "kysely";
 import type { Agent } from "undici";
@@ -41,6 +42,8 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
     return {runtimeId:machine.machineId,ownerId:machine.clerkUserId,origin:`https://${machine.publicIPv4}`,token:buildPlatformVerificationToken(machine.handle,options.platformSecret)};
   }
   return createSlackApp({db:options.db.kysely as unknown as Kysely<SlackDatabase>,config,resolveActor,fetchImpl,startCleanup:options.startCleanup,
+    linkTransaction: (actorId, work) => withAccountDeletionAdmission(options.db, actorId,
+      trx => work(trx.executor as unknown as Kysely<SlackDatabase>), options.env),
     isCurrentMember:input=>organizations.projection.isCurrentMember(input),
     requireOrgAdmin:async input=>{
       const refreshed=await organizations.projection.reconcile(input.organizationId);
