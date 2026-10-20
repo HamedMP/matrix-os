@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBillingRoutes, type StripeBillingClient } from '../../packages/platform/src/billing-routes.js';
-import { claimCardTrialCheckoutAttempt, claimCheckoutAttempt, getLatestCheckoutAttempt, type PlatformDB } from '../../packages/platform/src/db.js';
+import { claimCardTrialCheckoutAttempt, claimCheckoutAttempt, getLatestCheckoutAttempt, insertCheckoutAttempt, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const env = {
@@ -49,6 +49,24 @@ describe('Starter-only trial checkout', () => {
         durationDaysByPlan: { matrix_starter: 14 } },
       activeCheckout: { status: 'open', planSlug: 'matrix_starter', interval: 'monthly', regionSlug: 'region_fsn1' },
     });
+  });
+  it.each([{ duration: null, reserved: false }, { duration: 7, reserved: false }, { duration: 7, reserved: true }])(
+    'uses the current policy for an expired legacy $duration-day checkout (reserved=$reserved)', async ({ duration, reserved }) => {
+      await insertCheckoutAttempt(db, {
+        id: 'expired_legacy', clerkUserId: 'user_trial', stripeSessionId: 'cs_expired',
+        trialPeriodDays: duration, createdAt: '2026-10-17T09:59:59.000Z',
+      });
+      if (reserved) {
+        await db.executor.insertInto('billing_trial_accounts').values({
+          clerk_user_id: 'user_trial', trial_checkout_attempt_id: 'expired_legacy',
+          consumed_at: null, updated_at: '2026-10-17T09:59:59.000Z',
+        }).execute();
+      }
+      expect((await checkout(app(), 'matrix_starter')).status).toBe(200);
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+        trialPeriodDays: 14, paymentMethodMode: 'card_required',
+      }));
+      await expect(getLatestCheckoutAttempt(db, 'user_trial')).resolves.toMatchObject({ trialPeriodDays: 14 });
   });
   it('keeps the legacy status payload parseable by installed clients', async () => {
     const response = await app().request('/billing/status');
