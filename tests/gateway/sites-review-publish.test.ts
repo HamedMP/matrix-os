@@ -20,7 +20,11 @@ async function publish(publishing:unknown,reviewedConfig:unknown,storage:boolean
 }
 const forms=[{id:'contact',title:'Contact',fields:{email:{type:'email',required:true}}}];
 describe('reviewed public declarations',()=>{
- it('publishes an information-only app with one absolute build deadline',async()=>{const {response,build,platform}=await publish({data:{event:'Launch'},forms:[]},{data:{event:'Launch'},forms:[]},false);expect(response.status).toBe(200);expect(build.build).toHaveBeenCalledOnce();expect(build.build.mock.calls[0]?.[2]).toMatchObject({deadlineAt:expect.any(Number)});expect(platform.request).toHaveBeenCalledOnce();});
+ it('passes the overall publication deadline without sharing one declared timeout across build stages',async()=>{
+  const started=new Date('2026-10-20T00:00:00Z').getTime();vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(started);
+  try{const {response,build,platform}=await publish({data:{event:'Launch'},forms:[]},{data:{event:'Launch'},forms:[]},false);expect(response.status).toBe(200);expect(build.build).toHaveBeenCalledOnce();expect(build.build.mock.calls[0]?.[2]).toEqual({deadlineAt:started+SITE_PUBLISH_TIMEOUT_MS});expect(platform.request).toHaveBeenCalledOnce();}
+  finally{vi.useRealTimers();}
+ });
  it('requires storage only when live declaration includes visitor forms',async()=>{const {response,build,platform}=await publish({forms},{forms},false);expect(response.status).toBe(503);expect(build.build).not.toHaveBeenCalled();expect(platform.request).not.toHaveBeenCalled();});
  it('compares equivalent object fields independently of insertion order',async()=>{const publishing={data:{event:{title:'Launch',venue:'Online'},date:'Friday'},forms:[{id:'contact',title:'Contact',fields:{name:{type:'text',required:true},email:{type:'email',required:true}}}]};const reviewed={data:{date:'Friday',event:{venue:'Online',title:'Launch'}},forms:[{id:'contact',title:'Contact',fields:{email:{required:true,type:'email'},name:{required:true,type:'text'}}}]};expect((await publish(publishing,reviewed,true)).response.status).toBe(200);});
  it('still rejects changed values or array ordering before building',async()=>{for(const reviewed of [{data:{list:['second','first']},forms:[]},{data:{list:['first','changed']},forms:[]}]){const {response,build}=await publish({data:{list:['first','second']},forms:[]},reviewed,true);expect(response.status).toBe(409);expect(build.build).not.toHaveBeenCalled();}});

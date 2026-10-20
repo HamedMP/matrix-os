@@ -85,8 +85,10 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
    if(!isDeepStrictEqual(config,reviewedConfig))return c.json({error:'Site changed; reload and try again'},409);
    type Snapshot={ok:true;files:SiteFile[]}|{ok:false;reason:'changed'|'artifacts'};
    deadline.check();
-   // Queueing, install, build, capture and activation share this absolute budget.
-   const buildDeadlineAt=Math.min(deadline.deadlineAt,Date.now()+manifest.build.timeout*1000);
+   // Queueing, install, build, capture and activation share the publication
+   // deadline. BuildOrchestrator applies the manifest timeout independently to
+   // each install/build command within that overall budget.
+   const buildDeadlineAt=deadline.deadlineAt;
    const building=build.buildWithSnapshot<Snapshot>(manifest.slug,appDir,{deadlineAt:buildDeadlineAt},async()=>{
     deadline.check();
     if(!await livePublicationMatches(appDir,binding,manifest))return {ok:false,reason:'changed'};
