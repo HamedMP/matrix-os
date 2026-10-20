@@ -27,7 +27,7 @@ export function isShellNotFound(error: unknown): boolean {
 export function createShellOnboardingChatPort(client: CanonicalShellChatClient): OnboardingChatPort {
   return {
     create: (input) => client.create(input),
-    detail: (chatId) => client.detail(chatId),
+    detail: (chatId, cursor) => client.detail(chatId, cursor),
     admitTurn: (chatId, input) => client.admitTurn(chatId, input),
     isNotFound: isShellNotFound,
     isComputerStarting: isShellComputerStarting,

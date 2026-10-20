@@ -10,6 +10,7 @@ import { useWindowManager } from "@/hooks/useWindowManager";
 import { CanonicalShellChatRequestError } from "@/lib/canonical-chat-client";
 import { isShellSupportOpen, subscribeShellSupportPanel } from "@/lib/posthog-client";
 import {
+  createShellOnboardingChatPort,
   createShellOnboardingRepoSource,
   isShellComputerStarting,
   isShellNotFound,
@@ -179,6 +180,14 @@ describe("web onboarding chat port", () => {
     expect(isShellNotFound(new CanonicalShellChatRequestError(404))).toBe(true);
     expect(isShellNotFound(new CanonicalShellChatRequestError(403))).toBe(false);
     expect(isShellNotFound(new TypeError("Failed to fetch"))).toBe(false);
+  });
+
+  it("asks the chat client for an older page when the run is not on the newest one", async () => {
+    const detail = vi.fn().mockResolvedValue({ runs: [] });
+    const port = createShellOnboardingChatPort({ detail } as never);
+    await port.detail("chat_1");
+    await port.detail("chat_1", "chatcur_older");
+    expect(detail.mock.calls).toEqual([["chat_1", undefined], ["chat_1", "chatcur_older"]]);
   });
 });
 
