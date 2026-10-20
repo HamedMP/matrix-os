@@ -137,6 +137,14 @@ describe("collaboration PostgreSQL CI execution", () => {
 });
 
 describe("required collaboration PostgreSQL workflow", () => {
+  it("runs Slack deletion races in the required account-deletion PostgreSQL selection", () => {
+    const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
+    expect(workflow.jobs["funded-postgres"].steps.some((step: { run?: string }) => step.run?.includes("tests/platform/account-deletion-*-postgres.test.ts"))).toBe(true);
+    const selected = spawnSync("bash", ["-c", "printf '%s\\n' tests/platform/account-deletion-*-postgres.test.ts"], { encoding: "utf8", timeout: 2000, env: { PATH: process.env.PATH } });
+    expect(selected.status, selected.stderr).toBe(0);
+    expect(selected.stdout.trim().split("\n")).toContain("tests/platform/account-deletion-slack-postgres.test.ts");
+  });
+
   it("retains the existing required job, exact-source checkout, commands and ten-minute bound", () => {
     const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")); const job = workflow.jobs["funded-postgres"];
     expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(10);
