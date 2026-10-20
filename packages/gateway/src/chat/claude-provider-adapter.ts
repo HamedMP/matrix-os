@@ -3,6 +3,7 @@ import { openNativeSharedBrowserRun, type NativeSharedBrowserRun } from "./nativ
 import { configureClaudeSharedBrowser } from "./claude-shared-browser-launch.js";
 import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
 import { createClaudeInputController } from "./claude-input-control.js";
+import { createCanonicalCliHumanWait } from "./cli-human-wait.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
 import { createClaudeBuiltinToolApprovalControl } from "./claude-builtin-tool-approval.js";
 import { createClaudeIntegrationApprovalControl } from "./claude-integration-approval.js";
@@ -329,16 +330,17 @@ export function createClaudeChatProviderAdapter(options: {
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
     let finishInput: (() => void) | undefined;
     let writeControl: ((frame: string) => Promise<void>) | undefined;
+    const humanWait = createCanonicalCliHumanWait(event => queue.push(event));
     const approvalControl = approvalClient && registeredGeneration ? createClaudeCustomMcpApprovalControl({
       runId: input.runId, generation: registeredGeneration, client: approvalClient,
-      emit: event => queue.push(event),
+      emit: humanWait.emit,
       onError: error => console.warn("[chat-claude] Custom MCP approval failed", error instanceof Error ? error.name : "UnknownError"),
     }) : undefined;
     const integrationApproval = capability ? createClaudeIntegrationApprovalControl({
       runId: input.runId, homePath: options.homePath, capability,
       verify: options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient),
       ...(previewDrive && options.previewDriveClient ? { previewDriveClient: options.previewDriveClient } : {}),
-      emit: event => queue.push(event), onError: () => processController.abort(),
+      emit: humanWait.emit, onError: () => processController.abort(),
     }) : undefined;
     const verifyBuiltinToolDecision = options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient);
     // Auto Accept Edits still asks for non-edit tools; Auto's classifier refusals are deliberate and stay denied.
@@ -347,13 +349,14 @@ export function createClaudeChatProviderAdapter(options: {
       && input.interactionMode === "default"
       ? createClaudeBuiltinToolApprovalControl({
         runId: input.runId, chatId: input.chatId, homePath: options.homePath, verify: verifyBuiltinToolDecision,
-        emit: event => queue.push(event),
+        emit: humanWait.emit,
         onError: () => processController.abort(),
       }) : undefined;
     let approvalRevoked = false;
     let finalRevokePromise: Promise<void> | undefined;
     let clearApprovalPromise: Promise<boolean> | undefined;
     const revokeApproval = (reason: "final" | "steer" = "final") => {
+      inputControl.close();
       capability?.revoke();
       approvalControl?.close();
       integrationApproval?.close();
@@ -377,8 +380,9 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
     const inputControl = createClaudeInputController({
+      signal: processSignal,
       write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Input transport unavailable")),
-      emit: event => queue.push(event),
+      emit: humanWait.emit,
       onError: () => processController.abort(),
       onToolPermission: (request, respond) => integrationApproval?.onToolPermission(request, respond)
         || (approvalControl?.onToolPermission ?? (approvalReady && capability && !previewDrive && selectedPermission === "default"
@@ -743,7 +747,8 @@ export function createClaudeChatProviderAdapter(options: {
       maxStdoutBytes: MAX_STREAM_BYTES,
       maxStderrBytes: MAX_STDERR_BYTES,
       spawnFn: options.spawnFn,
-      onStart(write, end) {
+      onStart(write, end, idle) {
+        humanWait.attach(idle);
         writeControl = write;
         finishInput = end;
         void write(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: nativePrompt }, parent_tool_use_id: null })}\n`).catch(error => {
@@ -887,7 +892,7 @@ export function createClaudeChatProviderAdapter(options: {
       // terminal events. Finish the forwarding stream with that failure too.
       releaseActiveRun();
       queue.finish(error instanceof Error ? error : new Error("Claude execution unavailable"));
-    }).finally(() => { if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
+    }).finally(() => { inputControl.close(); humanWait.close(); if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
       capability?.revoke(); approvalControl?.close(); integrationApproval?.close(); builtinToolApproval?.close();
     } else revokeApproval(); });
 
@@ -897,6 +902,7 @@ export function createClaudeChatProviderAdapter(options: {
       streamCompleted = true;
     } finally {
       processController.abort();
+      inputControl.close(); humanWait.close();
       discardProjectedText();
       if (!streamCompleted) {
         cancellationRequested = true;

@@ -65,6 +65,13 @@ type CanonicalCliDeadline =
     idleTimeoutMs: number;
   };
 
+export interface CanonicalCliIdleControl {
+  /** Suspend only work inactivity; absolute lifetime and output caps remain active. */
+  pause(): void;
+  /** Restart a full idle interval after the human wait ends. */
+  resume(): void;
+}
+
 export async function runCanonicalCli(options: {
   command: string;
   args: string[];
@@ -75,7 +82,7 @@ export async function runCanonicalCli(options: {
   maxStdoutBytes: number;
   maxStderrBytes?: number;
   spawnFn?: CanonicalCliSpawn;
-  onStart?: (write: (frame: string) => Promise<void>, end: () => void) => void;
+  onStart?: (write: (frame: string) => Promise<void>, end: () => void, idle: CanonicalCliIdleControl) => void;
   onStdout: (chunk: Buffer) => void;
   onStderr?: (chunk: Buffer) => void;
 } & CanonicalCliDeadline): Promise<void> {
@@ -103,6 +110,7 @@ export async function runCanonicalCli(options: {
   await new Promise<void>((resolve, reject) => {
     let timeout: NodeJS.Timeout | undefined;
     let idleTimeout: NodeJS.Timeout | undefined;
+    let idlePaused = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
     let forceSettleTimer: NodeJS.Timeout | undefined;
     let terminationError: Error | undefined;
@@ -131,10 +139,23 @@ export async function runCanonicalCli(options: {
     };
     const abort = () => terminate(new CanonicalCliError("aborted"));
     const resetIdleTimeout = () => {
-      if (options.idleTimeoutMs === undefined || settled || terminationError) return;
+      if (options.idleTimeoutMs === undefined || idlePaused || settled || terminationError) return;
       if (idleTimeout) clearTimeout(idleTimeout);
       idleTimeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.idleTimeoutMs);
       idleTimeout.unref?.();
+    };
+    const idle: CanonicalCliIdleControl = {
+      pause() {
+        if (settled || terminationError) return;
+        idlePaused = true;
+        if (idleTimeout) clearTimeout(idleTimeout);
+        idleTimeout = undefined;
+      },
+      resume() {
+        if (!idlePaused || settled || terminationError) return;
+        idlePaused = false;
+        resetIdleTimeout();
+      },
     };
     if (options.timeoutMs !== undefined) {
       timeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.timeoutMs);
@@ -199,7 +220,7 @@ export async function runCanonicalCli(options: {
           });
         } catch (error) { clearTimeout(timer); rejectWrite(error); }
       });
-      try { options.onStart(write, () => child.stdin?.end?.()); } catch (error) {
+      try { options.onStart(write, () => child.stdin?.end?.(), idle); } catch (error) {
         console.warn("[chat-cli] Provider stdin setup failed", error instanceof Error ? error.name : "UnknownError");
         terminate(new CanonicalCliError("startup"));
       }
