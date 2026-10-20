@@ -22,6 +22,14 @@ final human review.
 
 ## Rules
 
+- For each PR, run `node scripts/review/pr-readiness.mjs <pr>` after publication
+  and before readiness/merge decisions. This shared advisory report is used by
+  push, land and the worktree monitor too. Exit 1 lists blockers, exit 3 is
+  unknown, and exit 0 still requires the listed manual gates and genuine
+  exact-source full qualification. Do not duplicate its review validity logic.
+  Reuse completed required validation across entry points only while its exact
+  source, commands, dependencies and toolchain remain valid.
+
 - Use the official `github/gh-stack` extension for stack operations. If unavailable,
   stop and report the blocker instead of falling back to raw branch surgery.
 - Use `gh` for GitHub PR metadata, checks, draft/ready state, and review
@@ -75,10 +83,11 @@ final human review.
    - Produce an ordered list of PR number, branch, base, draft state, and URL.
 
 2. Validate reviewability.
-   - If any PR is still draft, report that Greptile may not run for that PR until
-     a human or a separate explicit action marks it ready. Do not convert it from
-     this command. Continue monitoring and fixing the remaining non-draft PRs in
-     stack order; keep each draft PR listed as a blocker in the final status.
+   - Request Greptile explicitly on draft PRs, using the bounded request policy
+     below. Draft state and review requests are separate. If the reviewer is
+     unavailable on a draft, report that blocker; do not mark ready before 5/5
+     or alternate draft/ready to force review. After a valid 5/5 and disposition
+     of blockers, this command can mark ready once to admit full CI as intended.
    - Always keep the PR order intact, regardless of draft state. Do not alter
      bases manually or flatten dependencies; report malformed native membership.
 

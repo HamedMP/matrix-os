@@ -64,6 +64,11 @@ invocation syntax varies by client. It uses the currently deployed capabilities
 and preserves existing review/CI gates. It does not activate an unmerged preview
 workflow or grant admin bypass. See [the canonical skill](../../skills/matrix/ship/SKILL.md).
 
+From an up-to-date reviewed checkout, the shared read-only starting point is
+`node scripts/review/pr-readiness.mjs <pr>`. Push, land and both review monitors
+use this same report. It lists machine-visible blockers and remaining evidence;
+it does not authorize merges or turn green status badges into test coverage.
+
 ### One Command
 
 From a Matrix checkout:

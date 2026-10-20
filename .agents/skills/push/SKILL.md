@@ -25,6 +25,15 @@ description:
 
 ## Steps
 
+Use `node scripts/review/pr-readiness.mjs <pr>` after publication and on each
+monitored head, as do land and both monitors. It is advisory: exit 1 lists
+blockers, exit 3 is unknown, and exit 0 still needs authenticated full test
+evidence and the listed manual gates. Use its delegated review carry-over
+decision rather than independently parsing review scores. Keep required
+validation evidence with its exact source, command, dependencies and toolchain;
+reuse still-valid results between skills instead of repeating the full suite
+merely because another entry point was invoked. Changed inputs require reruns.
+
 For dependent PRs, use the GitHub native workflow in `docs/dev/stacked-prs.md`
 instead of the standalone push/pull recipe below. Create/adopt layers with
 `gh stack init` and `gh stack add`, commit explicit paths with Git, rebase

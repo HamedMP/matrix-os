@@ -74,45 +74,19 @@ Determine how to proceed based on what was provided in `<input_document>`.
    fi
    ```
 
-   **If already on a feature branch** (not the default branch):
+   For Matrix OS, every change uses a persistent **manual git worktree**, as
+   required by root policy. If already in the task's clean, correctly owned
+   feature worktree, continue there. Otherwise create a sibling worktree:
 
-   First, check whether the branch name is **meaningful** — a name like `feat/crowd-sniff` or `fix/email-validation` tells future readers what the work is about. Auto-generated worktree names (e.g., `worktree-jolly-beaming-raven`) or other opaque names do not.
-
-   If the branch name is meaningless or auto-generated, suggest renaming it before continuing:
-   ```bash
-   git branch -m <meaningful-name>
-   ```
-   Derive the new name from the plan title or work description (e.g., `feat/crowd-sniff`). Present the rename as a recommended option alongside continuing as-is.
-
-   Then ask: "Continue working on `[current_branch]`, or create a new branch?"
-   - If continuing (with or without rename), proceed to step 3
-   - If creating new, follow Option A or B below
-
-   **If on the default branch**, choose how to proceed:
-
-   **Option A: Create a new branch**
-   ```bash
-   git pull origin [default_branch]
-   git checkout -b feature-branch-name
-   ```
-   Use a meaningful name based on the work (e.g., `feat/user-authentication`, `fix/email-validation`).
-
-   **Option B: Use a worktree (recommended for parallel development)**
    ```bash
    git worktree add -b feature-branch-name ../feature-branch-name origin/[default_branch]
    cd ../feature-branch-name
    ```
-   On Matrix OS, use the repo's GitHub native stack/spec worktree workflow in `docs/dev/stacked-prs.md` and a meaningful, persistent worktree name. Do not delegate this setup to a separate vendored skill; this bundle does not include one.
 
-   **Option C: Continue on the default branch**
-   - Requires explicit user confirmation
-   - Only proceed after user explicitly says "yes, commit to [default_branch]"
-   - Never commit directly to the default branch without explicit permission
-
-   **Recommendation**: Use worktree if:
-   - You want to work on multiple features simultaneously
-   - You want to keep the default branch clean while experimenting
-   - You plan to switch between branches frequently
+   Use a meaningful branch name. Preserve unrelated changes and other tasks'
+   worktrees. Do not offer commits on the default branch or branch-only work in
+   the default checkout. For dependent PRs follow `docs/dev/stacked-prs.md` and
+   the official native stack workflow; do not flatten existing dependencies.
 
 3. **Create Task List** _(skip if Phase 0 already built one, or if Phase 0 routed as Trivial)_
    - Use the platform's task tracking tool (`TaskCreate`/`TaskUpdate`/`TaskList` in Claude Code, `update_plan` in Codex, or the equivalent on other harnesses) to break the plan into actionable tasks

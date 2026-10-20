@@ -44,13 +44,22 @@ and admission/resource limits; preserve gateway capacity and Main priority.
 ## Choose the requested operation
 
 **Check or qualify.** Read [qualification.md](references/qualification.md).
-Find the genuine current-head CI attempt and inspect its actual jobs, reviews
-and unresolved threads. Report the qualified source and the remaining gate.
+Run `node scripts/review/pr-readiness.mjs <pr>` from the verified checkout.
+This shared advisory report is also used by push, land and both monitors; do not
+reimplement its review decisions. Exit 1 reports machine-visible blockers; exit
+3 means collection could not decide. Exit 0 still requires the listed manual
+gates, including genuine qualification evidence; it never authorizes merging.
+Inspect the actual CI jobs/artifacts and actionable issue comments too.
 Keep full checks; run meaningful affected regressions locally on Matrix for
 fixes, then preserve full PR qualification. Request Greptile once for each new
 head when necessary, following the repository's review/carry-over rules. Mark a
 draft ready only after its required review score is current. Do not label an
 entire stack `fast-ci`: the shared Linux host has bounded admission.
+
+Reuse completed required validation when its exact source, dependencies,
+toolchain, command and policy still match. Entering another skill is not a reason
+to rerun it. New work, changed inputs or invalid provenance needs new evidence.
+Do not treat package selection or review carry-over as test credit.
 
 **Request or inspect a preview.** Read the current checkout's
 `docs/dev/preview-environments.md` and actual preview workflows before selecting
@@ -74,6 +83,12 @@ recommendations from executed checks and real captures. A web preview does not
 qualify mobile or platform isolation. Apply the repository's surface evidence
 gate; do not invent videos, successful flows or unavailable builds.
 
+For cross-surface changes, include the real composed journey, concurrent intent,
+authority changes before execution/commit, cancellation, restart recovery and
+partial-failure cleanup where relevant. Qualify stack layers on their actual
+bases and the assembled outcome at the tip. Group backlog work by outcome with
+an owner, dependencies, state (ship next/blocked/superseded/parked) and next action.
+
 **Diagnose red CI.** Read [qualification.md](references/qualification.md).
 Separate test failures, admission/transport/cleanup failures, source freshness,
 and routing/attribution failures using the actual log and receipt. Make a focused
@@ -85,9 +100,9 @@ overwrite a check with synthetic success, relax assertions/deadlines, or modify
 root leases/controller pins as a shortcut. Operator work follows the existing
 host-first procedure in `docs/dev/fast-ci.md` and needs operator authorization.
 
-**Ship.** Recheck the ticket, frozen head, complete real CI, current Greptile
-score/carry-over, unresolved findings, peer approval and conflicts immediately
-before merge. Merge a standalone PR with `--match-head-commit`; merge stacks
+**Ship.** Rerun the shared readiness report immediately before merge and verify
+its remaining manual gates against the current source. Merge a standalone PR
+with `--match-head-commit`; merge stacks
 through the native stack tool. Never add `--admin` by default. After merge,
 record the actual commit and verify its own Main CI and same-SHA release gate.
 PR CI does not cover later Main changes. If a pinned helper changed, distinguish

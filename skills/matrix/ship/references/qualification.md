@@ -9,6 +9,7 @@ verified repository/worktree on the selected Matrix computer.
 
 ```bash
 gh auth status
+node scripts/review/pr-readiness.mjs <pr>
 gh pr view <pr> --json headRefOid,headRefName,baseRefName,isDraft,reviewDecision,mergeable,statusCheckRollup
 gh pr checks <pr>
 gh run view <run-id> --json headSha,event,attempt,status,conclusion,jobs,url
@@ -20,6 +21,14 @@ Match Greptile's **Last reviewed commit** to the live head; an edited comment's
 timestamp does not identify its reviewed commit. For an earlier 5/5, use the
 repository's `scripts/review/review-carryover.mjs check` helper. Missing access
 is unknown state, not an empty inventory or approval.
+
+The shared report paginates review threads/reviews, delegates Greptile validity
+to the carry-over verifier, checks current-head independent approval and lists
+required status links. It fails closed on collection errors or source movement.
+It deliberately leaves qualification unverified: green status rollups, including
+draft no-ops, cannot establish artifact provenance. Review issue comments,
+finding dispositions and the manual gates remain necessary. Never use its exit
+0 alone as merge permission or publish it as a trusted required policy check.
 
 ## Evidence distinctions
 

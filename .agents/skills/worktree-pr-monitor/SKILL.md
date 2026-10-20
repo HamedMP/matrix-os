@@ -5,9 +5,10 @@ description: Create or continue an isolated Matrix OS worktree PR, validate it, 
 
 # Worktree PR Monitor
 
-Use this skill only when the requester explicitly asks for the manual git
-worktree -> PR -> monitor workflow. It keeps `/home/deploy/matrix-os` on `main`
-while implementation happens in `/home/deploy/matrix-os.worktrees/<slug>`.
+Use this skill for the manual git worktree -> PR -> monitor workflow. Resolve
+the current repository and a persistent sibling worktree on the engineer's
+chosen Matrix computer. Every Matrix OS change uses a manual worktree, as
+required by the root policy; this does not need a separate user request.
 
 This skill does not coordinate Swarm or multi-agent runs. The repo-level Swarm
 ban on `isolation: "worktree"` still applies; this workflow is a user-requested
@@ -18,14 +19,16 @@ manual git worktree flow for isolated PR publication.
 - `gh` is installed and authenticated.
 - The current repository is `HamedMP/matrix-os`.
 - The requester wants a PR in a worktree, not only a local patch.
-- The requester explicitly asked for a worktree or invoked this workflow.
 
 ## Rules
 
-- If the requester did not explicitly ask for a worktree, follow the current
-  branch workflow instead.
-- Keep `/home/deploy/matrix-os` on `main`.
-- Put feature work in `/home/deploy/matrix-os.worktrees/<slug>`.
+- Resolve the owning manual worktree; preserve other tasks and the default branch.
+- Use `node scripts/review/pr-readiness.mjs <pr>` after publication and before
+  readiness decisions, as do push, land and the stack monitor. Exit 1 reports
+  blockers; exit 3 is unknown. Exit 0 still requires genuine exact-source full
+  qualification and the listed manual gates. Never declare readiness from status
+  badges alone. Reuse valid required validation evidence between skills only
+  when source, command, dependencies and toolchain still match.
 - Use a semantic branch and PR title. Do not prefix titles with agent/tool tags.
 - Stage only files in scope.
 - Do not merge unless explicitly asked.
@@ -59,9 +62,9 @@ manual git worktree flow for isolated PR publication.
 2. Create or enter the worktree.
    - Slug: concise task slug, e.g. `fix-canvas-terminal-clicks`.
    - Branch: `codex/<slug>` unless the requester named a branch.
-   - Path: `/home/deploy/matrix-os.worktrees/<slug>`.
+   - Path: `../matrix-os-worktrees/<slug>`.
    - Command shape:
-     `git worktree add -b codex/<slug> /home/deploy/matrix-os.worktrees/<slug> origin/main`
+     `git worktree add -b codex/<slug> ../matrix-os-worktrees/<slug> origin/main`
 
 3. Implement.
    - Follow TDD where practical: add a failing focused regression before the
@@ -104,7 +107,8 @@ manual git worktree flow for isolated PR publication.
      review with `gh pr ready`. That starts full PR CI.
    - Wait for the triggered checks with `gh pr checks --watch` or equivalent
      GitHub API status reads.
-   - If every required triggered check passes, the PR is ready.
+   - Re-run the shared report and verify its manual gates, including actual
+     qualification evidence; required green status badges alone are insufficient.
    - If any triggered check fails, convert the PR back to draft with
      `gh pr ready --undo`, inspect the failure, implement the fix, rerun
      relevant local checks, commit, push, and return to step 7. Do not mark it
@@ -126,7 +130,7 @@ manual git worktree flow for isolated PR publication.
 ```sh
 git status --short --branch
 git worktree list
-git worktree add -b codex/<slug> /home/deploy/matrix-os.worktrees/<slug> origin/main
+git worktree add -b codex/<slug> ../matrix-os-worktrees/<slug> origin/main
 bun run typecheck
 bun run check:patterns
 bun run test

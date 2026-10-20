@@ -14,7 +14,7 @@ $ARGUMENTS
 
 ## Goal
 
-Move an explicitly requested manual git worktree change through the full Matrix
+Move a manual git worktree change through the full Matrix
 OS PR loop:
 
 1. create or use an isolated git worktree,
@@ -26,11 +26,17 @@ OS PR loop:
 
 ## Rules
 
-- Use this command only when the requester explicitly asks for a worktree PR
-  workflow. Otherwise, follow the repo's current-branch agent workflow.
+- Every Matrix OS change uses a persistent manual worktree under root policy.
+  Resolve the repository and owning worktree on the selected Matrix computer;
+  no separate worktree request is needed.
+- Use `node scripts/review/pr-readiness.mjs <pr>` after publication and before
+  readiness decisions. Exit 1 lists blockers, exit 3 is unknown, and exit 0
+  still needs genuine full qualification and the listed manual gates. Use this
+  shared report rather than separate review eligibility logic. Reuse completed
+  required validation only while its source, command and toolchain inputs match.
 - This command does not authorize Swarm `isolation: "worktree"`; that repo-level
   Swarm ban still applies.
-- Keep `/home/deploy/matrix-os` on `main`. Put feature work under `/home/deploy/matrix-os.worktrees/<slug>`.
+- Preserve the default checkout and other tasks; use a persistent sibling worktree.
 - Use a semantic branch and PR title. Do not prefix the PR title with agent/tool tags.
 - Never stage unrelated changes. Inspect `git status --short --branch` before staging.
 - Do not merge unless explicitly asked.
@@ -48,13 +54,13 @@ OS PR loop:
 
 1. Resolve scope and slug.
    - Derive a concise slug from `$ARGUMENTS` or the current task.
-   - Worktree path: `/home/deploy/matrix-os.worktrees/<slug>`.
+   - Worktree path: `../matrix-os-worktrees/<slug>`.
    - Branch: `codex/<slug>` unless the task names a specific branch.
 
 2. Create the worktree from current `origin/main`.
-   - From `/home/deploy/matrix-os`, verify `git status --short --branch`.
+   - From the verified repository, verify `git status --short --branch`.
    - If there are relevant uncommitted changes in main, stash or patch only those files, create the worktree, then apply them inside the worktree.
-   - Run `git worktree add -b <branch> /home/deploy/matrix-os.worktrees/<slug> origin/main`.
+   - Run `git worktree add -b <branch> ../matrix-os-worktrees/<slug> origin/main`.
 
 3. Implement in the worktree.
    - Follow TDD where practical: reproduce or add a failing regression first, then fix.
