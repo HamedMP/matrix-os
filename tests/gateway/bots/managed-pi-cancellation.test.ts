@@ -39,8 +39,8 @@ function fixture(phase: "route" | "input" | "admission" | "tools" | "source" | "
     ...resolveManagedPiRoute(snapshot, selection), capabilities: ["artifact.read"], requestClass: "interactive" };
   const phaseEntered = vi.fn();
   const wait = async (current: typeof phase) => { if (phase === current) { phaseEntered(); await gate.promise; } };
-  const release = vi.fn(async () => undefined);
-  const closeRun = vi.fn(async () => undefined);
+  const release = vi.fn<(runtimeHandle: string) => Promise<void>>(async () => undefined);
+  const closeRun = vi.fn<(runId: string) => Promise<void>>(async () => undefined);
   const forgetRun = vi.fn();
   const cancelInference = vi.fn();
   const runBot = vi.fn(async (request: { command: { kind: string } }) => {
