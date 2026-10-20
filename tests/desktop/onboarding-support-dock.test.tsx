@@ -120,6 +120,27 @@ describe("onboarding widget support dock", () => {
     }
   });
 
+  it("leaves an open support chat alone when a resize moves the hidden card into its corner", () => {
+    const savedLeft = { x: "left", y: "bottom", dx: 600, dy: 24 } as const;
+    const card = { width: 392, height: 624 };
+    const startWidth = window.innerWidth;
+    const resizeTo = (width: number) => act(() => {
+      window.innerWidth = width;
+      window.dispatchEvent(new Event("resize"));
+    });
+    try {
+      resizeTo(1920);
+      // The card sits away from support, then Chat is maximized and hides the widget.
+      const { rerender, closeSupport } = renderDock({ size: "corner", position: savedLeft, widgetSize: card, visible: false });
+      act(() => useUi.getState().setSupportPanelOpen(true));
+      resizeTo(1000);
+      rerender({ size: "corner", position: savedLeft, widgetSize: card, visible: false });
+      expect(closeSupport).not.toHaveBeenCalled();
+    } finally {
+      resizeTo(startWidth);
+    }
+  });
+
   it("keeps a card that shows up in the support corner while support is already open, and closes support", () => {
     act(() => useUi.getState().setSupportPanelOpen(true));
     const { dispatch, closeSupport } = renderDock({ size: "corner" });

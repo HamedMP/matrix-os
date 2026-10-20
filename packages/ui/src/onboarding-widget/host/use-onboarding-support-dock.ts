@@ -65,7 +65,8 @@ export function useOnboardingSupportDock({ size, position, widgetSize, visible =
     if (opened && sharesCornerRef.current) dispatch({ type: "size.changed", size: "bubble" });
   }, [dispatch, supportOpen]);
 
+  // A widget hidden behind a maximized Chat claims no corner, so a resize then must not close support.
   useEffect(() => {
-    if (expanded && sharesCorner && supportOpenRef.current) closeSupport();
-  }, [closeSupport, expanded, sharesCorner]);
+    if (visible && expanded && sharesCorner && supportOpenRef.current) closeSupport();
+  }, [closeSupport, expanded, sharesCorner, visible]);
 }
