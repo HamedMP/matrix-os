@@ -156,6 +156,19 @@ if [[ -n "$MATCHES" ]]; then
     if is_in_template_literal "$file" "$line_no"; then
       continue
     fi
+    source_line=$(sed -n "${line_no}p" "$file")
+    # A typed Worker request parameter identifies an inbound declaration.
+    # A standalone fetch(url) call must still pass the timeout check.
+    if grep -Eq '^[[:space:]]*(async[[:space:]]+)?fetch[[:space:]]*\([[:space:]]*[A-Za-z_$][[:alnum:]_$]*[[:space:]]*:[[:space:]]*Request[[:space:]]*[,)]' <<< "$source_line"; then
+      continue
+    fi
+    # This exact dispatch invokes the locally constructed Hono application.
+    # Keep all outbound fetches in the same file subject to the timeout check.
+    if [[ "$file" == 'packages/workspace-worker/src/index.ts' ]] \
+      && grep -Eq '^[[:space:]]*return[[:space:]]+await[[:space:]]+app\.fetch\(request\);?[[:space:]]*$' <<< "$source_line" \
+      && grep -Eq 'const app = createWorkspaceRoutes\(' "$file"; then
+      continue
+    fi
     window_end=$((line_no + 12))
     call_window=$(sed -n "${line_no},${window_end}p" "$file" 2>/dev/null || true)
     # Avoid a producer pipe: grep -q can exit before echo finishes writing,
