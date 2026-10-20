@@ -30,6 +30,12 @@ export interface NativeProviderProfileGuard {
   acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void | Promise<void>>;
   run<T>(profile: NativeProviderProfile, admission: Admission, operation: () => Promise<T>): Promise<T>;
 }
+/** Connecting to the terminal service found no socket or no listener: the service is not running. */
+function terminalServiceDown(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const { code, syscall } = error as NodeJS.ErrnoException;
+  return syscall === 'connect' && (code === 'ENOENT' || code === 'ECONNREFUSED');
+}
 const ReceiptDocument = z.object({ version: z.literal(1), receipts: z.array(z.object({ key: z.string().min(1).max(128).optional(), payloadHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), recoveryHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), superseded: z.boolean().optional(), archivedSessionName: z.string().min(1).max(128).optional(), attempt: ProviderConnectionAttemptSchema }).passthrough()).max(256) }).strict();
 
 /** Shared API-path admission for the two singleton native credential profiles.
@@ -46,6 +52,15 @@ export function createNativeProviderProfileGuard(options: {
   if (!options.homePath || !options.registry?.get || !options.registry.observeAgentLiveness) throw new Error('Native profile admission dependencies required');
   const leases = createNativeProviderWriterLease(options.homePath);
   const slots = { codex: { queued: 0 }, claude: { queued: 0 } };
+  async function managedProfileSessions() {
+    try { return await options.registry.listProfileSessions?.() ?? []; }
+    catch (error) {
+      // No terminal service means no provider login or install tab can be running.
+      // Any other failure still refuses, because a live session may be hidden.
+      if (terminalServiceDown(error)) return [];
+      throw error;
+    }
+  }
   async function assertAvailable(profile: NativeProviderProfile, admission: Admission, checkLease = true) {
     if (checkLease) await leases.assertAvailable(profile);
     const documents = await Promise.all(['login-receipts.json', 'login-recovery.json'].map(async name => {
@@ -53,7 +68,7 @@ export function createNativeProviderProfileGuard(options: {
       return document ? ReceiptDocument.parse(document.value).receipts : [];
     }));
     const config = await readSavedProviderSettingsConfiguration(join(options.homePath, 'system/ai-providers/settings.json'));
-    const managed = await options.registry.listProfileSessions?.() ?? [];
+    const managed = await managedProfileSessions();
     if (managed.length > 64) throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
     const recoverable = new Set<string>(); // bounded to validated receipts plus one canonical name
     if (admission.kind === 'login') recoverable.add(`provider-auth-${BigInt(`0x${admission.recoveryKey}`).toString(36).padStart(50, '0')}`);
@@ -110,6 +125,7 @@ export function createNativeProviderProfileGuard(options: {
       }
     } catch (error) {
       // The caller has not received admission, so no writer started here.
+      console.warn('[provider-settings] Native profile admission refused:', error instanceof Error ? error.name : 'UnknownError', error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined);
       let drained = !leaseMayExist;
       try {
         if (releaseLease) { await releaseLease(); drained = true; }
