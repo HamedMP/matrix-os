@@ -116,9 +116,10 @@
   to { opacity: 1; transform: none; }
 }
 
+/* Derived from --mxo-green so the pulse follows the brand green. */
 @keyframes mxo-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(51, 158, 107, 0.45); }
-  50% { box-shadow: 0 0 0 4px rgba(51, 158, 107, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mxo-green) 45%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--mxo-green) 0%, transparent); }
 }
 
 .mxo-header {
