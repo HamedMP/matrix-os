@@ -279,19 +279,52 @@ describe("onboarding turn admission", () => {
     expect(client.admitTurn).toHaveBeenCalledWith("chat_old", expect.objectContaining({ baseRevision: 9 }), { chatScope: "global" });
   });
 
-  it("keeps a follow-up on the AI its chat is bound to, even after the widget's choice changes", async () => {
-    const bound = { instanceId: "claude_default", model: "claude-sonnet", options: [{ id: "effort", value: "high" }] };
+  // The widget would now pick Hermes with full access; the chat ran on Claude, supervised.
+  const fullAccess = { ...selection, permissionMode: "full_access" };
+  const claude = { instanceId: "claude_default", model: "claude-sonnet", options: [{ id: "effort", value: "high" }] };
+  const run = (id: string, createdAt: string, permissionMode: string) => ({
+    id, instanceId: "claude_default", selection: claude, interactionMode: "default", permissionMode, createdAt,
+  });
+  const boundDetail = (runs: unknown[]) => ({
+    record: { chat: { revision: 4, currentSelection: claude }, providerBinding: { instanceId: "claude_default" } },
+    runs,
+  });
+
+  it("keeps a follow-up on the AI and permission mode its chat last ran with, even after the widget's choice changes", async () => {
     const client = {
       create: vi.fn(),
-      getDetail: vi.fn().mockResolvedValue({ record: { chat: { revision: 4, currentSelection: bound }, providerBinding: { instanceId: "claude_default" } } }),
+      getDetail: vi.fn().mockResolvedValue(boundDetail([
+        run("run_old", "2026-10-19T10:00:00.000Z", "auto_accept_edits"),
+        run("run_last", "2026-10-19T11:00:00.000Z", "supervised"),
+      ])),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_old")),
     };
-    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Follow up", selection, requestIds });
-    expect(client.admitTurn).toHaveBeenCalledWith("chat_old", expect.objectContaining({ baseRevision: 4, selection: bound }), { chatScope: "global" });
+    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Follow up", selection: fullAccess, requestIds });
+    expect(client.create).not.toHaveBeenCalled();
+    expect(client.admitTurn).toHaveBeenCalledWith("chat_old", expect.objectContaining({
+      baseRevision: 4, selection: claude, interactionMode: "default", permissionMode: "supervised",
+    }), { chatScope: "global" });
+  });
 
-    client.getDetail.mockResolvedValue({ record: { chat: { revision: 5, currentSelection: { instanceId: "claude_default", model: "claude-sonnet" } } } });
+  it("starts a new chat instead of guessing permissions for a bound chat that never ran", async () => {
+    const client = {
+      create: vi.fn().mockResolvedValue({ chat: { id: "chat_new", revision: 1 } }),
+      getDetail: vi.fn().mockResolvedValue(boundDetail([])),
+      admitTurn: vi.fn().mockResolvedValue(admitted("chat_new")),
+    };
+    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Try again", selection, requestIds });
+    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ clientRequestId: "req_create_1", currentSelection: { instanceId: "hermes_default", model: "default" } }));
+    expect(client.admitTurn).toHaveBeenCalledWith("chat_new", expect.objectContaining({ selection: { instanceId: "hermes_default", model: "default" }, permissionMode: "default" }), { chatScope: "global" });
+  });
+
+  it("uses the widget's choice for a chat that is not bound yet", async () => {
+    const client = {
+      create: vi.fn(),
+      getDetail: vi.fn().mockResolvedValue({ record: { chat: { revision: 5, currentSelection: claude } }, runs: [] }),
+      admitTurn: vi.fn().mockResolvedValue(admitted("chat_old")),
+    };
     await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Unbound", selection, requestIds });
-    expect(client.admitTurn).toHaveBeenLastCalledWith("chat_old", expect.objectContaining({ selection: { instanceId: "hermes_default", model: "default" } }), { chatScope: "global" });
+    expect(client.admitTurn).toHaveBeenLastCalledWith("chat_old", expect.objectContaining({ selection: { instanceId: "hermes_default", model: "default" }, permissionMode: "default" }), { chatScope: "global" });
   });
 
   it("starts a new chat when the remembered one is gone, but surfaces other failures", async () => {
