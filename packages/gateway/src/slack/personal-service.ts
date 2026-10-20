@@ -57,7 +57,7 @@ export class SlackPersonalService {
   // A failed accepted run gets a fixed notice through the same durable outbox;
   // never publish its raw errors, partial output, or an unclaimed queue result.
   const reply=result.runId&&(result.status==="completed"&&result.text
-   ? {runId:result.runId,text:result.text.slice(0,12_000)}
+   ? {runId:result.runId,text:truncateSlackText(result.text,12_000)}
    : result.status==="failed"?{runId:result.runId,text:SLACK_PERSONAL_FAILURE_MESSAGE}:null);
   await this.repository.finish(row,reply||null);
  }catch(error:unknown){console.warn("[slack-personal] result unavailable",error instanceof Error?error.name:"UnknownError");if(denied(error))await this.repository.finish(row,null);else await this.repository.deferResult(row);}
