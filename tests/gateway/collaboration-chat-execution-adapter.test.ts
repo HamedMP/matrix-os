@@ -39,6 +39,34 @@ const queued: SharedQueuedTurn = {
 };
 
 describe("CollaborationChatExecutionAdapter", () => {
+  it.each(["deadline", "cancel"])("bounds stalled root resolution on %s without a late enqueue", async (stop) => {
+    let release!: () => void;
+    const root = { ref: { kind: "project" as const, projectId: "project_brain" }, fingerprint: "a".repeat(64) };
+    const resolveExecutionRoot = vi.fn(() => new Promise<typeof root>(resolve => { release = () => resolve(root); }));
+    const enqueueSharedQueuedTurn = vi.fn(async () => ({ ...queued, pendingCount: 1, alreadyAccepted: false, resourceRevision: 13 }));
+    const controller = new AbortController();
+    const timeout = stop === "deadline" ? vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal) : null;
+    const adapter = createAdapter({ resolveExecutionRoot, enqueueSharedQueuedTurn });
+    const work = adapter.submit(context, { clientRequestId: queued.clientRequestId, expectedRevision: "12", text: "Question" }, stop === "cancel" ? controller.signal : undefined)
+      .then(() => ({ accepted: true }), (error: unknown) => ({ accepted: false, code: (error as { code?: string }).code }));
+    let outcome: unknown;
+    try {
+      await vi.waitFor(() => expect(resolveExecutionRoot).toHaveBeenCalledOnce());
+      controller.abort();
+      outcome = await Promise.race([work, new Promise(resolve => setTimeout(() => resolve("still pending"), 1000))]);
+      if (timeout) expect(timeout).toHaveBeenCalledWith(10_000);
+    } finally { release?.(); await work; timeout?.mockRestore(); }
+    expect(outcome).toEqual({ accepted: false, code: "unavailable" });
+    expect(enqueueSharedQueuedTurn).not.toHaveBeenCalled();
+  });
+  it("does not resolve or enqueue an already cancelled shared request", async () => {
+    const resolveExecutionRoot = vi.fn(async () => null), enqueueSharedQueuedTurn = vi.fn();
+    const adapter = createAdapter({ resolveExecutionRoot, enqueueSharedQueuedTurn });
+    const controller = new AbortController(); controller.abort();
+    await expect(adapter.submit(context, { clientRequestId: queued.clientRequestId, expectedRevision: "12", text: "Question" }, controller.signal))
+      .rejects.toMatchObject({ code: "unavailable" });
+    expect(resolveExecutionRoot).not.toHaveBeenCalled(); expect(enqueueSharedQueuedTurn).not.toHaveBeenCalled();
+  });
   it("admits an attributed request to the canonical queue and wakes dispatch", async () => {
     const enqueueSharedQueuedTurn = vi.fn(async () => ({
       ...queued, pendingCount: 2, alreadyAccepted: false, resourceRevision: 13,
