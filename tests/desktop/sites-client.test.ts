@@ -17,6 +17,25 @@ const actions: { name: string; call: (client: SiteClient, signal: AbortSignal) =
   { name: "delete submission", call: (client, signal) => client.deleteSubmission("launch", "11111111-1111-4111-8111-111111111111", signal) },
 ];
 describe("Electron site transport error parity", () => {
+  it.each(["JSON", "Blob"])("cancels an oversized %s response before buffering the complete body", async kind => {
+    const cancel=vi.fn();let offset=0;
+    const payload=new TextEncoder().encode(JSON.stringify({manifest:{publishing:{data:{description:"x".repeat(1_048_577)},forms:[]}}}));
+    const stream=new ReadableStream<Uint8Array>({
+      pull(controller){if(offset===0){controller.enqueue(payload.slice(0,1_048_577));offset++;}else if(offset===1){controller.enqueue(payload.slice(1_048_577));offset++;}else controller.close();},
+      cancel,
+    },{highWaterMark:0});
+    const api=createApiClient({baseUrl:"https://app.matrix-os.com",getRuntimeSlot:()=>"primary",fetchFn:async()=>new Response(stream)});
+    const client=createDesktopSiteClient(api,"preview"),signal=new AbortController().signal;
+    await expect(kind==="JSON"?client.getConfig("launch",signal):client.exportSubmissions("launch",null,signal)).rejects.toBeTruthy();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(offset).toBe(1);
+  });
+  it("cancels untrusted error bodies without reading or parsing them", async () => {
+    const cancel=vi.fn(),pull=vi.fn((controller:ReadableStreamDefaultController<Uint8Array>)=>{controller.enqueue(new TextEncoder().encode('{"error":"private"}'));controller.close();});
+    const api=createApiClient({baseUrl:"https://app.matrix-os.com",getRuntimeSlot:()=>"primary",fetchFn:async()=>new Response(new ReadableStream({pull,cancel},{highWaterMark:0}),{status:503})});
+    await expect(createDesktopSiteClient(api,"preview").getConfig("launch",new AbortController().signal)).rejects.toMatchObject({status:503});
+    expect(cancel).toHaveBeenCalledOnce();expect(pull).not.toHaveBeenCalled();
+  });
   it("logs only fixed categories when normalizing known and unknown transport failures", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const bound = { patch: vi.fn().mockRejectedValueOnce(new AppError("server", { httpStatus: 409 })).mockRejectedValueOnce({ private: "visitor fields" }) };

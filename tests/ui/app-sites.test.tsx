@@ -11,6 +11,25 @@ function client(overrides: Partial<SiteClient> = {}): SiteClient {
 }
 afterEach(cleanup);
 describe("shared app publishing", () => {
+  it("toggles deployment review closed and fetches a fresh unapproved declaration on reopening", async () => {
+    const getConfig=vi.fn().mockResolvedValueOnce({data:{revision:"first"},forms:[]}).mockResolvedValueOnce({data:{revision:"second"},forms:[]});
+    const api=client({getConfig});
+    render(<AppSitePanel appSlug="launch" client={api} />);
+    await screen.findByText("Your app is public.");
+    const trigger=screen.getByRole("button",{name:"Review deployment"});
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByLabelText("I reviewed this deployment"));
+    expect(screen.getByRole("button",{name:"Publish update"})).toHaveProperty("disabled",false);
+    fireEvent.click(trigger);
+    expect(screen.queryByLabelText("Deployment preview")).toBeNull();
+    expect(getConfig).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button",{name:"Publish update"})).toHaveProperty("disabled",true);
+    fireEvent.click(trigger);
+    await screen.findByText(/"second"/);
+    expect(getConfig).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText("I reviewed this deployment")).toHaveProperty("checked",false);
+    expect(screen.getByRole("button",{name:"Publish update"})).toHaveProperty("disabled",true);
+  });
   it("toggles visitor submissions closed and reloads only when reopened", async () => {
     const api = client();
     render(<AppSitePanel appSlug="launch" client={api} />);

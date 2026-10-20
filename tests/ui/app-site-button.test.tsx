@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppSiteButton } from "../../shell/src/components/app-sites/AppSiteButton";
 import { DesktopAppSiteButton } from "../../desktop/src/renderer/src/features/app-sites/DesktopAppSiteButton";
+import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering";
 
 const fixture = vi.hoisted(() => {
   const client = { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => null) };
@@ -19,6 +20,14 @@ beforeEach(() => {
   fixture.connection.api = {}; fixture.connection.runtimeSlot = "primary"; fixture.connection.authGeneration = 0;
 });
 afterEach(cleanup);
+
+it("keeps Web publishing above a maximized app window", async () => {
+  render(<div style={{ position:"fixed",zIndex:SHELL_Z_INDEX.fullscreenWindow }}><AppSiteButton appSlug="launch" /></div>);
+  fireEvent.click(screen.getByRole("button",{name:"Publish app"}));
+  const dialog=await screen.findByRole("dialog",{name:"Publish app"});
+  expect(Number(getComputedStyle(dialog).zIndex)).toBeGreaterThan(SHELL_Z_INDEX.fullscreenWindow);
+  expect(Number(getComputedStyle(dialog).zIndex)).toBe(SHELL_Z_INDEX.appDialog);
+});
 
 for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", DesktopAppSiteButton]] as const) {
   describe(`${surface} Publish app trigger`, () => {

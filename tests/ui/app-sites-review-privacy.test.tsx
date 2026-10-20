@@ -33,6 +33,9 @@ it.each(["success", "failure"])("discards approval immediately when review reloa
   fireEvent.click(screen.getByRole("button", { name: "Review deployment" }));
   expect(screen.queryByLabelText("I reviewed this deployment")).toBeNull();
   expect(screen.queryByText(/"Private draft guidance"/)).toBeNull();
+  expect(getConfig).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Review deployment" }));
+  expect(getConfig).toHaveBeenCalledTimes(2);
   await act(async () => {
     if (outcome === "success") resolve({ data: { guidance: "Changed draft guidance" }, forms: [] });
     else reject(new Error("private manifest path"));
