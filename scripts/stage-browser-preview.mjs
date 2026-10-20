@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -19,6 +19,10 @@ export async function stageBrowserPreview(source, bin) {
   await mkdir(bin, { recursive: true });
   await run('tar', ['-czf', join(bin, 'matrix-browser-preview.tar.gz'), '-C', source, ...files], { timeout: 60_000, maxBuffer: 4096 });
   await copyFile(join(source, 'native-experience.py'), join(bin, 'matrix-browser-preview-guard.py'));
+  // Checkout umasks vary. Privileged payloads must stay read-only to the
+  // preview owner after cloud-init changes their group to matrix.
+  await chmod(join(bin, 'matrix-browser-preview.tar.gz'), 0o644);
+  await chmod(join(bin, 'matrix-browser-preview-guard.py'), 0o644);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
