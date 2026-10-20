@@ -41,7 +41,7 @@ const wait = (ms: number) => new Promise((resolve) => { setTimeout(resolve, ms);
 /**
  * Add a project to the Company Brain: paste a GitHub link (cloned as a project) or pick a folder on this computer.
  * Either way the brain connects its repository and starts the first sync, then the app selects it. A project of that
- * name that is already there is just selected.
+ * name that is already there is connected and synced the same way.
  */
 export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddProjectProps) {
   const [mode, setMode] = useState<Mode>("link");
@@ -59,20 +59,21 @@ export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddP
 
   /**
    * Connect the repository and start the first sync; a failure still selects the project, with the reason. The app
-   * selects the project even when this panel was closed meanwhile.
+   * selects the project even when this panel was closed meanwhile. `lead` opens the line ("Added web").
    */
-  const connect = async (project: BrainProjectOption) => {
+  const connect = async (project: BrainProjectOption, lead: string) => {
     try {
       setStep("connecting");
       await api.registerGitSource(project.id, {});
       setStep("syncing");
       const outcome = await brainStartOrRun(api, project.id, { kind: "sync" },
         async () => brainSyncText(await api.syncGit(project.id)));
-      onAdded(project, outcome.started ? `Added ${project.name}. The first sync is running.` : `Added ${project.name}. ${outcome.text}`);
+      onAdded(project, outcome.started ? `${lead}. The first sync is running.` : `${lead}. ${outcome.text}`);
     } catch (failure: unknown) {
-      onAdded(project, `Added ${project.name}, but ${brainErrorText(brainShellError(failure))} Try again here in Sources.`);
+      onAdded(project, `${lead}, but ${brainErrorText(brainShellError(failure))} Try again here in Sources.`);
     }
   };
+  const already = (project: BrainProjectOption) => `${project.name} is already a project`;
 
   const addLink = async (url: string) => {
     const slug = brainProjectSlug(brainRepositoryName(url));
@@ -82,10 +83,10 @@ export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddP
       project = await adder.clone(url, brainAddRequestId());
     } catch (failure: unknown) {
       if (brainProjectExists(failure)) {
-        // Already there: select it as it is.
+        // Already there: connect it all the same (connecting the same project again changes nothing), then select it.
         const existing = await listed(slug);
         if (existing === null) throw failure;
-        onAdded(existing, `${existing.name} is already a project. It is selected now.`);
+        await connect(existing, already(existing));
         return;
       }
       if (!brainCloneMayContinue(failure)) throw failure;
@@ -101,19 +102,22 @@ export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddP
       if (!alive.current) return;
       if (project === null) throw new Error("clone_wait");
     }
-    await connect(project);
+    await connect(project, `Added ${project.name}`);
   };
 
   const addFolder = async (path: string) => {
     setStep("adding");
     let project: BrainProjectOption;
+    let lead: string;
     try {
       project = await adder.addFolder(path, brainFolderName(path), brainAddRequestId());
+      lead = `Added ${project.name}`;
     } catch (failure: unknown) {
+      // Already there: check and connect it all the same, then select it.
       const existing = brainProjectExists(failure) ? await listed(brainProjectSlug(brainFolderName(path))) : null;
       if (existing === null) throw failure;
-      onAdded(existing, `${existing.name} is already a project. It is selected now.`);
-      return;
+      project = existing;
+      lead = already(existing);
     }
     setStep("checking");
     // A check that failed says nothing: go on, and the connect step reports a folder the brain cannot read.
@@ -122,11 +126,11 @@ export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddP
       return null;
     });
     if (git === false) {
-      onAdded(project, `Added ${project.name}, but this folder is not a git repository, so the brain has nothing `
+      onAdded(project, `${lead}, but this folder is not a git repository, so the brain has nothing `
         + "to read. Run git init in it, or pick a folder that is a git repository.");
       return;
     }
-    await connect(project);
+    await connect(project, lead);
   };
 
   const run = (work: () => Promise<void>) => {
