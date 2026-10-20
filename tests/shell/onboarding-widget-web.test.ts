@@ -18,6 +18,9 @@ import {
 } from "@/components/onboarding-widget/shell-onboarding-ports";
 import { useShellOnboardingIntegrations } from "@/components/onboarding-widget/use-shell-onboarding-integrations";
 
+// The shared gateway socket is not under test here; the widget only subscribes to it.
+vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true, subscribe: () => () => undefined, send: () => undefined }) }));
+
 const GATEWAY = "https://app.example.test";
 
 function json(body: unknown, status = 200): Response {
@@ -448,6 +451,32 @@ describe("web onboarding app connect", () => {
     await waitFor(() => expect(outageReads).toBe(3));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(outageReads).toBe(3);
+  });
+
+  it("re-reads connections when Settings connects or disconnects an app, and stops listening on unmount", async () => {
+    let connected: unknown[] = [];
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/integrations/available")) return json(services);
+      if (url.endsWith("/api/integrations")) return json(connected);
+      throw new Error(`unexpected ${url}`);
+    });
+    let onChange: (() => void) | null = null;
+    const unsubscribe = vi.fn();
+    const subscribeConnectionChanges = vi.fn((listener: () => void) => { onChange = listener; return unsubscribe; });
+    const { result, unmount } = renderHook(() => useShellOnboardingIntegrations(vi.fn(), { gatewayUrl: GATEWAY, fetchFn, subscribeConnectionChanges }));
+    await waitFor(() => expect(result.current.available).toHaveLength(1));
+    expect(result.current.connections).toEqual([]);
+
+    connected = [{ id: "conn_1", service: "github", account_label: "sahar", status: "active" }];
+    act(() => onChange!());
+    await waitFor(() => expect(result.current.connections.map((connection) => connection.id)).toEqual(["conn_1"]));
+
+    connected = [];
+    act(() => onChange!());
+    await waitFor(() => expect(result.current.connections).toEqual([]));
+
+    unmount();
+    expect(unsubscribe).toHaveBeenCalled();
   });
 
   it("keeps a newer synced connection when an older list read finishes after it", async () => {
