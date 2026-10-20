@@ -138,6 +138,17 @@ it("rechecks an aged catalog for a connected key once, and drops it when the key
   expect(await store.read()).toMatchObject({ revision: 1, enabled: true }); expect((await readOwnerAnthropicKey(home)).key).toBe(request.apiKey);
   await service.shutdown();
 });
+it("reads the catalog of a connected key again after the runtime restarts, but not a rejected key", async () => {
+  const { service, fetcher, store, home } = await fixture(); const status = await service.connect("owner", request); await service.shutdown();
+  let now = Date.now(); const restarted = createMatrixAnthropicConnectionService({ homePath: home, ownerId: "owner", sourceStore: store,
+    supports: { rootChat: true, recipeBots: true }, fetch: fetcher, now: () => now, ttlMs: 60000 });
+  expect(await restarted.observe("owner")).toMatchObject({ state: "ready", models: [{ id: model.id }] }); expect(fetcher).toHaveBeenCalledTimes(2);
+  await expect(restarted.resolve(selection(status), "owner", "interactive")).resolves.toMatchObject({ accessSourceId: "owner_anthropic_key" });
+  now += 60001; fetcher.mockResolvedValueOnce(new Response("synthetic upstream rejection", { status: 401 }));
+  expect(await restarted.observe("owner")).toMatchObject({ state: "refresh_required", models: [] }); expect(fetcher).toHaveBeenCalledTimes(3);
+  now += 60001; expect(await restarted.observe("owner")).toMatchObject({ state: "refresh_required", models: [] }); expect(fetcher).toHaveBeenCalledTimes(3);
+  await restarted.shutdown();
+});
 it("failed explicit refresh removes usable qualification without disabling intent or changing key", async () => {
   const { service, fetcher, store, home } = await fixture(); const status = await service.connect("owner", request);
   fetcher.mockResolvedValueOnce(new Response("synthetic upstream rejection", { status: 401 }));

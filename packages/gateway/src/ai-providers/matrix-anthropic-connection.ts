@@ -80,20 +80,25 @@ export function createMatrixAnthropicConnectionService(options: {
       checkedAt: usable ? new Date(usable.checkedAt).toISOString() : null, staleAfter: usable ? new Date(usable.checkedAt + ttl).toISOString() : null,
       supports: state === "read_only" || state === "unsupported" ? { rootChat: false, recipeBots: false } : options.supports });
   }
-  // A connected key whose catalog only aged past the TTL is checked again by one shared,
-  // queued discovery under the same CAS fences. Errors leave it refresh_required.
-  let renewal: Promise<void> | null = null, renewAfter = 0;
+  // A connected key whose catalog aged past the TTL, or was never read since this runtime
+  // started, is checked again by one shared, queued discovery under the same CAS fences.
+  // Errors leave it refresh_required; a rejected key is not checked again until it changes.
+  let renewal: Promise<void> | null = null, renewAfter = 0, rejectedGeneration: string | null = null;
   async function renew(owner: string) {
     const aged = catalog;
-    if (!aged || now() < aged.checkedAt + ttl || now() < renewAfter || options.readOnly || !options.supports.rootChat && !options.supports.recipeBots) return;
+    if (aged && now() < aged.checkedAt + ttl || now() < renewAfter || options.readOnly || !options.supports.rootChat && !options.supports.recipeBots) return;
     renewal ??= enqueue(owner, async () => {
-      const captured = await current();
-      if (catalog !== aged || !captured.source.enabled || !captured.key.key || captured.source.credentialGeneration !== captured.generation
-        || aged.generation !== captured.generation || aged.revision !== captured.source.revision) return;
-      const models = await discover(captured.key.key); authorize(owner); const latest = await current();
-      if (catalog !== aged || !latest.source.enabled || latest.source.revision !== aged.revision || latest.generation !== aged.generation
-        || latest.source.credentialGeneration !== aged.generation) return;
-      catalog = { generation: aged.generation, revision: aged.revision, checkedAt: now(), models };
+      const captured = await current(), generation = captured.generation;
+      if (catalog !== aged || !captured.source.enabled || !captured.key.key || generation === null || captured.source.credentialGeneration !== generation
+        || generation === rejectedGeneration) { renewAfter = now() + Math.min(ttl, 30_000); return; }
+      const models = await discover(captured.key.key).catch(error => {
+        if (error instanceof MatrixAnthropicConnectionError && error.code === "rejected") rejectedGeneration = generation;
+        throw error;
+      });
+      authorize(owner); const latest = await current();
+      if (catalog !== aged || !latest.source.enabled || latest.source.revision !== captured.source.revision || latest.generation !== generation
+        || latest.source.credentialGeneration !== generation) return;
+      catalog = { generation, revision: captured.source.revision, checkedAt: now(), models };
     }).catch(error => {
       renewAfter = now() + Math.min(ttl, 30_000);
       if (error instanceof MatrixAnthropicConnectionError && error.code === "rejected" && catalog === aged) catalog = null;
@@ -172,7 +177,7 @@ export function createMatrixAnthropicConnectionService(options: {
       if (await options.sourceStore.replayConnection(parsed.data)) return status(owner);
       assertCAS(await current(), parsed.data); const models = await discover(parsed.data.apiKey); authorize(owner);
       const result = await options.sourceStore.commitConnection(parsed.data);
-      if (!result.replayed) { catalog = { generation: result.state.credentialGeneration!, revision: result.state.revision, checkedAt: now(), models }; notifyChanged(); }
+      if (!result.replayed) { catalog = { generation: result.state.credentialGeneration!, revision: result.state.revision, checkedAt: now(), models }; rejectedGeneration = null; notifyChanged(); }
       return status(owner);
     }),
     refresh: (owner, input) => enqueue(owner, async () => {
@@ -185,10 +190,13 @@ export function createMatrixAnthropicConnectionService(options: {
       if (!captured.source.enabled || captured.source.credentialGeneration !== captured.generation || !captured.key.key) throw new MatrixAnthropicConnectionError("rejected");
       let models: QualifiedModel[];
       try { models = await discover(captured.key.key); }
-      catch (error) { if (catalog?.generation === captured.generation && catalog.revision === captured.source.revision) catalog = null; throw error; }
+      catch (error) {
+        if (error instanceof MatrixAnthropicConnectionError && error.code === "rejected") rejectedGeneration = captured.generation;
+        if (catalog?.generation === captured.generation && catalog.revision === captured.source.revision) catalog = null; throw error;
+      }
       authorize(owner); const latest = await current(); assertCAS(latest, parsed.data);
       if (!latest.source.enabled || latest.source.credentialGeneration !== captured.source.credentialGeneration) throw new MatrixAnthropicConnectionError("conflict");
-      catalog = { generation: captured.generation!, revision: captured.source.revision, checkedAt: now(), models };
+      catalog = { generation: captured.generation!, revision: captured.source.revision, checkedAt: now(), models }; rejectedGeneration = null;
       refreshReceipts.push({ key: parsed.data.idempotencyKey, payload, expires: now() + ttl }); if (refreshReceipts.length > 64) refreshReceipts.shift(); return status(owner);
     }),
     disconnect: (owner, input) => enqueue(owner, async () => {
