@@ -1,3 +1,4 @@
+import { truncateSlackText } from "./text-boundary.js";
 import { z } from "zod/v4";
 import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
@@ -98,12 +99,12 @@ export class SlackCompanyService {
     const {binding}=await this.binding(inbox);
     const result=await this.options.readResult({ownerId:envelope.ownerId,scopeId:binding.scopeId,chatId:binding.chatId,queuedTurnId:inbox.queued_turn_id!});
     if(result.status!=="completed" || result.requestingActorId!==input.actorId || result.runId!==outbox.run_id
-      || result.text?.slice(0,12_000)!==outbox.text) throw new SlackCompanyError("forbidden");
+      || (result.text===undefined?undefined:truncateSlackText(result.text,12_000))!==outbox.text) throw new SlackCompanyError("forbidden");
     // Source reads are last among external authorization callbacks, closing the metadata-lookup window.
     await this.verifySources(inbox,envelope,async()=>{
       const finalResult=await this.options.readResult({ownerId:envelope.ownerId,scopeId:binding.scopeId,chatId:binding.chatId,queuedTurnId:inbox.queued_turn_id!});
       if(finalResult.status!=="completed" || finalResult.requestingActorId!==input.actorId || finalResult.runId!==outbox.run_id
-        || finalResult.text?.slice(0,12_000)!==outbox.text) throw new SlackCompanyError("forbidden");
+        || (finalResult.text===undefined?undefined:truncateSlackText(finalResult.text,12_000))!==outbox.text) throw new SlackCompanyError("forbidden");
       const live=await this.repository.publicationReceipt(input.appId,input.teamId,input.eventId);
       if(this.stopping || !live || live.outbox.lease!==outbox.lease || live.outbox.run_id!==outbox.run_id || live.outbox.text!==outbox.text
         || live.inbox.queued_turn_id!==inbox.queued_turn_id || live.inbox.chat_id!==inbox.chat_id || live.inbox.scope_id!==inbox.scope_id
@@ -161,9 +162,9 @@ export class SlackCompanyService {
     let proofs: Array<{scopeId:string;sourceId:string;incarnation:string;revision:number}> = [];
     let ingestion: SlackInbox["ingestion_status"]="not_requested";
     if (text === null) {
-      const brain = this.options.brain ? await this.options.brain.retrieveForRun(project.scopeId, binding.scopeId, envelope.actorId, { query: envelope.event.text.replace(/<@[A-Z0-9]+>/g," ").trim().slice(0,500) || "company", limit: 5 }) : null;
+      const brain = this.options.brain ? await this.options.brain.retrieveForRun(project.scopeId, binding.scopeId, envelope.actorId, { query: truncateSlackText(envelope.event.text.replace(/<@[A-Z0-9]+>/g," ").trim(),500) || "company", limit: 5 }) : null;
       proofs=(brain?.sources ?? []).map((source)=>({scopeId:project.scopeId,sourceId:source.sourceId,incarnation:source.incarnation,revision:source.revision}));
-      let capturedText=envelope.event.text.slice(0,8000);
+      let capturedText=truncateSlackText(envelope.event.text,8000);
       text = capturedText;
       if (envelope.event.text.length > 8000) text += "\n(Slack message truncated.)";
       if (this.options.readThread) {
@@ -261,7 +262,7 @@ export class SlackCompanyService {
     if (result.status === "pending") { await this.repository.deferResult(row); return; }
     if (result.status === "failed" || !result.runId || !result.text) { await this.repository.finish(row, null); return; }
     await this.chat(envelope, binding);
-    await this.repository.finish(row, { runId: result.runId, text: result.text.slice(0,12_000) });
+    await this.repository.finish(row, { runId: result.runId, text: truncateSlackText(result.text,12_000) });
   }
   private async deliver({ inbox, outbox }: NonNullable<Awaited<ReturnType<SlackCompanyRepository["claimReply"]>>>) {
     try {

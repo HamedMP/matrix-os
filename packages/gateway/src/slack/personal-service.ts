@@ -1,3 +1,4 @@
+import { truncateSlackText } from "./text-boundary.js";
 import { SlackBridgeEnvelopeSchema, type SlackBridgeEnvelope } from "@matrix-os/contracts/slack-bridge";
 import { CanonicalChatMessageSchema, MATRIX_BOT_SELECTION, MATRIX_BOT_INSTANCE_ID } from "@matrix-os/contracts";
 import { type Kysely, type Transaction } from "kysely";
@@ -34,7 +35,7 @@ export class SlackPersonalService {
  async close(){this.stopping=true;await this.active;}
  private record(row:SlackPersonalInbox):SlackPersonalRecord{const envelope=this.envelope(typeof row.envelope==="string"?JSON.parse(row.envelope):row.envelope);
   if(!row.chat_id||!row.bot_id||personalDmKey(envelope)!==row.dm_key)throw new SlackCompanyError("forbidden");
-  let text=envelope.event.text.slice(0,8000);if(envelope.event.text.length>8000)text+="\n(Slack message truncated.)";
+  let text=truncateSlackText(envelope.event.text,8000);if(envelope.event.text.length>8000)text+="\n(Slack message truncated.)";
   return {envelope,eventId:row.id,clientRequestId:`req_${row.id.replaceAll("-","")}`,chatId:row.chat_id,botId:row.bot_id,text,...(row.accepted_id&&row.accepted_kind?{acceptedId:row.accepted_id,acceptedKind:row.accepted_kind}:{})};
  }
  private async work(){await this.repository.cleanup();for(let index=0;index<10&&!this.stopping;index++){
@@ -111,7 +112,7 @@ export function createSlackPersonalResultReader(db:Kysely<OwnerBotDatabase>){ret
  if(!run||run.driver_kind!=="matrix_bot"||run.client_request_id!==record.clientRequestId||run.actor_id!==record.envelope.ownerId)throw new SlackCompanyError("forbidden");
  if(run.status!=="completed")return {status:["accepted","running","waiting_for_input","waiting_for_approval"].includes(run.status)?"pending":"failed",requestingActorId:run.actor_id,runId};
  const messages=await db.selectFrom("chat_messages").select(["parts"]).where("chat_id","=",record.chatId).where("run_id","=",runId).where("role","=","assistant").where("state","=","committed").orderBy("seq").limit(20).execute();
- const text=messages.flatMap(row=>CanonicalChatMessageSchema.shape.parts.parse(typeof row.parts==="string"?JSON.parse(row.parts):row.parts).flatMap(part=>part.type==="text"?[part.text]:[])).join("\n").slice(0,12_000);
+ const text=truncateSlackText(messages.flatMap(row=>CanonicalChatMessageSchema.shape.parts.parse(typeof row.parts==="string"?JSON.parse(row.parts):row.parts).flatMap(part=>part.type==="text"?[part.text]:[])).join("\n"),12_000);
  return {status:"completed",requestingActorId:run.actor_id,runId,text};
 };}
 
