@@ -48,8 +48,8 @@ it("qualifies actual Models data, binds exact source/key, reuses status and fenc
   const binding = { ownerId: "owner", kind: "managed_chat", requestClass: "interactive", ...resolved } as PiRuntimeBinding;
   expect(await service.revalidate(binding, new AbortController().signal)).toBe(true);
   expect(await service.credential(binding, new AbortController().signal)).toBe(request.apiKey);
-  advance(); expect(await service.observe("owner")).toMatchObject({ state: "refresh_required", models: [] });
-  expect(await service.revalidate(binding, new AbortController().signal)).toBe(false);
+  advance(); expect(await service.revalidate(binding, new AbortController().signal)).toBe(true); expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(await service.observe("owner")).toMatchObject({ state: "ready", models: [{ id: model.id }] }); expect(fetcher).toHaveBeenCalledTimes(2);
   await revokeOwnerAnthropicKey(home);
   const revoked = await service.observe("owner"); expect(revoked).toMatchObject({ state: "auth_required", models: [] });
   expect(revoked.credentialGeneration).toBeTruthy(); expect(revoked.credentialGeneration).not.toBe(status.credentialGeneration);
@@ -127,6 +127,17 @@ it("caps queued discovery, drains on shutdown and forbids stale/cancelled/mixed 
   expect(await service.revalidate(binding, new AbortController().signal)).toBe(false); await expect(service.observe("owner")).rejects.toThrow();
 });
 
+it("rechecks an aged catalog for a connected key once, and drops it when the key is rejected", async () => {
+  const { service, fetcher, store, home, advance } = await fixture(); const status = await service.connect("owner", request); advance();
+  const [first, second] = await Promise.all([service.observe("owner"), service.observe("owner")]);
+  expect(first).toMatchObject({ state: "ready", models: [{ id: model.id }] }); expect(second).toEqual(first); expect(fetcher).toHaveBeenCalledTimes(2);
+  await expect(service.resolve(selection(status), "owner", "interactive")).resolves.toMatchObject({ accessSourceId: "owner_anthropic_key" });
+  advance(); fetcher.mockResolvedValueOnce(new Response("synthetic upstream rejection", { status: 401 }));
+  await expect(service.resolve(selection(status), "owner", "interactive")).rejects.toThrow();
+  expect(await service.observe("owner")).toMatchObject({ state: "refresh_required", models: [], enabled: true }); expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(await store.read()).toMatchObject({ revision: 1, enabled: true }); expect((await readOwnerAnthropicKey(home)).key).toBe(request.apiKey);
+  await service.shutdown();
+});
 it("failed explicit refresh removes usable qualification without disabling intent or changing key", async () => {
   const { service, fetcher, store, home } = await fixture(); const status = await service.connect("owner", request);
   fetcher.mockResolvedValueOnce(new Response("synthetic upstream rejection", { status: 401 }));
