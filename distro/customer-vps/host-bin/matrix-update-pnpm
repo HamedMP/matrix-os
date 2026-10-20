@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# pnpm-only activation. Runs as the sync-agent user; never replaces Node or executes as root.
+pnpm_rollback_directory() { printf '%s/pnpm-runtime-rollback' "${STAGING_DIR:-$(dirname "$UPDATE_TRANSACTION_DIR")}"; }
+pnpm_candidate_version() {
+  local version="${1:-}"
+  if [ -z "$version" ] && [ -f "$UPDATE_TRANSACTION_DIR/candidate-version" ] && [ ! -L "$UPDATE_TRANSACTION_DIR/candidate-version" ]; then
+    version="$(head -c 129 "$UPDATE_TRANSACTION_DIR/candidate-version")" || return 1
+  fi
+  [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 1
+  printf '%s' "$version"
+}
+pnpm_atomic_replace() { python3 - "$1" "$2" <<'PY_PNPM_RENAME'
+import os,sys
+os.replace(sys.argv[1],sys.argv[2])
+parent=os.open(os.path.dirname(sys.argv[2]),os.O_RDONLY|os.O_DIRECTORY)
+try:os.fsync(parent)
+finally:os.close(parent)
+PY_PNPM_RENAME
+}
+pnpm_sweep_private_stages() { python3 - "$1" "$2" <<'PY_PNPM_SWEEP'
+import os,shutil,stat,sys,time
+parent,prefix=sys.argv[1:];active=0;now=time.time()
+with os.scandir(parent) as entries:
+ for count,entry in enumerate(entries):
+  if count>=1024:raise ValueError('pnpm staging entry cap')
+  if not entry.name.startswith(prefix):continue
+  info=entry.stat(follow_symlinks=False)
+  if stat.S_ISDIR(info.st_mode) and info.st_uid==os.getuid() and now-info.st_mtime>86400:
+   shutil.rmtree(entry.path)
+  else:active+=1
+# Delete expired entries before enforcing the live cap, even on overfull scans.
+if active>16:raise ValueError('pnpm staging count cap')
+PY_PNPM_SWEEP
+}
+record_pnpm_runtime_transaction() (
+  set -e
+  local version root state incoming entry
+  version="$(pnpm_candidate_version "${1:-}")" || return 1;root="${PNPM_RUNTIME_ROOT:-/opt/matrix/runtime/node}";state="$(pnpm_rollback_directory)" || return 1
+  [ ! -L "$state" ] || return 1
+  if [ -f "$state/candidate-version" ] && [ "$(head -c 129 "$state/candidate-version")" = "$version" ]; then return 0;fi
+  pnpm_sweep_private_stages "$(dirname "$state")" "$(basename "$state").incoming." || return 1
+  incoming="$(mktemp -d "${state}.incoming.XXXXXX")" || return 1;trap 'rm -rf -- "$incoming"' EXIT
+  entry="$root/bin/pnpm"
+  if [ -L "$entry" ] || [ -f "$entry" ];then cp -a -- "$entry" "$incoming/entry" || return 1;printf 'present\n' >"$incoming/kind" || return 1
+  elif [ -e "$entry" ];then return 1
+  else printf 'missing\n' >"$incoming/kind" || return 1;fi
+  printf '%s\n' "$version" >"$incoming/candidate-version" || return 1
+  rm -rf -- "$state" || return 1;pnpm_atomic_replace "$incoming" "$state"
+)
+restore_pnpm_runtime_transaction() (
+  set -e
+  local version root state incoming kind work
+  version="$(pnpm_candidate_version "${1:-}")" || return 1;root="${PNPM_RUNTIME_ROOT:-/opt/matrix/runtime/node}";state="$(pnpm_rollback_directory)" || return 1
+  [ -d "$state" ] && [ ! -L "$state" ] || return 0
+  [ -f "$state/candidate-version" ] && [ "$(head -c 129 "$state/candidate-version")" = "$version" ] || return 0
+  pnpm_sweep_private_stages "$root/lib/node_modules" .pnpm-restore. || return 1
+  work="$(mktemp -d "$root/lib/node_modules/.pnpm-restore.XXXXXX")" || return 1;trap 'rm -rf -- "$work"' EXIT
+  kind="$(cat "$state/kind")" || return 1;incoming="$work/entry"
+  case "$kind" in
+    present) { [ -L "$state/entry" ] || [ -f "$state/entry" ]; } || return 1;cp -a -- "$state/entry" "$incoming" || return 1;pnpm_atomic_replace "$incoming" "$root/bin/pnpm" ;;
+    missing) if [ -d "$root/bin/pnpm" ] && [ ! -L "$root/bin/pnpm" ];then return 1;fi;rm -f -- "$root/bin/pnpm" ;;
+    *) return 1 ;;
+  esac
+)
+# Swap only our fixed owned package directory; interrupted repair always leaves a complete package.
+pnpm_atomic_exchange_packages() { python3 - "$1" "$2" <<'PY_PNPM_EXCHANGE'
+import ctypes,os,stat,sys
+source,target=sys.argv[1:]
+for path in (source,target):
+ info=os.lstat(path)
+ if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.getuid():raise ValueError('invalid owned pnpm package')
+libc=ctypes.CDLL(None,use_errno=True)
+if sys.platform=='linux':
+ exchange=libc.renameat2
+ exchange.argtypes=[ctypes.c_int,ctypes.c_char_p,ctypes.c_int,ctypes.c_char_p,ctypes.c_uint]
+ result=exchange(-100,os.fsencode(source),-100,os.fsencode(target),2)
+elif sys.platform=='darwin':
+ exchange=libc.renamex_np
+ exchange.argtypes=[ctypes.c_char_p,ctypes.c_char_p,ctypes.c_uint]
+ result=exchange(os.fsencode(source),os.fsencode(target),2)
+else:raise ValueError('atomic pnpm repair unavailable')
+if result:raise OSError(ctypes.get_errno(),'atomic pnpm repair failed')
+for path in (source,target):
+ parent=os.open(os.path.dirname(path),os.O_RDONLY|os.O_DIRECTORY)
+ try:os.fsync(parent)
+ finally:os.close(parent)
+PY_PNPM_EXCHANGE
+}
+pnpm_runtime_probe() { python3 - "$1/bin/node" "$2/bin/pnpm.cjs" <<'PY_PNPM_PROBE'
+import os,subprocess,sys
+result=subprocess.run([sys.argv[1],sys.argv[2],'--version'],cwd='/',env={'PATH':'/usr/bin:/bin','HOME':'/nonexistent','CI':'1'},capture_output=True,text=True,timeout=10,check=True)
+if result.stdout.strip()!='10.33.4':raise ValueError('pnpm version mismatch')
+PY_PNPM_PROBE
+}
+install_pnpm_runtime_payload() (
+  set -e
+  local payload="$1/pnpm-10.33.4.tgz" root modules work destination incoming
+  [ -e "$payload" ] || [ -L "$payload" ] || return 0
+  [ -f "$payload" ] && [ ! -L "$payload" ] || return 1
+  root="${PNPM_RUNTIME_ROOT:-/opt/matrix/runtime/node}";modules="$root/lib/node_modules";destination="$modules/matrix-store-pnpm-10.33.4"
+  [ -d "$root" ] && [ ! -L "$root" ] && [ -d "$modules" ] && [ ! -L "$modules" ] && [ -d "$root/bin" ] && [ ! -L "$root/bin" ] || return 1
+  pnpm_sweep_private_stages "$modules" .pnpm-stage. || return 1
+  work="$(mktemp -d "$modules/.pnpm-stage.XXXXXX")" || return 1;incoming="$work/pnpm-link";trap 'rm -rf -- "$work";rm -f -- "$incoming"' EXIT
+  python3 - "$payload" "$work/package.tgz" <<'PY_PNPM_COPY' || return 1
+import os,stat,sys
+source=os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+try:
+ info=os.fstat(source)
+ if not stat.S_ISREG(info.st_mode) or info.st_size>16*1024*1024:raise ValueError('pnpm archive limit')
+ target=os.open(sys.argv[2],os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+ try:
+  total=0
+  while True:
+   data=os.read(source,65536)
+   if not data:break
+   total+=len(data)
+   if total>16*1024*1024:raise ValueError('pnpm archive limit')
+   view=memoryview(data)
+   while view:view=view[os.write(target,view):]
+ finally:os.close(target)
+finally:os.close(source)
+PY_PNPM_COPY
+  python3 - "$work/package.tgz" <<'PY_PNPM_INTEGRITY' || return 1
+import hashlib,os,sys
+path=sys.argv[1]
+if os.stat(path).st_size>16*1024*1024:raise ValueError('pnpm archive limit')
+digest=hashlib.sha512()
+with open(path,'rb') as source:
+ while True:
+  data=source.read(65536)
+  if not data:break
+  digest.update(data)
+actual=digest.hexdigest()
+if actual!='1c67b3b359b2d408119ba1ed289f34b8fc3c6873412bec6fd264fbdc82489e510fcbecb9ce9d22dae7f3b76269d8441046014bdca53b9979cd7a561ad631b800':raise ValueError('pnpm integrity mismatch')
+PY_PNPM_INTEGRITY
+  # Tighten a user-owned legacy prefix only after the fixed artifact is verified.
+  # Root-owned group-writable legacy prefixes require the root prerequisite reconciler.
+  python3 - "$root" <<'PY_PNPM_ROOT_MODE' || return 1
+import os,stat,sys
+info=os.lstat(sys.argv[1])
+if not stat.S_ISDIR(info.st_mode):raise ValueError('invalid runtime root')
+if info.st_mode&0o022:
+ if info.st_uid!=os.getuid():raise ValueError('runtime root requires privileged prerequisite reconciliation')
+ os.chmod(sys.argv[1],0o755)
+PY_PNPM_ROOT_MODE
+  mkdir "$work/package" || return 1;tar -xzf "$work/package.tgz" --strip-components=1 -C "$work/package" || return 1
+  pnpm_runtime_probe "$root" "$work/package" || return 1
+  if [ -e "$destination" ] || [ -L "$destination" ];then
+    [ -d "$destination" ] && [ ! -L "$destination" ] || return 1
+    if ! pnpm_runtime_probe "$root" "$destination";then
+      pnpm_atomic_exchange_packages "$work/package" "$destination" || return 1
+    fi
+  else pnpm_atomic_replace "$work/package" "$destination" || return 1;fi
+  ln -s ../lib/node_modules/matrix-store-pnpm-10.33.4/bin/pnpm.cjs "$incoming" || return 1
+  pnpm_atomic_replace "$incoming" "$root/bin/pnpm"
+)
+reconcile_installed_pnpm_runtime() {
+  local version="$1" payload="$APP_DIR/host-toolchain"
+  [ -f "$payload/pnpm-10.33.4.tgz" ] && [ ! -L "$payload/pnpm-10.33.4.tgz" ] || return 0
+  python3 - "$APP_DIR/BUNDLE_VERSION" "$RELEASE_FILE" "$version" <<'PY_PNPM_RELEASE_AUTHORITY' || return 1
+import json,os,stat,sys
+bundle,release,version=sys.argv[1:]
+for path,limit in [(bundle,129),(release,65536)]:
+ info=os.lstat(path)
+ if not stat.S_ISREG(info.st_mode) or info.st_size>limit:raise ValueError('invalid installed release authority')
+with open(bundle) as source:actual=source.read().strip()
+with open(release) as source:metadata=json.load(source)
+if actual!=version or metadata.get('version')!=version:raise ValueError('installed release mismatch')
+PY_PNPM_RELEASE_AUTHORITY
+  # Keep the predecessor entry across repeated starts, including the first legacy update hop.
+  record_pnpm_runtime_transaction "$version" && install_pnpm_runtime_payload "$payload"
+}

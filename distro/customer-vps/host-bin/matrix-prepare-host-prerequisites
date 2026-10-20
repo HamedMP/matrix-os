@@ -93,6 +93,47 @@ prerequisites_ready() {
     && prerequisites_present
 }
 
+# A loaded predecessor runs this new helper even on certified hosts. Seal only
+# the fixed Node prefix after verifying the immutable bundled pnpm artifact.
+prepare_app_store_runtime_root() {
+  /usr/bin/python3 -I - "$root" <<'PY_APP_STORE_RUNTIME'
+import hashlib,os,stat,sys
+root=sys.argv[1];flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
+fds=[]
+def directory(components):
+ current=os.open('/',flags);fds.append(current)
+ for name in components:
+  if not name:continue
+  if name in ('.','..'):raise ValueError('invalid parent')
+  child=os.open(name,flags,dir_fd=current);fds.append(child);current=child
+ return current
+try:
+ components=root.rstrip('/').split('/')
+ try:artifact_directory=directory(components+['opt','matrix','app','host-toolchain'])
+ except FileNotFoundError:sys.exit(0)
+ try:artifact=os.open('pnpm-10.33.4.tgz',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=artifact_directory)
+ except FileNotFoundError:sys.exit(0)
+ fds.append(artifact);info=os.fstat(artifact)
+ if not stat.S_ISREG(info.st_mode) or info.st_size>16*1024*1024:raise ValueError('invalid artifact')
+ digest=hashlib.sha512();total=0
+ while True:
+  data=os.read(artifact,65536)
+  if not data:break
+  total+=len(data)
+  if total>16*1024*1024:raise ValueError('artifact size limit')
+  digest.update(data)
+ if digest.hexdigest()!='1c67b3b359b2d408119ba1ed289f34b8fc3c6873412bec6fd264fbdc82489e510fcbecb9ce9d22dae7f3b76269d8441046014bdca53b9979cd7a561ad631b800':raise ValueError('unverified artifact')
+ try:runtime=directory(components+['opt','matrix','runtime','node'])
+ except FileNotFoundError:sys.exit(0)
+ os.fchmod(runtime,0o755)
+ os.fsync(runtime)
+except (OSError,ValueError):
+ print('matrix App Store runtime preparation failed',file=sys.stderr);sys.exit(64)
+finally:
+ for fd in reversed(fds):os.close(fd)
+PY_APP_STORE_RUNTIME
+}
+
 # A loaded predecessor updater executes this newly installed helper before it
 # starts the new supervisor. Run even on already-certified hosts: optional bind
 # sources must exist when the supervisor creates its protected home namespace.
@@ -167,6 +208,7 @@ finally:
 PY
 }
 
+prepare_app_store_runtime_root
 prepare_workload_roots
 
 if [ "$mode" = --certify-only ]; then
