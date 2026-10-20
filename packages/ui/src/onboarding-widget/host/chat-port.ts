@@ -49,14 +49,19 @@ export async function admitOnboardingTurn({ port, chatId, prompt, selection, req
   };
   let targetId = chatId;
   let baseRevision = 0;
-  let turnSelection: typeof modelSelection = modelSelection;
+  let route = { selection: modelSelection, interactionMode: selection.interactionMode, permissionMode: selection.permissionMode };
   if (targetId) {
     try {
-      const { record } = await port.detail(targetId);
-      baseRevision = record.chat.revision;
-      // A chat stays on the AI it first ran on, so follow-ups and retries keep that route
-      // even if the widget's AI choice has changed since.
-      if (record.providerBinding && record.chat.currentSelection) turnSelection = record.chat.currentSelection;
+      const detail = await port.detail(targetId);
+      baseRevision = detail.record.chat.revision;
+      // A chat stays on the AI it first ran on. Follow-ups and retries reuse its last run's
+      // selection and modes, so a later change in the widget's AI never raises their permissions.
+      const binding = detail.record.providerBinding;
+      if (binding) {
+        const last = latestRun(detail.runs, binding.instanceId);
+        if (last) route = { selection: last.selection, interactionMode: last.interactionMode, permissionMode: last.permissionMode };
+        else targetId = null; // Bound but never ran: nothing to copy, so start a new chat rather than guess.
+      }
     } catch (error: unknown) {
       if (!port.isNotFound(error)) throw error;
       targetId = null;
@@ -71,9 +76,15 @@ export async function admitOnboardingTurn({ port, chatId, prompt, selection, req
     clientRequestId: requestIds.turn,
     baseRevision,
     parts: [{ type: "text", text: prompt }],
-    selection: turnSelection,
-    interactionMode: selection.interactionMode,
-    permissionMode: selection.permissionMode,
+    ...route,
   });
   return { chatId: admitted.record.chat.id, runId: admitted.run.id };
+}
+
+function latestRun(runs: CanonicalChatDetailResponse["runs"], instanceId: string): CanonicalChatDetailResponse["runs"][number] | null {
+  let latest: CanonicalChatDetailResponse["runs"][number] | null = null;
+  for (const run of runs) {
+    if (run.instanceId === instanceId && (!latest || run.createdAt > latest.createdAt)) latest = run;
+  }
+  return latest;
 }
