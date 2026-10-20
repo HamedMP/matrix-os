@@ -47,6 +47,8 @@ export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddP
   const [mode, setMode] = useState<Mode>("link");
   const [link, setLink] = useState("");
   const [folder, setFolder] = useState("");
+  // Bumped each time the folder list shows or a folder opens, so a folder made since is listed.
+  const [folderAsk, setFolderAsk] = useState(0);
   const [step, setStep] = useState<Step | null>(null);
   const [error, setError] = useState("");
   const alive = useRef(true);
@@ -161,7 +163,8 @@ export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddP
         <BrainChip selected={mode === "link"} disabled={busy} onClick={() => { setMode("link"); setError(""); }}>
           Repository link
         </BrainChip>
-        <BrainChip selected={mode === "folder"} disabled={busy} onClick={() => { setMode("folder"); setError(""); }}>
+        <BrainChip selected={mode === "folder"} disabled={busy}
+          onClick={() => { setMode("folder"); setFolderAsk((ask) => ask + 1); setError(""); }}>
           Folder on this computer
         </BrainChip>
       </div>
@@ -180,7 +183,8 @@ export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddP
           </p>
         </form>
       ) : (
-        <BrainFolderPicker adder={adder} path={folder} onPath={(path) => { setFolder(path); setError(""); }}
+        <BrainFolderPicker adder={adder} path={folder} ask={folderAsk}
+          onPath={(path) => { setFolder(path); setFolderAsk((ask) => ask + 1); setError(""); }}
           busy={busy} onAdd={() => run(() => addFolder(folder))} />
       )}
       {step !== null && <BrainLoading label={STEP_TEXT[step]} />}
@@ -190,11 +194,12 @@ export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddP
 }
 
 /** Folders of the Matrix home, one level at a time: open one, go up, or add the one open now. */
-function BrainFolderPicker({ adder, path, onPath, busy, onAdd }: {
-  readonly adder: BrainProjectAdder; readonly path: string; readonly onPath: (path: string) => void;
-  readonly busy: boolean; readonly onAdd: () => void;
+function BrainFolderPicker({ adder, path, ask, onPath, busy, onAdd }: {
+  readonly adder: BrainProjectAdder; readonly path: string; readonly ask: number;
+  readonly onPath: (path: string) => void; readonly busy: boolean; readonly onAdd: () => void;
 }) {
-  const list = useBrainLoad(() => adder.folders(path), `folders:${path}`);
+  // A new `ask` reads the list again, even for a folder read before.
+  const list = useBrainLoad(() => adder.folders(path), `folders:${path}`, ask);
   const up = path.split("/").slice(0, -1).join("/");
   return (
     <div className="grid gap-2">
