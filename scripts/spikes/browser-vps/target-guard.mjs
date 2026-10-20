@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 export function assertBrowserLabTarget(hostEnvironment, expectedHandle) {
   const handles = hostEnvironment.split(/\r?\n/).filter((line) => line.startsWith('MATRIX_HANDLE='));
   const classifications = hostEnvironment.split(/\r?\n/).filter((line) => line.startsWith('MATRIX_RUNTIME_SLOT='));
-  if (!/^pr-[1-9][0-9]{0,9}$/.test(expectedHandle)
+  if (!/^(?:pr-[1-9][0-9]{0,9}|pv-[1-9][0-9]{0,8}-[0-9a-f]{8})$/.test(expectedHandle)
     || handles.length !== 1 || handles[0] !== `MATRIX_HANDLE=${expectedHandle}`
     || classifications.length !== 1 || classifications[0] !== `MATRIX_RUNTIME_SLOT=${expectedHandle}`) {
     throw new Error('Target is not the confirmed disposable preview');

@@ -14,6 +14,19 @@ spec.loader.exec_module(helper)
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_private_preview_guard_matches_the_node_boundary(self):
+        handle = 'pv-2722-3fa91c2e'
+        env = f'MATRIX_HANDLE={handle}\nMATRIX_RUNTIME_SLOT={handle}\n'
+        self.assertEqual(helper.assert_target(env, handle), handle)
+        for invalid in ['pv-0-3fa91c2e', 'pv-02722-3fa91c2e', 'pv-2722-3FA91C2E', 'pv-2722-3fa91c2', 'pv-2722-3fa91c2ee', 'pv-2722-../../primary', 'pv-1234567890-3fa91c2e']:
+            with self.assertRaises(ValueError):
+                helper.assert_target(f'MATRIX_HANDLE={invalid}\nMATRIX_RUNTIME_SLOT={invalid}\n', invalid)
+        for slot in ['primary', 'pr-2722', 'pv-2722-aaaaaaaa']:
+            with self.assertRaises(ValueError):
+                helper.assert_target(f'MATRIX_HANDLE={handle}\nMATRIX_RUNTIME_SLOT={slot}\n', handle)
+        with self.assertRaises(ValueError):
+            helper.assert_target(env + f'MATRIX_HANDLE={handle}\n', handle)
+
     def test_guard_accepts_only_exact_single_preview_classification(self):
         env = 'SECRET=synthetic-only\nMATRIX_HANDLE=pr-2526\nMATRIX_RUNTIME_SLOT=pr-2526\n'
         self.assertEqual(helper.assert_target(env, 'pr-2526'), 'pr-2526')
@@ -95,4 +108,4 @@ if __name__ == '__main__':
     result = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.loadTestsFromTestCase(BoundaryTests))
     if not result.wasSuccessful():
         raise SystemExit(1)
-    print('Native experience boundary: 7 checks passed')
+    print('Native experience boundary: 8 checks passed')

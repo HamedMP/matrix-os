@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Operator-only, explicit opt-in. Ordinary bundle installation never enables Chrome.
+if [ "$(id -u)" != 0 ] || [ "$#" != 1 ]; then
+  echo 'Usage: sudo matrix-install-browser-preview <exact-pr-or-pv-preview-handle>' >&2
+  exit 64
+fi
+bin=/opt/matrix/bin
+archive="$bin/matrix-browser-preview.tar.gz"
+guard="$bin/matrix-browser-preview-guard.py"
+for file in "$archive" "$guard"; do
+  if [ ! -f "$file" ] || [ -L "$file" ]; then
+    echo 'Browser preview payload is missing. Install the reviewed Browser preview bundle first.' >&2
+    exit 64
+  fi
+  case "$(stat -c '%u:%g:%a' "$file")" in
+    0:0:644|0:0:755) ;;
+    *) echo 'Browser preview payload must be root-owned and not writable by the owner account.' >&2; exit 64 ;;
+  esac
+done
+# Read classification as data, before creating temporary files or changing services.
+/usr/bin/python3 -I "$guard" guard "$1"
+# /run is root-writable only; /run/lock can permit unprivileged symlink creation.
+exec 9>/run/matrix-browser-preview.lock
+flock -w 30 9
+temporary="$(mktemp -d /tmp/matrix-browser-preview.XXXXXX)"
+trap 'rm -rf -- "$temporary"' EXIT
+tar -xzf "$archive" -C "$temporary" --no-same-owner
+if [ -f /opt/matrix-browser-lab/app/supervisor.mjs ] && [ -f /opt/matrix-browser-lab/viewer.passwd ]; then
+  # Preserve Chrome/VNC PIDs, the profile, and existing viewer credentials.
+  timeout --kill-after=30 1800 bash "$temporary/update-experience.sh" "$1"
+else
+  timeout --kill-after=30 1800 bash "$temporary/install.sh" "$1"
+fi
+echo 'Browser preview setup finished. Reopen Browser on this preview computer.'

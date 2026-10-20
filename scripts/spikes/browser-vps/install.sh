@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Test host only. Run from the exact reviewed PR source as root with pr-<N>.
+# Test host only. Run from the reviewed payload as root with its exact pr-* or pv-* handle.
 LAB_SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAB_PREFIX=/opt/matrix-browser-lab
 LAB_NODE=/opt/matrix/runtime/node/bin/node
 if [ "$(id -u)" != 0 ] || [ $# != 1 ]; then
-  echo 'Usage: sudo ./install.sh pr-<number>' >&2
+  echo 'Usage: sudo ./install.sh <exact-pr-or-pv-preview-handle>' >&2
   exit 64
 fi
 /usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" guard "$1"

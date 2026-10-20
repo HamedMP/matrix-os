@@ -1,0 +1,58 @@
+# Browser setup on Private Previews
+
+The Browser stack must be testable on an engineer's own `pv-<PR>-<suffix>`
+computer. Installing the host bundle currently leaves the native Chrome/viewer
+services absent; the earlier root installer additionally accepts only `pr-*`.
+
+## Supported flow
+
+1. Publish the cumulative Browser stack tip as a preview bundle, without a channel.
+2. The engineer confirms that bundle with `matrix preview start <PR>` or
+   `matrix preview update <PR>`. Verify the actually installed commit/version.
+3. An authorized operator runs
+   `sudo /opt/matrix/bin/matrix-install-browser-preview <exact-preview-handle>`
+   **on that preview**. The helper and native payload ship in the host bundle;
+   no checkout or laptop login copies are required.
+4. Reopen Browser from the launcher and test navigation, a new snapshot, and
+   Pause → Take over → Resume. Use the engineer's own connected agent account.
+5. Supervised cards still require the separately reviewed signed-authority route.
+   This installer does not enable that route or make Matrix AI funding runnable.
+
+## Boundaries and wiring
+
+- Root invocation and an exact match of the requested preview handle with the
+  single `MATRIX_HANDLE` and `MATRIX_RUNTIME_SLOT` values are required. Accept
+  canonical shared `pr-*` and owner-only `pv-*` IDs; reject primary, another
+  preview, malformed IDs and duplicate metadata before mutations. Read host
+  metadata as data rather than sourcing it.
+- Setup executes only the root-owned, non-writable payload installed through the
+  normal verified host-bundle path. Never run privileged code from owner-writable
+  `app/`. One host lock serializes setup; installation has a 30-minute bound.
+- The build packages the React viewer and explicit native runtime files, excluding
+  dependency stores, test probes, profiles and credentials. Ordinary host-bundle
+  installation does not opt a computer into Chrome.
+- Existing installations use the experience update, preserving Chrome/VNC PIDs,
+  viewer credentials and the owner profile. A first install leaves partial files
+  on failure and can be retried; it must not delete existing owner data.
+- No new HTTP routes, grants, collaboration access, database writes, or default
+  browser-permission activation. Customer promotion and fleet deployment remain
+  outside this preview-only fix.
+
+## Acceptance
+
+- Reproduce the Private Preview rejection in both Node and privileged Python;
+  pass canonical preview IDs while preserving the rejection controls.
+- Extract a real staged archive and verify all runtime imports and prebuilt
+  viewer files, with no dependency stores or private state.
+- Exercise the packaged setup dispatch and existing-installation update in an
+  isolated fixture. Fixture checks do not prove a live Chrome installation.
+- On the exact engineer preview, verify installed source, app-session creation,
+  Browser rendering and an agent's fresh second-turn snapshot before declaring
+  the engineer unblocked. Web Desktop and Web Canvas need separate evidence;
+  Electron Desktop needs a matching client and separate live qualification.
+- Update the companion public Browser preview guide in
+  `FinnaAI/matrix-os-site`. Ask the Browser/preview owner to review the setup
+  contract; the user's instruction authorizes implementing this fix.
+
+Tracking: [MAT-6](https://linear.app/matrix-os/issue/MAT-6/add-browser-use-support-to-matrix),
+[native Browser stack #2689](https://github.com/HamedMP/matrix-os/stacks/2689).

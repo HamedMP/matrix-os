@@ -15,7 +15,7 @@ def assert_target(environment, expected):
     lines = environment.splitlines()
     handles = [line for line in lines if line.startswith('MATRIX_HANDLE=')]
     slots = [line for line in lines if line.startswith('MATRIX_RUNTIME_SLOT=')]
-    if not re.fullmatch(r'pr-[1-9][0-9]{0,9}', expected) or handles != ['MATRIX_HANDLE=' + expected] or slots != ['MATRIX_RUNTIME_SLOT=' + expected]:
+    if not re.fullmatch(r'(?:pr-[1-9][0-9]{0,9}|pv-[1-9][0-9]{0,8}-[0-9a-f]{8})', expected) or handles != ['MATRIX_HANDLE=' + expected] or slots != ['MATRIX_RUNTIME_SLOT=' + expected]:
         raise ValueError('Target is not the confirmed disposable preview')
     return expected
 
@@ -69,7 +69,7 @@ def atomic_write(parent, name, content, owner_uid=0):
 
 def main(arguments):
     if os.getuid() != 0 or len(arguments) != 2 or arguments[0] not in ('guard', 'install'):
-        raise ValueError('Root-only preview setup: guard|install pr-<number>')
+        raise ValueError('Root-only preview setup: guard|install <exact-preview-handle>')
     assert_target(read_host_environment(), arguments[1])
     if arguments[0] == 'guard':
         return

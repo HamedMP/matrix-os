@@ -4,7 +4,7 @@ set -euo pipefail
 LAB_SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAB_PREFIX=/opt/matrix-browser-lab
 if [ "$(id -u)" != 0 ] || [ $# != 1 ]; then
-  echo 'Usage: sudo ./update-experience.sh pr-<number>' >&2
+  echo 'Usage: sudo ./update-experience.sh <exact-pr-or-pv-preview-handle>' >&2
   exit 64
 fi
 /usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" guard "$1"
