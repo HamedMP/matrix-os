@@ -116,7 +116,12 @@ export function BrainAddProject({ api, adder, loadProjects, onAdded }: BrainAddP
       return;
     }
     setStep("checking");
-    if (!await adder.isGitRepository(project.slug)) {
+    // A check that failed says nothing: go on, and the connect step reports a folder the brain cannot read.
+    const git = await adder.isGitRepository(project.slug).catch((error: unknown) => {
+      console.warn("[brain] git check failed for a new project", error instanceof Error ? error.name : typeof error);
+      return null;
+    });
+    if (git === false) {
       onAdded(project, `Added ${project.name}, but this folder is not a git repository, so the brain has nothing `
         + "to read. Run git init in it, or pick a folder that is a git repository.");
       return;

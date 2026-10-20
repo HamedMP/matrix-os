@@ -17,8 +17,11 @@ export const BRAIN_CLONE_WAIT_TRIES = 60;
 export interface BrainProjectAdder {
   clone(url: string, clientRequestId: string): Promise<BrainProjectOption>;
   addFolder(path: string, name: string, clientRequestId: string): Promise<BrainProjectOption>;
-  /** Whether the project's folder is a git repository (GET /api/projects/:slug/code-metadata). */
-  isGitRepository(slug: string): Promise<boolean>;
+  /**
+   * Whether the project's folder is a git repository (GET /api/projects/:slug/code-metadata); null when the answer
+   * does not say.
+   */
+  isGitRepository(slug: string): Promise<boolean | null>;
   /** The folder names inside `path` (relative to the Matrix home; "" is the home). */
   folders(path: string): Promise<readonly string[]>;
 }
@@ -41,8 +44,9 @@ export function createBrainProjectAdder(client: BrainHttpTransport): BrainProjec
     isGitRepository: async (slug) => {
       const value = await client.get<unknown>(`/api/projects/${encodeURIComponent(slug)}/code-metadata`,
         { timeoutMs: BRAIN_READ_TIMEOUT_MS });
-      return typeof value === "object" && value !== null
-        && (value as { isGitRepository?: unknown }).isGitRepository === true;
+      const answer = typeof value === "object" && value !== null
+        ? (value as { isGitRepository?: unknown }).isGitRepository : undefined;
+      return typeof answer === "boolean" ? answer : null;
     },
     folders: async (path) => {
       const value = await client.get<unknown>(`/api/files/list?path=${encodeURIComponent(path)}`,
