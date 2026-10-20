@@ -44,6 +44,18 @@ describe('trusted PR CI supersession', () => {
     expect(list.mock.calls[0][0].per_page).toBe(100);
   });
 
+  it('uses the immutable run head when GitHub refreshes an older run PR association', async () => {
+    const obsolete = run(71, previousSha);
+    // Observed on run39388684253 after PR2775 moved: this association is live,
+    // while workflow_run.head_sha still identifies the source that executed.
+    obsolete.pull_requests[0].head.sha = currentSha;
+    const { cancel } = await execute([
+      obsolete, run(72, currentSha), run(73, 'c'.repeat(40)),
+      run(74, previousSha, 99),
+    ]);
+    expect(cancel.mock.calls.map(([arg]) => arg.run_id)).toEqual([71]);
+  });
+
   it('does nothing when this event was overtaken by a newer PR head', async () => {
     const { cancel, list } = await execute([run(1, previousSha)], [previousSha]);
     expect(cancel).not.toHaveBeenCalled();
