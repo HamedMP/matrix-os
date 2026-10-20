@@ -352,7 +352,16 @@ export function createSharedBrowserCdpDriver(options: CdpConnectOptions & { home
     return { success: true, targetId };
   }
   async function detach() {
-    detaching = true; invalidateObservation(); await clearingCursor.catch(error=>{if(client?.available)throw error;report(error);});
+    detaching = true; invalidateObservation();
+    await clearingCursor.catch(async error => {
+      // A protocol rejection can leave the socket healthy but its recorded
+      // document/session unusable. Retry cleanup through fresh authority; never
+      // release input or replay the action without an acknowledgement.
+      report(error); recoveryRequired = true;
+      unsubscribe?.(); unsubscribe = undefined;
+      await client?.close(); client = undefined; sessionId = undefined;
+      clearingCursor = Promise.resolve();
+    });
     clearInterval(maintenance); maintenance = undefined;
     if (connecting) { try { client = await connecting; } catch (error) { report(error); } }
     if (client && !client.available) {
