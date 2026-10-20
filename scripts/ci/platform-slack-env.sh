@@ -45,21 +45,27 @@ case "$mode" in
     done
     node - "$secret_dir" <<'NODE'
 const fs = require('node:fs');
+class SlackConfigurationError extends Error {}
 const path = require('node:path');
 try {
   const read = name => fs.readFileSync(path.join(process.argv[2], name), 'utf8');
-  if (!/^A[A-Z0-9]{2,63}$/.test(read('SLACK_APP_ID')) || !/^\d+\.\d+$/.test(read('SLACK_CLIENT_ID'))) throw new Error();
+  if (!/^A[A-Z0-9]{2,63}$/.test(read('SLACK_APP_ID')) || !/^\d+\.\d+$/.test(read('SLACK_CLIENT_ID'))) throw new SlackConfigurationError();
   for (const name of ['SLACK_CLIENT_SECRET', 'SLACK_SIGNING_SECRET']) {
     const value = read(name);
-    if (value.length < 16 || value.length > 256) throw new Error();
+    if (value.length < 16 || value.length > 256) throw new SlackConfigurationError();
   }
   const encoded = read('SLACK_TOKEN_ENCRYPTION_KEY');
   const key = Buffer.from(encoded, 'base64');
-  if (key.length !== 32 || key.toString('base64') !== encoded) throw new Error();
-  const url = new URL(read('SLACK_PUBLIC_BASE_URL'));
-  if (url.protocol !== 'https:' || url.pathname !== '/' || url.username || url.password || url.search || url.hash) throw new Error();
-} catch {
-  process.stderr.write('Slack secret configuration is invalid.\n'); process.exit(1);
+  if (key.length !== 32 || key.toString('base64') !== encoded) throw new SlackConfigurationError();
+  const address = read('SLACK_PUBLIC_BASE_URL');
+  if (!URL.canParse(address)) throw new SlackConfigurationError();
+  const url = new URL(address);
+  if (url.protocol !== 'https:' || url.pathname !== '/' || url.username || url.password || url.search || url.hash) throw new SlackConfigurationError();
+} catch (error) {
+  const type = error instanceof SlackConfigurationError ? 'invalid_configuration'
+    : error instanceof Error && 'code' in error ? 'file_unavailable'
+    : error instanceof Error ? 'unexpected_error' : 'unknown_error';
+  process.stderr.write(`Slack secret validation failed (${type}).\n`); process.exit(1);
 }
 NODE
     ;;
@@ -72,19 +78,24 @@ NODE
     gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$revision_file"
     node - "$revision_file" "$enabled" "${bindings[@]}" <<'NODE'
 const fs = require('node:fs');
+class SlackConfigurationError extends Error {}
 try {
   const containers = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).spec?.containers;
-  if (!Array.isArray(containers) || containers.length !== 1 || !Array.isArray(containers[0].env)) throw new Error();
+  if (!Array.isArray(containers) || containers.length !== 1 || !Array.isArray(containers[0].env)) throw new SlackConfigurationError();
   for (const binding of process.argv.slice(4)) {
     const [name, reference] = binding.split('=');
     const [secret, version] = reference.split(':');
     const matches = containers[0].env.filter(entry => entry.name === name);
-    if (process.argv[3] === 'false') { if (matches.length !== 0) throw new Error(); }
+    if (process.argv[3] === 'false') { if (matches.length !== 0) throw new SlackConfigurationError(); }
     else if (matches.length !== 1 || matches[0].value !== undefined
-      || matches[0].valueFrom?.secretKeyRef?.name !== secret || String(matches[0].valueFrom?.secretKeyRef?.key) !== version) throw new Error();
+      || matches[0].valueFrom?.secretKeyRef?.name !== secret || String(matches[0].valueFrom?.secretKeyRef?.key) !== version) throw new SlackConfigurationError();
   }
-} catch {
-  process.stderr.write('Slack revision does not match the reviewed deployment contract.\n'); process.exit(1);
+} catch (error) {
+  const type = error instanceof SlackConfigurationError ? 'invalid_configuration'
+    : error instanceof SyntaxError ? 'invalid_json'
+    : error instanceof Error && 'code' in error ? 'file_unavailable'
+    : error instanceof Error ? 'unexpected_error' : 'unknown_error';
+  process.stderr.write(`Slack revision validation failed (${type}).\n`); process.exit(1);
 }
 NODE
     ;;
