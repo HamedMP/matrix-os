@@ -58,6 +58,16 @@ export const MatrixBillingPublicEntitlementSchema = z.object({
   updatedAt: IsoTimestampSchema,
 }).strict();
 
+export const MatrixBillingActiveCheckoutSchema = z.strictObject({
+  status: z.enum(["creating", "open"]),
+  planSlug: z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS),
+  interval: z.enum(["monthly", "annual"]),
+  regionSlug: z.enum(MATRIX_HOSTED_BILLING_REGION_SLUGS),
+  developerTools: z.array(z.enum(["codex", "claude-code", "opencode", "pi"]))
+    .max(4)
+    .refine((tools) => new Set(tools).size === tools.length, "Duplicate developer tools"),
+});
+
 export const MatrixBillingStatusSchema = z.object({
   entitlement: MatrixBillingPublicEntitlementSchema.nullable(),
   access: z.object({
@@ -69,7 +79,9 @@ export const MatrixBillingStatusSchema = z.object({
     eligible: z.boolean(),
     durationDays: z.number().int().min(1).max(30),
   }).strict(),
+  activeCheckout: MatrixBillingActiveCheckoutSchema.nullable().default(null),
 }).strict();
 
 export type MatrixBillingPublicEntitlement = z.infer<typeof MatrixBillingPublicEntitlementSchema>;
 export type MatrixBillingStatus = z.infer<typeof MatrixBillingStatusSchema>;
+export type MatrixBillingActiveCheckout = z.infer<typeof MatrixBillingActiveCheckoutSchema>;

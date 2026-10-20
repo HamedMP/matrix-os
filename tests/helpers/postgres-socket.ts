@@ -28,4 +28,3 @@ export class PostgresSocket extends Duplex {
     callback();
   }
 }
-

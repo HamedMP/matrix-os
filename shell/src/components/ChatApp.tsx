@@ -8,8 +8,9 @@ import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigati
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
-import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
+import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
+import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { ChatQueuedRequests } from "./chat/ChatQueuedRequests";
@@ -310,6 +311,17 @@ function ChatAppContent({
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
   const botTranscript = botTranscriptPlacement(grouped);
+  const waitingTool = grouped.flatMap((group) => {
+    if (group.type !== "message") return [];
+    const approval = canonicalApproval(group.message);
+    if (!approval) return [];
+    const view = supervisedToolApproval(approval);
+    return view?.kind === "waiting" ? [{ id: approval.approvalId, bar: view.bar }] : [];
+  })[0] ?? null;
+  const approvalPermissionMode = directBotId ? botPresentation?.permissionMode : providerState.selected?.permissionMode;
+  const onApprovalPermissionMode = !directBotId && providerState.selected?.permissionModes.includes("full_access")
+    ? providerState.selectPermissionMode
+    : undefined;
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the writeHermesSetup useEffect dependency array below; keep an explicit useMemo so the persisted-setup effect only re-runs when the channel set actually changes, not on every render.
   const selectedChannels = useMemo(() => Array.from(channels).sort(), [channels]);
   useEffect(() => {
@@ -405,13 +417,13 @@ function ChatAppContent({
       )}
       {/* Sidebar */}
       <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root aria-busy={navigationFresh===false}
-        className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
+        className={`z-20 flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-all duration-200 ease-out ${
           sidebarOpen
             ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
             : "w-0 overflow-hidden"
         }`}
       >
-        <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between bg-muted p-3 pb-2">
+        <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between bg-sidebar p-3 pb-2">
           <Button
             variant="ghost"
             size="icon"
@@ -707,6 +719,9 @@ function ChatAppContent({
                             return approval !== null
                               && submittingApprovalId === `${approval.runId}\0${approval.approvalId}`;
                           })()}
+                          permissionMode={approvalPermissionMode}
+                          onPermissionMode={onApprovalPermissionMode}
+                          onTryAgain={(prompt) => { composer.setText(supervisedToolRetryDraft(composer.text, prompt)); document.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
                           onSubmit={onSubmitApproval ? async (runId, approvalId, decision) => {
                             const submissionId = `${runId}\0${approvalId}`;
                             setSubmittingApprovalId(submissionId);
@@ -755,6 +770,12 @@ function ChatAppContent({
                   />
                 </div>
               )}
+              {waitingTool ? (
+                <SupervisedToolApprovalBar
+                  label={`Waiting for you · ${waitingTool.bar}`}
+                  onReview={() => document.getElementById(`tool-approval-${waitingTool.id}`)?.scrollIntoView({ block: "center" })}
+                />
+              ) : null}
               <ChatInput
                 attachmentPolicy={attachmentPolicy.error}
                 slashInstance={slashInstance}

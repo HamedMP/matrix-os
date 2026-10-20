@@ -2,7 +2,9 @@
 
 import { useAuth } from "@clerk/nextjs";
 import {
+  MatrixBillingActiveCheckoutSchema,
   MatrixBillingPublicEntitlementSchema,
+  type MatrixBillingActiveCheckout,
   type MatrixBillingPublicEntitlement,
 } from "@matrix-os/contracts";
 import {
@@ -38,6 +40,7 @@ type BillingAccessState = {
   checking: boolean;
   entitlement: BillingEntitlementSummary | null;
   trialOffer: BillingTrialOffer | null;
+  activeCheckout?: MatrixBillingActiveCheckout | null;
   accessReason: string | null;
   accessIssue: BillingAccessIssue;
   retry: () => void;
@@ -56,6 +59,7 @@ type BillingAccessRemoteState = {
   active: boolean | null;
   entitlement: BillingEntitlementSummary | null;
   trialOffer: BillingTrialOffer | null;
+  activeCheckout?: MatrixBillingActiveCheckout | null;
   accessReason: string | null;
   accessIssue: BillingAccessIssue;
 };
@@ -64,6 +68,7 @@ const BILLING_STATUS_UNAVAILABLE_STATE: BillingAccessRemoteState = {
   active: null,
   entitlement: null,
   trialOffer: null,
+  activeCheckout: null,
   accessReason: "billing_status_unavailable",
   accessIssue: "status",
 };
@@ -91,6 +96,24 @@ export function useMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
     getServerE2eBillingScenario,
   );
   if (!e2eBillingBypass) return state;
+  if (e2eBillingScenario === "open-checkout") {
+    return {
+      active: false,
+      checking: false,
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+      activeCheckout: {
+        status: "open",
+        planSlug: "matrix_starter",
+        interval: "monthly",
+        regionSlug: "region_nbg1",
+        developerTools: ["codex"],
+      },
+      accessReason: "e2e_open_checkout",
+      accessIssue: null,
+      retry: state.retry,
+    };
+  }
   if (e2eBillingScenario === "legacy-trial") {
     return {
       active: true,
@@ -229,7 +252,7 @@ function useManagedMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
   const previousCacheKeyRef = useRef<string | null>(null);
   const retryBillingStatus = useCallback(() => {
     failedAttemptsRef.current = 0;
-    setRemoteState(null);
+    billingStatusSnapshot = null;
     setRemoteChecked(false);
     setRetryTick((current) => current + 1);
   }, []);
@@ -346,12 +369,24 @@ function useManagedMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
       retry: retryBillingStatus,
     };
   }
-  if (!remoteChecked) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null, retry: retryBillingStatus };
+  if (!remoteChecked) {
+    return {
+      active: remoteState?.active ?? null,
+      checking: true,
+      entitlement: remoteState?.entitlement ?? null,
+      trialOffer: remoteState?.trialOffer ?? null,
+      activeCheckout: remoteState?.activeCheckout ?? null,
+      accessReason: remoteState?.accessReason ?? null,
+      accessIssue: remoteState?.accessIssue ?? null,
+      retry: retryBillingStatus,
+    };
+  }
   return {
     active: remoteState?.active === true,
     checking: false,
     entitlement: remoteState?.entitlement ?? null,
     trialOffer: remoteState?.trialOffer ?? null,
+    activeCheckout: remoteState?.activeCheckout ?? null,
     accessReason: remoteState?.accessReason ?? null,
     accessIssue: null,
     retry: retryBillingStatus,
@@ -415,6 +450,7 @@ function readRemoteBillingStatus(
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
         entitlement?: unknown;
         trialOffer?: { eligible?: unknown; durationDays?: unknown };
+        activeCheckout?: unknown;
       };
       const parsedEntitlement = body.entitlement === null || body.entitlement === undefined
         ? null
@@ -424,6 +460,9 @@ function readRemoteBillingStatus(
         active: body.access?.runtimeProxyAllowed === true,
         entitlement: parsedEntitlement?.data ?? null,
         trialOffer: parseBillingTrialOffer(body.trialOffer),
+        activeCheckout: body.activeCheckout === null || body.activeCheckout === undefined
+          ? null
+          : MatrixBillingActiveCheckoutSchema.parse(body.activeCheckout),
         accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
         accessIssue: null,
       };

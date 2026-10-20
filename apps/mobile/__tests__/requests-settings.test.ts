@@ -5,6 +5,7 @@ jest.mock("@/lib/storage", () => ({
 import { fetchMobileBillingStatus } from "@/lib/requests/settings";
 
 const overrideBillingStatus = {
+  activeCheckout: null,
   entitlement: {
     source: "override",
     planSlug: "matrix_builder",

@@ -190,16 +190,26 @@ it("keeps grouped account actions guarded while replacement runs and restores th
   p.snapshot.supportedActions = ["set_harness_enabled"];
   const receipt = {id: "replacement", harnessInstanceId: "claude", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), deviceCode: null, authorizationUrl: null, terminalSessionId: null, safeFailure: null};
   const client = {capabilities: vi.fn().mockResolvedValue([{harnessInstanceId: "claude", harness: "claude", displayName: "Claude", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["anthropic"], install: false, uninstall: false, logs: false, activeOperationId: "replacement"}]), get: vi.fn().mockResolvedValue(receipt), cancel: vi.fn().mockResolvedValue({...receipt, state: "cancelled"}), start: vi.fn(), logs: vi.fn(), submitKey: vi.fn()};
-  render(<AgentsProvidersView {...p} workflowClient={client as never} />);
-  fireEvent.click(row());
+  // Flush the real capability/resume effect chain before the unchanged row
+  // status wait; its callback otherwise competes with those pending updates.
+  await act(async () => {
+    render(<AgentsProvidersView {...p} workflowClient={client as never} />);
+  });
+  await act(async () => {
+    fireEvent.click(row());
+  });
   await waitFor(() => expect(row()).toHaveTextContent("Connecting"));
+  expect(client.get).toHaveBeenCalledWith("replacement", expect.any(AbortSignal));
   expect(screen.getAllByRole("button", {name: "Change account"})).toHaveLength(1);
   expect(screen.getByRole("button", {name: "Change account"})).toBeDisabled();
   expect(screen.getByRole("button", {name: "Disconnect"})).toBeDisabled();
   fireEvent.click(screen.getByRole("button", {name: "Disconnect"}));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", {name: "Cancel"}));
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", {name: "Cancel"}));
+  });
   await waitFor(() => expect(screen.getByRole("button", {name: "Change account"})).toBeEnabled());
+  expect(client.cancel).toHaveBeenCalledExactlyOnceWith("replacement", expect.any(AbortSignal));
   expect(screen.getByRole("button", {name: "Disconnect"})).toBeEnabled();
   expect(client.start).not.toHaveBeenCalled(); expect(p.onMutate).not.toHaveBeenCalled();
 });

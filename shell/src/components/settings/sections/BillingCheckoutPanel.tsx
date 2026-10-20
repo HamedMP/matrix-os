@@ -11,6 +11,7 @@ import {
   MATRIX_BILLING_SERVER_PROFILES,
 } from "@/lib/billing";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
+import type { MatrixBillingActiveCheckout } from "@matrix-os/contracts";
 import { getCheckoutAttribution } from "@/lib/marketing-attribution";
 import {
   captureBillingTelemetry,
@@ -20,6 +21,7 @@ import {
 } from "./billing-checkout";
 
 const BILLING_PREPARATION_TIMEOUT_MS = 370_000;
+const BILLING_ACTION_TIMEOUT_MS = 15_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const billingDateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
@@ -63,6 +65,8 @@ export function BillingCheckoutPanel({
   billingInterval,
   developerTools,
   trialDurationDays,
+  activeCheckout,
+  onCheckoutAbandoned,
 }: {
   onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
   onCheckoutNavigate?: (url: string) => void;
@@ -75,14 +79,18 @@ export function BillingCheckoutPanel({
   billingInterval: BillingInterval;
   developerTools: DeveloperToolId[];
   trialDurationDays: number | null;
+  activeCheckout?: MatrixBillingActiveCheckout | null;
+  onCheckoutAbandoned?: () => void;
 }) {
   const planSlug = selectedProfile.planSlug;
   const regionSlug = selectedRegion.featureSlug;
   const price = checkoutPrice(selectedProfile, billingInterval);
+  const pricePeriod = billingInterval === "annual" ? "year" : "month";
   const [trialEnd] = useState(() => trialDurationDays === null
     ? null
     : billingDateFormatter.format(new Date(Date.now() + trialDurationDays * DAY_MS)));
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [abandonLoading, setAbandonLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const telemetryPropertiesRef = useRef(telemetryProperties);
 
@@ -192,6 +200,45 @@ export function BillingCheckoutPanel({
     }
   }
 
+  async function abandonCheckout() {
+    setAbandonLoading(true);
+    setCheckoutError(null);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), BILLING_ACTION_TIMEOUT_MS);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear the abort timeout and reset `abandonLoading` on every path; the finalizer must run whether the request resolves, rejects, or throws.
+    try {
+      const response = await fetch("/billing/checkout/abandon", {
+        method: "POST",
+        credentials: "include",
+        signal: controller.signal,
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ runtimeSlot: checkoutRuntimeSlot ?? "primary" }),
+      });
+      if (!response.ok) {
+        const message = response.status === 409
+          ? "Checkout is already being confirmed and cannot be changed."
+          : "We couldn't release this checkout. Try again in a moment.";
+        reportCheckoutError(
+          `abandon_http_${response.status}`,
+          message,
+        );
+        onCheckoutAbandoned?.();
+        return;
+      }
+      onCheckoutAbandoned?.();
+    } catch (error: unknown) {
+      const message = "We couldn't release this checkout. Try again in a moment.";
+      reportCheckoutError(
+        error instanceof Error ? `abandon_${error.name}` : "abandon_unknown",
+        message,
+      );
+      onCheckoutAbandoned?.();
+    } finally {
+      window.clearTimeout(timeoutId);
+      setAbandonLoading(false);
+    }
+  }
+
   return (
     <aside className="rounded-2xl bg-[#0E3422] p-5 text-[#FCFCF8] shadow-[0_12px_36px_rgba(31,45,29,0.12)] lg:sticky lg:top-2">
       <div className="flex items-end justify-between gap-4">
@@ -201,21 +248,21 @@ export function BillingCheckoutPanel({
         {!checkoutBypassed && trialDurationDays === null ? (
           <span className="flex items-baseline gap-1">
             <span className="text-3xl font-semibold tracking-tight">${price}</span>
-            <span className="text-xs text-[#C9E8D9]/65">/month</span>
+            <span className="text-xs text-[#C9E8D9]/65">/{pricePeriod}</span>
           </span>
         ) : null}
       </div>
       {trialDurationDays !== null && trialEnd && (
         <div className="mt-5 border-t border-[#C9E8D9]/15 pt-5">
           <p className="text-3xl font-semibold tracking-tight text-cream">$0 today</p>
-          <p className="mt-1 text-sm text-[#FCFCF8]">Then ${price}/month on {trialEnd}</p>
+          <p className="mt-1 text-sm text-[#FCFCF8]">Then ${price}/{pricePeriod} on {trialEnd}</p>
         </div>
       )}
 
       <button
         type="button"
         onClick={startCheckout}
-        disabled={checkoutLoading}
+        disabled={checkoutLoading || abandonLoading}
         className="mt-5 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#BED77B] px-4 text-sm font-semibold text-[#0E3422] transition-colors hover:bg-[#CEE0AE] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F1C379] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0E3422] disabled:cursor-wait disabled:opacity-70"
       >
         {checkoutLoading ? (
@@ -225,12 +272,25 @@ export function BillingCheckoutPanel({
         )}
         {checkoutLoading
           ? "Opening secure checkout"
+          : activeCheckout
+          ? "Resume checkout"
           : checkoutBypassed
           ? "Continue setup"
           : trialDurationDays !== null
           ? `Start ${trialDurationDays}-day trial`
           : "Continue to pay"}
       </button>
+
+      {activeCheckout ? (
+        <button
+          type="button"
+          onClick={abandonCheckout}
+          disabled={checkoutLoading || abandonLoading}
+          className="mt-2 inline-flex h-10 w-full items-center justify-center rounded-xl border border-cream/30 px-4 text-sm font-semibold text-cream transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-70"
+        >
+          {abandonLoading ? "Releasing checkout" : "Choose different options"}
+        </button>
+      ) : null}
 
       {!checkoutBypassed && <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] font-medium text-[#C9E8D9]/65">
         <span className="inline-flex items-center gap-1">
@@ -239,7 +299,7 @@ export function BillingCheckoutPanel({
         </span>
       </div>}
       {checkoutError && (
-        <p className="mt-2 text-center text-xs text-red-300">{checkoutError}</p>
+        <p className="mt-2 text-center text-xs text-red-300" role="alert">{checkoutError}</p>
       )}
     </aside>
   );

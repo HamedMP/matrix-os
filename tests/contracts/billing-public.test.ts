@@ -3,6 +3,33 @@ import { describe, expect, it } from "vitest";
 import { MatrixBillingStatusSchema } from "@matrix-os/contracts";
 
 describe("public billing status contract", () => {
+  it("accepts only a bounded provider-neutral active checkout selection", () => {
+    const result = MatrixBillingStatusSchema.parse({
+      entitlement: null,
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      trialOffer: { eligible: true, durationDays: 3 },
+      activeCheckout: {
+        status: "open",
+        planSlug: "matrix_starter",
+        interval: "monthly",
+        regionSlug: "region_nbg1",
+        developerTools: ["codex"],
+      },
+    });
+
+    expect(result.activeCheckout).toEqual({
+      status: "open",
+      planSlug: "matrix_starter",
+      interval: "monthly",
+      regionSlug: "region_nbg1",
+      developerTools: ["codex"],
+    });
+    expect(() => MatrixBillingStatusSchema.parse({
+      ...result,
+      activeCheckout: { ...result.activeCheckout, stripeSessionId: "cs_secret" },
+    })).toThrow();
+  });
+
   it("accepts provider-neutral entitlement metadata", () => {
     const result = MatrixBillingStatusSchema.parse({
       entitlement: {
