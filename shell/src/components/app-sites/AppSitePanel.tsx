@@ -31,6 +31,7 @@ function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: Site
   const invalid = !metadata.title || (metadata.slug !== null && !SiteSlugSchema.safeParse(metadata.slug).success);
   const disabled = pending || loading || loadFailed;
   async function review() {
+    if (reviewOpen) { invalidateReview(); return; }
     invalidateReview();
     await action(signal => client.getConfig(appSlug, signal), declaration => {
       setConfig(declaration); setPreviewReady(true); setReviewOpen(true);

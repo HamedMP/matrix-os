@@ -1,5 +1,6 @@
 import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse } from "@matrix-os/contracts";
 
+export const SITE_CLIENT_MAX_RESPONSE_BYTES = 1_048_576;
 export interface SiteMetadata { title: string; description: string; slug: string | null; baseRevision?: number }
 export type { SiteSubmission };
 export type SiteSubmissionsPage = SiteSubmissionsResponse;

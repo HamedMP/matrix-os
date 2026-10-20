@@ -1,6 +1,5 @@
 import { getGatewayUrl } from "../../lib/gateway";
-import { createSiteClient, SiteClientError, type SiteTransport } from "../../lib/site-client";
-const MAX_RESPONSE_BYTES = 1_048_576;
+import { createSiteClient, SiteClientError, SITE_CLIENT_MAX_RESPONSE_BYTES as MAX_RESPONSE_BYTES, type SiteTransport } from "../../lib/site-client";
 async function request(path: string, method: string, value: unknown, options: { signal: AbortSignal; timeoutMs?: number }): Promise<Response> {
   const response = await fetch(`${getGatewayUrl()}${path}`, {
     method, credentials: "include", headers: { accept: "application/json", ...(value === undefined ? {} : { "content-type": "application/json" }) },
