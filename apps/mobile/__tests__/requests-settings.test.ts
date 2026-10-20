@@ -58,7 +58,9 @@ describe("settings requests", () => {
       ok: true,
       json: jest.fn().mockResolvedValue(status),
     } as unknown as Response);
-    await expect(fetchMobileBillingStatus("clerk-token", "primary")).resolves.toEqual(status);
+    await expect(fetchMobileBillingStatus("clerk-token", "primary")).resolves.toEqual({
+      ...status, activeCheckout: null,
+    });
   });
 
   it("accepts the public portal capability without a Stripe subscription identifier", async () => {
