@@ -68,7 +68,8 @@ const ClaudeStreamLineSchema = z.object({
 }).passthrough();
 
 type ClaudeChatState = z.infer<typeof ClaudeChatStateSchema>;
-const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
+const DEFAULT_MAX_RUN_TIMEOUT_MS = 4 * 60 * 60_000;
 // Claude's stream-json protocol repeats bounded tool-result envelopes throughout
 // a Run, so healthy repository tasks routinely exceed one MiB in total. This is
 // still a hard process-output ceiling; per-event projection and the queue remain
@@ -157,7 +158,10 @@ export function createClaudeChatProviderAdapter(options: {
   homePath: string;
   credentialKey?: Buffer;
   spawnFn?: CanonicalCliSpawn;
+  /** Maximum time without CLI output or accepted input. */
   timeoutMs?: number;
+  /** Absolute safety limit for a Claude CLI Run. */
+  maxRunTimeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
   /** The run id doubles as the funded priority claim key for this turn. */
   resolveCredentialLaunch?: (context: { runId: string; instanceId: string }) => Promise<KernelCredentialLaunch>;
@@ -165,7 +169,8 @@ export function createClaudeChatProviderAdapter(options: {
   previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const idleTimeoutMs = options.timeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const maxRunTimeoutMs = options.maxRunTimeoutMs ?? DEFAULT_MAX_RUN_TIMEOUT_MS;
   const activeRuns = new Map<string, {
     ownerId: string;
     ownerType: CanonicalProviderRunInput["owner"]["type"];
@@ -711,7 +716,10 @@ export function createClaudeChatProviderAdapter(options: {
       env: runEnv,
       replaceEnv: true,
       signal: processSignal,
-      timeoutMs: Math.min(timeoutMs, credentialLaunch.fundedRunTimeoutMs ?? timeoutMs),
+      // Funding supplies a strict total deadline; owner credentials use a
+      // progress-aware idle deadline with a separate bounded safety limit.
+      timeoutMs: Math.min(maxRunTimeoutMs, credentialLaunch.fundedRunTimeoutMs ?? maxRunTimeoutMs),
+      idleTimeoutMs: Math.min(idleTimeoutMs, credentialLaunch.fundedRunTimeoutMs ?? idleTimeoutMs),
       maxStdoutBytes: MAX_STREAM_BYTES,
       maxStderrBytes: MAX_STDERR_BYTES,
       spawnFn: options.spawnFn,

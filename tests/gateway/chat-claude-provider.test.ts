@@ -50,6 +50,54 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
+  it("does not fail a progressing owner Run at the 30-minute idle boundary", async () => {
+    vi.useFakeTimers();
+    try {
+      const stdout = new FakeStream();
+      const stderr = new FakeStream();
+      const process = new EventEmitter() as EventEmitter & {
+        stdout: FakeStream;
+        stderr: FakeStream;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      Object.assign(process, { stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } } });
+      process.stdout = stdout;
+      process.stderr = stderr;
+      process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
+      const spawnFn = vi.fn<CanonicalCliSpawn>(() => process);
+      const adapter = createClaudeChatProviderAdapter({
+        homePath: "/home/matrix/home",
+        spawnFn,
+        resolveCredentialEnv: async () => ({}),
+      });
+      const eventsPromise = (async () => {
+        const events = [];
+        for await (const event of adapter.start(baseInput)) events.push(event);
+        return events;
+      })();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(spawnFn).toHaveBeenCalledOnce();
+
+      const progress = JSON.stringify({ type: "stream_event", event: {
+        type: "content_block_delta", delta: { type: "text_delta", text: "working" },
+      } });
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      stdout.emit("data", Buffer.from(`${progress}\n`));
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      stdout.emit("data", Buffer.from(`${progress}\n`));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(process.kill).not.toHaveBeenCalled();
+
+      stdout.emit("data", Buffer.from(`${JSON.stringify({
+        type: "result", subtype: "success", result: "done", session_id: "long_session",
+      })}\n`));
+      process.emit("exit", 0, null);
+      expect((await eventsPromise).at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("passes the subscription instance to credential resolution on fresh and resumed runs", async () => {
     const resolveCredentialLaunch = vi.fn(async () => ({ env: {} }));
     const adapter = createClaudeChatProviderAdapter({
