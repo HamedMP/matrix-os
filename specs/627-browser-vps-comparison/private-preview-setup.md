@@ -32,8 +32,12 @@ services absent; the earlier root installer additionally accepts only `pr-*`.
   dependency stores, test probes, profiles and credentials. Ordinary host-bundle
   installation does not opt a computer into Chrome.
 - Existing installations use the experience update, preserving Chrome/VNC PIDs,
-  viewer credentials and the owner profile. A first install leaves partial files
-  on failure and can be retried; it must not delete existing owner data.
+  viewer credentials and the owner profile. A completion marker is written only
+  after success; legacy installs require all six services to be running before
+  choosing the update path. A first install leaves partial files on failure and
+  can be retried, retaining a valid viewer credential pair and owner data. The
+  installed app directory remains traversable by the unprivileged service even
+  when the source payload was extracted into a root-only temporary directory.
 - No new HTTP routes, grants, collaboration access, database writes, or default
   browser-permission activation. Customer promotion and fleet deployment remain
   outside this preview-only fix.

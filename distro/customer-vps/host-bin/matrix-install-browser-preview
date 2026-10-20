@@ -14,10 +14,12 @@ for file in "$archive" "$guard"; do
     echo 'Browser preview payload is missing. Install the reviewed Browser preview bundle first.' >&2
     exit 64
   fi
-  case "$(stat -c '%u:%g:%a' "$file")" in
-    0:0:644|0:0:755) ;;
-    *) echo 'Browser preview payload must be root-owned and not writable by the owner account.' >&2; exit 64 ;;
-  esac
+  # Fresh cloud-init uses root:matrix; in-place updates use root:root. Neither
+  # group may write privileged code. Ownership of the group does not grant execution authority.
+  if [[ ! "$(stat -c '%u:%g:%a' "$file")" =~ ^0:[0-9]+:(644|755)$ ]]; then
+    echo 'Browser preview payload must be root-owned and not writable by the owner account.' >&2
+    exit 64
+  fi
 done
 # Read classification as data, before creating temporary files or changing services.
 /usr/bin/python3 -I "$guard" guard "$1"
@@ -27,10 +29,19 @@ flock -w 30 9
 temporary="$(mktemp -d /tmp/matrix-browser-preview.XXXXXX)"
 trap 'rm -rf -- "$temporary"' EXIT
 tar -xzf "$archive" -C "$temporary" --no-same-owner
-if [ -f /opt/matrix-browser-lab/app/supervisor.mjs ] && [ -f /opt/matrix-browser-lab/viewer.passwd ]; then
+legacy_setup_complete() {
+  [ -f /opt/matrix-browser-lab/app/supervisor.mjs ] && [ -f /opt/matrix-browser-lab/viewer.passwd ] || return 1
+  grep -qx 'MATRIX_BROWSER_LAB=true' /opt/matrix/env/host.env || return 1
+  local unit
+  for unit in matrix-browser-lab{,-vnc,-wm,-desktop,-panel,-chrome}.service; do
+    [ -f "/etc/systemd/system/$unit" ] && systemctl is-active --quiet "$unit" || return 1
+  done
+}
+if [ -f /opt/matrix-browser-lab/.setup-complete ] || legacy_setup_complete; then
   # Preserve Chrome/VNC PIDs, the profile, and existing viewer credentials.
   timeout --kill-after=30 1800 bash "$temporary/update-experience.sh" "$1"
 else
   timeout --kill-after=30 1800 bash "$temporary/install.sh" "$1"
 fi
+touch /opt/matrix-browser-lab/.setup-complete
 echo 'Browser preview setup finished. Reopen Browser on this preview computer.'

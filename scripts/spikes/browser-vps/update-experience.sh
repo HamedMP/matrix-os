@@ -17,6 +17,7 @@ apt-get update -qq
 apt-get install -y --no-install-recommends wmctrl thunar xfce4-terminal xfdesktop4 tint2
 tar -C "$LAB_SOURCE" --exclude=node_modules --exclude=.venv --exclude=__pycache__ -cf - . | tar -C "$LAB_PREFIX/app" -xf -
 chown -R root:root "$LAB_PREFIX/app"
+chmod 0755 "$LAB_PREFIX/app"
 /usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" install "$1"
 cp -a "$LAB_SOURCE/lab/dist/." /home/matrix/home/apps/browser-lab/
 cp "$LAB_SOURCE/lab/matrix.json" /home/matrix/home/apps/browser-lab/

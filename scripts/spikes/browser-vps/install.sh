@@ -39,7 +39,8 @@ python3 -m venv "$LAB_PREFIX/venv"
 "$LAB_PREFIX/venv/bin/pip" install --disable-pip-version-check 'browser-use==0.13.11'
 # Executables remain root-owned; browser/worker profiles belong to the VPS owner.
 tar -C "$LAB_SOURCE" --exclude=node_modules --exclude=.venv -cf - . | tar -C "$LAB_PREFIX/app" -xf -
-chown -R root:root "$LAB_PREFIX"
+chown -R root:root "$LAB_PREFIX/app" "$LAB_PREFIX/bin" "$LAB_PREFIX/venv"
+chmod 0755 "$LAB_PREFIX/app"
 install -d -o matrix -g matrix -m 0700 /home/matrix/.local/share/matrix-browser-lab/chrome
 install -d -m 0755 /etc/opt/chrome/policies/managed
 cat > /etc/opt/chrome/policies/managed/matrix-browser-lab.json <<'JSON'
@@ -47,6 +48,9 @@ cat > /etc/opt/chrome/policies/managed/matrix-browser-lab.json <<'JSON'
 JSON
 # Random stream credential stays server-side; arbitrary pages in Chrome cannot
 # connect directly to the loopback desktop viewer without authentication.
+# A retry after service installation failed must retain the existing viewer
+# credential pair, just as it retains the Chrome profile.
+if [ ! -f "$LAB_PREFIX/viewer.passwd" ] || ! grep -Eq '^MATRIX_BROWSER_LAB_VIEWER_AUTH="?Basic [A-Za-z0-9+/]+={0,2}"?$' /opt/matrix/env/host.env; then
 python3 - <<'AUTH'
 import base64, os, secrets, subprocess
 from pathlib import Path
@@ -61,6 +65,7 @@ auth = 'Basic ' + base64.b64encode(f'matrix-browser-lab:{password}'.encode()).de
 subprocess.run(['/opt/matrix/runtime/node/bin/node', '/opt/matrix-browser-lab/app/viewer-auth.mjs'],
     input=auth, text=True, check=True, capture_output=True, timeout=10)
 AUTH
+fi
 cat > /etc/systemd/system/matrix-browser-lab-vnc.service <<'UNIT'
 [Unit]
 Description=Matrix test browser full-window viewer (loopback only)
