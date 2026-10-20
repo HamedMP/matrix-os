@@ -60,6 +60,60 @@ describe("platform speech draft recording", () => {
     vi.restoreAllMocks();
   });
 
+  it("exposes the server-authoritative Preview dictation quota", async () => {
+    const previewReady = {
+      ...ready,
+      previewQuota: {
+        mode: "preview" as const,
+        requestLimit: 3,
+        requestsUsed: 1,
+        requestsRemaining: 2,
+        maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    };
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(previewReady)
+      .mockResolvedValue({ ...previewReady, previewQuota: {
+        ...previewReady.previewQuota, requestsUsed: 2, requestsRemaining: 1,
+      } });
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-preview",
+      client: client({ capabilities }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    expect(hook.result.current.previewQuota).toEqual(previewReady.previewQuota);
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+    await waitFor(() => expect(hook.result.current.previewQuota?.requestsRemaining).toBe(1));
+  });
+
+  it("makes exhausted Preview dictation unavailable while preserving the quota", async () => {
+    const exhausted = {
+      ...ready,
+      previewQuota: {
+        mode: "preview" as const,
+        requestLimit: 2,
+        requestsUsed: 2,
+        requestsRemaining: 0,
+        maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    };
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-preview-exhausted",
+      client: client({ capabilities: vi.fn().mockResolvedValue(exhausted) }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("unavailable"));
+    expect(hook.result.current.isSupported).toBe(false);
+    expect(hook.result.current.previewQuota).toEqual(exhausted.previewQuota);
+  });
+
   it("records, stops, transcribes once, and inserts an editable draft without sending", async () => {
     const speech = client();
     const onDraft = vi.fn();

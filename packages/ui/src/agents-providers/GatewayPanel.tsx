@@ -10,7 +10,7 @@ import type {
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
-import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, gatewayPolicyAllowsModel, money, shortDate, titleCase } from "./utils.js";
+import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, gatewayPolicyAllowsModel, localDateTimeWithZone, money, shortDate, titleCase } from "./utils.js";
 
 const capabilityLabels = {
   tools: "Tools",
@@ -249,6 +249,11 @@ export function GatewayPanel({
       </div>
 
       {creditReserved ? <p className="matrix-ap-help">Your credit is reserved while usage is confirmed.</p> : null}
+      {source?.usage.kind === "managed_credit" && source.usage.previewQuota ? (
+        <p className="matrix-ap-help">
+          Preview allowance: {source.usage.previewQuota.requestsRemaining} of {source.usage.previewQuota.requestLimit} Chat requests remaining until {localDateTimeWithZone(source.usage.previewQuota.expiresAt)}.
+        </p>
+      ) : null}
       {budgetExceeded ? <p className="matrix-ap-help">This computer has reached its Matrix AI monthly budget. Contact your workspace administrator or support.</p> : null}
       {source && policy && creditRequired ? (
         <p className="matrix-ap-help">{checkoutAvailable ? "Add credit to use Matrix AI." : "Matrix AI needs spendable credit."}</p>
