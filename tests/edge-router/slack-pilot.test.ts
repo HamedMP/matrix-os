@@ -31,7 +31,7 @@ describe('bounded legacy Slack pilot sign-in route', () => {
     expect(sent.redirect).toBe('manual');
     expect(fetch.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
   });
-  it.each(['/sign-in', '/sign-up/verify-email-address', '/slack/oauth/complete'])('forwards the bounded same-origin auth action for %s', async (path) => {
+  it.each(['/sign-in', '/sign-up/verify-email-address', '/slack/oauth/complete', '/slack/install'])('forwards the bounded same-origin auth action for %s', async (path) => {
     clock(); const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
     const action = 'a'.repeat(40);
     const response = await handleSlackPilotRequest(request(path, { method: 'POST',
@@ -41,6 +41,16 @@ describe('bounded legacy Slack pilot sign-in route', () => {
     expect(await sent.text()).toBe('["cache"]');
     expect(sent.headers.get('next-action')).toBe(action);
     expect(sent.headers.has('x-platform-verified')).toBe(false);
+  });
+  it.each(['GET','HEAD'])('serves the exact pilot installer page for %s', async method => {
+    clock(); const fetch = vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response(null,{status:200}));
+    expect((await handleSlackPilotRequest(request('/slack/install',{method}),env)).status).toBe(200);
+    expect((fetch.mock.calls[0]![0] as Request).url).toBe(upstream + '/slack/install');
+  });
+  it.each([undefined,'https://app.matrix-os.com'])('rejects installer refresh without the exact pilot origin: %s', async caller => {
+    clock(); const fetch = vi.spyOn(globalThis,'fetch');
+    const response = await handleSlackPilotRequest(request('/slack/install',{method:'POST',headers:caller ? {origin:caller} : {},body:'[]'}),env);
+    expect(response.status).toBe(403); expect(fetch).not.toHaveBeenCalled();
   });
   it('rejects cross-origin auth actions and strips action dispatch from API requests', async () => {
     clock(); const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
@@ -59,7 +69,7 @@ describe('bounded legacy Slack pilot sign-in route', () => {
     expect(response.status).toBe(404);expect(fetch).not.toHaveBeenCalled();
   });
   it.each(['/vm/pr-2079/api/files', '/api/integrations', '/api/terminal/run', '/api/slack/context',
-    '/_next/data/secret', '/api/slack/install/extra', '/sign-injected', '/slack/link/extra', '/slack/oauth/complete/extra'])('denies unrelated path %s', async (path) => {
+    '/_next/data/secret', '/api/slack/install/extra', '/sign-injected', '/slack/link/extra', '/slack/oauth/complete/extra', '/slack/install/extra', '/slack/installed'])('denies unrelated path %s', async (path) => {
     clock(); const fetch = vi.spyOn(globalThis, 'fetch');
     expect((await handleSlackPilotRequest(request(path), env)).status).toBe(404);
     expect(fetch).not.toHaveBeenCalled();
