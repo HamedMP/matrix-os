@@ -24,6 +24,20 @@ const update = (text: string): AgentEvent => ({ type: "tool_execution_update", t
 const end = (text: string, isError = false): AgentEvent => ({ type: "tool_execution_end", toolCallId: "call_1", toolName: "mcp_call", result: result(text), isError });
 
 describe("managed Pi display evidence", () => {
+  it("unwraps broker-encoded MCP text without exposing internal fields and preserves the tool error status", async () => {
+    const safeArgs = { ...args, arguments: { command } };
+    const sent = await project([start(safeArgs), { type: "tool_execution_end", toolCallId: "call_1", toolName: "mcp_call", isError: false,
+      result: { content: [{ type: "text", text: JSON.stringify({ content: [{ type: "text", text: "Command failed\nexit 2" }], isError: true,
+        details: { thinking: "INTERNAL_REASONING" }, structuredContent: { body: "PRIVATE_BODY" } }) }] } }]);
+    expect(sent.at(-1)?.event).toMatchObject({ phase: "failed", display: { output: "Command failed\nexit 2" } });
+    expect(JSON.stringify(sent)).not.toMatch(/INTERNAL_REASONING|PRIVATE_BODY/);
+  });
+
+  it("announces that live tool sampling paused while retaining the last snapshot and final result", async () => {
+    const sent = await project([start({ ...args, arguments: { command } }), update("one"), update("two"), update("three"), update("four"), end("final")]);
+    expect(sent.some(item => item.event.type === "tool_progress" && item.event.display?.output?.includes("Live updates paused"))).toBe(true);
+    expect(sent.at(-1)?.event).toMatchObject({ phase: "completed", display: { output: "final" } });
+  });
   it("forwards selected input, live output and authoritative final text without raw objects or reasoning", async () => {
     const sent = await project([start({ ...args, arguments: { command, cwd: "projects/demo", timeout: 10 } }), update("working"), end("done")]);
     expect(sent.map(event => event.event)).toMatchObject([

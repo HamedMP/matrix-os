@@ -48,6 +48,24 @@ export function botToolDisplayInput(name: string, args: unknown): { display: Bot
   return { display, privateContext };
 }
 
+/** The owner MCP broker JSON-encodes its result inside text blocks for the model.
+ * Display only the original text content, never details/structuredContent. */
+export function botToolDisplayMcpResult(value: unknown): { value: unknown; isError: boolean } {
+  const content = record(value)?.content;
+  if (!Array.isArray(content) || content.length > 16) return { value: undefined, isError: false };
+  const text = content.map(part => record(part)).filter(part => part?.type === "text" && typeof part.text === "string").map(part => part!.text as string).join("");
+  if (text.length > 192 * 1024) return { value: undefined, isError: false };
+  if (!/^[\s]*[\[{]/.test(text)) return { value, isError: false };
+  try {
+    const result = record(JSON.parse(text));
+    return { value: Array.isArray(result?.content) ? { content: result.content } : undefined, isError: result?.isError === true };
+  } catch (error: unknown) {
+    // A partial JSON-looking result is not display evidence for a raw object.
+    if (!(error instanceof SyntaxError)) throw error;
+    return { value: undefined, isError: false };
+  }
+}
+
 /** Only recognized text blocks; never stringify result/details/binary objects. */
 export function botToolDisplayOutput(value: unknown, privateContext: boolean): Pick<BotToolDisplay, "output" | "truncated"> {
   if (privateContext) return { output: BOT_TOOL_HIDDEN_OUTPUT };

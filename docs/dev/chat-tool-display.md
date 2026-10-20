@@ -177,8 +177,27 @@ Empty text, unavailable/unknown envelopes, hidden sensitive output and truncated
 output have separate notices. Historical payload-free events remain supported;
 previously discarded details cannot be reconstructed.
 
-This adds display support for SDK partial-result events. Current artifact,
-integration and MCP broker calls use a request-response interface and do not
-produce streaming stdout; their results appear when the backend returns. No
-shell tool, streaming backend, permission or approval expansion is introduced.
-Live managed-provider/GUI acceptance remains a separate parent-scheduled gate.
+SDK partial results and supported Custom MCP progress notifications update the
+same managed card. For MCP the existing authorized POST opts into a bounded
+NDJSON response: the pinned HTTPS requester parses complete SSE notifications
+from that same upstream call, RemoteMcpClient matches a unique per-call progress
+token, and owner tools encrypt the selected progress text before canonical
+persistence. There is no additional execution, reconnect retry or receipt
+consumption. Non-stream callers retain JSON behavior. Cancellation aborts this
+request without evicting a remote session shared by other invocations. Late or
+foreign updates are ignored. Three updates are sampled per call; the last
+snapshot announces that live updates paused until completion. The final result
+retains its own192KiB transport limit, with a separate bounded allowance for
+three progress frames and framing overhead.
+
+MCP progress messages describe service-provided progress; they are not an
+implicit stdout/stderr contract. Artifact and ordinary integration tools still
+return final results. No local shell executor or arbitrary server log feed is
+added. A producer returning final content only cannot show real intermediate
+output. Actual stdout acceptance needs a specifically identified producer
+that supplies those frames; fixture notifications cannot establish it.
+Broker-encoded MCP results reveal recognized text content and isError only;
+details/structuredContent are not serialized into the display. This changes
+display status without changing the model's execution result or approval rules.
+Private Preview and local Electron acceptance precede HumanReview; Greptile and
+formal CI follow user acceptance. Live evidence is still required separately.

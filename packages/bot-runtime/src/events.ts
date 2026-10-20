@@ -1,5 +1,5 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
-import { botToolDisplayInput, botToolDisplayOutput, type BotToolDisplay, type BotEvent, type BotToolCapability } from "@matrix-os/contracts";
+import { botToolDisplayInput, botToolDisplayOutput, botToolDisplayMcpResult, type BotToolDisplay, type BotEvent, type BotToolCapability } from "@matrix-os/contracts";
 import { bridgeToolCallId } from "./tool-call-id.js";
 
 /** Leaves room for the event envelope inside the 16 KiB assistant delta bound. */
@@ -144,12 +144,18 @@ export function createEventProjector(options: {
           tool.updates += 1;
           tool.lastUpdate = now();
         }
-        const display = { ...tool.display, ...(event.type === "tool_execution_start" ? {}
-          : botToolDisplayOutput(event.type === "tool_execution_end" ? event.result : event.partialResult, tool.privateContext)) };
+        const rawResult = event.type === "tool_execution_end" ? event.result : event.type === "tool_execution_update" ? event.partialResult : undefined;
+        const result = capability === "mcp.call" ? botToolDisplayMcpResult(rawResult) : { value: rawResult, isError: false };
+        const output = event.type === "tool_execution_start" ? {} : botToolDisplayOutput(result.value, tool.privateContext);
+        if (event.type === "tool_execution_update" && tool.updates === 3) {
+          output.output = `${output.output?.slice(0, 2900)}\n\nLive updates paused until this tool finishes.`;
+          output.truncated = true;
+        }
+        const display = { ...tool.display, ...output };
         if (event.type === "tool_execution_end") tools.delete(id);
         await emit({ type: "tool_progress", toolCallId: id, capability,
           phase: event.type === "tool_execution_start" ? "started" : event.type === "tool_execution_update" ? "updated"
-            : options.signal?.aborted ? "cancelled" : event.isError ? "failed" : "completed", display });
+            : options.signal?.aborted ? "cancelled" : event.isError || result.isError ? "failed" : "completed", display });
       });
     }
   };
