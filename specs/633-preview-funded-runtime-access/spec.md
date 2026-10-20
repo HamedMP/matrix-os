@@ -26,7 +26,7 @@ Default and hard bounds:
 | Speech requests | 25 | 1–100 |
 | Active operations | 1 | exactly 1 |
 
-The AI dollar budget limits provider expense while the independent request counter limits many low-cost calls. Speech is zero-charge within its Preview counter and never falls back to the owner's paid or promotional balance. Preview funding summaries and speech capabilities return the remaining request count and expiry; Web Desktop and Web Canvas render those values.
+The AI dollar budget limits provider expense while the independent request counter limits many low-cost calls. Speech is zero-charge within its Preview counter and never falls back to the owner's paid or promotional balance. Preview funding summaries and speech capabilities return the remaining request count and expiry; Web Desktop, Web Canvas, and Electron Desktop render those values and retain the exhausted state.
 
 ## Auth matrix
 
@@ -55,7 +55,7 @@ Platform activation configures the host through the existing protected host endp
 4. Activate speech with a separately derived speech token for the same machine generation.
 5. Return only coarse readiness and remaining counters to the workflow.
 
-The runtime cannot top up a Preview allocation, inherit a configured owner promotion, or use checkout. Shared Preview users keep the existing denial for personal Integrations and Custom MCP accounts; funded Chat and dictation are machine capabilities, not personal-account delegation.
+The runtime cannot top up a Preview allocation, inherit a configured owner promotion, or use checkout. Shared Preview users keep the existing denial for personal Integrations and Custom MCP accounts; funded Chat and dictation are machine capabilities, not personal-account delegation. Dictation accepts a non-owner only when the Gateway is an explicitly configured Preview runtime and Platform has supplied a verified collaborator principal after its live machine-access check. Customer runtimes and direct non-Platform principals retain the exact owner check.
 
 ## Transaction, lock, and orphan-state rules
 
@@ -93,7 +93,7 @@ Merge readiness additionally requires one fresh exact-build Preview VPS created 
 1. One real funded Chat turn and one real dictation transcription.
 2. Before/after Preview counters and unchanged owner-primary funded balance.
 3. Cross-machine/owner/slot replay denial and stale-generation denial.
-4. Web Desktop and Web Canvas quota/capability UI on the exact commit.
+4. Web Desktop, Web Canvas, and Electron Desktop quota/capability UI on the exact commit.
 5. Fork/unapproved workflow denial, recorded from workflow policy rather than exposing secrets.
 
 Attach the captures or accessible links to the PR, post the same evidence with ENG-348 and PR links in Slack `#tech`, and link the Slack permalink back to the PR. Record the exact commit/build and any fixture limitations. Do not commit evidence files.

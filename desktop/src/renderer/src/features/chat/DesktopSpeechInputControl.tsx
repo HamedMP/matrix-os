@@ -42,8 +42,11 @@ export function DesktopSpeechInputControl({
     onActiveChange?.(active);
     return () => onActiveChange?.(false);
   }, [active, onActiveChange]);
-  if (!speech.isSupported && !active && !speech.error) return null;
-  const label = speech.phase === "requesting_permission"
+  if (!speech.isSupported && !active && !speech.error && !speech.previewQuota) return null;
+  const quotaExhausted = speech.previewQuota?.requestsRemaining === 0;
+  const label = quotaExhausted
+    ? "Preview dictation allowance exhausted"
+    : speech.phase === "requesting_permission"
     ? "Cancel microphone request"
     : speech.phase === "recording"
       ? "Stop recording"
@@ -57,6 +60,11 @@ export function DesktopSpeechInputControl({
   };
   return (
     <div className="relative flex items-center gap-1">
+      {speech.previewQuota ? (
+        <span role="status" className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+          Preview dictation: {speech.previewQuota.requestsRemaining} of {speech.previewQuota.requestLimit} requests remaining.
+        </span>
+      ) : null}
       {speech.error ? (
         <span
           role="alert"
@@ -82,7 +90,7 @@ export function DesktopSpeechInputControl({
         type="button"
         aria-label={label}
         title={label}
-        disabled={disabled && !active}
+        disabled={(disabled || quotaExhausted) && !active}
         onClick={activate}
         className="flex h-9 w-9 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
         style={{ color: speech.phase === "recording" ? "var(--danger)" : "var(--text-secondary)" }}

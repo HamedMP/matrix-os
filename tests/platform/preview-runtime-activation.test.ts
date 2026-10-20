@@ -84,6 +84,7 @@ describe("Preview runtime host activation", () => {
 
   it("activates through the real Preview proof route and Gateway host handler", async () => {
     let applied: Record<string, unknown> | undefined;
+    let fundedReadinessAttempts = 0;
     const hostEnv: NodeJS.ProcessEnv = {
       UPGRADE_TOKEN: buildPlatformVerificationToken(machine.handle, hostSecret),
       MATRIX_HANDLE: machine.handle,
@@ -113,6 +114,9 @@ describe("Preview runtime host activation", () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname.startsWith("/api/internal/platform-funded-ai/")) {
+        if (init?.method === "GET" && fundedReadinessAttempts++ === 0) {
+          throw new TypeError("Gateway is restarting");
+        }
         return hostApp.request(url.pathname, init);
       }
       if (url.pathname.endsWith("/api/internal/platform-speech/config") && init?.method === "POST") {

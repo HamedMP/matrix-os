@@ -107,13 +107,20 @@ export function createPreviewRuntimeAccessActivator(options: {
     let fundedReady = false;
     for (let attempt = 0; attempt < 12; attempt += 1) {
       await wait(1_000);
-      const status = await fetchImpl(`${base}/api/internal/platform-funded-ai/config`, {
-        ...requestOptions(), method: "GET",
-      });
-      const value = await readBoundedHostJson(status, 1024) as { configured?: unknown; configurationRevision?: unknown } | null;
-      if (status.ok && value?.configured === true && value.configurationRevision === expectedRevision) {
-        fundedReady = true;
-        break;
+      try {
+        const status = await fetchImpl(`${base}/api/internal/platform-funded-ai/config`, {
+          ...requestOptions(), method: "GET",
+        });
+        const value = await readBoundedHostJson(status, 1024) as { configured?: unknown; configurationRevision?: unknown } | null;
+        if (status.ok && value?.configured === true && value.configurationRevision === expectedRevision) {
+          fundedReady = true;
+          break;
+        }
+      } catch (error: unknown) {
+        if (attempt === 11) {
+          console.warn("[preview-runtime-activation] funded readiness check failed",
+            error instanceof Error ? error.name : "UnknownError");
+        }
       }
     }
     if (!fundedReady) throw new Error("Preview funded AI activation failed");

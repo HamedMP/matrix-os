@@ -27,6 +27,16 @@ const capabilities = {
   },
 };
 
+const exhaustedPreviewCapabilities = {
+  ...capabilities,
+  previewQuota: {
+    requestLimit: 3,
+    requestsUsed: 3,
+    requestsRemaining: 0,
+    expiresAt: "2026-10-20T16:45:00.000Z",
+  },
+};
+
 function client(): BrowserSpeechClient {
   return {
     capabilities: vi.fn(async () => capabilities),
@@ -159,5 +169,20 @@ describe("Electron shared Chat speech input", () => {
     await waitFor(() => expect(onDraft).toHaveBeenCalledWith("spoken draft"));
     expect(captureAdapter.start).toHaveBeenCalledTimes(2);
     expect(speechClient.transcribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the exhausted Preview quota visible and disables dictation", async () => {
+    const speechClient = client();
+    vi.mocked(speechClient.capabilities).mockResolvedValue(exhaustedPreviewCapabilities);
+    render(<DesktopSpeechInputControl
+      scopeKey="account-a:pr-2383:chat-a"
+      client={speechClient}
+      captureAdapter={{ isSupported: () => true, start: vi.fn() }}
+      onDraft={vi.fn()}
+      disabled={false}
+    />);
+
+    expect(await screen.findByText("Preview dictation: 0 of 3 requests remaining.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Preview dictation allowance exhausted" }).hasAttribute("disabled")).toBe(true);
   });
 });
