@@ -31,6 +31,20 @@ else process.stdout.write('ENABLED');
   });
 }
 describe("native Slack deployment contract", () => {
+  it.each([[0,"missing","file_unavailable"], [1,"missing","file_unavailable"], [1,"malformed","invalid_json"],
+    [1,"configuration","invalid_configuration"], [0,"configuration","invalid_configuration"], [0,"url","invalid_configuration"]] as const)(
+    "reports only a safe category for validator %s %s", (block, scenario, category) => {
+      const validators = [...readFileSync(join(root,"scripts/ci/platform-slack-env.sh"),"utf8").matchAll(/<<'NODE'\n([\s\S]*?)\nNODE/g)].map(match => match[1]);
+      const dir = mkdtempSync(join(tmpdir(),"matrix-slack-validator-")); dirs.push(dir); const file = join(dir,"revision-private-value");
+      if (block === 1 && scenario !== "missing") writeFileSync(file, scenario === "malformed" ? "private-secret-invalid-json" : "{}");
+      if (block === 0 && scenario !== "missing") {
+        const values = { APP_ID: scenario === "configuration" ? "private-secret-invalid" : "A123", CLIENT_ID:"123.456", CLIENT_SECRET:"private-client-secret", SIGNING_SECRET:"private-signing-secret", TOKEN_ENCRYPTION_KEY:Buffer.alloc(32,1).toString("base64"), PUBLIC_BASE_URL:"private-invalid-url" };
+        for (const [name,value] of Object.entries(values)) writeFileSync(join(dir,`SLACK_${name}`),value);
+      }
+      const result = spawnSync(process.execPath,["-",block === 0 ? dir : file,"false"],{input:validators[block],encoding:"utf8",timeout:2_000});
+      expect(result.status).toBe(1); expect(result.stderr).toContain(`(${category})`);
+      expect(result.stdout + result.stderr).not.toContain("private-"); expect(result.stdout).toBe("");
+    });
   it("defaults off and requires explicit opt-in", () => {
     expect(run("secret-bindings").stdout).toBe("");
     expect(run("validate", "yes").status).not.toBe(0);
