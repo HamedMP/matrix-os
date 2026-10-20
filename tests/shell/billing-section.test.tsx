@@ -1036,7 +1036,7 @@ describe("BillingSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
 
     expect(screen.getByText(
-      "This computer is designed for lighter workloads, so you can preinstall one coding agent—or none.",
+      "Preinstall one coding agent, or choose None.",
     )).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: "Codex" })).toBeNull();
     expect((screen.getByRole("radio", { name: "Codex" }) as HTMLInputElement).checked).toBe(true);
