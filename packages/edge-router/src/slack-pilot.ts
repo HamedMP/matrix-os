@@ -33,7 +33,7 @@ function configuration(env: SlackPilotEnv): { publicOrigin: string; upstream: st
 }
 
 function isAuthPath(path: string): boolean {
-  return path === '/slack/oauth/complete' || /^(?:\/__platform-shell)?\/sign-(?:in|up)(?:\/.*)?$/.test(path);
+  return path === '/slack/oauth/complete' || path === '/slack/install' || /^(?:\/__platform-shell)?\/sign-(?:in|up)(?:\/.*)?$/.test(path);
 }
 
 function allowedMethods(path: string): string[] {
