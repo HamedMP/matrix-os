@@ -302,6 +302,13 @@ function BootSequenceInner({
   const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isLoaded || !isSignedIn || status !== "ready" || state?.phase !== "plan_required") return;
+    // The plans entrypoint opens BillingGate directly. Replace this entry so
+    // Back cannot return to an extra step before billing.
+    navigateForOnboarding(state.nextAction.url || "/?plans=1");
+  }, [isLoaded, isSignedIn, status, state?.phase, state?.nextAction.url]);
+
+  useEffect(() => {
     if (!provisioningOutcomeAmbiguous) return;
     if (state?.phase !== "install_choices_required") {
       // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- authoritative journey state has resolved the previously ambiguous request outcome.
@@ -432,21 +439,7 @@ function BootSequenceInner({
 
   switch (state.phase) {
     case "plan_required":
-      return (
-        <BootShell activeStep="billing">
-          <h1 className="text-lg font-medium text-forest" style={{ fontFamily: fonts.display }}>Choose your plan</h1>
-          <p className="max-w-sm text-sm">{state.detail}</p>
-          {state.nextAction.url ? (
-            <a
-              href={state.nextAction.url}
-              className="rounded-md text-sm font-medium hover:opacity-90"
-              style={{ backgroundColor: c.deep, color: lightFg, padding: "0.5rem 1rem" }}
-            >
-              View plans
-            </a>
-          ) : null}
-        </BootShell>
-      );
+      return <MatrixLoadingScreen />;
     case "payment_settling":
       return (
         <BootShell activeStep="billing">
