@@ -93,6 +93,17 @@ export function createBillingStatusHandler(options: {
         starterDurationDays: options.starterTrialDays,
         activeAttempt: runtimeSlot === 'primary' ? activeAttempt : undefined,
       });
+      const activeCheckout = activeAttempt?.planSlug
+        && activeAttempt.billingInterval
+        && activeAttempt.regionSlug
+        ? {
+          status: activeAttempt.status,
+          planSlug: activeAttempt.planSlug,
+          interval: activeAttempt.billingInterval,
+          regionSlug: activeAttempt.regionSlug,
+          developerTools: activeAttempt.developerTools,
+        }
+        : null;
       const recurringPrice = entitlement?.source === 'stripe'
         && selectedSubscription
         && selectedSubscription.planSlug === entitlement.planSlug
@@ -128,6 +139,7 @@ export function createBillingStatusHandler(options: {
         trialOffer: query.data.trialOfferVersion === '2'
           ? trialOffer
           : { eligible: trialOffer.eligible, durationDays: trialOffer.durationDays },
+        activeCheckout,
       });
       if (!response.success) {
         console.error('[billing] status response validation failed');

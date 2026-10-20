@@ -6,7 +6,8 @@ import {
   type MatrixComputer,
 } from "@matrix-os/contracts";
 
-const SETTINGS_KEY = "matrix_os_settings";
+import { SETTINGS_KEY } from "./initial-theme";
+
 const GATEWAY_CONNECTION_KEY = "matrix_os_gateway_connection";
 export const HOSTED_GATEWAY_URL = "https://app.matrix-os.com";
 const HOSTED_GATEWAY_ID = "matrix-os-hosted";

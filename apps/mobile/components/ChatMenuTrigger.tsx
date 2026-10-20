@@ -12,7 +12,11 @@ export function ChatMenuTrigger({ title, actions, onOpen, children }: ChatMenuTr
   return cloneElement(children, {
     onLongPress: () => {
       onOpen();
-      const buttons: AlertButton[] = actions.map((action) => ({ text: action.label, onPress: action.onSelect }));
+      const buttons: AlertButton[] = actions.map((action) => ({
+        text: action.label,
+        style: action.id === "item" && action.destructive ? "destructive" : undefined,
+        onPress: action.onSelect,
+      }));
       if (buttons.length < ALERT_BUTTON_LIMIT) buttons.push({ text: "Cancel", style: "cancel" });
       Alert.alert(title, undefined, buttons, { cancelable: true });
     },

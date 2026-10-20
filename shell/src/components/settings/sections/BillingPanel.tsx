@@ -5,6 +5,7 @@ import {
   getMatrixBillingDefaultPlanSlug,
   getMatrixBillingTrialDurationDays,
 } from "@matrix-os/contracts";
+import type { MatrixBillingActiveCheckout } from "@matrix-os/contracts";
 import {
   useEffect,
   useEffectEvent,
@@ -484,6 +485,7 @@ export function BillingPanel({
   active,
   entitlement,
   trialOffer,
+  activeCheckout,
   accessReason,
   accessIssue,
   onRetry,
@@ -496,6 +498,7 @@ export function BillingPanel({
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
   trialOffer?: BillingTrialOffer | null;
+  activeCheckout?: MatrixBillingActiveCheckout | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   onRetry?: () => void;
@@ -514,6 +517,7 @@ export function BillingPanel({
     active,
     entitlement,
     trialOffer,
+    activeCheckout,
     accessReason,
     accessIssue,
     onRetry,
@@ -533,6 +537,7 @@ function ManagedBillingPanel(props: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
   trialOffer?: BillingTrialOffer | null;
+  activeCheckout?: MatrixBillingActiveCheckout | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   onRetry?: () => void;
@@ -550,6 +555,7 @@ function BillingPanelInner({
   active,
   entitlement,
   trialOffer,
+  activeCheckout,
   accessReason,
   accessIssue,
   onRetry,
@@ -563,6 +569,7 @@ function BillingPanelInner({
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
   trialOffer?: BillingTrialOffer | null;
+  activeCheckout?: MatrixBillingActiveCheckout | null;
   accessReason?: string | null;
   accessIssue?: BillingAccessIssue;
   onRetry?: () => void;
@@ -581,8 +588,8 @@ function BillingPanelInner({
     getServerRegionSlug,
   );
   const [selectedRegionOverride, setSelectedRegionOverride] = useState<string | null>(null);
-  const selectedRegionSlug = selectedRegionOverride ?? automaticRegionSlug;
-  const billingInterval: BillingInterval = "monthly";
+  const selectedRegionSlug = activeCheckout?.regionSlug ?? selectedRegionOverride ?? automaticRegionSlug;
+  const billingInterval: BillingInterval = activeCheckout?.interval ?? "monthly";
   const [developerTools, setDeveloperTools] = useState<DeveloperToolId[]>(defaultDeveloperTools);
   const [openPicker, setOpenPicker] = useState<PickerKey>(null);
   const checkoutBypassed = mode === "add-computer" && entitlement?.source === "override";
@@ -591,8 +598,12 @@ function BillingPanelInner({
         entitlement.allowedPlanSlugs.includes(profile.planSlug),
       )
     : MATRIX_BILLING_SERVER_PROFILES;
-  const selectedPlanProfile =
-    allowedProfiles.find(
+  const selectedPlanProfile = activeCheckout
+    ? allowedProfiles.find((profile) => profile.planSlug === activeCheckout.planSlug)
+      ?? MATRIX_BILLING_SERVER_PROFILES.find((profile) => profile.planSlug === activeCheckout.planSlug)
+      ?? allowedProfiles[0]
+      ?? MATRIX_BILLING_SERVER_PROFILES[0]!
+    : allowedProfiles.find(
       (profile) => selectedProfileSlug !== null
         ? profile.featureSlug === selectedProfileSlug
         : profile.planSlug === getMatrixBillingDefaultPlanSlug(trialOffer),
@@ -620,7 +631,8 @@ function BillingPanelInner({
     ? getMatrixBillingTrialDurationDays(trialOffer, selectedProfile.planSlug)
     : null;
   const developerToolLimit = getMatrixDeveloperToolPreinstallLimit(selectedProfile.hetznerType);
-  const effectiveDeveloperTools = constrainDeveloperToolsSelection(developerTools, developerToolLimit);
+  const effectiveDeveloperTools = activeCheckout?.developerTools
+    ?? constrainDeveloperToolsSelection(developerTools, developerToolLimit);
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by a useEffect dependency array below (the ref-sync effect keyed on telemetryProperties); removing useMemo would re-run that effect on every render.
   const telemetryProperties = useMemo<BillingTelemetryProperties>(
     () => {
@@ -789,7 +801,15 @@ function BillingPanelInner({
           </h3>
         </div>
 
-        <div className="rounded-2xl border border-[#E0E1CA] bg-[#FCFCF8] p-4 shadow-[0_2px_8px_rgba(31,45,29,0.07)] sm:p-5">
+        {activeCheckout ? (
+          <p className="rounded-xl border border-forest/20 bg-cream px-4 py-3 text-sm text-forest">
+            Your {selectedProfile.label} checkout is still open. Resume it or choose different options below.
+          </p>
+        ) : null}
+        <fieldset
+          disabled={Boolean(activeCheckout)}
+          className="min-w-0 rounded-2xl border border-[#E0E1CA] bg-[#FCFCF8] p-4 shadow-[0_2px_8px_rgba(31,45,29,0.07)] disabled:opacity-75 sm:p-5"
+        >
           <SelectionTriggerCards
             profiles={allowedProfiles}
             regions={allowedRegions}
@@ -809,10 +829,10 @@ function BillingPanelInner({
             )}
             onClearDeveloperTools={() => setDeveloperTools([])}
           />
-        </div>
+        </fieldset>
       </div>
       <BillingCheckoutPanel
-        key={trialDurationDays ?? "no-trial"}
+        key={`${trialDurationDays ?? "no-trial"}:${activeCheckout?.planSlug ?? "new"}:${activeCheckout?.regionSlug ?? "new"}`}
         onCheckoutIntent={onCheckoutIntent}
         onCheckoutNavigate={onCheckoutNavigate}
         checkoutReturnPath={checkoutReturnPath}
@@ -824,6 +844,8 @@ function BillingPanelInner({
         billingInterval={billingInterval}
         developerTools={effectiveDeveloperTools}
         trialDurationDays={trialDurationDays}
+        activeCheckout={activeCheckout}
+        onCheckoutAbandoned={onRetry}
       />
     </div>
   );

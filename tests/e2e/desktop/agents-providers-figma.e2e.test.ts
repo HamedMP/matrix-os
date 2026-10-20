@@ -141,7 +141,7 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     expect(gateway.events).not.toContain("login");
     await page.emulateMedia({ reducedMotion: "no-preference" });
   }, 15_000);
-  it("executes grouped inventory, history, key validation, install cancellation, and disconnect without restricted managed login", async () => {
+  it("executes grouped inventory, history, key validation, install cancellation, and scoped Codex logout without restricted managed login", async () => {
     try {
       expect(await app.evaluate(({ app }) => app.getAppPath())).toBe(join(root, "desktop/out/main"));
       expect(await feature().getByRole("region", { name: "Coding agents" }).locator(".matrix-ap-rail-item").count()).toBe(4);
@@ -200,24 +200,27 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       await capture("06-key-rejected");
       await key.fill("sk-safe-fixture-valid");
       await codex.getByRole("button", { name: "Try again", exact: true }).click();
-      await codex.getByRole("button", { name: "Disconnect", exact: true }).waitFor();
+      const logout = codex.getByRole("button", { name: "Log out Fixture API account", exact: true });
+      await logout.waitFor();
+      expect(await codex.getByRole("button", { name: "Disconnect", exact: true }).count()).toBe(0);
       expect(gateway.events.filter(event => event === "key-check")).toHaveLength(2);
       await capture("07-key-connected");
 
       expect(await codex.getByRole("button", { name: "View logs", exact: true }).count()).toBe(0);
-      await codex.getByRole("button", { name: "Disconnect", exact: true }).click();
-      const disconnect = page.getByRole("dialog", { name: "Disconnect Codex?", exact: true });
-      await disconnect.waitFor();
-      const uninstall = disconnect.getByRole("checkbox");
-      expect(await uninstall.isChecked()).toBe(false);
-      await capture("08-disconnect-confirm");
-      await disconnect.getByRole("button", { name: "Cancel", exact: true }).click();
-      expect(gateway.events).not.toContain("disconnect");
-      await codex.getByRole("button", { name: "Disconnect", exact: true }).click();
-      await disconnect.getByRole("button", { name: "Disconnect", exact: true }).click();
+      await logout.click();
+      const confirmation = page.getByRole("dialog", { name: "Log out of Codex?", exact: true });
+      await confirmation.waitFor();
+      expect(await confirmation.getByRole("checkbox").count()).toBe(0);
+      await capture("08-codex-logout-confirm");
+      await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+      expect(gateway.events).not.toContain("logout");
+      await logout.waitFor();
+      await logout.click();
+      await confirmation.getByRole("button", { name: "Log out", exact: true }).click();
       await apiKey.waitFor();
       expect(await codex.getByRole("button", { name: /ChatGPT account/ }).count()).toBe(0);
-      expect(gateway.events).toContain("disconnect");
+      expect(gateway.events.filter(event => event === "logout")).toHaveLength(1);
+      expect(gateway.events).not.toContain("disconnect");
 
       await select("Hermes");
       const hermes = feature().getByRole("region", { name: "Hermes connection", exact: true });

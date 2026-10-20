@@ -1,11 +1,11 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { KeyboardAvoidingView, Text } from "react-native";
+import { KeyboardAvoidingView, Platform, Text } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { ChatScreenView, type ChatScreenViewProps } from "../components/chat/ChatScreenView";
 import { CHAT_SUGGESTIONS } from "../components/chat/chat-suggestions";
 import { Icon } from "../components/ui/Icon";
-import { NewChatIcon, SidePanelIcon } from "../components/ui/icons";
+import { BackIcon, NewChatIcon, SidePanelIcon } from "../components/ui/icons";
 import type { TranscriptMessage } from "../lib/canonical-chat-transcript";
 
 import { flat } from "./ui-test-utils";
@@ -35,9 +35,12 @@ function props(overrides: Partial<ChatScreenViewProps> = {}): ChatScreenViewProp
 }
 
 describe("ChatScreenView", () => {
+  const originalPlatform = Platform.OS;
+
   afterEach(() => {
     cleanup();
     mockKeyboardVisible = false;
+    Platform.OS = originalPlatform;
   });
 
   it("draws a new chat from its props alone: top bar, greeting, suggestions and composer", () => {
@@ -69,6 +72,22 @@ describe("ChatScreenView", () => {
     fireEvent.press(button);
 
     expect(onOpenSidePanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes back from that button in place of opening the side panel, for a chat opened from a project", () => {
+    const onOpenSidePanel = jest.fn();
+    const onBack = jest.fn();
+    render(<ChatScreenView {...props({ onOpenSidePanel, onBack })} />);
+
+    expect(screen.queryByRole("button", { name: "Open chats and projects" })).toBeNull();
+    const button = screen.getByRole("button", { name: "Back" });
+    expect(flat(button)).toMatchObject({ width: 44, height: 44 });
+    expect(button.findByType(Icon).props.icon).toBe(BackIcon);
+
+    fireEvent.press(button);
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onOpenSidePanel).not.toHaveBeenCalled();
   });
 
   it("offers New chat on the right only while a chat is open", () => {
@@ -110,6 +129,15 @@ describe("ChatScreenView", () => {
     expect(keyboardView.props.keyboardVerticalOffset).toBeUndefined();
     expect(flat(keyboardView).paddingBottom).toBeUndefined();
     expect(flat(screen.getByTestId("composer")).paddingBottom).toBe(10);
+  });
+
+  // Android draws the app under the keyboard too: the app is edge to edge, so
+  // the window no longer shrinks for it.
+  it.each(["ios", "android"] as const)("makes room for the keyboard itself on %s", (os) => {
+    Platform.OS = os;
+    render(<ChatScreenView {...props()} />);
+
+    expect(screen.UNSAFE_getByType(KeyboardAvoidingView).props.behavior).toBe("padding");
   });
 
   it("rests the composer 8pt above the keyboard while it is open", () => {

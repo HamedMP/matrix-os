@@ -35,7 +35,15 @@ it('pins every refreshed lane checkout and preserves mandatory hosted gates unde
  for(const [key,job] of Object.entries(ci.jobs) as [string,any][]){
   if(key==='changes'||key==='ci-results')continue;
   if(key==='redirect'){expect(job.steps.find((step:any)=>String(step.uses).startsWith('actions/checkout@')).with.ref).toBe('${{ vars.MATRIX_CI_CONTROLLER_SHA }}');continue;}
-  if(key==='ci-backend'){expect(job.steps.find((step:any)=>String(step.uses).startsWith('actions/checkout@')).with.ref).toBe("${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/ci-execution/') && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && vars.MATRIX_CI_CONTROLLER_SHA || needs.changes.outputs.source_sha }}");continue;}
+  if(key==='completion-handoff'||key==='isolated-ci-backend'){
+   const checkout=job.steps.findIndex((step:any)=>String(step.uses).startsWith('actions/checkout@'));
+   expect(job.steps[checkout].with.ref).toBe('${{ steps.origin.outputs.helper_sha }}');
+   expect(checkout).toBeGreaterThan(0);
+   expect(job.steps[checkout-1].with.script).toContain('child.tree.sha!==source.tree?.sha');
+   expect(job.steps[checkout-1].with.script).toContain('child.parents[0].sha!==pin');
+   continue;
+  }
+  if(key==='ci-backend'){expect(job.steps.find((step:any)=>String(step.uses).startsWith('actions/checkout@')).with.ref).toBe('${{ needs.changes.outputs.source_sha }}');continue;}
   for(const step of job.steps.filter((step:any)=>String(step.uses).startsWith('actions/checkout@')))expect(step.with.ref,key).toBe(key==='dedicated-linux'?'${{ github.sha }}':'${{ needs.changes.outputs.source_sha }}');
  }
  const dedicated=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));

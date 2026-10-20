@@ -7,6 +7,20 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("desktop release workflows", () => {
+  it("keeps protected Windows signing out of branch-only artifact previews", () => {
+    const build = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+    const release = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
+    const canary = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
+
+    expect(build).toMatch(/build_windows:\s+description:.*\s+required: false\s+type: boolean\s+default: true/);
+    const windows = build.slice(build.indexOf("  windows:\n"));
+    expect(windows).toMatch(/name: Windows x64\s+if: \$\{\{ inputs\.build_windows \}\}/);
+    expect(windows).toContain("environment: desktop-release");
+    expect(release).toContain("build_windows: ${{ inputs.mode != 'dry-run' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}");
+    expect(release).toMatch(/name: Prepare channel pointer manifests\s+if: \$\{\{ needs\.prepare\.outputs\.mode != 'dry-run' \|\| github\.ref == 'refs\/heads\/main' \|\| startsWith\(github\.ref, 'refs\/tags\/'\) \}\}/);
+    expect(canary).not.toContain("build_windows: false");
+  });
+
   it("verifies the mounted DMG background through Finder at its native volume path", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 

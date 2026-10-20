@@ -44,10 +44,19 @@ export async function routeControllerEvent(github,repo,controllerSha,context,sna
    if(run.event==='pull_request'&&typeof run.head_repository?.full_name==='string'&&/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(run.head_repository.full_name))return{dispatched:false};
    throw new Error('Untrusted controller bridge requester');
   }
-  await verifyRunExecution(github,repo,run,'.github/workflows/ci.yml');
+  const origin=await verifyRunExecution(github,repo,run,'.github/workflows/ci.yml');
+  // Explicit handoffs own qualification; terminal events recover missing completion.
+  if(origin){
+   if(context.payload.action!=='completed')return{dispatched:false};
+   if(run.status!=='completed'||!['success','failure','cancelled','timed_out','action_required','stale','startup_failure','neutral','skipped'].includes(run.conclusion))throw new Error('Isolated fallback requester is not terminal');
+  }
+  if(run.event==='workflow_dispatch'&&!parseRefreshMarker(run.display_title)){
+   // Ordinary manual branch CI has no PR coverage authority to reconcile.
+   if(/^CI (?:hosted-)?refresh-v1(?:\s|$)/.test(run.display_title||''))throw new Error('Malformed exact source refresh marker');
+   return{dispatched:false};
+  }
   if(context.payload.action==='completed'){
    if(run.display_title?.startsWith('CI routing-v1 '))return{dispatched:false};
-   if(run.event==='workflow_dispatch'&&run.head_branch==='main'&&!parseRefreshMarker(run.display_title))return{dispatched:false};
    const {data:jobs}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,filter:'latest',per_page:100,request});
    if(!Array.isArray(jobs.jobs)||jobs.total_count!==jobs.jobs.length||jobs.jobs.length>100)throw new Error('Incomplete completed requester inventory');
    if(jobs.jobs.some(job=>job.name==='CI Results'&&job.steps?.some(step=>step.name==='Summarize isolated CI routing'&&step.conclusion==='success')))return{dispatched:false};

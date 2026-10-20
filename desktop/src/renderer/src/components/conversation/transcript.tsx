@@ -1,5 +1,5 @@
 import { ConversationNotice } from "./notice";
-import { BotRunMessageBody, BotUnassignedMessageBody, ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
+import { BotRunMessageBody, BotUnassignedMessageBody, ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard, type ChatMessageAttachment } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   ChevronRight,
@@ -17,12 +17,15 @@ import { Marker, MarkerContent } from "./marker";
 import { conversationTurnVisibility } from "./turn-visibility";
 import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
 import type {
+  ConversationActionPresentation,
   ConversationMessagePresentation,
   ConversationPresentationCallbacks,
   ConversationRequestPresentation,
   ConversationTurnPresentation,
   ConversationWorkPresentation,
 } from "./presentation";
+import { supervisedToolApproval, type SupervisedToolApproval } from "@matrix-os/contracts";
+import { offeredApprovalAction } from "./approval-actions";
 
 function formatTurnDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
@@ -169,23 +172,56 @@ function ResponseMessage({
 }
 
 
-function Request({
+function supervisedToolView(request: ConversationRequestPresentation): SupervisedToolApproval | null {
+  if (request.requestKind !== "approval") return null;
+  return supervisedToolApproval({
+    title: request.label,
+    description: request.detail,
+    pending: request.state === "waiting",
+    decision: request.decision,
+    reason: request.reason,
+    allowedDecisions: (request.actions ?? []).flatMap((action) => action.kind === "approval" ? [action.decision] : []),
+  });
+}
+
+function SupervisedToolRequest({
   request,
+  tool,
+  pending,
   callbacks,
+  perform,
 }: {
   request: ConversationRequestPresentation;
+  tool: SupervisedToolApproval;
+  pending: boolean;
   callbacks: ConversationPresentationCallbacks;
+  perform: (action: ConversationActionPresentation) => Promise<void>;
 }) {
-  const [answer, setAnswer] = useState("");
+  // Same gate as the generic request view: no active buttons for a viewer who cannot act.
+  const canAct = (["approve", "decline"] as const).some((decision) => offeredApprovalAction(request, callbacks, decision));
+  return (
+    <ConversationItem messageId={`request:${request.id}`}>
+      <SupervisedToolApprovalCard
+        approval={tool}
+        anchorId={`tool-approval-${request.requestId}`}
+        submitting={pending}
+        permissionMode={callbacks.permissionMode}
+        onPermissionMode={callbacks.onPermissionMode}
+        onTryAgain={callbacks.onTryAgain}
+        onDecision={canAct ? (decision) => {
+          const action = offeredApprovalAction(request, callbacks, decision);
+          if (action) void perform(action);
+        } : undefined}
+      />
+    </ConversationItem>
+  );
+}
+
+function useRequestAction(callbacks: ConversationPresentationCallbacks) {
   const [pending, setPending] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
   const activeAction = useRef<symbol | null>(null);
-  const availableActions = (request.actions ?? []).filter((action) => (
-    callbacks.performAction && (!callbacks.canPerformAction || callbacks.canPerformAction(action))
-  ));
-  const inputAction = availableActions.find((action) => action.kind === "input");
-  const label = `${request.requestKind === "approval" ? "Approval" : "Input"} ${request.state === "waiting" ? "required" : "resolved"}: ${request.label}`;
-  const perform = async (action: typeof availableActions[number], input?: string) => {
+  const perform = async (action: ConversationActionPresentation, input?: string) => {
     if (!callbacks.performAction || activeAction.current) return;
     const actionToken = Symbol("conversation-request-action");
     activeAction.current = actionToken;
@@ -203,6 +239,23 @@ function Request({
       }
     }
   };
+  return { pending, actionFailed, perform };
+}
+
+function Request({
+  request,
+  callbacks,
+}: {
+  request: ConversationRequestPresentation;
+  callbacks: ConversationPresentationCallbacks;
+}) {
+  const [answer, setAnswer] = useState("");
+  const { pending, actionFailed, perform } = useRequestAction(callbacks);
+  const availableActions = (request.actions ?? []).filter((action) => (
+    callbacks.performAction && (!callbacks.canPerformAction || callbacks.canPerformAction(action))
+  ));
+  const inputAction = availableActions.find((action) => action.kind === "input");
+  const label = `${request.requestKind === "approval" ? "Approval" : "Input"} ${request.state === "waiting" ? "required" : "resolved"}: ${request.label}`;
   if (request.input) return (
     <ConversationItem messageId={`request:${request.id}`}>
       <CanonicalChatInputForm request={request.input} onSubmit={callbacks.submitInput
@@ -210,6 +263,8 @@ function Request({
         : undefined} />
     </ConversationItem>
   );
+  const tool = supervisedToolView(request);
+  if (tool) return <SupervisedToolRequest request={request} tool={tool} pending={pending} callbacks={callbacks} perform={perform} />;
   return (
     <ConversationItem messageId={`request:${request.id}`}>
       <div

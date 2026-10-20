@@ -1,3 +1,5 @@
+import { createCodexExecutionSessions } from "../../packages/gateway/src/coding-agents/codex-execution-sessions.js";
+import { createCodexExecutionAdmission } from "../../packages/gateway/src/coding-agents/codex-execution-admission.js";
 import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,8 +13,14 @@ it.each(["missing", "unavailable", "running"])("cascades a %s child session with
     if (runtimeState === "missing") throw new TerminalRuntimeError("not_found");
     if (runtimeState === "unavailable") throw new TerminalRuntimeError("unavailable");
   });
+  const stopSession = vi.fn(async () => { throw new Error("deleted session no longer exists"); });
+  const native = createCodexExecutionAdmission({ homePath, isOwner: id => id === "owner_a", stopSession,
+    getSnapshot: vi.fn(), readNativeAccount: vi.fn(),
+  });
+  await createCodexExecutionSessions(homePath).register("owner_a", "sess_child", "a".repeat(64));
   const manager = createAgentSessionManager({
     homePath,
+    beforeProjectSessionRemove: ({ ownerId, sessionId, proof }) => native.releaseStoppedSession(ownerId, sessionId, proof),
     terminalRuntime: { ensureWorkspace: vi.fn(), createTab: vi.fn(), terminateTab, writeInput: vi.fn(), listWorkspaces: vi.fn() },
     agentLauncher: { buildLaunch: vi.fn() },
     worktreeManager: { listWorktrees: vi.fn(), acquireLease: vi.fn(), releaseLease: vi.fn() },
@@ -34,10 +42,15 @@ it.each(["missing", "unavailable", "running"])("cascades a %s child session with
     expect(terminateTab).toHaveBeenCalledOnce();
     if (runtimeState === "unavailable") {
       expect(result).toMatchObject({ ok: false });
+      expect(JSON.parse(await readFile(join(homePath, "system/ai-providers/codex-execution-sessions.json"), "utf8")))
+        .toEqual([expect.objectContaining({ sessionId: "sess_child", userId: "owner_a" })]);
       await expect(stat(join(homePath, "system/sessions/sess_child.json"))).resolves.toBeDefined();
       await expect(stat(join(homePath, "system/session-output/sess_child.jsonl"))).resolves.toBeDefined();
     } else {
       expect(result).toEqual({ ok: true, deleted: 1 });
+      const release = await native.prepareRevocation();
+      expect(stopSession).not.toHaveBeenCalled();
+      await release();
       for (const path of ["sessions/sess_child.json", "session-output/sess_child.jsonl", "coding-agents/provider-events/sess_child.jsonl"]) {
         await expect(stat(join(homePath, "system", path))).rejects.toMatchObject({ code: "ENOENT" });
       }

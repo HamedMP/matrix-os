@@ -1,9 +1,9 @@
 import React from "react";
 import { render, screen } from "@testing-library/react-native";
-import { StyleSheet as NativeStyleSheet, Text, useColorScheme } from "react-native";
+import { ActivityIndicator, StyleSheet as NativeStyleSheet, Text, useColorScheme } from "react-native";
 import type { UnistylesThemes } from "react-native-unistyles";
 
-import { StartupScreen } from "../components/StartupScreen";
+import { StartupLoading, StartupScreen } from "../components/StartupScreen";
 import { useStartupColors } from "../lib/use-startup-colors";
 
 type SplashPluginOptions = {
@@ -166,5 +166,21 @@ describe("startup screen", () => {
 
     expect(screen.getByLabelText("Matrix OS logo")).toBeTruthy();
     expect(screen.queryByText("Matrix OS")).toBeNull();
+  });
+
+  it("waits on the same spinner in the same place, whatever it is waiting for", () => {
+    render(<StartupLoading testID="first-wait" />);
+    const first = screen.UNSAFE_getByType(ActivityIndicator);
+    expect(first.props).toMatchObject({ size: "large", testID: "first-wait" });
+    expect(NativeStyleSheet.flatten(first.props.style)).toMatchObject({ marginTop: 24 });
+    expect(screen.getByTestId("startup-screen")).toBeTruthy();
+    expect(screen.getByText("Matrix OS")).toBeTruthy();
+  });
+
+  it("can say what it is waiting for, above the spinner", () => {
+    render(<StartupLoading message="Authenticating…" />);
+
+    expect(screen.getByText("Authenticating…")).toBeTruthy();
+    expect(screen.UNSAFE_getByType(ActivityIndicator)).toBeTruthy();
   });
 });

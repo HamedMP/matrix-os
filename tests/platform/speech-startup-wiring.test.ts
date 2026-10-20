@@ -28,4 +28,22 @@ describe("platform speech process wiring", () => {
     );
     expect(normalShutdown).toContain("fundedReservationCleanupWorker?.shutdown()");
   });
+  it("mounts policy-backed AI activation and runs its own worker independently of billing reconciliation", async () => {
+    const source = await readFile("packages/platform/src/platform-startup.ts", "utf8");
+    const setup = source.slice(source.indexOf("activateManagedFeatures = createManagedFeatureActivator"), source.indexOf("goldenSnapshotConfig = customerVpsConfig.goldenSnapshots"));
+    expect(setup).toContain("fundedAiEnabled: customerVpsConfig.fundedAiEnabled");
+    expect(setup).toContain("speechEnabled: customerVpsConfig.platformSpeechEnabled");
+    expect(setup).toContain("if (customerVpsConfig.fundedAiEnabled && internalFundedAiRuntimeRoutes)");
+    expect(setup).toContain("createFundedHostActivationRoutes({ db,");
+    expect(setup).toMatch(/if \(backgroundWorkersEnabled\)\s*\{\s*managedFeatureReconciliationWorker = startCustomerVpsReconciliationWorker/);
+    expect(setup).toContain("runPass: reconcileManagedFeatures");
+    expect(setup).toContain("registerCustomMcpStartupCleanup(async () => {");
+    expect(setup).toContain("managedFeatureReconciliationWorker?.stop()");
+    expect(setup).toContain("await managedFeatureReconciliationWorker?.drain()");
+    const shutdown = source.slice(source.indexOf("const shutdown = (signal:"));
+    expect(shutdown).toContain("managedFeatureReconciliationWorker?.stop()");
+    expect(shutdown.indexOf("managedFeatureReconciliationWorker?.drain()")).toBeLessThan(shutdown.indexOf("customerVpsProxyDispatcher.close()"));
+    expect(shutdown.indexOf("managedFeatureReconciliationWorker?.drain()")).toBeLessThan(shutdown.indexOf("db.destroy()"));
+  });
+
 });

@@ -44,6 +44,11 @@ describe('Starter-only trial checkout', () => {
     expect((await checkout(application, 'matrix_starter')).status).toBe(200);
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ trialPeriodDays: 14, paymentMethodMode: 'card_required' }));
     await expect(getLatestCheckoutAttempt(db, 'user_trial')).resolves.toMatchObject({ trialPeriodDays: 14 });
+    await expect((await application.request('/billing/status?trialOfferVersion=2')).json()).resolves.toMatchObject({
+      trialOffer: { eligible: true, durationDays: 14, eligiblePlanSlugs: ['matrix_starter'],
+        durationDaysByPlan: { matrix_starter: 14 } },
+      activeCheckout: { status: 'open', planSlug: 'matrix_starter', interval: 'monthly', regionSlug: 'region_fsn1' },
+    });
   });
   it('keeps the legacy status payload parseable by installed clients', async () => {
     const response = await app().request('/billing/status');
@@ -78,6 +83,8 @@ describe('Starter-only trial checkout', () => {
     const application = app({ MATRIX_CARD_TRIALS_ENABLED: 'false' });
     await expect((await application.request('/billing/status?trialOfferVersion=2')).json()).resolves.toMatchObject({
       trialOffer: { eligible: true, durationDays: 3, eligiblePlanSlugs: ['matrix_builder'] },
+      activeCheckout: { status: 'creating', planSlug: 'matrix_builder', interval: 'monthly',
+        regionSlug: 'region_fsn1', developerTools: ['codex', 'claude-code', 'opencode', 'pi'] },
     });
     expect((await checkout(application, 'matrix_builder')).status).toBe(200);
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ trialPeriodDays: 3 }));

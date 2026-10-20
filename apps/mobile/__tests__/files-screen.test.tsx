@@ -44,6 +44,7 @@ jest.mock("@expo/ui", () => {
 });
 
 import React from "react";
+import * as Haptics from "expo-haptics";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 import { StyleSheet as UnistylesStyleSheet } from "react-native-unistyles";
@@ -77,6 +78,7 @@ describe("drawer files screen", () => {
     React.act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
 
     expect(mockRefreshDirectory).toHaveBeenCalledTimes(1);
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
     expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 
     await React.act(async () => resolveRefresh?.());

@@ -7,29 +7,30 @@ import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
 
 afterEach(cleanup);
+const row = () => screen.getAllByRole("button", { name: /^Claude/ }).find(node => node.hasAttribute("aria-expanded"))!;
 function fixture(): ProviderSettingsSnapshot {
   return { refreshedAt: new Date().toISOString(), access: { mode: "writable" },
     supportedActions: ["logout_account", "remove_account", "reassign_account", "set_harness_enabled"], configurationHarnessKinds: [],
-    harnesses: [{ id: "codex", harness: "codex", displayName: "Codex", enabled: true, configuredEnabled: true,
+    harnesses: [{ id: "claude", harness: "claude", displayName: "Claude", enabled: true, configuredEnabled: true,
       installState: "installed", authState: "authenticated", connectivity: "online", loginMethods: ["terminal"],
       accountIds: ["personal"], selectedAccountId: "personal", accessSourceId: "personal-source",
-      route: { kind: "fixed", providerId: "openai", modelId: "codex:test" } }],
-    accounts: [{ id: "personal", providerId: "openai", accessSourceId: "personal-source", displayName: "Personal", authMethod: "terminal", authState: "authenticated",
+      route: { kind: "fixed", providerId: "anthropic", modelId: "claude:test" } }],
+    accounts: [{ id: "personal", providerId: "anthropic", accessSourceId: "personal-source", displayName: "Personal", authMethod: "terminal", authState: "authenticated",
       dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 } }],
-    accessSources: [{ id: "personal-source", kind: "provider_account", accountId: "personal", providerId: "openai", displayName: "Personal",
-      fundingKind: "owner_account", eligibleModelIds: ["codex:test"], readiness: { state: "ready" }, usage: { kind: "unavailable", reason: "unknown" } }],
+    accessSources: [{ id: "personal-source", kind: "provider_account", accountId: "personal", providerId: "anthropic", displayName: "Personal",
+      fundingKind: "owner_account", eligibleModelIds: ["claude:test"], readiness: { state: "ready" }, usage: { kind: "unavailable", reason: "unknown" } }],
     modelProviders: [], gatewayPolicy: null } as unknown as ProviderSettingsSnapshot;
 }
 function client() {
-  return { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["openai"], install: false, uninstall: false, logs: false }]),
+  return { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "claude", harness: "claude", displayName: "Claude", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["anthropic"], install: false, uninstall: false, logs: false }]),
     start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
 }
 async function mount(snapshot = fixture(), overrides: Partial<React.ComponentProps<typeof AgentsProvidersView>> = {}) {
   const workflowClient = client();
-  const props = { snapshot, selectedHarnessId: "codex", onSelectHarness: vi.fn(), onRefresh: vi.fn(), onMutate: vi.fn().mockResolvedValue(true), onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit: vi.fn(), workflowClient: workflowClient as never, ...overrides };
+  const props = { snapshot, selectedHarnessId: "claude", onSelectHarness: vi.fn(), onRefresh: vi.fn(), onMutate: vi.fn().mockResolvedValue(true), onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit: vi.fn(), workflowClient: workflowClient as never, ...overrides };
   const result = render(<AgentsProvidersView {...props} />);
   await act(async () => {});
-  fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+  fireEvent.click(row());
   return { ...result, props, workflowClient };
 }
 
@@ -78,10 +79,10 @@ it("guards guided logout and removal while the exact login operation runs", asyn
   const workflowClient = client();
   const capability = (await workflowClient.capabilities())[0];
   workflowClient.capabilities.mockResolvedValue([{ ...capability, activeOperationId: "login" }]);
-  const receipt = { id: "login", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60_000).toISOString(), deviceCode: null, authorizationUrl: null, terminalSessionId: null, safeFailure: null };
+  const receipt = { id: "login", harnessInstanceId: "claude", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60_000).toISOString(), deviceCode: null, authorizationUrl: null, terminalSessionId: null, safeFailure: null };
   workflowClient.get.mockResolvedValue(receipt); workflowClient.cancel.mockResolvedValue({ ...receipt, state: "cancelled" });
   const { props } = await mount(fixture(), { workflowClient: workflowClient as never });
-  await waitFor(() => expect(screen.getByRole("button", { name: /^Codex/ })).toHaveTextContent("Connecting"));
+  await waitFor(() => expect(row()).toHaveTextContent("Connecting"));
   expect(screen.getByRole("button", { name: "Log out Personal" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Remove Personal" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Remove Personal" }));
@@ -94,7 +95,7 @@ it.each([false, new Error("private credential path")])("retains a guided account
   const { props } = await mount(fixture(), { onMutate });
   fireEvent.click(screen.getByRole("button", { name: "Log out Personal" }));
   expect(await screen.findByRole("alert")).not.toHaveTextContent("private credential path");
-  expect(screen.getByRole("button", { name: /^Codex/ })).toHaveTextContent("Connected");
+  expect(row()).toHaveTextContent("Connected");
   expect(props.onRefresh).not.toHaveBeenCalled();
 });
 
@@ -109,7 +110,7 @@ it.each(["running", "failed", "cancelled"])("fences account actions until the kn
   expect(screen.getByRole("button", { name: "Remove Personal" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Log out Personal" }));
   expect(props.onMutate).not.toHaveBeenCalled();
-  await act(async () => { resolve({ id: "known", harnessInstanceId: "codex", kind: "login", state, expiresAt: new Date(Date.now() + 60_000).toISOString(), safeFailure: state === "failed" ? "failed" : null, deviceCode: null, authorizationUrl: null, terminalSessionId: null }); });
+  await act(async () => { resolve({ id: "known", harnessInstanceId: "claude", kind: "login", state, expiresAt: new Date(Date.now() + 60_000).toISOString(), safeFailure: state === "failed" ? "failed" : null, deviceCode: null, authorizationUrl: null, terminalSessionId: null }); });
   if (state === "running") expect(screen.getByRole("button", { name: "Log out Personal" })).toBeDisabled();
   else {
     expect(screen.getByRole("button", { name: "Log out Personal" })).toBeEnabled();

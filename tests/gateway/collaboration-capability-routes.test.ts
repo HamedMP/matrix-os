@@ -13,6 +13,15 @@ import { createOwnerResourceDriver } from "../../packages/gateway/src/collaborat
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
 
+// HTTP authorization stays portable. Linux retains the actual native provider;
+// only unsupported platforms receive explicit fixture generations for these routes.
+const portableIdentity = vi.hoisted(() => ({ value: "a".repeat(64) }));
+vi.mock("../../packages/gateway/src/collaboration/filesystem-incarnation.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../packages/gateway/src/collaboration/filesystem-incarnation.js")>();
+  if (process.platform === "linux") return actual;
+  return { ...actual, filesystemIncarnation: () => portableIdentity.value };
+});
+
 const ownerId = "user_capability_owner";
 const memberId = "user_capability_member";
 const secondMemberId = "user_capability_second_member";
@@ -42,6 +51,7 @@ describe("collaboration capability HTTP routes", () => {
   let participantLookupFailureActorId: string | null;
 
   beforeEach(async () => {
+    portableIdentity.value = "a".repeat(64);
     membershipDelayMs = 0;
     activeMembershipChecks = 0;
     maxActiveMembershipChecks = 0;
@@ -399,6 +409,7 @@ describe("collaboration capability HTTP routes", () => {
     expect((await second.json() as { id: string }).id).toBe(firstEntry.id);
     await rm(join(homePath, "notes.txt"));
     await writeFile(join(homePath, "notes.txt"), "different bytes");
+    if (process.platform !== "linux") portableIdentity.value = "b".repeat(64);
     const replaced = await resolve();
     expect(replaced.status).toBe(200);
     expect((await replaced.json() as { id: string }).id).not.toBe(firstEntry.id);
@@ -431,6 +442,7 @@ describe("collaboration capability HTTP routes", () => {
 
     await rm(join(homePath, "notes.txt"));
     await writeFile(join(homePath, "notes.txt"), "replacement");
+    if (process.platform !== "linux") portableIdentity.value = "b".repeat(64);
     const replaced = await lookup();
     expect(replaced.status).toBe(200);
     expect(await replaced.json()).toEqual({ entry: null });

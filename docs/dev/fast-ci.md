@@ -176,6 +176,25 @@ parallel jobs. Metadata-only and superseded skips are not full qualifications.
 A passed Linux workload with failed orchestration is a failed end-to-end sample.
 A single same-source pair cannot establish median/tail latency or throughput.
 
+### Completion races and release gates
+
+GitHub can report a workflow as successful before every job has its final
+status and conclusion. The host-bundle same-SHA gate retries empty inventories
+and pending job results within its existing 90-minute deadline. A terminal
+failed, cancelled, timed-out or neutral required job still blocks publication.
+Only the explicitly nonblocking shadow verifier is excluded.
+
+Full hosted main recovery can finish while a delayed dedicated lease is still
+running. After authenticating the exact requester, attempt, source and newest
+controller, a successful completed requester revokes redundant delegated work.
+Its controller settles neutral without a receipt or qualification credit.
+Failed requesters and failed Linux workloads remain failures; shadow work keeps
+its existing policy. This helper change needs the reviewed controller-pin
+activation described above, after merge and green-main verification.
+
+The 19 October regressions and validation are recorded in
+[completion recovery](../../specs/630-ci-check-attribution/completion-recovery.md).
+
 Pagination and pending-state repairs are pinned controller helpers. Merge alone
 does not activate them: after reviewed green main, approve that controller on
 the host and advance `MATRIX_CI_CONTROLLER_SHA` using the existing operator
@@ -230,13 +249,13 @@ ref protection, exact tree/parent proof and fresh PR-head checks remain required
 operators drain legacy jobs during rollout. CI grants retain their independent
 live configuration checks.
 
-### Staged activation
+### Initial staged activation
 
 1. Merge only after current-head Greptile 5/5 and genuine complete PR CI. Leave
    the isolation flag false/unset while the new Main commit completes genuine
    Main qualification through the existing route.
 2. Protect `ci-execution/*`, create its tree-identical execution commit, and
-   read back the exact parent, tree and ref. Add only that protected ref pattern
+   read back the exact parent, tree and ref. Add only that exact protected branch
    to the existing CI environment's allowed deployment branches when required.
 3. Follow the host-first controller procedure: genuine Main coverage, idle
    host, preserved policy backup, one reviewed controller append, and exact
@@ -256,3 +275,50 @@ live configuration checks.
 
 Do not replace failures with synthetic passing checks, hide failing tests with
 `continue-on-error`, or delete diagnostic history to produce a green badge.
+
+### Explicit isolated CI handoff
+
+An isolated PR refresh explicitly dispatches its own Linux qualification from
+a separate protected execution backend job on every attempt. It authenticates its actual run,
+attempt, workflow, protected execution origin and current PR source first.
+Main routing remains routing-only; the isolated self-handoff never suppresses
+its real workloads. Hosted-only refreshes retain their full hosted path.
+Qualification does not depend on delivery of a recursive `workflow_run` event.
+Authenticated terminal events provide deduplicated reconciliation when an explicit
+completion handoff is missing; scheduled recovery covers runs without such an event.
+
+After the selected workloads settle, a separate completion job dispatches
+reconciliation before the required aggregate. The aggregate rejects a failed
+or cancelled handoff and requires completion proof for the current attempt. A
+failed-only retry may retain an older successful backend job. GitHub can clone
+that job’s API record into the new attempt, so its protected output records
+ownership. A retained provider decision schedules lanes only; completion then
+requests fresh Linux qualification and verifies its immutable current-attempt
+receipt before reconciling. Infrastructure unavailability is not full coverage
+for that retained job; use a full rerun to select hosted recovery. Current-attempt
+hosted recovery still requires its verified infrastructure receipt and all
+required hosted workloads. An aggregate-only
+retry without fresh completion fails with explicit rerun guidance.
+
+Reconciliation waits at most three minutes for the real
+requester to become terminal, before receiving App credentials; its actual
+success, failure or cancellation remains authoritative. The qualification
+controller never waits for completion of its requesting CI, avoiding a cycle.
+Dispatch transport ambiguity is not automatically retried.
+
+If SSH closes while an authenticated renewal is pending, the client drains a
+buffered completion without writing to the closed stream. This never grants an
+initial lock after closure or relaxes renewal deadlines: success still requires
+the complete receipt, final unconditional source checks, exit zero and no trailing data.
+
+Controller history searches start ten minutes before the independently
+authenticated requester's creation time. Pagination retains that lower bound,
+along with existing request and same-second caps. Missing or malformed requester
+timestamps fail closed. An empty bounded search is missing evidence, never a
+passing qualification.
+
+For subsequent pin upgrades, keep isolation enabled. Fully qualify the new Main
+commit, reuse the existing execution protection, create a new exact-tree child,
+and add only its exact environment branch while preserving existing policies.
+Pause and drain auxiliary work, approve the new controller on the idle host,
+advance the pin last, and resume. Retain older execution refs and receipts.
