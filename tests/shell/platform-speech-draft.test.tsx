@@ -114,6 +114,54 @@ describe("platform speech draft recording", () => {
     expect(hook.result.current.previewQuota).toEqual(exhausted.previewQuota);
   });
 
+  it("fails closed on a stale post-transcription quota and retries capability refresh", async () => {
+    const previewReady = {
+      ...ready,
+      previewQuota: {
+        mode: "preview" as const,
+        requestLimit: 1,
+        requestsUsed: 0,
+        requestsRemaining: 1,
+        maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    };
+    const exhausted = {
+      ...previewReady,
+      previewQuota: {
+        ...previewReady.previewQuota,
+        requestsUsed: 1,
+        requestsRemaining: 0,
+      },
+    };
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(previewReady)
+      .mockRejectedValueOnce(new Error("private refresh detail"))
+      .mockResolvedValueOnce(exhausted);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-preview-stale",
+      client: client({ capabilities }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+
+    await waitFor(() => expect(hook.result.current.capabilitiesStale).toBe(true));
+    expect(hook.result.current.phase).toBe("unavailable");
+    expect(hook.result.current.isSupported).toBe(false);
+    expect(hook.result.current.previewQuota).toEqual(previewReady.previewQuota);
+    await act(async () => hook.result.current.retryCapabilities());
+    await waitFor(() => expect(hook.result.current.capabilitiesStale).toBe(false));
+    expect(hook.result.current.previewQuota).toEqual(exhausted.previewQuota);
+    expect(hook.result.current.phase).toBe("unavailable");
+    expect(warn).toHaveBeenCalledWith("[speech-draft] quota refresh failed", "Error");
+    expect(warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("private refresh detail"));
+  });
+
   it("records, stops, transcribes once, and inserts an editable draft without sending", async () => {
     const speech = client();
     const onDraft = vi.fn();
