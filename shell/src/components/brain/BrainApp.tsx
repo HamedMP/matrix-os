@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  BrainApp as SharedBrainApp, createBrainShellApi, listBrainProjects, type BrainAppProps,
+  BrainApp as SharedBrainApp, createBrainProjectAdder, createBrainShellApi, listBrainProjects, type BrainAppProps,
 } from "@matrix-os/ui";
 import { shellApi } from "@/api/http";
 import { useShellBrainChatHost } from "./BrainChatHost";
@@ -9,8 +9,9 @@ import { useShellBrainChatHost } from "./BrainChatHost";
 /** The shared Company Brain view bound to the Web gateway client (same-origin session). */
 const shellBrainApi = createBrainShellApi(shellApi);
 const loadShellProjects = () => listBrainProjects(shellApi);
+const shellProjectAdder = createBrainProjectAdder(shellApi);
 
-export type ShellBrainAppProps = Omit<BrainAppProps, "api" | "loadProjects" | "chat"> & {
+export type ShellBrainAppProps = Omit<BrainAppProps, "api" | "loadProjects" | "chat" | "addProjects"> & {
   /** Web Mobile: touch sizes in the chat, and Open in Chat switches to the Chat app. */
   readonly mobile?: boolean;
   /**
@@ -28,5 +29,8 @@ export type ShellBrainAppProps = Omit<BrainAppProps, "api" | "loadProjects" | "c
  */
 export function BrainApp({ mobile = false, active, visible, ...props }: ShellBrainAppProps) {
   const chat = useShellBrainChatHost(mobile, active, visible);
-  return <SharedBrainApp api={shellBrainApi} loadProjects={loadShellProjects} chat={chat} {...props} />;
+  return (
+    <SharedBrainApp api={shellBrainApi} loadProjects={loadShellProjects} addProjects={shellProjectAdder} chat={chat}
+      {...props} />
+  );
 }
