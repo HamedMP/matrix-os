@@ -1,5 +1,5 @@
 import type { BotInputHistoryReader } from "../bots/historical-input.js";
-import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
+import { canonicalAgentFailure, BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
 import { prepareBotInputs, type PreparedBotInputs } from "../bots/admitted-input.js";
 import { BotRunSpecSchema, BotRunOutcomeSchema, type BotEvent, type BotRunSpec } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -16,6 +16,7 @@ import type { ManagedPiAdmission } from "./managed-pi-admission.js";
 import { resolveManagedPiSelection } from "./managed-pi-route.js";
 import { createManagedPiSystemPrompt, ManagedPiPersonalityError, type ManagedPiPersonalityConfig } from "./managed-pi-system-prompt.js";
 import { fundedChatError, type FundedChatFailureReason } from "./funded-chat-error.js";
+import { awaitManagedPiCleanup, createManagedPiRunCancellation } from "./managed-pi-cancellation.js";
 import { assertTextOnlySteering } from "./steer-delivery-error.js";
 
 const StateSchema = z.object({ runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/), executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/) }).strict();
@@ -44,6 +45,8 @@ interface Active {
   isolated: boolean;
   inputs?: PreparedBotInputs;
   signal?: AbortSignal;
+  cancellation: AbortController;
+  releasing?: Promise<void>;
 }
 
 /** Two policies use one pinned worker/broker. Ordinary Chat has no recipe or bot grants. */
@@ -63,65 +66,77 @@ export function createManagedPiRuntime(deps: {
   const systemPrompt = createManagedPiSystemPrompt(deps.personality);
   const limits = readTrustedBotRunLimits();
   const active = new Map<string, Active>(); // capacity/terminal eviction below; runtime deadline bounds lifetime.
+  function release(run: Active): Promise<void> {
+    if (!run.binding) return Promise.resolve();
+    return run.releasing ??= deps.admission.release(run.binding.runtimeHandle)
+      .catch((error: unknown) => console.warn("[managed-pi] release failed", diagnosticErrorName(error)));
+  }
   async function stop(runId: string): Promise<void> {
-    const run = active.get(runId); if (!run || run.finished) return;
+    const run = active.get(runId); if (!run || run.finished || run.stopping) return;
     run.stopping = true;
+    run.cancellation.abort();
     run.inputs?.dispose();
     const binding = run.binding;
     if (binding) deps.cancelInference(binding);
     // Local approvals are revoked synchronously; Platform revocation is bounded and must not delay Stop.
     void deps.ownerTools?.closeRun(runId).catch((error: unknown) => console.warn("[managed-pi] tool close failed", error instanceof Error ? error.name : "UnknownError"));
     if (!binding) return;
-    let delivered = false;
-    try { delivered = (await deps.host.client.runBot({ ...binding, command: { version: 1, kind: "bot.cancel", runId } })).ok; }
-    catch (error: unknown) { console.warn("[managed-pi] cancel delivery failed", error instanceof Error ? error.name : "UnknownError"); }
-    if (!delivered) { await deps.admission.release(binding.runtimeHandle); return; }
-    run.grace ??= setTimeout(() => {
-      if (!run.finished) void deps.admission.release(binding.runtimeHandle).catch((error: unknown) => console.warn("[managed-pi] runtime release failed", error instanceof Error ? error.name : "UnknownError"));
-    }, 10_000);
+    // Start the existing grace clock before dispatch: an unresponsive cancel must not skip it.
+    run.grace ??= setTimeout(() => { if (!run.finished) void release(run); }, 10_000);
     run.grace.unref();
+    await awaitManagedPiCleanup(async () => {
+      let delivered = false;
+      try { delivered = (await deps.host.client.runBot({ ...binding, command: { version: 1, kind: "bot.cancel", runId } })).ok; }
+      catch (error: unknown) { console.warn("[managed-pi] cancel delivery failed", diagnosticErrorName(error)); }
+      if (!delivered && !run.finished) await release(run);
+    });
   }
   async function execute(input: CanonicalProviderRunInput<State>, run: Active): Promise<CanonicalProviderRunEvent> {
-    const signal = AbortSignal.any([input.signal, deps.lifetime, AbortSignal.timeout(10 * 60_000)]);
+    const cancellation = createManagedPiRunCancellation([input.signal, deps.lifetime, run.cancellation.signal]);
+    const { signal } = cancellation;
+    const cancelled = (): CanonicalProviderRunEvent => cancellation.timedOut()
+      ? { type: "run.completed", outcome: "failed", error: canonicalAgentFailure("execution_timeout")! }
+      : { type: "run.completed", outcome: "aborted" };
     run.signal = signal;
     const onAbort = () => { void stop(input.runId).catch((error: unknown) => console.warn("[managed-pi] cancellation failed", error instanceof Error ? error.name : "UnknownError")); };
     signal.addEventListener("abort", onAbort, { once: true });
     let stage: "route" | "input" | "admission" | "tool_setup" | "run_spec" | "worker_dispatch" = "route";
     try {
+      signal.throwIfAborted();
       run.isolated = deps.isolatedChat?.select({ ownerId: input.owner.ownerId, chatId: input.chatId, modelId: input.selection.model }) ?? false;
       if (run.isolated && (input.resumeState || input.continuationId || input.selection.instanceId !== "matrix_pi_default"
         || input.parts.some(part => part.type !== "text"))) throw new BotRouteError("model_unavailable");
-      const resolved = await resolveManagedPiSelection(input.selection, input.owner.ownerId, deps);
-      if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
+      const resolved = await cancellation.wait(() => resolveManagedPiSelection(input.selection, input.owner.ownerId, deps));
+      if (signal.aborted || run.stopping) return cancelled();
       if (run.isolated) resolved.route = { ...resolved.route, maxOutputTokens: 256 };
       stage = "input";
-      run.inputs = await prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, history: run.isolated ? undefined : deps.inputHistory, parts: input.parts, route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal,
-        assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } });
-      await run.inputs.revalidate();
+      run.inputs = await cancellation.wait(() => prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, history: run.isolated ? undefined : deps.inputHistory, parts: input.parts, route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal,
+        assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } }), inputs => inputs.dispose());
+      await cancellation.wait(() => run.inputs!.revalidate());
       stage = "admission";
-      run.binding = await deps.admission.admit({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, resolved });
-      if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
+      run.binding = await cancellation.wait(() => deps.admission.admit({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, resolved }), binding => deps.admission.release(binding.runtimeHandle));
+      if (signal.aborted || run.stopping) return cancelled();
       run.inputs.bind(run.binding);
-      const isolatedTurn = await deps.isolatedChat?.claim(run.binding);
+      const isolatedTurn = await cancellation.wait(async () => deps.isolatedChat?.claim(run.binding!));
       stage = "tool_setup";
-      if (!run.isolated) await deps.ownerTools?.open(run.binding, event => run.queue.push({ kind: "canonical", event }));
+      if (!run.isolated) await cancellation.wait(async () => deps.ownerTools?.open(run.binding!, event => run.queue.push({ kind: "canonical", event })), async () => deps.ownerTools?.closeRun(input.runId));
       stage = "run_spec";
       run.spec = BotRunSpecSchema.parse({ route: resolved.route,
-        systemPrompt: await systemPrompt(input),
+        systemPrompt: await cancellation.wait(() => systemPrompt(input)),
         capabilities: run.binding.capabilities, limits: run.isolated ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         ...(isolatedTurn ? { isolatedTurn } : {}),
         turn: { kind: "prompt", text: run.inputs.prompt(input.prompt), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) } });
       run.queue.push({ kind: "state", state: { runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration } });
-      if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
-      await run.inputs.revalidate();
-      await deps.assertSource?.(run.binding, signal);
-      if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
+      if (signal.aborted || run.stopping) return cancelled();
+      await cancellation.wait(() => run.inputs!.revalidate());
+      await cancellation.wait(async () => deps.assertSource?.(run.binding!, signal));
+      if (signal.aborted || run.stopping) return cancelled();
       stage = "worker_dispatch";
-      const reply = await deps.host.client.runBot({ runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration,
-        command: { version: 1, kind: "bot.run", runId: input.runId } });
+      const reply = await cancellation.wait(() => deps.host.client.runBot({ runtimeHandle: run.binding!.runtimeHandle, executionGeneration: run.binding!.executionGeneration,
+        command: { version: 1, kind: "bot.run", runId: input.runId } }));
+      if (signal.aborted || run.stopping) return cancelled();
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
       if (outcome?.success && outcome.data.runId === input.runId && outcome.data.status === "completed") return { type: "run.completed", outcome: "completed" };
-      if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
       if (!reply.ok) {
         const transportError = TransportErrorSchema.safeParse(reply.error);
         throw new ManagedPiWorkerFailure({ stage: "worker_transport", error: transportError.success ? transportError.data : "unknown" });
@@ -131,7 +146,7 @@ export function createManagedPiRuntime(deps: {
       throw new ManagedPiWorkerFailure({ stage: "worker_outcome", status: outcome.data.status,
         failureCode: outcome.data.failureCode ?? null, blockedReason: outcome.data.blockedReason ?? null, toolActions: outcome.data.toolActions });
     } catch (error: unknown) {
-      if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
+      if (signal.aborted || run.stopping) return cancelled();
       console.warn("[managed-pi] run failed", error instanceof ManagedPiWorkerFailure ? error.diagnostic
         : error instanceof ManagedPiPersonalityError ? { stage, error: "personality_unavailable", category: error.code }
         : { stage, error: diagnosticErrorName(error) });
@@ -145,10 +160,13 @@ export function createManagedPiRuntime(deps: {
         retryable: true, recoveryActions: ["retry"],
       } };
     } finally {
+      cancellation.dispose();
       run.inputs?.dispose();
-      await deps.ownerTools?.closeRun(input.runId).catch((error: unknown) => console.warn("[managed-pi] tool close failed", error instanceof Error ? error.name : "UnknownError"));
       run.finished = true; if (run.grace) clearTimeout(run.grace); signal.removeEventListener("abort", onAbort);
-      if (run.binding) await deps.admission.release(run.binding.runtimeHandle).catch((error: unknown) => console.warn("[managed-pi] release failed", error instanceof Error ? error.name : "UnknownError"));
+      // closeRun revokes local approvals synchronously; do not let remote revocation delay runtime stop.
+      await awaitManagedPiCleanup(async () => Promise.all([
+        deps.ownerTools?.closeRun(input.runId), release(run),
+      ]));
     }
   }
   const runs: BotRunSource = {
@@ -183,7 +201,7 @@ export function createManagedPiRuntime(deps: {
       const input = parseCanonicalProviderRunInput(value);
       if (input.owner.type !== "personal" || input.sharedScopeId || input.parts.some((part) => part.type !== "text" && part.type !== "attachment_reference" && !(part.type === "resource_reference" && ["agent", "chat"].includes(part.resource.kind) && input.context))) throw new Error("Unsupported Matrix AI input");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new Error("Matrix AI capacity unavailable");
-      const run: Active = { ownerId: input.owner.ownerId, chatId: input.chatId, stopping: false, finished: false, isolated: false, queue: createCanonicalCliEventQueue<Event>(2048) };
+      const run: Active = { ownerId: input.owner.ownerId, chatId: input.chatId, stopping: false, finished: false, isolated: false, cancellation: new AbortController(), queue: createCanonicalCliEventQueue<Event>(2048) };
       active.set(input.runId, run);
       const result = execute(input, run).finally(() => { active.delete(input.runId); deps.forgetRun(input.runId); run.queue.finish(); });
       let drained = false; let activities = 0;
