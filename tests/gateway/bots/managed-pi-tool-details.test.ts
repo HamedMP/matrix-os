@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { BotEventSchema, CanonicalChatRunActivitySchema, canonicalChatToolActivities, type BotEvent } from "@matrix-os/contracts";
 import { createEventProjector } from "../../../packages/bot-runtime/src/events.js";
 import { mapBotEvent } from "../../../packages/gateway/src/bots/chat-adapter.js";
@@ -120,6 +121,44 @@ import { makeAiProviderSnapshot } from "../../fixtures/ai-provider-snapshot.js";
 import { resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
 import type { ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runtime-host/index.js";
+
+it.each(["completed", "failed", "cancelled"] as const)("retains the managed tool's %s result when its start uses the last available pair", async status => {
+  const snapshot = makeAiProviderSnapshot();
+  const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+  const binding: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: "owner_boundary", chatId: "chat_boundary", runId: "run_boundary",
+    runtimeHandle: `runtime_${"b".repeat(32)}`, executionGeneration: "1", workspace: { kind: "chat_workspace" }, rootFingerprint: "b".repeat(64),
+    ...resolveManagedPiRoute(snapshot, selection), capabilities: ["mcp.call"], requestClass: "interactive" };
+  const controller = new AbortController();
+  const toolController = new AbortController();
+  if (status === "cancelled") toolController.abort();
+  const partial = fauxAssistantMessage(fauxText(""));
+  let workerEvents: BotEvent[] = [];
+  const host = { client: { runBot: vi.fn(async (input: { command: { kind: string } }) => {
+    if (input.command.kind !== "bot.run") return { ok: true, reply: { acknowledged: true } };
+    const deltas: AgentEvent[] = Array.from({ length: 1998 }, () => ({ type: "message_update", message: partial,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial } }));
+    workerEvents = await project([...deltas, start({ ...args, arguments: { command } }), end("BOUNDARY_FINAL", status === "failed")], toolController.signal);
+    for (const event of workerEvents) await runtime.events.publish(binding, event);
+    if (status === "cancelled") controller.abort();
+    return { ok: true, reply: { runId: binding.runId, status, toolActions: 1 } };
+  }) } } as unknown as ScopeRuntimeHost;
+  const runtime = createManagedPiRuntime({ toolOutputKey: key, admission: { admit: async () => binding,
+    release: async () => undefined, toolAuthority: async () => ({ permissionMode: "full_access" }), workspace: async () => "/owned/chat" },
+    host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal, forgetRun: () => undefined, cancelInference: () => undefined });
+  const events = [];
+  for await (const event of runtime.adapter.start({ owner: { type: "personal", ownerId: binding.ownerId }, chatId: binding.chatId,
+    turnId: "cturn_boundary", runId: binding.runId, prompt: "show details", parts: [{ type: "text", text: "show details" }], selection,
+    interactionMode: "default", permissionMode: "full_access", signal: controller.signal })) events.push(event);
+  const outputs = events.filter(event => event.type === "tool.output");
+  expect(outputs.at(-1)).toBeDefined();
+  expect(openToolOutput(key, "call_1", outputs.at(-1)!.protectedOutput)).toContain("BOUNDARY_FINAL");
+  expect(events.filter(event => event.type === "agent.activity").at(-1)).toMatchObject({ activityId: "call_1", status });
+  expect(workerEvents).toHaveLength(2000);
+  expect(workerEvents.slice(-2)).toMatchObject([
+    { seq: 1998, event: { type: "tool_progress", phase: "started" } },
+    { seq: 1999, event: { type: "tool_progress", phase: status } },
+  ]);
+});
 
 it.each(["failed", "cancelled", "completed"] as const)("closes an outstanding managed tool when the worker ends %s without a tool end", async status => {
   const snapshot = makeAiProviderSnapshot();

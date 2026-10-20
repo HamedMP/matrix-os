@@ -389,3 +389,35 @@ it("reserves a bounded terminal event after live text fills the event budget", a
   expect(sent.length).toBeLessThanOrEqual(MAX_EVENTS_PER_TURN);
   expect(sent.at(-1)?.event).toMatchObject({ type: "tool_progress", phase: "completed", display: { output: "final proof" } });
 });
+
+it.each([
+  { openFirst: false, deltas: 1999, buffered: false, reverse: false, visible: [], paused: 1 },
+  { openFirst: false, deltas: 1997, buffered: true, reverse: false, visible: ["call_b"], paused: 0 },
+  { openFirst: true, deltas: 1996, buffered: false, reverse: false, visible: ["call_a", "call_b"], paused: 0 },
+  { openFirst: true, deltas: 1996, buffered: false, reverse: true, visible: ["call_a", "call_b"], paused: 0 },
+  { openFirst: true, deltas: 1997, buffered: false, reverse: false, visible: ["call_a"], paused: 1 },
+  { openFirst: true, deltas: 1997, buffered: false, reverse: true, visible: ["call_a"], paused: 1 },
+])("keeps tool starts paired with reserved terminals at the event boundary (%j)", async ({ openFirst, deltas, buffered, reverse, visible, paused }) => {
+  const sent: BotEvent[] = []; let clock = 0;
+  const project = createEventProjector({ send: async event => { sent.push(event); }, capabilityForTool: () => "artifact.read", now: () => clock });
+  const start = (toolCallId: string): AgentEvent => ({ type: "tool_execution_start", toolCallId, toolName: "read_artifact", args: { path: "proof.txt" } });
+  const end = (toolCallId: string): AgentEvent => ({ type: "tool_execution_end", toolCallId, toolName: "read_artifact", result: { content: [{ type: "text", text: "final proof" }] }, isError: false });
+  const partial = fauxAssistantMessage(fauxText(""));
+  const delta: AgentEvent = { type: "message_update", message: partial, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial } };
+  try {
+    if (openFirst) await project(start("call_a"));
+    for (let i = 0; i < deltas; i++) { clock += 300; await project(delta); }
+    if (buffered) await project(delta); // Flushed by the following start, before admission.
+    await project(start("call_b"));
+    await project({ type: "tool_execution_update", toolCallId: "call_b", toolName: "read_artifact", args: {}, partialResult: { content: [{ type: "text", text: "partial" }] } });
+    for (const id of reverse ? ["call_b", "call_a"] : ["call_a", "call_b"]) await project(end(id));
+    await project(end("call_b")); // A duplicate terminal cannot consume another slot.
+    await project.drain();
+  } finally { project.close(); }
+  const tools = sent.flatMap(item => item.event.type === "tool_progress" ? [item.event] : []);
+  expect(tools.filter(event => event.phase === "started").map(event => event.toolCallId).sort()).toEqual(visible);
+  expect(tools.filter(event => event.phase === "completed").map(event => event.toolCallId).sort()).toEqual(visible);
+  expect(sent.filter(item => item.event.type === "activity")).toHaveLength(paused);
+  expect(sent).toHaveLength(2000);
+  expect(sent.every((event, index) => event.seq === index)).toBe(true);
+});

@@ -67,10 +67,11 @@ export function createEventProjector(options: {
 
   const emit = async (event: BotEvent["event"]) => {
     const terminal = event.type === "tool_progress" && ["completed", "failed", "cancelled"].includes(event.phase);
+    const started = event.type === "tool_progress" && event.phase === "started";
     // Reserve one slot per outstanding tool; text/update floods cannot lose its result.
     const limit = MAX_EVENTS_PER_TURN - (terminal ? 0 : tools.size);
     if (seq >= limit) return;
-    if (!terminal && seq === limit - 1) {
+    if (!terminal && !started && seq === limit - 1) {
       await options.send({ seq: seq++, event: { type: "activity", label: PAUSED_LABEL, state: "started" } });
       return;
     }
@@ -134,6 +135,11 @@ export function createEventProjector(options: {
         const id = bridgeToolCallId(event.toolCallId);
         if (event.type === "tool_execution_start") {
           if (tools.has(id) || toolStarts >= MAX_TOOLS) return;
+          // Track only a display whose start and terminal both fit beside pending results.
+          if (seq + tools.size + 2 > MAX_EVENTS_PER_TURN) {
+            await emit({ type: "activity", label: PAUSED_LABEL, state: "started" });
+            return;
+          }
           toolStarts += 1;
           tools.set(id, { ...botToolDisplayInput(event.toolName, event.args), updates: 0, lastUpdate: -Infinity });
         }
