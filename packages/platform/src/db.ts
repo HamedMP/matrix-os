@@ -808,7 +808,9 @@ export interface AccountDeletionJobsTable {
 
 import type { GooglePurchaseTable, GoogleCheckoutAttributionTable } from './billing/google-tracking-migration.js';
 
-export interface PlatformDatabase {
+import type { AppStoreDatabase } from './app-store/types.js';
+
+export interface PlatformDatabase extends AppStoreDatabase {
   billing_google_purchases: GooglePurchaseTable;
   billing_google_checkout_attribution: GoogleCheckoutAttributionTable;
   preview_drive_grants: PreviewDriveGrantsTable;
