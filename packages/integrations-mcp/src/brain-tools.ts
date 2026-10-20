@@ -202,7 +202,7 @@ async function callGateway<N extends ToolName>(
   throw new BrainGatewayStatus();
 }
 
-function gatewayTools(fetcher: GatewayFetcher): Required<BrainAgentReadTools> {
+function gatewayTools(fetcher: GatewayFetcher): Required<Omit<BrainAgentReadTools, "document">> {
   return {
     search: (input) => callGateway(fetcher, "brain_search", input),
     timeline: (input) => callGateway(fetcher, "brain_timeline", input),
