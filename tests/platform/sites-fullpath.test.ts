@@ -115,7 +115,9 @@ it('carries the remaining Gateway publication deadline into actual Platform acti
   gateway.route('/',createSiteRoutes({homePath:home,ownerIds:['deadline-owner'],platform:client,submissions:null,build:siteBuildFixture({build:async()=>{vi.setSystemTime(started+265000);return {ok:true};}})}));
   const response = await gateway.request('/api/apps/event/site',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'Event',reviewedConfig:{data:{},forms:[]}})});
   expect(response.status).toBe(503);
-  expect(await service.get({ownerId:'deadline-owner',machineId,appSlug:'event'})).toBeNull();
+  const pending = await service.get({ownerId:'deadline-owner',machineId,appSlug:'event'});
+  expect(pending).toMatchObject({status:'unpublished',activeVersion:null,versions:[]});
+  expect(await service.resolve(pending!.id)).toBeNull();
   expect(objects.size).toBe(0);
  } finally {vi.unstubAllGlobals();vi.useRealTimers();}
 });
