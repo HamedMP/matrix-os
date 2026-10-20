@@ -850,9 +850,11 @@ async function startPlatformServerWithCleanup(
         fetchDispatcher: customerVpsProxyDispatcher,
       });
     }
-    if (customerVpsConfig.fundedAiEnabled && internalFundedAiRuntimeRoutes) {
+    if ((customerVpsConfig.fundedAiEnabled || previewRuntimeAccess.enabled) && internalFundedAiRuntimeRoutes) {
       internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
-        platformSecret: customerVpsConfig.platformSecret, relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
+        platformSecret: customerVpsConfig.platformSecret,
+        ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
+        relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
     }
     const reconcileManagedFeatures = createManagedFeatureReconciliationPass(activateManagedFeatures);
     if (backgroundWorkersEnabled) {

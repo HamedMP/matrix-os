@@ -11,6 +11,7 @@ import {
   type SpeechSourceKind,
 } from "@matrix-os/contracts";
 import type { PlatformDB, PlatformDatabase, SpeechOperationsTable } from "../db.js";
+import { previewRuntimeOperationBusy } from "../preview-runtime-admission.js";
 
 const ReferenceSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const RuntimeSlotSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/);
@@ -307,22 +308,15 @@ export function createSpeechOperationsRepository(options: {
         .where("machine.activation_state", "=", "authorized")
         .where("machine.deleted_at", "is", null)
         .executeTakeFirst();
-      const runtimeActive = previewAllocation
-        ? await trx.executor.selectFrom("speech_operations")
-          .select(({ fn }) => fn.countAll<number>().as("count"))
-          .where("owner_id", "=", admission.identity.ownerId)
-          .where("machine_id", "=", admission.identity.machineId)
-          .where("runtime_slot", "=", admission.identity.runtimeSlot)
-          .where("execution_state", "in", activeStates)
-          .where("updated_at", ">", activeCutoff).executeTakeFirstOrThrow()
-        : undefined;
+      const previewBusy = previewAllocation
+        ? await previewRuntimeOperationBusy(trx.executor, admission.identity, activeCutoff)
+        : false;
       if (Number(active.count) >= maximumActiveOperations
         || Number(ownerActive.count) >= maximumActiveOperationsPerOwner
         || Number(ownerAdmissions.count) >= maximumAdmissionsPerOwner
         || (runtimeAdmissions !== undefined
           && Number(runtimeAdmissions.count) >= maximumAdmissionsPerRuntimeLifetime!)
-        || (runtimeActive !== undefined
-          && Number(runtimeActive.count) >= previewAllocation!.max_concurrency)) {
+        || previewBusy) {
         throw new SpeechOperationRateLimitError();
       }
       const inserted = await trx.executor.insertInto("speech_operations").values({

@@ -6,7 +6,10 @@ import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/
 import { buildPlatformSpeechRuntimeVerificationToken, buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { createPreviewRuntimeAccessActivator } from "../../packages/platform/src/preview-runtime-activation.js";
 import { loadPreviewRuntimeAccessConfig } from "../../packages/platform/src/preview-runtime-access.js";
+import { createFundedHostActivationRoutes } from "../../packages/platform/src/funded-host-activation.js";
+import { createPlatformFundedAiHostConfigRoutes } from "../../packages/gateway/src/funded-host-activation.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
+import { Hono } from "hono";
 
 const now = new Date("2026-10-20T10:00:00.000Z");
 const hostSecret = "h".repeat(32);
@@ -77,5 +80,64 @@ describe("Preview runtime host activation", () => {
     expect(speechBody).toMatchObject({ machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
       runtimeToken: buildPlatformSpeechRuntimeVerificationToken({ handle: machine.handle,
         machineId: machine.machineId, runtimeSlot: machine.runtimeSlot }, previewSecret, 1) });
+  });
+
+  it("activates through the real Preview proof route and Gateway host handler", async () => {
+    let applied: Record<string, unknown> | undefined;
+    const hostEnv: NodeJS.ProcessEnv = {
+      UPGRADE_TOKEN: buildPlatformVerificationToken(machine.handle, hostSecret),
+      MATRIX_HANDLE: machine.handle,
+      MATRIX_MACHINE_ID: machine.machineId,
+      MATRIX_CLERK_USER_ID: machine.ownerId,
+      MATRIX_RUNTIME_SLOT: machine.runtimeSlot,
+      MATRIX_RUNTIME_TOKEN_EPOCH: "1",
+      MATRIX_FUNDED_AI_ENABLED: "false",
+    };
+    const proofApp = new Hono().route("/internal/containers/:handle/ai",
+      createFundedHostActivationRoutes({ db, platformSecret: hostSecret,
+        previewRuntimeSecret: previewSecret,
+        relayOrigin: "https://matrix-ai-relay-production-test.a.run.app",
+        now: () => new Date(now) }));
+    const hostApp = new Hono().route("/api/internal/platform-funded-ai",
+      createPlatformFundedAiHostConfigRoutes({ env: hostEnv, isIdle: () => true,
+        now: () => now.getTime(), fetch: ((input, init) => proofApp.request(String(input), init)) as typeof fetch,
+        applyConfig: async config => {
+          applied = config;
+          hostEnv.MATRIX_FUNDED_AI_ENABLED = "true";
+          hostEnv.MATRIX_FUNDED_AI_PLATFORM_URL = config.configuration.platformOrigin;
+          hostEnv.MATRIX_FUNDED_AI_RELAY_URL = config.configuration.relayOrigin;
+          hostEnv.MATRIX_FUNDED_AI_RUNTIME_TOKEN = config.configuration.runtimeToken;
+        },
+        scheduleRestart: async () => undefined }));
+    let speechBody: Record<string, unknown> | undefined;
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.startsWith("/api/internal/platform-funded-ai/")) {
+        return hostApp.request(url.pathname, init);
+      }
+      if (url.pathname.endsWith("/api/internal/platform-speech/config") && init?.method === "POST") {
+        speechBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return new Response(null, { status: 200 });
+      }
+      if (url.pathname.endsWith("/api/internal/platform-speech/config")) {
+        const body = speechBody as { machineId: string; runtimeSlot: string; origin: string; runtimeToken: string };
+        return Response.json({ configured: true, configurationRevision: createHash("sha256")
+          .update(`${body.machineId}\0${body.runtimeSlot}\0${body.origin}\0${body.runtimeToken}`).digest("hex") });
+      }
+      throw new Error("Unexpected URL");
+    });
+    const repository = createAiFundedPolicyRepository({ db, credentialHashSecret: "c".repeat(32),
+      now: () => new Date(now) });
+    const activate = createPreviewRuntimeAccessActivator({ db, repository,
+      config: loadPreviewRuntimeAccessConfig({ MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "true",
+        MATRIX_PREVIEW_RUNTIME_SECRET: previewSecret, PLATFORM_SECRET: hostSecret }),
+      hostControlSecret: hostSecret, platformOrigin: "https://app.matrix-os.com",
+      relayOrigin: "https://matrix-ai-relay-production-test.a.run.app",
+      fetchImpl: fetchImpl as typeof fetch, wait: async () => undefined, now: () => new Date(now) });
+
+    await expect(activate({ ownerId: machine.ownerId, machineId: machine.machineId,
+      runtimeSlot: machine.runtimeSlot, expectedRuntimeTokenEpoch: 1 })).resolves.toMatchObject({ status: "ready" });
+    expect(applied).toMatchObject({ identity: { machineId: machine.machineId,
+      runtimeSlot: machine.runtimeSlot, runtimeTokenEpoch: 1 } });
   });
 });

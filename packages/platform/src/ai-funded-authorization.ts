@@ -32,6 +32,7 @@ import {
 } from "./ai-funded-metering-helpers.js";
 import { evaluateFundedPriority, findConflictingActiveReservation, type FundedBillingMode } from "./ai-funded-priority-claims.js";
 import { fundingSourceAvailability, reconcileExpiredPromotionalCredit, reserveFundingSources } from "./ai-funded-reservation-sources.js";
+import { previewRuntimeOperationBusy } from "./preview-runtime-admission.js";
 
 type AuthorizeOutcome =
   | { kind: "authorized"; response: FundedAiAuthorizationResponse }
@@ -165,6 +166,12 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         throw new AiFundedPolicyError("rate_limited", "slot_busy");
       }
       if (machine.provisioning_class === "preview") {
+        const previewBusy = await previewRuntimeOperationBusy(
+          trx.executor,
+          identity,
+          new Date(checked.getTime() - 2 * 60_000).toISOString(),
+        );
+        if (previewBusy) throw new AiFundedPolicyError("rate_limited", "slot_busy");
         const allocation = await trx.executor.updateTable("preview_runtime_allocations").set({
           ai_requests_used: sql<number>`ai_requests_used + 1`,
           updated_at: checkedAt,

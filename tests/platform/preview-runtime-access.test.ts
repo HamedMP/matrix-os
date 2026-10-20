@@ -10,6 +10,7 @@ import { buildPlatformRuntimeVerificationToken } from "../../packages/platform/s
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
+import { createSpeechOperationsRepository, SpeechOperationRateLimitError } from "../../packages/platform/src/speech/operations.js";
 
 const machineId = "71cf5b5b-f624-4c1c-9b6c-4dd2d46b2b02";
 const identity = { ownerId: "user_preview", machineId, runtimeSlot: "pr-2383" } as const;
@@ -170,6 +171,49 @@ describe("bounded Preview runtime access", () => {
       });
     expect(await db.executor.selectFrom("ai_funded_runtime_balances").selectAll()
       .where("machine_id", "=", "primary-machine").executeTakeFirstOrThrow()).toEqual(primaryBefore);
+  });
+
+  it("enforces one active Preview operation across hold-mode Chat requests", async () => {
+    await initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(),
+      request: { ...identity, expectedRuntimeTokenEpoch: 1 }, now: () => new Date(clock) });
+    const credential = await repository.issueRuntimeCredential(identity);
+    await repository.authorize({ credential: credential.credential.token,
+      requestId: "preview_active_chat_a", modelId, maxCostMicrousd: 100 });
+    await expect(repository.authorize({ credential: credential.credential.token,
+      requestId: "preview_active_chat_b", modelId, maxCostMicrousd: 100 }))
+      .rejects.toMatchObject({ code: "rate_limited", reason: "slot_busy" });
+  });
+
+  it("blocks dictation while funded Preview Chat is active", async () => {
+    await initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(),
+      request: { ...identity, expectedRuntimeTokenEpoch: 1 }, now: () => new Date(clock) });
+    const credential = await repository.issueRuntimeCredential(identity);
+    await repository.authorize({ credential: credential.credential.token,
+      requestId: "preview_chat_before_speech", modelId, maxCostMicrousd: 100 });
+    const operations = createSpeechOperationsRepository({ db, now: () => new Date(clock),
+      maximumActiveOperations: 10, maximumActiveOperationsPerOwner: 10 });
+    await expect(operations.admit({ identity,
+      requestId: `sp_${clock.getTime()}_${"chatfirst".padEnd(16, "a")}`,
+      sourceKind: "dictation", contentFingerprint: "a".repeat(64), policyRevision: "speech-1",
+      adapterId: "openai-file", modelId: "gpt-4o-transcribe", audioDurationMs: 1000,
+      maximumCostMicrousd: 10 }, async () => ({ reservationId: "preview_speech_after_chat", reservedMicrousd: 0 })))
+      .rejects.toBeInstanceOf(SpeechOperationRateLimitError);
+  });
+
+  it("blocks funded Preview Chat while dictation is active", async () => {
+    await initializePreviewRuntimeAccess({ db, repository, config: enabledConfig(),
+      request: { ...identity, expectedRuntimeTokenEpoch: 1 }, now: () => new Date(clock) });
+    const operations = createSpeechOperationsRepository({ db, now: () => new Date(clock),
+      maximumActiveOperations: 10, maximumActiveOperationsPerOwner: 10 });
+    await operations.admit({ identity,
+      requestId: `sp_${clock.getTime()}_${"speechfirst".padEnd(16, "a")}`,
+      sourceKind: "dictation", contentFingerprint: "b".repeat(64), policyRevision: "speech-1",
+      adapterId: "openai-file", modelId: "gpt-4o-transcribe", audioDurationMs: 1000,
+      maximumCostMicrousd: 10 }, async () => ({ reservationId: "preview_speech_before_chat", reservedMicrousd: 0 }));
+    const credential = await repository.issueRuntimeCredential(identity);
+    await expect(repository.authorize({ credential: credential.credential.token,
+      requestId: "preview_chat_after_speech", modelId, maxCostMicrousd: 100 }))
+      .rejects.toMatchObject({ code: "rate_limited", reason: "slot_busy" });
   });
 
   it("authenticates Preview runtime routes only with the separate exact-generation token", async () => {

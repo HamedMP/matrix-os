@@ -49,7 +49,9 @@ Platform activation configures the host through the existing protected host endp
 
 1. Initialize or read the exact Preview allocation.
 2. Post the exact Preview AI runtime token and fixed Platform/relay origins.
-3. Verify the host-reported configuration revision.
+3. Have the real Gateway host handler re-read a short-lived Platform proof that
+   joins the live Preview allocation and current machine generation, apply it
+   through the root installer, and verify the host-reported revision.
 4. Activate speech with a separately derived speech token for the same machine generation.
 5. Return only coarse readiness and remaining counters to the workflow.
 
@@ -59,7 +61,13 @@ The runtime cannot top up a Preview allocation, inherit a configured owner promo
 
 - Allocation creation takes the account-deletion owner lock first, then locks the exact machine and allocation/global/policy rows inside one transaction. A failed creation leaves no policy, balance, grant, or allocation.
 - AI admission retains the existing funded-owner advisory lock and balance/reservation transaction, then atomically increments the exact allocation counter before committing the reservation.
-- Speech admission retains the global speech admission lock, checks one active operation for the exact Preview runtime, atomically increments the speech counter, and writes the operation/reservation in the same transaction.
+- AI and speech admission share an exact owner/machine/slot advisory lock and
+  check both durable active-operation registries while holding it. The Preview
+  therefore permits only one funded operation across Chat and dictation, even
+  for simultaneous hold-mode Chat requests or a cross-service race.
+- Speech admission also retains the global speech admission lock, atomically
+  increments the speech counter, and writes the operation/reservation in the
+  same transaction.
 - Host activation happens after the database commit. A host-config failure may leave an unused or partially consumed allocation, which is acceptable because reruns are idempotent and cannot refill it. An allocation without both verified host configs is not reported ready.
 - Expired allocations may remain as audit/accounting rows until machine or account cleanup, but all auth and mutation paths fail closed on expiry. Machine deletion cascades them; account deletion also deletes them explicitly.
 - AI's existing owner-wide concurrency guard can be stricter than the Preview runtime's one-operation cap. It may defer a Preview request while another owner-funded request is active, but it cannot move or spend primary credit.
