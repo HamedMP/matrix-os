@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useId } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { saveDesktopConfigPatch, useDesktopConfig, buildMeshGradient, BUNDLED_WALLPAPERS, wallpaperUrl, type DesktopConfig } from "@/hooks/useDesktopConfig";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
+import { SHARED_WORKSPACE_PREFIX } from "@/lib/shared-workspace";
 import { getGatewayUrl } from "@/lib/gateway";
 import { UploadIcon, XIcon, ImageIcon, PaletteIcon } from "@/lib/hugeicons";
 import { Switch } from "@/components/ui/switch";
@@ -20,6 +21,7 @@ type BgMode = "pattern" | "solid" | "image";
 // react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-purpose appearance panel (background, dock) whose JSX sections share local state and handlers; splitting would scatter that state across props/context without reducing complexity. Real decomposition is out of scope for this behavior-preserving pass.
 export function AppearanceSection() {
   useTheme(); // keep theme applied
+  const sharedWorkspace = getGatewayUrl().endsWith(SHARED_WORKSPACE_PREFIX);
   const config = useDesktopConfig();
   const dock = useDesktopConfigStore((s) => s.dock);
   const setDock = useDesktopConfigStore((s) => s.setDock);
@@ -48,7 +50,7 @@ export function AppearanceSection() {
   // Bundled defaults ship with the shell, so they are always selectable in the
   // grid even when the gateway's wallpaper directory doesn't list them (e.g.
   // existing homes predate them, since template sync skips user wallpapers).
-  const gridWallpapers = [...new Set([...BUNDLED_WALLPAPERS, ...wallpapers])];
+  const gridWallpapers = [...new Set([...BUNDLED_WALLPAPERS, ...(sharedWorkspace ? [] : wallpapers)])];
 
   // Sync the editor inputs from the persisted background config using the
   // render-time prev-prop pattern instead of an effect.
@@ -63,6 +65,7 @@ export function AppearanceSection() {
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the mount-load useEffect dependency array below; removing useCallback would re-run the effect on every render and refetch the wallpaper list in a loop.
   const fetchWallpapers = useCallback(async () => {
+    if (sharedWorkspace) return;
     try {
       const res = await fetch(`${getGatewayUrl()}/api/settings/wallpapers`, { signal: AbortSignal.timeout(10_000) });
       if (res.ok) {
@@ -72,7 +75,7 @@ export function AppearanceSection() {
     } catch (err) {
       console.warn("[appearance] Failed to fetch wallpapers:", err);
     }
-  }, []);
+  }, [sharedWorkspace]);
 
   useEffect(() => {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount-only load of wallpapers from the gateway (external async read); setState lands in the fetch callback, which is the documented allowed pattern
@@ -119,6 +122,7 @@ export function AppearanceSection() {
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (sharedWorkspace) return;
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -140,6 +144,7 @@ export function AppearanceSection() {
   }
 
   async function handleDeleteWallpaper(name: string) {
+    if (sharedWorkspace) return;
     try {
       await fetch(
         `${getGatewayUrl()}/api/settings/wallpaper/${encodeURIComponent(name)}`,
@@ -290,6 +295,7 @@ export function AppearanceSection() {
                         type="button"
                         onClick={() => handleDeleteWallpaper(name)}
                         aria-label={`Delete wallpaper ${name}`}
+                        disabled={sharedWorkspace}
                         className="absolute top-1 right-1 size-5 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <XIcon className="size-3" />
@@ -300,16 +306,18 @@ export function AppearanceSection() {
               </div>
             )}
 
-            <label className="flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border py-6 cursor-pointer hover:border-primary/40 hover:bg-muted/30 transition-colors">
+            <label className={`flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border py-6 transition-colors ${sharedWorkspace ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:border-primary/40 hover:bg-muted/30"}`}>
               <UploadIcon className="size-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Upload image</span>
               <input
                 type="file"
                 accept="image/*"
+                disabled={sharedWorkspace}
                 onChange={handleUpload}
                 className="hidden"
               />
             </label>
+            {sharedWorkspace ? <p className="text-xs text-muted-foreground">Custom wallpaper uploads and deletion are unavailable in this preview.</p> : null}
           </div>
         )}
       </section>

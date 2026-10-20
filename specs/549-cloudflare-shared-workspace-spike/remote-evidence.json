@@ -1,0 +1,301 @@
+{
+  "environment": "isolated Cloudflare remote; production Next frontend on local machine",
+  "date": "2026-10-18",
+  "workerSourceCommit": "2fa52db0a",
+  "imageManifest": "sha256:b93bf9a106e2cd689184364a34bb911adda5b5b81ba6506ef93d4d36f506e7f7",
+  "instance": {
+    "name": "standard-2",
+    "provisionedMemoryGiB": 6,
+    "maximumVcpu": 1,
+    "allocatedDiskGB": 12
+  },
+  "wake": {
+    "at": "2026-10-18T14:58:31.653Z",
+    "states": [
+      {
+        "elapsedMs": 772,
+        "state": "sleeping",
+        "placement": "pooled",
+        "activeRuns": 0,
+        "generation": 1,
+        "idleSince": null
+      },
+      {
+        "elapsedMs": 4131,
+        "state": "running",
+        "placement": "pooled",
+        "activeRuns": 1,
+        "generation": 1,
+        "idleSince": null
+      },
+      {
+        "elapsedMs": 74226,
+        "state": "ready",
+        "placement": "pooled",
+        "activeRuns": 0,
+        "generation": 1,
+        "idleSince": 1792335585545
+      },
+      {
+        "elapsedMs": 89126,
+        "state": "checkpointing",
+        "placement": "pooled",
+        "activeRuns": 0,
+        "generation": 1,
+        "idleSince": 1792335585545
+      },
+      {
+        "elapsedMs": 92492,
+        "state": "sleeping",
+        "placement": "pooled",
+        "activeRuns": 0,
+        "generation": 2,
+        "idleSince": null
+      }
+    ],
+    "unauthenticatedStatus": 401,
+    "initialMetrics": {
+      "ms": 457,
+      "body": {
+        "running": false
+      }
+    },
+    "bootstrapMs": 127,
+    "queueAckMs": 558,
+    "wakeMs": 74226,
+    "readyMetrics": {
+      "ms": 138,
+      "body": {
+        "running": true,
+        "cgroupMemoryBytes": null,
+        "cgroupPeakBytes": null,
+        "gatewayAlive": true,
+        "rssKiB": 659156,
+        "timestamp": 1792335586165
+      }
+    },
+    "totalMs": 92492,
+    "finalMetrics": {
+      "ms": 16,
+      "body": {
+        "running": false
+      }
+    },
+    "passed": true
+  },
+  "agentVerification": {
+    "at": "2026-10-18T15:08:54.746Z",
+    "environment": "cloudflare-remote",
+    "reads": [
+      {
+        "path": "bootstrap",
+        "ms": 202,
+        "body": {
+          "layout": {
+            "windows": []
+          },
+          "modules": [],
+          "apps": [],
+          "icons": {},
+          "revision": 0
+        }
+      }
+    ],
+    "phases": [
+      {
+        "at": 1792336139633,
+        "state": "running",
+        "generation": 4,
+        "activeRuns": 1
+      },
+      {
+        "at": 1792336208223,
+        "state": "ready",
+        "generation": 4,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792336208840,
+        "state": "ready",
+        "generation": 4,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792336223390,
+        "state": "checkpointing",
+        "generation": 4,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792336226569,
+        "state": "sleeping",
+        "generation": 5,
+        "activeRuns": 0
+      },
+      {
+        "phase": "completed-and-slept",
+        "executionMs": 72862,
+        "totalMs": 91075,
+        "revision": 1
+      },
+      {
+        "at": 1792336230188,
+        "state": "running",
+        "generation": 5,
+        "activeRuns": 1
+      },
+      {
+        "at": 1792336277311,
+        "state": "ready",
+        "generation": 5,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792336277804,
+        "state": "ready",
+        "generation": 5,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792336297280,
+        "state": "checkpointing",
+        "generation": 5,
+        "activeRuns": 0
+      },
+      {
+        "at": 1792336298868,
+        "state": "sleeping",
+        "generation": 6,
+        "activeRuns": 0
+      },
+      {
+        "phase": "completed-and-slept",
+        "executionMs": 50833,
+        "totalMs": 72239,
+        "revision": 2
+      }
+    ],
+    "result": {
+      "passed": true,
+      "sharedInputHydrated": true,
+      "nativePrivateFileRestored": true,
+      "duplicateDidNotWake": true,
+      "browserAttached": false
+    }
+  },
+  "browser": {
+    "at": "2026-10-18T15:13:25.935Z",
+    "build": "production-next-start",
+    "api": "live-cloudflare",
+    "initialRuntime": {
+      "state": "sleeping",
+      "placement": "pooled",
+      "activeRuns": 0,
+      "generation": 6,
+      "idleSince": null
+    },
+    "desktopVisibleMs": 1171,
+    "savedFileVisibleMs": 1515,
+    "runtimeAtFileVisible": {
+      "state": "sleeping",
+      "placement": "pooled",
+      "activeRuns": 0,
+      "generation": 6,
+      "idleSince": null
+    },
+    "videoPath": "local artifact: shared-desktop-cloudflare-live.webm",
+    "uiSourceCommit": "641753dc5",
+    "backgroundWakeObservedAfterCapture": true
+  },
+  "memory": {
+    "source": "proc-meminfo MemTotal minus MemAvailable",
+    "sampleIntervalMs": 3000,
+    "maxObservedVmUsedMemoryBytes": 1289859072,
+    "maxObservedGatewayRssKiB": 756504,
+    "note": "Sampled observations, not an exact peak or billed memory; cgroup counters unavailable in native VM."
+  },
+  "persistedLeaseExtensions": [
+    {
+      "state": "interrupted",
+      "type": "chat",
+      "leaseExtendedByMs": 36101
+    },
+    {
+      "state": "completed",
+      "type": "wake",
+      "leaseExtendedByMs": 66640
+    },
+    {
+      "state": "completed",
+      "type": "chat",
+      "leaseExtendedByMs": 66692
+    },
+    {
+      "state": "completed",
+      "type": "chat",
+      "leaseExtendedByMs": 46190
+    },
+    {
+      "state": "completed",
+      "type": "wake",
+      "leaseExtendedByMs": 25727
+    }
+  ],
+  "appearance": {
+    "passed": true,
+    "concurrentDockChangesPreserved": true,
+    "position": "right",
+    "size": 64
+  },
+  "restoredTaskSdk": {
+    "checkpointBytes": 97391005,
+    "generation": 5,
+    "usage": [
+      {
+        "keys": [
+          "sessionId",
+          "cost",
+          "turns",
+          "tokensIn",
+          "tokensOut",
+          "model",
+          "provider",
+          "modelUsage",
+          "result"
+        ],
+        "costUsd": 0.0341263,
+        "turns": 5,
+        "tokensIn": 147364,
+        "tokensOut": 805,
+        "model": "claude-haiku-4-5"
+      }
+    ]
+  },
+  "failure": {
+    "passed": false,
+    "error": "Native runtime failed; inspect private server logs"
+  },
+  "failureResolution": "First remote agent attempt failed; cause unresolved. It was interrupted without a completed output. Fresh jobs after diagnostic deployment passed both tasks. Do not treat this sample as a reliability estimate.",
+  "cleanup": {
+    "status": "complete",
+    "workerAndSecretsRemoved": true,
+    "containerApplicationRemoved": true,
+    "queuesRemoved": 2,
+    "hyperdriveRemoved": true,
+    "bucketRemoved": true,
+    "objectsRemoved": 10,
+    "objectBytesRemoved": 681343638,
+    "databasesRemoved": 2,
+    "rolesRemoved": 2,
+    "registryImagesRemoved": 2,
+    "localImagesRemoved": 2,
+    "previewProcessesStopped": true,
+    "verifiedCloudResourcesAbsent": true,
+    "localSecretCopiesRemoved": true
+  },
+  "credentialExclusion": {
+    "passed": true,
+    "checkedSecrets": 5,
+    "unpackedBytesScanned": 99471201
+  }
+}

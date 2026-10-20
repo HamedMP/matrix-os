@@ -292,6 +292,9 @@ function normalizeAppPaths(value: unknown, fallback: readonly string[]): string[
 }
 
 function runtimeScopeFromPath(pathname: string | null | undefined): string {
+  // Choose the shared data scope synchronously, before any initial theme,
+  // layout or app snapshot read can borrow a personal-computer cache.
+  if (pathname === "/workspace" || pathname?.startsWith("/workspace/")) return "/workspace";
   const match = (pathname ?? "").match(/^\/vm\/([A-Za-z0-9_-]{1,64})(?:\/|$)/);
   return match ? `/vm/${match[1]}` : "default";
 }

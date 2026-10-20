@@ -1,5 +1,7 @@
+import { isSharedWorkspacePath, SHARED_WORKSPACE_PREFIX } from "./lib/shared-workspace";
+import { hasSharedPreviewBearer, sharedShellOrigin } from "./app/workspace/access";
 import { clerkMiddleware } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import {
   MATRIX_NATIVE_APP_SESSION_HEADER,
   MATRIX_PLATFORM_SESSION_HEADER,
@@ -115,6 +117,26 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
 
 // Clerk handler for authenticated routes
 const withClerk = clerkMiddleware(async (auth, request) => {
+  if (isSharedWorkspacePath(request.nextUrl.pathname)) {
+    if (process.env.MATRIX_SHARED_WORKSPACE_SPIKE !== "1") return new NextResponse("Not found", { status: 404 });
+    const session = await auth();
+    if (!session.userId) {
+      const document = ["GET", "HEAD"].includes(request.method)
+        && (request.nextUrl.pathname === "/workspace" || request.nextUrl.pathname === "/workspace/");
+      if (!document) return new NextResponse("Authentication required", { status: 401 });
+      try {
+        const publicOrigin = sharedShellOrigin(request.url);
+        const signInUrl = new URL(configuredSignInUrl ?? "/sign-in", publicOrigin);
+        signInUrl.searchParams.set("redirect_url", new URL(`${request.nextUrl.pathname}${request.nextUrl.search}`, publicOrigin).toString());
+        return NextResponse.redirect(signInUrl);
+      } catch (error: unknown) {
+        console.error("[workspace] Sign-in unavailable", error instanceof Error ? error.name : "UnknownError");
+        return new NextResponse("Workspace access unavailable", { status: 503 });
+      }
+    }
+    return sharedWorkspaceResponse(request);
+  }
+
   // Clerk normally performs this navigation in the browser after signup. If
   // that one-shot redirect is interrupted, Clerk has already established the
   // session and its <SignUp> component renders nothing. Recover at the request
@@ -158,10 +180,26 @@ const withClerk = clerkMiddleware(async (auth, request) => {
   return NextResponse.next();
 });
 
+function sharedWorkspaceResponse(request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith(`${SHARED_WORKSPACE_PREFIX}/`)) {
+    const url = request.nextUrl.clone();
+    url.pathname = `/workspace/api${request.nextUrl.pathname.slice(SHARED_WORKSPACE_PREFIX.length)}`;
+    return NextResponse.rewrite(url);
+  }
+  return NextResponse.next();
+}
+
 export function proxy(
   request: Parameters<typeof withClerk>[0],
   event: Parameters<typeof withClerk>[1],
 ) {
+  // Shared preview always authenticates independently of personal VPS and test
+  // bypasses; a platform routing cookie can never pick its data owner.
+  if (isSharedWorkspacePath(request.nextUrl.pathname)) {
+    if (process.env.MATRIX_SHARED_WORKSPACE_SPIKE !== "1") return new NextResponse("Not found", { status: 404 });
+    if (hasSharedPreviewBearer(request.headers)) return sharedWorkspaceResponse(request);
+    return withClerkPublicOrigin(request, () => withClerk(request, event));
+  }
   // E2E screenshot tests run against `next start`, which always serves the
   // built app with production semantics. Use the explicit bypass flag alone so
   // screenshot runs can skip auth without depending on NODE_ENV.
@@ -213,6 +251,8 @@ export function proxy(
 
 export const config = {
   matcher: [
+    "/__shared-workspace/:path*",
+    "/workspace/:path*",
     "/gateway/:path*",
     "/icons/:path*",
     "/files/:path*",

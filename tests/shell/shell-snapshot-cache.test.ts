@@ -71,6 +71,18 @@ describe("shell snapshot cache", () => {
     expect(loadShellSnapshot(otherUser, storage)).toBeNull();
   });
 
+  it("isolates the shared workspace snapshot before its first read from personal and VPS caches", () => {
+    const personal = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    saveShellSnapshot(personal, freshSnapshot, storage);
+    const shared = createShellSnapshotScope({ userId: "user_123", pathname: "/workspace" });
+    expect(shared?.runtimeScope).toBe("/workspace");
+    expect(shared?.storageKey).not.toBe(personal?.storageKey);
+    expect(loadShellSnapshot(shared, storage)).toBeNull();
+    saveShellSnapshot(shared, { bootstrap: { apps: [{ name: "Shared app", path: "__chat__" }] } }, storage);
+    expect(loadShellSnapshot(personal, storage)?.bootstrap?.apps?.[0]?.name).toBe("Notes");
+    expect(loadShellSnapshot(createShellSnapshotScope({ userId: "user_123", pathname: "/vm/primary" }), storage)).toBeNull();
+    expect(createShellSnapshotScope({ userId: "user_123", pathname: "/workspace-other" })?.runtimeScope).toBe("default");
+  });
   it("does not create a readable cache scope without a loaded user id", () => {
     expect(createShellSnapshotScope({ userId: null, pathname: "/" })).toBeNull();
     expect(createShellSnapshotScope({ userId: undefined, pathname: "/" })).toBeNull();
