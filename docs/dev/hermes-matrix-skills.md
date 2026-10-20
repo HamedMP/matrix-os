@@ -22,6 +22,7 @@ The sync script uses symlinked skill directories when possible, so updates to `s
 | `matrix-design-system` | Apply Matrix theme, shadcn-style component patterns, icon quality rules, and iframe-safe app layouts. |
 | `matrix-integrations` | Use platform-owned Matrix integrations without copying provider secrets into Hermes or customer VPSes. |
 | `matrix-dev-vps` | Develop Matrix from inside a user/dev VPS with hot reload, previews, and auth-aware tunnels. |
+| `matrix-ship` | Qualify, preview, diagnose CI, and ship engineering PRs using the existing gates. |
 | `matrix-debug-app` | Fix `needs_build`, manifest problems, bundle/icon 404s, console errors, and integration proxy issues. |
 | `matrix-landing-design` | Build public Matrix OS marketing and landing surfaces without mixing those patterns into apps. |
 

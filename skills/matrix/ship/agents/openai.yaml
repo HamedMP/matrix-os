@@ -1,0 +1,4 @@
+interface:
+  display_name: "Matrix Shipping"
+  short_description: "Preview, qualify, and ship a Matrix OS PR"
+  default_prompt: "Use $matrix-ship to check this Matrix OS PR, suggest its test plan, and take the requested preview or shipping steps."

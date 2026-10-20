@@ -13,6 +13,7 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `matrix-design-system` | Apply Matrix theme, shadcn-style component patterns, icon quality rules, and iframe-safe app layouts. |
 | `matrix-integrations` | Use platform-owned Matrix integrations without copying provider secrets into Agent or customer VPSes. |
 | `matrix-dev-vps` | Develop Matrix from inside a user/dev VPS with hot reload, previews, and auth-aware tunnels. |
+| `matrix-ship` | Qualify, preview, diagnose CI, and ship engineering PRs using exact-source evidence and existing gates. |
 | `matrix-debug-app` | Fix `needs_build`, manifest problems, bundle/icon 404s, console errors, and integration proxy issues. |
 | `matrix-landing-design` | Build product landing pages matching their apps, while keeping public Matrix OS marketing on the shared brand. |
 | `matrix-chat-import` | Import owner-selected Codex/Claude transcripts as private Matrix Chats. |
@@ -28,8 +29,8 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `shadcn` | Compose current project-aware components, coherent presets and responsive charts from real saved data. |
 | `review-animations` | Inspect the implemented motion against craft/accessibility/performance criteria. |
 
-Every skill supplies top-level discovery triggers. Matrix companion names also appear
-in top-level `related_skills` and harness metadata; discovery presents names while
+Skills supply names and descriptions for discovery, with optional triggers.
+Matrix companion names can also appear in `related_skills` and harness metadata; discovery presents names while
 full bodies and resources load on demand. Avoid eagerly injecting the entire pack.
 
 Saved Chat Agent recipes pin the admitted skill instructions and retain the actual
@@ -45,6 +46,23 @@ identifies the managed adaptation; it does not assert an upstream license that w
 supplied. Host-specific configuration is excluded.
 
 ## Install Into Agent
+
+For the engineering shipping workflow, sync the reviewed checkout's shared pack
+on your Matrix development computer, then ask your coding agent to use the skill:
+
+```bash
+MATRIX_SKILL_TARGETS=matrix,claude,codex,agent,hermes ./scripts/sync-matrix-agent-skills.sh skills/matrix
+```
+
+```text
+Use $matrix-ship to request a preview of PR 1234 and suggest what to test.
+Use $matrix-ship to check PR 1234 and tell me what blocks merging.
+```
+
+The same skill is discoverable by Matrix, Codex, Claude Code, Agent and Hermes;
+invocation syntax varies by client. It uses the currently deployed capabilities
+and preserves existing review/CI gates. It does not activate an unmerged preview
+workflow or grant admin bypass. See [the canonical skill](../../skills/matrix/ship/SKILL.md).
 
 ### One Command
 

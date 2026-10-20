@@ -33,6 +33,7 @@ skills=(
   personal-daily-brief
   review-animations
   shadcn
+  ship
 )
 
 # A real local source can refresh only Matrix-managed entries through the
