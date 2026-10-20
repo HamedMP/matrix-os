@@ -380,9 +380,13 @@ export type BrainJobStartInput =
   | { readonly kind: "extract"; readonly extractor?: "rules" | "model" }
   | { readonly kind: "search_refresh" } | { readonly kind: "graph_refresh" }
   | { readonly kind: "brief"; readonly window?: BrainBriefWindow };
+/** A repository sync that stopped because the repository has no GitHub remote to link its history to. */
+export const BRAIN_NO_WEB_BASE_TEXT = "This repository has no GitHub link, so the brain can't link to its history. "
+  + "Add a GitHub remote (git remote add origin https://github.com/owner/repo), then press Sync now in Sources.";
 /** Why a run stopped, beyond the API error codes: the run's own limits. */
 export const BRAIN_JOB_CODE_COPY: Readonly<Record<string, string>> = {
   ...BRAIN_ERROR_COPY,
+  web_base_unavailable: BRAIN_NO_WEB_BASE_TEXT,
   time_limit: "It ran out of time; start it again to go on.",
   step_limit: "It reached its step limit; start it again to go on.",
   attempts_exhausted: "It stopped after several restarts. Try again later.",

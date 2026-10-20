@@ -6,7 +6,7 @@ import { BrainButton } from "./brain-controls.js";
 import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import {
   BRAIN_RECEIPTS_SHOWN, brainCountsText, brainDay, brainExtractText, brainModelBudgetText, brainModelSpendText,
-  brainNextActionText, brainSyncText,
+  brainNextStepText, brainSyncText,
 } from "./brain-format.js";
 import type { BrainExtractView, BrainJobStartInput, BrainReceiptView } from "./brain-types.js";
 import {
@@ -149,7 +149,9 @@ export function BrainReceipts({ receipts }: { readonly receipts: readonly BrainR
           </BrainBadge>
           <time dateTime={receipt.startedAt} className={BRAIN_TONE.tertiary}>{brainDay(receipt.startedAt)}</time>
           <span className={BRAIN_TONE.secondary}>{brainCountsText(receipt.counts)}</span>
-          {receipt.errorCode && <span className={BRAIN_TONE.secondary}>{brainNextActionText(receipt.nextAction)}</span>}
+          {receipt.errorCode && (
+            <span className={BRAIN_TONE.secondary}>{brainNextStepText(receipt.errorCode, receipt.nextAction)}</span>
+          )}
         </li>
       ))}
     </ul>

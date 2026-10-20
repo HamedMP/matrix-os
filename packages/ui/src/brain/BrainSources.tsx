@@ -4,7 +4,7 @@ import { useState } from "react";
 import { BrainButton } from "./brain-controls.js";
 import { BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import {
-  BRAIN_RECEIPTS_SHOWN, BRAIN_SOURCE_KIND_LABELS, brainDay, brainNextActionText, brainSyncText,
+  BRAIN_RECEIPTS_SHOWN, BRAIN_SOURCE_KIND_LABELS, brainDay, brainNextStepText, brainSyncText,
 } from "./brain-format.js";
 import type { BrainJobView, BrainSourceView } from "./brain-types.js";
 import {
@@ -99,7 +99,7 @@ function SourceRow({ api, projectId, source, active, onChanged }: Pick<BrainScre
         {source.lastSync && (
           <span className={`${BRAIN_TYPE.caption} ${BRAIN_TONE.secondary}`}>
             Last sync {source.lastSync.status} {brainDay(source.lastSync.startedAt)}
-            {source.lastSync.errorCode ? `. ${brainNextActionText(source.lastSync.nextAction)}` : ""}
+            {source.lastSync.errorCode ? `. ${brainNextStepText(source.lastSync.errorCode, source.lastSync.nextAction)}` : ""}
           </span>
         )}
       </div>

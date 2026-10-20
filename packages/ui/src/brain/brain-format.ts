@@ -3,7 +3,7 @@
  * the components so every component file exports components only.
  */
 import {
-  BRAIN_ERROR_COPY, BRAIN_JOB_CODE_COPY, BRAIN_NOT_CONNECTED_CODES, type BrainConflictsView,
+  BRAIN_ERROR_COPY, BRAIN_JOB_CODE_COPY, BRAIN_NO_WEB_BASE_TEXT, BRAIN_NOT_CONNECTED_CODES, type BrainConflictsView,
   type BrainConnectableSourceKind, type BrainExtractView, type BrainJobView, type BrainMergeEvidenceView,
   type BrainModelSpend,
   type BrainShellErrorState, type BrainSourceKind, type BrainSourceSyncView, type BrainSyncCounts, type BrainSyncView,
@@ -43,6 +43,10 @@ const NEXT_ACTION_TEXT: Readonly<Record<string, string>> = {
 };
 export function brainNextActionText(nextAction: string): string {
   return NEXT_ACTION_TEXT[nextAction] ?? "";
+}
+/** What to do after a failed sync: the plain fix for a repository with no GitHub link, else the next action's words. */
+export function brainNextStepText(errorCode: string | null, nextAction: string): string {
+  return errorCode === "web_base_unavailable" ? BRAIN_NO_WEB_BASE_TEXT : brainNextActionText(nextAction);
 }
 
 /** "1.25" from micro-USD, rounded down to the cent so a budget is never shown larger than it is. */
@@ -249,7 +253,7 @@ export function brainCountsText(counts: BrainSyncCounts): string {
 
 /** One line about a finished sync run (git or another source). */
 export function brainSyncText(view: BrainSyncView | BrainSourceSyncView): string {
-  const next = brainNextActionText(view.nextAction);
+  const next = brainNextStepText(view.errorCode, view.nextAction);
   const head = view.status === "failed" ? "Sync failed." : `Synced: ${brainCountsText(view.counts)}.`;
   return next === "" ? head : `${head} ${next}`;
 }
@@ -279,7 +283,8 @@ export function brainJobText(label: string, view: BrainJobView): string {
     queued: `${label}: waiting to start.`, running, succeeded: `${label}: done${steps}.`,
     failed: `${label}: failed.${failed}`, cancelled: `${label}: stopped.`,
   }[view.status];
-  const next = brainNextActionText(view.nextAction);
+  // The words of a missing GitHub link already say what to do.
+  const next = view.errorCode === "web_base_unavailable" ? "" : brainNextActionText(view.nextAction);
   return next === "" ? head : `${head} ${next}`;
 }
 
