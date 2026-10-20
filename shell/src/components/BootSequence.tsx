@@ -256,6 +256,7 @@ export function BootSequence({
   completionRedirect,
   runtimeSlot = null,
   passivePostCheckout = false,
+  billingGateActive = false,
 }: {
   children: ReactNode;
   platformSessionActive?: boolean;
@@ -263,6 +264,7 @@ export function BootSequence({
   completionRedirect?: string;
   runtimeSlot?: string | null;
   passivePostCheckout?: boolean;
+  billingGateActive?: boolean;
 }) {
   // Server-verified session or e2e bypass: the journey is already past billing.
   if (platformSessionActive || e2eBypass) {
@@ -273,6 +275,7 @@ export function BootSequence({
       completionRedirect={completionRedirect}
       runtimeSlot={runtimeSlot}
       passivePostCheckout={passivePostCheckout}
+      billingGateActive={billingGateActive}
     >
       {children}
     </BootSequenceInner>
@@ -284,11 +287,13 @@ function BootSequenceInner({
   completionRedirect,
   runtimeSlot,
   passivePostCheckout,
+  billingGateActive,
 }: {
   children: ReactNode;
   completionRedirect?: string;
   runtimeSlot: string | null;
   passivePostCheckout: boolean;
+  billingGateActive: boolean;
 }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [provisioningOutcomeAmbiguous, setProvisioningOutcomeAmbiguous] = useState(false);
@@ -302,11 +307,13 @@ function BootSequenceInner({
   const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || status !== "ready" || state?.phase !== "plan_required") return;
+    // BillingGate keeps this sequence mounted behind its billing UI. It already
+    // owns plan selection there, so navigating again would reload checkout.
+    if (billingGateActive || !isLoaded || !isSignedIn || status !== "ready" || state?.phase !== "plan_required") return;
     // The plans entrypoint opens BillingGate directly. Replace this entry so
     // Back cannot return to an extra step before billing.
     navigateForOnboarding(state.nextAction.url || "/?plans=1");
-  }, [isLoaded, isSignedIn, status, state?.phase, state?.nextAction.url]);
+  }, [billingGateActive, isLoaded, isSignedIn, status, state?.phase, state?.nextAction.url]);
 
   useEffect(() => {
     if (!provisioningOutcomeAmbiguous) return;
