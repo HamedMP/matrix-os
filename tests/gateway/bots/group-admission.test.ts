@@ -19,6 +19,11 @@ import { botSandboxRootsForHome, managedPiSandboxRootsForHome } from "../../../p
 import { SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID, SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST } from "../../../packages/scope-runtime/src/bot-profile.js";
 import type { ScopeRuntimeRequest } from "../../../packages/scope-runtime/src/protocol.js";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, realpath: vi.fn(actual.realpath) };
+});
+
 const CHAT = "chat_group1";
 const RUNTIME = `runtime_${"c".repeat(32)}`;
 const root = { ref: { kind: "project" as const, projectId: "project_company1" }, fingerprint: "f".repeat(64), primaryWorkspaceRoot: "/company/shared-root" };
@@ -62,6 +67,38 @@ function setup(authorizeGroup?: GroupBotAuthorizer, duringLaunch?: () => void) {
   return { admission, registry, roots, client, revocation };
 }
 describe("shared group Pi admission", () => {
+  it.each((["resolver", "filesystem"] as const).flatMap(stage => (["abort", "deadline"] as const).map(stop => ({ stage, stop }))))("bounds group root $stage on $stop without a late launch", async ({ stage, stop }) => {
+    const cancelled = new AbortController(), deadline = new AbortController();
+    const fixture = setup(async () => context);
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    if (stage === "resolver") fixture.roots.resolve.mockImplementationOnce(async () => { entered(); await gate; return root; });
+    else vi.mocked(realpath).mockImplementationOnce(async path => {
+      entered(); await gate;
+      return path as string;
+    });
+    const originalTimeout = AbortSignal.timeout;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 10_000 ? deadline.signal : originalTimeout(ms));
+    const pending = fixture.admission.admit({ ...request, signal: cancelled.signal }).then(
+      value => ({ kind: "admitted" as const, value }), (error: unknown) => ({ kind: "refused" as const, error }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let observed: Awaited<typeof pending> | { kind: "still_waiting" };
+    let launched: number;
+    try {
+      await started;
+      if (stop === "abort") cancelled.abort();
+      else deadline.abort(new DOMException("Synthetic root deadline", "TimeoutError"));
+      observed = await Promise.race([pending, new Promise<{ kind: "still_waiting" }>(resolve => { timer = setTimeout(() => resolve({ kind: "still_waiting" }), 750); })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      release(); await pending; timeout.mockRestore(); vi.mocked(realpath).mockRestore();
+      launched = fixture.client.createRuntime.mock.calls.length;
+      await fixture.admission.release(RUNTIME);
+    }
+    expect(observed!).toMatchObject({ kind: "refused", error: expect.objectContaining({ code: "unavailable" }) });
+    expect(launched!).toBe(0); expect(fixture.registry.size).toBe(0); expect(fixture.revocation.runtimes.size).toBe(0);
+  });
   it.each(([1, 2] as const).flatMap(check => (["abort", "deadline"] as const).map(stop => ({ check, stop }))))("bounds authorization check $check on $stop and cleans a late launch", async ({ check, stop }) => {
     const cancelled = new AbortController(), deadline = new AbortController();
     let release!: () => void;
