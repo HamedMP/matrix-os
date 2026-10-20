@@ -161,7 +161,7 @@ export function createPrivateBotAdmission(deps: {
       }
       let root: Awaited<ReturnType<typeof deps.roots.resolve>>;
       try {
-        root = await deps.roots.resolve({ type: "personal", ownerId: input.ownerId }, input.group?.executionRoot ?? { kind: "bot_workspace", botId: input.botId });
+        root = await groupWait(input, () => deps.roots.resolve({ type: "personal", ownerId: input.ownerId }, input.group?.executionRoot ?? { kind: "bot_workspace", botId: input.botId }));
       } catch (error: unknown) {
         if (error instanceof ChatExecutionRootError) {
           throw new BotAdmissionError(error.code === "validation_unavailable" ? "unavailable" : "invalid_root");
@@ -171,7 +171,7 @@ export function createPrivateBotAdmission(deps: {
       if (input.group) {
         if (!deps.homePath) throw new BotAdmissionError("unavailable");
         try {
-          const [home, candidate, stats] = await Promise.all([realpath(deps.homePath), realpath(root.primaryWorkspaceRoot), lstat(root.primaryWorkspaceRoot)]);
+          const [home, candidate, stats] = await groupWait(input, () => Promise.all([realpath(deps.homePath!), realpath(root.primaryWorkspaceRoot), lstat(root.primaryWorkspaceRoot)]));
           if (!stats.isDirectory() || stats.isSymbolicLink() || candidate !== root.primaryWorkspaceRoot || !isAllowedSandboxRoot(home, candidate)) throw new BotAdmissionError("invalid_root");
         } catch (error: unknown) {
           if (error instanceof BotAdmissionError) throw error;
