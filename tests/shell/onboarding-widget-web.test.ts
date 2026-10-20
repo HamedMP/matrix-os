@@ -479,6 +479,35 @@ describe("web onboarding app connect", () => {
     expect(unsubscribe).toHaveBeenCalled();
   });
 
+  it("ends on the newest list when Settings connects then disconnects an app while a refresh is still loading", async () => {
+    // Every list read after the initial load waits until the test releases it, in order.
+    const pending: Array<(response: Response) => void> = [];
+    let listReads = 0;
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/integrations/available")) return json(services);
+      if (url.endsWith("/api/integrations")) {
+        listReads += 1;
+        if (listReads === 1) return json([]);
+        return new Promise<Response>((resolve) => { pending.push(resolve); });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    let onChange: (() => void) | null = null;
+    const subscribeConnectionChanges = (listener: () => void) => { onChange = listener; return () => undefined; };
+    const { result } = renderHook(() => useShellOnboardingIntegrations(vi.fn(), { gatewayUrl: GATEWAY, fetchFn, subscribeConnectionChanges }));
+    await waitFor(() => expect(result.current.available).toHaveLength(1));
+
+    act(() => onChange!()); // Settings connected GitHub.
+    act(() => onChange!()); // Settings disconnected it again while that refresh was still loading.
+    await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+    // The older read (still connected) answers first, the newer one (disconnected) after it.
+    await act(async () => { pending.shift()!(json([{ id: "conn_1", service: "github", account_label: "sahar", status: "active" }])); });
+    await waitFor(() => expect(pending.length).toBeGreaterThan(0));
+    await act(async () => { pending.shift()!(json([])); });
+
+    await waitFor(() => expect(result.current.connections).toEqual([]));
+  });
+
   it("keeps a newer synced connection when an older list read finishes after it", async () => {
     popupStub();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

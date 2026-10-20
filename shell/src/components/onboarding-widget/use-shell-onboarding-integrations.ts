@@ -151,15 +151,26 @@ export function useShellOnboardingIntegrations(
   useEffect(() => {
     if (!subscribeConnectionChanges) return;
     let disposed = false;
+    // One read at a time: a change that lands mid-read queues one more, so the last read starts
+    // after the last change. The revision check still drops a read a newer sync overtook.
+    let reading = false;
+    let changedSinceRead = false;
     const { gatewayUrl, fetchFn } = transport();
-    const unsubscribe = subscribeConnectionChanges(() => {
+    const refresh = () => {
+      if (reading) { changedSinceRead = true; return; }
+      reading = true;
+      changedSinceRead = false;
       const startedAt = connectionsRevisionRef.current;
       readJson(fetchFn, `${gatewayUrl}/api/integrations`).then((value) => {
         if (!disposed && connectionsRevisionRef.current === startedAt) applyConnections(parseConnectedIntegrations(value));
       }, (error: unknown) => {
         if (!disposed) console.warn("[onboarding-widget] connections refresh failed:", errorName(error));
+      }).finally(() => {
+        reading = false;
+        if (!disposed && changedSinceRead) refresh();
       });
-    });
+    };
+    const unsubscribe = subscribeConnectionChanges(refresh);
     return () => {
       disposed = true;
       unsubscribe();
