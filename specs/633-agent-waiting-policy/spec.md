@@ -27,3 +27,8 @@ The checkout started at main 17a1ec7642 in a manual worktree. The main directory
 
 Live captures for all affected surfaces, a Native Mobile device check and the separate FinnaAI/matrix-os-site documentation PR remain release/review-readiness requirements. They cannot be claimed completed by unit tests and are not authorized by this local implementation task. Prepare public-safe behavior notes; no Slack send or PR/CI launch in this batch.
 
+## Local validation snapshot — 2026-10-21
+
+The implemented paths passed 136 waiting/CLI regression tests and 74 managed Pi regression tests. A further 108 existing Hermes, coding-provider and Web/Electron parity tests passed. Native Mobile's full Jest run passed all 255 suites / 3,123 tests; the changed-file React Doctor scan reported no issues. Repository TypeScript checks passed across the configured backend and Electron projects.
+
+Native Mobile TypeScript still reports 63 existing errors across 15 files; comparison found no added diagnostics and none in changed files. The pattern scan reports zero violations and one path-operation warning caused by Promise/controller `resolve` calls rather than filesystem paths. These local results do not replace the live surface/device evidence, public-site documentation PR, CI or Greptile required before merge.

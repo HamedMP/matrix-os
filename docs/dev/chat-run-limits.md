@@ -36,4 +36,3 @@ Use fake clocks and fake workers/processes for deadline, waiting, expiry and can
 The affected surfaces are Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile. The first four consume existing canonical events and reviewed failure copy; Native Mobile additionally changes its preflight. Local unit tests do not qualify any running surface.
 
 Before review/merge readiness, collect current live screenshots and a short recording for each affected surface, validate Native Mobile on an approved device/runtime, and publish the corresponding public behavior documentation in the private matrix-os-site repository. Follow the repository evidence-sharing policy only when external posting is authorized. Do not deploy unreviewed changes to production to obtain evidence.
-

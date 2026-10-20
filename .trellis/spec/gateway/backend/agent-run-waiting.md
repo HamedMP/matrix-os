@@ -18,4 +18,3 @@ Shared CLI work-inactivity, Claude canonical human controls, managed Pi stop cau
 Cover multiple pending requests, provider output while paused, absolute expiry during human wait, synchronous clock advancement without timer delivery, uncertain writes, cancellation ordering, noncooperative worker/cancel/cleanup, late resources, and Native retries after changing source/model/options.
 
 Local tests do not replace current live evidence on each applicable OS view. Keep spending limits, credential validity, worker bounds and upload/output budgets unchanged unless separately approved.
-
