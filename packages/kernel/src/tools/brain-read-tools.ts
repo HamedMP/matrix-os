@@ -1,7 +1,7 @@
 /**
- * Company Brain read tools for the Matrix agent: brain_search, brain_timeline, brain_claims, brain_brief,
- * brain_conflicts and brain_impact (brain_why lives in brain-why.ts). Each is a thin read-only adapter over the
- * owner-bound BrainAgentReadTools the gateway passes in; only the tools whose method exists are defined.
+ * Company Brain read tools for the Matrix agent: brain_search, brain_timeline, brain_claims, brain_document,
+ * brain_brief, brain_conflicts and brain_impact (brain_why lives in brain-why.ts). Each is a thin read-only adapter
+ * over the owner-bound BrainAgentReadTools the gateway passes in; only the tools whose method exists are defined.
  */
 import { z } from "zod/v4";
 import { BRAIN_BRIEF_DESCRIPTION, BRAIN_BRIEF_INPUT_SHAPE, BRAIN_BRIEF_MESSAGES, renderBrainBrief } from "./brain-brief.js";
@@ -9,6 +9,9 @@ import { BRAIN_CLAIMS_DESCRIPTION, BRAIN_CLAIMS_INPUT_SHAPE, BRAIN_CLAIMS_MESSAG
 import {
   BRAIN_CONFLICTS_DESCRIPTION, BRAIN_CONFLICTS_INPUT_SHAPE, BRAIN_CONFLICTS_MESSAGES, renderBrainConflicts,
 } from "./brain-conflicts.js";
+import {
+  BRAIN_DOCUMENT_DESCRIPTION, BRAIN_DOCUMENT_INPUT_SHAPE, BRAIN_DOCUMENT_MESSAGES, renderBrainDocument,
+} from "./brain-document.js";
 import { BRAIN_IMPACT_DESCRIPTION, BRAIN_IMPACT_INPUT_SHAPE, BRAIN_IMPACT_MESSAGES, renderBrainImpact } from "./brain-impact.js";
 import { createBrainReadHandler, type BrainReadMessages, type BrainReadToolResult } from "./brain-read-format.js";
 import {
@@ -26,6 +29,7 @@ export type { BrainReadToolResult } from "./brain-read-format.js";
 export const BRAIN_READ_IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__brain_search", "mcp__matrix-os-ipc__brain_timeline", "mcp__matrix-os-ipc__brain_claims",
   "mcp__matrix-os-ipc__brain_brief", "mcp__matrix-os-ipc__brain_conflicts", "mcp__matrix-os-ipc__brain_impact",
+  "mcp__matrix-os-ipc__brain_document",
 ] as const;
 
 /** One tool for createSdkMcpServer: tool(name, description, inputShape, handler, { annotations: { readOnlyHint } }). */
@@ -46,7 +50,7 @@ function define<TShape extends z.ZodRawShape, TView>(
   description: string,
   inputShape: TShape,
   call: (input: z.output<z.ZodObject<TShape>>) => Promise<BrainAgentResult<TView>>,
-  render: (view: TView) => { readonly text: string; readonly external: boolean },
+  render: (view: TView, input: z.output<z.ZodObject<TShape>>) => { readonly text: string; readonly external: boolean },
   messages: BrainReadMessages,
 ): BrainReadToolDefinition {
   const schema = z.object(inputShape).strict();
@@ -64,11 +68,13 @@ function define<TShape extends z.ZodRawShape, TView>(
 export function brainReadToolDefinitions(tools: BrainAgentReadTools): BrainReadToolDefinition[] {
   const definitions: BrainReadToolDefinition[] = [];
   const limits = BRAIN_AGENT_TOOL_LIMITS;
-  const { search, timeline, claims, brief, conflicts, impact } = tools;
+  const { search, timeline, claims, brief, conflicts, document, impact } = tools;
+  // Document ids are printed only where brain_document can read them.
+  const ids = { ids: document !== undefined };
   if (search) {
     definitions.push(define("brain_search", BRAIN_SEARCH_DESCRIPTION, BRAIN_SEARCH_INPUT_SHAPE,
-      (input) => search.call(tools, { ...input, limit: input.limit ?? limits.search.default }), renderBrainSearch,
-      BRAIN_SEARCH_MESSAGES));
+      (input) => search.call(tools, { ...input, limit: input.limit ?? limits.search.default }),
+      (view) => renderBrainSearch(view, ids), BRAIN_SEARCH_MESSAGES));
   }
   if (timeline) {
     definitions.push(define("brain_timeline", BRAIN_TIMELINE_DESCRIPTION, BRAIN_TIMELINE_INPUT_SHAPE,
@@ -77,8 +83,8 @@ export function brainReadToolDefinitions(tools: BrainAgentReadTools): BrainReadT
   }
   if (claims) {
     definitions.push(define("brain_claims", BRAIN_CLAIMS_DESCRIPTION, BRAIN_CLAIMS_INPUT_SHAPE,
-      (input) => claims.call(tools, { ...input, limit: input.limit ?? limits.claims.default }), renderBrainClaims,
-      BRAIN_CLAIMS_MESSAGES));
+      (input) => claims.call(tools, { ...input, limit: input.limit ?? limits.claims.default }),
+      (view) => renderBrainClaims(view, ids), BRAIN_CLAIMS_MESSAGES));
   }
   if (brief) {
     definitions.push(define("brain_brief", BRAIN_BRIEF_DESCRIPTION, BRAIN_BRIEF_INPUT_SHAPE,
@@ -92,6 +98,10 @@ export function brainReadToolDefinitions(tools: BrainAgentReadTools): BrainReadT
   if (impact) {
     definitions.push(define("brain_impact", BRAIN_IMPACT_DESCRIPTION, BRAIN_IMPACT_INPUT_SHAPE,
       (input) => impact.call(tools, input), renderBrainImpact, BRAIN_IMPACT_MESSAGES));
+  }
+  if (document) {
+    definitions.push(define("brain_document", BRAIN_DOCUMENT_DESCRIPTION, BRAIN_DOCUMENT_INPUT_SHAPE,
+      (input) => document.call(tools, input), renderBrainDocument, BRAIN_DOCUMENT_MESSAGES));
   }
   return definitions;
 }

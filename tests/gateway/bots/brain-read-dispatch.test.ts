@@ -29,12 +29,27 @@ const WHY_PAGE = {
   }],
 };
 
+const DOC_ID = "a".repeat(64);
+const SPEC_CITE = {
+  documentId: DOC_ID, kind: "spec", label: "specs/070-vps-per-user", title: "VPS per user",
+  permalink: "https://github.com/acme/app/blob/main/specs/070-vps-per-user/spec.md", date: "2026-09-01T00:00:00Z",
+};
+const FILLER = Array.from({ length: 60 }, (_, index) => `Filler paragraph ${index} about billing tables and invoices. ${"x".repeat(300)}`);
+const SPEC_BODY = [
+  "# 070 VPS per user", "Each user gets one VPS.", ...FILLER.slice(0, 30),
+  "## Why services-on-host", "A coding agent that runs arbitrary repos needs a real VM boundary, not a shared Docker host.",
+  ...FILLER.slice(30),
+].join("\n\n");
+
 function services(): BotBrainServices & { calls: Array<[string, unknown[]]> } {
   const calls: Array<[string, unknown[]]> = [];
   const record = <T>(name: string, value: T) => vi.fn(async (...args: unknown[]) => { calls.push([name, args]); return value; });
   return {
     calls,
-    project: { why: record("why", WHY_PAGE), listClaims: record("claims", { kind: null, path: null, match: null, items: [], nextCursor: null }) } as never,
+    project: {
+      why: record("why", WHY_PAGE), listClaims: record("claims", { kind: null, path: null, match: null, items: [], nextCursor: null }),
+      readDocument: record("document", { cite: SPEC_CITE, body: SPEC_BODY }),
+    } as never,
     search: { search: record("search", SEARCH_VIEW) } as never,
     graph: { timeline: record("timeline", { entity: { kind: "file", key: "a.ts", displayName: "a.ts" }, items: [], nextCursor: null, freshness: SEARCH_VIEW.freshness }) } as never,
     brief: {
@@ -95,6 +110,30 @@ describe("brain.read in the bot broker", () => {
     }
     await expect(tools.dispatch(binding(), request({ tool: "search", project: PROJECT, input: { query: "x" } }), signal)).resolves.toBeDefined();
     expect(brain.calls.map(([name]) => name)).toEqual(["search"]);
+  });
+
+  it("reads a cited document for the thread's project and shows the parts that match the question", async () => {
+    const brain = services();
+    const tools = createBotToolDispatcher({ homePath: "/tmp", brainRead: createBotBrainRead(brain) });
+    const { result } = await tools.dispatch(binding(), request({ tool: "document", input: { id: DOC_ID, query: "why VM boundary docker" } }), signal);
+    expect(brain.calls).toEqual([["document", [OWNER, PROJECT, DOC_ID]]]);
+    const text = result.ok ? result.content.map((part) => part.text).join("") : "";
+    expect(text).toContain("<<<EXTERNAL_UNTRUSTED_CONTENT");
+    expect(text).toContain(SPEC_CITE.permalink);
+    expect(text).toContain("## Why services-on-host");
+    expect(text).toContain("needs a real VM boundary, not a shared Docker host.");
+    expect(text).toContain("Each user gets one VPS.");
+    expect(text).not.toContain("Filler paragraph 59 ");
+    expect(text.length).toBeLessThan(16_000);
+    for (const args of [
+      { tool: "document", project: "proj_other", input: { id: DOC_ID } },
+      { tool: "document", input: { id: DOC_ID, project: "proj_other" } },
+      { tool: "document", input: { id: "doc_1" } },
+      { tool: "document", input: { id: DOC_ID, offset: -1 } },
+    ]) {
+      await expect(tools.dispatch(binding(), request(args), signal)).rejects.toEqual(new BotBrokerActionError("invalid_arguments"));
+    }
+    expect(brain.calls).toHaveLength(1);
   });
 
   it("needs a named project in the bot's direct chat and passes it to the owner-scoped services", async () => {

@@ -33,20 +33,32 @@ export const BRAIN_SEARCH_INPUT_SHAPE = {
 
 const CLAIM_WORDS = { invariant: "Invariant", decision: "Decision", commitment: "Commitment", risk: "Risk" } as const;
 
-function hitBlock(hit: BrainSearchHitView, position: number): string {
+/** Options of the answer text. ids: print each document id for brain_document (only where that tool exists). */
+export interface BrainDocumentIdOptions { readonly ids?: boolean }
+
+/** "   Document id: <id>" for brain_document, or nothing. */
+export function documentIdLines(documentId: string | undefined, options: BrainDocumentIdOptions): string[] {
+  return options.ids && documentId !== undefined && /^[a-f0-9]{64}$/.test(documentId)
+    ? [`   Document id: ${documentId}`] : [];
+}
+
+function hitBlock(hit: BrainSearchHitView, position: number, options: BrainDocumentIdOptions): string {
   if (hit.claim) {
     const stale = hit.claim.stale ? " [stale]" : "";
     const label = hit.claim.label ? ` (${oneLine(hit.claim.label, 80)})` : "";
     return [
       `${position}. ${CLAIM_WORDS[hit.claim.kind] ?? "Claim"} in ${citeText(hit.cite)}${stale}`,
       ...permalinkLines(hit.cite),
+      ...documentIdLines(hit.cite.documentId, options),
       `   Claim${label}: ${oneLine(hit.claim.statement)}`,
     ].join("\n");
   }
   const snippet = hit.snippet;
   const text = `${snippet.truncatedStart ? "..." : ""}${oneLine(snippet.text)}${snippet.truncatedEnd ? "..." : ""}`;
-  return [`${position}. ${citeText(hit.cite)}`, ...permalinkLines(hit.cite), ...(text ? [`   Match: ${text}`] : [])]
-    .join("\n");
+  return [
+    `${position}. ${citeText(hit.cite)}`, ...permalinkLines(hit.cite), ...documentIdLines(hit.cite.documentId, options),
+    ...(text ? [`   Match: ${text}`] : []),
+  ].join("\n");
 }
 
 function noticeClause(view: BrainSearchView): string {
@@ -59,20 +71,20 @@ function noticeClause(view: BrainSearchView): string {
   return parts.join("");
 }
 
-export function formatBrainSearch(view: BrainSearchView): string {
+export function formatBrainSearch(view: BrainSearchView, options: BrainDocumentIdOptions = {}): string {
   const how = view.mode === "hybrid" ? "best first (words and meaning)" : "best first";
   const tail = `${noticeClause(view)}${freshnessClause(view.freshness)}`;
   return composeAnswer({
     maxChars: BRAIN_AGENT_TEXT_MAX_CHARS.brain_search,
     header: (shown) => `Search "${oneLine(view.q, 500)}": ${shown} ${shown === 1 ? "result" : "results"}, ${how}.${tail}`,
-    blocks: view.items.map((hit, index) => hitBlock(hit, index + 1)),
+    blocks: view.items.map((hit, index) => hitBlock(hit, index + 1, options)),
     more: moreLine("brain_search", view.nextCursor),
     leftOut: pagedLeftOut("result", "results"),
   });
 }
 
-export function renderBrainSearch(view: BrainSearchView): BrainReadAnswer {
-  if (view.items.length > 0) return { text: formatBrainSearch(view), external: true };
+export function renderBrainSearch(view: BrainSearchView, options: BrainDocumentIdOptions = {}): BrainReadAnswer {
+  if (view.items.length > 0) return { text: formatBrainSearch(view, options), external: true };
   if (view.notices.includes("query_empty_after_parse")) {
     return {
       text: "That query has no searchable words. Use letters or digits, quote a phrase, or end a word with * for a prefix.",

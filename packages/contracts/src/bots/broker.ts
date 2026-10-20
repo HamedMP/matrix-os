@@ -39,7 +39,7 @@ export const BotToolCapabilitySchema = z.enum([
 ]);
 
 /** Company Brain views a Bot may read (spec 567). `impact` is not one of them. */
-export const BotBrainReadToolSchema = z.enum(["search", "why", "timeline", "claims", "brief", "conflicts"]);
+export const BotBrainReadToolSchema = z.enum(["search", "why", "timeline", "claims", "document", "brief", "conflicts"]);
 export const BOT_BRAIN_READ_INPUT_MAX_BYTES = 4 * 1024;
 /** A project id or slug, as the Company Brain tools accept it. */
 const BrainProjectRefSchema = z.string().regex(/^(?:proj_[A-Za-z0-9_-]{1,128}|[a-z0-9][a-z0-9-]{0,62})$/);

@@ -153,7 +153,7 @@ export function wrapBrainAnswer(answer: BrainReadAnswer): string {
 export function createBrainReadHandler<TInput, TView>(options: {
   readonly tool: BrainReadToolName;
   readonly call: (input: TInput) => Promise<BrainAgentResult<TView>>;
-  readonly render: (view: TView) => BrainReadAnswer;
+  readonly render: (view: TView, input: TInput) => BrainReadAnswer;
   readonly messages: BrainReadMessages;
 }) {
   return async (input: TInput): Promise<BrainReadToolResult> => {
@@ -163,7 +163,7 @@ export function createBrainReadHandler<TInput, TView>(options: {
       if (result.status === "invalid") return textResult(options.messages.invalid);
       if (result.status === "not_configured") return textResult(options.messages.notConfigured ?? NOT_CONFIGURED);
       if (result.status !== "ok") return textResult(UNAVAILABLE, true);
-      return textResult(wrapBrainAnswer(options.render(result)));
+      return textResult(wrapBrainAnswer(options.render(result, input)));
     } catch (error: unknown) {
       console.error(`[brain-read] ${options.tool} failed:`, error instanceof Error ? error.name : typeof error);
       return textResult(UNAVAILABLE, true);

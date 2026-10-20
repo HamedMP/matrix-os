@@ -3,7 +3,9 @@ import type { BotToolRequest } from "@matrix-os/contracts";
 import type { BotBrokerClient } from "../../packages/bot-runtime/src/broker-client.js";
 import { capabilityForToolName, createBotTools } from "../../packages/bot-runtime/src/tools.js";
 
-const BRAIN_TOOLS = ["brain_search", "brain_why", "brain_timeline", "brain_claims", "brain_brief", "brain_conflicts"];
+const BRAIN_TOOLS = [
+  "brain_search", "brain_why", "brain_timeline", "brain_claims", "brain_document", "brain_brief", "brain_conflicts",
+];
 
 function broker(reply = "1. PR #12 - 2026-10-01 - Bot chats") {
   const requests: BotToolRequest[] = [];
@@ -21,7 +23,7 @@ const tools = (capabilities: Parameters<typeof createBotTools>[0]["capabilities"
   createBotTools({ capabilities, broker: client, state: { waitingForPerson: false, effectUnknown: false } });
 
 describe("brain read tools for bots", () => {
-  it("shows exactly the six brain tools with brain.read and none without it", () => {
+  it("shows exactly the seven brain tools with brain.read and none without it", () => {
     expect(tools(["brain.read"]).map((tool) => tool.name)).toEqual(BRAIN_TOOLS);
     expect(tools(["artifact.read", "memory.search", "interaction.create"]).map((tool) => tool.name))
       .not.toEqual(expect.arrayContaining(["brain_search"]));

@@ -6,6 +6,7 @@ import {
 import {
   BRAIN_AGENT_TEXT_MAX_CHARS, BRAIN_AGENT_TOOL_LIMITS, BRAIN_CLAIM_KINDS, type BrainClaimsView, type BrainClaimView,
 } from "./brain-read-types.js";
+import { documentIdLines, type BrainDocumentIdOptions } from "./brain-search.js";
 
 const LIMITS = BRAIN_AGENT_TOOL_LIMITS.claims;
 
@@ -35,12 +36,13 @@ function fieldsText(claim: BrainClaimView): string {
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 
-function claimBlock(claim: BrainClaimView, position: number): string {
+function claimBlock(claim: BrainClaimView, position: number, options: BrainDocumentIdOptions): string {
   const stale = claim.stale ? " [stale]" : "";
   const label = claim.label ? `${oneLine(claim.label, 80)}: ` : "";
   return [
     `${position}. ${KIND_WORDS[claim.kind]?.[0] ?? "Claim"} in ${citeText(claim.document)}${stale}`,
     ...permalinkLines(claim.document),
+    ...documentIdLines(claim.document.documentId, options),
     `   ${label}${oneLine(claim.statement)}${fieldsText(claim)}`,
   ].join("\n");
 }
@@ -51,18 +53,18 @@ function filterText(view: BrainClaimsView): string {
   return `${what} for ${oneLine(view.path, 1024)}${view.match === "folder" ? "/" : ""}`;
 }
 
-export function formatBrainClaims(view: BrainClaimsView): string {
+export function formatBrainClaims(view: BrainClaimsView, options: BrainDocumentIdOptions = {}): string {
   return composeAnswer({
     maxChars: BRAIN_AGENT_TEXT_MAX_CHARS.brain_claims,
     header: (shown) => `${filterText(view)}: ${shown} ${shown === 1 ? "claim" : "claims"}, newest document first.`,
-    blocks: view.items.map((claim, index) => claimBlock(claim, index + 1)),
+    blocks: view.items.map((claim, index) => claimBlock(claim, index + 1, options)),
     more: moreLine("brain_claims", view.nextCursor),
     leftOut: pagedLeftOut("claim", "claims"),
   });
 }
 
-export function renderBrainClaims(view: BrainClaimsView): BrainReadAnswer {
-  if (view.items.length > 0) return { text: formatBrainClaims(view), external: true };
+export function renderBrainClaims(view: BrainClaimsView, options: BrainDocumentIdOptions = {}): BrainReadAnswer {
+  if (view.items.length > 0) return { text: formatBrainClaims(view, options), external: true };
   return {
     text: `${filterText(view)}: none found. Claims come from the last extraction; newer documents appear after the ` +
       "next extraction run.",

@@ -29,6 +29,10 @@ export interface BrainAgentClaimsInput {
 }
 export interface BrainAgentBriefInput { readonly project: string; readonly date?: string; readonly window?: BrainBriefWindow }
 export interface BrainAgentConflictsInput { readonly project: string; readonly limit?: number; readonly cursor?: string }
+/** id: a document id printed by another brain tool. query: the question's words. offset: a character to read on from. */
+export interface BrainAgentDocumentInput {
+  readonly project: string; readonly id: string; readonly query?: string; readonly offset?: number;
+}
 export interface BrainAgentImpactInput {
   readonly project: string; readonly head: string; readonly base?: string; readonly depth?: 1 | 2;
 }
@@ -76,8 +80,8 @@ export interface BrainTimelineView {
 }
 
 export interface BrainClaimDocumentView {
-  readonly kind: "pr" | "commit" | "spec" | "document"; readonly label: string; readonly title: string;
-  readonly permalink: string; readonly date: string;
+  readonly documentId?: string; readonly kind: "pr" | "commit" | "spec" | "document"; readonly label: string;
+  readonly title: string; readonly permalink: string; readonly date: string;
 }
 export interface BrainClaimView {
   readonly kind: BrainClaimKind; readonly label: string | null; readonly statement: string;
@@ -114,6 +118,9 @@ export interface BrainConflictView {
 }
 export interface BrainConflictsView { readonly items: readonly BrainConflictView[]; readonly nextCursor: string | null }
 
+/** One live document: its cite and its whole stored body (at most 64 KiB). */
+export interface BrainDocumentView { readonly cite: BrainCiteView; readonly body: string }
+
 export type BrainImpactChangeStatus = "added" | "modified" | "deleted" | "renamed" | "type_changed";
 export interface BrainImpactClaim {
   readonly kind: "invariant" | "decision"; readonly label: string | null; readonly statement: string;
@@ -147,6 +154,7 @@ export interface BrainAgentReadTools {
   claims?(input: BrainAgentClaimsInput): Promise<BrainAgentResult<BrainClaimsView>>;
   brief?(input: BrainAgentBriefInput): Promise<BrainAgentResult<BrainBriefView>>;
   conflicts?(input: BrainAgentConflictsInput): Promise<BrainAgentResult<BrainConflictsView>>;
+  document?(input: BrainAgentDocumentInput): Promise<BrainAgentResult<BrainDocumentView>>;
   impact?(input: BrainAgentImpactInput): Promise<BrainAgentResult<BrainImpactView>>;
 }
 
@@ -158,6 +166,6 @@ export const BRAIN_AGENT_TOOL_LIMITS = {
 /** Characters of one answer before the untrusted-content wrapper. */
 export const BRAIN_AGENT_TEXT_MAX_CHARS = {
   brain_search: 8_000, brain_timeline: 8_000, brain_claims: 8_000, brain_brief: 10_000, brain_conflicts: 8_000,
-  brain_impact: 12_000,
+  brain_impact: 12_000, brain_document: 14_000,
 } as const;
 export type BrainReadToolName = keyof typeof BRAIN_AGENT_TEXT_MAX_CHARS;

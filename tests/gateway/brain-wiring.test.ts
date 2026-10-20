@@ -375,7 +375,8 @@ describe("mounted routes", { timeout: 60_000 }, () => {
       ownerId: "owner_a", project: services!.project, search: services!.search, graph: services!.graph,
       brief: services!.brief, impact: services!.impact,
     });
-    expect(Object.keys(tools ?? {}).sort()).toEqual(["brief", "claims", "conflicts", "impact", "search", "timeline"]);
+    expect(Object.keys(tools ?? {}).sort())
+      .toEqual(["brief", "claims", "conflicts", "document", "impact", "search", "timeline"]);
     expect(brainReadIpcToolNames(tools)).toEqual([...BRAIN_READ_IPC_TOOL_NAMES]);
   });
 });

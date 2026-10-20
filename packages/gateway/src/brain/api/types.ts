@@ -8,6 +8,7 @@
 import type { createProjectManager } from "../../project-manager.js";
 import type { BrainClaimModelProvider } from "../claims/model/types.js";
 import type { BrainExtractionLimits, BrainExtractionOptions, BrainExtractionResult } from "../claims/types.js";
+import type { BrainCiteView } from "../contracts.js";
 import type {
   GitSyncErrorCode,
   GitSyncInfoCode,
@@ -282,7 +283,12 @@ export interface BrainProjectService {
   extract(ownerId: string, projectRef: string, input: BrainExtractInput, signal?: AbortSignal): Promise<BrainExtractView>;
   /** Read-only; never extracts. */
   listClaims(ownerId: string, projectRef: string, query: BrainClaimsQuery): Promise<BrainClaimsView>;
+  /** Read-only: one live document of the project; a missing or tombstoned one is entity_not_found. */
+  readDocument(ownerId: string, projectRef: string, documentId: string): Promise<BrainDocumentReadView>;
 }
+
+/** One live document: its cite (the shared cite rule) and its whole stored body, at most BRAIN_DOCUMENT_MAX_BYTES. */
+export interface BrainDocumentReadView { readonly cite: BrainCiteView; readonly body: string }
 
 // Errors.
 

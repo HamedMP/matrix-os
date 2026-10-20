@@ -3,12 +3,15 @@
  * fixture repository, with a stub project lookup that only owner_a can see.
  */
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { brainReadToolDefinitions } from "../../packages/kernel/src/tools/brain-read-tools.js";
+import { createBrainAgentReadTools } from "../../packages/gateway/src/brain/agent/index.js";
 import { createBrainAgentTools } from "../../packages/gateway/src/brain/api/agent-tools.js";
 import { createBrainProjectService, startBrainProjectService } from "../../packages/gateway/src/brain/api/service.js";
 import {
   BRAIN_STORE_ERROR_API_CODES, BrainApiError, brainProjectScope,
   type BrainApiErrorCode, type BrainGitSync, type BrainProjectLookup, type BrainProjectServiceDeps,
 } from "../../packages/gateway/src/brain/api/types.js";
+import { BrainFeatureError } from "../../packages/gateway/src/brain/contracts.js";
 import { syncGitSource, type GitSyncErrorCode, type GitSyncResult } from "../../packages/gateway/src/brain/git/index.js";
 import { BrainRepository, BrainStoreError, type BrainSyncReceipt } from "../../packages/gateway/src/brain/index.js";
 import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
@@ -29,7 +32,7 @@ type LookupOptions = { readonly failStatus?: number; readonly checkout?: string 
 /** A BrainApiError's code; a BrainStoreError as `store:<the API code routes map it to>`. */
 async function rejection(promise: Promise<unknown>): Promise<string> {
   const error = await promise.then(() => null, (reason: unknown) => reason);
-  if (error instanceof BrainApiError) return error.code;
+  if (error instanceof BrainApiError || error instanceof BrainFeatureError) return error.code;
   if (error instanceof BrainStoreError) return `store:${BRAIN_STORE_ERROR_API_CODES[error.code]}`;
   return error === null ? "resolved" : "other";
 }
@@ -270,6 +273,36 @@ describe("brain project service", { timeout: 60_000 }, () => {
       `2. PR #1 \u00b7 ${file.items[1]!.date.slice(0, 10)} \u00b7 feat(brain): alpha [inferred link]\n   ${FIXTURE_WEB_BASE}/pull/1\n   Summary: - Adds alpha.`,
     );
     expect(sync).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads one live document of the caller's own project only, for the agent's brain_document tool", async () => {
+    await buildBaseHistory(t.f);
+    const projects = lookup([project(), project({ id: "proj_other", slug: "other" })]);
+    const svc = service(projects);
+    await svc.registerGitSource(OWNER, PROJECT_ID, {});
+    await svc.sync(OWNER, PROJECT_ID);
+    const [summary] = (await t.harness.repository.listDocuments(SCOPE, { limit: 1 })).items;
+    const id = summary!.documentId;
+    const stored = await t.harness.repository.getDocument(SCOPE, id);
+    expect(await svc.readDocument(OWNER, "widgets", id)).toEqual({
+      cite: expect.objectContaining({ documentId: id, permalink: stored!.permalink, title: stored!.title }),
+      body: stored!.body,
+    });
+    expect(await rejection(svc.readDocument("owner_b", PROJECT_ID, id))).toBe("project_not_found");
+    expect(await rejection(svc.readDocument(OWNER, "proj_other", id))).toBe("entity_not_found");
+    expect(await rejection(svc.readDocument(OWNER, PROJECT_ID, "f".repeat(64)))).toBe("entity_not_found");
+
+    const read = (ownerId: string) => brainReadToolDefinitions(createBrainAgentReadTools({
+      ownerId, project: svc, search: null, graph: null, brief: null, impact: null,
+    })!).find((definition) => definition.name === "brain_document")!;
+    const answer = (await read(OWNER).handler({ project: "widgets", id })).content[0]!.text;
+    expect(answer).toContain("<<<EXTERNAL_UNTRUSTED_CONTENT");
+    expect(answer).toContain(`Document id: ${id}`);
+    const notFound = "That document was not found in this project. Use a Document id printed by brain_search or brain_claims.";
+    expect((await read(OWNER).handler({ project: "other", id })).content[0]!.text).toBe(notFound);
+    expect((await read("owner_b").handler({ project: "widgets", id })).content[0]!.text).toBe(notFound);
+    expect((await read(OWNER).handler({ project: "widgets", id: "doc_1" })).content[0]!.text)
+      .toBe("Those arguments are not valid for this Company Brain tool.");
   });
 
   it("defers the brain on a bootstrap deadline and fails closed on any other bootstrap error", async () => {

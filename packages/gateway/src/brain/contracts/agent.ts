@@ -5,7 +5,7 @@
  * result shapes below structurally (the same names, fields and unions). Types and constants only.
  */
 import type { BrainClaimsView } from "../api/claims-types.js";
-import type { BrainProjectService } from "../api/types.js";
+import type { BrainDocumentReadView, BrainProjectService } from "../api/types.js";
 import type { BrainClaimKind } from "../claims/types.js";
 import type { BrainBriefService, BrainBriefView, BrainBriefWindow, BrainConflictsView } from "./brief.js";
 import type { BrainCiteKind } from "./common.js";
@@ -17,12 +17,14 @@ import type { BrainSearchService, BrainSearchView } from "./search.js";
 
 export const BRAIN_AGENT_TOOL_NAMES = [
   "brain_why", "brain_search", "brain_timeline", "brain_claims", "brain_brief", "brain_conflicts", "brain_impact",
+  "brain_document",
 ] as const;
 export type BrainAgentToolName = (typeof BRAIN_AGENT_TOOL_NAMES)[number];
 /** New kernel IPC tool names (options.ts allowedTools); brain_why keeps "mcp__matrix-os-ipc__brain_why". */
 export const BRAIN_READ_IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__brain_search", "mcp__matrix-os-ipc__brain_timeline", "mcp__matrix-os-ipc__brain_claims",
   "mcp__matrix-os-ipc__brain_brief", "mcp__matrix-os-ipc__brain_conflicts", "mcp__matrix-os-ipc__brain_impact",
+  "mcp__matrix-os-ipc__brain_document",
 ] as const;
 
 // Inputs. `project` is a project id or slug (BRAIN_PROJECT_REF_PATTERN); the owner is bound by the gateway, never
@@ -43,6 +45,10 @@ export interface BrainAgentClaimsInput {
 }
 export interface BrainAgentBriefInput { readonly project: string; readonly date?: string; readonly window?: BrainBriefWindow }
 export interface BrainAgentConflictsInput { readonly project: string; readonly limit?: number; readonly cursor?: string }
+/** id: a document id another tool printed; query and offset only pick the slice the kernel tool shows. */
+export interface BrainAgentDocumentInput {
+  readonly project: string; readonly id: string; readonly query?: string; readonly offset?: number;
+}
 export interface BrainAgentImpactInput {
   readonly project: string; readonly head: string; readonly base?: string; readonly depth?: 1 | 2;
 }
@@ -55,7 +61,7 @@ export const BRAIN_AGENT_TOOL_LIMITS = {
 /** Characters of one tool answer, before the untrusted-content wrapper; items that would pass it are left out. */
 export const BRAIN_AGENT_TEXT_MAX_CHARS: Readonly<Record<Exclude<BrainAgentToolName, "brain_why">, number>> = {
   brain_search: 8_000, brain_timeline: 8_000, brain_claims: 8_000, brain_brief: 10_000, brain_conflicts: 8_000,
-  brain_impact: 12_000,
+  brain_impact: 12_000, brain_document: 14_000,
 };
 
 // Results.
@@ -80,6 +86,7 @@ export interface BrainAgentReadTools {
   claims?(input: BrainAgentClaimsInput): Promise<BrainAgentResult<BrainClaimsView>>;
   brief?(input: BrainAgentBriefInput): Promise<BrainAgentResult<BrainBriefView>>;
   conflicts?(input: BrainAgentConflictsInput): Promise<BrainAgentResult<BrainConflictsView>>;
+  document?(input: BrainAgentDocumentInput): Promise<BrainAgentResult<BrainDocumentReadView>>;
   impact?(input: BrainAgentImpactInput): Promise<BrainAgentResult<BrainImpactView>>;
 }
 

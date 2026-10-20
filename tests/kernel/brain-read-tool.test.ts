@@ -21,6 +21,7 @@ function allTools(): Required<BrainAgentReadTools> {
     brief: vi.fn(async () => ({ status: "not_configured" as const })),
     conflicts: vi.fn(async () => ({ status: "unavailable" as const })),
     impact: vi.fn(async () => { throw new TypeError("secret /home/path"); }),
+    document: vi.fn(async () => ({ status: "not_found" as const })),
   };
 }
 
@@ -37,6 +38,7 @@ describe("brain read tool definitions", () => {
     const tools = allTools();
     expect(brainReadToolDefinitions(tools).map((entry) => entry.name)).toEqual([
       "brain_search", "brain_timeline", "brain_claims", "brain_brief", "brain_conflicts", "brain_impact",
+      "brain_document",
     ]);
     expect(brainReadIpcToolNames(tools)).toEqual([...BRAIN_READ_IPC_TOOL_NAMES]);
     expect(brainReadIpcToolNames({ claims: tools.claims, impact: tools.impact })).toEqual([

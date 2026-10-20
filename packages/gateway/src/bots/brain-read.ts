@@ -25,7 +25,8 @@ export type BotBrainServices = Pick<BrainServices, "project" | "search" | "graph
 export type BotBrainRead = (binding: BotRuntimeBinding, args: BrainReadArgs) => Promise<BotToolResult>;
 
 const KERNEL_NAMES: Record<Exclude<BotBrainReadTool, "why">, string> = {
-  search: "brain_search", timeline: "brain_timeline", claims: "brain_claims", brief: "brain_brief", conflicts: "brain_conflicts",
+  search: "brain_search", timeline: "brain_timeline", claims: "brain_claims", document: "brain_document",
+  brief: "brain_brief", conflicts: "brain_conflicts",
 };
 const WhyInputSchema = z.object(BRAIN_WHY_INPUT_SHAPE).strict();
 const MAX_TEXT_PART_CHARS = 60 * 1024;

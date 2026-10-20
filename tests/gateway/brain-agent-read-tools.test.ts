@@ -49,9 +49,10 @@ describe("createBrainAgentReadTools", () => {
     expect(createBrainAgentReadTools({ ownerId: "owner_a", project: null, search: null, graph: null, brief: null, impact: null }))
       .toBeUndefined();
     const all = createBrainAgentReadTools(depsOf(fakes));
-    expect(Object.keys(all ?? {}).sort()).toEqual(["brief", "claims", "conflicts", "impact", "search", "timeline"]);
+    expect(Object.keys(all ?? {}).sort())
+      .toEqual(["brief", "claims", "conflicts", "document", "impact", "search", "timeline"]);
     const claimsOnly = createBrainAgentReadTools({ ...depsOf(fakes), search: null, graph: null, brief: null, impact: null });
-    expect(Object.keys(claimsOnly ?? {})).toEqual(["claims"]);
+    expect(Object.keys(claimsOnly ?? {})).toEqual(["claims", "document"]);
     const noProject = createBrainAgentReadTools({ ...depsOf(fakes), project: null });
     expect(Object.keys(noProject ?? {}).sort()).toEqual(["brief", "conflicts", "impact", "search", "timeline"]);
     // The kernel registers the gateway object as its structural mirror.

@@ -1,6 +1,7 @@
 /**
- * The Matrix agent's Company Brain read tools (brain_search ... brain_impact): binds one owner (the run's caller),
- * passes each call to its feature service and maps every failure to one of the fixed statuses the kernel tools show.
+ * The Matrix agent's Company Brain read tools (brain_search ... brain_impact, brain_document): binds one owner (the
+ * run's caller), passes each call to its feature service and maps every failure to one of the fixed statuses the
+ * kernel tools show.
  * brain_why keeps its own adapter in api/agent-tools.ts.
  */
 import { z } from "zod/v4";
@@ -74,6 +75,7 @@ export function createBrainAgentReadTools(deps: BrainAgentReadToolsDeps): BrainA
         ...(input.kind ? { kind: input.kind } : {}), ...(input.path ? { path: input.path } : {}),
         ...(input.cursor ? { cursor: input.cursor } : {}),
       })),
+      document: bind("brain_document", (input) => project.readDocument(ownerId, input.project, input.id)),
     } : {}),
     ...(brief ? {
       brief: bind("brain_brief", (input) => brief.getBrief(ownerId, input.project, {

@@ -7,7 +7,9 @@
  */
 import type { Kysely } from "kysely";
 import type { ProjectConfig } from "../../project-manager.js";
+import { loadBrainCites } from "../cite.js";
 import { createBrainClaimModelProvider, parseBrainModelConfig } from "../claims/model/config.js";
+import { BrainFeatureError } from "../contracts.js";
 import { GIT_SOURCE_KIND, parseWebBase, syncGitSource, type GitSyncResult } from "../git/index.js";
 import {
   BRAIN_SOURCE_LABEL_MAX_CHARS, BrainRepository, type BrainDatabase, type BrainScopeKey, type BrainSource,
@@ -190,6 +192,16 @@ export function createBrainProjectService(deps: BrainProjectServiceDeps): BrainP
           lastSync: toLastSync(receipts[0]),
         },
       };
+    },
+
+    async readDocument(ownerId, projectRef, documentId) {
+      const { scope } = await resolveProject(ownerId, projectRef);
+      // Both reads carry the resolved owner and scope; a document of another project or owner is never found.
+      const document = await deps.repository.getDocument(scope, documentId);
+      const cite = document === null ? undefined
+        : (await loadBrainCites(deps.repository.kysely, scope, [document.documentId])).get(document.documentId);
+      if (document === null || cite === undefined) throw new BrainFeatureError("entity_not_found");
+      return { cite, body: document.body };
     },
 
     ...createClaimMethods(deps, resolveProject),

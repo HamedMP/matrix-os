@@ -67,6 +67,18 @@ const SHAPES: readonly BrainToolShape[] = [
     fields: { kind: oneOf(CLAIM_KINDS), path: PATH, limit: limit(50, 10, "Claims"), cursor: cursor(640) },
   },
   {
+    name: "brain_document", tool: "document",
+    description: "Read the text of one document that brain_search or brain_claims returned, by the \"Document id\" "
+      + "printed under it. With query, shows the opening and the parts that best match those words; with offset, the "
+      + "text from that character on. Use it to find the reason or detail a short match leaves out.",
+    fields: {
+      id: Type.String({ pattern: "^[a-f0-9]{64}$", description: "The Document id printed by brain_search or brain_claims." }),
+      query: Type.String({ minLength: 1, maxLength: 500, description: "Key words of the question." }),
+      offset: Type.Integer({ minimum: 0, maximum: 1_000_000, description: "Character to read on from, as a previous answer printed." }),
+    },
+    required: ["id"],
+  },
+  {
     name: "brain_brief", tool: "brief",
     description: "Read the project brief: what needs attention, new decisions, open commitments, new risks and what "
       + "changed, each line with its source. Window day (default) or week (the seven days ending on the date).",
