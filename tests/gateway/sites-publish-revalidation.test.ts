@@ -46,6 +46,30 @@ async function expectConflict(duringBuild: () => Promise<void>) {
  expect(platform.request).not.toHaveBeenCalled();
 }
 describe('publication manifest checks after asynchronous build/collection', () => {
+ it.each([
+  { declared: 180, duration: 150000, status: 200 },
+  { declared: 45, duration: 60000, status: 400 },
+  { declared: 600, duration: 250000, status: 200 },
+  { declared: 600, duration: 271000, status: 503 },
+ ])('honors a $declared second build declaration for $duration ms of work within the publication deadline', async ({ declared, duration, status }) => {
+  await save({ ...initial(), build: { ...initial().build, timeout: declared } });
+  const started = Date.now(), platform = { request: vi.fn().mockResolvedValue({ id: 'site' }) };
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(started);
+  try {
+   const build = siteBuildFixture({ build: vi.fn(async (_slug: string, _dir: string, opts: { timeoutMs?: number }) => {
+    // Model the production orchestrator's declared-timeout fallback and stop.
+    const allowed = opts.timeoutMs ?? declared * 1000;
+    vi.setSystemTime(started + Math.min(duration, allowed));
+    return { ok: duration <= allowed };
+   }) });
+   const app = new Hono();
+   app.use('*', async (c, next) => { markAuthContextReady(c); setPlatformVerifiedPrincipal(c, 'owner'); await next(); });
+   app.route('/', createSiteRoutes({ homePath: home, ownerIds: ['owner'], platform, build, submissions: null }));
+   const response = await app.request('/api/apps/event/site', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reviewedConfig: config }) });
+   expect(response.status).toBe(status);
+   expect(platform.request).toHaveBeenCalledTimes(status === 200 ? 1 : 0);
+  } finally { vi.useRealTimers(); }
+ });
  it('reads live publishing data even while the app index still caches its old manifest', async () => {
   await expectConflict(() => save({ ...initial(), publishing: { ...config, data: { ...config.data, privateAddress: 'unreviewed' } } }));
   expect(collectSiteFiles).not.toHaveBeenCalled();
