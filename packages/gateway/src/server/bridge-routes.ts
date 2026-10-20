@@ -1,3 +1,5 @@
+import {communityRecord} from '../app-store/provenance.js';
+import {communityQueryAllowed} from '../app-store/runtime-policy.js';
 /** Legacy app data bridge routes retained during gateway startup extraction. */
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
@@ -78,6 +80,9 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
     }
     const body = parsedBody.data;
     const action = body.action;
+    const identity=c.req.header('x-matrix-app-identity')??('app' in body?body.app:'');
+    const community=await communityRecord(homePath,identity);
+    if(community&&!communityQueryAllowed(community,identity,{...body,...('app' in body?{app:body.app}: {})}))return c.json({error:'App access denied'},403);
     const appSlug = action === "listApps" ? "" : body.app;
     const safeTable = "table" in body ? body.table : "";
 
@@ -177,6 +182,7 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
     "geocoding-api.open-meteo.com",
   ]);
   app.get("/api/bridge/proxy", async (c) => {
+    if(await communityRecord(homePath,c.req.header('x-matrix-app-identity')??''))return c.json({error:'App access denied'},403);
     const target = c.req.query("url");
     if (!target || typeof target !== "string" || target.length > 2048) {
       return c.json({ error: "url query param required" }, 400);
@@ -271,6 +277,9 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
       return c.json({ error: "Invalid request body" }, 400);
     }
     const body = parsedBody.data;
+    const identity=c.req.header('x-matrix-app-identity')??body.app;
+    const community=await communityRecord(homePath,identity);
+    if(community&&(body.app.replace(/^apps\//,'')!==community.appSlug||!kvStore))return c.json({error:'App access denied'},403);
 
     const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
     const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomUUID,createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -7,21 +7,34 @@ import { encodeAppBundle, decodeAppBundle, validateBundlePath } from '@matrix-os
 import { dependencyPlan, fetchDependencies } from './dependency-broker.js';
 import { buildSandboxLaunch, sandboxAvailable } from './build-sandbox.js';
 import { STORE_BUILD_DRIVER } from './build-driver.js';
+import {withStoreDirectory,sweepPrivateChildren} from './private-state.js';
 
 export class StoreBuildError extends Error {
  constructor(readonly code:'unavailable'|'build_failed'|'invalid'){super('App build is unavailable');this.name='StoreBuildError';}
 }
-export interface LocalStoreBuilder {build(files:ReadonlyMap<string,Buffer>,signal?:AbortSignal):Promise<Map<string,Buffer>>;close():Promise<void>}
+export interface StoreToolchain {nodeVersion:string;pnpmVersion:string;policyDigest:string}
+export interface StoreBuildResult {files:Map<string,Buffer>;toolchain:StoreToolchain}
+export interface LocalStoreBuilder {build(files:ReadonlyMap<string,Buffer>,signal?:AbortSignal):Promise<StoreBuildResult>;close():Promise<void>}
 const run=promisify(execFile);
 const BLOCKED_CONFIG=/(?:^|\/)(?:\.npmrc|\.pnpmfile\.(?:cjs|js)|pnpm-workspace\.yaml|\.yarnrc(?:\.yml)?)$/;
 export function createLocalStoreBuilder(options:{homePath:string;nodeRoot?:string;available?:()=>boolean;fetcher?:typeof fetch}):LocalStoreBuilder {
- const active=new Set<Promise<Map<string,Buffer>>>(); // Cap two; evicted only on settlement.
+ const active=new Set<Promise<StoreBuildResult>>(); // Cap two; evicted only on settlement.
  const stop=new AbortController();
- async function build(files:ReadonlyMap<string,Buffer>,signal?:AbortSignal):Promise<Map<string,Buffer>> {
+ const sweep=()=>withStoreDirectory(options.homePath,['builds'],dir=>sweepPrivateChildren(dir,/^build-[A-Za-z0-9]+$/,3600_000,32));
+ const timer=setInterval(()=>{if((options.available??sandboxAvailable)())void sweep().catch((error:unknown)=>console.warn('[app-store] Build cleanup unavailable',error instanceof Error?error.name:'UnknownError'));},3600_000);timer.unref();
+ async function build(files:ReadonlyMap<string,Buffer>,signal?:AbortSignal):Promise<StoreBuildResult> {
   if(stop.signal.aborted||active.size>=2||!(options.available??sandboxAvailable)())throw new StoreBuildError('unavailable');
   const abort=AbortSignal.any([stop.signal,...(signal?[signal]:[]),AbortSignal.timeout(180_000)]);
   // Validate bounded paths before writing anything; no submitted command runs outside bwrap.
   try{encodeAppBundle('source',files);}catch(error:unknown){if(error instanceof Error)throw new StoreBuildError('invalid');throw error;}
+  if(await sweep()>=8)throw new StoreBuildError('unavailable');
+  const nodeRoot=options.nodeRoot??'/opt/matrix/runtime/node';
+  const runtimeInfo=await lstat(nodeRoot);if(!runtimeInfo.isDirectory()||![0,process.getuid?.()].includes(runtimeInfo.uid)||(runtimeInfo.mode&0o022)!==0)throw new StoreBuildError('unavailable');
+  const versionEnv={PATH:nodeRoot+'/bin:/usr/bin:/bin',HOME:'/nonexistent',CI:'1'};
+  const [nodeResult,pnpmResult]=await Promise.all([run(join(nodeRoot,'bin/node'),['--version'],{env:versionEnv,cwd:nodeRoot,timeout:5000,maxBuffer:1024}),run(join(nodeRoot,'bin/pnpm'),['--version'],{env:versionEnv,cwd:nodeRoot,timeout:5000,maxBuffer:1024})]);
+  const nodeVersion=nodeResult.stdout.trim(),pnpmVersion=pnpmResult.stdout.trim();
+  if(!/^v24\.\d+\.\d+$/.test(nodeVersion)||pnpmVersion!=='10.33.4')throw new StoreBuildError('unavailable');
+  const policyDigest=createHash('sha256').update(STORE_BUILD_DRIVER).update(JSON.stringify(buildSandboxLaunch({source:'/source',dependencies:'/deps',driver:'/driver.mjs',nodeRoot:'/node',unit:'matrix-store-build-policy',uid:1000}).args)).digest('hex');
   const root=join(options.homePath,'data/app-store/builds');
   await mkdir(root,{recursive:true,mode:0o700});
   const info=await lstat(root);if(!info.isDirectory()||info.isSymbolicLink()||(info.mode&0o077)!==0)throw new StoreBuildError('unavailable');
@@ -49,7 +62,7 @@ export function createLocalStoreBuilder(options:{homePath:string;nodeRoot?:strin
     if(!value||typeof value!=='object'||typeof value.path!=='string'||typeof value.data!=='string'||value.data.length>12*1024*1024||dist.has(value.path))throw new StoreBuildError('build_failed');
     dist.set(value.path,Buffer.from(value.data,'base64'));
    }
-   return decodeAppBundle(encodeAppBundle('dist',dist),{kind:'dist'}).files;
+   return {files:decodeAppBundle(encodeAppBundle('dist',dist),{kind:'dist'}).files,toolchain:{nodeVersion,pnpmVersion,policyDigest}};
   }catch(error:unknown){
    if(error instanceof StoreBuildError)throw error;
    console.warn('[app-store] Isolated build failed',error instanceof Error?error.name:'UnknownError');
@@ -65,5 +78,5 @@ export function createLocalStoreBuilder(options:{homePath:string;nodeRoot?:strin
  }
  return {build(files,signal){
   const pending=build(files,signal);active.add(pending);void pending.finally(()=>active.delete(pending)).catch((error:unknown)=>{if(!(error instanceof Error))console.warn('[app-store] Build promise failed');});return pending;
- },async close(){stop.abort();await Promise.allSettled([...active]);}};
+ },async close(){clearInterval(timer);stop.abort();await Promise.allSettled([...active]);}};
 }

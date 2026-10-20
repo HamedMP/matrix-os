@@ -1,3 +1,4 @@
+import {startAppStoreRuntime} from './app-store/runtime.js';
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
@@ -1428,6 +1429,12 @@ export async function createGateway(config: GatewayConfig) {
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   });
 
+  const appStoreRuntime=await startAppStoreRuntime(app,{homePath,ownerIds:[process.env.MATRIX_USER_ID,process.env.MATRIX_CLERK_USER_ID].filter((value):value is string=>Boolean(value)),platformUrl:internalPlatformUrl,token:internalPlatformToken,handle:internalHandle,notify:async(change)=>{
+    broadcast({type:'app-store:submission',...change});
+    const ownerId=process.env.MATRIX_CLERK_USER_ID??process.env.MATRIX_USER_ID;
+    if(ownerId)await pushAdapter.send({channelId:'push',chatId:'app-store',ownerId,text:change.status==='published'?'Your app is published.':change.status==='changes_requested'?'Your app submission needs changes.':'Your app submission has an update.',metadata:{category:'app-store',versionId:change.versionId,status:change.status}});
+  }});
+
   registerHomeUtilityRoutes({
     app, homePath, conversations, canvasService, dispatcher, cronService,
     channelManager, interactionLogger, broadcast, logBestEffortFailure,
@@ -1999,6 +2006,7 @@ export async function createGateway(config: GatewayConfig) {
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();
+      await appStoreRuntime.close();
       await channelManager.stop();
       customMcp.stop();
       await processManager.shutdownAll();
