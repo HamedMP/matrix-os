@@ -1,5 +1,6 @@
 import {describe,it,expect,vi} from 'vitest';
 import {preparePublishDraft} from '../../../packages/gateway/src/app-store/prepare-draft.js';
+import {StoreGeneralizationLimitError} from '../../../packages/gateway/src/app-store/generalizer-batches.js';
 const manifest={name:'Test App',slug:'test-app',description:'A sample app',version:'1.0.0',runtime:'vite',permissions:[],storage:{tables:{}}};
 const source=()=>new Map([['matrix.json',Buffer.from(JSON.stringify(manifest))],['index.html',Buffer.from('hello')],['package.json',Buffer.from('{}')],['pnpm-lock.yaml',Buffer.from('lockfileVersion: 9.0')]]);
 describe('owner draft preparation',()=>{
@@ -19,4 +20,10 @@ describe('owner draft preparation',()=>{
   await preparePublishDraft({files,ownerTerms:[],generalizer:{generalize},builder:{build:vi.fn()},aiConsent:{accessSourceId:'owner_anthropic_key'},signal:AbortSignal.timeout(1000)});
   expect(files.get('index.html')?.toString()).toContain('sk-ant-');
  });
+});
+
+it('reports bounded generalization as an actionable source limit',async()=>{
+ const build=vi.fn();
+ const result=await preparePublishDraft({files:source(),ownerTerms:[],generalizer:{generalize:async()=>{throw new StoreGeneralizationLimitError('file_size');}},builder:{build},aiConsent:{accessSourceId:'owner_anthropic_key'},signal:AbortSignal.timeout(1000)});
+ expect(result.failureCode).toBe('limits_exceeded');expect(result.status).toBe('needs_attention');expect(build).not.toHaveBeenCalled();
 });
