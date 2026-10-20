@@ -15,6 +15,7 @@ import { Icon } from "./Preview";
 import AppIdentity from "./AppIdentity";
 import GalleryResults from "./GalleryResults";
 import GalleryDetail from "./GalleryDetail";
+import StoreHub from "./StoreHub";
 import { requestAppBuild } from "./build-handoff";
 declare global {
   interface Window {
@@ -22,6 +23,7 @@ declare global {
   }
 }
 export default function App() {
+  const [storeActive, setStoreActive] = useState(false);
   const [buildPrompt, setBuildPrompt] = useState("");
   const [building, setBuilding] = useState(false);
   const buildBusy = useRef(false);
@@ -178,6 +180,8 @@ export default function App() {
   const control = (name: string) => <img src={galleryArtwork(`controls/${name}.svg`)} alt="" aria-hidden="true" />;
   return (
     <main className="gallery" ref={galleryRef}>
+      <StoreHub bridge={window.MatrixOS} onActiveChange={setStoreActive} />
+      <div hidden={storeActive}>
       {active ? <GalleryDetail app={active} connections={connections} pending={pending}
         error={actionErrors[active.id] ?? ""} onClose={() => setSelected(null)} onAction={() => void action(active)} /> : (
       <div className="gallery-content">
@@ -237,6 +241,7 @@ export default function App() {
         </div></section>
         <footer className="gallery-footer"><span>Made for your Matrix computer.</span><span>Real app previews. Example data is labelled. Apps start empty.</span></footer>
       </div>)}
+      </div>
     </main>
   );
 }
