@@ -14,6 +14,7 @@ import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
 // (embed:set-active false) rather than moved off-screen (lesson L14).
 interface EmbedHostCommonProps {
   active?: boolean;
+  visible?: boolean;
   refreshRequest?: number;
   layoutRevision?: string;
   visualScale?: number;
@@ -32,6 +33,7 @@ export default function EmbedHost({
   const {
     kind,
   active: requestedActive = true,
+  visible = requestedActive,
   refreshRequest,
   layoutRevision,
   visualScale = 1,
@@ -200,7 +202,7 @@ export default function EmbedHost({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {slug && requestedActive ? <div className="flex shrink-0 justify-end border-b px-3 py-1.5"><DesktopAppSiteButton key={slug} appSlug={slug} /></div> : null}
+      {slug && visible ? <div className="flex shrink-0 justify-end border-b px-3 py-1.5"><DesktopAppSiteButton key={slug} appSlug={slug} /></div> : null}
     <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
       {snapshotDataUrl ? (
         <img
