@@ -1,6 +1,6 @@
 import {
   DEFAULT_RUNTIME_POLICY,
-  type RuntimeDriver, type RuntimeJob, type RuntimeLease, type RuntimePolicy, type RuntimeStore,
+  type RuntimeDriver, type RuntimeJob, type RuntimeLease, type RuntimePolicy, type RuntimeStore, type RuntimeExecutionControl,
 } from './contracts.js';
 import { runtimeDiagnostic, safeRuntimeDiagnostic } from './diagnostic.js';
 
@@ -12,6 +12,7 @@ export class RuntimeLifecycle {
     private readonly schedule: (at: number) => Promise<void>,
     private readonly now: () => number = Date.now,
     private readonly policy: RuntimePolicy = DEFAULT_RUNTIME_POLICY,
+    private readonly withControl: (operation:()=>Promise<void>)=>Promise<void> = operation=>operation(),
   ) {
     if (policy.heartbeatMs <= 0 || policy.leaseMs < policy.heartbeatMs * 2
       || policy.maxRunMs > 30 * 60_000 || policy.maxRunMs <= 0 || policy.idleGraceMs < 0) {
@@ -25,10 +26,25 @@ export class RuntimeLifecycle {
     if (!lease) return { accepted: false };
     await this.schedule(this.now() + this.policy.heartbeatMs);
     try {
-      await this.driver.start(job.ownerId, await this.store.latestCheckpoint(job.ownerId), lease.generation);
-      await this.driver.execute(job, lease);
-      const finished = await this.store.finish(lease, 'completed', this.now());
-      if (!finished) throw new Error('Runtime lease is no longer current');
+      await this.withControl(async()=>{
+        if(!await this.store.heartbeat(lease,this.now(),this.policy.leaseMs)) throw new Error('Runtime lease is no longer current');
+        await this.driver.start(job.ownerId, await this.store.latestCheckpoint(job.ownerId), lease.generation);
+        // Revocation may fence the owner while native startup is draining.
+        if(!await this.store.heartbeat(lease,this.now(),this.policy.leaseMs)) throw new Error('Runtime lease is no longer current');
+      });
+      const control:RuntimeExecutionControl=async operation=>{
+        let result!:Awaited<ReturnType<typeof operation>>;
+        await this.withControl(async()=>{
+          if(!await this.store.heartbeat(lease,this.now(),this.policy.leaseMs)) throw new Error('Runtime lease is no longer current');
+          result=await operation();
+        });
+        return result;
+      };
+      await this.driver.execute(job,lease,control);
+      await control(async()=>{
+        const finished = await this.store.finish(lease, 'completed', this.now());
+        if (!finished) throw new Error('Runtime lease is no longer current');
+      });
       return { accepted: true };
     } catch (error: unknown) {
       console.error('[workspace-runtime] Execution interrupted', safeRuntimeDiagnostic(error));
@@ -42,8 +58,20 @@ export class RuntimeLifecycle {
   private async interrupt(lease: RuntimeLease): Promise<void> {
     const generation = await this.store.beginInterrupt(lease,this.now());
     if (generation === null) return;
-    await this.driver.cancel(lease);
-    await this.store.fail(lease.ownerId,generation);
+    await this.terminate(lease.ownerId,generation,lease);
+  }
+
+  private async terminate(ownerId:string,generation:number,lease?:RuntimeLease):Promise<void> {
+    await this.withControl(async()=>{
+      // A previous callback may already have released this generation. Recheck
+      // under the DO's shared native-control gate before touching native compute.
+      const current=await this.store.status(ownerId);
+      if(current.placement !== 'pooled' || current.state !== 'interrupting' || current.generation !== generation) return;
+      const now=this.now();
+      await this.driver.cancel(lease ?? {ownerId,jobId:'recovery',generation,expiresAt:now,maxRunAt:now});
+      if(this.store.confirmStopped) await this.store.confirmStopped(ownerId,generation,this.now());
+      else await this.store.fail(ownerId,generation);
+    });
   }
 
   async alarm(ownerId: string): Promise<void> {
@@ -51,10 +79,8 @@ export class RuntimeLifecycle {
     if (summary.placement === 'personal') return;
     const now = this.now();
     if (summary.state === 'interrupting') {
-      try {
-        await this.driver.cancel({ownerId,jobId:'recovery',generation:summary.generation,expiresAt:now,maxRunAt:now});
-        await this.store.fail(ownerId,summary.generation);
-      } finally { await this.schedule(now + this.policy.heartbeatMs); }
+      try { await this.terminate(ownerId,summary.generation); }
+      finally { await this.schedule(now + this.policy.heartbeatMs); }
       return;
     }
     const active = await this.store.active(ownerId, now);
@@ -68,6 +94,10 @@ export class RuntimeLifecycle {
       }
     }
     await this.store.recoverExpired(ownerId, now);
+    if ((await this.store.status(ownerId)).state === 'interrupting') {
+      await this.schedule(now + this.policy.heartbeatMs);
+      return;
+    }
     if (remaining) {
       await this.driver.keepAlive();
       await this.schedule(now + this.policy.heartbeatMs);
@@ -87,10 +117,14 @@ export class RuntimeLifecycle {
       return;
     }
     try {
-      const checkpoint = await this.driver.checkpoint(ownerId, generation);
-      if (!await this.store.saveCheckpoint(ownerId, checkpoint)) throw new Error('Checkpoint fence rejected');
-      await this.driver.stop();
-      if (!await this.store.markSleeping(ownerId, generation)) throw new Error('Sleep fence rejected');
+      await this.withControl(async()=>{
+        const current=await this.store.status(ownerId);
+        if(current.placement !== 'pooled' || current.generation !== generation || current.state !== 'checkpointing') return;
+        const checkpoint = await this.driver.checkpoint(ownerId, generation);
+        if (!await this.store.saveCheckpoint(ownerId, checkpoint)) throw new Error('Checkpoint fence rejected');
+        await this.driver.stop();
+        if (!await this.store.markSleeping(ownerId, generation)) throw new Error('Sleep fence rejected');
+      });
     } catch (error: unknown) {
       console.error('[workspace-runtime] Checkpoint failed', error instanceof Error ? error.name : 'UnknownError');
       await this.store.fail(ownerId, generation);
@@ -100,8 +134,7 @@ export class RuntimeLifecycle {
       if (summary.idleSince !== null && now - summary.idleSince >= retryMs) {
         const nextGeneration = await this.store.beginIdleInterrupt(ownerId,generation,now);
         if (nextGeneration !== null) {
-          await this.driver.cancel({ownerId,jobId:'checkpoint-recovery',generation:nextGeneration,expiresAt:now,maxRunAt:now});
-          await this.store.fail(ownerId,nextGeneration);
+          await this.terminate(ownerId,nextGeneration);
         }
       } else { await this.driver.keepAlive(); }
       await this.schedule(now + this.policy.heartbeatMs);

@@ -1,5 +1,10 @@
 import { WorkspaceRuntime, type WorkspaceRuntimeEnvironment, type RuntimeConnection } from './runtime/durable-object.js';
-import { createPostgresWorkspaceRepository } from './data/repository.js';
+import type { Kysely } from 'kysely';
+import { PostgresComputeAdmissionStore, type AdmissionDatabase } from './data/compute-admission.js';
+import type { ComputeBudgetDatabase } from './data/compute-budget.js';
+import type { WorkspaceDatabase } from './data/repository.js';
+import { runtimePolicyFromEnvironment } from './runtime/contracts.js';
+import { admitWorkspaceChatMessage, createPostgresWorkspaceRepository } from './data/repository.js';
 import { PostgresRuntimeStore } from './data/runtime-store.js';
 import { R2WorkspaceFiles } from './data/files.js';
 import { runWorkspaceFileCleanup } from './data/cleanup.js';
@@ -27,6 +32,9 @@ const authOptions = (env: Environment) => ({
   ...(env.PREVIEW_TOKEN && env.PREVIEW_OWNER_ID ? {previewBearer:{token:env.PREVIEW_TOKEN,ownerId:env.PREVIEW_OWNER_ID}} : {}),
 });
 
+const admissionStore = (db: Kysely<WorkspaceDatabase>) => new PostgresComputeAdmissionStore(
+  db as unknown as Kysely<WorkspaceDatabase & ComputeBudgetDatabase & AdmissionDatabase>, (trx,owner,input)=>admitWorkspaceChatMessage(trx as unknown as Kysely<WorkspaceDatabase>,owner,input));
+
 export class MatrixWorkspaceRuntime extends WorkspaceRuntime {
   protected async openRuntimeConnection(): Promise<RuntimeConnection> {
     const env = this.env as Environment;
@@ -35,7 +43,7 @@ export class MatrixWorkspaceRuntime extends WorkspaceRuntime {
     // Per-connection bounded snapshot; discarded when this job/alarm closes.
     const revisions = new Map<string, number>();
     return {
-      store:new PostgresRuntimeStore(repository.db),
+      store:new PostgresRuntimeStore(repository.db,admissionStore(repository.db).runtimeHooks()),
       resolveCredentials:createPreviewCredentialResolver(env),
       hydrate:owner => hydrateWorkspace(repository,files,owner,revisions),
       publishOutput:(lease,output) => publishRuntimeOutput(repository,files,lease,output,revisions),
@@ -47,7 +55,17 @@ export class MatrixWorkspaceRuntime extends WorkspaceRuntime {
 export default {
   async scheduled(_event: ScheduledController, env: Environment): Promise<void> {
     const repository = createPostgresWorkspaceRepository(env.HYPERDRIVE.connectionString);
-    try { await runWorkspaceFileCleanup(repository,new R2WorkspaceFiles(env.WORKSPACE_FILES)); }
+    try {
+      const admission=admissionStore(repository.db);
+      await admission.dispatch(async job=>{await env.WORKSPACE_JOBS.send(job);},Date.now(),10,env.PREVIEW_OWNER_ID);
+      for (const owner of await admission.reconcileOwners(Date.now(),100)) {
+        if (owner !== env.PREVIEW_OWNER_ID) continue;
+        try { await env.WORKSPACE_RUNTIME.get(env.WORKSPACE_RUNTIME.idFromName(owner)).reconcile(owner); }
+        catch (error) { console.error('[workspace-recovery] rearm deferred',safeRuntimeDiagnostic(error)); }
+      }
+      // Object collection stays hourly; compute recovery runs every minute.
+      if (new Date(_event.scheduledTime).getUTCMinutes() === 17) await runWorkspaceFileCleanup(repository,new R2WorkspaceFiles(env.WORKSPACE_FILES));
+    }
     finally { await repository.close(); }
   },
   async fetch(request: Request, env: Environment): Promise<Response> {
@@ -55,7 +73,8 @@ export default {
       return Response.json({error:'Workspace unavailable'},{status:503,headers:{'Cache-Control':'private, no-store'}});
     }
     const repository = createPostgresWorkspaceRepository(env.HYPERDRIVE.connectionString);
-    const runtime = new PostgresRuntimeStore(repository.db);
+    const admission = admissionStore(repository.db);
+    const runtime = new PostgresRuntimeStore(repository.db,admission.runtimeHooks());
     try {
       if (new URL(request.url).pathname === '/api/workspace/metrics') {
         const owner = env.PREVIEW_ENABLED === '1' ? await createWorkspaceAuthenticator(authOptions(env))(request) : null;
@@ -68,13 +87,11 @@ export default {
         enqueue:async (owner,action) => {
           // The spike has one isolated kernel DB. Never share it across owners.
           if (owner !== env.PREVIEW_OWNER_ID) throw new Error('Compute preview is unavailable');
-          const status = await runtime.status(owner);
-          if (status.placement !== 'pooled') throw new Error('Pooled placement unavailable');
-          const job: RuntimeJob = action.type === 'wake'
-            ? {ownerId:owner,jobId:crypto.randomUUID(),type:'wake'}
-            : {ownerId:owner,jobId:action.idempotencyKey,type:'chat',chatId:action.chatId,message:action.message};
-          await env.WORKSPACE_JOBS.send(parseQueuedJob(job));
-          return {state:'queued',jobId:job.jobId};
+          const admitted = await admission.admit(owner,action,runtimePolicyFromEnvironment(env).maxRunMs,Date.now());
+          // The committed outbox survives an ambiguous send. Scheduled dispatch retries it.
+          try { await admission.dispatch(async job=>{await env.WORKSPACE_JOBS.send(job);},Date.now(),1,owner); }
+          catch (error) { console.error('[workspace-outbox] delivery deferred',safeRuntimeDiagnostic(error)); }
+          return {state:admitted.state,jobId:admitted.jobId,...(admitted.chatId ? {chatId:admitted.chatId} : {})};
         },
       }});
       return await app.fetch(request);
@@ -84,16 +101,20 @@ export default {
     } finally { await repository.close(); }
   },
   async queue(batch: MessageBatch<RuntimeJob>, env: Environment): Promise<void> {
-    for (const message of batch.messages) {
+    const repository=createPostgresWorkspaceRepository(env.HYPERDRIVE.connectionString);
+    const admission=admissionStore(repository.db);
+    try { for (const message of batch.messages) {
       try {
         const job = parseQueuedJob(message.body);
         if (job.ownerId !== env.PREVIEW_OWNER_ID) throw new Error('Compute preview is unavailable');
-        await env.WORKSPACE_RUNTIME.get(env.WORKSPACE_RUNTIME.idFromName(job.ownerId)).run(job);
+        const admitted=await admission.validate(job);
+        if (!admitted) { message.ack(); continue; }
+        await env.WORKSPACE_RUNTIME.get(env.WORKSPACE_RUNTIME.idFromName(admitted.ownerId)).run(admitted);
         message.ack();
       } catch (error) {
         console.error('[workspace-queue] execution unavailable',safeRuntimeDiagnostic(error));
         message.retry({delaySeconds:60});
       }
-    }
+    } } finally { await repository.close(); }
   },
 } satisfies ExportedHandler<Environment, RuntimeJob>;

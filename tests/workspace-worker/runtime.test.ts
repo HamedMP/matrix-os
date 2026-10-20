@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RuntimeControlGate } from '../../packages/workspace-worker/src/runtime/control-gate.js';
 import { RuntimeLifecycle } from '../../packages/workspace-worker/src/runtime/lifecycle.js';
 import { runtimeDiagnostic } from '../../packages/workspace-worker/src/runtime/diagnostic.js';
 import type { RuntimeDriver, RuntimeLease, RuntimeStore, RuntimeSummary } from '../../packages/workspace-worker/src/runtime/contracts.js';
 
-function fixture() {
+function fixture(control?: (operation:()=>Promise<void>)=>Promise<void>) {
   let now = 0;
   let summary: RuntimeSummary = { state: 'running', placement: 'pooled', activeRuns: 0, generation: 1, idleSince: 0 };
   const leases: RuntimeLease[] = [];
@@ -15,14 +16,14 @@ function fixture() {
       leases.push(lease); summary.activeRuns++; return lease;
     }),
     active: vi.fn(async () => leases.filter((l) => l.expiresAt > now)),
-    beginIdleInterrupt: vi.fn(async () => 2),
-    beginInterrupt: vi.fn(async () => 2),
+    beginIdleInterrupt: vi.fn(async () => {summary={...summary,state:"interrupting",generation:2};return 2;}),
+    beginInterrupt: vi.fn(async (lease) => {if(summary.generation!==lease.generation)return null;summary={...summary,state:"interrupting",generation:2};return 2;}),
     heartbeat: vi.fn(async (lease, time, duration) => { lease.expiresAt = time + duration; return true; }),
     finish: vi.fn(async (lease) => { leases.splice(leases.indexOf(lease), 1); summary.activeRuns--; return true; }),
     recoverExpired: vi.fn(async () => undefined),
-    beginCheckpoint: vi.fn(async () => leases.length ? null : 1),
+    beginCheckpoint: vi.fn(async () => {if(leases.length)return null;summary={...summary,state:"checkpointing"};return 1;}),
     saveCheckpoint: vi.fn(async () => true), latestCheckpoint: vi.fn(async () => null),
-    markSleeping: vi.fn(async () => true), fail: vi.fn(async () => undefined),
+    markSleeping: vi.fn(async () => true), confirmStopped: vi.fn(async () => true), fail: vi.fn(async () => undefined),
   } as unknown as RuntimeStore;
   const driver: RuntimeDriver = {
     running: true, start: vi.fn(async () => undefined), execute: vi.fn(async () => undefined),
@@ -31,7 +32,7 @@ function fixture() {
   };
   const schedule = vi.fn(async () => undefined);
   const lifecycle = new RuntimeLifecycle(store, driver, schedule, () => now,
-    { leaseMs: 100, heartbeatMs: 20, idleGraceMs: 30, maxRunMs: 500 });
+    { leaseMs: 100, heartbeatMs: 20, idleGraceMs: 30, maxRunMs: 500 },control);
   return { lifecycle, store, driver, schedule, leases, tick: (n: number) => { now = n; }, personal: () => { summary = { ...summary, placement: 'personal' }; } };
 }
 
@@ -85,7 +86,7 @@ describe('shared runtime active-work lifecycle', () => {
   it('marks a destroyed failed run as failed rather than ready', async () => {
     const f=fixture(); vi.mocked(f.driver.execute).mockRejectedValue(new Error('unavailable'));
     await expect(f.lifecycle.run({ownerId:'owner',jobId:'failed',type:'chat',message:'test'})).rejects.toThrow('interrupted');
-    expect(f.store.fail).toHaveBeenCalledWith('owner',2);
+    expect(f.store.confirmStopped).toHaveBeenCalledWith('owner',2,0);
   });
   it('does not let a late failed execution cancel the replacement generation', async () => {
     const f=fixture(); let reject!: (error:Error)=>void;
@@ -100,4 +101,64 @@ describe('shared runtime active-work lifecycle', () => {
     const f = fixture(); f.leases.push({ownerId:'owner',jobId:'a',generation:1,expiresAt:1000,maxRunAt:500}); f.tick(501);
     const lease = f.leases[0]; await f.lifecycle.alarm('owner'); expect(f.driver.cancel).toHaveBeenCalled(); expect(f.store.beginInterrupt).toHaveBeenCalledWith(lease, 501);
   });
+});
+
+ describe('compute termination proof', () => {
+  it('confirms stop only after native cancellation succeeds', async () => {
+    const f=fixture(); vi.mocked(f.driver.execute).mockRejectedValue(new Error('failed'));
+    await expect(f.lifecycle.run({ownerId:'owner',jobId:'proof',type:'wake'})).rejects.toThrow();
+    expect(f.store.confirmStopped).toHaveBeenCalledWith('owner',2,0);
+    expect(vi.mocked(f.driver.cancel).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(f.store.confirmStopped!).mock.invocationCallOrder[0]);
+  });
+  it('retains unknown holds and quarantine if destruction fails', async () => {
+    const f=fixture(); vi.mocked(f.driver.execute).mockRejectedValue(new Error('failed'));
+    vi.mocked(f.driver.cancel).mockRejectedValue(new Error('unknown termination'));
+    await expect(f.lifecycle.run({ownerId:'owner',jobId:'unknown',type:'wake'})).rejects.toThrow();
+    expect(f.store.confirmStopped).not.toHaveBeenCalled(); expect(f.store.fail).not.toHaveBeenCalled();
+  });
+ });
+
+describe('overlapping termination recovery',()=>{
+ it('does not write failed after confirmed settlement releases the generation',async()=>{
+  const f=fixture();vi.mocked(f.driver.execute).mockRejectedValue(new Error('failed'));
+  await expect(f.lifecycle.run({ownerId:'owner',jobId:'release',type:'wake'})).rejects.toThrow();
+  expect(f.store.confirmStopped).toHaveBeenCalled();expect(f.store.fail).not.toHaveBeenCalled();
+ });
+ it('serializes destruction and rechecks the fence before a second callback',async()=>{
+  const f=fixture();let summary={state:'interrupting',placement:'pooled',activeRuns:0,generation:2,idleSince:0} as RuntimeSummary;
+  vi.mocked(f.store.status).mockImplementation(async()=>summary);
+  let pending:Promise<void>|null=null;
+  const gate=async(action:()=>Promise<void>)=>{const prior=pending??Promise.resolve();const task=prior.then(action);pending=task;try{await task;}finally{if(pending===task)pending=null;}};
+  vi.mocked(f.store.confirmStopped!).mockImplementation(async()=>{summary={...summary,state:'running'};return true;});
+  const create=()=>new RuntimeLifecycle(f.store,f.driver,f.schedule,()=>0,{leaseMs:100,heartbeatMs:20,idleGraceMs:30,maxRunMs:500},gate);
+  await Promise.all([create().alarm('owner'),create().alarm('owner')]);
+  expect(f.driver.cancel).toHaveBeenCalledOnce();expect(f.store.fail).not.toHaveBeenCalled();
+ });
+});
+
+describe('native startup drain before replacement',()=>{
+ it('fences a deferred startup, drains it, then destroys without executing the agent',async()=>{
+  const gate=new RuntimeControlGate();const f=fixture(operation=>gate.run(operation));let release!:()=>void;
+  vi.mocked(f.driver.start).mockImplementation(()=>new Promise<void>(resolve=>{release=resolve;}));
+  const run=f.lifecycle.run({ownerId:'owner',jobId:'startup',type:'wake'}).catch(error=>error);
+  await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
+  f.leases[0].expiresAt=1000;f.tick(501);
+  const alarm=f.lifecycle.alarm('owner');await vi.waitFor(()=>expect(f.store.beginInterrupt).toHaveBeenCalled());
+  expect(f.driver.cancel).not.toHaveBeenCalled();expect(f.store.confirmStopped).not.toHaveBeenCalled();
+  vi.mocked(f.store.heartbeat).mockResolvedValueOnce(false);release();
+  await alarm;expect(await run).toBeInstanceOf(Error);
+  expect(f.driver.execute).not.toHaveBeenCalled();expect(f.driver.cancel).toHaveBeenCalledOnce();expect(f.store.confirmStopped).toHaveBeenCalledOnce();
+ });
+});
+
+describe('interruptible agent execution',()=>{
+ it('destroys a revoked running agent without waiting for its execute promise',async()=>{
+  const gate=new RuntimeControlGate();const f=fixture(operation=>gate.run(operation));let release!:()=>void;
+  vi.mocked(f.driver.execute).mockImplementation(()=>new Promise<void>(resolve=>{release=resolve;}));
+  const run=f.lifecycle.run({ownerId:'owner',jobId:'agent',type:'wake'}).catch(error=>error);
+  await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
+  f.leases[0].expiresAt=1000;f.tick(501);const alarm=f.lifecycle.alarm('owner');
+  try {await vi.waitFor(()=>expect(f.driver.cancel).toHaveBeenCalledOnce(),{timeout:200});}
+  finally {vi.mocked(f.store.heartbeat).mockResolvedValue(false);release();await alarm;await run;}
+ });
 });

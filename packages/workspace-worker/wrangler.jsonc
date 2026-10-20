@@ -5,7 +5,7 @@
   "compatibility_date": "2026-10-10",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
-  "triggers": {"crons":["17 * * * *"]},
+  "triggers": {"crons":["* * * * *"]},
   "vars": {
     "PREVIEW_ENABLED": "1",
     "PREVIEW_OWNER_ID": "shared-spike-owner",

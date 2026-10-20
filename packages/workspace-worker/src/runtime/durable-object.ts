@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { DirectoryBackup } from '@cloudflare/sandbox';
+import { RuntimeControlGate } from './control-gate.js';
 import { RuntimeLifecycle } from './lifecycle.js';
 import { NativeRuntimeDriver, type NativeRuntimeEnvironment, type RuntimeOutput } from './native-driver.js';
 import { runtimePolicyFromEnvironment, type RuntimeJob, type RuntimeLease, type RuntimeStore } from './contracts.js';
@@ -23,6 +24,7 @@ export interface WorkspaceRuntimeEnvironment extends NativeRuntimeEnvironment {
 
 /** Parent composes Postgres/R2; no application state is persisted in DO storage. */
 export abstract class WorkspaceRuntime extends DurableObject<WorkspaceRuntimeEnvironment> {
+  private readonly control=new RuntimeControlGate();
   protected abstract openRuntimeConnection(): Promise<RuntimeConnection>;
   constructor(ctx: DurableObjectState, env: WorkspaceRuntimeEnvironment) {
     super(ctx, env);
@@ -34,6 +36,16 @@ export abstract class WorkspaceRuntime extends DurableObject<WorkspaceRuntimeEnv
     try {
       await connection.store.bindRuntime(this.ctx.id.toString(), job.ownerId);
       return await runtime.run(job);
+    } finally { await connection.close(); }
+  }
+
+  /** Service-binding recovery only: arm an alarm without starting compute. */
+  async reconcile(ownerId: string): Promise<void> {
+    const connection=await this.openRuntimeConnection();
+    try {
+      if ((await connection.store.status(ownerId)).placement !== 'pooled') return;
+      await connection.store.bindRuntime(this.ctx.id.toString(),ownerId);
+      await this.ctx.storage.setAlarm(Date.now());
     } finally { await connection.close(); }
   }
 
@@ -70,7 +82,7 @@ export abstract class WorkspaceRuntime extends DurableObject<WorkspaceRuntimeEnv
         if (!ownerId || !await connection.store.saveCheckpoint(ownerId, checkpoint)) throw new Error('Checkpoint fence rejected');
       }, (ownerId) => connection.hydrate?.(ownerId) ?? Promise.resolve([]), connection.resolveCredentials);
     const policy = runtimePolicyFromEnvironment(this.env);
-    const runtime = new RuntimeLifecycle(connection.store, driver, (at) => this.ctx.storage.setAlarm(at), Date.now, policy);
+    const runtime = new RuntimeLifecycle(connection.store, driver, (at) => this.ctx.storage.setAlarm(at), Date.now, policy, operation=>this.control.run(operation));
     return {runtime,connection};
   }
 }
