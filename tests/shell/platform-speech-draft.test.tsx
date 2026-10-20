@@ -2,7 +2,10 @@
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { usePlatformSpeechDraft } from "../../packages/ui/src/speech/use-platform-speech-draft.js";
+import {
+  platformSpeechControlState,
+  usePlatformSpeechDraft,
+} from "../../packages/ui/src/speech/use-platform-speech-draft.js";
 import type { PlatformSpeechCaptureAdapter } from "../../packages/ui/src/speech/use-platform-speech-draft.js";
 import type { BrowserSpeechClient } from "../../shell/src/lib/platform-speech-client.js";
 
@@ -160,6 +163,34 @@ describe("platform speech draft recording", () => {
     expect(hook.result.current.phase).toBe("unavailable");
     expect(warn).toHaveBeenCalledWith("[speech-draft] quota refresh failed", "Error");
     expect(warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("private refresh detail"));
+  });
+
+  it("keeps the retry control visible when customer speech capabilities become stale", async () => {
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(ready)
+      .mockRejectedValueOnce(new Error("private refresh detail"))
+      .mockResolvedValueOnce(ready);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-customer-stale",
+      client: client({ capabilities }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+
+    await waitFor(() => expect(hook.result.current.capabilitiesStale).toBe(true));
+    expect(hook.result.current.previewQuota).toBeUndefined();
+    expect(platformSpeechControlState(hook.result.current)).toMatchObject({
+      disabled: false,
+      label: "Retry speech availability",
+      visible: true,
+    });
+    await act(async () => hook.result.current.retryCapabilities());
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
   });
 
   it("records, stops, transcribes once, and inserts an editable draft without sending", async () => {

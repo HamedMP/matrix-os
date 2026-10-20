@@ -6,6 +6,7 @@ import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
 import {
   BOT_ATTACHMENT_HANDOFF_REASON,
   platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
   usePlatformSpeechDraft,
   SpeechInputWaveform,
   type ChatAgentDraftRequest,
@@ -193,7 +194,7 @@ export function ChatInput({
       {speech.error ? <p role="alert" className="text-xs text-destructive">{speech.error}</p> : null}
       {speech.previewQuota ? (
         <p role="status" className="text-xs text-muted-foreground">
-          Preview dictation: {speech.previewQuota.requestsRemaining} of {speech.previewQuota.requestLimit} requests remaining.
+          {platformSpeechPreviewQuotaLabel(speech.previewQuota)}
           {speech.capabilitiesStale ? " Last known quota; refresh required." : null}
         </p>
       ) : null}

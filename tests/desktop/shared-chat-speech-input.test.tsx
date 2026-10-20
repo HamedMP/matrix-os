@@ -10,6 +10,7 @@ import type {
 } from "@matrix-os/ui";
 import { BrowserSpeechClientError } from "@matrix-os/ui";
 import { DesktopSpeechInputControl } from "../../desktop/src/renderer/src/features/chat/DesktopSpeechInputControl";
+import { localDateTimeWithZone } from "../../packages/ui/src/agents-providers/utils";
 
 const capabilities = {
   contractVersion: 1 as const,
@@ -198,7 +199,8 @@ describe("Electron shared Chat speech input", () => {
       disabled={false}
     />);
 
-    expect(await screen.findByText("Preview dictation: 0 of 3 requests remaining.")).toBeTruthy();
+    const expiry = localDateTimeWithZone(exhaustedPreviewCapabilities.previewQuota.expiresAt);
+    expect(await screen.findByText(`Preview dictation: 0 of 3 requests remaining until ${expiry}.`)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Preview dictation allowance exhausted" }).hasAttribute("disabled")).toBe(true);
   });
 
@@ -213,7 +215,8 @@ describe("Electron shared Chat speech input", () => {
       disabled={false}
     />);
 
-    expect(await screen.findByText("Preview dictation: 2 of 3 requests remaining.")).toBeTruthy();
+    const expiry = localDateTimeWithZone(unavailablePreviewCapabilities.previewQuota.expiresAt);
+    expect(await screen.findByText(`Preview dictation: 2 of 3 requests remaining until ${expiry}.`)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Speech is unavailable" }).hasAttribute("disabled")).toBe(true);
   });
 });

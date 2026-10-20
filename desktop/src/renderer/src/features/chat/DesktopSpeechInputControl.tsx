@@ -4,6 +4,7 @@ import {
   createWebPcmSpeechCaptureAdapter,
   PlatformSpeechRecorderError,
   platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
   resolveSpeechWorkletUrl,
   SpeechInputWaveform,
   usePlatformSpeechDraft,
@@ -55,7 +56,7 @@ export function DesktopSpeechInputControl({
     <div className="relative flex items-center gap-1">
       {speech.previewQuota ? (
         <span role="status" className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-          Preview dictation: {speech.previewQuota.requestsRemaining} of {speech.previewQuota.requestLimit} requests remaining.
+          {platformSpeechPreviewQuotaLabel(speech.previewQuota)}
           {speech.capabilitiesStale ? " Last known quota; refresh required." : null}
         </span>
       ) : null}

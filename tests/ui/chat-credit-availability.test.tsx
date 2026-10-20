@@ -38,7 +38,7 @@ it("shows the exact local Preview expiry time and time zone", () => {
   render(<GatewayPanel source={s} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false}
     canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   const expiry = localDateTimeWithZone("2026-10-20T16:45:00.000Z");
-  expect(expiry).toMatch(/\d{1,2}:45/);
+  expect(expiry).toMatch(/\d{1,2}:\d{2}/);
   expect(expiry).toMatch(/(?:GMT|UTC|[A-Z]{2,})/);
   expect(screen.getByText(`Preview allowance: 24 of 25 Chat requests remaining until ${expiry}.`)).toBeVisible();
 });

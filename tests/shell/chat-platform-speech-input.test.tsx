@@ -7,6 +7,7 @@ import { ChatInput } from "../../shell/src/components/chat/ChatInput.js";
 import { useChatComposerDraft } from "../../shell/src/components/chat/useChatComposerDraft.js";
 import type { BrowserSpeechClient } from "../../shell/src/lib/platform-speech-client.js";
 import type { PlatformSpeechCaptureAdapter } from "../../packages/ui/src/index.js";
+import { localDateTimeWithZone } from "../../packages/ui/src/agents-providers/utils.js";
 
 const requestId = "sp_1788998400000_abcdefghijklmnop";
 
@@ -228,7 +229,8 @@ describe("shared chat platform speech input", () => {
     });
     render(<TestComposer onSubmit={vi.fn()} client={exhausted} />);
 
-    expect(await screen.findByText("Preview dictation: 0 of 3 requests remaining.")).toBeTruthy();
+    const expiry = localDateTimeWithZone("2026-10-20T16:00:00.000Z");
+    expect(await screen.findByText(`Preview dictation: 0 of 3 requests remaining until ${expiry}.`)).toBeTruthy();
     const microphone = screen.getByRole("button", { name: "Preview dictation allowance exhausted" });
     expect(microphone.hasAttribute("disabled")).toBe(true);
   });

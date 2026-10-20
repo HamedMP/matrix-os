@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SpeechCapabilitiesResponse, SpeechMediaType } from "@matrix-os/contracts";
+import { localDateTimeWithZone } from "../agents-providers/utils.js";
 
 export type PlatformSpeechDraftPhase =
   | "loading"
@@ -36,6 +37,12 @@ export interface PlatformSpeechControlState {
   visible: boolean;
 }
 
+export function platformSpeechPreviewQuotaLabel(
+  quota: NonNullable<SpeechCapabilitiesResponse["previewQuota"]>,
+): string {
+  return `Preview dictation: ${quota.requestsRemaining} of ${quota.requestLimit} requests remaining until ${localDateTimeWithZone(quota.expiresAt)}.`;
+}
+
 export function platformSpeechControlState(
   speech: Pick<UsePlatformSpeechDraftResult,
     "phase" | "isSupported" | "previewQuota" | "capabilitiesStale">,
@@ -63,7 +70,7 @@ export function platformSpeechControlState(
     active,
     disabled: quotaExhausted || retrying || (unavailable && !speech.capabilitiesStale),
     label,
-    visible: speech.isSupported || Boolean(speech.previewQuota),
+    visible: speech.isSupported || speech.capabilitiesStale || Boolean(speech.previewQuota),
   };
 }
 
