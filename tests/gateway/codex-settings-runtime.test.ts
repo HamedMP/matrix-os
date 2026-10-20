@@ -88,6 +88,7 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
       signalCompletionBoundary({ kind: "native_completion" });
       return result;
     } catch (error) {
+      if (!(error instanceof Error)) throw error;
       signalCompletionBoundary({ kind: "native_completion", error });
       throw error;
     }

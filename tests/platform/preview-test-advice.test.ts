@@ -129,10 +129,40 @@ describe("preview test advice", () => {
   });
   it("does not make a negative preview recommendation when inventory reads fail", async () => {
     const f = fixture();
-    f.github.rest.pulls.listFiles.mockRejectedValueOnce(new Error("unavailable"));
+    f.github.rest.pulls.listFiles.mockRejectedValueOnce(
+      Object.assign(new Error("unavailable"), { name: "HttpError", status: 503 }),
+    );
     await advisePreviewTests(f.github, repo, 1);
     expect(f.comments[0]).toMatchObject({ body: expect.stringContaining("Preview selection unknown") });
     expect((f.comments[0] as {body: string}).body).not.toContain("No runtime `preview` suggested");
+  });
+  it.each([403, 404, 429, 500, 504])("keeps HTTP %s inventory failures conservative for stacked PRs", async status => {
+    const f = fixture([], "codex/parent");
+    f.github.rest.repos.getBranch.mockRejectedValueOnce(
+      Object.assign(new Error("GitHub read unavailable"), { name: "HttpError", status }),
+    );
+    await advisePreviewTests(f.github, repo, 1);
+    expect(f.comments[0]).toMatchObject({ body: expect.stringContaining("Preview selection unknown") });
+  });
+  it.each([
+    new TypeError("invalid local property access"),
+    new ReferenceError("undefined local binding"),
+    new Error("unexpected inventory failure"),
+    Object.assign(new Error("not an HTTP error"), { status: 503 }),
+    Object.assign(new Error("invalid HTTP status"), { name: "HttpError", status: "503" }),
+    { name: "HttpError", status: 503 },
+  ])("propagates unexpected inventory failures without publishing advice: %s", async error => {
+    const f = fixture();
+    f.github.rest.pulls.listFiles.mockRejectedValueOnce(error);
+    await expect(advisePreviewTests(f.github, repo, 1)).rejects.toBe(error);
+    expect(f.github.rest.issues.createComment).not.toHaveBeenCalled();
+    expect(f.github.rest.issues.updateComment).not.toHaveBeenCalled();
+  });
+  it("propagates malformed successful GitHub responses instead of hiding controller defects", async () => {
+    const f = fixture();
+    f.github.rest.pulls.listFiles.mockResolvedValueOnce({ data: null } as never);
+    await expect(advisePreviewTests(f.github, repo, 1)).rejects.toThrow("PR file inventory unavailable");
+    expect(f.comments).toHaveLength(0);
   });
   it("uses cumulative main-to-head changes for stacks and publishes the full exact head", async () => {
     const f = fixture(

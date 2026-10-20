@@ -7,6 +7,11 @@ const NATIVE = "Native Mobile (iOS and Android)";
 const CLI = "CLI (Linux, macOS and Windows)";
 const owned = (pr) =>
   pr.labels.some((l) => ["preview", "preview-platform"].includes(l.name));
+// Octokit wraps HTTP, transport and request timeout failures as HttpError.
+// Status alone must not turn controller defects into apparently valid advice.
+const githubReadFailure = (error) =>
+  error instanceof Error && error.name === "HttpError" &&
+  Number.isInteger(error.status) && error.status >= 400 && error.status <= 599;
 
 // Advisory metadata rules only. A path match never establishes test coverage.
 export function classifyPreviewTests(files, complete = true) {
@@ -180,9 +185,10 @@ export async function advisePreviewTests(github, repo, number) {
   try {
     diff = await changedFiles(github, repo, pr);
   } catch (error) {
+    if (!githubReadFailure(error)) throw error;
     console.warn(
       "Preview advice file inventory unavailable",
-      error?.status ?? "unknown",
+      error.status,
     );
     diff = { files: [], complete: false, scope: "unavailable" };
   }

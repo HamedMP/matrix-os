@@ -103,3 +103,11 @@ PRs prioritized. Inactive queue metadata is retained seven days, then incrementa
 pruned; incomplete inventory holds admission and preserves known cleanup. Legacy
 unreserved dispatches drain before queue admission. Adopted runtime expiry never
 extends the existing 72-hour reaper deadline. Expiry removes the request label.
+
+## Clean worktree qualification
+
+Declare the TypeScript 5 compiler library directly at the repository root so a
+fresh frozen install preserves its JavaScript compiler API and real compiler
+lifecycle checks. Keep the TypeScript 7 checker under its existing separate
+`@typescript/native` alias. Validate fresh installation, all affected compiler
+and AST-based tests, canonical type checks and the unchanged complete suite.
