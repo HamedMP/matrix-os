@@ -34,5 +34,8 @@
   "tests/platform/collaboration-tickets.test.ts",
   "tests/platform/collaboration-two-home-relay-postgres.test.ts",
   "tests/platform/organization-authority-postgres.test.ts",
-  "tests/platform/platform-migration-revision-db.test.ts"
+  "tests/platform/platform-migration-revision-db.test.ts",
+  "tests/platform/slack-app.test.ts",
+  "tests/platform/slack-delivery-recovery.test.ts",
+  "tests/platform/slack-repository.test.ts"
 ]
