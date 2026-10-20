@@ -7,6 +7,7 @@ import { BROKER_PLACEHOLDER_KEY, createBridgeModel } from "../../packages/bot-ru
 import { createBotTools } from "../../packages/bot-runtime/src/tools.js";
 import { readBotArtifactBytes } from "../../packages/gateway/src/bots/artifact-read.js";
 import { BotBrokerActionError } from "../../packages/gateway/src/bots/broker-actions.js";
+import { chatGptPlanWire } from "../../packages/gateway/src/bots/chatgpt-plan-wire.js";
 
 const text = '{"name":"matrix-os"}\n';
 const bytes = Buffer.from(text);
@@ -89,9 +90,13 @@ describe("Pi artifact recovery in one agent run (scripted provider, no live infe
     const tools = createBotTools({ capabilities: ["artifact.read"], broker: f.broker,
       state: { waitingForPerson: false, effectUnknown: false } });
     const route = createBridgeModel(command.route, "http://127.0.0.1:41000");
+    let finalTool: { strict?: boolean; parameters?: unknown } | undefined;
     let tool: { strict?: boolean; parameters?: { required?: string[]; properties?: Record<string, unknown> } } | undefined;
     const fetchImpl: typeof fetch = async (_url, init) => {
-      tool = JSON.parse(String(init?.body)).tools?.find((item: { name: string }) => item.name === "read_artifact");
+      const raw = JSON.parse(String(init?.body));
+      tool = raw.tools?.find((item: { name: string }) => item.name === "read_artifact");
+      const wire = JSON.parse(chatGptPlanWire(raw, route.model.id));
+      finalTool = wire.input.find((item: { type: string }) => item.type === "additional_tools")?.tools.find((item: { name: string }) => item.name === "read_artifact");
       return new Response(JSON.stringify({ error: { message: "Synthetic transport stop" } }),
         { status: 400, headers: { "content-type": "application/json" } });
     };
@@ -101,7 +106,17 @@ describe("Pi artifact recovery in one agent run (scripted provider, no live infe
     expect(tool).toBeDefined();
     expect(tool!.parameters?.required).toContain("path");
     expect(tool!.parameters?.required).not.toContain("chunk");
+    expect(finalTool?.parameters).toEqual(tool!.parameters);
+    expect(finalTool?.strict).toBe(false);
     console.log("Synthetic schema evidence", JSON.stringify({ strict: tool!.strict ?? null, required: tool!.parameters?.required,
       chunkExposed: Boolean(tool!.parameters?.properties?.chunk) }));
   });
+  it("preserves an explicit strict tool contract on the subscription wire", () => {
+    const tool = { type: "function", name: "strict_read", strict: true,
+      parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } };
+    const wire = JSON.parse(chatGptPlanWire({ model: "gpt-6.1-sol", stream: true, store: false,
+      input: [{ role: "user", content: "Synthetic wire test" }], tools: [tool] }, "gpt-6.1-sol"));
+    expect(wire.input[0].tools).toEqual([tool]);
+  });
+
 });
