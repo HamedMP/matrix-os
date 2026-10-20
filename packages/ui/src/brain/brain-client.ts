@@ -195,10 +195,16 @@ export async function listBrainProjects(client: BrainHttpTransport): Promise<Bra
   const list = typeof value === "object" && value !== null ? (value as { projects?: unknown }).projects : undefined;
   if (!Array.isArray(list)) return [];
   return list.slice(0, BRAIN_PROJECTS_MAX).flatMap((entry: unknown) => {
-    if (typeof entry !== "object" || entry === null) return [];
-    const { id: projectId, name, slug } = entry as Record<string, unknown>;
-    if (typeof projectId !== "string" || !PROJECT_ID_PATTERN.test(projectId) || typeof slug !== "string") return [];
-    const label = typeof name === "string" && name.trim() !== "" ? name.trim().slice(0, PROJECT_NAME_MAX_CHARS) : slug;
-    return [{ id: projectId, name: label, slug }];
+    const option = brainProjectOption(entry);
+    return option === null ? [] : [option];
   });
+}
+
+/** One project answer checked field by field; null without a valid id and slug. */
+export function brainProjectOption(entry: unknown): BrainProjectOption | null {
+  if (typeof entry !== "object" || entry === null) return null;
+  const { id: projectId, name, slug } = entry as Record<string, unknown>;
+  if (typeof projectId !== "string" || !PROJECT_ID_PATTERN.test(projectId) || typeof slug !== "string") return null;
+  const label = typeof name === "string" && name.trim() !== "" ? name.trim().slice(0, PROJECT_NAME_MAX_CHARS) : slug;
+  return { id: projectId, name: label, slug };
 }

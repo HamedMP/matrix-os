@@ -1,8 +1,9 @@
 "use client";
 
-import { Brain, MessageSquare } from "lucide-react";
+import { Brain, MessageSquare, Plus } from "lucide-react";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
-import { BrainSelect } from "./brain-controls.js";
+import type { BrainProjectAdder } from "./brain-add-project.js";
+import { BrainButton, BrainSelect } from "./brain-controls.js";
 import { readRemembered, writeRemembered } from "./brain-memory.js";
 import { BRAIN_THEME, BRAIN_TONE, BRAIN_TYPE } from "./brain-tone.js";
 import {
@@ -10,7 +11,8 @@ import {
   type BrainShellClient, type BrainShellScreen, type BrainShellScreenId,
 } from "./brain-types.js";
 import { brainTabIndexForKey } from "./brain-format.js";
-import { BrainEmpty, BrainView, type BrainScreenProps } from "./brain-ui.js";
+import { BrainConfirm, BrainEmpty, BrainView, type BrainScreenProps } from "./brain-ui.js";
+import { BrainAddProject } from "./BrainAddProject.js";
 import { BrainAsk } from "./BrainAsk.js";
 import { BrainChat, type BrainChatHost } from "./BrainChat.js";
 import { BrainClaims } from "./BrainClaims.js";
@@ -34,6 +36,11 @@ export interface BrainAppProps {
   readonly showHeading?: boolean;
   /** The surface's chat view for the Chat tab; without it the tab says chat is not available here. */
   readonly chat?: BrainChatHost;
+  /**
+   * Adds a project from a GitHub link or a folder on the computer (createBrainProjectAdder over the same transport);
+   * without it the app shows no Add project button.
+   */
+  readonly addProjects?: BrainProjectAdder;
 }
 
 const SCREEN_LABELS: Readonly<Record<BrainShellScreen, string>> = {
@@ -57,7 +64,7 @@ function openingScreen(id: BrainShellScreenId): BrainShellScreen {
  * project this browser picked last when it is still listed, else the first one.
  */
 export function BrainApp({
-  api, loadProjects, initialScreen, initialProjectId, showHeading = true, chat,
+  api, loadProjects, initialScreen, initialProjectId, showHeading = true, chat, addProjects,
 }: BrainAppProps) {
   const projects = useBrainLoad(loadProjects, "projects");
   const opening = initialScreen ?? (chat ? "chat" : "search");
@@ -66,6 +73,26 @@ export function BrainApp({
   const [picked, setPicked] = useState(() => initialProjectId ?? readRemembered(PROJECT_STORAGE_KEY, "project"));
   const baseId = useId();
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  const pick = (projectId: string) => {
+    setPicked(projectId);
+    writeRemembered(PROJECT_STORAGE_KEY, projectId, "project");
+  };
+  // A project just added is listed at once, selected, and opened on Sources, where its first sync shows.
+  const onAdded = (project: BrainProjectOption, note: string) => {
+    if (projects.state.status === "ready" && !projects.state.data.some((item) => item.id === project.id)) {
+      projects.replace([...projects.state.data, project]);
+    }
+    projects.reload();
+    pick(project.id);
+    setScreen("sources");
+    setAdding(false);
+    setNotice(note);
+  };
+  const addForm = addProjects === undefined ? null
+    : <BrainAddProject api={api} adder={addProjects} loadProjects={loadProjects} onAdded={onAdded} />;
 
   const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const next = brainTabIndexForKey(event.key, BRAIN_SHELL_SCREENS.indexOf(screen), BRAIN_SHELL_SCREENS.length);
@@ -93,10 +120,13 @@ export function BrainApp({
             const project = list.find((candidate) => candidate.id === picked) ?? list[0];
             if (project === undefined) {
               return (
-                <div className="p-5">
+                <div className="grid gap-4 p-5">
                   <BrainEmpty title="No projects yet.">
-                    Add a project from Files or Terminal; its brain appears here once its repository is connected.
+                    {addForm === null
+                      ? "Add a project from Files or Terminal; its brain appears here once its repository is connected."
+                      : "Paste a GitHub link or pick a folder on this computer. The brain connects it and starts reading."}
                   </BrainEmpty>
+                  {addForm}
                 </div>
               );
             }
@@ -105,20 +135,29 @@ export function BrainApp({
             return (
               <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]">
                 <nav aria-label="Company Brain"
-                  className={`flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-b px-5 py-2 ${BRAIN_TONE.border}`}>
+                  className={`relative flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-b px-5 py-2 ${BRAIN_TONE.border}`}>
                   <label className={`flex min-w-0 items-center gap-2 font-medium ${BRAIN_TYPE.label} ${BRAIN_TONE.secondary}`}>
                     Project
                     <BrainSelect
                       className="min-w-0 max-w-48"
                       value={project.id}
-                      onChange={(event) => {
-                        setPicked(event.target.value);
-                        writeRemembered(PROJECT_STORAGE_KEY, event.target.value, "project");
-                      }}
+                      onChange={(event) => { pick(event.target.value); setNotice(""); }}
                     >
                       {list.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
                     </BrainSelect>
                   </label>
+                  {addForm !== null && (
+                    <BrainConfirm open={adding} onClose={() => setAdding(false)} label="Add project"
+                      trigger={(
+                        <BrainButton size="sm" variant="outline" aria-haspopup="dialog" aria-expanded={adding}
+                          onClick={() => setAdding(!adding)}>
+                          <Plus className="size-4" aria-hidden="true" />
+                          Add project
+                        </BrainButton>
+                      )}>
+                      {addForm}
+                    </BrainConfirm>
+                  )}
                   <div role="tablist" aria-label="Screens" onKeyDown={onTabKey}
                     className="flex min-w-0 max-w-full gap-1 overflow-x-auto">
                     {BRAIN_SHELL_SCREENS.map((value, index) => (
@@ -141,6 +180,9 @@ export function BrainApp({
                       </button>
                     ))}
                   </div>
+                  {notice !== "" && (
+                    <p role="status" className={`basis-full ${BRAIN_TYPE.label} ${BRAIN_TONE.secondary}`}>{notice}</p>
+                  )}
                 </nav>
                 <section
                   key={`${project.id}:${screen}`}

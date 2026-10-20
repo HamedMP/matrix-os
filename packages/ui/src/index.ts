@@ -250,6 +250,7 @@ export * from "./chat-navigation/metrics.js";
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
 export { BrainApp, type BrainAppProps } from "./brain/BrainApp.js";
 export { type BrainChatHost, type BrainChatSlot } from "./brain/BrainChat.js";
+export { createBrainProjectAdder, type BrainProjectAdder } from "./brain/brain-add-project.js";
 export {
   brainShellError,
   createBrainShellApi,
