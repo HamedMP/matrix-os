@@ -6,6 +6,8 @@ async function normalize<T>(work: () => Promise<T>): Promise<T> {
   try { return await work(); }
   catch (error: unknown) {
     console.warn("[desktop-sites] request failed", error instanceof Error ? "Error" : "UnknownError");
+    const reason = error instanceof AppError ? error.cause : error;
+    if (reason instanceof Error && reason.message === "file_too_large") throw new SiteClientError(413);
     if (error instanceof AppError) {
       const httpStatus = error.httpStatus;
       if (typeof httpStatus === "number" && Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus <= 599) {
