@@ -26,7 +26,10 @@ describe("Electron site transport error parity", () => {
     },{highWaterMark:0});
     const api=createApiClient({baseUrl:"https://app.matrix-os.com",getRuntimeSlot:()=>"primary",fetchFn:async()=>new Response(stream)});
     const client=createDesktopSiteClient(api,"preview"),signal=new AbortController().signal;
-    await expect(kind==="JSON"?client.getConfig("launch",signal):client.exportSubmissions("launch",null,signal)).rejects.toBeTruthy();
+    const error = await (kind==="JSON"?client.getConfig("launch",signal):client.exportSubmissions("launch",null,signal)).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(SiteClientError);
+    expect(error).toMatchObject({ status: 413 });
+    expect(siteActionError(error)).toBe("This app exceeds the publishing size limit.");
     expect(cancel).toHaveBeenCalledOnce();
     expect(offset).toBe(1);
   });
