@@ -170,20 +170,21 @@ export function createBotBrokerActions(deps: {
     return true;
   }
 
-  async function reauthorize(binding: PiRuntimeBinding, childSignal?: AbortSignal): Promise<void> {
+  async function reauthorize(binding: PiRuntimeBinding, childSignal?: AbortSignal, finalDelivery = false): Promise<void> {
     if (!binding.group) return;
     const runSignal = deps.registry.inferenceSignal(binding);
-    if (!runSignal || runSignal.aborted || childSignal?.aborted) throw new BotBrokerActionError("stale_generation");
-    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(AUTHORIZATION_TIMEOUT_MS), ...(childSignal ? [childSignal] : [])]);
-    if (signal.aborted) throw new BotBrokerActionError(runSignal.aborted || childSignal?.aborted ? "stale_generation" : "timeout");
+    if (!runSignal || (!finalDelivery && runSignal.aborted) || childSignal?.aborted) throw new BotBrokerActionError("stale_generation");
+    // Inference cancellation retains final event/session authority until release.
+    const signal = AbortSignal.any([...(finalDelivery ? [] : [runSignal]), deps.inference.lifetime, AbortSignal.timeout(AUTHORIZATION_TIMEOUT_MS), ...(childSignal ? [childSignal] : [])]);
+    if (signal.aborted) throw new BotBrokerActionError((!finalDelivery && runSignal.aborted) || childSignal?.aborted ? "stale_generation" : "timeout");
     try {
       await untilAborted(requireGroupBotAuthority({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, group: binding.group }, deps.authorizeGroup), signal);
     } catch (error: unknown) {
-      if (signal.aborted) throw new BotBrokerActionError(runSignal.aborted || childSignal?.aborted ? "stale_generation" : "timeout");
+      if (signal.aborted) throw new BotBrokerActionError((!finalDelivery && runSignal.aborted) || childSignal?.aborted ? "stale_generation" : "timeout");
       console.warn("[bots] group authorization denied:", error instanceof Error ? error.name : "UnknownError");
       throw new BotBrokerActionError("denied");
     }
-    if (signal.aborted) throw new BotBrokerActionError(runSignal.aborted || childSignal?.aborted ? "stale_generation" : "timeout");
+    if (signal.aborted) throw new BotBrokerActionError((!finalDelivery && runSignal.aborted) || childSignal?.aborted ? "stale_generation" : "timeout");
     if (!deps.registry.lookupRun(binding)) throw new BotBrokerActionError("stale_generation");
   }
 
@@ -297,7 +298,7 @@ export function createBotBrokerActions(deps: {
         ...(binding.group ? { contextRunId: binding.runId, contextGeneration: createHash("sha256").update(`group:${binding.group.scopeId}:${binding.group.sessionGeneration}:${binding.rootFingerprint}:${binding.runId}`).digest("hex") } : {}) };
       if (binding.group && !binding.group.sessionGeneration && ["bot.session.load", "bot.session.save"].includes(request.action)) return refusal(request.requestId, "denied");
       try {
-        await reauthorize(binding);
+        await reauthorize(binding, undefined, request.action === "bot.event" || request.action === "bot.session.save");
         switch (request.action) {
           case "bot.run.load":
             return success(request.requestId, BotRunSpecSchema.parse(await deps.runs.loadRunSpec(binding)));

@@ -30,6 +30,7 @@ import {
   type CollaborationAiExecutionEligibility,
 } from "./shared-ai-eligibility.js";
 import type { CollaborationRunLossRepository } from "./shared-run-loss.js";
+import { untilAborted } from "../bots/broker-actions.js";
 
 export class CollaborationChatExecutionAdapter {
   private readonly now: () => Date;
@@ -125,6 +126,7 @@ export class CollaborationChatExecutionAdapter {
   async submit(
     context: AuthorizedCollaborationContext,
     inputValue: unknown,
+    signal?: AbortSignal,
   ): Promise<CollaborationAiRequestAcceptedResponse> {
     requireChatContext(context, "request_ai");
     await this.requireSubmitMode(context);
@@ -136,7 +138,16 @@ export class CollaborationChatExecutionAdapter {
     const eligibility = parseCollaborationAiEligibility(
       await this.options.resolveEligibility(context.scopeId),
     );
-    const executionRoot = await this.options.resolveExecutionRoot?.(context);
+    const rootDeadline = AbortSignal.any([AbortSignal.timeout(10_000), ...(signal ? [signal] : [])]);
+    let executionRoot: Awaited<ReturnType<NonNullable<typeof this.options.resolveExecutionRoot>>> | undefined;
+    try {
+      rootDeadline.throwIfAborted();
+      executionRoot = await untilAborted(Promise.resolve(this.options.resolveExecutionRoot?.(context)), rootDeadline);
+      rootDeadline.throwIfAborted();
+    } catch (error: unknown) {
+      if (rootDeadline.aborted) throw new CollaborationAuthorizationError("unavailable", "Shared execution root is unavailable");
+      throw error;
+    }
     const queued = await this.options.repository.enqueueSharedQueuedTurn(ownerFor(context), {
       chatId: context.resourceId,
       scopeId: context.scopeId,
