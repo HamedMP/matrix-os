@@ -8,9 +8,10 @@ import { createWorkspaceAuthenticator } from './auth.js';
 import { hydrateWorkspace, parseQueuedJob, publishRuntimeOutput } from './bridge.js';
 import type { RuntimeJob } from './runtime/contracts.js';
 import { safeRuntimeDiagnostic } from './runtime/diagnostic.js';
+import { createPreviewCredentialResolver, type PreviewCredentialEnvironment } from './runtime/credentials.js';
 export { DirectoryBackupGateway } from '@cloudflare/sandbox';
 
-interface Environment extends WorkspaceRuntimeEnvironment {
+interface Environment extends WorkspaceRuntimeEnvironment, PreviewCredentialEnvironment {
   HYPERDRIVE: Hyperdrive;
   WORKSPACE_FILES: R2Bucket;
   WORKSPACE_JOBS: Queue<RuntimeJob>;
@@ -35,6 +36,7 @@ export class MatrixWorkspaceRuntime extends WorkspaceRuntime {
     const revisions = new Map<string, number>();
     return {
       store:new PostgresRuntimeStore(repository.db),
+      resolveCredentials:createPreviewCredentialResolver(env),
       hydrate:owner => hydrateWorkspace(repository,files,owner,revisions),
       publishOutput:(lease,output) => publishRuntimeOutput(repository,files,lease,output,revisions),
       close:async () => {revisions.clear(); await repository.close();},
