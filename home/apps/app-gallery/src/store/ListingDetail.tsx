@@ -49,11 +49,18 @@ export default function ListingDetail({
 }) {
   const [detail, setDetail] = useState<StoreListing | null>(null),
     [error, setError] = useState(""),
-    [consent, setConsent] = useState(false),
+    [consentedVersion, setConsentedVersion] = useState<string | null>(null),
     [showConsent, setShowConsent] = useState(false);
   const [busy, setBusy] = useState(false),
     [job, setJob] = useState<AppStoreInstallJob | null>(null),
     [refresh, setRefresh] = useState(0);
+  const consentKey =
+    detail?.currentVersion && detail.capabilitiesDigest
+      ? `${detail.slug}:${detail.currentVersion.id}:${detail.capabilitiesDigest}`
+      : null;
+  const consent = consentKey !== null && consentedVersion === consentKey;
+  const setConsent = (value: boolean) =>
+    setConsentedVersion(value ? consentKey : null);
   const alive = useRef(true),
     lock = useRef(false),
     title = useRef<HTMLHeadingElement>(null);
