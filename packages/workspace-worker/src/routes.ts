@@ -7,6 +7,7 @@ import { createDefaultOsViewDocument, OsViewDocumentSchema, PatchOsViewStateRequ
 import { createWorkspaceAuthenticator, type WorkspaceAuthOptions } from "./auth.js";
 import { readSharedFileSnapshot, WorkspaceError, type WorkspaceRepository, type SharedChat } from "./data/repository.js";
 import { MAX_TEXT_BYTES, type WorkspaceFiles } from "./data/files.js";
+import { isRuntimePrivatePath } from '../runtime/paths.mjs';
 
 export type WorkspaceAction = { type: "wake" } | { type: "chat"; chatId: string; message: string; idempotencyKey: string };
 export interface WorkspaceRuntimeAdapter {
@@ -18,7 +19,7 @@ export interface WorkspaceRouteOptions {
   auth: WorkspaceAuthOptions; previewEnabled: boolean;
 }
 const relativePath = z.string().min(1).max(512).refine((value) =>
-  !value.startsWith("/") && !/[\\\u0000-\u001f]/.test(value) && value.split("/").every((part) => part !== ".." && part !== "." && part.length > 0));
+  !value.startsWith("/") && !isRuntimePrivatePath(value) && !/[\\\u0000-\u001f]/.test(value) && value.split("/").every((part) => part !== ".." && part !== "." && part.length > 0));
 const limitSchema = z.coerce.number().int().min(1).max(100).default(50);
 const revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const chatIdSchema = z.string().regex(/^chat_[A-Za-z0-9_-]{1,128}$/);

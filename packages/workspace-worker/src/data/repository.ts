@@ -2,6 +2,7 @@ import { mergeDesktopDefaults, mergeDesktopPatch, type DesktopSettingsPatch } fr
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
 import type { RuntimeLease } from "../runtime/contracts.js";
+import { isRuntimePrivatePath, RUNTIME_PRIVATE_DIRECTORY } from '../../runtime/paths.mjs';
 
 export class WorkspaceError extends Error {
   constructor(readonly code: "conflict" | "not_found" | "invalid", message = code) { super(message); }
@@ -168,15 +169,18 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
     });
   }
   async listFiles(ownerId: string, prefix: string, limit: number) {
-    const query = this.db.selectFrom("shared_files").selectAll().where("owner_id", "=", ownerId);
+    const query = this.db.selectFrom("shared_files").selectAll().where("owner_id", "=", ownerId)
+      .where('path','!=',RUNTIME_PRIVATE_DIRECTORY).where('path','not like',`${RUNTIME_PRIVATE_DIRECTORY}/%`);
     const rows = await (prefix ? query.where("path", "like", `${prefix.replace(/[\\%_]/g, "\\$&")}%`) : query).orderBy("path").limit(limit).execute();
     return rows.map(fileRecord);
   }
   async file(ownerId: string, path: string) {
+    if (isRuntimePrivatePath(path)) return null;
     const row = await this.db.selectFrom("shared_files").selectAll().where("owner_id", "=", ownerId).where("path", "=", path).executeTakeFirst();
     return row ? fileRecord(row) : null;
   }
   async commitFile(ownerId: string, path: string, objectKey: string, bytes: number, baseRevision: number) {
+    if (isRuntimePrivatePath(path)) throw new WorkspaceError('invalid');
     const values = { owner_id: ownerId, path, object_key: objectKey, bytes, revision: 1, updated_at: new Date().toISOString() };
     const row = baseRevision === 0
       ? await this.db.insertInto("shared_files").values(values).onConflict((oc) => oc.columns(["owner_id", "path"]).doNothing()).returningAll().executeTakeFirst()
