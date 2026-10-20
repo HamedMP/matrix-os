@@ -12,6 +12,8 @@
 @import "@matrix-os/ui/agents-providers.css";
 @import "@matrix-os/ui/chat-agents.css";
 @import "@matrix-os/ui/styles.css";
+@import "@matrix-os/ui/onboarding-widget.css";
+@import "@matrix-os/ui/onboarding-support-dock.css";
 
 /* Opt-in command-list motion: immediate entry, delayed fade on exit. */
 [data-instant-list-hover] {

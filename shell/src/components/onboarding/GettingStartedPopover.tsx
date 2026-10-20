@@ -183,7 +183,9 @@ function GettingStartedPopoverContent({
   helpMenu,
   triggerClassName = "flex size-7 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 }: GettingStartedPopoverProps) {
-  const { visible: open, requestedOpen, blocked, isBlocked, setRequestedOpen: setOpen } = useGettingStartedVisibility();
+  const {
+    visible: open, requestedOpen, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setRequestedOpen: setOpen,
+  } = useGettingStartedVisibility();
   const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
   const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
@@ -238,11 +240,13 @@ function GettingStartedPopoverContent({
       !snapshot.loaded
       || blocked
       || isBlocked()
+      || autoOpenSuppressed
+      || isAutoOpenSuppressed()
       || snapshot.completedCount === TOTAL_STEPS
       || hasAutoOpened(autoOpenKey)
     ) return;
     setOpen(true);
-  }, [autoOpenKey, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, setOpen]);
+  }, [autoOpenKey, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
 
   useEffect(() => {
     if (!open) return;

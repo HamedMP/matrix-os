@@ -7,6 +7,7 @@ import {
   CanonicalChatQueueAdmissionResponseSchema, CanonicalChatQueueCancellationResponseSchema,
   CanonicalQueueChatTurnRequestSchema, CanonicalCancelQueuedChatTurnRequestSchema, CanonicalChatQueuedTurnIdSchema,
   type CanonicalChatQueueAdmissionResponse, type CanonicalChatQueueCancellationResponse, type CanonicalCancelQueuedChatTurnRequest,
+  CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalSubmitChatInputRequestSchema,
   CanonicalChatInputSubmissionResponseSchema,
@@ -49,7 +50,8 @@ export interface CanonicalShellChatClient {
   list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
-  detail(chatId: string): Promise<CanonicalChatDetailResponse>;
+  /** The newest page, or the older page `cursor` names. */
+  detail(chatId: string, cursor?: string): Promise<CanonicalChatDetailResponse>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
@@ -219,9 +221,11 @@ export function createCanonicalShellChatClient(options: {
         body: JSON.stringify(body),
       }));
     },
-    async detail(chatId) {
+    async detail(chatId, cursor) {
       const id = CanonicalChatIdSchema.parse(chatId);
-      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
+      const query = new URLSearchParams({ limit: "200" });
+      if (cursor !== undefined) query.set("cursor", CanonicalChatApiCursorSchema.parse(cursor));
+      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?${query}`)));
     },
     async updateReadState(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);

@@ -10,7 +10,8 @@ it("uses bounded current-Computer transport for Matrix API connection reads", as
   expect(fetcher.mock.calls[0][0]).toBe("/vm/review/api/ai/matrix-connections/anthropic");
   expect(fetcher.mock.calls[0][1]).toMatchObject({ cache: "no-store", credentials: "include" });
 });
-vi.mock("../../shell/src/lib/gateway.js", () => ({ getGatewayUrl: () => "/vm/review" }));
+const { liveGateway } = vi.hoisted(() => ({ liveGateway: { current: "/vm/review" } }));
+vi.mock("../../shell/src/lib/gateway.js", () => ({ getGatewayUrl: () => liveGateway.current }));
 const page = { entries: [], nextCursor: null };
 describe("web provider workflow transport", () => {
   it("invokes default browser fetch with the global receiver for workflows and history", async () => {
@@ -73,6 +74,32 @@ describe("web provider workflow transport", () => {
     const fetcher = vi.fn().mockResolvedValue(new Response("Access denied", { status }));
     await expect(createWebProviderWorkflowClient({ fetcher }).capabilities(new AbortController().signal)).rejects.toMatchObject({ reason });
   });
+  it("keeps a bound workflow on its computer after the live URL changes", async () => {
+    liveGateway.current = "/vm/alice";
+    const fetcher = vi.fn().mockResolvedValue(Response.json([]));
+    const client = createWebProviderWorkflowClient({ fetcher, gatewayUrl: "/vm/alice" });
+    liveGateway.current = "";
+    try {
+      await expect(client.capabilities(new AbortController().signal)).resolves.toEqual([]);
+      expect(fetcher.mock.calls[0][0]).toBe("/vm/alice/api/ai/provider-settings/workflows/v2/capabilities");
+    } finally {
+      liveGateway.current = "/vm/review";
+    }
+  });
+
+  it("still refuses Settings workflows after the live computer changes", async () => {
+    liveGateway.current = "/vm/alice";
+    const fetcher = vi.fn().mockResolvedValue(Response.json([]));
+    const client = createWebProviderWorkflowClient({ fetcher });
+    liveGateway.current = "/vm/bob";
+    try {
+      await expect(client.capabilities(new AbortController().signal)).rejects.toThrow();
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      liveGateway.current = "/vm/review";
+    }
+  });
+
   it("binds workflows to the captured gateway with caller cancellation and no cache", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json([]));
     const caller = new AbortController();

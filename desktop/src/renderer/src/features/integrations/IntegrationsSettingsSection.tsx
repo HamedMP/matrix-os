@@ -15,7 +15,7 @@ import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stor
 import { IntegrationMarketplace } from "@matrix-os/ui";
 import { AvailableServiceCard } from "./AvailableServiceCard";
 import { ConnectPendingBanner } from "./ConnectPendingBanner";
-import { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll } from "./connect-poll";
+import { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll } from "@matrix-os/ui";
 import { DisconnectConfirmDialog } from "./DisconnectConfirmDialog";
 import { EmptyCatalogState, ErrorState, LoadingSkeleton, UnavailableState } from "./IntegrationStatusViews";
 import { useIntegrations } from "./integrations-store";

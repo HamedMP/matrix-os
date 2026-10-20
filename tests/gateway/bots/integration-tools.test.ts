@@ -396,7 +396,7 @@ describe("bot integration tools", () => {
     const reference = JSON.parse(shown);
     expect(reference).toMatchObject({ kind: "workspace_attachment", size, sha256: createHash("sha256").update(bytes).digest("hex"), untrusted: true });
     expect(reference.relPath).toMatch(/^gmail-attachment-[0-9]{2}\.bin$/);
-    expect(await readFile(join(path, reference.relPath))).toEqual(bytes);
+    expect((await readFile(join(path, reference.relPath))).equals(bytes)).toBe(true);
     // Follow the reference through the same bounded dispatcher the bot can use.
     const dispatcher = createBotToolDispatcher({ homePath: home });
     const chunks: Buffer[] = [];
@@ -415,7 +415,7 @@ describe("bot integration tools", () => {
       expect(chunk.eof).toBe(chunk.nextOffset === size);
       chunks.push(data); offset = chunk.nextOffset;
     }
-    expect(Buffer.concat(chunks)).toEqual(bytes);
+    expect(Buffer.concat(chunks).equals(bytes)).toBe(true);
     expect(shown).not.toContain(bytes.toString("base64url").slice(0, 100));
     expect(sent).toHaveBeenCalledExactlyOnceWith(OWNER, expect.objectContaining({ connectionId: WORK.connectionId }), undefined);
     expect(await readdir(join(path, ".bot-save"))).toEqual([]);

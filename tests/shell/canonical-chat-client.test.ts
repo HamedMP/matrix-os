@@ -279,4 +279,13 @@ describe("canonical shell Chat client", () => {
     await expect(client.deleteAttachment("projects/private.txt")).rejects.toThrow("InvalidAttachmentReference");
     expect(fetchFn).toHaveBeenCalledOnce();
   });
+
+  it("reads an older detail page only with a well-formed cursor", async () => {
+    const fetchFn = vi.fn(async () => Response.json({}));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+    await expect(client.detail("chat_shell_test", "chatcur_older")).rejects.toThrow();
+    expect(new URL(String(fetchFn.mock.calls[0]?.[0])).searchParams.get("cursor")).toBe("chatcur_older");
+    await expect(client.detail("chat_shell_test", "x&limit=9999")).rejects.toThrow();
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
 });

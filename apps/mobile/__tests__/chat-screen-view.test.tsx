@@ -5,7 +5,7 @@ import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { ChatScreenView, type ChatScreenViewProps } from "../components/chat/ChatScreenView";
 import { CHAT_SUGGESTIONS } from "../components/chat/chat-suggestions";
 import { Icon } from "../components/ui/Icon";
-import { NewChatIcon, SidePanelIcon } from "../components/ui/icons";
+import { BackIcon, NewChatIcon, SidePanelIcon } from "../components/ui/icons";
 import type { TranscriptMessage } from "../lib/canonical-chat-transcript";
 
 import { flat } from "./ui-test-utils";
@@ -72,6 +72,22 @@ describe("ChatScreenView", () => {
     fireEvent.press(button);
 
     expect(onOpenSidePanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes back from that button in place of opening the side panel, for a chat opened from a project", () => {
+    const onOpenSidePanel = jest.fn();
+    const onBack = jest.fn();
+    render(<ChatScreenView {...props({ onOpenSidePanel, onBack })} />);
+
+    expect(screen.queryByRole("button", { name: "Open chats and projects" })).toBeNull();
+    const button = screen.getByRole("button", { name: "Back" });
+    expect(flat(button)).toMatchObject({ width: 44, height: 44 });
+    expect(button.findByType(Icon).props.icon).toBe(BackIcon);
+
+    fireEvent.press(button);
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onOpenSidePanel).not.toHaveBeenCalled();
   });
 
   it("offers New chat on the right only while a chat is open", () => {

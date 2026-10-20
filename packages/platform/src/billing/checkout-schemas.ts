@@ -85,3 +85,7 @@ export const PortalRequestSchema = z.object({
 export const CheckoutPreparationStatusQuerySchema = z.object({
   attemptId: z.uuid(),
 }).strict();
+
+export const CheckoutAbandonRequestSchema = z.object({
+  runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
+}).strict();
