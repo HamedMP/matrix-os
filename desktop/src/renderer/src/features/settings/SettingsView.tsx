@@ -88,7 +88,7 @@ export function SettingsSidebar({
     <nav
       aria-label="Settings sections"
       className="flex h-full w-full flex-col gap-0.5 overflow-y-auto p-2"
-      style={{ background: "var(--bg-surface)" }}
+      style={{ background: "var(--sidebar)", color: "var(--sidebar-foreground)" }}
     >
       {SECTION_GROUPS.map((group) => (
         <div key={group} className="mb-1 flex flex-col gap-0.5">
@@ -102,10 +102,10 @@ export function SettingsSidebar({
                 key={s.id}
                 type="button"
                 onClick={() => onSectionChange(s.id)}
-                className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 ${active ? "bg-[var(--bg-selected)]" : "hover:bg-[var(--bg-hover)]"}`}
-                style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
+                className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 ${active ? "bg-[var(--sidebar-accent)]" : "hover:bg-[var(--sidebar-accent)]"}`}
+                style={{ color: active ? "var(--sidebar-accent-foreground)" : "var(--text-secondary)" }}
               >
-                <span style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }}>{s.icon}</span>
+                <span style={{ color: active ? "var(--sidebar-accent-foreground)" : "var(--text-tertiary)" }}>{s.icon}</span>
                 {s.label}
               </button>
             );
@@ -119,7 +119,9 @@ export function SettingsSidebar({
 export default function SettingsView({
   section: controlledSection,
   onSectionChange,
+  automaticCreditRefreshEnabled = false,
 }: {
+  automaticCreditRefreshEnabled?: boolean;
   section?: SettingsSectionId;
   onSectionChange?: (section: SettingsSectionId) => void;
 } = {}) {
@@ -150,7 +152,7 @@ export default function SettingsView({
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "organization" ? <OrganizationSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
-          {section === "agents-providers" ? <AgentsProvidersAdapter /> : null}
+          {section === "agents-providers" ? <AgentsProvidersAdapter automaticCreditRefreshEnabled={automaticCreditRefreshEnabled} /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
           {section === "services" ? <IntegrationsSettingsSection /> : null}
           {section === "mcps" ? <McpServersSection /> : null}

@@ -11,7 +11,9 @@ import FileEmpty01Icon from "@hugeicons/core-free-icons/FileEmpty01Icon";
 
 import { AnalyticsMask } from "@/lib/analytics";
 import { useComputerFilePreview } from "@/lib/queries/use-computer-file-preview";
+import { motion } from "@/lib/theme-v2";
 import { EmptyState, Spacer, Text } from "@/components/ui";
+import { withRefreshTap } from "@/lib/haptics";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export function ComputerFilePreview({ name, path }: { name: string; path: string }) {
@@ -37,7 +39,7 @@ export function ComputerFilePreview({ name, path }: { name: string; path: string
           <RefreshControl
             testID="file-preview-refresh-control"
             refreshing={pullToRefresh.refreshing}
-            onRefresh={pullToRefresh.onRefresh}
+            onRefresh={withRefreshTap(pullToRefresh.onRefresh)}
             tintColor={theme.v2.appColors.ink}
             colors={[theme.v2.appColors.ink]}
             progressBackgroundColor={theme.v2.appColors.canvas}
@@ -76,6 +78,7 @@ export function ComputerFilePreview({ name, path }: { name: string; path: string
           <>
             <Spacer size="lg" />
             <Image
+              transition={motion.duration.fast}
               accessibilityLabel={name}
               source={{
                 uri: preview.uri,

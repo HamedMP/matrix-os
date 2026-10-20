@@ -12,6 +12,18 @@ import { validateCustomMcpUrl } from "../../packages/gateway/src/integrations/cu
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); network.request.mockReset(); });
 describe("OAuth absolute network deadline", () => {
+  it("preserves a registration denial without parsing its plain-text body or logging it", async () => {
+    const body = new PassThrough() as PassThrough & { statusCode: number };
+    body.statusCode = 403;
+    const request = new EventEmitter() as EventEmitter & { end(): void };
+    network.request.mockImplementation((_url, _options, receive) => {
+      request.end = () => queueMicrotask(() => { receive(body); body.end("Forbidden private-upstream-detail"); });
+      return request;
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(pinnedOAuthRequest({ method: "POST", url: "https://public.example/register" })).resolves.toEqual({ status: 403, body: undefined });
+    expect(warn).not.toHaveBeenCalled();
+  });
   it("aborts a continuously trickling response despite no idle timeout", async () => {
     vi.useFakeTimers();
     vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {

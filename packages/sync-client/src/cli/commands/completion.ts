@@ -23,6 +23,7 @@ const COMMANDS = [
   "doctor",
   "instance",
   "preview",
+  "update",
   "completion",
 ];
 

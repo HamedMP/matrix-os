@@ -45,9 +45,11 @@ scope.
   do not carry over to another account or computer. What is chosen for a new
   chat while its first message is on its way goes to the chat that message
   creates.
-- Sending shows the message at once. If the send fails, the text and the
-  attachments return to the composer. Places are held for them until the send
-  is settled, so nothing added meanwhile is pushed out when they come back.
+- Sending shows the message at once. If the send fails, the message stays in
+  the chat marked as not sent, with its attachments, and "Edit" returns them
+  to the composer (spec 627). Places are held for them until the send is
+  settled and while the message waits, so nothing added meanwhile is pushed
+  out when they come back.
 - On a project's screen nothing can be added while its message is on its way.
   That screen is left for the new chat as soon as the message is in, so what
   was chosen meanwhile would have no composer to appear in.
@@ -106,9 +108,9 @@ shared contract schemas.
 
 | Step that fails | Result |
 | --- | --- |
-| An upload | No chat is created, no turn is asked for. Uploads that this send put on the computer are removed. Text and attachments return to the composer. |
+| An upload | No chat is created, no turn is asked for. Uploads that this send put on the computer are removed. The message stays as not sent (spec 627). |
 | An upload is stored but is not the whole file | It is removed, so a later try does not find it in place, and the upload counts as failed. |
-| Creating the chat | Uploads that this send put on the computer are removed. Text and attachments return. |
+| Creating the chat | Uploads that this send put on the computer are removed. The message stays as not sent. |
 | Admitting the turn | The answer may only have been lost, so uploads stay. Sending again reuses the request ids and finds the uploads in place, so the computer sees one message. |
 | Anything, on a later try | An upload found already in place is never removed: the turn of an earlier try may name it. |
 | Removing an unused upload | Logged. The computer clears the upload folder by itself (7 days, 200 files). |
@@ -140,8 +142,9 @@ new build, not an over-the-air update.
   copy of the message arrives.
 - A model that reads no attachments shows both rows disabled with the reason.
 - A skill chosen from the sheet starts the draft.
-- A failed send returns text and attachments, and sending again does not
-  create a second chat or message, nor remove a file a sent message uses.
+- A failed send keeps text and attachments (in the chat, or back in the
+  composer on "Edit"), and sending again does not create a second chat or
+  message, nor remove a file a sent message uses.
 - After a change to a model that does not read a waiting attachment, Send is
   off and the composer says why.
 - A photo the library names without an ending is still shown as a photo after

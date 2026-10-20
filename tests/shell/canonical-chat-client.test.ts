@@ -33,7 +33,7 @@ describe("canonical shell Chat client", () => {
     expect(opened).toBe(response);
     expect(opened.bodyUsed).toBe(false);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1",
+      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1",
       expect.objectContaining({
         method: "GET",
         headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "1" },
@@ -277,6 +277,15 @@ describe("canonical shell Chat client", () => {
       expect.objectContaining({ method: "DELETE", signal: expect.any(AbortSignal) }),
     );
     await expect(client.deleteAttachment("projects/private.txt")).rejects.toThrow("InvalidAttachmentReference");
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
+  it("reads an older detail page only with a well-formed cursor", async () => {
+    const fetchFn = vi.fn(async () => Response.json({}));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+    await expect(client.detail("chat_shell_test", "chatcur_older")).rejects.toThrow();
+    expect(new URL(String(fetchFn.mock.calls[0]?.[0])).searchParams.get("cursor")).toBe("chatcur_older");
+    await expect(client.detail("chat_shell_test", "x&limit=9999")).rejects.toThrow();
     expect(fetchFn).toHaveBeenCalledOnce();
   });
 });

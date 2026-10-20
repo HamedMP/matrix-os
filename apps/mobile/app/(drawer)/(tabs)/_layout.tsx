@@ -1,22 +1,19 @@
-import { Platform } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
 import { Tabs, type BottomTabBarProps } from "expo-router/tabs";
 
 import { useAgentsWaitingCount } from "@/components/agents/use-agents-waiting-count";
 import { TABS, TabBar } from "@/components/shell/TabBar";
 import { focusedNestedRouteName, isTabBarHidden } from "@/lib/tab-bar-visibility";
-import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
+import { useReduceMotion } from "@/lib/use-reduce-motion";
 
 function ShellTabBar({ state, navigation }: BottomTabBarProps) {
-  const keyboardVisible = useKeyboardVisible();
   const agentsWaiting = useAgentsWaitingCount();
   const focused = state.routes[state.index];
 
   if (isTabBarHidden(focused.name, focusedNestedRouteName(focused))) return null;
-  // Android resizes the window for the keyboard, which would lift the bar on
-  // top of it. On iOS the keyboard simply covers the bar.
-  if (Platform.OS === "android" && keyboardVisible) return null;
 
+  // An open keyboard covers the bar where it stands, on Android too: the app
+  // is edge to edge, so the window does not shrink for the keyboard.
   return (
     <TabBar
       activeRoute={focused.name}
@@ -41,6 +38,7 @@ function ShellTabBar({ state, navigation }: BottomTabBarProps) {
 
 export default function TabsLayout() {
   const { theme } = useUnistyles();
+  const reduceMotion = useReduceMotion();
 
   return (
     <Tabs
@@ -48,6 +46,9 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         sceneStyle: { backgroundColor: theme.v2.colors.background },
+        // The next tab's screen slides in a little from its side; with reduced
+        // motion it cross-fades instead.
+        animation: reduceMotion ? "fade" : "shift",
       }}
     >
       {TABS.map((tab) => <Tabs.Screen key={tab.route} name={tab.route} />)}

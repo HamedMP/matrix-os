@@ -1,9 +1,11 @@
+import {assertNotRoutingCoverage,verifyRunExecution} from './dedicated-isolated.mjs';
 // Metadata suites must execute the required Actions job. A skipped/renamed job
 // in a newer suite makes GitHub show the previous real result as "Expected".
-// Reuse only a genuine aggregate for the identical head/base/merge snapshot;
-// metadata verifications themselves are never requesting coverage candidates.
+// Reuse only genuine coverage for this head and its recorded tested source;
+// main advances preserve that source. Metadata jobs never qualify each other.
 import {authenticatedRequestingRun} from './dedicated-refresh.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
+import {mainPrCoverage,verifyMainPrSnapshot} from './dedicated-main-pr.mjs';
 const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const same=(a,b)=>typeof a==='string'&&typeof b==='string'&&a.toLowerCase()===b.toLowerCase();
@@ -23,9 +25,17 @@ export async function verifyMetadataCoverage(github,repo,snapshot,currentRunId){
  if(!id(currentRunId)||!id(snapshot.prNumber)||![snapshot.headSha,snapshot.baseSha,snapshot.sourceSha].every(value=>/^[a-f0-9]{40}$/.test(value||''))||!snapshot.headRef||!snapshot.baseRef)throw new Error('Invalid metadata source snapshot');
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected CI workflow');
- const run=await newestWorkflowRun(github,repo,workflow,candidate=>candidate.id!==currentRunId&&requestingRun(candidate,repo,snapshot,workflow),{kind:'requester',headSha:snapshot.headSha,headRef:snapshot.headRef});
+ let run;
+ if(snapshot.baseRef==='main'){
+  const coverage=await mainPrCoverage(github,repo,snapshot,{allModes:true,excludeRunId:currentRunId,controllerSha:snapshot.executionControllerSha});
+  if(coverage){
+   const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});
+   await verifyMainPrSnapshot(github,repo,pull,coverage.snapshot);
+   snapshot=coverage.snapshot;run=coverage.run;
+  }
+ }else run=await newestWorkflowRun(github,repo,workflow,async candidate=>{if(candidate.id===currentRunId||!requestingRun(candidate,repo,snapshot,workflow))return false;await verifyRunExecution(github,repo,candidate,'.github/workflows/ci.yml');return true;},{kind:'requester',headSha:snapshot.headSha,headRef:snapshot.headRef,controllerSha:snapshot.executionControllerSha});
  if(!run||run.status!=='completed'||run.conclusion!=='success')throw new Error('No successful exact-source CI coverage for this metadata edit');
- if(run.event==='pull_request'&&run.pull_requests?.length===0){
+ if(snapshot.baseRef!=='main'&&run.event==='pull_request'&&run.pull_requests?.length===0){
   // GitHub omits associations for fork runs. Independently authenticate the
   // event's exact PR tuple and public merge parents before accepting that shape.
   const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});
@@ -36,6 +46,7 @@ export async function verifyMetadataCoverage(github,repo,snapshot,currentRunId){
 
  const {data}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,filter:'latest',per_page:100,request});
  if(!Number.isSafeInteger(data.total_count)||data.total_count>100||!Array.isArray(data.jobs)||data.jobs.length!==data.total_count)throw new Error('Incomplete genuine CI job inventory');
+ assertNotRoutingCoverage(data.jobs);
  const aggregates=data.jobs.filter(job=>job.name==='CI Results');
  const job=aggregates[0],prefix=`https://api.github.com/repos/${repo.owner}/${repo.repo}/check-runs/`;
  if(aggregates.length!==1||job.run_id!==run.id||job.run_attempt!==run.run_attempt||job.head_sha!==run.head_sha||job.status!=='completed'||job.conclusion!=='success'||!job.check_run_url?.startsWith(prefix))throw new Error('Genuine CI aggregate did not pass');
@@ -43,5 +54,5 @@ export async function verifyMetadataCoverage(github,repo,snapshot,currentRunId){
  if(!id(checkId))throw new Error('Invalid genuine CI check identity');
  const {data:check}=await github.rest.checks.get({...repo,check_run_id:checkId,request});
  if(check.id!==checkId||check.app?.id!==15368||check.app?.slug!=='github-actions'||check.name!=='CI Results'||check.head_sha!==run.head_sha||check.status!=='completed'||check.conclusion!=='success'||check.details_url!==`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${run.id}/job/${job.id}`)throw new Error('CI aggregate issuer or source binding mismatch');
- return{runId:run.id,runAttempt:run.run_attempt};
+ return{runId:run.id,runAttempt:run.run_attempt,sourceSha:snapshot.sourceSha,baseSha:snapshot.baseSha};
 }

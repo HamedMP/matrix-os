@@ -39,11 +39,12 @@ export function getAuthPage(
   const billingSetupTargetJson = escapeInlineScriptJson(buildBillingSetupTarget(appShellOrigin, redirectTarget));
   const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
   const modeDetail = mode === 'sign-up'
-    ? 'Start with a free account. The 3-day hosted Matrix trial begins only when you provision your cloud computer.'
+    ? 'Start with a free account. Choose your cloud computer to see available trial offers and billing details.'
     : 'Sign in to continue to your Matrix computer, provisioning status, or trial checkout.';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   ${getAuthPageIndexingTags(mode, appShellOrigin)}
@@ -1250,6 +1251,7 @@ export function getNoContainerPage() {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Matrix OS</title>
@@ -1387,6 +1389,7 @@ export function getRuntimePickerPage(input: {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Select Matrix OS Machine</title>

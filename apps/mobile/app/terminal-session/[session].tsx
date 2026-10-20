@@ -22,6 +22,7 @@ import {
   type MobileTerminalConnection,
   type TerminalServerFrame,
 } from "@/lib/terminal-client";
+import { useTerminalKeys } from "@/components/terminal/use-terminal-keys";
 import { isSafeSessionId } from "@/lib/terminal-state";
 import { colors } from "@/lib/theme";
 
@@ -44,7 +45,7 @@ export default function TerminalSessionScreen() {
   // exited has ended, however the socket was last left.
   const status: LiveStatus = exitedOnComputer ? "ended" : liveStatus;
   const error = exitedOnComputer ? null : liveError;
-  const [fontScale, setFontScale] = useState(1);
+  const [fontScale] = useState(1);
   const surfaceRef = useRef<TerminalSurfaceHandle | null>(null);
   const connectionRef = useRef<MobileTerminalConnection | null>(null);
   const connectionAttemptRef = useRef(0);
@@ -219,9 +220,8 @@ export default function TerminalSessionScreen() {
     connectionRef.current?.resize(cols, rows);
   }, []);
 
-  const adjustFontScale = useCallback((delta: number) => {
-    setFontScale((current) => Math.max(0.85, Math.min(1.3, Number((current + delta).toFixed(2)))));
-  }, []);
+  const focusKeyboard = useCallback(() => surfaceRef.current?.focus(), []);
+  const keys = useTerminalKeys(sendData, focusKeyboard);
 
   return (
     <KeyboardAvoidingView
@@ -238,7 +238,8 @@ export default function TerminalSessionScreen() {
         <TerminalSurface
           ref={surfaceRef}
           fontScale={fontScale}
-          onInput={sendData}
+          onInput={keys.sendTyped}
+          onKeys={keys.sendKey}
           onBinary={sendBinary}
           onResize={handleResize}
         />
@@ -289,15 +290,19 @@ export default function TerminalSessionScreen() {
       </View>
 
       <TerminalControlBar
-        onSend={sendData}
+        onSend={keys.sendKey}
         onScroll={(lines) => surfaceRef.current?.scrollLines(lines)}
         onScrollToBottom={() => surfaceRef.current?.scrollToBottom()}
+        onShowKeyboard={focusKeyboard}
         onDismissKeyboard={() => {
           surfaceRef.current?.blur();
           Keyboard.dismiss();
         }}
-        onFontScale={adjustFontScale}
-        onClear={() => surfaceRef.current?.clear()}
+        keyboardVisible={keys.keyboardVisible}
+        expanded={keys.expanded}
+        onExpandedChange={keys.setExpanded}
+        ctrlArmed={keys.ctrlArmed}
+        onToggleCtrl={keys.toggleCtrl}
       />
     </KeyboardAvoidingView>
   );

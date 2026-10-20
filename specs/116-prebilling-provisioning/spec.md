@@ -42,6 +42,8 @@ A user may close checkout, let it expire, encounter a declined payment, or lose 
 2. **Given** billing authorization and cleanup occur concurrently, **When** both operations settle, **Then** the authorized computer remains assigned and accessible and no replacement computer is created.
 3. **Given** checkout creation fails before a checkout session is available, **When** the failure is returned to the user, **Then** Matrix does not begin provider preparation.
 4. **Given** provider preparation fails while checkout remains available, **When** the user completes billing, **Then** Matrix preserves the authorized purchase and uses the normal retryable provisioning path without exposing raw provider errors.
+5. **Given** the user returns from an open Stripe Checkout without completing payment, **When** billing setup reloads, **Then** Matrix shows the server-owned checkout selection and offers explicit actions to resume that checkout or abandon it before choosing different options.
+6. **Given** the user chooses to abandon an open checkout, **When** Stripe confirms that the session is expired, **Then** Matrix atomically releases the checkout, trial reservation, and unauthorized preparation; if Stripe reports completion or cannot confirm expiry, Matrix keeps the reservation and does not permit a replacement checkout.
 
 ---
 
@@ -127,6 +129,8 @@ Existing customers, additional computers, recoveries, resizes, billing grace, su
 - **FR-030**: The public onboarding documentation MUST explain the new compute → agents → checkout/preparation → billing authorization → ready sequence without exposing private operator details.
 - **FR-031**: Post-checkout onboarding, including CLI and device-return flows, MUST treat accepted or resumable preparation as authoritative and MUST NOT ask the user to choose default installs or start provisioning again.
 - **FR-032**: A temporary app-session `no_runtime` result while the selected runtime is preparing or awaiting billing MUST be treated as a passive wait state; Matrix MUST preserve the validated return target and runtime slot, retry session creation, and continue automatically after authorization.
+- **FR-033**: Billing status MUST expose a bounded, owner-scoped projection of any active checkout selection so every billing surface can render the authoritative plan, interval, region, and developer tools without exposing checkout URLs or internal identifiers.
+- **FR-034**: A user-requested checkout abandonment MUST expire the provider checkout before atomically resolving the local attempt, releasing any trial reservation, and scheduling cleanup of an unauthorized prepared computer. Completion, ambiguous provider outcomes, and concurrent authorization MUST fail closed without unlocking a replacement checkout.
 
 ### Key Entities
 

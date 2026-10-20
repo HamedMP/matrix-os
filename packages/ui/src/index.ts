@@ -46,8 +46,18 @@ export {
   deriveCanonicalProviderChoices,
   orderCanonicalProviderInstancesForDefault,
 } from "./canonical-provider-choice.js";
-export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath } from "./provider-projection-paths.js";
+export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath, providerSettingsManagedCreditPath } from "./provider-projection-paths.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
+export {
+  applyCanonicalComposerPreference,
+  canonicalComposerSelectionIsAvailable,
+  changeCanonicalComposerInstance,
+  createCanonicalComposerSelection,
+  providerInstanceIsLocked,
+  updateCanonicalComposerOption,
+  type CanonicalComposerPreference,
+  type CanonicalComposerSelection,
+} from "./canonical-composer-selection.js";
 export {
   ChatEventFrameTooLarge,
   createCanonicalChatEventSource as createSharedCanonicalChatEventSource,
@@ -150,7 +160,14 @@ export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
 
-export { GettingStartedVisibilityProvider, GettingStartedBlocker, useGettingStartedVisibility, useGettingStartedBlocker, useGettingStartedPopoverFocus } from "./getting-started-visibility.js";
+export {
+  GettingStartedVisibilityProvider,
+  GettingStartedBlocker,
+  useGettingStartedAutoOpenSuppression,
+  useGettingStartedVisibility,
+  useGettingStartedBlocker,
+  useGettingStartedPopoverFocus,
+} from "./getting-started-visibility.js";
 export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from "./terminal/terminal-pane-request.js";
 
 export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection, type ChatAgentDraftRequest, type StartAgentChat } from "./chat-agents/client.js";
@@ -227,6 +244,14 @@ export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, provi
 export type { ProviderWorkflowClient } from "./agents-providers/types.js";
 
 export { IntegrationMarketplace } from "./integrations/IntegrationMarketplace.js";
+export {
+  DEFAULT_CONNECT_POLL_INTERVALS_MS,
+  activeConnectionIds,
+  hasNewActiveConnection,
+  startConnectPoll,
+  type ConnectPollConnection,
+  type ConnectPollOptions,
+} from "./integrations/connect-poll.js";
 export type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./agents-providers/local-chatgpt-plan-client.js";
 export { createMatrixAnthropicConnectionClient, type MatrixAnthropicConnectionClient } from "./agents-providers/matrix-anthropic-connection-client.js";
 
@@ -237,6 +262,7 @@ export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
 
 export { ChatRailSection } from "./chat/ChatRailSection.js";
+export { SupervisedToolApprovalBar, SupervisedToolApprovalCard } from "./chat/SupervisedToolApprovalCard.js";
 
 export { OverflowingChatTitle } from "./chat/OverflowingChatTitle.js";
 
@@ -246,5 +272,12 @@ export * from "./chat-navigation/browser-cache.js";
 export * from "./chat-navigation/projection.js";
 export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
+export * from "./onboarding-widget/index.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
+
+export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./chat/attachment-input.js";
+
+export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
+
+export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";

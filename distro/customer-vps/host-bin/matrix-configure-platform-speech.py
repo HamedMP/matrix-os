@@ -1,6 +1,7 @@
 #!/usr/bin/python3 -I
 """Root-only activation of machine-bound managed speech configuration."""
 import json
+import fcntl
 import os
 import re
 import stat
@@ -72,6 +73,22 @@ def write_backup(path, data, source_info):
 
 
 def apply_config(env_path, backup_path, raw_config):
+    # All managed host.env writers share this lock so independent features and
+    # runtime-token rotation cannot overwrite one another's assignments.
+    lock = os.open(os.path.join(os.path.dirname(os.path.abspath(env_path)), '.host.env.funded-repair.lock'),
+                   os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(lock)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != 0o600 or (os.geteuid() == 0 and info.st_uid != 0)):
+            raise ValueError('Unsafe host environment lock')
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return _apply_config_unlocked(env_path, backup_path, raw_config)
+    finally:
+        os.close(lock)
+
+
+def _apply_config_unlocked(env_path, backup_path, raw_config):
     config = validate_config(raw_config)
     env_bytes, original = read_regular(env_path, 65536)
     lines = env_bytes.decode("utf-8").split("\n")

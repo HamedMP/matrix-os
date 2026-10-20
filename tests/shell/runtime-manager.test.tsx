@@ -253,7 +253,7 @@ describe("RuntimeManager", () => {
     expect(screen.queryByText("Each one is a private Matrix OS workspace with its own files and data.")).toBeNull();
     expect(screen.getByText("Matrix OS member").className).toContain("font-medium");
     expect(screen.getByText("neo@example.com")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Switch to Studio/i }).getAttribute("href")).toBe(
+    expect((await screen.findByRole("link", { name: /Switch to Studio/i })).getAttribute("href")).toBe(
       "/vm/neo-studio?runtime=studio",
     );
     expect(screen.getByText("Current")).toBeTruthy();
@@ -704,7 +704,7 @@ describe("RuntimeManager", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/auth/computers") return json(inventory);
-      if (url === "/billing/status") return json(billingStatus(2));
+      if (url === "/billing/status" || url === "/billing/status?trialOfferVersion=2") return json(billingStatus(2));
       if (url.startsWith("/billing/status?runtimeSlot=")) {
         billingReads += 1;
         return json({
@@ -741,7 +741,7 @@ describe("RuntimeManager", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/auth/computers") return json(inventory);
-      if (url === "/billing/status") return json(billingStatus(2));
+      if (url === "/billing/status" || url === "/billing/status?trialOfferVersion=2") return json(billingStatus(2));
       if (url.startsWith("/billing/status?runtimeSlot=")) {
         billingReads += 1;
         return billingReads > 1

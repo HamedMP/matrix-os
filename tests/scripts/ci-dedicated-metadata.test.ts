@@ -4,7 +4,7 @@ import {parse} from 'yaml';
 import {authenticatedRequestingRun} from '../../scripts/ci/dedicated-refresh.mjs';
 const ci=parse(readFileSync('.github/workflows/ci.yml','utf8'));
 const format=(text:string,...values:unknown[])=>text.replace(/\{(\d+)\}/g,(_,i)=>String(values[Number(i)]));
-function expression(text:string,github:any,inputs={}){if(!text.startsWith('${{')&&!text.includes('always(')&&!text.includes('github.'))return text;return Function('github','inputs','format','always',`return (${text.replace(/^\$\{\{\s*|\s*\}\}$/g,'')});`)(github,inputs,format,()=>true);}
+function expression(text:string,github:any,inputs={}){if(!text.startsWith('${{')&&!text.includes('always(')&&!text.includes('github.'))return text;return Function('github','inputs','format','always','needs','vars',`return (${text.replace(/^\$\{\{\s*|\s*\}\}$/g,'')});`)(github,inputs,format,()=>true,{redirect:{outputs:{}}},{});}
 const sha='a'.repeat(40),head='b'.repeat(40),base='c'.repeat(40),repo={owner:'HamedMP',repo:'matrix-os'};
 describe('metadata-only PR events cannot replace required coverage',()=>{
  it.each(['title','body'])('keeps the required aggregate executable for ready %s edits while excluding metadata from coverage provenance',field=>{

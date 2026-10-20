@@ -499,7 +499,9 @@ describe("Desktop launcher dock button by mode", () => {
 
     // Startup now persists Chat. Settle that revision before the icon action;
     // the fixture must not invent an icon as the startup PATCH response.
-    await waitFor(() => expect(patches).toHaveLength(1));
+    // Layout persistence is debounced by 500 ms; a loaded CI runner can spend
+    // the default 1 s wait budget before that write reaches the mock endpoint.
+    await waitFor(() => expect(patches).toHaveLength(1), { timeout: 5_000 });
     expect(document.apps).toContainEqual(expect.objectContaining({ path: "__chat__", state: "open" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Open App Launcher" }));

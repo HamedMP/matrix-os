@@ -477,7 +477,7 @@ export function WorkRail({
       aria-busy={records.length>0 && !navigation.fresh}
       data-navigation-fresh={navigation.fresh || undefined}
       className={`matrix-chat-work-rail flex min-h-0 shrink-0 flex-col gap-0.5 overflow-hidden border-r pb-2 pt-3 ${className}`}
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      style={{ borderColor: "var(--sidebar-border)", background: "var(--sidebar)", color: "var(--sidebar-foreground)" }}
     >
       <WorkRailHeader
         shortcutAvailable={newChatShortcutActive}

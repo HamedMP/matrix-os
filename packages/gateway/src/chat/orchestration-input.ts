@@ -50,6 +50,7 @@ function shellQuotedOwnerReference(ownerReference: string): string {
 
 export function requirementsFor(input: CanonicalCreateChatTurnRequest) {
   return {
+    attachmentInputs: input.parts.filter(part => part.type === "attachment_reference"),
     attachments: input.parts.flatMap((part) =>
       part.type === "attachment_reference" ? [part.kind] : []
     ),

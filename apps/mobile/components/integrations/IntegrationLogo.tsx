@@ -4,6 +4,7 @@ import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import type { IntegrationService } from "@/lib/requests";
+import { motion } from "@/lib/theme-v2";
 
 export function IntegrationLogo({
   service,
@@ -36,6 +37,7 @@ export function IntegrationLogo({
     >
       {service.logoUrl && !imageFailed ? (
         <Image
+          transition={motion.duration.fast}
           source={{ uri: service.logoUrl }}
           contentFit="contain"
           onError={() => setImageFailed(true)}

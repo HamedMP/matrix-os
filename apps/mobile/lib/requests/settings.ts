@@ -40,6 +40,7 @@ export function fetchMobileBillingStatus(
 ): Promise<MobileBillingStatus> {
   const url = new URL(`${HOSTED_GATEWAY_URL}/billing/status`);
   url.searchParams.set("runtimeSlot", runtimeSlot);
+  url.searchParams.set("trialOfferVersion", "2");
   return fetchAuthenticatedJson({
     url: url.toString(),
     token: clerkToken,

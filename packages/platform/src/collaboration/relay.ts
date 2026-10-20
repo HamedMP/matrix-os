@@ -26,7 +26,9 @@ const SESSION_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", new RegExp(`^/api/collaboration/direct-sessions/(${UUID})/renew$`)],
   ["DELETE", new RegExp(`^/api/collaboration/direct-sessions/(${UUID})$`)],
 ];
+const RECOVERY_RESOURCE_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const RUNTIME_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
+  ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/catalog/${RECOVERY_RESOURCE_ID}/reauthorization/(?:inspect|confirm)$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/catalog/resolve$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes/preflight$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes$`)],

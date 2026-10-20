@@ -1,7 +1,11 @@
 import { WebCache } from "./web-cache.js";
 import { extractWithReadability, extractRawText } from "./web-utils.js";
 import { wrapExternalContent } from "../security/external-content.js";
-import { validateUrl, SsrfBlockedError } from "../security/ssrf-guard.js";
+import { validateUrl } from "../security/ssrf-guard.js";
+import {
+  boundedWebFetchLimit, cancelWebBody, MAX_WEB_FETCH_TIMEOUT_MS,
+  MAX_WEB_RESPONSE_BYTES, readBoundedWebBody, WebFetchBudget, WebFetchLimitError,
+} from "./web-fetch-limits.js";
 
 export type ExtractMode = "markdown" | "text";
 export type ExtractedVia = "cloudflare-markdown" | "readability" | "firecrawl" | "raw";
@@ -20,13 +24,7 @@ export interface WebFetchResult {
   charCount: number;
 }
 
-interface FetchResponse {
-  ok: boolean;
-  status: number;
-  headers: Map<string, string>;
-  text(): Promise<string>;
-}
-
+type FetchResponse = Pick<Response, "ok" | "status" | "headers" | "body">;
 type Fetcher = (url: string, init?: RequestInit) => Promise<FetchResponse>;
 
 export interface WebFetchToolOptions {
@@ -35,6 +33,10 @@ export interface WebFetchToolOptions {
   wrapContent?: boolean;
   maxChars?: number;
   firecrawlApiKey?: string;
+  /** Decoded response cap; may lower but never exceed the built-in maximum. */
+  maxResponseBytes?: number;
+  /** Total operation budget; may lower but never exceed the built-in maximum. */
+  timeoutMs?: number;
 }
 
 const DEFAULT_MAX_CHARS = 50_000;
@@ -56,30 +58,35 @@ function validateWebUrl(url: string): void {
 export function createWebFetchTool(opts: WebFetchToolOptions) {
   const {
     cache,
-    fetcher = globalThis.fetch as unknown as Fetcher,
+    fetcher = globalThis.fetch,
     wrapContent = false,
     maxChars: defaultMaxChars = DEFAULT_MAX_CHARS,
     firecrawlApiKey,
   } = opts;
 
+  const maxResponseBytes = boundedWebFetchLimit(opts.maxResponseBytes, MAX_WEB_RESPONSE_BYTES);
+  const timeoutMs = boundedWebFetchLimit(opts.timeoutMs, MAX_WEB_FETCH_TIMEOUT_MS);
+
   async function execute(input: WebFetchInput): Promise<WebFetchResult> {
     const { url, extractMode = "markdown", maxChars = defaultMaxChars } = input;
 
+    const budget = new WebFetchBudget(timeoutMs);
     validateWebUrl(url);
-    await validateUrl(url);
+    await budget.wait(validateUrl(url));
 
     const cacheKey = `fetch:${WebCache.normalizeUrl(url)}`;
     const cached = cache.get<WebFetchResult>(cacheKey);
     if (cached) return cached;
 
-    const response = await fetchWithValidatedRedirects(fetcher, url);
+    const response = await fetchWithValidatedRedirects(fetcher, url, budget);
 
     if (!response.ok) {
+      cancelWebBody(response.body);
       throw new Error(`HTTP ${response.status} fetching ${url}`);
     }
 
     const contentType = response.headers.get("content-type") ?? "";
-    const body = await response.text();
+    const body = await readBoundedWebBody(response.body, budget, maxResponseBytes);
 
     let content: string;
     let title: string | undefined;
@@ -89,7 +96,8 @@ export function createWebFetchTool(opts: WebFetchToolOptions) {
       content = body;
       extractedVia = "cloudflare-markdown";
     } else {
-      const article = await extractWithReadability(body, url).catch((err: unknown) => {
+      const article = await budget.wait(extractWithReadability(body, url)).catch((err: unknown) => {
+        if (err instanceof WebFetchLimitError) throw err;
         console.warn("[web-fetch] Readability extraction failed:", err instanceof Error ? err.message : String(err));
         return null;
       });
@@ -98,7 +106,7 @@ export function createWebFetchTool(opts: WebFetchToolOptions) {
         title = article.title;
         extractedVia = "readability";
       } else if (firecrawlApiKey) {
-        const fcResult = await fetchWithFirecrawl(url, firecrawlApiKey, fetcher);
+        const fcResult = await fetchWithFirecrawl(url, firecrawlApiKey, fetcher, budget, maxResponseBytes);
         if (fcResult) {
           content = fcResult.content;
           title = fcResult.title;
@@ -113,6 +121,7 @@ export function createWebFetchTool(opts: WebFetchToolOptions) {
       }
     }
 
+    budget.check();
     if (content.length > maxChars) {
       content = content.slice(0, maxChars);
     }
@@ -132,6 +141,7 @@ export function createWebFetchTool(opts: WebFetchToolOptions) {
       charCount: content.length,
     };
 
+    budget.check();
     cache.set(cacheKey, result);
     return result;
   }
@@ -139,21 +149,26 @@ export function createWebFetchTool(opts: WebFetchToolOptions) {
   return { execute };
 }
 
-async function fetchWithValidatedRedirects(fetcher: Fetcher, initialUrl: string): Promise<FetchResponse> {
+async function fetchWithValidatedRedirects(
+  fetcher: Fetcher, initialUrl: string, budget: WebFetchBudget,
+): Promise<FetchResponse> {
   let currentUrl = initialUrl;
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
-    const response = await fetcher(currentUrl, {
+    budget.check();
+    const response = await budget.wait(fetcher(currentUrl, {
       headers: {
         Accept: "text/markdown, text/html;q=0.9, */*;q=0.8",
         "User-Agent": "MatrixOS/1.0 (web-fetch)",
       },
       redirect: "manual",
-    });
+      signal: budget.signal,
+    }), (lateResponse) => cancelWebBody(lateResponse.body));
 
     if (response.status < 300 || response.status >= 400) {
       return response;
     }
 
+    cancelWebBody(response.body);
     const location = response.headers.get("location") ?? response.headers.get("Location");
     if (!location) {
       throw new Error(`HTTP ${response.status} redirect missing Location for ${currentUrl}`);
@@ -161,7 +176,8 @@ async function fetchWithValidatedRedirects(fetcher: Fetcher, initialUrl: string)
 
     const nextUrl = new URL(location, currentUrl).toString();
     validateWebUrl(nextUrl);
-    await validateUrl(nextUrl);
+    budget.check();
+    await budget.wait(validateUrl(nextUrl));
     currentUrl = nextUrl;
   }
 
@@ -172,18 +188,26 @@ async function fetchWithFirecrawl(
   url: string,
   apiKey: string,
   fetcher: Fetcher,
+  budget: WebFetchBudget,
+  maxResponseBytes: number,
 ): Promise<{ content: string; title?: string } | null> {
   try {
-    const response = await fetcher("https://api.firecrawl.dev/v1/scrape", {
+    budget.check();
+    const response = await budget.wait(fetcher("https://api.firecrawl.dev/v1/scrape", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ url, formats: ["markdown"] }),
-    });
-    if (!response.ok) return null;
-    const data = JSON.parse(await response.text()) as {
+      redirect: "error",
+      signal: budget.signal,
+    }), (lateResponse) => cancelWebBody(lateResponse.body));
+    if (!response.ok) {
+      cancelWebBody(response.body);
+      return null;
+    }
+    const data = JSON.parse(await readBoundedWebBody(response.body, budget, maxResponseBytes)) as {
       data?: { markdown?: string; metadata?: { title?: string } };
     };
     if (!data.data?.markdown) return null;
@@ -192,6 +216,7 @@ async function fetchWithFirecrawl(
       title: data.data.metadata?.title,
     };
   } catch (err: unknown) {
+    if (err instanceof WebFetchLimitError) throw err;
     console.warn("[web-fetch] Firecrawl extraction failed:", err instanceof Error ? err.message : String(err));
     return null;
   }

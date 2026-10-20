@@ -18,7 +18,8 @@
     "./integration-marketplace": "./src/integration-marketplace.ts",
     "./managed-integrations": "./src/managed-integrations.ts",
     "./bokio-integration": "./src/bokio-integration.ts",
-    "./data-imports": "./src/data-imports.ts"
+    "./data-imports": "./src/data-imports.ts",
+    "./command-preview-policy": "./src/command-preview-policy.mjs"
   },
   "imports": {
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
@@ -55,6 +56,7 @@
     "#canonical-chat-api": "./src/canonical-chat-api.ts",
     "#canonical-chat-inputs": "./src/canonical-chat-inputs.ts",
     "#canonical-chat-content": "./src/canonical-chat-content.ts",
+    "#supervised-tool-approval": "./src/supervised-tool-approval.ts",
     "#canonical-chat-approvals": "./src/canonical-chat-approvals.ts",
     "#canonical-chat-approval-display": "./src/canonical-chat-approval-display.ts",
     "#canonical-chat-primitives": "./src/canonical-chat-primitives.ts",
@@ -79,13 +81,19 @@
     "#legacy-contract-primitives": "./src/legacy-contract-primitives.ts",
     "#kernel-conversations": "./src/kernel-conversations.ts",
     "#provider-settings": "./src/provider-settings.ts",
+    "#provider-managed-credit": "./src/provider-managed-credit.ts",
     "#funded-ai": "./src/funded-ai.ts",
+    "#funded-host-activation": "./src/funded-host-activation.ts",
     "#funded-workers-models": "./src/funded-workers-models.ts",
     "#funded-ai-execution-recovery": "./src/funded-ai-execution-recovery.ts",
     "#jev": "./src/jev.ts",
     "#jev-inbox": "./src/jev-inbox.ts",
     "#jev-hermes-route": "./src/jev-hermes-route.ts",
     "#getting-started": "./src/getting-started.ts",
+    "#integration-connections": "./src/integration-connections.ts",
+    "#onboarding-widget": "./src/onboarding-widget.ts",
+    "#onboarding-widget-catalog": "./src/onboarding-widget-catalog.ts",
+    "#onboarding-widget-view": "./src/onboarding-widget-view.ts",
     "#os-view": "./src/os-view.ts",
     "#safe-client-error": "./src/safe-client-error.ts",
     "#speech": "./src/speech.ts",
@@ -101,7 +109,8 @@
     "#ai-credit-history": "./src/ai-credit-history.ts",
     "#provider-workflows": "./src/provider-workflows.ts",
     "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
-    "#app-capabilities": "./src/app-capabilities.ts"
+    "#app-capabilities": "./src/app-capabilities.ts",
+    "#command-preview": "./src/command-preview.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

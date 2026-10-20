@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../../../../packages/ui/src/desktop-top-bar.tsx";
 @source "../../../../../packages/ui/src/integrations";
 @source "../../../../../packages/ui/src/chat-import";
 @source "../../../../../packages/ui/src/organization-drive";
@@ -14,6 +15,7 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
+@import "@matrix-os/ui/onboarding-widget.css";
 @import "./brand-fonts.css";
 @import "@matrix-os/ui/chat-agents.css";
 @import "@matrix-os/ui/styles.css";
@@ -119,7 +121,8 @@ textarea,
 }
 
 /* ── Focus visibility (keyboard-first, US6) ───────────────────── */
-:focus-visible {
+/* The onboarding widget (.mxo-root) ships its own focus treatment. */
+:focus-visible:where(:not(.mxo-root *)) {
   outline: none;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-sm);

@@ -28,7 +28,7 @@ export function ProviderGlyph({
         : "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"}
       style={{
         background: compact ? "transparent" : "var(--accent-muted)",
-        color: compact ? "var(--text-secondary)" : "var(--accent)",
+        color: compact ? "var(--text-secondary)" : "var(--accent-text)",
       }}
     >
       <Icon size={compact ? 15 : 16} />

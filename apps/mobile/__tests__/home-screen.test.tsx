@@ -1,17 +1,26 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { Alert, KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
+import { KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
 
-import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
+import * as mockContextMenu from "./context-menu-test-utils";
+import ChatScreenRoute from "../app/(drawer)/(tabs)/(chats)/index";
+import { ActiveChatProvider } from "../components/chat/active-chat";
 import { Icon } from "../components/ui/Icon";
 import { SidePanelIcon } from "../components/ui/icons";
+
+import { menuItem } from "./context-menu-test-utils";
+
+// The Chats stack's layout holds the open chat's state above its screens.
+const ChatScreen = () => <ActiveChatProvider><ChatScreenRoute /></ActiveChatProvider>;
 
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: false }) }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+// Jest resolves the iOS files, so each message sits in a native context menu.
+jest.mock("@expo/ui/swift-ui", () => mockContextMenu.swiftUiContextMenuModule());
 
 const mockSendMessage = jest.fn();
 const mockOpenSidePanel = jest.fn();
@@ -57,6 +66,9 @@ jest.mock("@/lib/queries/use-send-chat-message", () => ({
   useSendChatMessage: () => ({ mutate: mockSendMessage, isPending: mockSendPending }),
 }));
 
+jest.mock("@/lib/queries/use-retry-chat-turn", () => ({
+  useRetryChatTurn: () => ({ mutate: jest.fn(), isPending: false, isError: false, variables: undefined }),
+}));
 jest.mock("@/lib/queries/use-cancel-run", () => ({
   useCancelRun: () => ({ mutate: jest.fn(), isPending: false }),
 }));
@@ -107,12 +119,8 @@ describe("drawer home screen", () => {
     mockDetail = { record: { chat: { id: mockActiveChatId, title: "Native failure" } }, runs: [], turns: [], activities: [],
       messages: [{ id: "msg_native_copy", chatId: mockActiveChatId, role: "user", state: "committed", seq: 1,
         parts: [{ type: "text", text: "Inspect native failure" }], createdAt: "2026-09-09T00:00:00.000Z" }] };
-    const alert = jest.spyOn(Alert, "alert");
     render(<ChatScreen />);
-    fireEvent(screen.getByText("Inspect native failure"), "longPress");
-    const action = alert.mock.calls[0]?.[2]?.find((button) => button.text === "Copy chat ID");
-    expect(action).toBeDefined();
-    action!.onPress?.();
+    fireEvent.press(menuItem(screen.getByText("Inspect native failure"), "Copy chat ID"));
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat_native_content");
   });
 
@@ -214,32 +222,40 @@ describe("drawer home screen", () => {
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
     });
 
-    it("puts the text back in the composer when the send fails", () => {
+    it("keeps a message that failed to send where it was, marked as not sent, and gives it back on Edit", () => {
       render(<ChatScreen />);
       sendDraft("Ship it");
 
       act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
 
-      expect(screen.queryByText("Ship it")).toBeNull();
+      expect(screen.getByText("Ship it")).toBeTruthy();
+      expect(screen.getByText("Not sent")).toBeTruthy();
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
+      expect(screen.queryByText("What should we work on?")).toBeNull();
+
+      fireEvent.press(screen.getByRole("button", { name: "Edit message" }));
+      expect(screen.queryByText("Not sent")).toBeNull();
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
       expect(screen.getByText("What should we work on?")).toBeTruthy();
     });
 
-    it("keeps text typed while a failed send was in flight", () => {
+    it("keeps text typed while a failed send was in flight, ahead of which Edit puts the message", () => {
       render(<ChatScreen />);
       sendDraft("Ship it");
       fireEvent.changeText(screen.getByLabelText("Message Matrix"), "and tag it");
 
       act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("and tag it");
 
+      fireEvent.press(screen.getByRole("button", { name: "Edit message" }));
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it and tag it");
     });
 
-    it("reuses the idempotency keys when the same text is retried after a failure", () => {
+    it("reuses the idempotency keys when a message that was not sent is retried", () => {
       render(<ChatScreen />);
       sendDraft("Ship it");
       act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
-      fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+      fireEvent.press(screen.getByRole("button", { name: "Retry sending" }));
 
       expect(mockSendMessage).toHaveBeenCalledTimes(2);
       const [first, retry] = mockSendMessage.mock.calls.map((call) => call[0]);
@@ -294,7 +310,7 @@ describe("drawer home screen", () => {
       expect(screen.getAllByText("Ship it")).toHaveLength(3);
     });
 
-    it("returns a failed send's text to the chat it was sent in, not the one on screen", () => {
+    it("shows a failed send as not sent in the chat it was sent in, not the one on screen", () => {
       mockActiveChatId = "chat_a";
       mockDetail = detailFor("chat_a", []);
       const view = render(<ChatScreen />);
@@ -306,13 +322,15 @@ describe("drawer home screen", () => {
       view.rerender(<ChatScreen />);
       act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
+      expect(screen.queryByText("Not sent")).toBeNull();
 
-      // Back in the original chat, the text is waiting in the composer.
+      // Back in the original chat, the message is there, marked as not sent.
       mockActiveChatId = "chat_a";
       mockDetail = detailFor("chat_a", []);
       view.rerender(<ChatScreen />);
-      expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
-      expect(screen.queryByText("Ship it")).toBeNull();
+      expect(screen.getByText("Ship it")).toBeTruthy();
+      expect(screen.getByText("Not sent")).toBeTruthy();
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
     });
 
     it("keeps a failed send's text apart from a draft typed in another chat", () => {
@@ -332,7 +350,8 @@ describe("drawer home screen", () => {
       mockActiveChatId = "chat_a";
       mockDetail = detailFor("chat_a", []);
       view.rerender(<ChatScreen />);
-      expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
+      expect(screen.getByText("Not sent")).toBeTruthy();
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
 
       mockActiveChatId = "chat_b";
       mockDetail = detailFor("chat_b", []);

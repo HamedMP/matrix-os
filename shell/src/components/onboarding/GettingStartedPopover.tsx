@@ -10,7 +10,7 @@ import {
   type GettingStartedStep,
   type GettingStartedStepId,
 } from "@matrix-os/contracts";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { CheckIcon, ClipboardCheck, DownloadIcon, Github } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -183,8 +183,11 @@ function GettingStartedPopoverContent({
   helpMenu,
   triggerClassName = "flex size-7 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 }: GettingStartedPopoverProps) {
-  const { visible: open, requestedOpen, blocked, isBlocked, setRequestedOpen: setOpen } = useGettingStartedVisibility();
+  const {
+    visible: open, requestedOpen, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setRequestedOpen: setOpen,
+  } = useGettingStartedVisibility();
   const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
+  const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
   const [downloadSuggestion, setDownloadSuggestion] = useState<DesktopDownloadSuggestion>({
@@ -237,11 +240,13 @@ function GettingStartedPopoverContent({
       !snapshot.loaded
       || blocked
       || isBlocked()
+      || autoOpenSuppressed
+      || isAutoOpenSuppressed()
       || snapshot.completedCount === TOTAL_STEPS
       || hasAutoOpened(autoOpenKey)
     ) return;
     setOpen(true);
-  }, [autoOpenKey, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, setOpen]);
+  }, [autoOpenKey, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -297,7 +302,7 @@ function GettingStartedPopoverContent({
   const label = `Getting started — ${snapshot.completedCount} of ${TOTAL_STEPS}`;
   const progress = `${(snapshot.completedCount / TOTAL_STEPS) * 100}%`;
 
-  const trigger = <PopoverPrimitive.Trigger asChild>
+  const trigger = (closeHelp?: () => void) => <PopoverPrimitive.Trigger asChild>
         <button
           type="button"
           aria-label={label}
@@ -306,6 +311,7 @@ function GettingStartedPopoverContent({
           className={helpMenu ? "relative flex w-full flex-wrap items-center gap-2.5 rounded-md p-2 text-left text-[13px] outline-none hover:bg-foreground/5 focus-visible:bg-foreground/5" : `relative ${triggerClassName}`}
           onClick={() => {
             if (requestedOpen) setOpen(false);
+            closeHelp?.();
           }}
         >
           <ClipboardCheck className="size-4" aria-hidden="true" />
@@ -317,7 +323,9 @@ function GettingStartedPopoverContent({
       </PopoverPrimitive.Trigger>;
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={handleRadixOpenChange}>
-      {helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger} /> : trigger}
+      {helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger}
+        gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef}
+        anchorTrigger={(helpTrigger) => <PopoverPrimitive.Anchor asChild>{helpTrigger}</PopoverPrimitive.Anchor>} /> : trigger()}
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
           role="dialog"
@@ -327,7 +335,13 @@ function GettingStartedPopoverContent({
           sideOffset={7}
           collisionPadding={12}
           onOpenAutoFocus={onOpenAutoFocus}
-          onCloseAutoFocus={onCloseAutoFocus}
+          onCloseAutoFocus={(event) => {
+            onCloseAutoFocus(event);
+            if (helpMenu && !requestedOpen) {
+              event.preventDefault();
+              helpTriggerRef.current?.focus();
+            }
+          }}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           className="w-[252px] overflow-hidden rounded-[12px] border outline-none"

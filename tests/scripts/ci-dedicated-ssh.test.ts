@@ -56,3 +56,91 @@ it('binds actual native merge parent bytes separately from branch base in reques
  expect((helpers as any).validateLeaseRequest(value)).toEqual(value);
  expect(canonical(value)).toContain(nativePins.base);expect(canonical(value)).toContain(nativePins.parentMerge);
 });
+
+function deferred(){
+ let resolve!:()=>void,reject!:(error:Error)=>void;
+ const promise=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});
+ return{promise,resolve,reject};
+}
+async function heldRenewal(options:{signal?:AbortSignal;finalError?:Error}={}){
+ const child=fake(),held=deferred(),entered=deferred();let written='';
+ child.stdin.on('data',chunk=>{written+=chunk.toString();});
+ const revalidate=vi.fn(async(_request:unknown,_cycle:unknown)=>{
+  if(revalidate.mock.calls.length===2){entered.resolve();await held.promise;}
+  if(revalidate.mock.calls.length===3&&options.finalError)throw options.finalError;
+ });
+ const fn=(helpers as Record<string,unknown>).runDedicatedLeaseSession as Function;
+ const pending=fn(child,{protocolVersion:1,leaseId,capability,request},{revalidate,signal:options.signal,maxMilliseconds:1000});
+ pending.catch(()=>{});await admitted(child);
+ const deadlineUnixMs=Date.now()+30000;
+ emit(child,'renewal-required',{challenge:'6'.repeat(64),deadlineUnixMs});
+ await entered.promise;
+ return{child,held,revalidate,pending,deadlineUnixMs,written:()=>written};
+}
+function completedBeforeClose(value:Awaited<ReturnType<typeof heldRenewal>>,status=0){
+ emit(value.child,'completed',{status:0,receipt:receipt()});value.child.emit('close',status);
+}
+describe('SSH completion while authenticated renewal is pending',()=>{
+ it('drains a buffered complete receipt after close without sending a renewal to a closed child',async()=>{
+  const value=await heldRenewal();completedBeforeClose(value);value.held.resolve();
+  await expect(value.pending).resolves.toEqual(receipt());
+  expect(value.revalidate.mock.calls).toEqual([[request,{unconditional:true}],[request,{unconditional:false}],[request,{unconditional:true}]]);
+  const sent=value.written().trim().split('\n').map(line=>JSON.parse(line));
+  expect(sent.map(record=>record.type??'envelope')).toEqual(['envelope','grant']);
+  expect(value.child.kill).not.toHaveBeenCalled();
+ });
+ it('still rejects exit zero when no terminal receipt was buffered',async()=>{
+  const value=await heldRenewal();value.child.emit('close',0);value.held.resolve();
+  await expect(value.pending).rejects.toThrow();expect(value.revalidate).toHaveBeenCalledTimes(2);
+ });
+ it('still rejects a nonzero SSH exit despite a valid buffered receipt',async()=>{
+  const value=await heldRenewal();completedBeforeClose(value,1);value.held.resolve();
+  await expect(value.pending).rejects.toThrow();
+ });
+ it.each(['malformed','truncated','replayed-renewal','trailing-after-terminal'])('rejects %s control data queued behind a held renewal',async kind=>{
+  const value=await heldRenewal();
+  if(kind==='malformed')value.child.stdout.write('{broken}\n');
+  if(kind==='truncated')value.child.stdout.write('{"protocolVersion":1,"type":"completed"');
+  if(kind==='replayed-renewal')emit(value.child,'renewal-required',{challenge:'6'.repeat(64),deadlineUnixMs:Date.now()+30000});
+  if(kind==='trailing-after-terminal'){
+   emit(value.child,'completed',{status:0,receipt:receipt()});emit(value.child,'running');
+  }
+  value.child.emit('close',0);value.held.resolve();await expect(value.pending).rejects.toThrow();
+ });
+ it.each(['source','digest','cleanup'])('rejects buffered %s receipt corruption after renewal and closure',async kind=>{
+  const value=await heldRenewal(),invalid=receipt();
+  if(kind==='source')invalid.sourceSha='0'.repeat(40);
+  if(kind==='digest')invalid.requestDigest='0'.repeat(64);
+  if(kind==='cleanup')invalid.containerGone=false;
+  emit(value.child,'completed',{status:0,receipt:invalid});value.child.emit('close',0);value.held.resolve();
+  await expect(value.pending).rejects.toThrow();
+ });
+ it('requires final unconditional source authentication after draining a valid receipt',async()=>{
+  const value=await heldRenewal({finalError:new Error('final source changed')});completedBeforeClose(value);value.held.resolve();
+  await expect(value.pending).rejects.toThrow('final source changed');
+  expect(value.revalidate).toHaveBeenCalledTimes(3);
+ });
+ it('does not drain past a rejected renewal source authentication',async()=>{
+  const value=await heldRenewal();completedBeforeClose(value);value.held.reject(new Error('renewal source changed'));
+  await expect(value.pending).rejects.toThrow('renewal source changed');expect(value.revalidate).toHaveBeenCalledTimes(2);
+ });
+ it('does not grant an initial lock after the child closes while lock authentication is held',async()=>{
+  const child=fake(),held=deferred(),entered=deferred();let written='';child.stdin.on('data',chunk=>{written+=chunk.toString();});
+  const revalidate=vi.fn(async()=>{entered.resolve();await held.promise;});
+  const pending=run(child,revalidate);pending.catch(()=>{});
+  emit(child,'queued');emit(child,'locked',{challenge:'5'.repeat(64),deadlineUnixMs:Date.now()+30000});await entered.promise;
+  emit(child,'running');emit(child,'completed',{status:0,receipt:receipt()});child.emit('close',0);held.resolve();
+  await expect(pending).rejects.toThrow();expect(written).not.toContain('"type":"grant"');expect(revalidate).toHaveBeenCalledTimes(1);
+ });
+ it('preserves the absolute renewal deadline when a valid receipt and close are buffered',async()=>{
+  let now=Date.now();const clock=vi.spyOn(Date,'now').mockImplementation(()=>now);
+  try{
+   const value=await heldRenewal();completedBeforeClose(value);now=value.deadlineUnixMs+1;value.held.resolve();
+   await expect(value.pending).rejects.toThrow(/expired/);expect(value.revalidate).toHaveBeenCalledTimes(2);
+  }finally{clock.mockRestore();}
+ });
+ it('preserves explicit cancellation while a valid receipt waits behind renewal authentication',async()=>{
+  const aborter=new AbortController(),value=await heldRenewal({signal:aborter.signal});completedBeforeClose(value);aborter.abort();value.held.resolve();
+  await expect(value.pending).rejects.toThrow(/cancelled/);expect(value.child.kill).toHaveBeenCalledWith('SIGTERM');
+ });
+});

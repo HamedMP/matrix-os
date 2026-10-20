@@ -143,7 +143,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
       'speech_operations', 'speech_runtime_allowances', 'ai_credit_checkout_claims', 'ai_funded_usage_reservations'] as const) {
       await trx.executor.deleteFrom(table).where('owner_id','=',owner).execute();
     }
-    for (const table of ['billing_customers','billing_subscriptions','billing_entitlements','billing_entitlement_overrides',
+    for (const table of ['billing_google_checkout_attribution','billing_google_purchases','billing_customers','billing_subscriptions','billing_entitlements','billing_entitlement_overrides',
       'prebilling_provisioning_intents','billing_checkout_attempts','billing_trial_accounts','onboarding_first_run',
       'onboarding_journey_events','device_codes'] as const) {
       await trx.executor.deleteFrom(table).where('clerk_user_id','=',owner).execute();

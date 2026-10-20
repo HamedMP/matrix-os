@@ -192,3 +192,29 @@ describe("provider settings shell transport", () => {
       .rejects.toEqual(expect.objectContaining({ code: "unavailable" }));
   });
 });
+
+describe("scoped managed credit transport", () => {
+  it.each([404, 405, 401, 403])("classifies HTTP%s without a full-read fallback or error-body dependence", async status => {
+    const response = new Response("old gateway or forbidden", { status });
+    const cancel = vi.spyOn(response.body!, "cancel");
+    const fetcher = vi.fn().mockResolvedValue(response);
+    const transport = createProviderSettingsTransport({ fetcher });
+    await expect(transport.getManagedCredit(new AbortController().signal)).rejects.toMatchObject({ code: status === 404 || status === 405 ? "managed_credit_unsupported" : "managed_credit_unauthorized" });
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(cancel).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0]?.[0]).toContain("/api/ai/provider-settings/managed-credit");
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ cache: "no-store" });
+  });
+  it("validates and bounds quiet responses without broadcasting provider changes", async () => {
+    const { observation } = await import("../ui/provider-managed-credit-fixture");
+    const changed = vi.fn(); window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed);
+    try {
+      const response = observation(); const fetcher = vi.fn().mockResolvedValueOnce(Response.json(response)).mockResolvedValueOnce(new Response(" ".repeat(16 * 1024 + 1)))
+        .mockResolvedValueOnce(new Response("{}", { headers: { "content-length": String(16 * 1024 + 1) } }));
+      const transport = createProviderSettingsTransport({ fetcher });
+      expect(await transport.getManagedCredit(new AbortController().signal)).toEqual(response);
+      await expect(transport.getManagedCredit()).rejects.toMatchObject({ code: "invalid_response" });
+      await expect(transport.getManagedCredit()).rejects.toMatchObject({ code: "invalid_response" });
+      expect(changed).not.toHaveBeenCalled();
+    } finally { window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed); }
+  });
+});

@@ -3,6 +3,7 @@ import { getAction, getService } from "../../packages/gateway/src/integrations/r
 import { createIntegrationRoutes, executeIntegrationAction, validateActionParams } from "../../packages/gateway/src/integrations/routes.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
+import { describeServiceHandler } from "../../packages/kernel/src/tools/integrations.js";
 
 function client() {
   return { proxyGet: vi.fn(), proxyPost: vi.fn(), runAction: vi.fn(), listAccounts: vi.fn(), getAppInfo: vi.fn().mockResolvedValue(null) };
@@ -19,6 +20,63 @@ async function execute(actionId: string, params: Record<string, unknown>, pipedr
 }
 
 describe("Gmail connector foundation", () => {
+  it("discovers create_draft as a write with an optional recipient through describe_service", async () => {
+    const pipedream = client();
+    const app = createIntegrationRoutes({ db: {} as PlatformDb,
+      pipedream: pipedream as unknown as PipedreamConnectClient,
+      webhookSecret: "test", resolveUserId: async () => "owner" });
+    const result = await describeServiceHandler({ service: "gmail" }, async () => app.request("/agent-catalog"));
+    const draft = result.content[0].text.split("\n").find(line => line.startsWith("- create_draft "));
+    expect(draft).toContain("[write]");
+    expect(draft).toContain("to: string");
+    expect(draft).toContain("subject (required): string");
+    expect(draft).toContain("body (required): string");
+    expect(draft).toContain("cc: string");
+  });
+
+  it("creates a UTF-8 draft through the proxy and returns both IDs without sending", async () => {
+    const pipedream = client();
+    const response = { id: "draft-123", message: { id: "message-456", labelIds: ["DRAFT"] } };
+    pipedream.proxyPost.mockResolvedValue(response);
+    expect(await execute("create_draft", { to: "supplier@example.com", cc: "team@example.com",
+      subject: "Offert – café", body: "Hej!\r\nPris för blåbär? 🍓" }, pipedream)).toEqual({ data: response });
+    expect(pipedream.proxyPost).toHaveBeenCalledExactlyOnceWith({
+      externalUserId: "owner", accountId: "account",
+      url: "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+      body: { message: { raw: expect.any(String) } },
+    });
+    const { raw } = pipedream.proxyPost.mock.calls[0][0].body.message;
+    expect(Buffer.from(raw, "base64url").toString("utf8")).toBe([
+      "To: supplier@example.com", "Subject: Offert – café", "Cc: team@example.com",
+      'Content-Type: text/plain; charset="UTF-8"', "MIME-Version: 1.0", "", "Hej!\r\nPris för blåbär? 🍓",
+    ].join("\r\n"));
+    expect(raw).not.toMatch(/[+/=]/);
+    expect(pipedream.runAction).not.toHaveBeenCalled();
+    expect(getAction("gmail", "create_draft")!.componentKey).toBeUndefined();
+  });
+
+  it.each([{}, { cc: "team@example.com" }])("creates a draft without a To recipient: %j", async (recipients) => {
+    const pipedream = client();
+    await execute("create_draft", { ...recipients, subject: "Contact form", body: "Review me" }, pipedream);
+    const { raw } = pipedream.proxyPost.mock.calls[0][0].body.message;
+    const decoded = Buffer.from(raw, "base64url").toString("utf8");
+    expect(decoded).not.toMatch(/(?:^|\r\n)To:/);
+    expect(decoded).not.toContain("undefined");
+    expect(decoded).toContain("\r\n\r\nReview me");
+  });
+
+  it("strips CR/LF injection from draft headers while retaining body newlines", async () => {
+    const pipedream = client();
+    await execute("create_draft", { to: "a@example.com\r\nBcc: b@example.com", subject: "Subject\nBcc: c@example.com",
+      cc: "d@example.com\r\nX-Header: evil", body: "First\r\nSecond" }, pipedream);
+    const { raw } = pipedream.proxyPost.mock.calls[0][0].body.message;
+    expect(Buffer.from(raw, "base64url").toString("utf8")).toBe([
+      "To: a@example.comBcc: b@example.com", "Subject: SubjectBcc: c@example.com",
+      "Cc: d@example.comX-Header: evil", 'Content-Type: text/plain; charset="UTF-8"',
+      "MIME-Version: 1.0", "", "First\r\nSecond",
+    ].join("\r\n"));
+  });
+
   it("reads the live Gmail profile through the selected connected account", async () => {
     const pipedream = client();
     const profile = { emailAddress: "owner@example.com", messagesTotal: 42 };
@@ -86,6 +144,16 @@ describe("Gmail connector foundation", () => {
   });
 
   it.each([
+    ["create_draft", {}], ["create_draft", { subject: "Missing body" }],
+    ["create_draft", { body: "Missing subject" }],
+    ["create_draft", { subject: "", body: "", to: "" }],
+    ["create_draft", { subject: "", body: "", to: "x".repeat(4097) }],
+    ["create_draft", { subject: "x".repeat(4097), body: "" }],
+    ["create_draft", { subject: "", body: "x".repeat(60001) }],
+    ["create_draft", { subject: "", body: "", cc: "x".repeat(4097) }],
+    ["create_draft", { subject: "", body: "", to: null }],
+    ["create_draft", { subject: "", body: 42 }],
+    ["create_draft", { subject: "", body: "", bcc: "unreviewed@example.com" }],
     ["list_messages", { maxResults: 0 }], ["list_messages", { maxResults: 501 }],
     ["search", { query: "books", maxResults: 1.5 }], ["list_messages", { maxResults: NaN }],
     ["list_messages", { pageToken: "" }], ["list_messages", { pageToken: "x".repeat(2049) }],

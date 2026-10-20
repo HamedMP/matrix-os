@@ -4,6 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 
 import { SidePanelSkeletonRows } from "@/components/shell/SidePanelRows";
 import { Button, ChatIcon, EmptyState, IconTile, ItemRow } from "@/components/ui";
+import { withRefreshTap } from "@/lib/haptics";
 
 import type { ProjectChatRow } from "./project-rows";
 
@@ -79,7 +80,7 @@ export function ProjectChatList({
       data={ready ? rows : []}
       keyExtractor={(row) => row.id}
       refreshing={refreshing}
-      onRefresh={onRefresh}
+      onRefresh={withRefreshTap(onRefresh)}
       onEndReached={ready && hasMore && !loadingMore && !loadMoreFailed ? onLoadMore : undefined}
       onEndReachedThreshold={0.5}
       renderItem={({ item: row }) => (
