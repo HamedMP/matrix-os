@@ -1,5 +1,6 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
@@ -143,11 +144,45 @@ describe("required collaboration PostgreSQL workflow", () => {
     expect(job.steps[0].with.ref).toBe("${{ needs.changes.outputs.source_sha }}");
     expect(job.steps.filter((step: { run?: string }) => step.run?.includes("pnpm exec vitest run"))).toHaveLength(5);
     expect(job.steps.find((step: { name?: string }) => step.name === "Build test prerequisites once").run).toBe("bun run test:prepare");
-    const step = job.steps.find((step: { name?: string }) => step.name === "Collaboration PostgreSQL qualification");
+    const collaboration = workflow.jobs["collaboration-postgres"];
+    expect(collaboration).toBeDefined();
+    expect(collaboration.needs).toBe("changes");
+    expect(collaboration.if).toBe(job.if);
+    expect(collaboration["timeout-minutes"]).toBe(10);
+    expect(collaboration.services).toEqual(job.services);
+    expect(collaboration.env).toEqual(job.env);
+    expect(collaboration.steps.slice(0, 6)).toEqual(job.steps.slice(0, 6));
+    expect(job.steps.some((step: { name?: string }) => step.name === "Collaboration PostgreSQL qualification")).toBe(false);
+    const step = collaboration.steps.find((step: { name?: string }) => step.name === "Collaboration PostgreSQL qualification");
     expect(step?.run).toBe("node scripts/ci/collaboration-postgres.mjs");
     expect(workflow.jobs["ci-results"].needs).toContain("funded-postgres");
-    const artifact = job.steps.find((step: { name?: string }) => step.name === "Upload collaboration PostgreSQL qualification");
+    expect(workflow.jobs["ci-results"].needs).toContain("collaboration-postgres");
+    expect(workflow.jobs["completion-handoff"].needs).toContain("collaboration-postgres");
+    const artifact = collaboration.steps.find((step: { name?: string }) => step.name === "Upload collaboration PostgreSQL qualification");
     expect(artifact?.if).toBe("always()");
     expect(artifact?.with).toMatchObject({ path: "output/ci/collaboration-postgres/*.json", "if-no-files-found": "error", "retention-days": 7 });
+  });
+});
+
+
+describe("required parallel PostgreSQL qualification", () => {
+  it.each(["hosted", "linux"])("requires genuine collaboration success with %s qualification", provider => {
+    const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
+    const step = workflow.jobs["ci-results"].steps.find((step: { name?: string }) => step.name === "Summarize required CI jobs");
+    const directory = mkdtempSync(join(tmpdir(), "collaboration-ci-gate-")); roots.push(directory);
+    const env: Record<string, string> = { PATH: process.env.PATH!, GITHUB_STEP_SUMMARY: join(directory, "summary") };
+    for (const key of Object.keys(step.env)) env[key] = "success";
+    Object.assign(env, { CI_TRIGGER_REQUESTED: "true", SHOULD_RUN: "true", DEDICATED_ELIGIBLE: "true",
+      DEDICATED_REQUIRED: "true", DEDICATED_MODE: "delegated", CI_BACKEND_PROVIDER: provider,
+      INFRASTRUCTURE_FALLBACK: provider === "hosted" ? "true" : "false" });
+    if (provider === "linux") for (const key of ["TYPECHECK_RESULT", "SHELL_PRODUCTION_BUILD_RESULT",
+      "AGENT_SDK_COMPATIBILITY_RESULT", "UNIT_RESULT", "DOCS_CONTRACT_RESULT", "OS_VIEW_PARITY_RESULT", "E2E_RESULT"]) env[key] = "skipped";
+    const run = (outcome: string) => spawnSync("bash", ["-c", step.run], {
+      env: { ...env, COLLABORATION_POSTGRES_RESULT: outcome }, encoding: "utf8", timeout: 5000,
+    });
+    const positive = run("success"); expect(positive.status, positive.stderr).toBe(0);
+    for (const outcome of ["failure", "cancelled", "skipped", "", "unknown"]) {
+      const negative = run(outcome); expect(negative.status, `${outcome}: ${negative.stderr}`).toBe(1);
+    }
   });
 });

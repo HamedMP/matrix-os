@@ -892,6 +892,46 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/platform/preview-drive-postgres-concurrency.test.ts --maxWorkers=1 --no-file-parallelism
 
+  collaboration-postgres:
+    name: Collaboration PostgreSQL
+    needs: changes
+    if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
+        # and a service container cannot fall back; Google's Docker Hub mirror is not pull-limited.
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: matrix_test
+          POSTGRES_PASSWORD: matrix_test
+          POSTGRES_DB: matrix_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U matrix_test -d matrix_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # Disposable service only; never use owner or production database secrets.
+      MATRIX_TEST_POSTGRES_URL: postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.3"
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
+      - run: pnpm install --frozen-lockfile
+      - name: Build test prerequisites once
+        run: bun run test:prepare
       - name: Collaboration PostgreSQL qualification
         run: node scripts/ci/collaboration-postgres.mjs
 
@@ -1270,7 +1310,7 @@ jobs:
 
   completion-handoff:
     name: Handoff isolated CI completion
-    needs: [redirect, changes, isolated-ci-backend, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
+    needs: [redirect, changes, isolated-ci-backend, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, collaboration-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
     if: always() && !cancelled() && github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)
     runs-on: ubuntu-latest
     timeout-minutes: 70
@@ -1341,7 +1381,7 @@ jobs:
     # verify earlier exact-source coverage instead of renaming/skipping the job:
     # GitHub's merge box only considers the latest suite for this workflow.
     name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft == true) && 'CI Draft (ignored)' || 'CI Results' }}
-    needs: [redirect, changes, isolated-ci-backend, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux, completion-handoff]
+    needs: [redirect, changes, isolated-ci-backend, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, collaboration-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux, completion-handoff]
     if: always() && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true)
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1411,6 +1451,7 @@ jobs:
           AGENT_SDK_COMPATIBILITY_RESULT: ${{ needs.agent-sdk-compatibility.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           FUNDED_POSTGRES_RESULT: ${{ needs.funded-postgres.result }}
+          COLLABORATION_POSTGRES_RESULT: ${{ needs.collaboration-postgres.result }}
           FUNDED_HOST_ROOT_RESULT: ${{ needs.funded-host-root.result }}
           DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
           OS_VIEW_PARITY_RESULT: ${{ needs.os-view-parity.result }}
@@ -1444,6 +1485,7 @@ jobs:
             echo "| Agent SDK 0.3.251 Compatibility | $AGENT_SDK_COMPATIBILITY_RESULT |"
             echo "| Unit Tests | $UNIT_RESULT |"
             echo "| Funded Settlement PostgreSQL | $FUNDED_POSTGRES_RESULT |"
+            echo "| Collaboration PostgreSQL | $COLLABORATION_POSTGRES_RESULT |"
             echo "| Protected Funded Host Root Contracts | $FUNDED_HOST_ROOT_RESULT |"
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
@@ -1467,7 +1509,7 @@ jobs:
           # Shadow Linux qualification is observed in the table above but never gates the aggregate.
           LINUX_GATE_RESULT="$DEDICATED_LINUX_RESULT"
           if [ "${DEDICATED_MODE:-delegated}" = "shadow" ]; then LINUX_GATE_RESULT=skipped; fi
-          for result in "$CI_HANDOFF_RESULT" "$CI_REDIRECT_RESULT" "$CI_BACKEND_RESULT" "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$LINUX_GATE_RESULT"; do
+          for result in "$CI_HANDOFF_RESULT" "$CI_REDIRECT_RESULT" "$CI_BACKEND_RESULT" "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$LINUX_GATE_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
@@ -1478,6 +1520,10 @@ jobs:
           done
 
           if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$FUNDED_POSTGRES_RESULT" != "success" ]; then
+            failed=true
+          fi
+
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$COLLABORATION_POSTGRES_RESULT" != "success" ]; then
             failed=true
           fi
 
