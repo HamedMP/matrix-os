@@ -83,6 +83,24 @@ describe("preview physical deletion proof", () => {
 
 describe("preview cleanup service proof", () => {
   const { createService } = useCustomerVpsFixture();
+  it("keeps unreserved deleted previews in capacity inventory until live physical absence", async () => {
+    const { service, hetzner } = createService({ hetzner: createMockHetznerClient({
+      deleteServer: vi.fn().mockRejectedValue(new Error("provider unavailable")),
+    }) });
+    const preview = await service.provisionPreview({ clerkUserId: "user_team", handle: "pr-12", runtimeSlot: "pr-12" });
+    await service.delete(preview.machineId);
+    expect(await service.listAllMachines()).toEqual([]);
+    let inventory = await service.previewCapacityInventory();
+    expect(inventory.truncated).toBe(false);
+    expect(inventory.machines).toEqual([expect.objectContaining({
+      machineId: preview.machineId, handle: "pr-12", status: "deleted", previewDeletionConfirmed: false,
+    })]);
+    vi.mocked(hetzner.getServer).mockRejectedValueOnce(new Error("provider read unavailable"));
+    await expect(service.previewCapacityInventory()).rejects.toThrow("provider read unavailable");
+    vi.mocked(hetzner.getServer).mockResolvedValue(null);
+    inventory = await service.previewCapacityInventory();
+    expect(inventory.machines[0].previewDeletionConfirmed).toBe(true);
+  });
   it("recovers an externally deleted preview while provider cleanup retries", async () => {
     const { service, hetzner } = createService({ hetzner: createMockHetznerClient({
       deleteServer: vi.fn().mockRejectedValue(new Error("provider unavailable")),

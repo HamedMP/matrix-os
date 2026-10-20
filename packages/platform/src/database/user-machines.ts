@@ -381,6 +381,16 @@ export async function listAllUserMachines(
   return rows.map(mapUserMachine);
 }
 
+/** Includes shared-preview tombstones; active fleet inventory cannot prove capacity. */
+export async function listPreviewCapacityMachines(db: PlatformDB, limit: number): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor.selectFrom('user_machines').selectAll()
+    .where('provisioning_class', '=', 'preview').where('handle', 'like', 'pr-%')
+    .where(eb => eb.or([eb('runtime_slot', '=', 'preview'), eb('runtime_slot', '=', eb.ref('handle'))]))
+    .orderBy('last_seen_at', 'desc').limit(limit).execute();
+  return rows.map(mapUserMachine);
+}
+
 export async function listStaleUserMachines(
   db: PlatformDB,
   statuses: string[],

@@ -14,6 +14,16 @@ export function registerPreviewDeletionRoute(
   service: CustomerVpsService,
   authorize: (c: Context) => Response | null,
 ) {
+  app.get("/preview-capacity", async (c) => {
+    const error = authorize(c);
+    if (error) return error;
+    try {
+      return c.json(await service.previewCapacityInventory());
+    } catch (err) {
+      logCustomerVpsError("preview capacity inventory failed", err);
+      return c.json({ error: "Preview status unavailable" }, 503);
+    }
+  });
   app.get("/preview-cleanup", async (c) => {
     const error = authorize(c);
     if (error) return error;

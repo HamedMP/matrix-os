@@ -128,6 +128,7 @@ export interface CustomerVpsService {
   deploy(target?: DeployTarget): Promise<DeployResult>;
   activateSpeech(target?: SpeechActivationTarget): Promise<SpeechFleetActivationPageResult>;
   listAllMachines(): Promise<StatusResponse[]>;
+  previewCapacityInventory(): Promise<{ machines: StatusResponse[]; truncated: boolean }>;
   dispatchProvisioningJobs(): Promise<{ checked: number; completed: number; failed: number }>;
   setPrebillingFallbackReconciler?(reconcile: (() => Promise<unknown>) | undefined): void;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;

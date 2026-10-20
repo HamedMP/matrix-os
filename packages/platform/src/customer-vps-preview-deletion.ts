@@ -1,10 +1,30 @@
 import type { PlatformDB, UserMachineRecord } from "./db.js";
 import type { HetznerClient } from "./customer-vps-hetzner.js";
+import { listPreviewCapacityMachines } from "./database/user-machines.js";
 
 type DeletionSubject = Pick<UserMachineRecord,
   "machineId" | "provisioningClass" | "handle" | "deletedAt" | "status" | "hetznerServerId">;
 type DeletionProvider = Pick<HetznerClient, "getServer" | "listServersByLabel">;
 const HISTORY_LIMIT = 100;
+
+/** Operator-only capacity snapshot: retain unknown tombstones instead of dropping them. */
+export async function previewCapacityInventory(db: PlatformDB, provider: DeletionProvider) {
+  const rows = await listPreviewCapacityMachines(db, 500);
+  const machines: (UserMachineRecord & { previewDeletionConfirmed?: boolean })[] = [...rows];
+  if (rows.length >= 500) return { machines, truncated: true };
+  const deadline = Date.now() + 10000;
+  let cursor = 0;
+  const workers = await Promise.allSettled(Array.from({ length: Math.min(4, rows.length) }, async () => {
+    while (cursor < rows.length) {
+      const index = cursor++;
+      const row = rows[index]!;
+      machines[index] = { ...row, ...await previewDeletionProof(row, provider, db, deadline) };
+    }
+  }));
+  const failed = workers.find(result => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
+  return { machines, truncated: false };
+}
 
 /** Read-only proof: a tombstone or accepted provider DELETE does not stop billing. */
 export async function previewDeletionProof(
