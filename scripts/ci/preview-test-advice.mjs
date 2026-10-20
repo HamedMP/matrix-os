@@ -1,4 +1,4 @@
-import { request, upsertComment } from "./preview-review-api.mjs";
+import { pages, request, upsertComment } from "./preview-review-api.mjs";
 import { needsDesktop } from "./preview-review-model.mjs";
 const SHA = /^[a-f0-9]{40}$/;
 const WEB = ["Web Desktop", "Web Canvas", "Web Mobile"];
@@ -230,4 +230,34 @@ export async function advisePreviewTests(github, repo, number) {
     return;
   await upsertComment(github, repo, number, body);
   return advice;
+}
+
+
+// Recover per-PR events coalesced by the shared controller lock. Re-read each
+// live head/label before publishing; this sweep cannot allocate a preview.
+export async function sweepPreviewTestAdvice(github, repo, { now = Date.now() } = {}) {
+  if (!Number.isSafeInteger(now) || now < 0) throw new Error("Invalid advice sweep time");
+  const rows = await pages(github.rest.pulls.list, {
+    ...repo, state: "open", sort: "created", direction: "asc",
+  });
+  if (rows.length > 5000 || rows.some(row => !Number.isSafeInteger(row?.number)
+      || row.number < 1 || !["open", "closed"].includes(row.state)))
+    throw new Error("PR inventory unavailable");
+  const numbers = [];
+  for (const row of rows) if (row.state === "open" && !numbers.includes(row.number)) numbers.push(row.number);
+  numbers.sort((a, b) => a - b);
+  if (!numbers.length) return { considered: 0, checked: [] };
+  const start = (Math.floor(now / 300000) * 8) % numbers.length;
+  const checked = Array.from({ length: Math.min(8, numbers.length) }, (_, index) => numbers[(start + index) % numbers.length]);
+  let failed = false;
+  for (const number of checked) {
+    try {
+      await advisePreviewTests(github, repo, number);
+    } catch (error) {
+      failed = true;
+      console.warn("Preview advice refresh failed", number, error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+  if (failed) throw new Error("Advice sweep incomplete");
+  return { considered: numbers.length, checked };
 }

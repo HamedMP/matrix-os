@@ -1,6 +1,9 @@
 name: PR Test Advice
 
 on:
+  schedule:
+    # Avoid the preview controller's simultaneous five-minute trigger.
+    - cron: "2-59/5 * * * *"
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
@@ -24,7 +27,7 @@ concurrency:
 
 jobs:
   advise:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event.pull_request.base.ref == 'main')
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -48,7 +51,12 @@ jobs:
       - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
-            const { advisePreviewTests } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/preview-test-advice.mjs`);
+            const { advisePreviewTests, sweepPreviewTestAdvice } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/preview-test-advice.mjs`);
+            if (context.eventName === 'schedule') {
+              const result = await sweepPreviewTestAdvice(github, context.repo);
+              core.info(`Advice recovery: ${result.checked.length} of ${result.considered} open PRs checked`);
+              return;
+            }
             const number = context.eventName === 'workflow_dispatch' ? Number(context.payload.inputs.pr) : context.issue.number;
             const plan = context.eventName === 'workflow_dispatch' && context.payload.inputs.agent_plan;
             if (plan) {
