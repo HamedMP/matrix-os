@@ -238,13 +238,6 @@ function generateProfileHtml(handle: string): string {
     <p class="handle" id="handle-text"></p>
     <p class="bio">Welcome to my Matrix OS profile.</p>
 
-    <div class="apps-section" id="apps">
-      <h2>Published Apps</h2>
-      <div class="apps-grid" id="apps-grid">
-        <p style="color:#71717a;font-size:0.875rem">Loading apps...</p>
-      </div>
-    </div>
-
     <p class="powered-by">
       Powered by <a href="https://matrix-os.com">Matrix OS</a>
     </p>
@@ -256,37 +249,6 @@ function generateProfileHtml(handle: string): string {
     document.getElementById('display-name').textContent = handle;
     document.getElementById('handle-text').textContent = '@' + handle + ':matrix-os.com';
 
-    (async () => {
-      try {
-        const res = await fetch('/api/store/apps?author=@' + encodeURIComponent(handle));
-        if (!res.ok) return;
-        const data = await res.json();
-        const grid = document.getElementById('apps-grid');
-        grid.textContent = '';
-        if (!data.apps || data.apps.length === 0) {
-          const p = document.createElement('p');
-          p.style.cssText = 'color:#71717a;font-size:0.875rem';
-          p.textContent = 'No published apps yet.';
-          grid.appendChild(p);
-          return;
-        }
-        for (const app of data.apps) {
-          const card = document.createElement('div');
-          card.className = 'app-card';
-          const nameEl = document.createElement('div');
-          nameEl.className = 'name';
-          nameEl.textContent = app.name;
-          const descEl = document.createElement('div');
-          descEl.className = 'desc';
-          descEl.textContent = app.description || '';
-          card.appendChild(nameEl);
-          card.appendChild(descEl);
-          grid.appendChild(card);
-        }
-      } catch (err) {
-        console.error('Failed to load published apps', err);
-      }
-    })();
   </script>
 </body>
 </html>`;

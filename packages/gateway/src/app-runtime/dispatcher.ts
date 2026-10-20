@@ -1,3 +1,4 @@
+import {communityRuntimeCsp} from '../app-store/community-csp.js';
 import {communityRecord} from '../app-store/provenance.js';
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -190,7 +191,7 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
           return c.json({ error: "needs_build", status: "needs_build" }, 503);
         }
         const response=await serveStaticFileWithin(distDir, subPath, c);
-        if(community){response.headers.set('x-matrix-app-distribution','community');response.headers.set('content-security-policy',(response.headers.get('content-security-policy')??"default-src 'self'")+";form-action 'none';frame-src 'none'");}
+        if(community){response.headers.set('x-matrix-app-distribution','community');response.headers.set('content-security-policy',communityRuntimeCsp(slug));}
         return response;
       }
 

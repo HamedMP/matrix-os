@@ -107,6 +107,18 @@ describe('App Store authenticated platform routes', () => {
     expect((await request(target, '/listings/garden/rating', 'PUT', { stars: 4 }, 'consumer')).status).toBe(200);
     expect((await request(target, `/review/versions/${created.versionId}/decision`, 'POST', { type: 'approve' }, 'reviewer')).status).toBe(409);
   });
+  it('returns finalized source state after a lost response without rescanning or leaking another owner submission', async () => {
+    const target = app(); const created = await create(target);
+    expect((await request(target, `/submissions/${created.versionId}/finalize`, 'POST')).status).toBe(200);
+    objects.clear();
+    const retry = await request(target, `/submissions/${created.versionId}/finalize`, 'POST');
+    expect(retry.status).toBe(200); expect(AppStoreSubmissionSummarySchema.parse(await retry.json()).status).toBe('in_review');
+    expect((await request(target, `/submissions/${created.versionId}/finalize`, 'POST', undefined, 'consumer')).status).toBe(404);
+  });
+  it('keeps an in-flight scan exclusive instead of starting a duplicate finalize', async () => {
+    const target = app(); const created = await create(target); await runtime.repository.beginScan('user_publisher', created.versionId);
+    expect((await request(target, `/submissions/${created.versionId}/finalize`, 'POST')).status).toBe(409);
+  });
   it('blocks secret source and hash mismatches with generic responses', async () => {
     const target = app(); const malicious = bundle('export const key = "sk-proj-Aa012345678901234567890123456789";'); const created = await create(target, malicious);
     const result = await request(target, `/submissions/${created.versionId}/finalize`, 'POST'); expect(result.status).toBe(200);

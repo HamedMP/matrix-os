@@ -1,6 +1,6 @@
-import {isCurrentAppFrame,communityIframeSandbox} from './app-frame-authority';
 "use client";
 
+import {isCurrentAppFrame,communityIframeSandbox} from './app-frame-authority';
 import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";

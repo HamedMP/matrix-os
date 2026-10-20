@@ -1,5 +1,5 @@
 import {OWNER_IFRAME_SANDBOX,communityDocumentPolicy} from './app-frame-authority';
-import { buildBridgeScript, withCredentialedAssets, type ThemeVars } from "@/lib/os-bridge";
+import { buildBridgeScript, type ThemeVars } from "@/lib/os-bridge";
 import { appRuntimeSlugFromIdentity } from "@matrix-os/contracts";
 
 const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
@@ -75,17 +75,16 @@ export function injectBridgeIntoAppHtml(
 ): string {
   const bridgeScript = buildBridgeScript(appName, themeVars, design,authority?.token)
     + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}\n`;
-  const escapedBaseHref = baseHref.replace(/"/g, "&quot;");
-  const injection = [
-    `<base href="${escapedBaseHref}">`,
-    `<meta http-equiv="Content-Security-Policy" content="${(APP_IFRAME_CSP+(authority?.community?"; "+communityDocumentPolicy:"")).replace(/"/g, "&quot;")}">`,
-    `<script>${bridgeScript}</script>`,
-  ].join("");
-
-  const rewritten = withCredentialedAssets(html);
-
-  if (/<head[^>]*>/i.test(rewritten)) {
-    return rewritten.replace(/<head([^>]*)>/i, `<head$1>${injection}`);
-  }
-  return `<!doctype html><html><head>${injection}</head><body>${rewritten}</body></html>`;
+  // Parse inertly: a lexical <head> may live in a comment or quoted attribute.
+  // DOM construction guarantees the enforced policy precedes all submitted nodes.
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  for(const base of document.querySelectorAll('base'))base.remove();
+  for(const script of document.querySelectorAll('script[src]'))script.setAttribute('crossorigin','use-credentials');
+  for(const link of document.querySelectorAll('link[rel="stylesheet"][href]'))link.setAttribute('crossorigin','use-credentials');
+  const policy=document.createElement('meta');policy.setAttribute('http-equiv','Content-Security-Policy');
+  policy.setAttribute('content',authority?.community?communityDocumentPolicy(baseHref):APP_IFRAME_CSP);
+  const base=document.createElement('base');base.setAttribute('href',baseHref);
+  const script=document.createElement('script');script.textContent=bridgeScript.replace(/<\/script/gi,'<\\/script');
+  document.head.prepend(policy,base,script);
+  return '<!doctype html>'+document.documentElement.outerHTML;
 }

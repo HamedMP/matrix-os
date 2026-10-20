@@ -18,7 +18,7 @@ type Severity = AppStoreScanFinding["severity"];
 interface LineRule { rule: string; category: Category; severity: Severity; message: string; pattern: RegExp }
 
 const SECRET_RULES: LineRule[] = [
-  { rule: "secret.url_credentials", pattern: /https?:\/\/[^\s/"']+:[^\s/@"']+@/g, message: "Credential-bearing URL" },
+  { rule: "secret.url_credentials", pattern: /https?:\/\/[^\s/:@"']+:[^\s/@"']+@/g, message: "Credential-bearing URL" },
   { rule: "secret.anthropic", pattern: /sk-ant-[A-Za-z0-9_-]{20,}/g, message: "Anthropic API key" },
   { rule: "secret.openai", pattern: /sk-(?!ant-)(?:proj-)?[A-Za-z0-9_-]{20,}/g, message: "OpenAI-style API key" },
   { rule: "secret.aws", pattern: /\bAKIA[0-9A-Z]{16}\b/g, message: "AWS access key" },
@@ -55,7 +55,10 @@ const OTHER_RULES: LineRule[] = [
     pattern: /new\s+WebSocket\s*\(\s*["'`]wss?:\/\//g },
 ];
 
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.([A-Za-z]{2,24})\b/g;
+/** Fixed candidate lengths keep failed matches linear in attacker-controlled input size. */
+export function appStoreEmailPattern():RegExp {
+  return /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.([A-Za-z]{2,24})\b/g;
+}
 const IGNORED_EMAIL_DOMAIN = /@(?:[a-z0-9-]+\.)*(?:example\.(?:com|org|net)|example|test|invalid|localhost)$/i;
 const IMAGE_TLDS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "ico"]);
 const IMPORT_SPECIFIER = /(?:\bfrom\s+|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)["'`]([^"'`\n]+)["'`]/g;
@@ -174,7 +177,7 @@ export function scanAppFiles(files: ReadonlyMap<string, Buffer>, options: ScanOp
         if (pattern.test(text)) add("personal.owner", "personal", "high", path, line, "Owner name, handle or email");
       }
       if (!codeText) continue;
-      for (const match of text.matchAll(EMAIL)) {
+      for (const match of text.matchAll(appStoreEmailPattern())) {
         const email = match[0];
         if (IMAGE_TLDS.has(match[1].toLowerCase()) || IGNORED_EMAIL_DOMAIN.test(email) || ownerLower.has(email.toLowerCase())) continue;
         add("personal.email", "personal", "medium", path, line, "Email address");
