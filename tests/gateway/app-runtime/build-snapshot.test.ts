@@ -39,4 +39,13 @@ describe('BuildOrchestrator immutable capture', () => {
   finally { resume.resolve(); }
   const results = await Promise.all(requests); expect(results[0]).toBe(results[1]);
  });
+ it('shares one absolute deadline across install and build', async () => {
+  await writeFile(join(dir, 'matrix.json'), JSON.stringify({ name: 'App', slug: 'app', version: '1.0.0', runtime: 'vite', runtimeVersion: '1.0.0', build: {
+   install: 'node -e "setTimeout(()=>process.exit(0),100)"', command: 'node -e "setTimeout(()=>process.exit(0),100)"', output: 'dist', sourceGlobs: ['input.txt', 'matrix.json'],
+  } }));
+  const collector = vi.fn(); const started = Date.now();
+  const result = await new BuildOrchestrator({ concurrency: 1 }).buildWithSnapshot('app', dir, { deadlineAt: started + 150 }, collector);
+  expect(result).toMatchObject({ ok: false, error: { code: 'timeout' } });
+  expect(collector).not.toHaveBeenCalled(); expect(Date.now() - started).toBeLessThan(350);
+ });
 });

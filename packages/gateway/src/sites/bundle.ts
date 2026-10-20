@@ -1,6 +1,6 @@
 /** Collect only production artifacts. Never follow links or upload source trees. */
 import { constants } from 'node:fs';
-import { lstat, open, readdir, realpath } from 'node:fs/promises';
+import { lstat, open, opendir, realpath } from 'node:fs/promises';
 import { extname, join, relative, resolve, sep } from 'node:path';
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -15,7 +15,8 @@ export async function collectSiteFiles(appDir: string, output: string): Promise<
  const files:SiteFile[]=[];let total=0,visited=0;
  async function walk(dir:string,prefix='',depth=0):Promise<void>{
   if(depth>16) throw new Error('Public build too large');
-  for(const name of await readdir(dir)){
+  for await(const entry of await opendir(dir)){
+   const name=entry.name;
    if(++visited>1000 || name.startsWith('.') || /^(?:src|node_modules|env|secrets?|credentials?|matrix\.json|package(?:-lock)?\.json|pnpm-lock\.yaml)$/i.test(name) || /\.(?:map|env|sql|log|ts|tsx|jsx|pem|key)$/i.test(name) || /^(?:secrets?|credentials?|env|database|dump|backup)(?:[._-]|$)/i.test(name)) throw new Error('Unsafe public build artifact');
    const path=join(dir,name),info=await lstat(path),filePath=prefix+name;
    if(info.isSymbolicLink()) throw new Error('Unsafe public build artifact');

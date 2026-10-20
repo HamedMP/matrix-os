@@ -42,4 +42,15 @@ describe('bounded shared build ownership', () => {
   } finally { resume.resolve(); await Promise.all(requests); }
   await expect(withAppBuildLock(directories[128], async () => 'later')).resolves.toBe('later');
  });
+ it('does not start queued work after its absolute deadline expires', async () => {
+  const { withAppBuildLock } = await import('../../../packages/gateway/src/app-runtime/build-lock.js');
+  const app = join(root, 'app'); await mkdir(app);
+  const started = Promise.withResolvers<void>(); const resume = Promise.withResolvers<void>(); const queued = vi.fn();
+  const first = withAppBuildLock(app, async () => { started.resolve(); await resume.promise; });
+  await started.promise;
+  const second = withAppBuildLock(app, async () => { queued(); }, { deadlineAt: Date.now() + 10 });
+  await new Promise(resolve => setTimeout(resolve, 30)); resume.resolve(); await first;
+  await expect(second).rejects.toMatchObject({ code: 'timeout' });
+  expect(queued).not.toHaveBeenCalled();
+ });
 });

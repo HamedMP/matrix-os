@@ -172,8 +172,12 @@ prepare_workload_roots
 prepare_sites_nginx() {
   # Loaded predecessor updaters already execute this newly installed helper.
   # Keep this migration here so the first upgrade also updates existing hosts.
-  local helper_dir
-  helper_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  local helper_source="${BASH_SOURCE[0]}" helper_dir
+  case "$helper_source" in
+    */*) helper_dir="${helper_source%/*}" ;;
+    *) helper_dir=. ;;
+  esac
+  helper_dir="$(cd -- "$helper_dir" && pwd)"
   /usr/bin/timeout --kill-after=5 30 /usr/bin/python3 -I \
     "$helper_dir/matrix-configure-sites-nginx" --root "$root"
 }

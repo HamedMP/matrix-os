@@ -85,8 +85,9 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
    if(!isDeepStrictEqual(config,reviewedConfig))return c.json({error:'Site changed; reload and try again'},409);
    type Snapshot={ok:true;files:SiteFile[]}|{ok:false;reason:'changed'|'artifacts'};
    deadline.check();
-   // Honor the app's build budget, capped by the remaining publication time.
-   const building=build.buildWithSnapshot<Snapshot>(manifest.slug,appDir,{timeoutMs:Math.min(manifest.build.timeout*1000,Math.max(1,deadline.deadlineAt-Date.now()))},async()=>{
+   // Queueing, install, build, capture and activation share this absolute budget.
+   const buildDeadlineAt=Math.min(deadline.deadlineAt,Date.now()+manifest.build.timeout*1000);
+   const building=build.buildWithSnapshot<Snapshot>(manifest.slug,appDir,{deadlineAt:buildDeadlineAt},async()=>{
     deadline.check();
     if(!await livePublicationMatches(appDir,binding,manifest))return {ok:false,reason:'changed'};
     let files:SiteFile[];
