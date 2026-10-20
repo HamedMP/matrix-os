@@ -61,6 +61,22 @@ describe("durable Slack company requests use canonical shared Chat admission", (
   });
   afterEach(async () => { await fixture.destroy(); });
 
+  it("preserves Unicode at the company question truncation boundary", async () => {
+    readThread.mockResolvedValue(null);
+    await service.receive({ ...envelope, event: { ...envelope.event, text: "a".repeat(7999)+"😀 tail" } });
+    await service.drain();
+    expect(submit).toHaveBeenCalledOnce();
+    expect(submit.mock.calls[0][1].text.startsWith("a".repeat(7999)+"\n(Slack message truncated.)")).toBe(true);
+    expect(submit.mock.calls[0][1].text).not.toContain("\uFFFD");
+  });
+  it("safely truncates a company reply without replacing half an emoji", async () => {
+    options.readResult=async()=>({status:"completed",requestingActorId:actors.owner,runId:"run_slack_test",text:"a".repeat(11999)+"😀 tail"});
+    service=new SlackCompanyService(options);
+    await service.receive(envelope);await service.drain();
+    expect(sendReply).toHaveBeenCalledOnce();
+    expect(sendReply.mock.calls[0][0].text).toBe("a".repeat(11999));
+  });
+
   it("commits before acknowledgement, deduplicates retries, and preserves exact thread Chat across restart", async () => {
     expect(await service.receive(envelope)).toMatchObject({ accepted: true });
     expect(await service.receive(envelope)).toMatchObject({ accepted: true, duplicate: true });

@@ -14,6 +14,18 @@ describe("durable private Slack personal transport",()=>{
  beforeEach(async()=>{vi.resetAllMocks();completed=false;fixture=await createCollaborationTestDatabase();db=fixture.db as unknown as Kysely<SlackPersonalDatabase>;await bootstrapSlackPersonalDatabase(db);
  resolvePersonalChat.mockResolvedValue({chatId:"chat_private",botId:"bot_aaaaaaaa"});submitPersonal.mockResolvedValue({runId:"run_private"});sendReply.mockResolvedValue({status:"sent",messageTs:"1790766001.000001"});service=create();});
  afterEach(async()=>{await service.close();await fixture.destroy();});
+ it.each([7999,7998])("admits a long emoji DM at the UTF-16 boundary after %i ASCII characters",async(prefix)=>{
+  submitPersonal.mockImplementation(async(record)=>{
+   await sql`select ${JSON.stringify({text:record.text})}::jsonb`.execute(db);
+   return {runId:"run_private"};
+  });
+  const row=await service.receive({...envelope,event:{...envelope.event,text:"a".repeat(prefix)+"😀 tail"}});
+  await service.drain();
+  expect(await db.selectFrom("slack_personal_inbox").select("state").where("id","=",row.eventId).executeTakeFirstOrThrow()).toEqual({state:"accepted"});
+  const text=submitPersonal.mock.calls[0][0].text;
+  expect(text.isWellFormed()).toBe(true);
+  expect(text).toBe("a".repeat(prefix)+(prefix===7998?"😀":"")+"\n(Slack message truncated.)");
+ });
  it("durably deduplicates before ACK and keeps one personal Chat across restart",async()=>{
   expect(await service.receive(envelope)).toMatchObject({accepted:true,duplicate:false});expect(await service.receive(envelope)).toMatchObject({accepted:true,duplicate:true});expect(submitPersonal).not.toHaveBeenCalled();
   await service.drain();expect(submitPersonal).toHaveBeenCalledTimes(1);await service.close();service=create();completed=true;await service.drain();await service.drain();
