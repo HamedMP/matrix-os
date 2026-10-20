@@ -1,3 +1,4 @@
+import {isCurrentAppFrame,communityIframeSandbox} from './app-frame-authority';
 "use client";
 
 import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
@@ -21,7 +22,6 @@ import { createCoalescedBridgeDataHandler, type BridgeDataRequest } from "@/lib/
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import { MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
 import {
-  APP_IFRAME_SANDBOX,
   extractSlug,
   appIdentityFromPath,
   appDataChangeMessageForIdentity,
@@ -50,9 +50,9 @@ function readCurrentDesign(): string {
   return document.documentElement.dataset.themeStyle ?? "flat";
 }
 
-async function handleBridgeFetch(appName: string, payload: unknown, port: MessagePort, signal: AbortSignal): Promise<void> {
+async function handleBridgeFetch(appName: string, payload: unknown, port: MessagePort, signal: AbortSignal, community = false): Promise<void> {
   try {
-    const bound = prepareBridgeFetchRequest(appName, payload);
+    const bound = prepareBridgeFetchRequest(appName, payload,community);
     const requestInit = bound.init;
     const response = await fetch(resolveBridgeFetchUrl(getGatewayUrl(), bound.url), {
       method: requestInit.method,
@@ -62,7 +62,7 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
       redirect: "error",
     });
     const body = await readAppBridgeResponse(response, bound);
-    if (!signal.aborted) port.postMessage({ ok: response.ok, status: response.status, body: response.ok ? body : null });
+    if (!signal.aborted) port.postMessage({ ok: response.ok, status: response.status, body: response.ok ? body : (bound.url.startsWith('/api/app-store/')&&body&&typeof body==='object'&&'error' in body&&['invalid','unauthorized','forbidden','not_found','conflict','limit','unavailable'].includes(String(body.error))?{error:body.error}:null) });
   } catch (err: unknown) {
     console.warn("[app-viewer] bridge fetch unavailable", err instanceof Error ? err.name : "UnknownError");
     if (!signal.aborted) port.postMessage({ ok: false, error: "App request unavailable" });
@@ -99,6 +99,8 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const communityRef=useRef(false);
+  const bridgeTokenRef=useRef(crypto.randomUUID());
   const { send, subscribe } = useSocket();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
   const appName = appIdentityFromPath(path);
@@ -120,7 +122,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     const onLoad = () => {
       try {
         const themeVars = readCurrentTheme();
-        const script = buildBridgeScript(appName, themeVars, readCurrentDesign());
+        const script = buildBridgeScript(appName, themeVars, readCurrentDesign(),bridgeTokenRef.current);
         // Inject bridge directly into iframe DOM, then trigger reload.
         const doc = iframe.contentDocument;
         if (doc) {
@@ -180,11 +182,12 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     const launches = new Set<AbortController>();
     const handler: BridgeHandler = {
       sendToKernel(text) {
+        if(communityRef.current)return;
         send({ type: "message", text, sessionId });
       },
       fetchData: bridgeDataHandler,
       openApp(name, requestedPath) {
-        if (!onOpenApp || launches.size >= 8) return;
+        if (communityRef.current||!onOpenApp || launches.size >= 8) return;
         const controller = new AbortController();
         launches.add(controller);
         void resolveAppBridgeLaunch(name, requestedPath, controller.signal)
@@ -197,8 +200,10 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     const pending = new Map<MessagePort, AbortController>();
     const onMessage = (event: MessageEvent) => {
       const data = event.data;
+      if(!isCurrentAppFrame(event,{source:iframeRef.current?.contentWindow??null,app:appName,token:bridgeTokenRef.current}))return;
       if (data?.type === "os:bridge-dispose" && event.source === iframeRef.current?.contentWindow
         && (event.origin === window.location.origin || event.origin === "null") && data.app === appName) {
+        bridgeTokenRef.current=crypto.randomUUID();
         for (const [port, controller] of pending) { controller.abort(); port.close(); }
         pending.clear();
         for (const controller of launches) controller.abort();
@@ -216,7 +221,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         if (pending.size >= 32) { port.postMessage({ ok: false, error: "App request unavailable" }); port.close(); return; }
         const controller = new AbortController();
         pending.set(port, controller);
-        void handleBridgeFetch(appName, data.payload, port, controller.signal).finally(() => pending.delete(port));
+        void handleBridgeFetch(appName, data.payload, port, controller.signal,communityRef.current).finally(() => pending.delete(port));
         return;
       }
       handleBridgeMessage(event, handler, {
@@ -310,11 +315,13 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     fetch(baseHref, { signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS) })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        communityRef.current=response.headers.get('x-matrix-app-distribution')==='community';
         return response.text();
       })
       .then((html) => {
         if (!cancelled) {
-          setIframeHtml(injectBridgeIntoAppHtml(html, appName, readCurrentTheme(), baseHref, readCurrentDesign()));
+          bridgeTokenRef.current=crypto.randomUUID();
+          setIframeHtml(injectBridgeIntoAppHtml(html, appName, readCurrentTheme(), baseHref, readCurrentDesign(),{token:bridgeTokenRef.current,community:communityRef.current}));
         }
       })
       .catch((err: unknown) => {
@@ -383,7 +390,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         src={iframeSrc}
         srcDoc={slug && iframeHtml ? iframeHtml : undefined}
         className="min-h-0 w-full flex-1 border-0"
-        sandbox={APP_IFRAME_SANDBOX}
+        sandbox={communityIframeSandbox(communityRef.current)}
         title={path}
       />
     </div>

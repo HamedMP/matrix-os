@@ -62,6 +62,7 @@ function isSafeAppIdentity(value: string): boolean {
 
 interface NativeAppBridgeOptions {
   authGeneration: () => number;
+  allowUnscopedActions?: (app:string)=>Promise<boolean>;
   generate: (app: string, context: string) => void;
   aiRequest: (slug: string, input: AppAiInput, signal?: AbortSignal) => Promise<unknown>;
   capabilityRequest?: (app: string, input: AppCapabilityInput, signal?: AbortSignal) => Promise<unknown>;
@@ -160,6 +161,7 @@ export function createNativeAppQueryRequester(
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
+        "x-matrix-app-identity":slug,
       },
       body,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -185,11 +187,11 @@ export function createNativeAppGatewayRequester(
     const response = await fetchFn(new URL(request.url, origin).toString(), {
       method: request.init?.method ?? "GET",
       redirect: "error",
-      headers: { authorization: `Bearer ${token}`, ...(request.init?.method === "POST" ? { "content-type": "application/json" } : {}) },
+      headers: { authorization: `Bearer ${token}`, "x-matrix-app-identity":slug,...(request.init?.method === "POST" ? { "content-type": "application/json" } : {}) },
       ...(request.init?.body !== undefined ? { body: request.init.body } : {}),
       signal: AbortSignal.timeout(nativeAppGatewayTimeout(request)),
     });
-    if (!response.ok) throw new Error(`gateway request failed (${response.status})`);
+    if (!response.ok){const body=await readBoundedJson(response);const code=request.url.startsWith('/api/app-store/')&&body&&typeof body==='object'&&'error'in body&&['invalid','unauthorized','forbidden','not_found','conflict','limit','unavailable'].includes(String(body.error))?String(body.error):'app gateway request failed';throw new Error(code);}
     return readBoundedJson(response);
   };
 }
@@ -348,11 +350,16 @@ export class NativeAppBridge {
     if (now - this.generateWindow >= 60_000) { this.generateWindow = now; this.generateCount = 0; }
     if (this.generateCount >= 10) throw new Error("App task rate limit exceeded");
     this.generateCount++;
+    if(this.options.allowUnscopedActions){
+      void this.options.allowUnscopedActions(identity.appIdentity).then(allowed=>{if(allowed&&this.senders.get(sender.id)===identity&&identity.authGeneration===this.options.authGeneration())this.options.generate(identity.appIdentity,context);}).catch((error:unknown)=>console.warn('[native-app] App task unavailable',error instanceof Error?error.name:'UnknownError'));
+      return;
+    }
     this.options.generate(identity.appIdentity, context);
   }
 
   async openApp(sender: NativeAppSender, rawRequest: unknown): Promise<void> {
     const identity = this.senders.get(sender.id);
+    if(identity&&this.options.allowUnscopedActions&&!await this.options.allowUnscopedActions(identity.appIdentity))throw new Error('App launch unavailable');
     const authorized = () => identity && this.senders.get(sender.id) === identity
       && identity.authGeneration === this.options.authGeneration()
       && isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug);

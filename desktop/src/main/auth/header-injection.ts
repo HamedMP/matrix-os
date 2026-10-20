@@ -132,6 +132,7 @@ export function buildRendererCsp(gatewayOrigin: string | null, rendererOrigin: s
     `script-src ${scriptSources}`,
     "style-src 'self' 'unsafe-inline'",
     `connect-src ${connectSources}`,
+    `frame-src ${uniq(["'self'",gatewayHttpOrigin]).join(" ")}`,
     "worker-src 'self' blob:",
     "font-src 'self' data:",
     // blob: renders same-renderer object URLs (authenticated file previews);
