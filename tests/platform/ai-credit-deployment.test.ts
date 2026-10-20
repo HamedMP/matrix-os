@@ -20,7 +20,6 @@ const env = {
   CUSTOM_MCP_ENABLED: "false", MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: "1",
   PLATFORM_SPEECH_ENABLED: "false", MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: "false",
   MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "false", MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false",
-  MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "false",
   MATRIX_FUNDED_HOST_CONFIG_ENABLED: "false",
   MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false", MATRIX_FUNDED_AI_RELAY_URL: "",
   MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "10", MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "1",
@@ -56,40 +55,6 @@ describe("Matrix AI credit Cloud Run deployment", () => {
     expect(validate({ ...enabled, STRIPE_PRICE_AI_CREDIT_USD_10: "" }).status).not.toBe(0);
     expect(validate({ ...enabled, STRIPE_PRICE_AI_CREDIT_USD_10: "price_credit5" }).status).not.toBe(0);
     expect(validate({ ...enabled, MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "typo" }).status).not.toBe(0);
-  });
-
-  it("requires both funded AI and Platform speech before bounded Preview access can be enabled", () => {
-    const enabled = {
-      MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "true",
-      MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "true",
-      MATRIX_FUNDED_AI_RUNTIME_ENABLED: "true",
-      MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.com",
-      PLATFORM_SPEECH_ENABLED: "true",
-      MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: "true",
-      PLATFORM_SPEECH_PROVIDER: "openai",
-      PLATFORM_SPEECH_MODEL: "gpt-4o-mini-transcribe",
-      PLATFORM_SPEECH_POLICY_REVISION: "speech-v1",
-      PLATFORM_SPEECH_MICROUSD_PER_MINUTE: "1000",
-      PLATFORM_SPEECH_FUNDING_SOURCES: "promotional",
-      PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: "false",
-      PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: "1000000",
-      PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: "1000000",
-    };
-    expect(validate(enabled).status).toBe(0);
-    for (const key of ["MATRIX_FUNDED_AI_RUNTIME_ENABLED", "PLATFORM_SPEECH_ENABLED",
-      "MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED"] as const) {
-      const result = validate({ ...enabled, [key]: "false" });
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Preview runtime access requires funded AI and platform speech");
-    }
-  });
-
-  it("mounts the dedicated Preview secret only for the explicit opt-in", () => {
-    expect(workflow.jobs.deploy.env.MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED)
-      .toContain("vars.MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED");
-    const deployScript = step("Deploy tagged revision");
-    expect(deployScript).toContain("MATRIX_PREVIEW_RUNTIME_SECRET=matrix-preview-runtime-secret:latest");
-    expect(deployScript).toContain('if [ "$MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED" = "true" ]');
   });
 
   it("binds the reviewed package IDs only when checkout is enabled", () => {
@@ -231,7 +196,6 @@ describe("funded control-plane effective secret access", () => {
   function verify(secretPolicy: string, projectPolicy: string, failures: Record<string, string> = {}) {
     return spawnSync("bash", ["-c", `
       gcloud() {
-        if [ "\${FAIL_PREVIEW_SECRET:-false}" = true ] && [[ "$*" == *"matrix-preview-runtime-secret"* ]]; then return 1; fi
         case "$1 $2 $3" in
           'secrets versions describe') return 0 ;;
           'secrets get-iam-policy '* )
@@ -255,14 +219,6 @@ describe("funded control-plane effective secret access", () => {
   it("recognizes an existing unconditional project-level accessor without granting a new role", () => {
     const result = verify(policy([]), policy([binding]));
     expect(result.status, result.stderr).toBe(0);
-  });
-  it("preflights the dedicated Preview secret only when Preview access is enabled", () => {
-    expect(verify(policy([binding]), policy([]), {
-      MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "false", FAIL_PREVIEW_SECRET: "true",
-    }).status).toBe(0);
-    expect(verify(policy([binding]), policy([]), {
-      MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "true", FAIL_PREVIEW_SECRET: "true",
-    }).status).not.toBe(0);
   });
   it.each([
     [policy([]), policy([]), {}],

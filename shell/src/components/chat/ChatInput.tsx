@@ -188,11 +188,6 @@ export function ChatInput({
       {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
       {speech.error ? <p role="alert" className="text-xs text-destructive">{speech.error}</p> : null}
-      {speech.previewQuota ? (
-        <p role="status" className="text-xs text-muted-foreground">
-          Preview dictation: {speech.previewQuota.requestsRemaining} of {speech.previewQuota.requestLimit} requests remaining.
-        </p>
-      ) : null}
       <Attachments attachments={attachments} onRemove={removeFile} />
       <div ref={slashAnchorRef} className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
         <ChatSlashPicker instance={slashInstance} loading={slashCatalogLoading} query={slashQuery} listRef={slashListRef} anchorRef={slashAnchorRef} inputRef={textareaRef}

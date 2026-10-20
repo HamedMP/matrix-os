@@ -833,43 +833,6 @@ jobs:
             '{handle:$handle,address:$address}' > preview-runtime-route.json
           chmod 600 preview-runtime-route.json
 
-      - name: Activate bounded Preview AI and speech
-        run: |
-          set -euo pipefail
-          machine="$(curl -fsS --max-time 30 \
-            -H "authorization: Bearer ${PLATFORM_SECRET}" \
-            "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-            jq -ce --arg h "$HANDLE" '
-              [.machines[] | select(
-                .handle == $h and .runtimeSlot == $h and .provisioningClass == "preview"
-                and .status == "running" and .activationState == "authorized"
-                and .deletedAt == null and .healthy == true
-              )] | if length == 1 then .[0] else error("exact Preview runtime unavailable") end')"
-          body="$(jq -cn \
-            --arg owner "$(jq -r .clerkUserId <<< "$machine")" \
-            --arg machine "$(jq -r .machineId <<< "$machine")" \
-            --arg slot "$(jq -r .runtimeSlot <<< "$machine")" \
-            --argjson epoch "$(jq -r .runtimeTokenEpoch <<< "$machine")" \
-            '{ownerId:$owner,machineId:$machine,runtimeSlot:$slot,expectedRuntimeTokenEpoch:$epoch}')"
-          code="$(curl -sS --max-time 180 -o /tmp/preview-access.json -w '%{http_code}' \
-            -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/access/activate" \
-            -H "authorization: Bearer ${PLATFORM_SECRET}" \
-            -H "content-type: application/json" \
-            --data-binary "$body")"
-          if [ "$code" != "200" ] || ! jq -e '
-            .status == "ready"
-            and .fundedAiConfigured == true
-            and .speechConfigured == true
-            and .allocation.ai.requestsRemaining > 0
-            and .allocation.speech.requestsRemaining > 0
-            and .allocation.maxConcurrency == 1
-            and (.allocation.expiresAt | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
-          ' /tmp/preview-access.json >/dev/null; then
-            echo "Bounded Preview AI and speech activation failed with HTTP ${code}." >&2
-            exit 1
-          fi
-          jq '{status,expiresAt:.allocation.expiresAt,aiRequestsRemaining:.allocation.ai.requestsRemaining,speechRequestsRemaining:.allocation.speech.requestsRemaining}' /tmp/preview-access.json
-
       - name: Publish exact-head preview runtime route
         uses: actions/upload-artifact@v4
         with:
@@ -889,7 +852,6 @@ jobs:
 
           - Shell: https://app.matrix-os.com/vm/${HANDLE}
           - Bundle: \`${VERSION}\`
-          - Funded access: bounded Preview-only Chat and dictation (remaining quota is shown in Matrix OS)
           - Logs (from the ops box): \`./scripts/preview-logs.sh --handle ${HANDLE}\` (enroll first with \`./scripts/enable-vps-logship.sh ${HANDLE} preview\`)"
           if [ "${PREVIEW_COLLABORATION:-false}" = "true" ]; then
             body="${body}
