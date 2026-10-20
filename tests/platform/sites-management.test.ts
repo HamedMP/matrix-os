@@ -58,7 +58,9 @@ it.each(['expired', 'caller-aborted'] as const)('never activates %s publication 
    body: JSON.stringify({ title: 'Deadline', slug: 'deadline-app', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('Deadline').toString('base64') }] }),
   });
   expect(response.status).toBe(503);
-  expect(await db.executor.selectFrom('public_sites').select('id').where('app_slug', '=', 'deadline').execute()).toEqual([]);
+  const pending = await service.get({ ownerId: 'user_launch', machineId: identity.machineId, appSlug: 'deadline' });
+  expect(pending).toMatchObject({ status: 'unpublished', activeVersion: null, versions: [] });
+  expect(await service.resolve(pending!.id)).toBeNull();
   expect(objects.size).toBe(0);
  } finally { vi.useRealTimers(); }
 });
