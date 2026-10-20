@@ -55,39 +55,38 @@ it('denies a second publish for the owner before it takes another DB transaction
   const transactions = vi.spyOn(db, 'transaction');
   const first = service.deploy(owner, deployment);
   await began.promise;
+  const admittedTransactions = transactions.mock.calls.length;
   const second = service.deploy({ ...owner, appSlug: 'second-event' }, deployment);
   const secondOutcome = second.then(() => 'accepted', () => 'denied');
   try {
     expect(await Promise.race([secondOutcome, new Promise(resolve => setTimeout(() => resolve('waiting'), 50))])).toBe('denied');
-    expect(transactions).toHaveBeenCalledOnce();
+    expect(transactions).toHaveBeenCalledTimes(admittedTransactions);
     expect(upload).toHaveBeenCalledOnce();
   } finally { finish.resolve(); await Promise.allSettled([first, second]); }
   const next = await service.deploy({ ...owner, appSlug: 'after-finish' }, deployment);
   expect(next.status).toBe('published');
 });
 
-it('caps all owners at four in-flight publish transactions and releases capacity after completion', async () => {
+it('caps all owners at four in-flight publications and releases capacity after completion', async () => {
   const finish = Promise.withResolvers<void>();
   const owners = Array.from({ length: 5 }, (_, index) => ({ ownerId: `user_publisher_${index}`, machineId: `publish-machine-${index}`, appSlug: 'event' }));
   for (const publisher of owners) await insertUserMachine(db, { machineId: publisher.machineId, clerkUserId: publisher.ownerId, handle: `publisher-${publisher.ownerId.slice(-1)}`,
     status: 'running', provisionedAt: new Date().toISOString() });
   const service = createSitesService({ db, storage: { async putObject() { await finish.promise; return {}; }, async getObject() { return { body: null }; } } });
-  const transactions = vi.spyOn(db, 'transaction');
   const accepted = owners.slice(0, 4).map(publisher => service.deploy(publisher, deployment));
   const denied = service.deploy(owners[4], deployment);
   const deniedOutcome = denied.then(() => 'accepted', () => 'denied');
   try {
     expect(await Promise.race([deniedOutcome, new Promise(resolve => setTimeout(() => resolve('waiting'), 50))])).toBe('denied');
-    expect(transactions).toHaveBeenCalledTimes(4);
   } finally { finish.resolve(); await Promise.allSettled([...accepted, denied]); }
   expect((await service.deploy(owners[4], deployment)).status).toBe('published');
 });
 
-it('releases admission after validation and upload failures without retaining a partial site', async () => {
+it('releases admission after failures while retaining unpublished cleanup inventory', async () => {
   const service = createSitesService({ db, storage: { putObject: vi.fn().mockRejectedValueOnce(new Error('upload failed')).mockResolvedValue({}), async getObject() { return { body: null }; } } });
   await expect(service.deploy(owner, {})).rejects.toThrow('invalid_request');
   await expect(service.deploy(owner, deployment)).rejects.toThrow('upload failed');
-  expect(await service.get(owner)).toBeNull();
+  expect(await service.get(owner)).toMatchObject({ status: 'unpublished', activeVersion: null, versions: [] });
   expect((await service.deploy(owner, deployment)).status).toBe('published');
 });
 
@@ -109,9 +108,10 @@ it('retains the owner admission while failed candidate cleanup is still running'
   const first = service.deploy(owner, deployment);
   const firstOutcome = first.then(() => 'accepted', () => 'failed');
   await cleanupBegan.promise;
+  const admittedTransactions = transactions.mock.calls.length;
   try {
     await expect(service.deploy({ ...owner, appSlug: 'during-cleanup' }, deployment)).rejects.toThrow('unavailable');
-    expect(transactions).toHaveBeenCalledOnce();
+    expect(transactions).toHaveBeenCalledTimes(admittedTransactions);
   } finally { cleanupFinish.resolve(); await firstOutcome; }
   expect((await service.deploy(owner, deployment)).status).toBe('published');
 });

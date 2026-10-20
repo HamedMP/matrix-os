@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
-import { withSiteOwnerAdmission } from '../../packages/platform/src/sites/account-lifecycle.js';
+import { withSiteOwnerAdmission, eraseOwnerSites, eraseOwnerSiteRegistry } from '../../packages/platform/src/sites/account-lifecycle.js';
 import { SiteError } from '../../packages/platform/src/sites/types.js';
 const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 const postgres = postgresUrl ? describe : describe.skip;
@@ -169,6 +169,25 @@ postgres('public sites independent PostgreSQL sessions', () => {
             expect(putObject).not.toHaveBeenCalled();
             expect(await service.get(delayedOwner)).toBeNull();
         } finally { release.resolve(); await Promise.allSettled([holder, outcome]); vi.useRealTimers(); }
+    });
+    it('retains failed first-upload inventory across independent PostgreSQL sessions until erasure succeeds', async () => {
+        const publisher = { ownerId: 'user_failed_first_upload', machineId: 'failed-first-runtime', appSlug: 'event' };
+        await insertUserMachine(dbA, { machineId: publisher.machineId, clerkUserId: publisher.ownerId, handle: publisher.machineId, status: 'running', provisionedAt: new Date().toISOString() });
+        const objects = new Map<string, Uint8Array>();
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const storage = { async putObject(key: string, bytes: unknown) { objects.set(key, bytes as Uint8Array); throw Error('upload acknowledgement lost'); }, async deleteObject() { throw Error('cleanup unavailable'); }, async getObject() { return { body: null }; } };
+        try {
+            await expect(createSitesService({ db: dbA, storage }).deploy(publisher, { title: 'Failed first upload', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('candidate').toString('base64') }] })).rejects.toThrow('upload acknowledgement lost');
+            const reader = createSitesService({ db: dbB });
+            expect(await reader.get(publisher)).toMatchObject({ status: 'unpublished', activeVersion: null, versions: [] });
+            expect(objects.size).toBe(1);
+            await expect(eraseOwnerSites(dbB, publisher.ownerId, undefined)).rejects.toThrow('Sites storage cleanup unavailable');
+            expect(await reader.get(publisher)).not.toBeNull();
+            await eraseOwnerSites(dbB, publisher.ownerId, { async listObjects(prefix) { return { keys: [...objects.keys()].filter(key => key.startsWith(prefix)), nextCursor: null }; }, async deleteObject(key) { objects.delete(key); }, async abortOwnerMultipartUploads() {} });
+            expect(objects.size).toBe(0);
+            await eraseOwnerSiteRegistry(dbB, publisher.ownerId);
+            expect(await reader.get(publisher)).toBeNull();
+        } finally { warning.mockRestore(); }
     });
     it('orders deletion acceptance behind publishing owner lock and blocks every later publication', async () => {
         const env = { ACCOUNT_DELETION_SECRET: 'sites-publishing-deletion-race-secret' };
