@@ -50,7 +50,7 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
-  it("does not fail a progressing owner Run at the 30-minute idle boundary", async () => {
+  it("does not fail a progressing owner Run after four hours", async () => {
     vi.useFakeTimers();
     try {
       const stdout = new FakeStream();
@@ -81,10 +81,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       const progress = JSON.stringify({ type: "stream_event", event: {
         type: "content_block_delta", delta: { type: "text_delta", text: "working" },
       } });
-      await vi.advanceTimersByTimeAsync(15 * 60_000);
-      stdout.emit("data", Buffer.from(`${progress}\n`));
-      await vi.advanceTimersByTimeAsync(15 * 60_000);
-      stdout.emit("data", Buffer.from(`${progress}\n`));
+      for (let minutes = 15; minutes <= 255; minutes += 15) {
+        await vi.advanceTimersByTimeAsync(15 * 60_000);
+        stdout.emit("data", Buffer.from(`${progress}\n`));
+      }
       await vi.advanceTimersByTimeAsync(60_000);
       expect(process.kill).not.toHaveBeenCalled();
 

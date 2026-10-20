@@ -52,6 +52,19 @@ export class CanonicalCliError extends Error {
   }
 }
 
+type CanonicalCliDeadline =
+  | {
+    /** Absolute process lifetime. Never refreshed by provider activity. */
+    timeoutMs: number;
+    /** Inactivity deadline, refreshed after accepted stdout or stdin writes. */
+    idleTimeoutMs?: number;
+  }
+  | {
+    timeoutMs?: number;
+    /** Inactivity deadline, refreshed after accepted stdout or stdin writes. */
+    idleTimeoutMs: number;
+  };
+
 export async function runCanonicalCli(options: {
   command: string;
   args: string[];
@@ -59,17 +72,13 @@ export async function runCanonicalCli(options: {
   env: Record<string, string>;
   replaceEnv?: boolean;
   signal: AbortSignal;
-  /** Absolute process lifetime. Never refreshed by provider activity. */
-  timeoutMs: number;
-  /** Optional inactivity deadline, refreshed after accepted stdout or stdin writes. */
-  idleTimeoutMs?: number;
   maxStdoutBytes: number;
   maxStderrBytes?: number;
   spawnFn?: CanonicalCliSpawn;
   onStart?: (write: (frame: string) => Promise<void>, end: () => void) => void;
   onStdout: (chunk: Buffer) => void;
   onStderr?: (chunk: Buffer) => void;
-}): Promise<void> {
+} & CanonicalCliDeadline): Promise<void> {
   const maxStderrBytes = options.maxStderrBytes ?? 8_192;
   let stdoutBytes = 0;
   let stderrBytes = 0;
@@ -127,8 +136,10 @@ export async function runCanonicalCli(options: {
       idleTimeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.idleTimeoutMs);
       idleTimeout.unref?.();
     };
-    timeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.timeoutMs);
-    timeout.unref?.();
+    if (options.timeoutMs !== undefined) {
+      timeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.timeoutMs);
+      timeout.unref?.();
+    }
     resetIdleTimeout();
 
     if (options.signal.aborted) {
