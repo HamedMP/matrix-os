@@ -1,4 +1,6 @@
+import * as testAdvice from "../../scripts/ci/preview-test-advice.mjs";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -46,6 +48,83 @@ function fixture(
   return { github, pr, comments };
 }
 describe("preview test advice", () => {
+  it("refreshes other PRs before reporting a failed lookup in the sweep", async () => {
+    const good = fixture(); good.pr.number = 2;
+    const github = { rest: { ...good.github.rest, pulls: {
+      ...good.github.rest.pulls,
+      list: vi.fn(async () => ({ data: [{ number: 1, state: "open" }, good.pr] })),
+      get: async (args: any) => {
+        if (args.pull_number === 1) throw new Error("synthetic unavailable");
+        return good.github.rest.pulls.get();
+      },
+    } } };
+    await expect((testAdvice as any).sweepPreviewTestAdvice(github, repo, { now: 0 }))
+      .rejects.toThrow("Advice sweep incomplete");
+    expect(good.comments).toHaveLength(1);
+  });
+  it("recovers dropped refresh events from open PR metadata and rotates beyond one bounded batch", async () => {
+    const fixtures = Array.from({ length: 9 }, (_, index) => {
+      const f = fixture(); f.pr.number = index + 1; return f;
+    });
+    const byNumber = (number: number) => fixtures[number - 1];
+    const github = { rest: {
+      pulls: {
+        list: vi.fn(async () => ({ data: fixtures.map(f => f.pr) })),
+        get: async (args: any) => byNumber(args.pull_number).github.rest.pulls.get(),
+        listFiles: async (args: any) => byNumber(args.pull_number).github.rest.pulls.listFiles(args),
+      },
+      repos: fixtures[0].github.rest.repos,
+      issues: {
+        listComments: async (args: any) => ({ data: byNumber(args.issue_number).comments }),
+        createComment: vi.fn(async (args: any) => {
+          byNumber(args.issue_number).comments.push({ ...args, id: args.issue_number, user: { login: "github-actions[bot]" } });
+        }),
+        updateComment: vi.fn(),
+      },
+    } };
+    const first = await (testAdvice as any).sweepPreviewTestAdvice(github, repo, { now: 0 });
+    expect(first.checked).toHaveLength(8);
+    expect(fixtures[8].comments).toHaveLength(0);
+    await (testAdvice as any).sweepPreviewTestAdvice(github, repo, { now: 300000 });
+    expect(fixtures.every(f => f.comments.length === 1)).toBe(true);
+    expect(github.rest.issues.createComment).toHaveBeenCalledTimes(9);
+    expect(fixtures[0].comments[0]).toMatchObject({ body: expect.stringContaining(head) });
+  });
+  it("executes scheduled recovery without a PR event payload or deployment authority", async () => {
+    const f = fixture();
+    const wf = YAML.parse(readFileSync(".github/workflows/preview-test-advice.yml", "utf8"));
+    const script = wf.jobs.advise.steps.at(-1).with.script;
+    // Execute Node's real module loader; Vitest's VM cannot dynamically import
+    // inside Function. No GitHub or deployment calls escape these metadata mocks.
+    const execution = `
+      const pr = ${JSON.stringify(f.pr)}, comments = [], info = [];
+      let reads = 0;
+      const github = { rest: {
+        pulls: { list: async () => ({data:[pr]}), get: async () => { reads++; return {data:pr}; },
+          listFiles: async () => ({data:[{filename:"shell/app/page.tsx"}]}) },
+        issues: { listComments: async () => ({data:comments}), createComment: async args => {comments.push(args);} },
+      } };
+      const context = { eventName:"schedule", repo:${JSON.stringify(repo)} };
+      const core = { info: message => info.push(message) };
+      await (async () => { ${script} })();
+      console.log(JSON.stringify({comments,info,reads}));
+    `;
+    const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", execution], {
+      cwd: process.cwd(), env: { PATH: process.env.PATH, GITHUB_WORKSPACE: process.cwd() },
+      encoding: "utf8", timeout: 5000,
+    }));
+    expect(result.comments).toHaveLength(1);
+    expect(result.info).toEqual(["Advice recovery: 1 of 1 open PRs checked"]);
+    expect(result.reads).toBe(2);
+  });
+  it("rejects malformed sweep inventory before publishing any advice", async () => {
+    const f = fixture();
+    const github = { ...f.github, rest: { ...f.github.rest, pulls: {
+      ...f.github.rest.pulls, list: vi.fn(async () => ({ data: [{ number: "bad", state: "open" }] })),
+    } } };
+    await expect((testAdvice as any).sweepPreviewTestAdvice(github, repo)).rejects.toThrow("PR inventory unavailable");
+    expect(f.comments).toHaveLength(0);
+  });
   it("avoids paid runtime for docs/tests and recommends exact surfaces without claiming qualification", () => {
     expect(
       classifyPreviewTests([
@@ -256,6 +335,7 @@ describe("preview test advice", () => {
       "reopened",
       "ready_for_review",
     ]);
+    expect(wf.on.schedule).toEqual([{ cron: "2-59/5 * * * *" }]);
     expect(wf.permissions).toEqual({
       contents: "read",
       "pull-requests": "write",
@@ -274,6 +354,8 @@ describe("preview test advice", () => {
       ["main", "pull_request_target", "stack", false],
       ["main", "workflow_dispatch", "stack", true],
       ["stack", "workflow_dispatch", "stack", false],
+      ["main", "schedule", "stack", true],
+      ["stack", "schedule", "main", false],
     ]) {
       expect(
         runInNewContext(wf.jobs.advise.if, {
