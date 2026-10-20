@@ -1,4 +1,5 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { generateKeyPairSync } from 'node:crypto';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -8,6 +9,25 @@ const root = process.cwd();
 const script = join(root, 'scripts/ci/platform-account-deletion-env.sh');
 const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 const temporaryDirectories: string[] = [];
+const validApplePrivateKey = generateKeyPairSync('ec', {
+  namedCurve: 'prime256v1',
+  privateKeyEncoding: { format: 'pem', type: 'pkcs8' },
+  publicKeyEncoding: { format: 'pem', type: 'spki' },
+}).privateKey;
+const legacyApplePrivateKey = generateKeyPairSync('ec', {
+  namedCurve: 'prime256v1',
+  privateKeyEncoding: { format: 'pem', type: 'sec1' },
+  publicKeyEncoding: { format: 'pem', type: 'spki' },
+}).privateKey;
+const validSecretValues = {
+  'account-deletion-secret': 'd'.repeat(48),
+  'clerk-user-webhook-signing-secret': `whsec_${Buffer.alloc(24, 7).toString('base64')}`,
+  'apple-team-id': 'PX4JL74Y2K',
+  'apple-sign-in-key-id': 'ABC123DEFG',
+  'apple-sign-in-private-key': validApplePrivateKey,
+  'apple-services-id': 'com.matrixos.web',
+  'apple-native-client-id': 'com.matrixos.mobile',
+};
 
 function run(mode: string, extra: NodeJS.ProcessEnv = {}, fixture: Record<string, unknown> = {}, role?: 'api' | 'worker') {
   const directory = mkdtempSync(join(tmpdir(), 'account-deletion-deploy-'));
@@ -32,15 +52,7 @@ if (args.includes('access')) {
 }
 `);
   chmodSync(gcloud, 0o700);
-  const values = {
-    'account-deletion-secret': 'd'.repeat(48),
-    'clerk-user-webhook-signing-secret': `whsec_${Buffer.alloc(24, 7).toString('base64')}`,
-    'apple-team-id': 'PX4JL74Y2K',
-    'apple-sign-in-key-id': 'ABC123DEFG',
-    'apple-sign-in-private-key': '-----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----\n',
-    'apple-services-id': 'com.matrixos.web',
-    'apple-native-client-id': 'com.matrixos.mobile',
-  };
+  const values = validSecretValues;
   const args = [script, mode, 'reviewed-revision'];
   if (role) args.push(role);
   const result = spawnSync('bash', args, {
@@ -57,13 +69,14 @@ if (args.includes('access')) {
       GCP_PROJECT_ID: 'project',
       GCP_REGION: 'region',
       CLOUD_RUN_SERVICE_ACCOUNT: 'runtime@example.com',
+      TMPDIR: directory,
       MOCK_CALLS: calls,
       MOCK_VALUES: JSON.stringify(values),
       MOCK_REVISION: JSON.stringify(fixture),
       ...extra,
     },
   });
-  return { ...result, calls: readFileSync(calls, 'utf8') };
+  return { ...result, calls: readFileSync(calls, 'utf8'), directory };
 }
 
 afterEach(() => {
@@ -101,6 +114,19 @@ describe('production account deletion deployment contract', () => {
     expect(run('preflight-secrets', { MOCK_VALUES: JSON.stringify({ 'account-deletion-secret': 'short' }) }).status).not.toBe(0);
   });
 
+  it('rejects malformed or non-PKCS8 Apple signing keys and removes the secret temp file on failure', () => {
+    for (const privateKey of [
+      '-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----\n',
+      legacyApplePrivateKey,
+    ]) {
+      const rejected = run('preflight-secrets', {
+        MOCK_VALUES: JSON.stringify({ ...validSecretValues, 'apple-sign-in-private-key': privateKey }),
+      });
+      expect(rejected.status).not.toBe(0);
+      expect(readdirSync(rejected.directory).sort()).toEqual(['calls', 'gcloud']);
+    }
+  });
+
   it('preflights every configured secret without printing its value', () => {
     const result = run('preflight-secrets');
     expect(result.status, result.stderr).toBe(0);
@@ -108,8 +134,8 @@ describe('production account deletion deployment contract', () => {
       'account-deletion-secret', 'clerk-user-webhook-signing-secret', 'apple-team-id',
       'apple-sign-in-key-id', 'apple-sign-in-private-key', 'apple-services-id', 'apple-native-client-id',
     ]) expect(result.calls).toContain(name);
-    expect(result.stdout).not.toContain('private-key-material');
-    expect(result.stderr).not.toContain('private-key-material');
+    expect(result.stdout).not.toContain('PRIVATE KEY');
+    expect(result.stderr).not.toContain('PRIVATE KEY');
   });
 
   it('verifies exact candidate, production, and worker bindings', () => {

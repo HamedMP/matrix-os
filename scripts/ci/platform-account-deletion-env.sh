@@ -90,8 +90,21 @@ validate_secret_value() {
       [[ "$value" =~ ^[A-Z0-9]{10}$ ]]
       ;;
     apple-sign-in-private-key)
-      grep -Eq '^-----BEGIN (EC )?PRIVATE KEY-----$' "$path" &&
-        grep -Eq '^-----END (EC )?PRIVATE KEY-----$' "$path"
+      node -e '
+        const { createPrivateKey, createPublicKey, sign, verify } = require("node:crypto");
+        const { readFileSync } = require("node:fs");
+        const value = readFileSync(process.argv[1], "utf8");
+        if (!/^-----BEGIN PRIVATE KEY-----\r?\n[\s\S]+\r?\n-----END PRIVATE KEY-----\r?\n?$/.test(value)) process.exit(1);
+        try {
+          const key = createPrivateKey(value);
+          if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1") process.exit(1);
+          const probe = Buffer.from("matrix-account-deletion-preflight", "utf8");
+          const signature = sign("sha256", probe, key);
+          if (!verify("sha256", probe, createPublicKey(key), signature)) process.exit(1);
+        } catch {
+          process.exit(1);
+        }
+      ' "$path"
       ;;
     apple-services-id)
       value="$(<"$path")"
@@ -109,7 +122,9 @@ preflight_secrets() {
   local runtime_member="serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}"
   local value_file
   value_file="$(mktemp)"
-  trap 'rm -f "$value_file"' EXIT
+  local cleanup_command
+  printf -v cleanup_command 'rm -f -- %q' "$value_file"
+  trap "$cleanup_command" EXIT
   chmod 600 "$value_file"
   for index in "${!secret_names[@]}"; do
     local name="${secret_names[$index]}"
