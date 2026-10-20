@@ -29,6 +29,7 @@ describe('portable account exports',()=>{
      if(prefix==='matrixos-sync/user_a/'&&cursor==='page2')return {keys:[prefix+'two',prefix+'system/vps-meta.json'],nextCursor:null};
      if(prefix==='custom/user_a/'&&!cursor)return {keys:[prefix+'three'],nextCursor:null};
      if(prefix==='matrixos-sync/v2/owners/user_a/runtimes/'&&!cursor)return {keys:[prefix+'studio/files/four'],nextCursor:null};
+     if(prefix==='app-store/owners/user_a/'&&!cursor)return {keys:[prefix+'sources/reviewed'],nextCursor:null};
      throw Error('wrong page');
    });
    const sign=vi.fn(async(key:string)=>'https://storage.example.test/'+key);
@@ -37,8 +38,9 @@ describe('portable account exports',()=>{
    const b=await listAccountExportFiles(store,'user_a','custom',a.nextCursor!);
    const c=await listAccountExportFiles(store,'user_a','custom',b.nextCursor!);
    const d=await listAccountExportFiles(store,'user_a','custom',c.nextCursor!);
-   expect([a,b,c,d].flatMap(page=>page.files.map(file=>file.path))).toEqual(['one','two','three','studio/files/four']);
-   expect(d.nextCursor).toBeNull();expect(list.mock.calls).toEqual([['matrixos-sync/user_a/',undefined],['matrixos-sync/user_a/','page2'],['custom/user_a/',undefined],['matrixos-sync/v2/owners/user_a/runtimes/',undefined]]);
+   const e=await listAccountExportFiles(store,'user_a','custom',d.nextCursor!);
+   expect([a,b,c,d,e].flatMap(page=>page.files.map(file=>file.path))).toEqual(['one','two','three','studio/files/four','sources/reviewed']);
+   expect(e.nextCursor).toBeNull();expect(list.mock.calls).toEqual([['matrixos-sync/user_a/',undefined],['matrixos-sync/user_a/','page2'],['custom/user_a/',undefined],['matrixos-sync/v2/owners/user_a/runtimes/',undefined],['app-store/owners/user_a/',undefined]]);
    expect(sign).not.toHaveBeenCalledWith(expect.stringContaining('vps-meta'),expect.anything());
  });
  it('exports only the authenticated owner records without credentials or delivery payloads',async()=>{
