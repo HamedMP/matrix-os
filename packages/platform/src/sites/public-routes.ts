@@ -75,6 +75,8 @@ export function createSitePublicRoutes(options: {
         c.header('Cross-Origin-Resource-Policy', 'cross-origin');
         // Direct app HTML navigation remains sandboxed too.
         c.header('Content-Security-Policy', APP_CSP);
+        if (asset.contentType === 'text/html')
+            return c.html(siteFrame(asset.body.toString('utf8'), asset.site, path.data));
         return c.body(new Uint8Array(asset.body));
     });
     app.post('/:reference/forms/:formId', bodyLimit({ maxSize: 17 * 1024, onError: c => c.json({ error: 'Invalid submission' }, 413) }), async (c) => {

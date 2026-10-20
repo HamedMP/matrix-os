@@ -83,6 +83,16 @@ export function createSitesService(options: {
         check();
         const timeout = AbortSignal.timeout(Math.max(1, Math.min(25000, deadlineAt - Date.now())));
         const uploadSignal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
+        // Commit owner inventory before any external upload. A rolled-back first
+        // publication must still block account erasure if its bytes cannot be checked.
+        await withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
+            check();
+            await assertCurrentPublishingRuntime(trx, owner);
+            await trx.executor.insertInto('public_sites').values({ id: randomUUID(), owner_id: owner.ownerId, machine_id: owner.machineId, app_slug: owner.appSlug,
+                title: request.title, description: request.description, slug: null, revision: 0, status: 'unpublished', active_version: null, created_at: new Date().toISOString(),
+            }).onConflict(oc => oc.columns(['owner_id', 'machine_id', 'app_slug']).doNothing()).execute();
+            check();
+        }, env);
         try {
             return await withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
                 check(); // The owner lock may have consumed the remaining publication budget.
@@ -90,10 +100,6 @@ export function createSitesService(options: {
                 await sql `SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
                 await assertCurrentPublishingRuntime(trx, owner);
                 check();
-                const freshId = randomUUID();
-                await trx.executor.insertInto('public_sites').values({ id: freshId, owner_id: owner.ownerId, machine_id: owner.machineId, app_slug: owner.appSlug,
-                    title: request.title, description: request.description, slug: null, revision: 0, status: 'unpublished', active_version: null, created_at: new Date().toISOString(),
-                }).onConflict(oc => oc.columns(['owner_id', 'machine_id', 'app_slug']).doNothing()).execute();
                 const row = await ownership(trx, owner).forUpdate().executeTakeFirstOrThrow();
                 check();
                 if (request.baseRevision !== undefined && row.revision !== request.baseRevision)
@@ -181,13 +187,13 @@ export function createSitesService(options: {
             throw new SiteError('not_found');
         const row = await db.executor.selectFrom('public_site_versions').selectAll().where('site_id', '=', site.id).where('id', '=', version).executeTakeFirst();
         const file = row?.files.find(f => f.path === path);
-        if (!file)
+        if (!row || !file)
             throw new SiteError('not_found');
         const ownerRow = await db.executor.selectFrom('public_sites').select('owner_id').where('id', '=', site.id).executeTakeFirst();
         if (!ownerRow)
             throw new SiteError('not_found');
         const body = await loadSiteAsset(signal => storage.getObject(key(ownerRow.owner_id, site.id, version, path), { signal }), file.bytes);
-        return { body, contentType: file.contentType };
+        return { body, contentType: file.contentType, site: { ...site, activeVersion: version, config: SitePublishingSchema.parse(row.config) } };
     }
     async function admitted<T>(reference: string, work: (site: SiteRecord, trx: PlatformDB) => Promise<T>) {
         const initial = await resolve(reference);

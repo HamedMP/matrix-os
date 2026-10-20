@@ -18,8 +18,9 @@ window.addEventListener('message',async(event)=>{
  }catch(error){console.warn('[sites] submission failed',error instanceof TypeError?'TypeError':error instanceof Error?'Error':'UnknownError');port.postMessage({error:'Submissions are unavailable'})}finally{inFlight=false;port.close()}
 });</script></body></html>`;
 }
-export function siteFrame(html: string, site: SiteRecord): string {
-    const bootstrap = `<base href="https://matrix.page/${site.id}/assets/${site.activeVersion}/"><script>
+export function siteFrame(html: string, site: SiteRecord, path = 'index.html'): string {
+    const base = new URL('./', new URL(path, `https://matrix.page/${site.id}/assets/${site.activeVersion}/`)).href;
+    const bootstrap = `<base href="${escape(base)}"><script>
 (()=>{const data=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('${encoded(site.config.data)}'),c=>c.charCodeAt(0))));
 const prepareLink=event=>{
  const link=event.composedPath().find(node=>node instanceof HTMLAnchorElement);
