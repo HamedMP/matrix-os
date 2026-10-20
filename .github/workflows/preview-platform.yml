@@ -1598,17 +1598,17 @@ jobs:
             | select(.name == "platform-preview-secret") | .key
             | select(type == "string" and test("^[1-9][0-9]{0,18}$"))
           ' <<< "$revision_json")" || { echo "The checked Slack revision requires one immutable signing secret version; redeploy legacy revisions." >&2; exit 1; }
-          client_origins="$(jq -er --arg alias "https://pr-${PR_NUMBER}-preview.matrix-os.com" '
+          client_origins="$(jq -er --arg alias "https://pr-${PR_NUMBER}-preview.matrix-os.com" --arg expected_relay "$url" '
             [.spec.containers[0].env[]?] as $env
             | [$env[] | select(.name == "MATRIX_COLLABORATION_ALLOWED_ORIGINS") | .value] as $allowed
             | [$env[] | select(.name == "MATRIX_COLLABORATION_RELAY_ORIGIN") | .value] as $relay
             | [$env[] | select(.name == "MATRIX_COLLABORATION_TICKET_KEYS")
                 | "\(.valueFrom.secretKeyRef.name):\(.valueFrom.secretKeyRef.key)"] as $keys
-            | select(($allowed | length) == 1 and ($relay | length) == 1
+            | select(($allowed | length) == 1 and $relay == [$expected_relay]
                 and $keys == ["collaboration-ticket-keys-preview:latest"]
                 and ($allowed[0] | split(",") | length <= 16
                     and all(.[]; test("^https://[A-Za-z0-9.-]+$"))
-                    and index($alias) != null and index($relay[0]) != null))
+                    and index($alias) != null))
             | $allowed[0]
           ' <<< "$revision_json")" || { echo "The tagged preview has not enabled collaboration from the pilot's exact browser origin." >&2; exit 1; }
           [[ "$url" =~ ^https://[A-Za-z0-9.-]+$ ]]
