@@ -103,6 +103,7 @@ export const BotToolErrorCodeSchema = z.enum([
   "not_granted",
   "approval_required",
   "invalid_arguments",
+  "artifact_digest_mismatch",
   "unavailable",
   "timeout",
   "budget_exhausted",
