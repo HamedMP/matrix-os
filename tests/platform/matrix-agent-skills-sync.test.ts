@@ -65,11 +65,17 @@ describe("Matrix coding-agent skill sync", () => {
     const cliHome = join(root, "cli-home");
     const matrixHome = join(root, "matrix-home");
     const hermesHome = join(root, "hermes-home");
+    const ownerAgentHome = join(root, "existing-agent-home");
+    const ownerSkillsRoot = join(root, "existing-agent-skills");
+    const inheritedEnvironment = { ...process.env, AGENT_HOME: ownerAgentHome, MATRIX_AGENT_SKILLS_ROOT: ownerSkillsRoot };
     try {
+      writeSkill(join(ownerAgentHome, "skills"), "existing", "matrix-existing-home");
+      writeSkill(ownerSkillsRoot, "existing", "matrix-existing-root");
       writeSkill(source, "app-builder", "matrix-app-builder");
       cpSync(join(process.cwd(), "skills", "matrix", "ship"), join(source, "ship"), { recursive: true });
       execFileSync("bash", [join(process.cwd(), "scripts/sync-matrix-agent-skills.sh"), source], {
-        env: { ...process.env, HOME: cliHome, MATRIX_HOME: matrixHome, HERMES_HOME: hermesHome,
+        env: { ...inheritedEnvironment, HOME: cliHome, MATRIX_HOME: matrixHome, HERMES_HOME: hermesHome,
+          MATRIX_AGENT_SKILLS_ROOT: join(cliHome, ".agent", "skills"),
           MATRIX_SKILL_TARGETS: "matrix,claude,codex,agent,hermes" }, stdio: "pipe",
       });
       for (const skillsRoot of [join(matrixHome, ".agents", "skills"), join(matrixHome, ".claude", "skills"),
@@ -83,6 +89,9 @@ describe("Matrix coding-agent skill sync", () => {
       }
       clearSkillCache();
       expect(loadSkills(matrixHome)).toContainEqual(expect.objectContaining({ name: "matrix-ship", format: "directory" }));
+      expect(readFileSync(join(ownerAgentHome, "skills", "existing", "SKILL.md"), "utf8")).toContain("name: matrix-existing-home");
+      expect(readFileSync(join(ownerSkillsRoot, "existing", "SKILL.md"), "utf8")).toContain("name: matrix-existing-root");
+      expect(existsSync(join(ownerSkillsRoot, "matrix-ship"))).toBe(false);
     } finally { clearSkillCache(); rmSync(root, { recursive: true, force: true }); }
   });
 
