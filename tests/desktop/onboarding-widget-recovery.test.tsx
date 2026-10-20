@@ -122,6 +122,35 @@ describe("onboarding run recovery", () => {
     expect(result.current.state.firstTaskCompleted).toBe(false);
   });
 
+  it("finds a restored run on an older page of a chat that kept going elsewhere, instead of calling it failed", async () => {
+    const client = {
+      create: vi.fn(),
+      admitTurn: vi.fn(),
+      getDetail: vi.fn(async (_chatId: string, input?: { cursor?: string }) => (input?.cursor === "chatcur_older"
+        ? { runs: [{ id: "run_1", status: "completed" }], messages: [{ runId: "run_1", role: "assistant", parts: [{ type: "text", text: "Three Lisbon picks" }] }] }
+        : { runs: [{ id: "run_later", status: "completed" }], messages: [], nextCursor: "chatcur_older" })),
+    };
+    const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client));
+    await flush();
+    expect(client.getDetail).toHaveBeenCalledWith("chat_1", { cursor: "chatcur_older" });
+    expect(result.current.state.screen).toMatchObject({ phase: "done" });
+    expect(result.current.state.firstTaskCompleted).toBe(true);
+    expect(client.admitTurn).not.toHaveBeenCalled();
+  });
+
+  it("calls a restored run failed only after every older page lacks it, and reads a bounded number of pages", async () => {
+    let page = 0;
+    const client = {
+      create: vi.fn(),
+      admitTurn: vi.fn(),
+      getDetail: vi.fn(async () => ({ runs: [], messages: [], nextCursor: `chatcur_page${++page}` })),
+    };
+    const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client));
+    await flush();
+    expect(result.current.state.screen).toMatchObject({ phase: "failed" });
+    expect(client.getDetail.mock.calls.length).toBeLessThanOrEqual(11);
+  });
+
   it("forgets a remembered chat that was deleted and goes back to the task list", async () => {
     const client = { create: vi.fn(), admitTurn: vi.fn(), getDetail: vi.fn().mockRejectedValue(new AppError("notFound")) };
     const { result } = renderHook(() => useHarness({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun }, client));

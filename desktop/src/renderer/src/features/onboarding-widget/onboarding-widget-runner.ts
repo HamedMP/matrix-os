@@ -53,7 +53,7 @@ type DesktopChatClient = Pick<CanonicalChatClient, "create" | "getDetail" | "adm
 function desktopChatTurns(client: DesktopChatClient): Pick<OnboardingChatPort, "create" | "detail" | "admitTurn" | "isNotFound"> {
   return {
     create: (input) => client.create(input),
-    detail: (chatId) => client.getDetail(chatId),
+    detail: (chatId, cursor) => (cursor === undefined ? client.getDetail(chatId) : client.getDetail(chatId, { cursor })),
     admitTurn: (chatId, input) => client.admitTurn(chatId, input, { chatScope: "global" }),
     isNotFound: isNotFoundError,
   };

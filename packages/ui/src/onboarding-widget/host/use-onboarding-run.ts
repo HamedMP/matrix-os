@@ -18,6 +18,7 @@ import {
 
 export const COMPUTER_RETRY_DELAYS_MS = [3_000, 5_000, 8_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000];
 const DETAIL_POLL_MS = 5_000;
+const OLDER_PAGES_TO_CHECK = 10;
 
 export interface OnboardingRunDeps {
   port: OnboardingChatPort | null;
@@ -113,14 +114,21 @@ export function useOnboardingRun(
       if (disposed || inFlight) return;
       inFlight = true;
       try {
-        const detail = await port.detail(chatId);
+        let detail = await port.detail(chatId);
         if (disposed) return;
+        // Detail holds only the newest page; a chat that kept going elsewhere can push this run onto an older one.
+        let cursor = detail.nextCursor;
+        for (let page = 0; cursor && page < OLDER_PAGES_TO_CHECK && !detail.runs.some((run) => run.id === runId); page += 1) {
+          detail = await port.detail(chatId, cursor);
+          if (disposed) return;
+          cursor = detail.nextCursor;
+        }
         const view = deriveOnboardingRunView(detail, runId, failedStepLabel ? { failedStepLabel } : {});
         setRunView(view);
         if (view.status === "completed" || view.status === "failed") {
           dispatch({ type: "run.settled", runId, outcome: view.status });
         } else if (!detail.runs.some((run) => run.id === runId)) {
-          // Admission returns only after the run is stored, so a missing run (e.g. one restored after a restart) is gone.
+          // Admission returns only after the run is stored, so a run on no page of the chat is gone.
           dispatch({ type: "run.settled", runId, outcome: "failed" });
         }
       } catch (error: unknown) {
