@@ -294,11 +294,35 @@ export function createSpeechOperationsRepository(options: {
           .where("runtime_slot", "=", admission.identity.runtimeSlot)
           .where("source_kind", "is not", null)
           .executeTakeFirstOrThrow();
+      const previewAllocation = await trx.executor.selectFrom("preview_runtime_allocations as allocation")
+        .innerJoin("user_machines as machine", "machine.machine_id", "allocation.machine_id")
+        .select("allocation.max_concurrency")
+        .where("allocation.machine_id", "=", admission.identity.machineId)
+        .where("allocation.owner_id", "=", admission.identity.ownerId)
+        .where("allocation.runtime_slot", "=", admission.identity.runtimeSlot)
+        .whereRef("allocation.runtime_token_epoch", "=", "machine.runtime_token_epoch")
+        .where("allocation.expires_at", ">", checkedAt)
+        .where("machine.provisioning_class", "=", "preview")
+        .where("machine.status", "=", "running")
+        .where("machine.activation_state", "=", "authorized")
+        .where("machine.deleted_at", "is", null)
+        .executeTakeFirst();
+      const runtimeActive = previewAllocation
+        ? await trx.executor.selectFrom("speech_operations")
+          .select(({ fn }) => fn.countAll<number>().as("count"))
+          .where("owner_id", "=", admission.identity.ownerId)
+          .where("machine_id", "=", admission.identity.machineId)
+          .where("runtime_slot", "=", admission.identity.runtimeSlot)
+          .where("execution_state", "in", activeStates)
+          .where("updated_at", ">", activeCutoff).executeTakeFirstOrThrow()
+        : undefined;
       if (Number(active.count) >= maximumActiveOperations
         || Number(ownerActive.count) >= maximumActiveOperationsPerOwner
         || Number(ownerAdmissions.count) >= maximumAdmissionsPerOwner
         || (runtimeAdmissions !== undefined
-          && Number(runtimeAdmissions.count) >= maximumAdmissionsPerRuntimeLifetime!)) {
+          && Number(runtimeAdmissions.count) >= maximumAdmissionsPerRuntimeLifetime!)
+        || (runtimeActive !== undefined
+          && Number(runtimeActive.count) >= previewAllocation!.max_concurrency)) {
         throw new SpeechOperationRateLimitError();
       }
       const inserted = await trx.executor.insertInto("speech_operations").values({

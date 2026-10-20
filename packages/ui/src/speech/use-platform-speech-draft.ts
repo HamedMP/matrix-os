@@ -16,6 +16,7 @@ export interface UsePlatformSpeechDraftResult {
   phase: PlatformSpeechDraftPhase;
   error: string | null;
   isSupported: boolean;
+  previewQuota: SpeechCapabilitiesResponse["previewQuota"];
   elapsedMs: number;
   /** Current microphone energy, normalized to the inclusive range 0..1. */
   inputLevel: number;
@@ -89,6 +90,7 @@ function supportedMediaType<TRecording extends PlatformSpeechRecording>(
   if (!capabilities) return undefined;
   if (capabilities.fileTranscription.status !== "ready"
     || !capabilities.fileTranscription.dictation.enabled
+    || capabilities.previewQuota?.requestsRemaining === 0
     || !captureAdapter.isSupported()) {
     return undefined;
   }
@@ -123,6 +125,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   const recordingRef = useRef<ActiveRecording<TRecording> | null>(null);
   const requestRef = useRef<ActiveRequest | null>(null);
   const captureStartRef = useRef<AbortController | null>(null);
+  const quotaRefreshRef = useRef<AbortController | null>(null);
 
   const cancelRemote = (requestId: string) => {
     void client.cancel(requestId).catch((caught: unknown) => {
@@ -134,6 +137,8 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     setInputMeter({ level: 0, sequence: 0 });
     captureStartRef.current?.abort();
     captureStartRef.current = null;
+    quotaRefreshRef.current?.abort();
+    quotaRefreshRef.current = null;
     const recording = recordingRef.current;
     recordingRef.current = null;
     if (recording) {
@@ -236,6 +241,23 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       setPhase("error");
     } finally {
       if (requestRef.current?.generation === active.generation) requestRef.current = null;
+      if (!controller.signal.aborted) {
+        quotaRefreshRef.current?.abort();
+        const quotaController = new AbortController();
+        quotaRefreshRef.current = quotaController;
+        void client.capabilities(quotaController.signal).then((value) => {
+          if (generationRef.current === active.generation) {
+            setCapabilities(value);
+            if (!supportedMediaType(value, options.captureAdapter)) setPhase("unavailable");
+          }
+        }).catch((caught: unknown) => {
+          if (!quotaController.signal.aborted && generationRef.current === active.generation) {
+            console.warn("[speech-draft] quota refresh failed", caught instanceof Error ? caught.name : "UnknownError");
+          }
+        }).finally(() => {
+          if (quotaRefreshRef.current === quotaController) quotaRefreshRef.current = null;
+        });
+      }
     }
   };
 
@@ -314,6 +336,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     isSupported: phase !== "loading"
       && phase !== "unavailable"
       && supportedMediaType(capabilities, options.captureAdapter) !== undefined,
+    previewQuota: capabilities?.previewQuota,
     elapsedMs,
     inputLevel: inputMeter.level,
     inputLevelSequence: inputMeter.sequence,

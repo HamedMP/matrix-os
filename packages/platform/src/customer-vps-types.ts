@@ -79,6 +79,7 @@ export interface StatusResponse {
   clerkUserId: string;
   handle: string;
   runtimeSlot: string;
+  runtimeTokenEpoch: number;
   provisioningClass: UserMachineProvisioningClass;
   activationState: 'awaiting_billing' | 'authorized';
   status: CustomerVpsStatus;

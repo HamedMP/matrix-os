@@ -100,6 +100,8 @@ import {
   loadPlatformSpeechConfig,
 } from './speech/config.js';
 import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
+import { loadPreviewRuntimeAccessConfig } from './preview-runtime-access.js';
+import { createPreviewRuntimeAccessActivator, type PreviewRuntimeAccessActivator } from './preview-runtime-activation.js';
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 
@@ -244,6 +246,7 @@ type CreatePlatformApp = (deps: {
   collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
   activateManagedFeatures?: ManagedFeatureActivator;
+  activatePreviewRuntimeAccess?: PreviewRuntimeAccessActivator;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
@@ -344,12 +347,15 @@ async function startPlatformServerWithCleanup(
     ...process.env,
     PLATFORM_SECRET: platformSecret,
   });
+  const previewRuntimeAccess = loadPreviewRuntimeAccessConfig({ ...process.env, PLATFORM_SECRET: platformSecret });
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
   let internalFundedAiOperatorRoutes: Hono | undefined;
-  const speechService = createConfiguredPlatformSpeechService({ db, config: speechConfig });
+  const speechService = createConfiguredPlatformSpeechService({ db, config: speechConfig, previewRuntimeAccess });
   const internalSpeechRuntimeRoutes = platformSecret.length >= 32
-    ? createSpeechRuntimeRoutes({ db, platformSecret, service: speechService })
+    ? createSpeechRuntimeRoutes({ db, platformSecret,
+      ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
+      service: speechService })
     : undefined;
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
@@ -372,6 +378,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
       platformSecret: fundedAiConfig.platformSecret,
+      ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
       repository: fundedAiRepository,
       topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
       promotionalGrant: fundedAiConfig.promotionalGrant,
@@ -776,6 +783,7 @@ async function startPlatformServerWithCleanup(
 
   let customerVpsService: CustomerVpsService | undefined;
   let activateManagedFeatures: ManagedFeatureActivator | undefined;
+  let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
   let customerVpsReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
@@ -833,6 +841,15 @@ async function startPlatformServerWithCleanup(
       relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
       speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
       fetchDispatcher: customerVpsProxyDispatcher });
+    if (previewRuntimeAccess.enabled && fundedAiRepository && speechConfig.enabled) {
+      activatePreviewRuntimeAccess = createPreviewRuntimeAccessActivator({
+        db, repository: fundedAiRepository, config: previewRuntimeAccess,
+        hostControlSecret: customerVpsConfig.platformSecret,
+        platformOrigin: new URL(customerVpsConfig.platformRegisterUrl).origin,
+        relayOrigin: customerVpsConfig.fundedAiRelayUrl,
+        fetchDispatcher: customerVpsProxyDispatcher,
+      });
+    }
     if (customerVpsConfig.fundedAiEnabled && internalFundedAiRuntimeRoutes) {
       internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
         platformSecret: customerVpsConfig.platformSecret, relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
@@ -1060,6 +1077,7 @@ async function startPlatformServerWithCleanup(
     collaboration,
     customerVpsService,
     activateManagedFeatures,
+    activatePreviewRuntimeAccess,
     goldenSnapshotService,
     goldenSnapshotConfig,
     customerVpsObjectStore,
