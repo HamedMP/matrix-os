@@ -1,4 +1,7 @@
-import { BrainApp, createBrainShellApi, listBrainProjects, type BrainShellClient, type BrainProjectOption } from "@matrix-os/ui";
+import {
+  BrainApp, createBrainProjectAdder, createBrainShellApi, listBrainProjects, type BrainProjectAdder,
+  type BrainProjectOption, type BrainShellClient,
+} from "@matrix-os/ui";
 import { useMemo } from "react";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration } from "../../stores/runtime-generation";
@@ -6,11 +9,12 @@ import { WorkSurfaceRuntimeProvider } from "../work/WorkSurfaceRuntime";
 import { desktopBrainTransport } from "./brain-transport";
 import { useDesktopBrainChatHost } from "./DesktopBrainChat";
 
-function DesktopBrainApp({ api, loadProjects, visible }: {
-  api: BrainShellClient; loadProjects: () => Promise<readonly BrainProjectOption[]>; visible: boolean;
+function DesktopBrainApp({ api, loadProjects, addProjects, visible }: {
+  api: BrainShellClient; loadProjects: () => Promise<readonly BrainProjectOption[]>; addProjects: BrainProjectAdder;
+  visible: boolean;
 }) {
   const chat = useDesktopBrainChatHost(visible);
-  return <BrainApp api={api} loadProjects={loadProjects} chat={chat} showHeading={false} />;
+  return <BrainApp api={api} loadProjects={loadProjects} addProjects={addProjects} chat={chat} showHeading={false} />;
 }
 
 /**
@@ -24,7 +28,10 @@ export default function DesktopBrainView({ visible = true }: { visible?: boolean
   const clients = useMemo(() => {
     if (!api) return null;
     const transport = desktopBrainTransport(api.forRuntime(slot));
-    return { api: createBrainShellApi(transport), loadProjects: () => listBrainProjects(transport) };
+    return {
+      api: createBrainShellApi(transport), loadProjects: () => listBrainProjects(transport),
+      addProjects: createBrainProjectAdder(transport),
+    };
   }, [api, slot]);
   if (!clients) {
     return (
@@ -40,6 +47,7 @@ export default function DesktopBrainView({ visible = true }: { visible?: boolean
         key={`${slot}:${authGeneration}:${captureRuntimeGeneration()}`}
         api={clients.api}
         loadProjects={clients.loadProjects}
+        addProjects={clients.addProjects}
         visible={visible}
       />
     </WorkSurfaceRuntimeProvider>
