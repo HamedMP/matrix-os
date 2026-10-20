@@ -28,7 +28,7 @@ function checkTarget(version: unknown, duplicate = false, signingVersion: unknow
       { name: "SLACK_PREVIEW_RUNTIME_HANDLE", value: "pr-2079" },
       signing, ...(duplicateSigning ? [signing] : []),
       { name: "MATRIX_COLLABORATION_ALLOWED_ORIGINS", value: "https://pr-2079-preview.matrix-os.com" },
-      { name: "MATRIX_COLLABORATION_RELAY_ORIGIN", value: "https://pr-2079-preview.matrix-os.com" },
+      { name: "MATRIX_COLLABORATION_RELAY_ORIGIN", value: "https://preview.example.test" },
       { name: "MATRIX_COLLABORATION_TICKET_KEYS", valueFrom: { secretKeyRef: { name: "collaboration-ticket-keys-preview", key: "latest" } } },
       ...(duplicate ? [database] : []),
     ];

@@ -78,6 +78,22 @@ function revisionContract(revision: unknown, overrides: Record<string, string> =
   } });
 }
 
+function connectionOriginContract(revision: unknown, expectedRelay: string) {
+  const connection = YAML.parse(workflowText).jobs["connect-slack-pilot-preview"];
+  const target = connection.steps.find((step: Step) => step.name === "Check PR, identity, and exact tagged preview")?.run;
+  expect(typeof target).toBe("string");
+  const start = target.indexOf('client_origins="$(jq -er --arg alias');
+  const end = target.indexOf('\n[[ "$url"', start);
+  expect(start).toBeGreaterThan(0);
+  expect(end).toBeGreaterThan(start);
+  // Execute only the real revision-origin validation: no cloud/auth/VM commands.
+  const script = `revision_json="$REVISION_JSON"\nurl="$EXPECTED_RELAY"\n${target.slice(start, end)}\nprintf '%s' "$client_origins"`;
+  return spawnSync("bash", ["-euc", script], {
+    encoding: "utf8", timeout: 5_000,
+    env: { PATH: process.env.PATH, PR_NUMBER: "2079", REVISION_JSON: JSON.stringify(revision), EXPECTED_RELAY: expectedRelay },
+  });
+}
+
 function seed(): string {
   return randomBytes(32).toString("base64url");
 }
@@ -155,6 +171,45 @@ describe("preview platform collaboration authority", () => {
   const pilotBackend="https://pr-2079---matrix-platform-preview-example-ey.a.run.app";
   const pilotBrowser="https://app.matrix-os.com";
   const pilotOverrides={SLACK_PREVIEW_ENABLED:"true",SLACK_PREVIEW_BROWSER_ORIGIN:pilotBrowser,PREVIEW_PUBLIC_URL:pilotAlias};
+
+  function connectionRevision(browserOrigin: string) {
+    const overrides = { ...pilotOverrides, SLACK_PREVIEW_BROWSER_ORIGIN: browserOrigin };
+    const bindings = deployedArguments(overrides, pilotBackend).env.split("|");
+    const env: { name: string; value?: string; valueFrom?: { secretKeyRef: { name: string; key: string } } }[] = bindings.filter(binding => /^MATRIX_COLLABORATION_(ALLOWED_ORIGINS|RELAY_ORIGIN)=/.test(binding)).map(binding => {
+      const separator = binding.indexOf("=");
+      return { name: binding.slice(0, separator), value: binding.slice(separator + 1) };
+    });
+    env.push({ name: "MATRIX_COLLABORATION_TICKET_KEYS", valueFrom: { secretKeyRef: { name: PREVIEW_SECRET, key: "latest" } } });
+    return { spec: { containers: [{ env }] } };
+  }
+
+  it.each(["https://qualification.matrix-os.com", pilotBrowser])("connects the deployed tagged relay with only configured browser origins (%s)", browser => {
+    const revision = connectionRevision(browser);
+    const result = connectionOriginContract(revision, pilotBackend);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(`${pilotAlias},${browser}`);
+    expect(result.stdout.split(",")).not.toContain(pilotBackend);
+  });
+
+  it.each([pilotAlias, "https://foreign-relay.example.test"])("rejects relay %s even when it appears in browser origins", relay => {
+    const revision = connectionRevision(pilotBrowser);
+    const env = revision.spec.containers[0]!.env;
+    env.find(value => value.name === "MATRIX_COLLABORATION_RELAY_ORIGIN")!.value = relay;
+    env.find(value => value.name === "MATRIX_COLLABORATION_ALLOWED_ORIGINS")!.value = `${pilotAlias},${pilotBrowser},${relay}`;
+    expect(connectionOriginContract(revision, pilotBackend).status).not.toBe(0);
+  });
+
+  it.each(["missing-alias", "invalid-origin", "over-cap", "duplicate-relay", "wrong-key"])("keeps connection origin fence %s", failure => {
+    const revision = connectionRevision(pilotBrowser);
+    const env = revision.spec.containers[0]!.env;
+    const allowed = env.find(value => value.name === "MATRIX_COLLABORATION_ALLOWED_ORIGINS")!;
+    if (failure === "missing-alias") allowed.value = pilotBackend;
+    if (failure === "invalid-origin") allowed.value = `${pilotAlias},http://insecure.example.test`;
+    if (failure === "over-cap") allowed.value = [pilotAlias, ...Array.from({ length: 16 }, (_, index) => `https://origin-${index}.example.test`)].join(",");
+    if (failure === "duplicate-relay") env.push({ name: "MATRIX_COLLABORATION_RELAY_ORIGIN", value: pilotBackend });
+    if (failure === "wrong-key") env.find(value => value.name === "MATRIX_COLLABORATION_TICKET_KEYS")!.valueFrom!.secretKeyRef.name = "wrong-preview-key";
+    expect(connectionOriginContract(revision, pilotBackend).status).not.toBe(0);
+  });
 
   it("advertises the exact pilot backend for collaboration while preserving the sign-in alias",()=>{
     const bindings=deployedArguments(pilotOverrides,pilotBackend).env.split("|");
