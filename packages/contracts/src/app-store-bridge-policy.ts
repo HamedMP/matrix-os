@@ -27,6 +27,7 @@ const GALLERY_ROUTES: readonly Route[] = [
 
 /** Reviewer surface inside Gallery; the platform enforces the reviewer allowlist on every call. */
 const REVIEW_ROUTES: readonly Route[] = [
+  route("GET", "/api/app-store/review/listings", { allowed: ["q", "category", "sort", "cursor", "limit"] }),
   route("GET", "/api/app-store/review/queue", { allowed: ["status", "cursor"] }),
   route("GET", `/api/app-store/review/versions/${UUID}`),
   route("GET", `/api/app-store/review/versions/${UUID}/file`, { allowed: ["path", "previous"], required: ["path"] }),
@@ -87,3 +88,6 @@ export function appStoreBridgeTimeoutMs(url: string): number {
   if (/^\/api\/app-store\/drafts\/[0-9a-f-]{36}\/submit$/.test(url)) return 120_000;
   return 15_000;
 }
+
+/** A512KiB text file or two256KiB diff sides can expand sixfold in JSON. */
+export const MAX_APP_STORE_BRIDGE_REPLY_BYTES=4*1024*1024;

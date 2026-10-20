@@ -67,9 +67,10 @@ export default function DraftChanges({
         {draft.report?.notes && <p>{draft.report.notes}</p>}
       </section>
       <section>
-        <h4>Review source changes</h4>
+        <h4>Review full source</h4>
+        <p>Inspect every file, including unchanged source, before sharing.</p>
         <ul className="store-file-list">
-          {draft.changedFiles.map((item) => (
+          {(draft.sourceFiles ?? draft.changedFiles).map((item) => (
             <li key={item.path}>
               <button onClick={() => void onFile(item.path)}>
                 {item.path}

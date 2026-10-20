@@ -6,38 +6,6 @@ import {
 } from "../store-model";
 import type { AppStoreInstallJob } from "../generated-store-gateway";
 import { ErrorNotice, Metrics, Needs } from "./Shared";
-const pendingKey = "matrix-store-pending-install";
-function remember(slug: string, id?: string) {
-  try {
-    if (id)
-      sessionStorage.setItem(
-        pendingKey,
-        JSON.stringify({ slug, id, at: Date.now() }),
-      );
-    else sessionStorage.removeItem(pendingKey);
-  } catch (error) {
-    console.warn(
-      "Store install recovery storage unavailable",
-      error instanceof Error ? error.name : "UnknownError",
-    );
-  }
-}
-function resume(slug: string): string | null {
-  try {
-    const value = JSON.parse(sessionStorage.getItem(pendingKey) ?? "null");
-    return value?.slug === slug &&
-      typeof value.id === "string" &&
-      Date.now() - value.at < 60 * 60 * 1000
-      ? value.id
-      : null;
-  } catch (error) {
-    console.warn(
-      "Store install recovery unavailable",
-      error instanceof Error ? error.name : "UnknownError",
-    );
-    return null;
-  }
-}
 export default function ListingDetail({
   client,
   slug,
@@ -76,7 +44,16 @@ export default function ListingDetail({
     setError("");
     void client.detail(slug).then(
       (value) => {
-        if (active) setDetail(value);
+        if (active) {
+          setDetail(value);
+          setJob(value.installJob ?? null);
+          if (value.installJob?.status === "failed")
+            setError(
+              storeErrorMessage({
+                error: value.installJob.error ?? "build_failed",
+              }),
+            );
+        }
       },
       (cause) => {
         if (active) setError(storeErrorMessage(cause));
@@ -92,8 +69,7 @@ export default function ListingDetail({
   useEffect(() => {
     let active = true,
       timer: ReturnType<typeof setTimeout> | undefined;
-    const restored = resume(slug);
-    const jobId = pendingJobId ?? restored;
+    const jobId = pendingJobId;
     if (!jobId) return;
     const started = Date.now();
     let failures = 0;
@@ -105,10 +81,8 @@ export default function ListingDetail({
         setError("");
         setJob(result);
         if (result.status === "installed") {
-          remember(slug);
           setRefresh((value) => value + 1);
         } else if (result.status === "failed") {
-          remember(slug);
           setError(
             storeErrorMessage({ error: result.error ?? "build_failed" }),
           );
@@ -162,15 +136,12 @@ export default function ListingDetail({
       setConsent(false);
       if ("id" in result) {
         setJob(result);
-        if (result.status === "queued" || result.status === "building")
-          remember(slug, result.id);
         if (result.status === "failed")
           setError(
             storeErrorMessage({ error: result.error ?? "build_failed" }),
           );
         if (result.status === "installed") setRefresh((value) => value + 1);
       } else {
-        remember(slug);
         setRefresh((value) => value + 1);
       }
     });

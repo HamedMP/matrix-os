@@ -61,6 +61,10 @@ For a complete isolated staging connection:
 
 See [Preview environments](../../docs/dev/preview-environments.md), [staging platform and feature VPS runbook](../../docs/dev/staging-platform-vps.md), and [qualification requirements](quickstart.md). Prefer current workflows and their channel-none preview provenance rules over older runbook examples that publish to `dev`.
 
-## Verification recorded for the platform layer
+## Verification and review alignment
 
-The focused App Store and related account-deletion/migration regression run passed **77 tests across 12 modules**. Platform source/typecheck configurations passed; the pattern scan reported zero violations. Database tests used the repository's standard PGlite fixture fallback because a native PostgreSQL fixture URL was not configured. The production Hono route composition was exercised locally. These results do not substitute for native PostgreSQL contention testing, an isolated live VPS build, or the required surface captures.
+The integrated affected run passed335tests with5macOS-only skips; Linux isolation/publication/recovery proofs exercise those filesystem and process boundaries. Native PostgreSQL tests with a real multi-connection pool verify concurrent metrics and owner-quota admission. Full typecheck, production shell build, Gallery production build and focused Native tests passed; iOS and Android Hermes exports passed after removing a masked source-import alias. Further review regressions are recorded in the stack PRs.
+
+The public guide has471passing tests, current-head Greptile5/5 and live responsive preview captures. The broader repository unit run also exercises unrelated subsystems; any failures must be reported separately rather than converted to a passing count. These checks do not establish product visual qualification or a successful second-owner live scenario. Live Native Mobile testing is explicitly deferred by the requester.
+
+AI preparation preserves the complete source through bounded batches (48KiB serialized text-file/batch,16calls,180seconds total). Each subsequent batch receives the current manifest, complete file index and bounded read-only helper context. Oversized source needs splitting; it is never silently omitted. The saved owner-key route is offered for ready/unverified observations only, with separate explicit provider consent.

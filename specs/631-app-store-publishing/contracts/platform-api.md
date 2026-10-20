@@ -14,7 +14,7 @@ Auth is `Authorization: Bearer HMAC_SHA256(handle, PLATFORM_SECRET)`, compared t
 | Method | Path | Body / query | Response | Notes |
 | --- | --- | --- | --- | --- |
 | GET | `/listings` | `AppStoreCatalogQuery` `{ q?, category?, sort?: popular\|rating\|new, cursor?, limit? ≤ 50 }` | `AppStoreCatalogPage` `{ listings: AppStoreListingSummary[], nextCursor? }` | `live` only |
-| GET | `/listings/:slug` | — | `AppStoreListingDetail` (includes the caller's `myRating`, `myInstall`, `isPublisher`) | `live`, or any status for the publisher. A suspended listing returns its notice to prior installers only. |
+| GET | `/listings/:slug` | — | `AppStoreListingDetail` (includes the caller's `myRating`, `myInstall`, `isPublisher`) | `live`, or any status for the publisher. Delisted/suspended listings return a coarse removal notice to prior installers; no new source grant is issued. |
 | GET | `/listings/:slug/icon` | — | Image bytes (`image/png` or `image/svg+xml`, ≤ 256 KiB) with `Content-Security-Policy: default-src 'none'` | From the current version's source bundle cache |
 | POST | `/listings/:slug/download` | `{ versionId }` | `AppStoreDownloadGrant` `{ versionId, version, source: { url, sha256, size }, approval: { keyId, signature }, capabilities, capabilitiesDigest, manifest }` | Source-only presigned GET valid for 15 min; authenticated gateway verifies approval against the trusted platform status key ring, exact compressed digest/size and per-file hashes before any local build. The version must be the current published version, or the caller must already have it installed. |
 | PUT | `/listings/:slug/install` | `{ versionId }` | `AppStoreInstallState` | Idempotent upsert; counters change in the same transaction |
@@ -23,9 +23,10 @@ Auth is `Authorization: Bearer HMAC_SHA256(handle, PLATFORM_SECRET)`, compared t
 | DELETE | `/listings/:slug/rating` | — | `AppStoreRatingState` | |
 | POST | `/submissions` | `AppStoreCreateSubmission` | `{ versionId, upload: { url, expiresAt }, status }` | Idempotent by `submissionKey`; claims the slug; enforces semver ordering |
 | POST | `/submissions/:versionId/finalize` | — | `AppStoreSubmissionSummary` | Moves the version `awaiting_upload → scanning → in_review \| scan_failed` |
-| GET | `/submissions` | `cursor?` | `{ submissions: AppStoreSubmissionSummary[], listings: AppStorePublisherListing[] }` | The caller's versions and listing metrics |
+| GET | `/submissions` | `cursor?` | `{ submissions: AppStoreSubmissionSummary[], listings: AppStorePublisherListing[], nextCursor? }` | The caller's versions and listing metrics; both streams are paged, at most100 rows each |
 | POST | `/submissions/:versionId/withdraw` | — | `AppStoreSubmissionSummary` | CAS from withdrawable states |
 | GET | `/status` | — | `AppStoreStatus` `{ enabled: boolean, reviewer: boolean, signingKeys: [{ keyId, publicKey }] }` | Authentication still required; the only route that answers while `MATRIX_APP_STORE_ENABLED` is off |
+| GET | `/review/listings` | `AppStoreCatalogQuery` | `AppStoreCatalogPage` | Reviewer only; published history including delisted/suspended listings; excludes never-published drafts |
 | GET | `/review/queue` | `{ status?: in_review\|changes_requested, cursor? }` | `{ items: AppStoreReviewQueueItem[], nextCursor? }` | Reviewer only |
 | GET | `/review/versions/:versionId` | — | `AppStoreReviewDetail` (version, listing, capabilities, scan report, generalization report, file tree, previous version summary, events) | Reviewer only |
 | GET | `/review/versions/:versionId/file` | `{ path, previous? }` | `{ path, size, text?: string, binary: boolean, truncated: boolean }` | ≤ 512 KiB of text; reviewer only |

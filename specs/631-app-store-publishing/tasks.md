@@ -20,6 +20,8 @@
 
 ---
 
+Implementation tasks below are marked from the integrated stack. Remaining test/qualification boxes retain their original detailed acceptance scope until the exact final runtime and evidence are recorded. Planned test filenames were consolidated under `tests/gateway/app-store/` and related contract/platform/Gallery suites. Native Mobile live testing is deferred explicitly by Hamed.
+
 ## Phase 1: Setup and spec (L0)
 
 - [x] T001 Write spec, plan, research, data model, contracts, quickstart and tasks in `specs/631-app-store-publishing/`
@@ -60,14 +62,14 @@
 
 **Implementation**
 
-- [ ] T008 Implement `packages/contracts/src/app-store.ts`:
+- [x] T008 Implement `packages/contracts/src/app-store.ts`:
   - enums: categories, licenses, permissions, version statuses, listing statuses, error codes
   - all request and response schemas from `contracts/platform-api.md` and `contracts/gateway-api.md`
   - helpers: `deriveAppStoreCapabilities`, `capabilitiesDigest`, `compareStoreStorage`, `compareSemver`, `parseSemver`.
-- [ ] T009 Implement `packages/contracts/src/app-store-bundle.ts`: `encodeAppBundle`, `decodeAppBundle`, `AppBundleError`, `APP_BUNDLE_LIMITS`, `bundleDigest`.
-- [ ] T010 Implement `packages/contracts/src/app-store-scan.ts`: `scanAppFiles(files, { ownerTerms })` → `AppStoreScanReport`, plus `redactSecrets(text)` for the scrub step.
-- [ ] T011 Implement `packages/contracts/src/app-store-bridge-policy.ts`: `isAllowedAppStoreGalleryRequest`, `isAllowedStoreReviewRequest`, `isStoreReviewIdentity`, `isCommunityBridgeRequestAllowed`.
-- [ ] T012 Add the new export paths to `packages/contracts/package.json`, the aliases to `vitest.config.ts`, and the `integrations` field to `packages/gateway/src/app-runtime/manifest-schema.ts`.
+- [x] T009 Implement `packages/contracts/src/app-store-bundle.ts`: `encodeAppBundle`, `decodeAppBundle`, `AppBundleError`, `APP_BUNDLE_LIMITS`, `bundleDigest`.
+- [x] T010 Implement `packages/contracts/src/app-store-scan.ts`: `scanAppFiles(files, { ownerTerms })` → `AppStoreScanReport`, plus `redactSecrets(text)` for the scrub step.
+- [x] T011 Implement `packages/contracts/src/app-store-bridge-policy.ts`: `isAllowedAppStoreGalleryRequest`, `isAllowedStoreReviewRequest`, `isStoreReviewIdentity`, `isCommunityBridgeRequestAllowed`.
+- [x] T012 Add the new export paths to `packages/contracts/package.json`, the aliases to `vitest.config.ts`, and the `integrations` field to `packages/gateway/src/app-runtime/manifest-schema.ts`.
 
 **Checkpoint**: `pnpm exec vitest run tests/contracts/app-store-*.test.ts` passes, and so does `bun run typecheck`.
 
@@ -87,9 +89,9 @@
   - concurrent versions cannot regress the current version pointer
   - catalog search, sort and cursor.
 - [ ] T014 [P] Failing migration test in `tests/platform/app-store-migration.test.ts`: idempotent re-run, revision recorded, and the core revision fingerprint unchanged.
-- [ ] T015 Implement `packages/platform/src/app-store/migration.ts` and `migration-revision.ts`, add the `app-store` scope to `migration-runner.ts`, and add the step to `database/run-migrations.ts`.
-- [ ] T016 Implement `packages/platform/src/app-store/types.ts` (Kysely table interfaces) and add them to `PlatformDatabase` in `packages/platform/src/db.ts`.
-- [ ] T017 Implement the repositories, each with a single responsibility and under 500 LOC:
+- [x] T015 Implement `packages/platform/src/app-store/migration.ts` and `migration-revision.ts`, add the `app-store` scope to `migration-runner.ts`, and add the step to `database/run-migrations.ts`.
+- [x] T016 Implement `packages/platform/src/app-store/types.ts` (Kysely table interfaces) and add them to `PlatformDatabase` in `packages/platform/src/db.ts`.
+- [x] T017 Implement the repositories, each with a single responsibility and under 500 LOC:
   - `repository-listings.ts`: catalog, detail, publisher listings
   - `repository-versions.ts`: create, finalize, decisions, publish, withdraw, sweeps
   - `repository-community.ts`: installs, ratings
@@ -120,20 +122,20 @@
   - install and uninstall idempotency
   - rating requires an install
   - generic errors throughout.
-- [ ] T021 Implement `packages/platform/src/app-store/object-store.ts`: keys, presigned PUT/GET, bounded `getObject` buffering, delete.
-- [ ] T022 Implement `reviewer-allowlist.ts` (parsing rules from `prebilling-provisioning-config.ts`) and `errors.ts` (typed errors plus one mapper).
-- [ ] T023 Implement `intake.ts`: download, verify size and hash, decode source, scan with publisher terms, apply store manifest policy, check additive storage against the previous published version, require a lockfile and a `vite` dependency.
-- [ ] T024 Implement `internal-routes.ts` (catalog, install, rating, submissions) and `review-routes.ts`, with `bodyLimit` on every mutation, Zod-validated params, bounded rate limiters, and auth copied from `internal-integration-route-registration.ts`.
-- [ ] T025 Implement `sweeper.ts`: hourly removal of stale `awaiting_upload` versions and their objects, resetting stuck `scanning` versions, and a timer that is cleared on shutdown.
-- [ ] T026 Wire everything in `packages/platform/src/main.ts` and `platform-startup.ts`, mounted before the admin middleware.
-- [ ] T027 Remove `store-api.ts`, its mount, `app-registry.ts` helpers that nothing else uses, and their tests. Leave the legacy tables in place.
+- [x] T021 Implement `packages/platform/src/app-store/object-store.ts`: keys, presigned PUT/GET, bounded `getObject` buffering, delete.
+- [x] T022 Implement `reviewer-allowlist.ts` (parsing rules from `prebilling-provisioning-config.ts`) and `errors.ts` (typed errors plus one mapper).
+- [x] T023 Implement `intake.ts`: download, verify size and hash, decode source, scan with publisher terms, apply store manifest policy, check additive storage against the previous published version, require a lockfile and a `vite` dependency.
+- [x] T024 Implement `internal-routes.ts` (catalog, install, rating, submissions) and `review-routes.ts`, with `bodyLimit` on every mutation, Zod-validated params, bounded rate limiters, and auth copied from `internal-integration-route-registration.ts`.
+- [x] T025 Implement `sweeper.ts`: hourly removal of stale `awaiting_upload` versions and their objects, resetting stuck `scanning` versions, and a timer that is cleared on shutdown.
+- [x] T026 Wire everything in `packages/platform/src/main.ts` and `platform-startup.ts`, mounted before the admin middleware.
+- [x] T027 Remove `store-api.ts`, its mount, `app-registry.ts` helpers that nothing else uses, and their tests. Leave the legacy tables in place.
 
 ## Phase 5: Shared local isolated build (L4), serves US1 and US4
 
 - [ ] T028 [P] Failing tests in `tests/gateway/app-store-isolated-build.test.ts`: unavailable adapter refuses execution; executable malicious Vite config cannot read host env/home/sockets or reach network; process tree dies on timeout/shutdown; UID/capability/resource boundaries; no host fallback; publisher verifier and installer inject the same service.
 - [ ] T029 [P] Failing tests in `tests/gateway/app-store-registry-broker.test.ts`: exact lockfile registry packages/integrity accepted; git/file/workspace/URL/hook entries, private addresses, redirects and tampered packages rejected; bounded cache/read-only snapshot; no submitted code executes during fetch; offline misses fail closed.
-- [ ] T030 Implement `packages/gateway/src/app-store/registry-broker.ts` and bounded cache with restricted HTTPS package acquisition, digest validation, TTL/size cleanup, read-only per-job snapshots and typed generic errors.
-- [ ] T031 Implement `packages/gateway/src/app-store/isolated-build.ts` and supported VPS OS adapter: dedicated non-root UID, mount/user/PID/network isolation, read-only pinned toolchain, no host credentials/home/sockets/network, fixed offline install/build, CPU/memory/PID/disk limits, bounded outputs/logs and symlink-safe staging teardown. Provision and adversarially verify it on a supported VPS; missing isolation reports unavailable. Add no platform worker/jobs/routes/secret.
+- [x] T030 Implement `packages/gateway/src/app-store/registry-broker.ts` and bounded cache with restricted HTTPS package acquisition, digest validation, TTL/size cleanup, read-only per-job snapshots and typed generic errors.
+- [x] T031 Implement `packages/gateway/src/app-store/isolated-build.ts` and supported VPS OS adapter: dedicated non-root UID, mount/user/PID/network isolation, read-only pinned toolchain, no host credentials/home/sockets/network, fixed offline install/build, CPU/memory/PID/disk limits, bounded outputs/logs and symlink-safe staging teardown. Provision and adversarially verify it on a supported VPS; missing isolation reports unavailable. Add no platform worker/jobs/routes/secret.
 
 ## Phase 6: Publish pipeline (L5), serves US1 and US2
 
@@ -167,14 +169,14 @@
   - finalize result recorded
   - generic errors.
 - [ ] T036 [P] [US1] Failing route tests in `tests/gateway/app-store-publish-routes.test.ts`: owner auth, `bodyLimit`, param validation, and a 503 when dependencies are missing.
-- [ ] T037 Implement `packages/kernel/src/confined-file-agent.ts` and export it from the kernel index.
-- [ ] T038 Implement `packages/gateway/src/app-store/platform-client.ts`, following the `chat/preview-drive-platform-client.ts` pattern:
+- [x] T037 Implement `packages/kernel/src/confined-file-agent.ts` and export it from the kernel index.
+- [x] T038 Implement `packages/gateway/src/app-store/platform-client.ts`, following the `chat/preview-drive-platform-client.ts` pattern:
   - bounded JSON
   - `redirect: "error"`
   - timeouts: 10 s for APIs, 60 s for transfers.
-- [ ] T039 Implement `draft-store.ts` (atomic `draft.json`, cap, TTL) and `snapshot.ts` (pinned directories, reused from `app-gallery/pinned-directory.ts`), and add `data/app-store` to `DENIED_FILE_API_PREFIXES` in `path-security.ts`.
-- [ ] T040 Implement `scrub.ts`, `generalizer-prompt.ts` and `generalizer.ts` (credential launch via `buildKernelCredentialLaunch`, strict report schema), and `verify.ts` (store manifest plus a build check in the private namespace through the shared OS-isolated service from T031, fixed offline commands and `--ignore-scripts`; never direct host Vite).
-- [ ] T041 Implement `publish-service.ts` (job registry capped at 16, at most 2 concurrent per owner) and `routes-publish.ts`, registered in `server/app-management-routes.ts`.
+- [x] T039 Implement `draft-store.ts` (atomic `draft.json`, cap, TTL) and `snapshot.ts` (pinned directories, reused from `app-gallery/pinned-directory.ts`), and add `data/app-store` to `DENIED_FILE_API_PREFIXES` in `path-security.ts`.
+- [x] T040 Implement `scrub.ts`, `generalizer-prompt.ts` and `generalizer.ts` (credential launch via `buildKernelCredentialLaunch`, strict report schema), and `verify.ts` (store manifest plus a build check in the private namespace through the shared OS-isolated service from T031, fixed offline commands and `--ignore-scripts`; never direct host Vite).
+- [x] T041 Implement `publish-service.ts` (job registry capped at 16, at most 2 concurrent per owner) and `routes-publish.ts`, registered in `server/app-management-routes.ts`.
 
 ## Phase 7: Community install and runtime policy (L6), serves US4 and US5
 
@@ -197,10 +199,10 @@
   - gallery store routes allowed
   - community apps limited to identity-bound bridges, including forged body app IDs and cross-app denial
   - no owner token exposed to community content; exact Native Mobile Gallery request parity.
-- [ ] T046 Implement `provenance.ts`, `capability-grants.ts` (atomic update of `~/system/app-capabilities.json` under the owner mutation lock), and `install-service.ts` with durable bounded local jobs, signature verification, shared isolated builder, crash reconciliation and metrics only after success.
-- [ ] T047 Implement `routes-catalog.ts` and `routes-review.ts`.
-- [ ] T048 Enforce community rules in `server/bridge-routes.ts`, and expose `distribution` from provenance in the app listing the shell consumes.
-- [ ] T049 Apply the shared policy in `shell/src/components/app-viewer-bridge-policy.ts` and `app-capability-request.ts`, and in `desktop/src/shared/native-app-gateway.ts` (Gallery store routes with bounded JSON bodies), and Native Mobile `apps/mobile/lib/app-capability-bridge.ts`/runtime session. Verify server authorization binds app identity instead of trusting submitted `app`.
+- [x] T046 Implement `provenance.ts`, `capability-grants.ts` (atomic update of `~/system/app-capabilities.json` under the owner mutation lock), and `install-service.ts` with durable bounded local jobs, signature verification, shared isolated builder, crash reconciliation and metrics only after success.
+- [x] T047 Implement `routes-catalog.ts` and `routes-review.ts`.
+- [x] T048 Enforce community rules in `server/bridge-routes.ts`, and expose `distribution` from provenance in the app listing the shell consumes.
+- [x] T049 Apply the shared policy in `shell/src/components/app-viewer-bridge-policy.ts` and `app-capability-request.ts`, and in `desktop/src/shared/native-app-gateway.ts` (Gallery store routes with bounded JSON bodies), and Native Mobile `apps/mobile/lib/app-capability-bridge.ts`/runtime session. Verify server authorization binds app identity instead of trusting submitted `app`.
 
 ## Phase 8: Gallery UI (L7), serves US1, US2, US4, US5
 
@@ -227,9 +229,9 @@
   - selected AI-provider disclosure and consent precede source transmission, separate from final Matrix submission
   - consent and license gate submit
   - My submissions shows statuses, reviewer messages and metrics; withdraw works.
-- [ ] T054 Implement `home/apps/app-gallery/src/store-model.ts`: a bridge client with an error-string allowlist and pure derivations shared by the components.
-- [ ] T055 Implement `Community.tsx`, `ListingDetail.tsx`, `ConsentSheet.tsx`, `StarRating.tsx`, `Publish*.tsx` and `Submissions.tsx` with DESIGN.md tokens and reduced-motion support, and wire them into `App.tsx` without growing it past 500 LOC.
-- [ ] T056 Update `home/apps/app-gallery/sync-contract.mjs` and `matrix.json` `sourceGlobs` for the new contract files, then rebuild with `node scripts/build-default-apps.mjs home/apps`.
+- [x] T054 Implement `home/apps/app-gallery/src/store-model.ts`: a bridge client with an error-string allowlist and pure derivations shared by the components.
+- [x] T055 Implement `Community.tsx`, `ListingDetail.tsx`, `ConsentSheet.tsx`, `StarRating.tsx`, `Publish*.tsx` and `Submissions.tsx` with DESIGN.md tokens and reduced-motion support, and wire them into `App.tsx` without growing it past 500 LOC.
+- [x] T056 Update `home/apps/app-gallery/sync-contract.mjs` and `matrix.json` `sourceGlobs` for the new contract files, then rebuild with `node scripts/build-default-apps.mjs home/apps`.
 
 ## Phase 9: Gallery Review tab (L8), serves US3
 
@@ -241,15 +243,15 @@
   - conflict handling
   - listing actions.
 - [ ] T058 [P] [US3] Failing test in `tests/default-apps/app-store-review-model.test.ts` for the review client: error-string allowlist, cursor paging, decision CAS conflict mapping.
-- [ ] T059 Implement `home/apps/app-gallery/src/review/` (`review-model.ts`, `ReviewQueue.tsx`, `ReviewDetail.tsx`, `FileViewer.tsx`, `DecisionDialog.tsx`), each under 500 LOC.
-- [ ] T060 Add the Review tab to Gallery navigation, shown only when `status.reviewer` is true.
+- [x] T059 Implement `home/apps/app-gallery/src/review/` (`review-model.ts`, `ReviewQueue.tsx`, `ReviewDetail.tsx`, `FileViewer.tsx`, `DecisionDialog.tsx`), each under 500 LOC.
+- [x] T060 Add the Review tab to Gallery navigation, shown only when `status.reviewer` is true.
 
 ## Phase 10: Notifications, tool and docs (L9)
 
 - [ ] T061 [P] Failing tests in `tests/gateway/app-store-submission-poller.test.ts`: polls only while submissions are pending, tracks at most 50, sends push and shell notifications on status change, stops on shutdown, no duplicate notifications after restart.
 - [ ] T062 [P] Failing tests in `tests/kernel/publish-app-tool.test.ts`: `publish_app` creates a draft through the injected publish service (resolved at registration) and returns the Gallery publish link.
-- [ ] T063 Implement `submission-poller.ts` and the `publish_app` rewire in `packages/kernel/src/ipc-server.ts` and `packages/gateway/src/app-publish.ts`.
-- [ ] T064 Add a store section to the `matrix-app-builder` skill and document the store flow in `docs/dev/app-store.md`.
+- [x] T063 Implement `submission-poller.ts` and the `publish_app` rewire in `packages/kernel/src/ipc-server.ts` and `packages/gateway/src/app-publish.ts`.
+- [x] T064 Add a store section to the `matrix-app-builder` skill and document the store flow in `docs/dev/app-store.md`.
 
 ## Polish and validation (every layer)
 
