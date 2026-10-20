@@ -44,8 +44,11 @@ export function DesktopSpeechInputControl({
   }, [active, onActiveChange]);
   if (!speech.isSupported && !active && !speech.error && !speech.previewQuota) return null;
   const quotaExhausted = speech.previewQuota?.requestsRemaining === 0;
+  const unavailable = !speech.isSupported && !active;
   const label = quotaExhausted
     ? "Preview dictation allowance exhausted"
+    : unavailable
+      ? "Speech is unavailable"
     : speech.phase === "requesting_permission"
     ? "Cancel microphone request"
     : speech.phase === "recording"
@@ -90,7 +93,7 @@ export function DesktopSpeechInputControl({
         type="button"
         aria-label={label}
         title={label}
-        disabled={(disabled || quotaExhausted) && !active}
+        disabled={(disabled || quotaExhausted || unavailable) && !active}
         onClick={activate}
         className="flex h-9 w-9 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
         style={{ color: speech.phase === "recording" ? "var(--danger)" : "var(--text-secondary)" }}

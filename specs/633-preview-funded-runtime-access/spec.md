@@ -55,7 +55,7 @@ Platform activation configures the host through the existing protected host endp
 4. Activate speech with a separately derived speech token for the same machine generation.
 5. Return only coarse readiness and remaining counters to the workflow.
 
-The runtime cannot top up a Preview allocation, inherit a configured owner promotion, or use checkout. Shared Preview users keep the existing denial for personal Integrations and Custom MCP accounts; funded Chat and dictation are machine capabilities, not personal-account delegation. Dictation accepts a non-owner only when the Gateway is an explicitly configured Preview runtime and Platform has supplied a verified collaborator principal after its live machine-access check. Customer runtimes and direct non-Platform principals retain the exact owner check.
+The control plane writes `MATRIX_PREVIEW_RUNTIME=true` into host configuration only when the persisted machine has `provisioning_class=preview`; customer and Private Preview provisioning omit the marker. The runtime cannot top up a Preview allocation, inherit a configured owner promotion, or use checkout. Shared Preview users keep the existing denial for personal Integrations and Custom MCP accounts; funded Chat and dictation are machine capabilities, not personal-account delegation. Dictation accepts a non-owner only when the Gateway is an explicitly configured Preview runtime and Platform has supplied a verified collaborator principal after its live machine-access check. Customer runtimes and direct non-Platform principals retain the exact owner check.
 
 ## Transaction, lock, and orphan-state rules
 

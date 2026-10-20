@@ -407,6 +407,7 @@ write_files:
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       {{updateManifestBaseUrlEnv}}
       {{collaborationDisabledEnv}}
+      {{previewRuntimeEnv}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}

@@ -60,6 +60,17 @@ describe('Private Preview host environment', () => {
     }
   });
 
+  it('marks only server-authorized PR Preview hosts as Preview runtimes', async () => {
+    for (const template of [DEFAULT_CLOUD_INIT_TEMPLATE, await loadCustomerVpsCloudInitTemplate()]) {
+      expect(envLines(renderCloudInitTemplate(template, hostConfig('pr-2383', 'preview'))))
+        .toContain('MATRIX_PREVIEW_RUNTIME=true');
+      expect(renderCloudInitTemplate(template, hostConfig('alice', 'customer')))
+        .not.toContain('MATRIX_PREVIEW_RUNTIME');
+      expect(renderCloudInitTemplate(template, hostConfig('pv-1907-3fa91c2e', 'private-preview')))
+        .not.toContain('MATRIX_PREVIEW_RUNTIME');
+    }
+  });
+
   it('keeps a Private Preview user_data under the Hetzner limit with headroom', async () => {
     const longest = hostConfig('pv-999999999-ffffffff', 'private-preview');
     const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), {

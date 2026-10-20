@@ -37,6 +37,22 @@ const exhaustedPreviewCapabilities = {
   },
 };
 
+const unavailablePreviewCapabilities = {
+  ...capabilities,
+  fileTranscription: {
+    ...capabilities.fileTranscription,
+    status: "unavailable" as const,
+    reason: "disabled" as const,
+    dictation: { ...capabilities.fileTranscription.dictation, enabled: false as const },
+  },
+  previewQuota: {
+    requestLimit: 3,
+    requestsUsed: 1,
+    requestsRemaining: 2,
+    expiresAt: "2026-10-20T16:45:00.000Z",
+  },
+};
+
 function client(): BrowserSpeechClient {
   return {
     capabilities: vi.fn(async () => capabilities),
@@ -184,5 +200,20 @@ describe("Electron shared Chat speech input", () => {
 
     expect(await screen.findByText("Preview dictation: 0 of 3 requests remaining.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Preview dictation allowance exhausted" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("keeps remaining Preview quota visible but disables an unavailable microphone", async () => {
+    const speechClient = client();
+    vi.mocked(speechClient.capabilities).mockResolvedValue(unavailablePreviewCapabilities);
+    render(<DesktopSpeechInputControl
+      scopeKey="account-a:pr-2383:chat-a"
+      client={speechClient}
+      captureAdapter={{ isSupported: () => true, start: vi.fn() }}
+      onDraft={vi.fn()}
+      disabled={false}
+    />);
+
+    expect(await screen.findByText("Preview dictation: 2 of 3 requests remaining.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Speech is unavailable" }).hasAttribute("disabled")).toBe(true);
   });
 });
