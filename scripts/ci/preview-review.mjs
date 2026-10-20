@@ -1,3 +1,4 @@
+import { retireExpiredLegacy } from "./preview-review-legacy.mjs";
 import { collectReviewPrs } from "./preview-review-recovery.mjs";
 import { loadPreviewHistory } from "./preview-review-history.mjs";
 import { originReadSnapshot } from "./preview-review-api.mjs";
@@ -315,6 +316,8 @@ export async function reconcilePreviews({
     }
   }
   leases = leases.filter((r) => r.state !== "inactive");
+  if (history.complete && !legacyDispatchDraining)
+    machines = await retireExpiredLegacy({ prs, leases, machines, pendingPrs, owner, now, platform });
   let plan = planQueue({
     requests: prs,
     reservations: leases,

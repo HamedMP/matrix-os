@@ -39,6 +39,39 @@ describe("actual preview reconciliation across GitHub and fleet boundaries", () 
     await f.reconcile();
     expect(f.dispatches).toHaveLength(1);
   });
+  it.each([0, 15])("retires an expired legacy runtime before fresh admission with %i other slots", async (otherSlots) => {
+    const request = pr(1), f = fixture([request]);
+    const legacy = f.machine(1, { provisionedAt: "2026-10-10T09:00:00Z" });
+    for (let index = 0; index < otherSlots; index++) f.machine(index + 2);
+    let confirmed = false, removed = 0;
+    f.platform.deletionConfirmed = async () => confirmed;
+    f.platform.remove = async (target: any) => {
+      expect(target).toBe(legacy); removed++;
+      Object.assign(legacy, { status: "deleted", deletedAt: "2026-10-19T10:00:00Z", previewDeletionConfirmed: false });
+      return { deleted: true };
+    };
+    await f.reconcile();
+    expect(removed).toBe(1);
+    expect(f.leases).toHaveLength(0); expect(f.dispatches).toHaveLength(0);
+    await f.reconcile();
+    expect(removed).toBe(1); expect(f.leases).toHaveLength(0);
+    expect(request.labels).toEqual([{ name: "preview" }]);
+    confirmed = true; legacy.previewDeletionConfirmed = true;
+    await f.reconcile();
+    expect(f.leases).toHaveLength(1);
+    expect(f.leases[0].payload.expiresAt).toBe("2026-10-22T10:00:00.000Z");
+    expect(f.dispatches.map((row: any) => row.inputs.pr)).toEqual(["1"]);
+    expect(request.labels).toEqual([{ name: "preview" }]);
+  });
+  it.each(["foreign", "ambiguous", "leased"])("does not retire a %s legacy target outside cleanup authority", async (mode) => {
+    const f = fixture();
+    f.machine(1, { provisionedAt: "2026-10-10T09:00:00Z", ...(mode === "foreign" ? { clerkUserId: "user_other" } : {}) });
+    if (mode === "ambiguous") f.machine(1, { provisionedAt: "2026-10-10T09:00:00Z" });
+    if (mode === "leased") f.reserve();
+    f.platform.remove = async () => { throw new Error("Protected legacy runtime must not be removed"); };
+    await expect(f.reconcile()).resolves.toBeDefined();
+    expect(f.machines.every(machine => machine.deletedAt == null)).toBe(true);
+  });
   it("bounds an adopted runtime expiry by the existing reaper lifetime", async () => {
     const f = fixture();
     f.machine(1, { provisionedAt: "2026-10-17T10:00:00Z" });
