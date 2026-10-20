@@ -12,7 +12,8 @@ export const ONBOARDING_CHAT_TITLE = "Getting started";
 /** What the onboarding widget needs from a host's canonical Chat transport. */
 export interface OnboardingChatPort {
   create(input: CanonicalCreateChatRequest): Promise<Pick<CanonicalChatRecord, "chat">>;
-  detail(chatId: string): Promise<CanonicalChatDetailResponse>;
+  /** The newest page of the chat, or the older page `cursor` names. */
+  detail(chatId: string, cursor?: string): Promise<CanonicalChatDetailResponse>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
   /** Calls `onChange` whenever the chat may have changed; returns a disposer. */
   watch(chatId: string, onChange: () => void): () => void;
