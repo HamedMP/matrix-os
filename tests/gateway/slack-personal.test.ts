@@ -32,6 +32,12 @@ describe("durable private Slack personal transport",()=>{
   expect(sendReply).toHaveBeenCalledTimes(1);expect(sendReply.mock.calls[0][0]).toMatchObject({envelope,chatId:"chat_private",runId:"run_private",text:"Private <@U123> & <!channel>"});
   await service.receive({...envelope,event:{...envelope.event,eventId:"Ev456"}});await service.drain();expect(resolvePersonalChat).toHaveBeenCalledTimes(1);
  });
+ it("safely truncates a personal reply without replacing half an emoji",async()=>{
+  service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>now,resolvePersonalChat,submitPersonal,sendReply,
+   readResult:async()=>({status:"completed",requestingActorId:envelope.ownerId,runId:"run_private",text:"a".repeat(11999)+"😀 tail"})});
+  await service.receive(envelope);await service.drain();
+  expect(sendReply).toHaveBeenCalledOnce();expect(sendReply.mock.calls[0][0].text).toBe("a".repeat(11999));
+ });
  it("refuses channels, company flags, changed identities and substituted event payloads",async()=>{
   for(const bad of [{...envelope,actorId:"user_other"},{...envelope,channelScopeId:"10000000-0000-4000-8000-000000000001"},{...envelope,companyPublicationApproved:true},{...envelope,event:{...envelope.event,channelId:"C123"}},{...envelope,event:{...envelope.event,channelId:"G123"}},{...envelope,event:{...envelope.event,kind:"mention"}}]) await expect(service.receive(bad)).rejects.toMatchObject({code:"forbidden"});
   await service.receive(envelope);await expect(service.receive({...envelope,event:{...envelope.event,text:"Replace payload"}})).rejects.toMatchObject({code:"conflict"});expect(submitPersonal).not.toHaveBeenCalled();
