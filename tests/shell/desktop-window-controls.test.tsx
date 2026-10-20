@@ -17,9 +17,9 @@ import {
   type AppWindow,
 } from "@/hooks/useWindowManager";
 
-const viewerProps=vi.hoisted(()=>({current: null as null | {onOpenApp: unknown}}));
+const viewerProps=vi.hoisted(()=>({current: null as null | {onOpenApp: unknown;visible?: boolean}}));
 vi.mock("@/components/AppViewer", () => ({
-  AppViewer: (props: {onOpenApp: unknown}) => { viewerProps.current=props; return <div data-testid="app-viewer" />; },
+  AppViewer: (props: {onOpenApp: unknown;visible?: boolean}) => { viewerProps.current=props; return <div data-testid="app-viewer" />; },
 }));
 
 describe("web desktop window controls", () => {
@@ -115,6 +115,26 @@ describe("web desktop window controls", () => {
 
   it("keeps floating windows below the desktop header", () => {
     expect(desktopWindowTop(20, 38)).toBe("58px");
+  });
+
+  it("hides portal-backed app controls throughout minimize and restores them with the window", () => {
+    const win: AppWindow = {
+      id: "window-1", title: "Demo", path: "apps/demo/dist/index.html",
+      x: 20, y: 20, width: 640, height: 480, minimized: false, zIndex: 10,
+    };
+    const noop = vi.fn();
+    const props = { dockPosition: "bottom" as const, fullscreenWindowId: null, interacting: false,
+      onAnimateMinimize: noop, onCloseWindow: noop, onDragEnd: noop, onDragMove: noop,
+      onDragStart: noop, onFocusWindow: noop, onOpenWindow: noop,
+      onResizeInteractionChange: noop, onToggleFullscreen: noop };
+    const view = render(<DesktopWindow {...props} win={win} minimizingIds={new Set()} />);
+    expect(viewerProps.current?.visible).toBe(true);
+    view.rerender(<DesktopWindow {...props} win={win} minimizingIds={new Set([win.id])} />);
+    expect(viewerProps.current?.visible).toBe(false);
+    view.rerender(<DesktopWindow {...props} win={{...win,minimized:true}} minimizingIds={new Set()} />);
+    expect(viewerProps.current?.visible).toBe(false);
+    view.rerender(<DesktopWindow {...props} win={win} minimizingIds={new Set()} />);
+    expect(viewerProps.current?.visible).toBe(true);
   });
 
   it("centers title-bar content with equal vertical clearance", () => {
