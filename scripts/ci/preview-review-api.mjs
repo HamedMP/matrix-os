@@ -52,14 +52,22 @@ export function platformClient({
   }
   return {
     async fleet() {
-      const data = await call("/vps/fleet");
-      if (
-        data.truncated ||
-        !Array.isArray(data.machines) ||
-        data.machines.length >= 500
-      )
-        throw new Error("Preview fleet inventory incomplete");
-      return data.machines;
+      // Preserve actual runtime health while adding legacy tombstones that
+      // disappear from the active fleet before physical provider cleanup.
+      const snapshots = [await call("/vps/fleet"), await call("/vps/preview-capacity")];
+      const machines = new Map();
+      for (const data of snapshots) {
+        if (data.truncated || !Array.isArray(data.machines) || data.machines.length >= 500)
+          throw new Error("Preview fleet inventory incomplete");
+        const ids = new Set();
+        for (const row of data.machines) {
+          if (typeof row.machineId !== "string" || !row.machineId.length || row.machineId.length > 100 || ids.has(row.machineId))
+            throw new Error("Preview fleet identity incomplete");
+          ids.add(row.machineId);
+          machines.set(row.machineId, { ...machines.get(row.machineId), ...row });
+        }
+      }
+      return [...machines.values()];
     },
     async removePrivate(pr) {
       if (!Number.isSafeInteger(pr) || pr < 1)

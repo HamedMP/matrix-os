@@ -83,7 +83,8 @@ jobs:
             const {resolve} = require('node:path');
             const {dispatchExecutionRef} = await import(pathToFileURL(resolve('scripts/ci/dedicated-isolated.mjs')).href);
             const branch = await dispatchExecutionRef(github, context.repo, process.env.CONTROLLER, '.github/workflows/preview-review.yml');
-            await github.rest.actions.createWorkflowDispatch({...context.repo, workflow_id:'preview-review.yml', ref:branch, inputs:{requested_pr:String(context.payload.pull_request?.number ?? '')}, request:{timeout:10000}});
+            const requestedPr = context.eventName === 'workflow_dispatch' ? context.payload.inputs?.requested_pr : context.payload.pull_request?.number;
+            await github.rest.actions.createWorkflowDispatch({...context.repo, workflow_id:'preview-review.yml', ref:branch, inputs:{requested_pr:String(requestedPr ?? '')}, request:{timeout:10000}});
   origin:
     name: Verify preview scheduler execution origin
     if: vars.MATRIX_PREVIEW_REVIEW_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)

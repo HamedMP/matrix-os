@@ -1,6 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { fixture, pr, head } from "./preview-review-fixture";
 describe("actual preview reconciliation across GitHub and fleet boundaries", () => {
+  it("pauses new reservations for unreserved legacy cleanup and recovers only after physical proof", async () => {
+    const f = fixture([pr(2)]);
+    const legacy = f.machine(1, { status: "deleted", deletedAt: "2026-10-19", previewDeletionConfirmed: false });
+    await f.reconcile();
+    expect(f.leases).toHaveLength(0);
+    expect(f.dispatches).toHaveLength(0);
+    expect(f.comments.get(2).body).toContain("physical cleanup");
+    legacy.previewDeletionConfirmed = true;
+    await f.reconcile();
+    expect(f.leases).toHaveLength(1);
+    expect(f.dispatches.map((d: any) => d.inputs.pr)).toEqual(["2"]);
+  });
   it("reserves before dispatch, caps sixteen, and reports queued owners", async () => {
     const f = fixture(Array.from({ length: 17 }, (_, i) => pr(i + 1)));
     await f.reconcile();

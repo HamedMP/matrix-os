@@ -469,7 +469,9 @@ export async function reconcilePreviews({
       ? "Reservation history recovering; queue admission paused"
       : legacyDispatchDraining
         ? "Legacy preview jobs draining; queue admission paused"
-        : null,
+        : plan.cleanupPending
+          ? "Legacy physical cleanup awaiting provider proof; new allocations paused"
+          : null,
   });
   return {
     capacity: CAPACITY,

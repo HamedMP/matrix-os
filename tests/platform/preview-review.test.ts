@@ -52,6 +52,29 @@ const machine = (number: number, extra = {}) => ({
 });
 
 describe("preview admission and truthful reviewer status", () => {
+  it("holds unknown legacy tombstones and never treats them as backing a new reservation", () => {
+    for (const proof of [undefined, false]) {
+      const result = planQueue({ requests: [pr(2)], reservations: [reservation(1)],
+        machines: [machine(1, { status: "deleted", deletedAt: "2026-10-19", previewDeletionConfirmed: proof })], now });
+      expect(result.occupied).toBe(2);
+      expect(result.admit).toEqual([]);
+      expect(result.waiting.map((p: any) => p.number)).toEqual([2]);
+      expect(result.cleanupPending).toBe(true);
+    }
+    const released = planQueue({ requests: [pr(2)], reservations: [], machines: [machine(1, {
+      status: "deleted", deletedAt: "2026-10-19", previewDeletionConfirmed: true,
+    })], now });
+    expect(released.occupied).toBe(0);
+    expect(released.admit.map((p: any) => p.number)).toEqual([2]);
+  });
+  it("holds all new allocation while an unreserved deleted legacy machine lacks physical proof", () => {
+    const result = planQueue({ requests: [pr(17)], reservations: [], machines: [machine(16, {
+      status: "deleted", deletedAt: "2026-10-19", previewDeletionConfirmed: false,
+    })], now });
+    expect(result.occupied).toBe(1);
+    expect(result.admit).toEqual([]);
+    expect(result.waiting.map((p: any) => p.number)).toEqual([17]);
+  });
   it("holds exactly sixteen slots including legacy machines and pending reservations", () => {
     const result = planQueue({
       requests: [pr(21), pr(22), pr(23)],
@@ -217,6 +240,19 @@ describe("preview admission and truthful reviewer status", () => {
 });
 
 describe("bounded operator and proof reads", () => {
+  it("merges tombstone capacity with fresh runtime health rather than relying on active fleet alone", async () => {
+    const calls: string[] = [];
+    const client = platformClient({ token: "operator", fetchImpl: async (url: string) => {
+      calls.push(new URL(url).pathname);
+      return new Response(JSON.stringify({ machines: new URL(url).pathname === "/vps/fleet"
+        ? [machine(1, { healthy: true, runtimeVersion: "exact" })]
+        : [machine(1), machine(2, { status: "deleted", deletedAt: "2026-10-19", previewDeletionConfirmed: false })], truncated: false }));
+    } });
+    const inventory = await client.fleet();
+    expect(calls).toEqual(["/vps/fleet", "/vps/preview-capacity"]);
+    expect(inventory).toEqual([expect.objectContaining({ machineId: "machine-1", healthy: true, runtimeVersion: "exact" }),
+      expect.objectContaining({ machineId: "machine-2", status: "deleted", previewDeletionConfirmed: false })]);
+  });
   it("uses explicit physical proof, not a deleted DB status", async () => {
     const client = platformClient({
       token: "operator",

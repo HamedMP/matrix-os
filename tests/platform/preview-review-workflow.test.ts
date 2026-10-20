@@ -34,6 +34,30 @@ function allowed(
     format: (s: string, v: string) => s.replace("{0}", v),
   });
 }
+it("forwards manual comment priority without turning it into an admission allowlist", async () => {
+    const step = workflow.jobs.route.steps.find((s: any) => s.name === "Dispatch serialized preview reconciliation");
+    const script = step.with.script;
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    for (const [eventName, payload, expected] of [
+      ["workflow_dispatch", { inputs: { requested_pr: "42" } }, "42"],
+      ["pull_request_target", { pull_request: { number: 17 }, inputs: { requested_pr: "42" } }, "17"],
+      ["schedule", {}, ""],
+    ] as const) {
+      const dispatches: any[] = [];
+      const github = { rest: { actions: {
+        listWorkflowRuns: async () => ({ data: { workflow_runs: [] } }),
+        createWorkflowDispatch: async (data: any) => dispatches.push(data),
+      } } };
+      // Exercise the actual router script, replacing only reviewed execution-ref discovery.
+      const executable = script.replace(/const \{dispatchExecutionRef\} = await import\([^\n]+\);/, "const dispatchExecutionRef = async () => 'ci-execution/pin';");
+      await new AsyncFunction("github", "context", "process", "core", "require", executable)(github,
+        { eventName, payload, repo: { owner: "HamedMP", repo: "matrix-os" } },
+        { env: { CONTROLLER: pin } }, { notice: () => {} }, (name: string) => name === "node:url"
+          ? { pathToFileURL: () => ({ href: "file:///reviewed-controller" }) } : { resolve: () => "reviewed-controller" });
+      expect(dispatches).toHaveLength(1);
+      expect(dispatches[0].inputs.requested_pr).toBe(expected);
+    }
+});
 describe("unified preview workflow authorization and retained checks", () => {
   it("routes metadata-only events while keeping actual scheduler secrets off Main", () => {
     expect(
