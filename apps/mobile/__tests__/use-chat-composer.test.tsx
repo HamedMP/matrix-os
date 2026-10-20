@@ -52,6 +52,7 @@ type ComposerProps = Parameters<typeof useChatComposer>[0];
 
 const newChat: ComposerProps = {
   scope: "user_1:amin:primary", activeChatId: null, detail: null, selection, turnModes, projectId: null,
+  catalog: null,
 };
 
 function detailFor(chatId: string, messageIds: string[], turns: { clientRequestId: string; inputMessageId: string }[] = []) {
