@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { parseFrontmatter, skillSources, type SkillSource } from "@matrix-os/kernel";
+import { parseSkillFrontmatter, skillSources, type SkillSource } from "@matrix-os/kernel";
 import {
   CHAT_AGENT_RECIPE_MAX_CATALOG_SKILLS,
   ChatAgentRecipeCatalogSchema,
@@ -86,9 +86,9 @@ async function readCandidate(path: string, roots: readonly Source[], installedOn
 }
 
 function parseSkill(content: string, sourceFile: string, source: Source, installedOnly: boolean): Skill {
-  const { frontmatter, body } = parseFrontmatter(content);
+  const { frontmatter, body, authors } = parseSkillFrontmatter(content, { requireAuthorship: source.bundled });
   if (typeof frontmatter.name !== "string" || typeof frontmatter.description !== "string"
-    || (source.bundled && frontmatter.author !== "Matrix OS")) throw new InvalidSkillError("Invalid skill metadata");
+    || (source.bundled && (!authors.length || authors.some(author => author !== "Matrix OS")))) throw new InvalidSkillError("Invalid skill metadata");
   const id = ChatAgentRecipeSkillIdSchema.safeParse(frontmatter.name).success
     ? frontmatter.name : `skill-${createHash("sha256").update(frontmatter.name).digest("hex")}`;
   const description = frontmatter.description.trim().slice(0, 400).replace(/[\uD800-\uDBFF]$/, "");

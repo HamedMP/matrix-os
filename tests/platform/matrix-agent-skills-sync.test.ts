@@ -88,7 +88,8 @@ describe("Matrix coding-agent skill sync", () => {
         expect(existsSync(join(target, "agents", "openai.yaml"))).toBe(true);
       }
       clearSkillCache();
-      expect(loadSkills(matrixHome)).toContainEqual(expect.objectContaining({ name: "matrix-ship", format: "directory" }));
+      expect(loadSkills(matrixHome)).toContainEqual(expect.objectContaining({ name: "matrix-ship", format: "directory",
+        triggers: ["qualify PR", "ship PR", "diagnose CI", "PR preview"] }));
       expect(readFileSync(join(ownerAgentHome, "skills", "existing", "SKILL.md"), "utf8")).toContain("name: matrix-existing-home");
       expect(readFileSync(join(ownerSkillsRoot, "existing", "SKILL.md"), "utf8")).toContain("name: matrix-existing-root");
       expect(existsSync(join(ownerSkillsRoot, "matrix-ship"))).toBe(false);

@@ -30,6 +30,14 @@ draft no-ops, cannot establish artifact provenance. Review issue comments,
 finding dispositions and the manual gates remain necessary. Never use its exit
 0 alone as merge permission or publish it as a trusted required policy check.
 
+When a shipped skill changes, check installation and both actual discovery
+paths: the kernel loader and Chat catalog/recipe resolution. Keep the all-shipped
+trigger/link and installer-parity checks. A successful file copy or kernel load
+does not establish Chat availability. The affected contract cohort includes
+`tests/kernel/*skill*.test.ts`, `tests/platform/matrix-agent-skills-sync.test.ts`
+and `tests/gateway/chat-agent-recipe.test.ts`; exercise the added skill's actual
+resolved body, source and hash too. Run these through the existing isolated job.
+
 ## Evidence distinctions
 
 | Observed result | What it establishes |

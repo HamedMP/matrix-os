@@ -11,6 +11,7 @@ import {
 import { join, basename, dirname, relative } from "node:path";
 import { z } from "zod/v4";
 import { parseFrontmatter } from "./agents.js";
+import { parseSkillFrontmatter } from "./skill-frontmatter.js";
 import { skillSources, type SkillSource as Source } from "./skill-sources.js";
 
 const SkillFrontmatterSchema = z.object({
@@ -79,7 +80,10 @@ function parseSkillFile(
     return null;
   }
 
-  const { frontmatter, body } = parseFrontmatter(content);
+  let parsed;
+  try { parsed = parseSkillFrontmatter(content); }
+  catch (error: unknown) { warnSkillFallback(`Skipping invalid ${label}/${basename(filePath)}`, error); return null; }
+  const { frontmatter, body } = parsed;
   const result = SkillFrontmatterSchema.safeParse(frontmatter);
   if (!result.success) {
     console.warn(

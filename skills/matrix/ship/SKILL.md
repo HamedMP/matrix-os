@@ -4,6 +4,7 @@ description: Qualify, preview, diagnose CI, and ship Matrix OS pull requests usi
 license: MIT
 metadata:
   author: Matrix OS
+  triggers: qualify PR, ship PR, diagnose CI, PR preview
   short-description: Preview, qualify, and ship a Matrix OS PR
 ---
 

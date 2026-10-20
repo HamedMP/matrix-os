@@ -29,7 +29,11 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `shadcn` | Compose current project-aware components, coherent presets and responsive charts from real saved data. |
 | `review-animations` | Inspect the implemented motion against craft/accessibility/performance criteria. |
 
-Skills supply names and descriptions for discovery, with optional triggers.
+Skills supply names and descriptions for discovery. Every shipped skill includes
+triggers, either in the legacy `triggers` array or the standard extension
+`metadata.triggers` comma-separated string. The kernel and Chat catalog use the
+same bounded metadata reader; bundled provenance accepts `author` or
+`metadata.author`, requiring agreement when both are declared.
 Matrix companion names can also appear in `related_skills` and harness metadata; discovery presents names while
 full bodies and resources load on demand. Avoid eagerly injecting the entire pack.
 

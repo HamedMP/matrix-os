@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
+import { parseSkillFrontmatter } from "../../packages/kernel/src/skill-frontmatter.js";
 
 const SKILLS_DIR = join(__dirname, "../../skills/matrix");
 
@@ -143,7 +144,13 @@ describe("shipped design skill discovery", () => {
     });
     for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((item) => item.isDirectory())) {
       const content = readFileSync(skillPath(entry.name), "utf-8");
-      expect(content.split("---")[1], entry.name).toMatch(/^triggers:\s*\[[^\]]+\]/m);
+      const { frontmatter } = parseSkillFrontmatter(content);
+      expect(Array.isArray(frontmatter.triggers), entry.name).toBe(true);
+      expect((frontmatter.triggers as string[]).length, entry.name).toBeGreaterThan(0);
+      for (const trigger of frontmatter.triggers as string[]) {
+        expect(typeof trigger, entry.name).toBe("string");
+        expect(trigger.trim().length, entry.name).toBeGreaterThan(0);
+      }
       for (const resource of walk(join(SKILLS_DIR, entry.name))) {
         for (const match of readFileSync(resource, "utf-8").matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
           const link = match[1];
