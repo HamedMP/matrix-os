@@ -18,7 +18,7 @@ describe('production deletion composition',()=>{
    const {db,instance}=await createTestPlatformDb();
    const gatewayDb=createGatewayDb({dialect:instance.dialect});
    await gatewayDb.migrate();
-   const env={ACCOUNT_DELETION_ENABLED:'true',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test'};
+   const env={ACCOUNT_DELETION_CONFIGURED:'true',ACCOUNT_DELETION_ENABLED:'true',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test'};
    const ownerUuid='11111111-1111-4111-8111-111111111111';
    const foreignUuid='22222222-2222-4222-8222-222222222222';
    await sql`INSERT INTO users (id,clerk_id,handle,display_name,email,container_id)
@@ -72,7 +72,7 @@ describe('production deletion composition',()=>{
  it('reaches durable cleanup through real app auth and signed webhook without requiring a VPS or payment',async()=>{
    const {db}=await createTestPlatformDb();
    const key=Buffer.from('s'.repeat(32));
-   const env={ACCOUNT_DELETION_ENABLED:'true',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test',CLERK_USER_WEBHOOK_SIGNING_SECRET:'whsec_'+key.toString('base64')};
+   const env={ACCOUNT_DELETION_CONFIGURED:'true',ACCOUNT_DELETION_ENABLED:'true',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test',CLERK_USER_WEBHOOK_SIGNING_SECRET:'whsec_'+key.toString('base64')};
    vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
      if(String(url).includes('organization_memberships'))return Response.json({data:[],total_count:0});
      if(String(url).includes('/users/'))return init?.method==='DELETE'?Response.json({deleted:true}):Response.json({external_accounts:[]});
@@ -96,5 +96,12 @@ describe('production deletion composition',()=>{
      expect(store.listObjects).toHaveBeenCalledWith('matrixos-sync/user_wiring/');
      expect((await app.request('/api/account/delete/export/platform',{headers:{authorization:'Bearer valid'}})).status).toBe(409);
    }finally{runtime?.stop();await runtime?.drain();runtime?.close();await db.destroy();}
+ });
+ it('keeps the runtime available when new deletion requests are disabled',async()=>{
+   const {db}=await createTestPlatformDb();
+   const env={ACCOUNT_DELETION_CONFIGURED:'true',ACCOUNT_DELETION_ENABLED:'false',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test'};
+   const runtime=await createConfiguredAccountDeletionRuntime({db,env,backgroundWorkersEnabled:false});
+   try{expect(runtime).toBeDefined();}
+   finally{runtime?.close();await db.destroy();}
  });
 });
