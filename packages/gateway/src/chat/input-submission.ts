@@ -72,6 +72,9 @@ export async function pendingInputTransition(db: Kysely<ChatDatabase> | Transact
     sql<boolean>`EXISTS (
       SELECT 1 FROM chat_run_events requested
       WHERE requested.run_id = ${runId} AND (requested.event ->> 'type') = 'approval.requested'
+        AND NOT EXISTS (SELECT 1 FROM chat_approval_outcomes outcomes
+          WHERE outcomes.run_id = requested.run_id
+            AND outcomes.approval_id = (requested.event ->> 'approvalId'))
         AND NOT EXISTS (SELECT 1 FROM chat_run_events resolved
           WHERE resolved.run_id = requested.run_id AND (resolved.event ->> 'type') = 'approval.resolved'
             AND (resolved.event ->> 'approvalId') = (requested.event ->> 'approvalId'))

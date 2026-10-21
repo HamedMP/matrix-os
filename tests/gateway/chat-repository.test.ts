@@ -2315,6 +2315,26 @@ describe("ChatRepository", () => {
       runId: acceptedRun.id,
       approvalId: approval.approvalId,
     })).resolves.toBeNull();
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
+      id: "activity_input_after_approval",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: "2026-08-25T00:00:03.000Z",
+      type: "input.requested",
+      requestId: "input_after_approval",
+      title: "Continue?",
+    }, {
+      id: "activity_input_after_approval_resolved",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: "2026-08-25T00:00:04.000Z",
+      type: "input.resolved",
+      requestId: "input_after_approval",
+      reason: "answered",
+    }]);
+    const afterInput = await repository.kysely.selectFrom("chat_runs")
+      .select("status").where("id", "=", acceptedRun.id).executeTakeFirstOrThrow();
+    expect(afterInput.status).toBe("running");
   });
 
   it("preserves a pending input request while compacting non-terminal activity", async () => {
