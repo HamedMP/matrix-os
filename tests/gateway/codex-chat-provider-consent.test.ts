@@ -115,6 +115,44 @@ it("does not advertise a configured Codex subscription without executable consen
   });
 });
 
+it.each([null, "another_openai_account"])(
+  "does not advertise Codex when its saved account binding is %s",
+  (selectedAccountId) => {
+    const staleBinding = structuredClone(settings);
+    staleBinding.harnesses[0]!.enabled = true;
+    staleBinding.harnesses[0]!.selectedAccountId = selectedAccountId;
+    staleBinding.accessSources[0]!.readiness = {
+      state: "ready",
+      checkedAt: "2026-10-20T19:40:00.000Z",
+      staleAfter: "2026-10-20T19:40:30.000Z",
+      action: "none",
+      safeReason: null,
+    };
+
+    const [codex] = applyHarnessSettings({
+      systemRepairAction: () => ({
+        id: "system_repair",
+        kind: "foreground_terminal",
+        label: "Repair",
+        command: "true",
+      }),
+      now: new Date("2026-10-20T19:40:10.000Z"),
+      instances: [codexInstance],
+      settings: staleBinding,
+      settingsRequired: true,
+      settingsAvailable: true,
+      executableDriverKinds: ["codex"],
+    });
+
+    expect(codex).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "authentication_required",
+      defaultSelection: undefined,
+      setupActions: [{ id: "codex_settings", kind: "open_settings", label: "Agents & providers" }],
+    });
+  },
+);
+
 it("requests native account identity when revalidating a bound Codex chat", async () => {
   const selected = { instanceId: "codex_default", model: "gpt-5.4" };
   const withoutNativeIdentity = structuredClone(settings);

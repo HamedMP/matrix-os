@@ -92,6 +92,18 @@ export function applyHarnessSettings(input: {
       if (input.settingsAvailable && saved.length > 0 && enabled.length === 0) {
         return unavailableInstance(instance, "disabled_in_settings");
       }
+      if (instance.driverKind === "codex" && input.settingsAvailable && enabled.length === 1) {
+        const source = input.settings?.accessSources.find((candidate) => candidate.id === enabled[0]!.accessSourceId);
+        const staleNativeBinding = source?.id === "owner_openai_profile"
+          && source.kind === "provider_account"
+          && (source.accountId === null || enabled[0]!.selectedAccountId !== source.accountId);
+        if (staleNativeBinding) {
+          return {
+            ...unavailableInstance(instance, "authentication_required"),
+            setupActions: [CODEX_SETTINGS_ACTION],
+          };
+        }
+      }
       if (instance.driverKind === "codex" && input.settingsAvailable && enabled.length === 1
         && enabled[0]!.enabled === false) {
         const source = input.settings?.accessSources.find((candidate) => candidate.id === enabled[0]!.accessSourceId);
