@@ -14,8 +14,7 @@ const Read = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("get_message"), params: z.strictObject({ messageId: JevInboxGmailIdSchema }) }),
 ]);
 
-/** Fresh live identity precedes every requested read, pinned to the same owner/connection. */
-export async function executeJevBoundRead(options: {
+export interface JevBoundReadInput {
   ownerId: string;
   externalUserId: string;
   connection: { id: string; user_id: string; service: string; status: string; account_label: string | null;
@@ -25,7 +24,9 @@ export async function executeJevBoundRead(options: {
   params?: Record<string, unknown>;
   pipedream: PipedreamConnectClient;
   signal: AbortSignal;
-}): Promise<unknown> {
+}
+/** Reusable pure preflight before any collection admission or provider lookup. */
+export function validateJevBoundRead(options: JevBoundReadInput) {
   const { binding, connection } = options;
   const read = Read.safeParse({ action: options.action, params: options.params });
   if (!read.success || connection.user_id !== options.ownerId || connection.id !== binding.connectionId
@@ -33,14 +34,21 @@ export async function executeJevBoundRead(options: {
     || connection.account_label !== binding.accountLabel || connection.account_email !== binding.expectedEmail) {
     throw new JevBoundReadError("denied");
   }
+  return read.data;
+}
+
+/** Fresh live identity precedes every requested read, pinned to the same owner/connection. */
+export async function executeJevBoundRead(options: JevBoundReadInput): Promise<unknown> {
+  const { binding, connection } = options;
+  const read = validateJevBoundRead(options);
   const get = options.pipedream.boundedGmailGet;
   if (!get) throw new JevBoundReadError("unavailable");
   const identity = { externalUserId: options.externalUserId, accountId: connection.pipedream_account_id };
   const rawProfile = await get({ ...identity, kind: "profile" }, options.signal);
   const profile = Profile.safeParse(rawProfile);
   if (!profile.success || profile.data.emailAddress !== binding.expectedEmail) throw new JevBoundReadError("denied");
-  if (read.data.action === "get_profile") return profile.data;
-  if (read.data.action === "list_threads") return get({ ...identity, kind: "threads", ...(read.data.params?.pageToken ? { pageToken: read.data.params.pageToken } : {}) }, options.signal);
-  if (read.data.action === "get_thread_ids") return get({ ...identity, kind: "thread-ids", id: read.data.params.threadId }, options.signal);
-  return get({ ...identity, kind: "message", id: read.data.params.messageId }, options.signal);
+  if (read.action === "get_profile") return profile.data;
+  if (read.action === "list_threads") return get({ ...identity, kind: "threads", ...(read.params?.pageToken ? { pageToken: read.params.pageToken } : {}) }, options.signal);
+  if (read.action === "get_thread_ids") return get({ ...identity, kind: "thread-ids", id: read.params.threadId }, options.signal);
+  return get({ ...identity, kind: "message", id: read.params.messageId }, options.signal);
 }

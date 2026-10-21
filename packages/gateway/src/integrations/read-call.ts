@@ -2,13 +2,14 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import type { PlatformDb } from "../platform-db.js";
+import { admitGoogleCollection, type GoogleCollectionAdmission } from "./collection-hook.js";
 import { executeIntegrationAction } from "./action-execution.js";
 import { integrationActionFailure, integrationActionSuccess } from "./call-outcome.js";
 import { resolveIntegrationConnection } from "./connection-selection.js";
 import { validateActionParams } from "./parameter-validation.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { getAction, getService } from "./registry.js";
-import { executeJevBoundRead, JevBoundReadError, JevReadBindingSchema } from "./jev-bound-read.js";
+import { executeJevBoundRead, validateJevBoundRead, JevBoundReadError, JevReadBindingSchema } from "./jev-bound-read.js";
 import type { ServiceDefinition } from "./types.js";
 
 /** Independent from Jev recipe binding; contains identity metadata only, never credentials. */
@@ -34,6 +35,7 @@ const ReadCallBodySchema = z.strictObject({
 /** The dedicated scoped route never syncs, chooses an account, or calls a preset without exact selection. */
 export function createIntegrationReadCallRoutes(options: {
   db: PlatformDb;
+  googleCollection?: GoogleCollectionAdmission;
   pipedream: PipedreamConnectClient;
   resolveUserId: (c: Context) => Promise<string | null>;
   presetBroker?: {
@@ -100,11 +102,16 @@ export function createIntegrationReadCallRoutes(options: {
     if (connectionId && selected.connection.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
     const user = await options.db.getUserById(uid);
     if (!user?.pipedream_external_id) return c.json({ error: "Integration unavailable" }, 503);
+    let beforeRelease: (() => Promise<void>) | undefined;
     try {
+      // This request gate does not qualify Jev onward processing.
+      if (binding) validateJevBoundRead({ ownerId: uid, externalUserId: user.pipedream_external_id,
+        connection: selected.connection, binding, action, params, pipedream: options.pipedream, signal: c.req.raw.signal });
+      beforeRelease = await admitGoogleCollection(options.googleCollection, c, uid, selected.connection, "/read-call");
       if (binding) {
         const data = await executeJevBoundRead({ ownerId: uid, externalUserId: user.pipedream_external_id,
           connection: selected.connection, binding, action, params, pipedream: options.pipedream, signal: c.req.raw.signal });
-        return integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data });
+        return await integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data, beforeRelease });
       }
       const { data, summary } = await executeIntegrationAction({
         pipedream: options.pipedream,
@@ -116,15 +123,17 @@ export function createIntegrationReadCallRoutes(options: {
         actionId: action,
         params,
       });
-      return integrationActionSuccess(c, {
+      return await integrationActionSuccess(c, {
         db: options.db,
         connectionId: selected.connection.id,
         service,
         action,
         data,
         summary,
+        beforeRelease,
       });
     } catch (err: unknown) {
+      try { await beforeRelease?.(); } catch (releaseError) { return integrationActionFailure(c, releaseError, service, action); }
       if (err instanceof JevBoundReadError) return c.json({ error: "Integration read unavailable" }, err.code === "denied" ? 403 : 503);
       return integrationActionFailure(c, err, service, action);
     }
