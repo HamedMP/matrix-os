@@ -38,7 +38,7 @@ export function BrowserSurface(props: BrowserSurfaceProps) {
   const desktop = props.surface === "desktop";
   const available = state.status?.available === true;
   const connected = state.connection === "connected";
-  const interactive = available && connected && browserHumanInputAllowed(state.status) && !state.busy;
+  const interactive = props.active !== false && available && connected && browserHumanInputAllowed(state.status) && !state.busy;
   const automation = state.status?.automation;
   const automationReady = available && connected && !state.busy && props.active !== false;
   const minimized = !desktop && state.status?.chrome.present && state.status.chrome.minimized;

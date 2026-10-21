@@ -12,27 +12,35 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
   const [revision, setRevision] = useState(0);
   const [viewerRevision, setViewerRevision] = useState(0);
   const scope = JSON.stringify([gatewayUrl, surface, revision]);
+  // Activation gates input, not the lifetime of an already-open viewer.
+  const [startedScope, setStartedScope] = useState(active ? scope : "");
+  const enabled = active || startedScope === scope;
+  const focus = useRef({ active, epoch: 0 });
+  if (focus.current.active !== active) focus.current = { active, epoch: focus.current.epoch + 1 };
+  const wake = useRef<(() => void) | null>(null);
+  useEffect(() => { if (active) setStartedScope(scope); }, [active, scope]);
   const [state, setState] = useState<BrowserSurfaceState>(() => empty(scope, active));
   const iframe = useRef<HTMLIFrameElement>(null);
-  const lifetime = useRef<{ scope: string; controller: AbortController; mutation: boolean; mutationRevision: number; connection: BrowserSurfaceState["connection"]; status: BrowserSurfaceState["status"] } | null>(null);
+  const lifetime = useRef<{ scope: string; controller: AbortController; mutation: boolean; mutationRevision: number; connection: BrowserSurfaceState["connection"]; status: BrowserSurfaceState["status"]; statusEpoch: number } | null>(null);
 
   useEffect(() => {
-    setState(empty(scope, active));
-    if (!active) return;
+    setState(empty(scope, enabled));
+    if (!enabled) return;
     const controller = new AbortController();
-    const owner: NonNullable<typeof lifetime.current> = { scope, controller, mutation: false, mutationRevision: 0, connection: "connecting", status: null }; lifetime.current = owner;
+    const owner: NonNullable<typeof lifetime.current> = { scope, controller, mutation: false, mutationRevision: 0, connection: "connecting", status: null, statusEpoch: -1 }; lifetime.current = owner;
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
     let connectionTimer: ReturnType<typeof setTimeout> | undefined;
     let refreshAt = 0;
     let admitted = false;
     let expectedViewerUrl = "";
     let viewerRefreshAt = 0;
+    let polling = false, wakeRequested = false;
     let endpoint: ReturnType<typeof browserEndpoint>;
     const current = () => !controller.signal.aborted && lifetime.current === owner;
-    const update = (patch: Partial<BrowserSurfaceState>) => {
+    const update = (patch: Partial<BrowserSurfaceState>, statusEpoch = -1) => {
       if (!current()) return;
       if (patch.connection !== undefined) owner.connection = patch.connection;
-      if (patch.status !== undefined) owner.status = patch.status;
+      if (patch.status !== undefined) { owner.status = patch.status; owner.statusEpoch = statusEpoch; }
       setState(previous => previous.scope === scope ? { ...previous, ...patch } : previous);
     };
     const session = async () => {
@@ -46,6 +54,7 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
       update({ connection: "unavailable", viewerUrl: "", error: "Your Matrix computer’s browser is unavailable. Reconnect to try again." });
     };
     const openViewer = async () => {
+      if (!focus.current.active) return;
       expectedViewerUrl = ""; viewerRefreshAt = 0; admitted = false;
       if (connectionTimer) clearTimeout(connectionTimer);
       update({ connection: "connecting", viewerUrl: "", error: "" });
@@ -53,19 +62,21 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
       // Stream authority is fixed at admission. A cached cookie may be near
       // expiry, so every claim starts with a freshly renewed owner session.
       await ensureSession(controller.signal, { force: true });
-      if (!current()) return;
+      if (!current() || !focus.current.active) return;
       refreshAt = Date.now() + 60_000;
+      const initialEpoch = focus.current.epoch;
       const initial = browserStatus(await browserRequest(endpoint.appBase, "browser-status", controller.signal));
-      if (!current()) return;
+      if (!current() || !focus.current.active) return;
       if (!initial.available || !browserStatusIsCurrent(initial, owner.status)) { fail(); return; }
-      update({ status: initial });
+      update({ status: initial }, initialEpoch);
       const ticket = await browserRequest(endpoint.appBase, "browser-session", controller.signal, { surface });
-      if (!current()) return;
+      if (!current() || !focus.current.active) return;
+      const statusEpoch = focus.current.epoch;
       const status = browserStatus(await browserRequest(endpoint.appBase, "browser-status", controller.signal));
-      if (!current()) return;
+      if (!current() || !focus.current.active) return;
       if (!status.available || !browserStatusIsCurrent(status, owner.status)) { fail(); return; }
       expectedViewerUrl = productViewerUrl(endpoint, ticket);
-      update({ status, viewerUrl: expectedViewerUrl });
+      update({ status, viewerUrl: expectedViewerUrl }, statusEpoch);
       // Reclaim before the ten-minute cookie/stream expiry, not the ticket's
       // shorter handshake window. Only a fresh RFB acknowledgement allows input.
       viewerRefreshAt = Date.now() + 8 * 60_000;
@@ -74,20 +85,35 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
         update({ connection: "disconnected", viewerUrl: "" });
       }, 15_000);
     };
-    const poll = async () => {
+    const poll = async (returning = false) => {
+      if (!current()) return;
+      if (polling) { wakeRequested ||= returning; return; }
+      if (pollTimer) clearTimeout(pollTimer);
+      polling = true;
+      const statusEpoch = focus.current.epoch;
       const mutationRevision = owner.mutationRevision;
       try {
-        if (owner.mutation) return;
+        if (!focus.current.active || owner.mutation) return;
+        if ((owner.connection === "connecting" && !expectedViewerUrl)
+          || (returning && ["disconnected", "unavailable"].includes(owner.connection))) {
+          await openViewer(); return;
+        }
         if (owner.connection === "connected" && viewerRefreshAt && Date.now() >= viewerRefreshAt) {
           await openViewer(); return;
         }
         await session(); if (!current()) return;
         const status = browserStatus(await browserRequest(endpoint.appBase, "browser-status", controller.signal));
         if (current() && !owner.mutation && mutationRevision === owner.mutationRevision && browserStatusIsCurrent(status, owner.status)) {
-          update({ status }); if (!status.available) fail();
+          update({ status }, statusEpoch); if (!status.available) fail();
         }
       } catch (error) { if (current() && !owner.mutation && mutationRevision === owner.mutationRevision) { report(error); fail(); } }
-      finally { if (current()) pollTimer = setTimeout(() => { void poll(); }, 4000); }
+      finally {
+        polling = false;
+        if (current()) {
+          const returning = wakeRequested; wakeRequested = false;
+          pollTimer = setTimeout(() => { void poll(returning); }, returning ? 0 : 4000);
+        }
+      }
     };
     const onMessage = (event: MessageEvent) => {
       if (!current() || !endpoint || event.origin !== endpoint.origin || !iframe.current || !expectedViewerUrl || iframe.current.src !== expectedViewerUrl || event.source !== iframe.current.contentWindow) return;
@@ -100,23 +126,23 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
       update(connected ? { connection: "connected", error: "" } : { connection: "disconnected", viewerUrl: "" });
     };
     window.addEventListener("message", onMessage);
-    void (async () => {
-      try {
-        endpoint = browserEndpoint(gatewayUrl);
-        await openViewer(); if (!current()) return;
-        pollTimer = setTimeout(() => { void poll(); }, 4000);
-      } catch (error) { if (current()) { report(error); fail(); } }
-    })();
+    const resume = () => { void poll(true); };
+    wake.current = resume;
+    try { endpoint = browserEndpoint(gatewayUrl); void poll(); }
+    catch (error) { report(error); fail(); }
     return () => {
       controller.abort(); if (pollTimer) clearTimeout(pollTimer); if (connectionTimer) clearTimeout(connectionTimer);
       window.removeEventListener("message", onMessage);
       if (lifetime.current === owner) lifetime.current = null;
+      if (wake.current === resume) wake.current = null;
     };
-  }, [gatewayUrl, surface, active, scope, revision, ensureSession]);
+  }, [gatewayUrl, surface, enabled, scope, revision, ensureSession]);
+
+  useEffect(() => { if (active) wake.current?.(); }, [active, scope]);
 
   const control = async (action: BrowserControlAction): Promise<boolean> => {
     const owner = lifetime.current;
-    const acknowledged = () => owner?.connection === "connected" && browserHumanInputAllowed(owner.status);
+    const acknowledged = () => focus.current.active && owner?.statusEpoch === focus.current.epoch && owner?.connection === "connected" && browserHumanInputAllowed(owner.status);
     if (!active || !owner || owner.scope !== scope || owner.controller.signal.aborted || owner.mutation || !acknowledged()) return false;
     owner.mutation = true; owner.mutationRevision++;
     const current = () => !owner.controller.signal.aborted && lifetime.current === owner;
@@ -139,7 +165,7 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
   };
   const automationControl = async (action: BrowserAutomationAction): Promise<boolean> => {
     const owner = lifetime.current;
-    const acknowledged = () => owner?.connection === "connected" && browserAutomationActionAllowed(owner.status, action);
+    const acknowledged = () => focus.current.active && owner?.statusEpoch === focus.current.epoch && owner?.connection === "connected" && browserAutomationActionAllowed(owner.status, action);
     if (!active || !owner || owner.scope !== scope || owner.controller.signal.aborted || owner.mutation || !acknowledged()) return false;
     owner.mutation = true; owner.mutationRevision++;
     const current = () => !owner.controller.signal.aborted && lifetime.current === owner;
@@ -167,6 +193,9 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
       if (current()) setState(previous => previous.scope === scope ? { ...previous, busy: false, automationAction: undefined } : previous);
     }
   };
-  return { state: state.scope === scope && active ? state : empty(scope, active), iframe,
+  const currentState = state.scope === scope ? state : empty(scope, active);
+  const status = currentState.status && lifetime.current?.statusEpoch !== focus.current.epoch
+    ? { ...currentState.status, humanControlAvailable: false } : currentState.status;
+  return { state: { ...currentState, status, ...(!active ? { connection: "inactive" as const } : {}) }, iframe,
     viewerKey: `${scope}:${viewerRevision}`, reconnect: () => { if (active) setRevision(value => value + 1); }, control, automationControl };
 }

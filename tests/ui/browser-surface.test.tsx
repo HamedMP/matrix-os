@@ -64,7 +64,7 @@ describe("shared Chrome-first surface", () => {
     view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface={surface} active={false} ensureSession={ensureSession} />);
     view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface={surface} active ensureSession={ensureSession} />);
     await screen.findByTitle(title);
-    expect(renew).toHaveBeenCalledTimes(3);
+    expect(renew).toHaveBeenCalledTimes(2);
   });
 
   it("disables all native desktop commands before handshake, during read-only, and after revocation", async () => {
@@ -186,25 +186,33 @@ describe("shared Chrome-first surface", () => {
     expect(next.hasAttribute("inert")).toBe(true);
     message(next); expect(next.hasAttribute("inert")).toBe(false);
   });
-  it("removes the stream while inactive and reacquires it when activated", async () => {
+  it("retains the stream without input while unfocused and revalidates before input returns", async () => {
     const view = mount(); const previous = await frame(); message(previous);
+    expect(previous.hasAttribute("inert")).toBe(false);
     view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
-    expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
+    expect(screen.getByTitle("Chrome on your Matrix computer")).toBe(previous);
+    expect(previous.hasAttribute("inert")).toBe(true);
+    expect(previous.style.pointerEvents).toBe("none");
     expect(ticketNumber).toBe(1);
+    status = { ...ready, humanControlAvailable: false };
     view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
-    const next = await frame(); expect(next).not.toBe(previous); expect(ticketNumber).toBe(2);
+    expect(previous.hasAttribute("inert")).toBe(true);
+    await waitFor(() => expect(calls.filter(call => call.url.endsWith("browser-status")).length).toBeGreaterThan(2));
+    expect(await frame()).toBe(previous);
+    expect(previous.hasAttribute("inert")).toBe(true);
+    expect(ticketNumber).toBe(1);
   });
   it("checks the owner session again soon after returning to an existing cookie", async () => {
     const view = mount(); const previous = await frame(); message(previous);
     view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
-    vi.useFakeTimers({ now: 4 * 60_000 });
+    vi.useFakeTimers({ now: Date.now() + 4 * 60_000 });
     view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(ensureSession).toHaveBeenCalledTimes(2);
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(ensureSession.mock.calls.length).toBeGreaterThan(2);
   });
-  it("ignores late claims and aborts their requests after deactivation", async () => {
+  it("ignores late claims while unfocused without destroying the transport lifetime", async () => {
     const normal = vi.mocked(fetch).getMockImplementation()!;
     let release!: (response: Response) => void; let signal: AbortSignal | undefined;
     vi.mocked(fetch).mockImplementation(async (url, init) => {
@@ -213,7 +221,7 @@ describe("shared Chrome-first surface", () => {
     });
     const view = mount(); await waitFor(() => expect(release).toBeTypeOf("function"));
     view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
-    expect(signal?.aborted).toBe(true);
+    expect(signal?.aborted).toBe(false);
     await act(async () => { release(Response.json({ ticket: "a".repeat(48), expiresAt: Date.now() + 60_000 })); });
     expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
   });
@@ -338,7 +346,7 @@ describe("long-lived browser viewer renewal", () => {
     expect(screen.getByText("Agent is working")).toBeTruthy();
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/browser-control") || String(url).endsWith("/browser-automation"))).toBe(false);
   });
-  it("aborts a pending replacement when hidden and ignores its late admission", async () => {
+  it("ignores a pending replacement while unfocused without reviving its late admission", async () => {
     const normal = vi.mocked(fetch).getMockImplementation()!;
     let release!: (response: Response) => void; let signal!: AbortSignal;
     vi.mocked(fetch).mockImplementation(async (url, init) => {
@@ -350,10 +358,19 @@ describe("long-lived browser viewer renewal", () => {
     const view = mount(); await flush(); message(frame());
     await advance(8 * 60_000); expect(release).toBeTypeOf("function");
     view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
-    expect(signal.aborted).toBe(true);
+    expect(signal.aborted).toBe(false);
     await act(async () => { release(Response.json({ ticket: "b".repeat(48), expiresAt: Date.now() + 60_000 })); });
     expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
     await advance(10 * 60_000); expect(claims).toBe(1);
+  });
+  it("does not reclaim admission in the background and renews expiry on return", async () => {
+    const view = mount(); await flush(); const previous = frame(); message(previous);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
+    await advance(8 * 60_000);
+    expect(claims).toBe(1); expect(frame()).toBe(previous); expect(previous.hasAttribute("inert")).toBe(true);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
+    await flush(); expect(claims).toBe(2); expect(frame()).not.toBe(previous);
+    expect(frame().hasAttribute("inert")).toBe(true);
   });
   it("defers stream replacement until an in-flight owner mutation settles", async () => {
     const normal = vi.mocked(fetch).getMockImplementation()!;
@@ -367,5 +384,47 @@ describe("long-lived browser viewer renewal", () => {
     await act(async () => { release(Response.json(ready)); });
     await advance(4000); expect(claims).toBe(2);
     expect(frame("desktop").hasAttribute("inert")).toBe(true);
+  });
+});
+
+
+describe("retained browser transport focus safety", () => {
+  it("does not start an initially unfocused surface until its first activation", async () => {
+    const view = mount({ active: false });
+    expect(calls).toHaveLength(0);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
+    const previous = await frame(); message(previous);
+    expect(ticketNumber).toBe(1);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
+    expect(await frame()).toBe(previous); expect(ticketNumber).toBe(1);
+  });
+  it("waits for fresh foreground authority before allowing input on the retained iframe", async () => {
+    const view = mount(); const previous = await frame(); message(previous);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
+    const normal = vi.mocked(fetch).getMockImplementation()!;
+    let release!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation((url, init) => String(url).endsWith("browser-status")
+      ? new Promise<Response>(resolve => { release = resolve; }) : normal(url, init));
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
+    expect(previous.hasAttribute("inert")).toBe(true);
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    await act(async () => { release(Response.json(ready)); });
+    await waitFor(() => expect(previous.hasAttribute("inert")).toBe(false));
+    expect(await frame()).toBe(previous); expect(ticketNumber).toBe(1);
+  });
+  it("discards a retained stream on runtime change while staying inactive", async () => {
+    const view = mount(); const previous = await frame(); message(previous);
+    view.rerender(<BrowserSurface gatewayUrl="https://app.matrix-os.com/vm/other" surface="browser" active={false} ensureSession={ensureSession} />);
+    expect(screen.queryByTitle("Chrome on your Matrix computer")).toBeNull();
+    expect(calls.some(call => call.url.includes("/vm/other/"))).toBe(false);
+  });
+  it("reacquires a stream lost in the background only when focused again", async () => {
+    const view = mount(); const previous = await frame(); message(previous);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active={false} ensureSession={ensureSession} />);
+    message(previous, { type: "matrix-browser-viewer", connected: false });
+    expect(ticketNumber).toBe(1);
+    view.rerender(<BrowserSurface gatewayUrl={gatewayUrl} surface="browser" active ensureSession={ensureSession} />);
+    expect(await frame()).not.toBe(previous); expect(ticketNumber).toBe(2);
   });
 });

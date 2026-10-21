@@ -14,6 +14,8 @@ function chrome() {
   let url = 'about:blank', handoff = false, snapshotId = '', skip = '', created = 0, downloadPath = '', downloads = false, navigationError = false, missingCursor = false, globalPrimaryAttachEvent = false;
   const missing = new Set<string>();
   let lookupError: { code: number; message: string } | undefined;
+  let cursorError = { code: -32000, message: "Could not find object with given id" };
+  let recoveryError = false;
   const original = Buffer.from('%PDF-1.4\noriginal CDP invoice fixture\n%%EOF');
   const messages: any[] = [];
   class Socket extends EventEmitter {
@@ -27,7 +29,11 @@ function chrome() {
         return;
       }
       if (missingCursor && packet.method === 'Runtime.callFunctionOn' && packet.params.functionDeclaration.startsWith('function MATRIX_CLEAR_CURSOR')) {
-        queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ id: packet.id, error: { code: -32000, message: 'Could not find object with given id' } }))));
+        queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ id: packet.id, error: cursorError }))));
+        return;
+      }
+      if (recoveryError && packet.method === 'Runtime.evaluate' && packet.params.expression.includes('MATRIX_CLEAR_CURSOR')) {
+        queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ id: packet.id, error: { code: -32000, message: 'private recovery failure' } }))));
         return;
       }
       if (packet.method === 'Browser.setDownloadBehavior') downloadPath = packet.params.downloadPath ?? '';
@@ -69,7 +75,7 @@ function chrome() {
   return { messages, fetcher, socketFactory: () => (socket = new Socket()), raw: (value: unknown) => socket.emit('message', Buffer.from(typeof value === 'string' ? value : JSON.stringify(value))), event: (method: string, params = {}, sessionId = 'agent-session') => socket.emit('message', Buffer.from(JSON.stringify({ method, params, sessionId }))),
     emitPrimaryAttachBeforeAck() { globalPrimaryAttachEvent = true; },
     setUrl(value: string) { url = value; }, setHandoff(value: boolean) { handoff = value; }, skip(value: string) { skip = value; }, enableDownloads() { downloads = true; return original; },
-    closeTarget(id: string) { missing.add(id); }, failLookup(error?: { code: number; message: string }) { lookupError = error; }, failNavigation() { navigationError = true; }, failCursor() { missingCursor = true; }, disconnect() { socket.close(); } };
+    closeTarget(id: string) { missing.add(id); }, failLookup(error?: { code: number; message: string }) { lookupError = error; }, failNavigation() { navigationError = true; }, failCursor(error?: { code: number; message: string }) { missingCursor = true; if (error) cursorError = error; }, failCursorRecovery() { recoveryError = true; }, disconnect() { socket.close(); } };
 }
 async function rig(commandTimeoutMs?:number) {
   const homePath = await mkdtemp(join(tmpdir(), 'shared-cdp-')); homes.push(homePath);
@@ -252,6 +258,33 @@ describe('shared owner Chrome CDP driver', () => {
     expect(fake.messages.some(row=>row.method==='Runtime.evaluate' && row.params.expression.includes('MATRIX_CLEAR_CURSOR'))).toBe(true);
     expect(fake.messages.filter(row=>row.method==='Runtime.callFunctionOn' && row.params.arguments?.[2]?.value==='click')).toHaveLength(1);
     fake.skip('');await driver.detach();
+  });
+  it('recovers cursor cleanup protocol failure through a fresh transport without replaying the action', async () => {
+    const { driver, fake, signal } = await rig();
+    const observed = await driver.execute({ action: 'snapshot' }, signal);
+    await driver.execute({ action: 'click', observationId: observed.observationId!, ref: 'r1' }, signal);
+    fake.failCursor({ code: -32000, message: 'Cannot find context with specified id' });
+    await expect(driver.detach()).resolves.toBeUndefined();
+    expect(fake.fetcher).toHaveBeenCalledTimes(2);
+    expect(fake.messages.some(row => row.method === 'Runtime.evaluate' && row.params.expression.includes('MATRIX_CLEAR_CURSOR'))).toBe(true);
+    expect(fake.messages.filter(row => row.method === 'Runtime.callFunctionOn' && row.params.arguments?.[2]?.value === 'click')).toHaveLength(1);
+  });
+  it('remains unavailable when fresh cursor cleanup is not acknowledged', async () => {
+    const { driver, fake, signal } = await rig();
+    const observed = await driver.execute({ action: 'snapshot' }, signal);
+    await driver.execute({ action: 'click', observationId: observed.observationId!, ref: 'r1' }, signal);
+    fake.failCursor({ code: -32000, message: 'Cannot find context with specified id' }); fake.failCursorRecovery();
+    await expect(driver.detach()).rejects.toMatchObject({ code: 'browser_unavailable' });
+    expect(fake.fetcher).toHaveBeenCalledTimes(2);
+    expect(fake.messages.filter(row => row.method === 'Runtime.callFunctionOn' && row.params.arguments?.[2]?.value === 'click')).toHaveLength(1);
+  });
+  it('logs only the CDP method and numeric code for a protocol failure', async () => {
+    const fake = chrome(); const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const client = await connectBrowserCdp(fake);
+    fake.failLookup({ code: -32000, message: 'private-url https://secret.example/?token=private-value' });
+    await expect(client.request('Target.getTargetInfo', { targetId: 'agent-tab' })).rejects.toMatchObject({ code: 'browser_unavailable' });
+    expect(warn).toHaveBeenCalledWith('[shared-browser] CDP protocol unavailable', 'Target.getTargetInfo', -32000);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private'); await client.close();
   });
   it('releases owner input after navigation invalidates the decorated document', async () => {
     const { driver, fake, signal } = await rig();

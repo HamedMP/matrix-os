@@ -17,8 +17,8 @@ describe('profile-preserving native experience upgrade', () => {
   });
   it('guards the exact preview and never reinstalls or restarts Chrome/VNC in an upgrade', async () => {
     const script = await readFile(new URL('../../scripts/spikes/browser-vps/update-experience.sh', import.meta.url), 'utf8');
-    expect(script).toContain('/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" guard "$1"');
-    expect(script).toContain('/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" install "$1"');
+    expect(script).toContain('/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" guard "$@"');
+    expect(script).toContain('/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" install "$@"');
     expect(script).not.toContain('LAB_NODE'); expect(script).not.toContain('/opt/matrix/runtime/node');
     expect(script.indexOf('native-experience.py" guard')).toBeLessThan(script.indexOf('apt-get update'));
     expect(script.indexOf('native-experience.py" guard')).toBeLessThan(script.indexOf('tar -C'));
@@ -29,8 +29,8 @@ describe('profile-preserving native experience upgrade', () => {
   });
   it('uses isolated system Python for newly shared privileged installer steps', async () => {
     const script = await readFile(new URL('../../scripts/spikes/browser-vps/install.sh', import.meta.url), 'utf8');
-    expect(script).toContain('/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" guard "$1"');
-    expect(script).toContain('/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" install "$1"');
+    expect(script).toContain('/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" guard "$@"');
+    expect(script).toContain('/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" install "$@"');
     expect(script).not.toMatch(/"\$LAB_NODE" "\$LAB_SOURCE\/(?:target-guard|native-experience-units)\.mjs"/);
   });
 });
