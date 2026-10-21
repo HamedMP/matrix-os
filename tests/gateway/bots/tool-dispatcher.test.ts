@@ -74,9 +74,9 @@ describe("bot tool dispatcher", () => {
       args: { relPath: "attachment.bin", chunk: { offset, length: 32768, sha256: hash } } });
     await expect(tools.dispatch(binding, read("attachment.bin"), signal)).rejects.toMatchObject({ code: "invalid_arguments" });
     await expect(tools.dispatch(binding, chunkRead(bytes.length + 1), signal)).rejects.toMatchObject({ code: "invalid_arguments" });
-    await expect(tools.dispatch(binding, chunkRead(0, "0".repeat(64)), signal)).rejects.toMatchObject({ code: "stale_generation" });
+    await expect(tools.dispatch(binding, chunkRead(0, "0".repeat(64)), signal)).rejects.toMatchObject({ code: "artifact_digest_mismatch" });
     await writeFile(path, Buffer.alloc(bytes.length, 0x92));
-    await expect(tools.dispatch(binding, chunkRead(), signal)).rejects.toMatchObject({ code: "stale_generation" });
+    await expect(tools.dispatch(binding, chunkRead(), signal)).rejects.toMatchObject({ code: "artifact_digest_mismatch" });
     await writeFile(path, Buffer.alloc(1024 * 1024 + 1));
     await expect(tools.dispatch(binding, chunkRead(), signal)).rejects.toMatchObject({ code: "invalid_arguments" });
     await rm(path);
