@@ -38,18 +38,21 @@ export const mocks = {
   fetchCollaborationInbox: jest.fn(),
 };
 
+type ScreenNavigation = { navigation: { getState: () => DrawerState } };
+
 interface DrawerProps {
   children: ReactNode;
-  screenOptions?: Record<string, unknown>;
-  screenListeners?: (props: { navigation: { getState: () => DrawerState } }) => DrawerListeners;
+  screenOptions?: Record<string, unknown> | ((props: ScreenNavigation) => Record<string, unknown>);
+  screenListeners?: (props: ScreenNavigation) => DrawerListeners;
   drawerContent?: (props: unknown) => ReactNode;
 }
 
 /** Stands in for `expo-router/drawer`: records the navigator's props and renders the panel. */
 export function drawerModule() {
   function Drawer({ children, screenOptions, screenListeners, drawerContent }: DrawerProps) {
-    drawer.options = screenOptions;
-    drawer.listeners = screenListeners?.({ navigation: { getState: () => drawer.state } });
+    const screen: ScreenNavigation = { navigation: { getState: () => drawer.state } };
+    drawer.options = typeof screenOptions === "function" ? screenOptions(screen) : screenOptions;
+    drawer.listeners = screenListeners?.(screen);
     return createElement(
       Fragment,
       null,
