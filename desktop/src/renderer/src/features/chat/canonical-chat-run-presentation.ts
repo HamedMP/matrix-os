@@ -1,4 +1,4 @@
-import { projectChatSubagent, canonicalChatToolDetail, canonicalReviewedAgentFailure } from "@matrix-os/contracts";
+import { projectChatSubagent, canonicalChatToolDetail, canonicalChatToolActivityState, canonicalReviewedAgentFailure } from "@matrix-os/contracts";
 import type { CanonicalChatRun, CanonicalChatRunActivity } from "@matrix-os/contracts";
 import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
 import type {
@@ -54,18 +54,6 @@ function isDuplicateProviderModelStatus(
   return activity.kind === "phase"
     && activity.label === "Working"
     && [activity.summary, activity.preview].some((value) => value?.trim().toLowerCase() === expected);
-}
-
-function activityState(
-  status:
-    | Extract<CanonicalChatRunActivity, { type: "tool.progress" }>["status"]
-    | Extract<CanonicalChatRunActivity, { type: "agent.activity" }>["status"],
-): ConversationActivityPresentation["state"] {
-  if (status === "failed") return "failed";
-  if (status === "cancelled") return "stopped";
-  if (status === "partial") return "partial";
-  if (status === "completed") return "completed";
-  return "running";
 }
 
 function isGenericThinkingPlaceholder(item: ConversationWorkPresentation): boolean {
@@ -171,7 +159,8 @@ export function runPresentation(
       }
       setBounded(agentActivities, activity.activityId, activity, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "tool.output") {
-      const output = toolOutput.get(activity.toolCallId) ?? [];
+      // Managed Pi emits authoritative snapshots; other providers append chunks.
+      const output = run.driverKind === "matrix_pi" || run.driverKind === "matrix_bot" ? [] : toolOutput.get(activity.toolCallId) ?? [];
       output.push(activity.truncated ? `${activity.text}\nOutput was truncated for display.` : activity.text);
       setBounded(toolOutput, activity.toolCallId, output, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "assistant.delta") {
@@ -243,7 +232,7 @@ export function runPresentation(
         activities: [{
           id: activity.subagent ? activity.activityId : activity.id,
           kind: activity.kind,
-          state: activityState(activity.status),
+          state: canonicalChatToolActivityState(run, activity.status),
           label: activity.label,
           ...(activity.subagent ? { subagent: projectChatSubagent(activity.subagent, run.status) } : {}),
           ...(activity.preview ? {
@@ -267,7 +256,7 @@ export function runPresentation(
       activities: [{
         id: activity.id,
         kind: "tool",
-        state: activityState(activity.status),
+        state: canonicalChatToolActivityState(run, activity.status),
         label: activity.label,
         ...(detail ? { detail, preview: detail, previewKind: "text" as const } : {}),
       }],

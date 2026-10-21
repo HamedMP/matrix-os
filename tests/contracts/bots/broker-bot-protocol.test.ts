@@ -79,7 +79,7 @@ describe("bot broker tool contracts", () => {
     expect(BotToolResultSchema.parse({ ok: false, code: "not_granted" }).ok).toBe(false);
     expect(BotToolResultSchema.safeParse({ ok: false, code: "not_granted", message: "postgres said no" }).success).toBe(false);
     expect(BotToolErrorCodeSchema.options).toEqual([
-      "denied", "not_granted", "approval_required", "invalid_arguments", "unavailable", "timeout", "budget_exhausted", "stale_generation",
+      "denied", "not_granted", "approval_required", "invalid_arguments", "artifact_digest_mismatch", "unavailable", "timeout", "budget_exhausted", "stale_generation",
     ]);
   });
 });

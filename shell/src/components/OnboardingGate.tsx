@@ -72,6 +72,7 @@ function OnboardingGateInner({
         handoffStartedAt={handoffStartedAt}
       >
         <BootSequence
+          billingGateActive
           platformSessionActive={platformSessionActive}
           e2eBypass={e2eBypass}
           completionRedirect={
