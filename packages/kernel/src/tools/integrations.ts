@@ -8,7 +8,7 @@ import { wrapExternalContent } from "../security/external-content.js";
 import { GATEWAY_BASE, API_TIMEOUT_MS, ACTION_TIMEOUT_MS, gatewayAuthHeaders as authHeaders,
   textResult, errorResult, defaultFetcher, type GatewayFetcher, type ToolResult } from "./integration-gateway.js";
 export { gatewayAuthHeaders, type GatewayFetcher, type GatewayFetchResponse } from "./integration-gateway.js";
-export { ConnectServiceInputSchema, connectServiceHandler, getGmailConnectionOptionsHandler,
+export { ConnectServiceInputSchema, connectServiceHandler, getGmailConnectionOptionsHandler, getConnectionAttemptHandler, ConnectionAttemptInputSchema,
   type ConnectServiceInput } from "./integration-connections.js";
 
 interface ConnectedServiceInventoryItem {

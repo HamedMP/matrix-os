@@ -7,10 +7,8 @@ const coreDiscovery = ["list_services", "search_tools", "describe_tool"];
 const coreCall = [...coreDiscovery, "call_tool", "get_approval"];
 const fullBaseline = [
   "list_integration_inventory", "list_connected_services", "describe_service",
-  "connect_service", "sync_services", "call_service", "disconnect_service",
+  "get_gmail_connection_options", "get_connection_attempt", "connect_service", "sync_services", "call_service", "disconnect_service",
   ...customDiscovery, "call_custom_mcp_tool", ...coreCall, "jev_evaluate",
-  "get_gmail_connection_options", "connect_service", "sync_services", "call_service", "disconnect_service",
-  ...customDiscovery, "call_custom_mcp_tool", "jev_evaluate",
   "list_chat_agent_options", "create_chat_agent",
 ];
 

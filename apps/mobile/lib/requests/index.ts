@@ -61,6 +61,7 @@ export {
 } from "./files";
 export {
   createIntegrationConnectUrl,
+  fetchIntegrationConnectionAttempt,
   deleteIntegrationConnection,
   fetchAvailableIntegrations,
   fetchConnectedIntegrations,

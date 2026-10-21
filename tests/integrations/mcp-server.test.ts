@@ -50,6 +50,16 @@ describe("Matrix integrations MCP server", () => {
       expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual(options);
     } finally { await client.close(); await server.close(); }
   });
+  it('reaches exact receipt metadata through the full owner tool', async () => {
+    const id = '123e4567-e89b-42d3-a456-426614174000';
+    const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response(200, { status: 'expired', token: 'private' }));
+    const { client, server } = await connect(fetcher);
+    try {
+      const result = await client.callTool({ name: 'get_connection_attempt', arguments: { attempt_id: id } });
+      expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ status: 'expired' });
+      expect(fetcher.mock.calls[0]![0]).toContain('/gmail/pipedream/attempts/' + id);
+    } finally { await client.close(); await server.close(); }
+  });
 
 
   it("exposes only bounded Drive discovery and one read action on shared Preview", async () => {
@@ -147,6 +157,7 @@ describe("Matrix integrations MCP server", () => {
       "list_connected_services",
       "describe_service",
       "get_gmail_connection_options",
+      "get_connection_attempt",
       "connect_service",
       "sync_services",
       "call_service",

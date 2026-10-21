@@ -11,7 +11,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import { useFocusEffect, useRouter } from "expo-router";
 
-import { hasCompletedIntegrationConnection, type IntegrationConnectionSnapshot } from "@matrix-os/contracts";
+import { hasCompletedIntegrationConnection, isCompletedIntegrationAttempt, type IntegrationConnectionSnapshot } from "@matrix-os/contracts";
 import { buildIntegrationSections, integrationDescription, integrationAuthType, type GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
 import GithubIcon from "@hugeicons/core-free-icons/GithubIcon";
 import { SettingsRow } from "@/components/settings/SettingsSurface";
@@ -51,6 +51,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
     isError,
     startConnection,
     gmailConnectionOptions,
+    readConnectionAttempt,
     syncConnections,
     connectingServiceId: startingServiceId,
     refresh,
@@ -64,8 +65,18 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   const connectInFlight = useRef(false);
   const [gmailChoice, setGmailChoice] = useState<GmailChoiceState | null>(null);
   const gmailAttempt = useRef(0);
+  const receiptId = useRef<string | null>(null);
+  const receiptReader = useRef(readConnectionAttempt);
+  const refreshRef = useRef(refresh);
+  const connectedRef = useRef(connected);
+  useEffect(() => {
+    receiptReader.current = readConnectionAttempt;
+    refreshRef.current = refresh;
+    connectedRef.current = connected;
+  }, [readConnectionAttempt, refresh, connected]);
   useEffect(() => {
     gmailAttempt.current += 1;
+    receiptId.current = null;
     connectInFlight.current = false;
     setGmailChoice(null);
     setConnectingServiceId(null);
@@ -81,11 +92,14 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   const connectIntegration = async (service: IntegrationService, connectionMethod?: GmailConnectionMethod) => {
     if (connectingServiceId || startingServiceId || connectInFlight.current) return;
     connectInFlight.current = true;
-    const attempt = gmailAttempt.current;
+    const attempt = ++gmailAttempt.current;
     setConnectionError(null);
     previousConnections.current = connected.map(connection => ({ ...connection }));
     try {
-      const url = await (connectionMethod ? startConnection(service.id, { connectionMethod }) : startConnection(service.id));
+      receiptId.current = null;
+      const url = await (service.id === "gmail" ? startConnection(service.id, { ...(connectionMethod ? { connectionMethod } : {}),
+        onAttempt: id => { if (gmailAttempt.current === attempt) receiptId.current = id; },
+      }) : startConnection(service.id));
       if (gmailAttempt.current !== attempt) return;
       setConnectingServiceId(service.id);
       noteConnectAppsSignIn(openedFrom);
@@ -102,6 +116,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
 
   const cancelGmailChoice = () => {
     gmailAttempt.current += 1;
+    receiptId.current = null;
     connectInFlight.current = false;
     setGmailChoice(null);
   };
@@ -137,7 +152,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   );
 
   useEffect(() => {
-    if (!connectingServiceId) return;
+    if (!connectingServiceId || receiptId.current) return;
     const connectedAfterStart = hasCompletedIntegrationConnection(
       previousConnections.current, connectingServiceId, connected,
     );
@@ -147,16 +162,28 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   useEffect(() => {
     if (!connectingServiceId) return;
     let cancelled = false;
+    const attempt = gmailAttempt.current;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
     const sync = async () => {
       if (cancelled || syncInFlight.current || AppState.currentState !== "active") return;
       syncInFlight.current = true;
       try {
-        await syncConnectionsRef.current();
+        if (receiptId.current) {
+          const receipt = await receiptReader.current(receiptId.current);
+          if (cancelled || gmailAttempt.current !== attempt) return;
+          if (receipt.status === "failed" || receipt.status === "expired") throw new Error("Connection unavailable");
+          if (receipt.status === "succeeded") {
+            await refreshRef.current();
+            if (!cancelled && gmailAttempt.current === attempt && isCompletedIntegrationAttempt(receipt, connectingServiceId, connectedRef.current)) setConnectingServiceId(null);
+          }
+        } else await syncConnectionsRef.current();
       } catch (error: unknown) {
         // The next poll retries; a delayed provider account is expected during OAuth.
         console.warn("[mobile] integrations poll sync failed", error instanceof Error ? error.name : "unknown");
+        if (receiptId.current && !cancelled && gmailAttempt.current === attempt) {
+          setConnectingServiceId(null); setConnectionError("Could not confirm connection. Try connecting again.");
+        }
       } finally {
         syncInFlight.current = false;
       }
@@ -170,7 +197,11 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
     const appStateSubscription = AppState.addEventListener("change", (state) => {
       if (state === "active") void sync();
     });
-    const timeout = setTimeout(() => setConnectingServiceId(null), 120_000);
+    const timeout = setTimeout(() => {
+      if (cancelled || gmailAttempt.current !== attempt) return;
+      if (receiptId.current) setConnectionError("Could not confirm connection. Try connecting again.");
+      setConnectingServiceId(null);
+    }, 120_000);
     schedulePoll();
 
     return () => {

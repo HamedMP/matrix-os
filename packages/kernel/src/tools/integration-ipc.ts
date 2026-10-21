@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import {
-  connectServiceHandler, getGmailConnectionOptionsHandler, ConnectServiceInputSchema,
+  connectServiceHandler, getGmailConnectionOptionsHandler, getConnectionAttemptHandler, ConnectionAttemptInputSchema, ConnectServiceInputSchema,
   callServiceHandler, describeServiceHandler, disconnectServiceHandler,
   listIntegrationInventoryHandler, listConnectedServicesHandler, syncServicesHandler,
   listCustomMcpServersHandler, describeCustomMcpServerHandler, callCustomMcpToolHandler,
@@ -27,6 +27,13 @@ export function createIntegrationIpcTools(tool: typeof import("@anthropic-ai/cla
         "Discover the authenticated owner's available Gmail connection methods before connecting. Honor the user's explicit Matrix or Pipedream choice.",
         {},
         async () => getGmailConnectionOptionsHandler(),
+      ),
+
+      tool(
+        "get_connection_attempt",
+        "Check the exact Gmail consent receipt returned by connect_service. Pending, expired or failed receipts must not be replaced with inventory-based completion.",
+        ConnectionAttemptInputSchema.shape,
+        input => getConnectionAttemptHandler(input),
       ),
 
       tool(

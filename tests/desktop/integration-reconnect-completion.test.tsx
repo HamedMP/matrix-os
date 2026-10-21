@@ -35,3 +35,34 @@ it.each([
   await waitFor(() => expect(screen.queryByText(/waiting for|Still waiting|Not connected yet/i)).toBeNull());
   expect(api.post).toHaveBeenCalledWith("/api/integrations/sync", {});
 });
+
+it.each(['pending', 'expired', 'unavailable'])('never substitutes account availability for a %s receipt', async receiptState => {
+  const attemptId = '123e4567-e89b-42d3-a456-426614174000';
+  const get = vi.fn(async (path: string) => path.endsWith('/available') ? [{ id: 'gmail', name: 'Gmail', category: 'google' }]
+    : path.endsWith('/connection-options') ? { methods: ['pipedream'], defaultMethod: 'pipedream' }
+    : path.includes('/attempts/') ? receiptState === 'unavailable' ? { error: 'unavailable' } : { status: receiptState } : [account]);
+  const post = vi.fn(async (path: string) => path.endsWith('/connect') ? { url: 'https://pipedream.com/connect', service: 'gmail', attemptId }
+    : { synced: 1, services: [{ ...account, connected_at: '2099-01-01' }] });
+  const api = { get, post } as unknown as ApiClient;
+  useConnection.setState({ status: 'signed-in', handle: 'operator', api: api as never });
+  render(<IntegrationsSettingsSection pollIntervals={[60_000]} />);
+  fireEvent.click(await screen.findByTestId('integration-connect-gmail'));
+  await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledOnce());
+  fireEvent.click(await screen.findByRole('button', { name: /I've connected/i }));
+  await waitFor(() => expect(get).toHaveBeenCalledWith('/api/integrations/gmail/pipedream/attempts/' + attemptId));
+  expect(post.mock.calls.every(([path]) => !path.endsWith('/sync'))).toBe(true);
+});
+it('completes the exact receipt account even when its active metadata is unchanged', async () => {
+  const attemptId = '123e4567-e89b-42d3-a456-426614174000';
+  const api = {
+    get: vi.fn(async (path: string) => path.endsWith('/available') ? [{ id: 'gmail', name: 'Gmail', category: 'google' }]
+      : path.endsWith('/connection-options') ? { methods: ['pipedream'], defaultMethod: 'pipedream' }
+      : path.includes('/attempts/') ? { status: 'succeeded', accountId: account.id } : [account]),
+    post: vi.fn(async () => ({ url: 'https://pipedream.com/connect', service: 'gmail', attemptId })),
+  } as unknown as ApiClient;
+  useConnection.setState({ status: 'signed-in', handle: 'operator', api: api as never });
+  render(<IntegrationsSettingsSection pollIntervals={[10]} />);
+  fireEvent.click(await screen.findByTestId('integration-connect-gmail'));
+  await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledOnce());
+  await waitFor(() => expect(screen.queryByRole('button', { name: /I've connected/i })).toBeNull());
+});

@@ -8,6 +8,7 @@ import {
   fetchAvailableIntegrations,
   fetchConnectedIntegrations,
   fetchGmailConnectionOptions,
+  fetchIntegrationConnectionAttempt,
   type IntegrationConnectOptions,
   mobileQueryKeys,
   refreshIntegrationConnection,
@@ -110,6 +111,11 @@ export function useComputerIntegrations() {
     gmailConnectionOptions: async () => {
       if (!computer) throw new Error("Could not load Gmail connection options. Try again.");
       return fetchGmailConnectionOptions(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+    },
+    readConnectionAttempt: async (attemptId: string) => {
+      const token = await getToken();
+      if (!token || !computer) throw new Error("Could not confirm connection. Try connecting again.");
+      return fetchIntegrationConnectionAttempt(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, attemptId);
     },
     startConnection: (serviceId: string, options?: IntegrationConnectOptions) => startConnectionMutation.mutateAsync({ serviceId, options }),
     syncConnections: () => syncMutation.mutateAsync(),
