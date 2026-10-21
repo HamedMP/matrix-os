@@ -14,6 +14,17 @@ const json = (value: unknown, status = 200) => Response.json(value, { status });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('bounded Google owner consent settings client', () => {
+  it.each([500, 401, 200])('cancels unread rejected/non-JSON bodies (status=%s)', async status => {
+    const cancel = vi.fn(); const response = new Response(new ReadableStream({ cancel }), { status });
+    await expect(createGoogleOwnerConsentClient(async () => response).disclosures('owner-one', accountId)).rejects.toBeDefined();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+  it('cancels headers arriving after owner cancellation', async () => {
+    const controller = new AbortController(); const cancel = vi.fn(); let finish!: (r: Response) => void;
+    const pending = createGoogleOwnerConsentClient(() => new Promise<Response>(r => { finish = r; })).disclosures('owner-one', accountId, controller.signal);
+    const rejected = expect(pending).rejects.toBeDefined(); controller.abort(); await rejected;
+    finish(new Response(new ReadableStream({ cancel }))); await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+  });
   it('uses exact fixed paths, verified transport owner, and strict accepted CAS payload', async () => {
     const transport = vi.fn<BotIntegrationTransport>(async (_owner, r) => r.method === 'GET' ? json({ profiles: [notice()] }) : json({ consentRevision: 1, consentActive: true }));
     const client = createGoogleOwnerConsentClient(transport);
