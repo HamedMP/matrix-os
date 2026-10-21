@@ -1,4 +1,5 @@
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
+import { createGoogleBrokerRuntime } from './google-data.js';
 import { createHash } from "node:crypto";
 import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
 import { readReleaseInfo } from "../system-info.js";
@@ -323,6 +324,8 @@ export async function startBots(options: {
   saveSweepTimer.unref();
 
   const registry = new BotRuntimeRegistry();
+  const googleData = await createGoogleBrokerRuntime({ database: options.repository.kysely, registry,
+    ...(options.integrations ? { transport: options.integrations } : {}) });
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
     registry, profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
@@ -414,6 +417,7 @@ export async function startBots(options: {
     events: { publish: (binding, event) => isManagedPiBinding(binding) ? managed.events.publish(binding, event) : orchestrator.eventSink.publish(binding, event) },
     tools: qualifiedTools,
     inference: {
+      googleData: googleData.inference,
       ...(isolatedChat ? { isolatedChat } : {}),
       ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
@@ -435,6 +439,7 @@ export async function startBots(options: {
   brokerTool = actions.callTool;
   forgetRun = (runId) => actions.forgetRun(runId);
   const unregister = registerBotBroker(host, actions);
+  googleData.start();
   const adapter = createMatrixBotChatProviderAdapter({
     orchestrator,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
@@ -469,6 +474,7 @@ export async function startBots(options: {
       await reconciler.stop();
       await nativeTasks?.close();
       await managed.close();
+      await googleData.close();
     },
   };
 }
