@@ -33,6 +33,7 @@ describe('Google policy broker composition', () => {
     ({ db } = await createAuthorityFixture()); registry.bind(binding);
     runtime = await createGoogleBrokerRuntime({ database: db.sql, registry });
     runtime.start();
+    await expect(runtime.assertToolEgressAllowed(binding, new AbortController().signal)).resolves.toBeUndefined();
     const request = { phase: 'dispatch' as const, binding, identity: null, signal: new AbortController().signal };
     expect(await runtime.inference.authorize(request)).toEqual({ allowed: true, googleOrigin: false });
     const deadline = new Date(Date.now() + 60000).toISOString();
@@ -40,6 +41,7 @@ describe('Google policy broker composition', () => {
       googleAccountId: '123e4567-e89b-42d3-a456-426614174000', consentId: 'source_one', profileId: 'source_one',
       profileRevision: 1, purposeId: 'mail-assistance', expiresAt: deadline, retentionDeadline: deadline });
     expect(await runtime.inference.authorize(request)).toEqual({ allowed: false });
+    await expect(runtime.assertToolEgressAllowed(binding, new AbortController().signal)).rejects.toThrow("Tool unavailable");
     await runtime.close();
     // Closing processing resources never destroys the owner's injected database.
     expect((await db.repository.listReviewedProfiles(binding.ownerId))).toEqual([]);

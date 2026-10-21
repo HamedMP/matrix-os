@@ -11,6 +11,7 @@ import { GoogleInferenceIdentitySchema } from '../google-data/runtime/profile-re
 import { googleInferenceIdentity, type GoogleDataInferenceAuthority, type GoogleInferenceIdentity } from '../google-data/runtime/inference-policy.js';
 import { createGoogleCollectionClient, GoogleCollectionClientError, type GoogleCollectionClientDependencies } from '../google-data/runtime/collection-client.js';
 import { createGoogleOwnerConsentClient } from '../google-data/runtime/owner-consent-client.js';
+import { createGoogleToolEgressGuard } from '../google-data/runtime/tool-egress.js';
 
 /** Owner database composition only. Missing platform transport denies classified
  * Google work. No profiles, consent or classification are invented at startup;
@@ -44,6 +45,7 @@ export async function createGoogleBrokerRuntime<DB>(options: {
     inspect: (...args: Parameters<typeof contexts.inspect>) => trackedDatabase(() => contexts.inspect(...args)),
     mark: (input: Parameters<typeof contexts.mark>[0]) => trackedDatabase(() => contexts.mark(input)),
   };
+  const toolEgress = createGoogleToolEgressGuard({ registry: options.registry, contexts: collectionContexts });
   const observed = new Map<string, { binding: PiRuntimeBinding; identity: GoogleInferenceIdentity; signal: AbortSignal; expiresAt: number }>(); // <=64; TTL/LRU eviction and shutdown clear.
   const live = (binding: PiRuntimeBinding) => {
     if (closed) return null;
@@ -99,6 +101,7 @@ export async function createGoogleBrokerRuntime<DB>(options: {
     /** Server-only observation, never profile approval or a replacement for a
      * fresh credential read/revalidation before collection. No credential value. */
     observedIdentity,
+    assertToolEgressAllowed: (binding: PiRuntimeBinding, signal: AbortSignal) => toolEgress.assertAllowed(binding, AbortSignal.any([signal, closing.signal])),
     /** Server-only. Caller must provide an authenticated affirmative owner interaction;
      * a model permission default is not consent. No token or credential is returned. */
     async prepareCollection(binding: PiRuntimeBinding, accountUUID: string, signal: AbortSignal,
