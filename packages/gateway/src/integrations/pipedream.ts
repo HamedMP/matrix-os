@@ -1,3 +1,5 @@
+import { createGuardedPipedreamGmailRequest } from "./pipedream-gmail-request.js";
+import type { BeforeGmailSend } from "./gmail-send-admission.js";
 import { createBoundedFinanceAction } from "./finance-write-request.js";
 import { createBoundedManagedAction } from "./bounded-managed-action.js";
 import { collectPipedreamPages } from "./pipedream-pagination.js";
@@ -50,7 +52,7 @@ export interface PipedreamConnectClient {
     url: string;
     body: Record<string, unknown>;
     headers?: Record<string, string>;
-  }): Promise<unknown>;
+  }, beforeSend?: BeforeGmailSend): Promise<unknown>;
 
   discoverActions(appSlug: string): Promise<DiscoveredAction[]>;
 
@@ -66,7 +68,7 @@ export interface PipedreamConnectClient {
     url: string;
     params?: Record<string, string>;
     headers?: Record<string, string>;
-  }): Promise<unknown>;
+  }, beforeSend?: BeforeGmailSend): Promise<unknown>;
 
   proxyPost(opts: {
     externalUserId: string;
@@ -74,7 +76,7 @@ export interface PipedreamConnectClient {
     url: string;
     body?: Record<string, unknown>;
     headers?: Record<string, string>;
-  }): Promise<unknown>;
+  }, beforeSend?: BeforeGmailSend): Promise<unknown>;
 
   proxyPut(opts: {
     externalUserId: string;
@@ -82,7 +84,7 @@ export interface PipedreamConnectClient {
     url: string;
     body?: Record<string, unknown>;
     headers?: Record<string, string>;
-  }): Promise<unknown>;
+  }, beforeSend?: BeforeGmailSend): Promise<unknown>;
 
   proxyPatch(opts: {
     externalUserId: string;
@@ -90,7 +92,7 @@ export interface PipedreamConnectClient {
     url: string;
     body?: Record<string, unknown>;
     headers?: Record<string, string>;
-  }): Promise<unknown>;
+  }, beforeSend?: BeforeGmailSend): Promise<unknown>;
 
   proxyDelete(opts: {
     externalUserId: string;
@@ -98,7 +100,7 @@ export interface PipedreamConnectClient {
     url: string;
     params?: Record<string, string>;
     headers?: Record<string, string>;
-  }): Promise<unknown>;
+  }, beforeSend?: BeforeGmailSend): Promise<unknown>;
 
   revokeAccount(accountId: string): Promise<void>;
 
@@ -157,6 +159,8 @@ export async function createPipedreamClient(
     projectEnvironment: normalizePipedreamProjectEnvironment(config.environment),
   });
   const coalesceRead = createReadCoalescer();
+  const guardedGmail = createGuardedPipedreamGmailRequest({ projectId: config.projectId,
+    environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken });
   const boundedFinanceAction = createBoundedFinanceAction({ projectId: config.projectId,
     environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken });
   const boundedManagedAction = createBoundedManagedAction({ projectId: config.projectId,
@@ -182,13 +186,13 @@ export async function createPipedreamClient(
       assertLegacyInput(input);
       return readDriveFile(input);
     },
-    async boundedGmailLabels(input, signal) {
+    async boundedGmailLabels(input, signal, beforeSend) {
       assertLegacyInput(input);
-      return boundedGmailLabels(input, signal);
+      return boundedGmailLabels(input, signal, beforeSend);
     },
-    async boundedGmailGet(input, signal) {
+    async boundedGmailGet(input, signal, beforeSend) {
       assertLegacyInput(input);
-      return boundedGmailGet(input, signal);
+      return boundedGmailGet(input, signal, beforeSend);
     },
     async createConnectToken(externalUserId: string, redirects) {
       const response = await sdk.tokens.create(
@@ -232,8 +236,9 @@ export async function createPipedreamClient(
       return `${connectLinkUrl}${separator}app=${encodeURIComponent(app)}`;
     },
 
-    async callAction(opts) {
+    async callAction(opts, beforeSend) {
       assertLegacyAccountId(opts.accountId);
+      if (beforeSend) return guardedGmail(opts, "POST", beforeSend);
       const result = await sdk.proxy.post(
         {
           url: opts.url,
@@ -278,8 +283,9 @@ export async function createPipedreamClient(
       };
     },
 
-    async proxyGet(opts) {
+    async proxyGet(opts, beforeSend) {
       assertLegacyAccountId(opts.accountId);
+      if (beforeSend) return guardedGmail(opts, "GET", beforeSend);
       return coalesceRead(proxyReadKey(opts), () => (sdk.proxy as any).get(
         {
           url: opts.url,
@@ -292,8 +298,9 @@ export async function createPipedreamClient(
       ));
     },
 
-    async proxyPost(opts) {
+    async proxyPost(opts, beforeSend) {
       assertLegacyAccountId(opts.accountId);
+      if (beforeSend) return guardedGmail(opts, "POST", beforeSend);
       const result = await (sdk.proxy as any).post(
         {
           url: opts.url,
@@ -307,8 +314,9 @@ export async function createPipedreamClient(
       return result;
     },
 
-    async proxyPut(opts) {
+    async proxyPut(opts, beforeSend) {
       assertLegacyAccountId(opts.accountId);
+      if (beforeSend) return guardedGmail(opts, "PUT", beforeSend);
       const result = await (sdk.proxy as any).put(
         {
           url: opts.url,
@@ -322,8 +330,9 @@ export async function createPipedreamClient(
       return result;
     },
 
-    async proxyPatch(opts) {
+    async proxyPatch(opts, beforeSend) {
       assertLegacyAccountId(opts.accountId);
+      if (beforeSend) return guardedGmail(opts, "PATCH", beforeSend);
       const result = await (sdk.proxy as any).patch(
         {
           url: opts.url,
@@ -337,8 +346,9 @@ export async function createPipedreamClient(
       return result;
     },
 
-    async proxyDelete(opts) {
+    async proxyDelete(opts, beforeSend) {
       assertLegacyAccountId(opts.accountId);
+      if (beforeSend) return guardedGmail(opts, "DELETE", beforeSend);
       // Pipedream's ProxyDeleteRequest accepts URL + query params (no body),
       // matching standard REST DELETE semantics. If a target API needs a
       // DELETE-with-body (rare; e.g. some Elasticsearch endpoints), use

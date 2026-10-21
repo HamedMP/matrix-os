@@ -1,3 +1,4 @@
+import { admitGmailSend, type BeforeGmailSend } from "./gmail-send-admission.js";
 import { z } from "zod/v4";
 import { JevInboxGmailIdSchema } from "@matrix-os/contracts";
 
@@ -50,10 +51,10 @@ export function createBoundedPipedreamGet(options: {
   environment: "development" | "production";
   getAccessToken: () => Promise<string>;
   fetcher?: (url: string, init: RequestInit) => Promise<Response>;
-}): (input: unknown, callerSignal?: AbortSignal) => Promise<unknown> {
+}): (input: unknown, callerSignal?: AbortSignal, beforeSend?: BeforeGmailSend) => Promise<unknown> {
   const projectId = z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/).parse(options.projectId);
   const environment = z.enum(["development", "production"]).parse(options.environment);
-  return async (rawInput, callerSignal) => {
+  return async (rawInput, callerSignal, beforeSend) => {
     const input = BoundedGmailReadSchema.parse(rawInput);
     callerSignal?.throwIfAborted();
     const signal = callerSignal ? AbortSignal.any([callerSignal, AbortSignal.timeout(10_000)])
@@ -87,7 +88,7 @@ export function createBoundedPipedreamGet(options: {
     let response: Response;
     try {
       const token = await withinDeadline(() => options.getAccessToken(), signal);
-      signal.throwIfAborted();
+      await withinDeadline(() => admitGmailSend(signal, beforeSend), signal);
       response = await withinDeadline(() => (options.fetcher ?? fetch)(url.href, {
         method: "GET", redirect: "error", signal,
         headers: { Authorization: `Bearer ${token}`, "x-pd-environment": environment, Accept: "application/json" },

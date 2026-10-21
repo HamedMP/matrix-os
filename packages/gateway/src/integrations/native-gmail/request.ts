@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import { boundedOperation } from '../../bounded-operation.js';
+import { admitGmailSend, type BeforeGmailSend } from '../gmail-send-admission.js';
 
 export const NATIVE_GMAIL_ACCOUNT = /^gmail_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function isNativeGmailAccount(id: string): boolean { return id.startsWith('gmail_'); }
@@ -27,8 +28,13 @@ const queryKeys = new Set(['q', 'maxResults', 'pageToken', 'labelIds', 'startHis
 const Attachment = z.object({ size: z.number().int().min(0).max(1024 * 1024), data: z.string().max(1398104).regex(/^[A-Za-z0-9_-]*={0,2}$/) });
 
 export function gmailTarget(input: NativeGmailRequest, method: string): URL {
-  if (!identity.safeParse(input.externalUserId).success || !NATIVE_GMAIL_ACCOUNT.test(input.accountId)
-    || input.url.length > 8192 || /\/(?:\.|%2e)/i.test(input.url) || input.headers && Object.keys(input.headers).length) {
+  if (!NATIVE_GMAIL_ACCOUNT.test(input.accountId)) throw new NativeGmailRequestError();
+  return gmailApiTarget(input, method);
+}
+/** Shared fixed Gmail API boundary; each transport independently validates its account identity. */
+export function gmailApiTarget(input: Omit<NativeGmailRequest, 'accountId'>, method: string): URL {
+  if (!identity.safeParse(input.externalUserId).success || input.url.length > 8192
+    || /\/(?:\.|%2e)/i.test(input.url) || input.headers && Object.keys(input.headers).length) {
     throw new NativeGmailRequestError();
   }
   const target = new URL(input.url);
@@ -53,7 +59,7 @@ function cancel(body: ReadableStream<Uint8Array> | ReadableStreamDefaultReader<U
 
 /** End-to-end deadline includes credential resolution, fetch, and streamed bytes. No implicit retries. */
 export function createNativeGmailRequest(options: { oauth: GmailTokenSource; fetcher?: typeof fetch }) {
-  return async (input: NativeGmailRequest, method: string, maxBytes = 2 * 1024 * 1024, callerSignal?: AbortSignal): Promise<unknown> => {
+  return async (input: NativeGmailRequest, method: string, maxBytes = 2 * 1024 * 1024, callerSignal?: AbortSignal, beforeSend?: BeforeGmailSend): Promise<unknown> => {
     let target: URL;
     try { target = gmailTarget(input, method); }
     catch (error) {
@@ -67,43 +73,50 @@ export function createNativeGmailRequest(options: { oauth: GmailTokenSource; fet
     if (body && Buffer.byteLength(body) > 128 * 1024) throw new NativeGmailRequestError();
     return boundedOperation(async signal => {
       const token = await options.oauth.token({ externalUserId: input.externalUserId, accountId: input.accountId }, signal);
+      await admitGmailSend(signal, beforeSend);
       signal.throwIfAborted();
       const response = await (options.fetcher ?? fetch)(target.href, { method, body, redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) } });
-      const length = response.headers.get('content-length');
-      if (!response.ok || !response.body || length !== null && (!/^\d+$/.test(length) || Number(length) > maxBytes)) {
-        cancel(response.body);
-        if (response.status === 404 && target.pathname.endsWith('/history')) throw new NativeGmailHistoryExpiredError();
-        // Only coarse statuses reach the existing safe failure mapper. No upstream body or headers.
-        throw new NativeGmailRequestError([401, 403, 404, 429].includes(response.status) ? response.status : 502);
-      }
-      const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
-      const aborted = () => cancel(reader); signal.addEventListener('abort', aborted, { once: true });
-      try {
-        for (;;) {
-          signal.throwIfAborted(); const next = await reader.read(); if (next.done) break;
-          bytes += next.value.byteLength;
-          if (bytes > maxBytes || chunks.length >= 4096) throw new NativeGmailRequestError();
-          chunks.push(next.value);
-        }
-        signal.throwIfAborted();
-        const result: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)));
-        if (attachment) {
-          const parsed = Attachment.safeParse(result);
-          if (!parsed.success) throw new NativeGmailRequestError();
-          const decoded = Buffer.from(parsed.data.data, 'base64url');
-          const canonical = decoded.toString('base64url');
-          const padded = canonical.padEnd(Math.ceil(canonical.length / 4) * 4, '=');
-          if (decoded.byteLength !== parsed.data.size || parsed.data.data !== canonical && parsed.data.data !== padded) throw new NativeGmailRequestError();
-          return parsed.data;
-        }
-        if (target.pathname.endsWith('/history') && !HistoryPage.safeParse(result).success) throw new NativeGmailRequestError();
-        return result;
-      } catch (error) {
-        cancel(reader);
-        if (error instanceof NativeGmailRequestError) throw error;
-        throw new NativeGmailRequestError();
-      } finally { signal.removeEventListener('abort', aborted); reader.releaseLock(); }
+      return readGmailResponse(response, target, maxBytes, signal);
     }, 10_000, callerSignal);
   };
+}
+
+/** Shared bounded JSON/attachment reader. Callers own token resolution and admission before sending. */
+export async function readGmailResponse(response: Response, target: URL, maxBytes: number, signal: AbortSignal): Promise<unknown> {
+  const attachment = target.pathname.includes('/attachments/');
+  const length = response.headers.get('content-length');
+  if (!response.ok || !response.body || length !== null && (!/^\d+$/.test(length) || Number(length) > maxBytes)) {
+    cancel(response.body);
+    if (response.status === 404 && target.pathname.endsWith('/history')) throw new NativeGmailHistoryExpiredError();
+    // Only coarse statuses reach the existing safe failure mapper. No upstream body or headers.
+    throw new NativeGmailRequestError([401, 403, 404, 429].includes(response.status) ? response.status : 502);
+  }
+  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
+  const aborted = () => cancel(reader); signal.addEventListener('abort', aborted, { once: true });
+  try {
+    for (;;) {
+      signal.throwIfAborted(); const next = await reader.read(); if (next.done) break;
+      bytes += next.value.byteLength;
+      if (bytes > maxBytes || chunks.length >= 4096) throw new NativeGmailRequestError();
+      chunks.push(next.value);
+    }
+    signal.throwIfAborted();
+    const result: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)));
+    if (attachment) {
+      const parsed = Attachment.safeParse(result);
+      if (!parsed.success) throw new NativeGmailRequestError();
+      const decoded = Buffer.from(parsed.data.data, 'base64url');
+      const canonical = decoded.toString('base64url');
+      const padded = canonical.padEnd(Math.ceil(canonical.length / 4) * 4, '=');
+      if (decoded.byteLength !== parsed.data.size || parsed.data.data !== canonical && parsed.data.data !== padded) throw new NativeGmailRequestError();
+      return parsed.data;
+    }
+    if (target.pathname.endsWith('/history') && !HistoryPage.safeParse(result).success) throw new NativeGmailRequestError();
+    return result;
+  } catch (error) {
+    cancel(reader);
+    if (error instanceof NativeGmailRequestError) throw error;
+    throw new NativeGmailRequestError();
+  } finally { signal.removeEventListener('abort', aborted); reader.releaseLock(); }
 }

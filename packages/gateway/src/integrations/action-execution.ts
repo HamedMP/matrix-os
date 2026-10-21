@@ -1,3 +1,4 @@
+import type { BeforeGmailSend } from "./gmail-send-admission.js";
 import { executeFinanceWriteAction } from "./finance-writes.js";
 import { isBoundedManagedAction, BoundedManagedActionError } from "./bounded-managed-action.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
@@ -32,8 +33,12 @@ export async function executeIntegrationAction(opts: {
   serviceId: string;
   actionId: string;
   params?: Record<string, unknown>;
+  beforeSend?: BeforeGmailSend;
 }): Promise<{ data: unknown; summary?: string }> {
   const { pipedream, externalUserId, connection, def, actionDef, serviceId, actionId, params } = opts;
+  const beforeSend = serviceId === "gmail" ? opts.beforeSend : undefined;
+  const control: [BeforeGmailSend?] = beforeSend ? [beforeSend] : [];
+  const boundedControl: [AbortSignal?, BeforeGmailSend?] = beforeSend ? [undefined, beforeSend] : [];
 
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");
@@ -56,7 +61,7 @@ export async function executeIntegrationAction(opts: {
   if (serviceId === "gmail" && actionId === "get_attachment") {
     if (!pipedream.boundedGmailGet) throw new BoundedPipedreamReadError();
     return { data: await pipedream.boundedGmailGet({ externalUserId, accountId: connection.pipedream_account_id,
-      kind: "attachment", id: String(params?.messageId), attachmentId: String(params?.attachmentId) }) };
+      kind: "attachment", id: String(params?.messageId), attachmentId: String(params?.attachmentId) }, ...boundedControl) };
   }
   // New thread discovery/ID actions always use a raw capped response, including
   // ordinary callers; a generic SDK parse is not a byte limit.
@@ -65,12 +70,13 @@ export async function executeIntegrationAction(opts: {
     const identity = { externalUserId, accountId: connection.pipedream_account_id };
     return { data: await pipedream.boundedGmailGet(actionId === "list_threads"
       ? { ...identity, kind: "threads", ...(params?.pageToken !== undefined ? { pageToken: String(params.pageToken) } : {}) }
-      : { ...identity, kind: "thread-ids", id: String(params?.threadId) }) };
+      : { ...identity, kind: "thread-ids", id: String(params?.threadId) }, ...boundedControl) };
   }
 
   // Discovered components have different parameter/cursor contracts.
   // Preserve reviewed direct mappings when both execution paths exist.
   if (actionDef.componentKey && !actionDef.directApi) {
+    if (beforeSend) throw new IntegrationActionNotImplementedError(serviceId, actionId);
     const safeParams = Object.fromEntries(
       Object.entries(params ?? {}).filter(([k]) => k !== def.pipedreamApp),
     );
@@ -104,7 +110,7 @@ export async function executeIntegrationAction(opts: {
             url,
             params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
+          }, ...control),
         };
       case "DELETE":
         return {
@@ -114,7 +120,7 @@ export async function executeIntegrationAction(opts: {
             url,
             params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
+          }, ...control),
         };
       case "POST":
         return {
@@ -124,7 +130,7 @@ export async function executeIntegrationAction(opts: {
             url,
             body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
+          }, ...control),
         };
       case "PUT":
         return {
@@ -134,7 +140,7 @@ export async function executeIntegrationAction(opts: {
             url,
             body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
+          }, ...control),
         };
       case "PATCH":
         return {
@@ -144,7 +150,7 @@ export async function executeIntegrationAction(opts: {
             url,
             body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
             ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
+          }, ...control),
         };
       default: {
         const _exhaustive: never = api.method;
