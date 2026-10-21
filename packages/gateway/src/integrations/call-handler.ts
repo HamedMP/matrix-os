@@ -184,10 +184,10 @@ export function createIntegrationCallHandler(deps: IntegrationCallHandlerDepende
     }
 
     const externalId = await getOrCreateExternalId(uid);
-    let beforeRelease: (() => Promise<void>) | undefined;
+    let lease: Awaited<ReturnType<typeof admitGoogleCollection>>;
 
     try {
-      beforeRelease = await admitGoogleCollection(deps.googleCollection, c, uid, connection, "/call");
+      lease = await admitGoogleCollection(deps.googleCollection, c, uid, connection, "/call");
       const { data, summary } = await executeIntegrationAction({
         pipedream,
         externalUserId: externalId,
@@ -197,11 +197,13 @@ export function createIntegrationCallHandler(deps: IntegrationCallHandlerDepende
         serviceId: service,
         actionId: action,
         params,
+        beforeSend: lease?.beforeSend,
+        signal: c.req.raw.signal,
       });
 
-      return await integrationActionSuccess(c, { db, connectionId: connection.id, service, action, data, summary, beforeRelease });
+      return await integrationActionSuccess(c, { db, connectionId: connection.id, service, action, data, summary, beforeRelease: lease?.release });
     } catch (err: unknown) {
-      try { await beforeRelease?.(); } catch (releaseError) { return integrationActionFailure(c, releaseError, service, action); }
+      try { await lease?.release(); } catch (releaseError) { return integrationActionFailure(c, releaseError, service, action); }
       return integrationActionFailure(c, err, service, action);
     }
   };

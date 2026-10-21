@@ -27,13 +27,15 @@ async function fixture(options: { consentKinds?: string[]; models?: string[] } =
   const claim: GoogleProcessingClaim = { ownerId: stamp.ownerId, googleAccountId: accountId, runId: 'run_synthetic',
     runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', profileId: profile.id, profileRevision: stamp.profileRevision,
     consentId: stamp.consentId, consentRevision: stamp.consentRevision, purposeId: stamp.purposeId,
-    routeDigest: stamp.routeDigest, policyExpiresAt: stamp.expiresAt };
+    routeDigest: stamp.routeDigest, policyExpiresAt: stamp.expiresAt, collectionExpiresAt: stamp.expiresAt };
   const consume = vi.fn(async value => { await ledger.consume(value); });
   const ownsGmailAccount = vi.fn(async (owner: string, account: string) => active && owner === claim.ownerId && account === accountId);
   const deps: GoogleCollectionAdmissionDependencies = { repository: db.repository, authority, ledger: { consume },
     resolveRuntime: async () => ({ ownerId: 'owner-one', machineToken }), ownsGmailAccount, now: () => clock };
   const collected = vi.fn();
   let beforeRelease: (() => Promise<void>) | undefined;
+  let beforeSend: ((signal: AbortSignal) => Promise<void>) | undefined;
+  let beforeCollection: (() => Promise<void>) | undefined;
   let released: (() => Promise<void>) | undefined;
   function app(overrides: Partial<GoogleCollectionAdmissionDependencies> = {}) {
     const admission = createGoogleCollectionAdmission({ ...deps, ...overrides });
@@ -43,7 +45,7 @@ async function fixture(options: { consentKinds?: string[]; models?: string[] } =
         const path = c.req.path === '/read-call' ? '/read-call' : '/call';
         const grant = await admission.admit({ context: c, ownerId: claim.ownerId, googleAccountId: accountId,
           path, body: await c.req.text() });
-        released = grant.release; collected();
+        released = grant.release; beforeSend = grant.beforeSend; await beforeCollection?.(); await grant.beforeSend(c.req.raw.signal); collected();
         await beforeRelease?.(); await grant.release();
         return c.json({ data: 'synthetic Google response' });
       } catch (error) {
@@ -60,12 +62,47 @@ async function fixture(options: { consentKinds?: string[]; models?: string[] } =
   });
   return { app, send, token, deps, consume, ownsGmailAccount, collected, profile, consent, claim, stamp,
     advance: (ms: number) => { clock = new Date(clock.getTime() + ms); }, deactivate: () => { active = false; },
+    beforeCollection: (hook: () => Promise<void>) => { beforeCollection = hook; }, sendCheck: (signal: AbortSignal) => beforeSend!(signal),
     beforeRelease: (hook: () => Promise<void>) => { beforeRelease = hook; }, release: () => released!(),
     rows: () => sql<Record<string, unknown>>`SELECT * FROM google_processing_requests`.execute(db.sql),
   };
 }
 
 describe('machine-authenticated Gmail collection admission', () => {
+  it.each(['abort', 'expiry', 'account', 'consent', 'renewal', 'profile'])('rechecks %s after admission immediately before collection', async changed => {
+    const f = await fixture(); const controller = new AbortController();
+    f.beforeCollection(async () => {
+      if (changed === 'abort') controller.abort();
+      if (changed === 'expiry') f.advance(30001);
+      if (changed === 'account') f.deactivate();
+      if (changed === 'consent' || changed === 'renewal') await db.repository.revokeAccount('owner-one', accountId);
+      if (changed === 'renewal') await db.repository.recordConsent(consentInput(f.profile.id), 2);
+      if (changed === 'profile') await db.repository.revokeProfile(f.profile.id, 'owner-one', 1);
+    });
+    expect((await f.send(f.app(), { signal: controller.signal })).status).toBe(403);
+    expect(f.collected).not.toHaveBeenCalled(); expect(f.consume).toHaveBeenCalledOnce();
+  });
+  it('honors the provider-specific cancellation signal independently of the HTTP signal', async () => {
+    const f = await fixture(); expect((await f.send(f.app())).status).toBe(200);
+    const controller = new AbortController(); controller.abort();
+    await expect(f.sendCheck(controller.signal)).rejects.toBeInstanceOf(GoogleCollectionAdmissionError);
+  });
+
+  it('caps delayed sends at the signed context deadline even while policy remains valid', async () => {
+    const f = await fixture(); const token = f.token({ collectionExpiresAt: new Date(now.getTime() + 100).toISOString() });
+    f.beforeCollection(async () => { f.advance(101); });
+    expect((await f.send(f.app(), { token })).status).toBe(403);
+    expect(f.collected).not.toHaveBeenCalled(); expect(f.consume).toHaveBeenCalledOnce();
+  });
+  it('rechecks provider cancellation after an authority lookup that ignores its signal', async () => {
+    const f = await fixture(); const controller = new AbortController(); let checks = 0;
+    const original = f.deps.authority.revalidate;
+    const authority = { ...f.deps.authority, revalidate: async (...args: Parameters<typeof original>) => {
+      const stamp = await original(...args); if (++checks === 2) controller.abort(); return stamp;
+    } };
+    f.beforeCollection(async () => { await f.sendCheck(controller.signal); });
+    expect((await f.send(f.app({ authority }))).status).toBe(403); expect(f.collected).not.toHaveBeenCalled();
+  });
   it.each(['native', 'pipedream'])('admits the same canonical owned account for %s transport and releases only after revalidation', async transport => {
     const f = await fixture(); const server = f.app();
     const response = await f.send(server);
