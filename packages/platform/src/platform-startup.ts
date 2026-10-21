@@ -99,6 +99,7 @@ import {
 } from './speech/config.js';
 import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
+import { createConfiguredAppStoreRuntime } from './app-store/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 
 interface GatewayPlatformUser {
@@ -237,6 +238,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
   whatsappRoutes?: Hono<any>;
+  appStoreRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
@@ -732,6 +734,7 @@ async function startPlatformServerWithCleanup(
   }
 
   let internalSyncRoutes: Hono | undefined;
+  let appStoreObjectStore: GatewayR2Client | undefined;
   let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
   let primaryStorageGate: R2CapabilityGate | undefined;
@@ -751,6 +754,7 @@ async function startPlatformServerWithCleanup(
       r2PrefixRoot: process.env.R2_PREFIX_ROOT ?? 'matrixos-sync',
     });
     customerVpsObjectStore = r2;
+    appStoreObjectStore = r2;
     hostBundleObjectStore = r2;
     primaryStorageGate = createR2CapabilityGate({ storage: r2 });
   }
@@ -1009,6 +1013,8 @@ async function startPlatformServerWithCleanup(
   const appEnv = process.env;
   const stopGooglePurchaseWorker = startGooglePurchaseWorker(db, appEnv, backgroundWorkersEnabled);
   registerCustomMcpStartupCleanup(stopGooglePurchaseWorker);
+  const appStoreRuntime = createConfiguredAppStoreRuntime({ db, env: appEnv, platformSecret, objectStore: appStoreObjectStore, privatePreviewEligibility: privatePreviewAccess.eligibility });
+  registerCustomMcpStartupCleanup(() => appStoreRuntime.shutdown());
   const whatsappRuntime = createConfiguredWhatsAppRuntime({ db, env: appEnv, clerkAuth });
   registerCustomMcpStartupCleanup(async () => { await whatsappRuntime?.shutdown(); });
   const legacyContainerRoutingEnabled =
@@ -1043,6 +1049,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
     whatsappRoutes: whatsappRuntime?.routes,
+    appStoreRoutes: appStoreRuntime.routes,
     fundedAiRepository,
     fundedModelProbes,
     collaboration,
@@ -1069,7 +1076,7 @@ async function startPlatformServerWithCleanup(
   const server = serve({ fetch: app.fetch, port }, () => {
     console.log(`Platform listening on :${port}`);
   });
-  if (backgroundWorkersEnabled) whatsappRuntime?.start();
+  if (backgroundWorkersEnabled) { whatsappRuntime?.start(); appStoreRuntime.start(); }
 
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -1105,6 +1112,7 @@ async function startPlatformServerWithCleanup(
           stopGooglePurchaseWorker(),
           collaboration?.shutdown(),
           whatsappRuntime?.shutdown(),
+          appStoreRuntime.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
