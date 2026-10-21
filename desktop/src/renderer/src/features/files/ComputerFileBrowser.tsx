@@ -131,6 +131,7 @@ export default function ComputerFileBrowser({
   const [entries, setEntries] = useState<BrowserEntry[]>([]);
   const [status, setStatus] = useState<BrowserStatus>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<BrowserSortKey>("name");
   const [sortDirection, setSortDirection] = useState<BrowserSortDirection>("asc");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -545,7 +546,7 @@ export default function ComputerFileBrowser({
             ...(contextFile?.scope === browserScope || contextDirectory
               ? [{ label: "Copy Path", onSelect: () => {
                   const path = contextFile?.scope === browserScope ? contextFile.path : contextDirectory?.path;
-                  if (path) void navigator.clipboard.writeText(`/home/matrix/home/${path}`);
+                  if (path) void navigator.clipboard.writeText(`/home/matrix/home/${path}`).then(() => setActionError(null)).catch(() => setActionError("Couldn’t copy the path. Check clipboard access and try again."));
                 } }]
               : []),
             ...(contextDirectory && onOpenFolderInNewTab
@@ -595,6 +596,8 @@ export default function ComputerFileBrowser({
         ) : null}
       </div>
       </ContextMenu>
+
+      {actionError ? <p role="alert" className="px-3 py-1 text-xs" style={{ color: "var(--danger)" }}>{actionError}</p> : null}
 
       <UploadStatusList uploads={fileUploads.uploads} onRetry={fileUploads.retry} onRemove={fileUploads.remove} />
 

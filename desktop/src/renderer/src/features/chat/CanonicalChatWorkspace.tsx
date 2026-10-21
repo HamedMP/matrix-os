@@ -49,10 +49,7 @@ import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
 import { useChatFileNavigation } from "../work/ChatFileNavigation";
-import { resolveChatInspectorTargetForRun, resolveWorkFilesScope } from "../work/work-files-scope";
-import { useFilesNavigation } from "../../stores/files-navigation";
-import { useTabs, FILES_WORKSPACE_TAB_SPEC } from "../../stores/tabs";
-import { invoke } from "../../lib/operator";
+import { useChatCopyFullPath, useChatFilePathNavigation } from "./use-chat-file-path-navigation";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -418,6 +415,8 @@ export function CanonicalChatWorkspace({
     if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
     await navigator.clipboard.writeText(text);
   }, []);
+  const openChatFilePath = useChatFilePathNavigation(controller.detail, projects, fileNavigation, setSubmissionError);
+  const copyChatFullPath = useChatCopyFullPath(controller.detail, projects, copyText);
   const retryTurn = controller.retryTurn;
   const submitApproval = controller.submitApproval;
   const performTranscriptAction = useCallback(async (action: ConversationActionPresentation) => {
@@ -982,6 +981,7 @@ export function CanonicalChatWorkspace({
                   onReveal={credentialDisclosure.reveal} onHide={credentialDisclosure.hide} />;
               },
               copyText,
+              copyFullPath: copyChatFullPath,
               openImportedAsset: importedAssets.openImportedAsset,
               openAttachment: (rawPath) => {
                 const path = normalizeDesktopEditorPath(rawPath);
@@ -990,56 +990,7 @@ export function CanonicalChatWorkspace({
                 return true;
               },
               openWebLink: openChatWebLink,
-              openFile: (rawPath, executionRoot) => {
-                if (!fileNavigation || !controller.detail) return false;
-                const scope = resolveWorkFilesScope(controller.detail, projects);
-                const target = resolveChatInspectorTargetForRun(
-                  rawPath, scope, executionRoot, controller.detail.record.projectId,
-                );
-                if (!target) return false;
-                const connection = useConnection.getState();
-                const generation = captureRuntimeGeneration();
-                const current = () => isCurrentRuntimeGeneration(generation)
-                  && useConnection.getState().runtimeSlot === connection.runtimeSlot
-                  && useConnection.getState().authGeneration === connection.authGeneration;
-                void (async () => {
-                  try {
-                    if (target.kind === "home") {
-                      const stat = await connection.api?.forRuntime(connection.runtimeSlot).get<{ type: "file" | "directory" }>(
-                        `/api/files/stat?path=${encodeURIComponent(target.path)}`,
-                      );
-                      if (!current()) return;
-                      if (!stat) throw new Error("FilesUnavailable");
-                      if (stat.type === "directory") {
-                        useFilesNavigation.getState().navigate(target.path);
-                        useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC);
-                      } else {
-                        fileNavigation.open({ chatId: scope.chatId, target });
-                      }
-                    } else {
-                      let directory = false;
-                      try {
-                        await invoke("runtime:browse-files", {
-                          projectId: target.projectId,
-                          ...(target.worktreeId ? { worktreeId: target.worktreeId } : {}),
-                          path: target.path,
-                          limit: 1,
-                        });
-                        directory = true;
-                      } catch (error: unknown) {
-                        // File paths cannot be browsed. The authenticated preview
-                        // resolves the file or displays its permission error.
-                        console.debug("[chat-files] directory lookup unavailable", error instanceof Error ? error.name : "UnknownError");
-                      }
-                      if (current()) fileNavigation.open({ chatId: scope.chatId, target, directory });
-                    }
-                  } catch (error: unknown) {
-                    if (current()) setSubmissionError("This file or folder is unavailable. Check its path and permissions.");
-                    console.warn("[chat-files] path lookup failed", error instanceof Error ? error.name : "UnknownError");
-                  }
-                })();
-                return true;
-              },
+              openFile: openChatFilePath,
               ...(api ? { loadImage: loadChatImage } : {}),
               submitInput: controller.submitInput,
               performAction: performTranscriptAction,

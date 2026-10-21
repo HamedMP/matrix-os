@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FilePreviewDescriptor } from "@matrix-os/contracts";
 import { FilePreviewContent } from "../../packages/ui/src/files/FilePreviewContent";
+import { resolvePreviewLink } from "../../packages/ui/src/files/preview-links";
 
 const base: FilePreviewDescriptor = {
   resource: { kind: "home", path: "reports/result.csv" },
@@ -25,6 +26,18 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("FilePreviewContent", () => {
+  it("resolves Markdown links relative to the previewed file and keeps web links external", async () => {
+    vi.unstubAllGlobals();
+    const openLink = vi.fn();
+    render(<FilePreviewContent descriptor={{ ...base, resource: { kind: "project", projectId: "repo", worktreeId: "old", path: "notes/readme.md" }, name: "readme.md", kind: "markdown" }}
+      contentUrl="/notes" loadText={vi.fn(async () => "[Guide](./docs/guide.md) [Web](https://example.com)")} onOpenLink={openLink} />);
+    fireEvent.click(await screen.findByRole("link", { name: "Guide" }));
+    expect(openLink).toHaveBeenCalledWith({ kind: "file", path: "notes/docs/guide.md" });
+    fireEvent.click(screen.getByRole("link", { name: "Web" }));
+    expect(openLink).toHaveBeenCalledWith({ kind: "web", url: "https://example.com/" });
+    expect(resolvePreviewLink("../../escape.md", { kind: "home", path: "notes/readme.md" })).toBeNull();
+    expect(resolvePreviewLink("javascript:alert(1)", { kind: "home", path: "notes/readme.md" })).toBeNull();
+  });
   it("renders bounded CSV data as a table", async () => {
     render(<FilePreviewContent descriptor={base} contentUrl="/content" loadText={vi.fn(async () => "name,total\nAda,42")} />);
     expect(await screen.findByRole("table", { name: "result.csv" })).toBeTruthy();

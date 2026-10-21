@@ -388,8 +388,8 @@ function ProjectNavigableFilesPanel({
   );
 }
 
-export function InspectorFilePreview({ target, onDirtyChange }: { target: InspectorFileTarget; onDirtyChange?: (dirty: boolean) => void }) {
+export function InspectorFilePreview({ target, onDirtyChange, onOpenFile }: { target: InspectorFileTarget; onDirtyChange?: (dirty: boolean) => void; onOpenFile?: (target: InspectorFileTarget) => void }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
-  return <InspectorResourcePreview key={`${runtimeSlot}:${authGeneration}:${JSON.stringify(target)}`} target={target} onDirtyChange={onDirtyChange} />;
+  return <InspectorResourcePreview key={`${runtimeSlot}:${authGeneration}:${JSON.stringify(target)}`} target={target} onDirtyChange={onDirtyChange} onOpenFile={onOpenFile} />;
 }

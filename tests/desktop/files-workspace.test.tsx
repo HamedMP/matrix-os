@@ -429,6 +429,39 @@ describe("Files workspace", () => {
     await waitFor(() => expect(api.putText).toHaveBeenCalledWith("/api/files/blob?path=README.md&force=true", "# Changed"));
   });
 
+  it("keeps a dirty editor guarded when Edit or the same file is selected again", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open README.md" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit file" }));
+    const editor = await screen.findByRole("textbox", { name: "Edit README.md" });
+    fireEvent.change(editor, { target: { value: "# Unsaved" } });
+    fireEvent.click(screen.getByRole("button", { name: "Edit file" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
+    expect(screen.getByRole("button", { name: "Save file" }).hasAttribute("disabled")).toBe(false);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    act(() => useFilesNavigation.getState().navigate(""));
+    await waitFor(() => expect(useFilesNavigation.getState().request).toBeNull());
+    expect(confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Open archive.zip" }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("textbox", { name: "Edit README.md" }) as HTMLTextAreaElement).value).toBe("# Unsaved");
+  });
+
+  it("guards Organization drives tab clicks and navigation requests while editing", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open README.md" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit file" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Edit README.md" }), { target: { value: "# Unsaved" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("tab", { name: "Organization drives" }));
+    expect(screen.getByRole("region", { name: "File preview" })).toBeTruthy();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    act(() => useFilesNavigation.getState().navigateDrive("00000000-0000-4000-8000-000000000001"));
+    await waitFor(() => expect(useFilesNavigation.getState().request).toBeNull());
+    expect(screen.getByRole("region", { name: "File preview" })).toBeTruthy();
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
   it("previews bounded code as selectable text", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));

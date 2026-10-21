@@ -310,6 +310,15 @@ describe("ComputerFileBrowser view options", () => {
     expect(onEditFile).toHaveBeenCalledWith("README.md");
   });
 
+  it("shows a safe message when Copy Path is denied", async () => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error("private clipboard error")) } });
+    renderBrowser();
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "Open README.md" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy Path" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Couldn’t copy the path");
+    expect(screen.queryByText(/private clipboard error/)).toBeNull();
+  });
+
   it("matches the Files list handoff geometry and filters from the toolbar search", async () => {
     const { container } = renderBrowser();
     const readme = await screen.findByRole("button", { name: "Open README.md" });

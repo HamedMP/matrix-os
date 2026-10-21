@@ -32,3 +32,7 @@ The filesystem remains the source of truth. Save is one file write after a fresh
 - Test folder links, inline folder chips, project/worktree path resolution, listing actions, Markdown/HTML source modes, sandbox policy, and runtime guards.
 - Run desktop and UI typechecks plus focused Vitest suites.
 - Capture Web Desktop and Electron Desktop from a reviewed test runtime when available; record missing access as a review blocker.
+
+## Public documentation deliverable
+
+- Ship a separate `FinnaAI/matrix-os-site` PR under `content/docs/` that explains transcript folder paths, Files actions, and side preview editing limits. Link the product and docs PRs to each other and to ENG-353.

@@ -2,6 +2,7 @@ import type { FilePreviewDescriptor } from "@matrix-os/contracts";
 import { useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { resolvePreviewLink, type PreviewLink } from "./preview-links";
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_BINARY_BYTES = 50 * 1024 * 1024;
@@ -18,6 +19,7 @@ export interface FilePreviewContentProps {
   /** A caller that supplies a bounded prefix rather than the complete text. */
   textPreviewBytes?: number;
   renderSource?: (text: string, name: string) => ReactNode;
+  onOpenLink?: (link: PreviewLink) => void;
 }
 
 function parseDelimited(source: string, separator: "," | "\t"): string[][] {
@@ -61,7 +63,7 @@ function Failure({ retry }: { retry?: () => void }) {
   </div>;
 }
 
-function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBytes, renderSource }: FilePreviewContentProps) {
+function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBytes, renderSource, onOpenLink }: FilePreviewContentProps) {
   const limit = textPreviewBytes === undefined ? MAX_TEXT_BYTES : Math.max(1, Math.min(MAX_TEXT_BYTES, textPreviewBytes));
   const [mode, setMode] = useState<"preview" | "source">("preview");
   const [state, setState] = useState<{ status: "loading" } | { status: "ready"; text: string } | { status: "failed" }>({ status: "loading" });
@@ -98,7 +100,15 @@ function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBy
       srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:">${state.text}`}
       className="min-h-96 w-full flex-1 border-0 bg-white"
     /> : descriptor.kind === "markdown" && mode === "preview" ? <div className="min-h-0 flex-1 overflow-auto p-4 text-sm" data-selectable>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: ({ alt }) => <span>{alt}</span> }}>{state.text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+        img: ({ alt }) => <span>{alt}</span>,
+        a: ({ href, children }) => {
+          const link = href ? resolvePreviewLink(href, descriptor.resource) : null;
+          return link && onOpenLink
+            ? <a href={href} onClick={(event) => { event.preventDefault(); onOpenLink(link); }}>{children}</a>
+            : <span>{children}</span>;
+        },
+      }}>{state.text}</ReactMarkdown>
     </div> : <div className="flex min-h-0 flex-1 flex-col overflow-auto">{renderSource
       ? renderSource(state.text, descriptor.name)
       : <pre className="whitespace-pre-wrap break-words p-4 text-xs" data-selectable><code>{state.text}</code></pre>}</div>}

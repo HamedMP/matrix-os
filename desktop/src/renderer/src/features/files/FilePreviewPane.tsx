@@ -414,6 +414,7 @@ export function PreviewPane({
   const textual = entry.type === "file" && ["text", "markdown", "html"].includes(kind);
   const confirmDiscard = () => !dirty || window.confirm("Discard unsaved changes to this file?");
   const changeMode = (next: "preview" | "source" | "edit") => {
+    if (next === mode || (kind === "text" && mode === "preview" && next === "source")) return;
     if (!confirmDiscard()) return;
     updateDirty(false);
     setMode(next);

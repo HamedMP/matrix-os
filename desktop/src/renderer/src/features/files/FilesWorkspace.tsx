@@ -97,9 +97,10 @@ export default function FilesWorkspace() {
   }, []);
 
   const openFolderTab = useCallback((path: string, title = pathTitle(path)) => {
+    const existing = tabs.find((tab) => tab.path === path);
+    if (existing?.id === activeTabId) return;
     if (previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
     setPreviewDirty(false);
-    const existing = tabs.find((tab) => tab.path === path);
     if (existing) {
       setActiveTabId(existing.id);
       return;
@@ -107,13 +108,15 @@ export default function FilesWorkspace() {
     const tab = { id: `files-folder-${nextTabId.current++}`, path, initialPath: path, title };
     setTabs([...tabs, tab].slice(-MAX_FILE_TABS));
     setActiveTabId(tab.id);
-  }, [previewDirty, tabs]);
+  }, [activeTabId, previewDirty, tabs]);
 
   useEffect(() => {
     if (!navigation) return;
     useFilesNavigation.getState().consume(navigation);
     if (navigation.runtimeSlot !== runtimeSlot || navigation.authGeneration !== authGeneration || !isCurrentRuntimeGeneration(navigation.generation)) return;
     if (navigation.driveScopeId && organizationDrivesAvailable) {
+      if (!confirmPreviewChange()) return;
+      setPreviewDirty(false);
       setDriveOpened(true); setRequestedDrive({scopeId: navigation.driveScopeId, id: navigation.driveIntentId}); setActiveTabId(ORGANIZATION_DRIVES_TAB);
     } else openFolderTab(navigation.path);
   }, [navigation, runtimeSlot, authGeneration, openFolderTab, organizationDrivesAvailable]);
@@ -124,8 +127,8 @@ export default function FilesWorkspace() {
 
   const closeTab = useCallback((tabId: string) => {
     if (tabs.length === 1) return;
-    if (previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
-    setPreviewDirty(false);
+    if (tabId === activeTabId && previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
+    if (tabId === activeTabId) setPreviewDirty(false);
     const index = tabs.findIndex((tab) => tab.id === tabId);
     const next = tabs.filter((tab) => tab.id !== tabId);
     setTabs(next);
@@ -192,7 +195,7 @@ export default function FilesWorkspace() {
           const active = tab.id === visibleActiveTabId;
           return (
             <div key={tab.id} className="flex h-8 shrink-0 items-center rounded-t-lg border border-b-0" style={{ borderColor: "var(--border-subtle)", background: active ? "var(--bg-surface)" : "transparent" }}>
-              <button type="button" role="tab" aria-selected={active} aria-label={tab.title} onClick={() => { if (confirmPreviewChange()) { setPreviewDirty(false); setActiveTabId(tab.id); } }} className="flex h-full max-w-48 items-center gap-2 px-3 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]" style={{ color: active ? "var(--text-primary)" : "var(--text-tertiary)" }}>
+              <button type="button" role="tab" aria-selected={active} aria-label={tab.title} onClick={() => { if (active) return; if (confirmPreviewChange()) { setPreviewDirty(false); setActiveTabId(tab.id); } }} className="flex h-full max-w-48 items-center gap-2 px-3 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]" style={{ color: active ? "var(--text-primary)" : "var(--text-tertiary)" }}>
                 <Folder size={14} aria-hidden /><span className="truncate">{tab.title}</span>
               </button>
               {tabs.length > 1 ? <button type="button" aria-label={`Close ${tab.title}`} onClick={() => closeTab(tab.id)} className="mr-1 flex size-6 items-center justify-center rounded hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}><X size={13} /></button> : null}
@@ -200,7 +203,7 @@ export default function FilesWorkspace() {
           );
         })}
         {organizationDrivesAvailable ? <button type="button" role="tab" aria-selected={visibleActiveTabId === ORGANIZATION_DRIVES_TAB}
-          onClick={() => { setDriveOpened(true); setActiveTabId(ORGANIZATION_DRIVES_TAB); }}
+          onClick={() => { if (visibleActiveTabId === ORGANIZATION_DRIVES_TAB || !confirmPreviewChange()) return; setPreviewDirty(false); setDriveOpened(true); setActiveTabId(ORGANIZATION_DRIVES_TAB); }}
           className="flex h-8 shrink-0 items-center rounded-t-lg border border-b-0 px-3 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
           style={{ borderColor: "var(--border-subtle)", background: visibleActiveTabId === ORGANIZATION_DRIVES_TAB ? "var(--bg-surface)" : "transparent",
             color: visibleActiveTabId === ORGANIZATION_DRIVES_TAB ? "var(--text-primary)" : "var(--text-tertiary)" }}>
@@ -221,6 +224,8 @@ export default function FilesWorkspace() {
                   initialPath={tab.initialPath}
                   onPathChange={(path) => updateTabPath(tab.id, path)}
                   onSelectionChange={(next: BrowserSelection | null) => {
+                    const selected = selections[tab.id];
+                    if (next && selected && next.path === selected.path && next.entry.type === selected.entry?.type) return;
                     if (!confirmPreviewChange()) return;
                     setPreviewDirty(false);
                     setSelections((current) => ({ ...current, [tab.id]: next ? { slot: runtimeSlot, authGeneration, path: next.path, entry: next.entry } : null }));

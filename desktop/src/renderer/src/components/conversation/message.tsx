@@ -5,6 +5,7 @@ import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../../lib/cn";
+import { ContextMenu } from "../../design/primitives";
 import type { ConversationPresentationCallbacks } from "./presentation";
 
 function MessageGroup({ className, ...props }: React.ComponentProps<"div">) {
@@ -202,6 +203,20 @@ function pathPresentation(value: string): { kind: "file" | "folder"; label: stri
   return { kind: FILE_EXTENSION_PATTERN.test(withoutLocation) ? "file" : "folder", label };
 }
 
+function TranscriptPathReference({ path, copyFullPath, children }: {
+  path: string;
+  copyFullPath: (path: string) => Promise<void>;
+  children: React.ReactElement;
+}) {
+  const [failed, setFailed] = React.useState(false);
+  return <>
+    <ContextMenu items={[{ label: "Copy Full Path", onSelect: () => {
+      void copyFullPath(path).then(() => setFailed(false)).catch(() => setFailed(true));
+    } }]}>{children}</ContextMenu>
+    {failed ? <span role="alert" className="ml-1 text-xs" style={{ color: "var(--danger)" }}>Couldn’t copy the full path.</span> : null}
+  </>;
+}
+
 function CodeBlock({
   code,
   language,
@@ -392,6 +407,7 @@ function codeCredentialContent(
 export function MessageResponse({
   children,
   copyText,
+  copyFullPath,
   openFile,
   openWebLink,
   loadFileImage,
@@ -403,6 +419,7 @@ export function MessageResponse({
 }: {
   children: string;
   copyText: ConversationPresentationCallbacks["copyText"];
+  copyFullPath?: ConversationPresentationCallbacks["copyFullPath"];
   openFile?: ConversationPresentationCallbacks["openFile"];
   openWebLink?: ConversationPresentationCallbacks["openWebLink"];
   loadFileImage?: (path: string) => Promise<Blob>;
@@ -412,16 +429,17 @@ export function MessageResponse({
   renderCredentialMarker?: (offset: number, marker: string, number: number) => React.ReactNode;
   className?: string;
 }) {
-  const callbacks = React.useRef({ copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp });
+  const callbacks = React.useRef({ copyText, copyFullPath, openFile, openWebLink, loadFileImage, resolveApp, openApp });
   const credentialMarkerRef = React.useRef(renderCredentialMarker);
   const markdownSourceRef = React.useRef(children);
   credentialMarkerRef.current = renderCredentialMarker;
   markdownSourceRef.current = children;
   React.useLayoutEffect(() => {
-    callbacks.current = { copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp };
-  }, [copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp]);
+    callbacks.current = { copyText, copyFullPath, openFile, openWebLink, loadFileImage, resolveApp, openApp };
+  }, [copyText, copyFullPath, openFile, openWebLink, loadFileImage, resolveApp, openApp]);
   const copy = React.useCallback((text: string) => callbacks.current.copyText(text), []);
   const hasFileNavigation = Boolean(openFile);
+  const hasFullPathCopy = Boolean(copyFullPath);
   const hasWebNavigation = Boolean(openWebLink);
   const loadLocalImage = React.useCallback((path: string) => callbacks.current.loadFileImage!(path), []);
   const openLocalFile = React.useCallback((path: string) => callbacks.current.openFile?.(path), []);
@@ -440,13 +458,16 @@ export function MessageResponse({
       if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath)) {
         return <AttachmentImage src={href!} label={String(props.children ?? editorPath.split("/").at(-1))} path={href!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
       }
-      return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && hasFileNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+      const anchor = <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && hasFileNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
         callbacks.current.openFile?.(href!);
       } } : {})} {...(external && hasWebNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
         callbacks.current.openWebLink?.(href!);
       } } : {})} />;
+      return editorPath && hasFullPathCopy && href
+        ? <TranscriptPathReference path={href} copyFullPath={(path) => callbacks.current.copyFullPath!(path)}>{anchor}</TranscriptPathReference>
+        : anchor;
     }
     return {
     span: ({ node: _node, ...props }: React.ComponentProps<"span"> & { node?: unknown }) => {
@@ -504,7 +525,7 @@ export function MessageResponse({
         return <AttachmentImage src={value} label={path!.label} path={value} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
       }
       if (path && editorPath && hasFileNavigation) {
-        return (
+        const chip = (
           <button
             type="button"
             aria-label={`Open ${path.label}`}
@@ -516,6 +537,9 @@ export function MessageResponse({
             <span className="truncate">{path.label}</span>
           </button>
         );
+        return hasFullPathCopy
+          ? <TranscriptPathReference path={value} copyFullPath={(raw) => callbacks.current.copyFullPath!(raw)}>{chip}</TranscriptPathReference>
+          : chip;
       }
       if (path) {
         const Icon = path.kind === "file" ? FileText : Folder;
@@ -548,7 +572,7 @@ export function MessageResponse({
       <MarkdownTable {...props} copyText={copy} />
     ),
     };
-  }, [copy, hasFileNavigation, hasWebNavigation, hasImageLoader, loadLocalImage, openLocalFile, resolveApp, openApp]);
+  }, [copy, hasFileNavigation, hasFullPathCopy, hasWebNavigation, hasImageLoader, loadLocalImage, openLocalFile, resolveApp, openApp]);
 
   return (
     <div

@@ -1,5 +1,5 @@
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { resolveWorkFilesScope, resolveChatInspectorTargetForRun } from "@desktop/renderer/src/features/work/work-files-scope";
+import { resolveWorkFilesScope, resolveChatInspectorTargetForRun, scopeForInspectorTarget } from "@desktop/renderer/src/features/work/work-files-scope";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { describe, expect, it } from "vitest";
@@ -56,6 +56,11 @@ function detail(options: {
 }
 
 describe("resolveWorkFilesScope", () => {
+  it("builds the file tree from a historical directory target", () => {
+    const active = { kind: "project" as const, chatId: "chat-1", projectId: "matrix-os", worktreeId: "wt_new", label: "Matrix OS" };
+    expect(scopeForInspectorTarget(active, { kind: "project", path: "src", label: "src", projectId: "matrix-os", worktreeId: "wt_old" }))
+      .toMatchObject({ kind: "project", chatId: "chat-1", projectId: "matrix-os", worktreeId: "wt_old" });
+  });
   it("opens a historical message in its originating worktree", () => {
     const latest = resolveWorkFilesScope(detail({
       projectId: "project_stable",
