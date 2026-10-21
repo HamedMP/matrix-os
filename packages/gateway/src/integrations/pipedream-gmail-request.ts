@@ -38,7 +38,7 @@ export function createGuardedPipedreamGmailRequest(options: {
 }) {
   const projectId = z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/).parse(options.projectId);
   const environment = z.enum(["development", "production"]).parse(options.environment);
-  return async (rawInput: NativeGmailRequest, method: string, beforeSend: BeforeGmailSend): Promise<unknown> => {
+  return async (rawInput: NativeGmailRequest, method: string, beforeSend: BeforeGmailSend, parentSignal?: AbortSignal): Promise<unknown> => {
     try {
       if (typeof beforeSend !== "function") throw new NativeGmailRequestError();
       const input = inputSchema.parse(rawInput);
@@ -54,7 +54,7 @@ export function createGuardedPipedreamGmailRequest(options: {
           headers: { Authorization: `Bearer ${token}`, "x-pd-environment": environment, "x-pd-proxy-accept": "application/json",
             ...(body ? { "Content-Type": "application/json", "x-pd-proxy-content-type": "application/json" } : {}) } });
         return readGmailResponse(response, target, target.pathname.includes("/attachments/") ? 1400 * 1024 : 2 * 1024 * 1024, signal);
-      }, 10_000);
+      }, 10_000, parentSignal);
     } catch (error: unknown) {
       if (error instanceof NativeGmailRequestError) throw error;
       // Callback, token and network errors may contain private diagnostics; expose no raw message.

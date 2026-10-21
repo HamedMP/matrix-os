@@ -34,11 +34,13 @@ export async function executeIntegrationAction(opts: {
   actionId: string;
   params?: Record<string, unknown>;
   beforeSend?: BeforeGmailSend;
+  signal?: AbortSignal;
 }): Promise<{ data: unknown; summary?: string }> {
   const { pipedream, externalUserId, connection, def, actionDef, serviceId, actionId, params } = opts;
   const beforeSend = serviceId === "gmail" ? opts.beforeSend : undefined;
-  const control: [BeforeGmailSend?] = beforeSend ? [beforeSend] : [];
-  const boundedControl: [AbortSignal?, BeforeGmailSend?] = beforeSend ? [undefined, beforeSend] : [];
+  const signal = serviceId === "gmail" ? opts.signal : undefined;
+  const control: [BeforeGmailSend?, AbortSignal?] = signal ? [beforeSend, signal] : beforeSend ? [beforeSend] : [];
+  const boundedControl: [AbortSignal?, BeforeGmailSend?] = beforeSend ? [signal, beforeSend] : signal ? [signal] : [];
 
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");

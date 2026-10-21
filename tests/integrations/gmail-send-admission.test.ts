@@ -45,6 +45,63 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe.each([false, true])("Gmail send admission native=%s", native => {
+  it.each(["get_profile", "create_label"])("propagates parent cancellation through guarded %s action streams after admission", async actionId => {
+    const f = await fixture(native); const controller = new AbortController(); const cancelled = vi.fn();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    f.fetcher.mockImplementation(async () => new Response(new ReadableStream({ start(value) {
+      stream = value; value.enqueue(new TextEncoder().encode("{"));
+    }, cancel: cancelled })));
+    const beforeSend = vi.fn(async () => undefined);
+    const pending = executeIntegrationAction({ pipedream: f.client, externalUserId: identity.externalUserId,
+      connection: { pipedream_account_id: f.accountId }, def: GMAIL_SERVICE, actionDef: GMAIL_SERVICE.actions[actionId],
+      serviceId: "gmail", actionId, params: actions[actionId], beforeSend, signal: controller.signal })
+      .then(() => "released", () => "denied");
+    try {
+      await vi.waitFor(() => expect(f.fetcher).toHaveBeenCalledOnce());
+      controller.abort();
+      expect(f.fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+      expect(await pending).toBe("denied"); expect(cancelled).toHaveBeenCalledOnce();
+    } finally {
+      try { stream.close(); } catch (error) { if (!(error instanceof TypeError)) throw error; }
+      await pending;
+    }
+  });
+  it("aborts the generic request during its token wait and prevents a late send", async () => {
+    const f = await fixture(native); const token = deferred<string>(); f.token.mockReturnValue(token.promise);
+    const controller = new AbortController(); const beforeSend = vi.fn(async () => undefined);
+    const pending = f.client.proxyGet({ ...identity, accountId: f.accountId, url: `${base}/profile` }, beforeSend, controller.signal)
+      .then(() => "released", () => "denied");
+    await vi.waitFor(() => expect(f.token).toHaveBeenCalled());
+    controller.abort(); token.resolve("late");
+    expect(await pending).toBe("denied"); expect(f.fetcher).not.toHaveBeenCalled(); expect(beforeSend).not.toHaveBeenCalled();
+  });
+  it("aborts the generic request while an admission callback ignores cancellation", async () => {
+    const f = await fixture(native); const held = deferred<void>(); const controller = new AbortController();
+    const beforeSend = vi.fn(async () => held.promise);
+    const pending = f.client.proxyGet({ ...identity, accountId: f.accountId, url: `${base}/profile` }, beforeSend, controller.signal)
+      .then(() => "released", () => "denied");
+    await vi.waitFor(() => expect(beforeSend).toHaveBeenCalledOnce()); controller.abort();
+    try { expect(await pending).toBe("denied"); expect(f.fetcher).not.toHaveBeenCalled(); }
+    finally { held.resolve(); }
+    await new Promise(resolve => setTimeout(resolve, 0)); expect(f.fetcher).not.toHaveBeenCalled();
+  });
+  it("propagates parent cancellation through guarded callAction streams", async () => {
+    const f = await fixture(native); const controller = new AbortController(); const cancelled = vi.fn();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    f.fetcher.mockImplementation(async () => new Response(new ReadableStream({ start(value) {
+      stream = value; value.enqueue(new TextEncoder().encode("{"));
+    }, cancel: cancelled })));
+    const pending = f.client.callAction({ ...identity, accountId: f.accountId, url: `${base}/labels`, body: { name: "Reviewed" } },
+      async () => undefined, controller.signal).then(() => "released", () => "denied");
+    try {
+      await vi.waitFor(() => expect(f.fetcher).toHaveBeenCalledOnce()); controller.abort();
+      expect(f.fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+      expect(await pending).toBe("denied"); expect(cancelled).toHaveBeenCalledOnce();
+    } finally {
+      try { stream.close(); } catch (error) { if (!(error instanceof TypeError)) throw error; }
+      await pending;
+    }
+  });
   it.each(["proxyGet", "proxyPost", "boundedGmailGet", "boundedGmailLabels"] as const)("rechecks %s after credential wait and sends nothing after revocation", async method => {
     const f = await fixture(native); const token = deferred<string>(); f.token.mockReturnValue(token.promise);
     let valid = true;
@@ -122,6 +179,18 @@ it("retains unguarded SDK owner reads/writes and account revocation", async () =
   await f.client.revokeAccount(identity.accountId);
   expect(mocks.get).toHaveBeenCalledOnce(); expect(mocks.post).toHaveBeenCalledOnce(); expect(mocks.revoke).toHaveBeenCalledOnce();
   expect(f.fetcher).not.toHaveBeenCalled();
+});
+it("keeps explicitly cancellable legacy SDK reads independent while preserving owner reads", async () => {
+  const f = await fixture(false); const first = new AbortController(); const second = new AbortController();
+  const held = deferred<unknown>(); mocks.get.mockReturnValue(held.promise);
+  const input = { ...identity, url: `${base}/profile` };
+  const one = f.client.proxyGet(input, undefined, first.signal); const two = f.client.proxyGet(input, undefined, second.signal);
+  try {
+    await vi.waitFor(() => expect(mocks.get).toHaveBeenCalledTimes(2));
+    first.abort(); expect(mocks.get.mock.calls[0]![1].abortSignal.aborted).toBe(true);
+    expect(mocks.get.mock.calls[1]![1].abortSignal.aborted).toBe(false);
+    expect(f.fetcher).not.toHaveBeenCalled();
+  } finally { held.resolve({ legacy: true }); await Promise.all([one, two]); }
 });
 
 it.each(["https://other.example/profile", `${base}/messages/../profile`, `${base}/messages/%2e%2e/profile`,
