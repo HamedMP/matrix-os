@@ -67,6 +67,11 @@ describe("kernel working directory", () => {
     expect(options.cwd).toBe(config.homePath);
   });
 
+  it("includes authenticated Gmail options discovery in the ordinary owner tool surface", async () => {
+    const options = await kernelOptions({ db, homePath: "/home/matrix/home" });
+    expect(options.allowedTools).toContain("mcp__matrix-os-ipc__get_gmail_connection_options");
+  });
+
   it("registers Desktop tools only when authoritative dependencies are injected", async () => {
     const osViewTools = {
       listPlaceableApps: vi.fn(async () => []),

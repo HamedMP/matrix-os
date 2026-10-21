@@ -431,3 +431,6 @@ export { ProjectSetupLaunchProvider, useProjectSetupLaunch } from "./chat/Projec
 export { projectSetupGenerationText, projectSetupGenerationResultId, projectSetupControlsMessageId, projectSetupDetailPresentation } from "./chat/project-setup-presentation.js";
 
 export { useProjectSetupMarkdownEdits, type ProjectSetupMarkdownState } from "./chat/ProjectSetupMarkdown.js";
+
+export { GmailConnectionChoice } from "./integrations/GmailConnectionChoice.js";
+export { useGmailConnectionChoice } from "./integrations/use-gmail-connection-choice.js";

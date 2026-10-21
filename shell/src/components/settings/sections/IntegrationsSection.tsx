@@ -11,10 +11,11 @@ import {
   PREVIEW_INTEGRATIONS_UNAVAILABLE_NOTICE,
   type ConnectedService,
 } from "./integrations-helpers";
-import { GITHUB_DEVELOPER_SERVICE_ID, IntegrationMarketplace, withGithubDeveloperCatalogEntry } from "@matrix-os/ui";
-import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
+import { GITHUB_DEVELOPER_SERVICE_ID, GmailConnectionChoice, useGmailConnectionChoice, IntegrationMarketplace, withGithubDeveloperCatalogEntry } from "@matrix-os/ui";
+import type { GmailConnectionMethod, IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
 import { ConnectedIntegrationAccounts } from "./ConnectedIntegrationAccounts";
 import { GithubDeveloperIntegration } from "./GithubDeveloperIntegration";
+import { fetchGmailConnectionOptions } from "./gmail-connection-request";
 import { CustomMcpServersPanel } from "./CustomMcpServersPanel";
 import { ShellExternalMcpApprovalsSection } from "@/components/ShellExternalMcpApprovalsPill";
 
@@ -40,6 +41,8 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState<string>("");
   const [savingRename, setSavingRename] = useState<string | null>(null);
+  const loadGmailOptions = useCallback(() => fetchGmailConnectionOptions(GATEWAY), []);
+  const gmailChoice = useGmailConnectionChoice(loadGmailOptions);
   const connectInFlight = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -193,7 +196,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
     };
   }, [loadData]);
 
-  const handleConnect = async (serviceId: string, label?: string) => {
+  const handleConnect = async (serviceId: string, label?: string, connectionMethod?: GmailConnectionMethod) => {
     if (connecting || connectInFlight.current) return;
     connectInFlight.current = true;
     let popup: Window | null = null;
@@ -204,6 +207,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
       if (!popup) throw new Error("Consent window blocked");
       const payload: Record<string, string> = { service: serviceId };
       if (label?.trim()) payload.label = label.trim();
+      if (serviceId === "gmail" && connectionMethod) payload.connectionMethod = connectionMethod;
       const res = await fetch(`${GATEWAY}/api/integrations/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -446,13 +450,14 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
               {!loading ? <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }} /> : null}
               <IntegrationMarketplace services={services} connectedIds={connectedIds} connectingId={connecting}
                 rowPresentation={service => service.id === GITHUB_DEVELOPER_SERVICE_ID ? developer : undefined}
-                onConnect={id => { if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }} />
+                onConnect={id => { if (id === "gmail") gmailChoice.request(method => void handleConnect(id, undefined, method)); else if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }} />
               {!loading ? <CustomMcpServersPanel connectedApps={connected} appNames={Object.fromEntries(available.map(service => [service.id, service.name]))} /> : null}
               {!loading ? <ShellExternalMcpApprovalsSection /> : null}
             </>
           );
         }}
       </GithubDeveloperIntegration>
+      <GmailConnectionChoice choice={gmailChoice} />
     </div>
   );
 }

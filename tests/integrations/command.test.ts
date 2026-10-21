@@ -14,6 +14,20 @@ function response(body: unknown) {
 }
 
 describe("matrix-integrations terminal fallback", () => {
+  it.each(["matrix", "pipedream"])("preserves service/label positional args with optional %s method", async connectionMethod => {
+    const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response({ url: "https://connect.test", service: "gmail" }));
+    await runIntegrationsCommand(["connect", "gmail", "Work Gmail", connectionMethod], fetcher);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body as string)).toEqual({ service: "gmail", label: "Work Gmail", connectionMethod });
+  });
+  it("discovers owner connection methods and rejects a non-Gmail method before dispatch", async () => {
+    const options = { methods: ["pipedream"], defaultMethod: "pipedream" };
+    const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response(options));
+    expect(JSON.parse(await runIntegrationsCommand(["gmail-options"], fetcher))).toEqual(options);
+    fetcher.mockClear();
+    await expect(runIntegrationsCommand(["connect", "github", "Work", "matrix"], fetcher)).rejects.toThrow();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   afterEach(() => vi.unstubAllEnvs());
 
   it("preserves run-scoped authority for read-only calls", async () => {
