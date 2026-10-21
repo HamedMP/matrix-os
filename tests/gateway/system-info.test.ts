@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, onTestFinished, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -628,6 +628,9 @@ describe("T135: System info", () => {
 
 describe("getVersion", () => {
   it("falls back to package.json version in dev", () => {
+    const homePath = tmpHome();
+    onTestFinished(() => { vi.unstubAllEnvs(); rmSync(homePath, { recursive: true, force: true }); });
+    vi.stubEnv("MATRIX_BUNDLE_VERSION_FILE", join(homePath, "missing-BUNDLE_VERSION"));
     const version = getVersion();
     expect(version).toMatch(/^\d+\.\d+\.\d+/);
   });

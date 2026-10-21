@@ -14,9 +14,10 @@ function ok(journey: Partial<MobileJourneyState>): JourneyFetchResult {
 const noop = () => {};
 
 describe("JourneyGate", () => {
-  it("shows a loading state before the first result", () => {
+  it("waits on the startup screen before the first result, as every launch wait does", () => {
     const { getByTestId } = render(<JourneyGate result={null} onRetry={noop} onOpenUrl={noop} />);
     expect(getByTestId("journey-loading")).toBeTruthy();
+    expect(getByTestId("startup-screen")).toBeTruthy();
   });
 
   it("account_required prompts re-sign-in with an actionable button", () => {

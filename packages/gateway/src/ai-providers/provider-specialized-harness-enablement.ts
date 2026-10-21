@@ -1,3 +1,4 @@
+import { assertCodexNativeLoginSelection } from "./codex-native-login-completion.js";
 import { assertClaudeNativeLoginSelection } from "./claude-native-login-completion.js";
 import type { AiProviderSnapshotV3, ProviderSettingsMutation, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import type { HarnessConfiguration } from "./provider-settings-persistence.js";
@@ -14,11 +15,13 @@ export function assertSpecializedHarnessEnablement(input: {
   canonical: AiProviderSnapshotV3;
   snapshot?: ProviderSettingsSnapshot;
   claudeNativeCompletion?: boolean;
+  codexNativeCompletion?: boolean;
 }): void {
-  const nativeSelection = input.claudeNativeCompletion === true && input.harness.harness === "claude";
+  const nativeSelection = input.claudeNativeCompletion === true && input.harness.harness === "claude"
+    || input.codexNativeCompletion === true && input.harness.harness === "codex";
   if (nativeSelection) {
     if (!input.snapshot) throw new ProviderSettingsStoreError("runtime_unavailable", 503);
-    assertClaudeNativeLoginSelection({ mutation: input.mutation, snapshot: input.snapshot });
+    (input.harness.harness === "codex" ? assertCodexNativeLoginSelection : assertClaudeNativeLoginSelection)({ mutation: input.mutation, snapshot: input.snapshot });
   } else if (input.mutation.type !== "set_harness_enabled") {
     throw new ProviderSettingsStoreError("runtime_unavailable", 503);
   }

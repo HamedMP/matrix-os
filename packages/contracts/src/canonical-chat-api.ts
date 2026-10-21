@@ -320,7 +320,11 @@ export const CanonicalUpdateChatReadStateRequestSchema = z.discriminatedUnion("t
 export type CanonicalChatReadState = z.infer<typeof CanonicalChatReadStateSchema>;
 export type CanonicalUpdateChatReadStateRequest = z.infer<typeof CanonicalUpdateChatReadStateRequestSchema>;
 
+export const CanonicalChatImportSourceSchema = z.object({ harness: z.enum(["claude", "codex"]) }).strict();
+export type CanonicalChatImportSource = z.infer<typeof CanonicalChatImportSourceSchema>;
+
 export const CanonicalChatRecordSchema = z.object({
+  importSource: CanonicalChatImportSourceSchema.optional(),
   readState: CanonicalChatReadStateSchema.optional(),
   chat: CanonicalChatSchema,
   projectId: canonicalReferenceId(160).optional(),

@@ -1,10 +1,11 @@
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import type { SemanticColors } from "@/lib/theme-v2";
 
 import { Icon, type IconData } from "./Icon";
-import { DISABLED_OPACITY, PRESSED_OPACITY } from "./pressable-state";
+import { DISABLED_OPACITY } from "./pressable-state";
+import { PressableScale } from "./PressableScale";
 
 export type ButtonVariant = "filled" | "outline" | "secondary" | "text";
 export type ButtonSize = "default" | "large";
@@ -47,20 +48,19 @@ export function Button({
   const inactive = disabled || loading;
 
   return (
-    <Pressable
+    <PressableScale
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: inactive, busy: loading }}
       disabled={inactive}
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.base,
         styles[size],
         styles[variant],
         fullWidth && styles.fullWidth,
         disabled && styles.disabled,
-        pressed && styles.pressed,
       ]}
     >
       {/* Kept in place while loading so the button does not change width. */}
@@ -76,7 +76,7 @@ export function Button({
       {loading ? (
         <ActivityIndicator size="small" color={contentColor} style={styles.spinner} />
       ) : null}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -137,8 +137,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   disabled: {
     opacity: DISABLED_OPACITY,
-  },
-  pressed: {
-    opacity: PRESSED_OPACITY,
   },
 }));

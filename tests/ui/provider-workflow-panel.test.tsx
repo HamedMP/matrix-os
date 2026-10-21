@@ -266,8 +266,8 @@ it("contains a blocked sign-in popup as a safe actionable failure", async () => 
 it("places the single change-account action inside the connected card slot", () => {
   render(
     <HarnessWorkflowPanel
-      harness={{ ...harness, authState: "authenticated" }}
-      capability={capability}
+      harness={{ ...claudeHarness, authState: "authenticated" }}
+      capability={claudeCapability}
       client={client()}
       disabled={false}
       onRefresh={vi.fn()}
@@ -372,10 +372,10 @@ it("offers explicit Connect for a saved Off account instead of silently restorin
 });
 it("shows account actions for a configured native connection without claiming remote readiness", () => {
   const api = client();
-  render(<HarnessWorkflowPanel harness={{...harness, authState: "unknown", enabled: true, localObservation: {state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 60000).toISOString()}}} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} renderConnection={action => <article>Current account{action}</article>} />);
+  render(<HarnessWorkflowPanel harness={{...claudeHarness, authState: "unknown", enabled: true, localObservation: {state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 60000).toISOString()}}} capability={claudeCapability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} renderConnection={action => <article>Current account{action}</article>} />);
   expect(screen.getByText("Current account")).toBeInTheDocument();
   expect(screen.getByRole("button", {name: "Change account"})).toBeInTheDocument();
-  expect(screen.queryByText("Connect Codex with")).not.toBeInTheDocument();
+  expect(screen.queryByText("Connect Claude Code with")).not.toBeInTheDocument();
   expect(api.start).not.toHaveBeenCalled();
 });
 it("omits unsupported Disconnect without a Matrix disconnection callback", () => {

@@ -55,6 +55,7 @@ export interface TerminalState {
 export type TerminalControlKey =
   | "escape"
   | "tab"
+  | "shift-tab"
   | "enter"
   | "arrow-up"
   | "arrow-down"
@@ -253,6 +254,8 @@ export function buildTerminalControlSequence(key: TerminalControlKey): string {
       return "\x1b";
     case "tab":
       return "\t";
+    case "shift-tab":
+      return "\x1b[Z";
     case "enter":
       return "\r";
     case "arrow-up":
