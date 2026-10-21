@@ -1,3 +1,4 @@
+import { createPipedreamGmailAttemptRoutes, type PipedreamGmailAttemptConfig } from "./pipedream-attempts/routes.js";
 import { isNativeGmailAccount } from "./native-gmail/request.js";
 import { createNativeGmailConnectionRoutes } from "./native-gmail/connection-routes.js";
 import { createNativeGmailDisconnectRoutes } from "./native-gmail/disconnect-routes.js";
@@ -133,6 +134,7 @@ export interface IntegrationBroadcast {
 }
 
 export interface IntegrationRoutesOpts {
+  pipedreamGmailAttempts?: PipedreamGmailAttemptConfig;
   db: PlatformDb;
   nativeGmail?: NativeGmailLifecycle;
   nativeGmailCleanup?: Pick<NativeGmailLifecycle, "revoke">;
@@ -252,6 +254,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   if (opts.nativeGmail) app.route("/", createNativeGmailRoutes({ db, oauth: opts.nativeGmail, resolveUserId, broadcast, isEligible: opts.nativeGmailEligible }));
   if (!opts.nativeGmail) app.route("/", createNativeGmailConnectionRoutes({ db, resolveUserId, isEligible: opts.nativeGmailEligible ?? (async () => false) }));
   if (!opts.nativeGmail && opts.nativeGmailCleanup) app.route("/", createNativeGmailDisconnectRoutes({ db, cleanup: opts.nativeGmailCleanup, resolveUserId, broadcast }));
+  if (opts.pipedreamGmailAttempts) app.route("/", createPipedreamGmailAttemptRoutes({ db, pipedream,
+    config: opts.pipedreamGmailAttempts, resolveUserId, admit: opts.verifiedConnectedWebhook, emit }));
   app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 

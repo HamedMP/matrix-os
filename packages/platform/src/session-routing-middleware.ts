@@ -1,4 +1,4 @@
-import { isGmailOAuthCallback } from './integration-public-path.js';
+import { isGmailOAuthCallback, isGmailPipedreamCallback } from './integration-public-path.js';
 import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
 import {
   buildPreviewTerminalAccess,
@@ -457,7 +457,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return next();
     }
     const isPublicIntegrationPath =
-      isGmailOAuthCallback(c.req.method, reqPath) ||
+      isGmailOAuthCallback(c.req.method, reqPath) || isGmailPipedreamCallback(c.req.method, reqPath) ||
       reqPath === '/api/integrations/available' ||
       reqPath.startsWith('/api/integrations/webhook/');
     const isIntegrationPath =

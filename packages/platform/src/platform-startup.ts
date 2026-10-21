@@ -1,3 +1,4 @@
+import { loadGmailPipedreamAttemptConfig } from "./gmail-pipedream-attempt-config.js";
 import { createConfiguredPlatformGmail, initializeOwnedIntegrationDb, requiresPlatformGmailRuntime } from './native-gmail-startup.js';
 import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
 import { z } from 'zod/v4';
@@ -195,6 +196,7 @@ interface GatewayIntegrationRoutesModule {
     db: GatewayPlatformDb;
     pipedream: unknown;
     nativeGmail?: unknown;
+    pipedreamGmailAttempts?: ReturnType<typeof loadGmailPipedreamAttemptConfig>;
     nativeGmailCleanup?: unknown;
     nativeGmailEligible?: (userId: string) => Promise<boolean>;
     webhookSecret: string;
@@ -515,8 +517,9 @@ async function startPlatformServerWithCleanup(
     },
     disconnect: (userId: string, connectionId: string) => managedMcpPresetBroker?.disconnect(userId, connectionId) ?? Promise.resolve(false),
   };
+  const pipedreamGmailAttempts = loadGmailPipedreamAttemptConfig(process.env);
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
-  if (requiresPlatformGmailRuntime(process.env) && !integrationConfig) throw new Error('Gmail integration runtime unavailable');
+  if ((requiresPlatformGmailRuntime(process.env) || pipedreamGmailAttempts) && !integrationConfig) throw new Error('Gmail integration runtime unavailable');
   if (integrationConfig) {
     const [
       { createIntegrationRoutes, executeIntegrationAction, authorizeInternalJevLabels },
@@ -576,6 +579,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       nativeGmail: gmail.oauth,
+      pipedreamGmailAttempts,
       nativeGmailCleanup: gmail.cleanup,
       nativeGmailEligible: gmail.isEligible,
       webhookSecret,
@@ -591,6 +595,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       nativeGmail: gmail.oauth,
+      pipedreamGmailAttempts,
       nativeGmailCleanup: gmail.cleanup,
       nativeGmailEligible: gmail.isEligible,
       webhookSecret,
