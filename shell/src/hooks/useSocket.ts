@@ -26,6 +26,9 @@ export type ServerMessage =
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number; requestId?: string; eventId?: string }
   | { type: "data:change"; app: string; key: string }
   | { type: "os-view:changed"; revision: number; updatedAt: string }
+  | { type: "integration:connected"; service: string; accountLabel: string }
+  | { type: "integration:disconnected"; service: string; id: string }
+  | { type: "integration:expired"; service: string; id: string; accountLabel: string }
   | {
       type: "client:ack";
       actionId: string;

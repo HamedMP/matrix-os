@@ -23,7 +23,7 @@ it("connects Codex with a qualified API key and omits stale subscription choices
  expect(screen.getByRole("heading",{name:"Connect Codex with"})).toBeVisible();
  expect(screen.getByRole("button",{name:/^Codex.*Not connected/})).toHaveFocus();
  expect(screen.queryByRole("button",{name:/ChatGPT account/})).toBeNull();
- expect(screen.getByText(/Codex subscription connections are not currently supported/)).toBeVisible();
+ expect(screen.queryByText(/Codex subscription connections are not currently supported/)).toBeNull();
  expect(within(subscriptions).getByText(/OpenAI API key.*billed per request/)).toBeVisible();
  fireEvent.click(screen.getByRole("button",{name:/OpenAI API key/}));
  fireEvent.change(screen.getByLabelText("Paste your OpenAI API key"),{target:{value:"synthetic-key-only"}});
@@ -39,9 +39,9 @@ it("reuses the exact connected native account instead of repeating authorization
  render(<AgentsProvidersView {...props}/>);
  const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
  fireEvent.click(await within(subscriptions).findByRole("button",{name:"Manage Codex connection"}));
- expect(within(subscriptions).getByText("Saved account")).toBeInTheDocument();
+ expect(within(subscriptions).getByText("Connected")).toBeInTheDocument();
  expect(within(subscriptions).getByText("Current owner")).toBeInTheDocument();
- expect(within(subscriptions).getByText(/Codex subscription connections are not currently supported/)).toBeInTheDocument();
+ expect(within(subscriptions).getByText(/Native Codex.*Matrix AI/)).toBeInTheDocument();
  expect(screen.queryByRole("button",{name:/ChatGPT account ·/})).not.toBeInTheDocument();
  expect(client.startConnection).not.toHaveBeenCalled();
 });
@@ -132,7 +132,7 @@ it("keeps saved Codex metadata without promising unavailable account changes", a
  render(<AgentsProvidersView {...props}/>); await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
  const subscriptions=screen.getByRole("region",{name:"Your subscriptions"});
  expect(within(subscriptions).getByText("Recorded owner")).toBeVisible();
- expect(within(subscriptions).queryByRole("button",{name:"Manage Codex connection"})).toBeNull();
+ expect(within(subscriptions).getByRole("button",{name:"Manage Codex connection"})).toBeEnabled();
  fireEvent.click(screen.getByRole("button",{name:/^Codex/}));
  expect(screen.queryByRole("button",{name:"Change account"})).toBeNull();
  expect(screen.queryByRole("button",{name:"Reconnect"})).toBeNull();
@@ -240,4 +240,52 @@ it("offers Claude connection for the migrated kernel identity with qualified sub
  expect(screen.getByRole("button",{name:/Claude account · Sign in in browser/})).toBeEnabled();
  expect(screen.getByRole("button",{name:/Claude account · Log in in Terminal/})).toBeEnabled();
  expect(client.startConnection).not.toHaveBeenCalled(); expect(props.onMutate).not.toHaveBeenCalled();
+});
+
+it("offers the current native Codex terminal flow from Coding agents beside Matrix AI", async () => {
+ const {props,client,capability}=setup();
+ const terminal={id:"openai_terminal",providerId:"openai",authKind:"subscription",method:"terminal",billingKind:"subscription",executionKind:"native",availability:"available"} as const;
+ vi.mocked(client.capabilities).mockResolvedValue([{...capability,connectionOptions:[terminal]}]);
+ vi.mocked(client.startConnection!).mockResolvedValue({id:"native",harnessInstanceId:"codex",kind:"login",state:"running",expiresAt:new Date(Date.now()+60000).toISOString(),terminalSessionId:"tws_native:tt_login",deviceCode:null,authorizationUrl:null,safeFailure:null,connectionOption:terminal});
+ render(<AgentsProvidersView {...props}/>);
+ const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
+ expect(within(subscriptions).getByRole("article",{name:"ChatGPT subscription"})).toBeVisible();
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ fireEvent.click(screen.getByRole("button",{name:/^Codex/}));
+ fireEvent.click(screen.getByRole("button",{name:/ChatGPT account · Log in in Terminal/}));
+ await waitFor(()=>expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:"codex",optionId:"openai_terminal"}),expect.any(AbortSignal)));
+ expect(props.onOpenTerminal).toHaveBeenCalledWith("tws_native:tt_login");
+ expect(props.onMutate).not.toHaveBeenCalled();
+});
+it('reconnects a saved native Codex account through explicit Terminal completion rather than generic enablement', async () => {
+ const option = {id:'openai_terminal',providerId:'openai',authKind:'subscription',method:'terminal',billingKind:'subscription',executionKind:'native',availability:'available'} as const;
+ const {props,client}=setup({connectionOptions:[option]});
+ vi.mocked(client.startConnection!).mockResolvedValue({id:'native-reconnect',harnessInstanceId:'codex',kind:'login',state:'running',expiresAt:new Date(Date.now()+60000).toISOString(),terminalSessionId:'tws_native:tt_login',deviceCode:null,authorizationUrl:null,safeFailure:null,connectionOption:option});
+ Object.assign(props.snapshot.harnesses[0]!,{enabled:false,configuredEnabled:false,authState:'authenticated',accessSourceId:'owner_openai_profile',selectedAccountId:'owner_codex',accountIds:['owner_codex']});
+ props.snapshot.accounts=[{id:'owner_codex',providerId:'openai',accessSourceId:'owner_openai_profile',displayName:'Native owner',authMethod:'terminal',authState:'authenticated',dependencies:{activeChatCount:0,resumableChatCount:0,harnessInstanceCount:1}}] as never;
+ props.snapshot.accessSources=[{id:'owner_openai_profile',kind:'provider_account',fundingKind:'owner_account',providerId:'openai',accountId:'owner_codex',displayName:'Codex',eligibleModelIds:['selected-in-codex'],readiness:{state:'ready'},usage:{kind:'unavailable',reason:'unknown'}}] as never;
+ props.snapshot.supportedActions=['set_harness_enabled'];
+ render(<AgentsProvidersView {...props} onRefreshForConnection={vi.fn().mockResolvedValue(props.snapshot)}/>);
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ fireEvent.click(screen.getByRole('button',{name:/^Codex/}));
+ fireEvent.click(screen.getByRole('button',{name:'Reconnect'}));
+ await waitFor(()=>expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:'codex',optionId:'openai_terminal'}),expect.any(AbortSignal)));
+ expect(props.onOpenTerminal).toHaveBeenCalledWith('tws_native:tt_login');
+ expect(props.onMutate).not.toHaveBeenCalled();
+});
+
+it('retains the saved native account card while explicit reconfirmation is required', async () => {
+ const option = {id:'openai_terminal',providerId:'openai',authKind:'subscription',method:'terminal',billingKind:'subscription',executionKind:'native',availability:'available'} as const;
+ const {props,client}=setup({connectionOptions:[option]});
+ Object.assign(props.snapshot.harnesses[0]!,{enabled:false,configuredEnabled:true,authState:'authenticated',accessSourceId:'owner_openai_profile',selectedAccountId:'owner_codex',accountIds:['owner_codex']});
+ props.snapshot.accounts=[{id:'owner_codex',providerId:'openai',accessSourceId:'owner_openai_profile',displayName:'Native owner',authMethod:'terminal',authState:'authenticated',connectionDetails:{email:'saved@example.test',planName:'ChatGPT Plus'},dependencies:{activeChatCount:0,resumableChatCount:0,harnessInstanceCount:1}}] as never;
+ props.snapshot.accessSources=[{id:'owner_openai_profile',kind:'provider_account',fundingKind:'owner_account',providerId:'openai',accountId:'owner_codex',displayName:'Codex',eligibleModelIds:['selected-in-codex'],readiness:{state:'auth_required'},usage:{kind:'unavailable',reason:'unknown'}}] as never;
+ render(<AgentsProvidersView {...props}/>);
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ fireEvent.click(screen.getByRole('button',{name:/^Codex/}));
+ expect(within(screen.getByRole('region',{name:'Codex saved account'})).getByText('saved@example.test')).toBeVisible();
+ expect(screen.getByRole('heading',{name:'Saved account'})).toBeVisible();
+ expect(screen.queryByRole('button',{name:/^Codex.*Connected/})).toBeNull();
+ expect(screen.getByRole('button',{name:/ChatGPT account.*Log in in Terminal/})).toBeVisible();
+ expect(client.startConnection).not.toHaveBeenCalled();
 });

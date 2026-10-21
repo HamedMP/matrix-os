@@ -1,5 +1,5 @@
 // The App source gate independently checks full hosted recovery, never exit-only evidence.
-export const HOSTED_LANES=Object.freeze(['Type Check','Shell Production Build','Pattern Scan','React Doctor','Sync Client Package','Agent SDK 0.3.251 Compatibility',...Array.from({length:4},(_,i)=>`Unit Tests (${i+1}/4)`),'Funded Settlement PostgreSQL','Protected Funded Host Root Contracts','Docs Contract Tests','OS View Parity','E2E Tests (general)','E2E Tests (electron)','CI Backend Decision']);
+export const HOSTED_LANES=Object.freeze(['Type Check','Shell Production Build','Pattern Scan','React Doctor','Sync Client Package','Agent SDK 0.3.251 Compatibility',...Array.from({length:4},(_,i)=>`Unit Tests (${i+1}/4)`),'Funded Settlement PostgreSQL','Collaboration PostgreSQL','Protected Funded Host Root Contracts','Docs Contract Tests','OS View Parity','E2E Tests (general)','E2E Tests (electron)','CI Backend Decision']);
 const request={timeout:10000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 export async function verifyFullHostedCoverage(github,repo,run){

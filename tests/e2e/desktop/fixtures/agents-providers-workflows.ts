@@ -128,6 +128,11 @@ export async function startAgentsProvidersWorkflowGateway(options: { now?: () =>
       }
       if (path === "/api/ai/provider-settings/actions" && req.method === "POST") {
         const mutation = ProviderSettingsMutationSchema.parse(await body(req));
+        if (mutation.type === "logout_account" && mutation.accountId === "codex_account") {
+          if (mutation.expectedRevision !== revision) return json(res, { error: "Stale fixture revision" }, 409);
+          events.push("logout"); authenticated = false; codexEnabled = false; revision++;
+          return json(res, { kind: "snapshot", snapshot: currentSnapshot() });
+        }
         if (mutation.type !== "set_harness_enabled" || mutation.harnessInstanceId !== "codex_harness") return json(res, { error: "Unsupported fixture action" }, 400);
         if (mutation.expectedRevision !== revision) return json(res, {error: "Stale fixture revision"}, 409);
         events.push("disconnect"); codexEnabled = mutation.enabled; revision++;

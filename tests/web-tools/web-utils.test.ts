@@ -39,3 +39,19 @@ describe("extractRawText", () => {
     expect(stdout).toBe("true");
   });
 });
+
+
+describe("raw element tag boundaries", () => {
+  it("drops raw bodies closed with whitespace or attributes", () => {
+    expect(extractRawText('<p>Keep</p><script>secret()</script ><style>p{}</style foo="bar"><p>Also</p>')).toBe("Keep Also");
+  });
+  it("keeps script/style-prefixed ordinary element text", () => {
+    expect(extractRawText("<scripture>Visible</scripture><styleguide>Still visible</styleguide><script>hidden</script><style>hidden</style>"))
+      .toBe("Visible Still visible");
+  });
+  it("removes balanced split fragments while returning plain text", () => {
+    const text = extractRawText("<p>A</p><scr<script></script>ipt>evil()</script><p>B</p>");
+    expect(text).not.toMatch(/<script|<style/i);
+    expect(text).toContain("A"); expect(text).toContain("B");
+  });
+});

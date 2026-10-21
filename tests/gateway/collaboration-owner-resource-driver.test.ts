@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createOwnerResourceDriver } from "../../packages/gateway/src/collaboration/owner-resource-driver.js";
 
+// Physical-generation checks remain required on Linux; app/path checks are portable.
+const nativeIt = it.runIf(process.platform === "linux");
+
 const OWNER = "user_owner";
 const PROJECT = "project_alpha";
 const APP_REGISTRY_IDENTITY = "b".repeat(64);
@@ -34,7 +37,7 @@ describe("owner resource driver boundary", () => {
 
   afterEach(async () => { driver.close(); await rm(base, { recursive: true, force: true }); });
 
-  it("streams project bytes and atomically replaces a catalog path", async () => {
+  nativeIt("streams project bytes and atomically replaces a catalog path", async () => {
     await writeFile(join(project, "README.md"), "old");
     const namespace = { ownerId: OWNER, projectId: PROJECT, path: "README.md" };
     const before = await driver.fingerprint(namespace);
@@ -48,7 +51,7 @@ describe("owner resource driver boundary", () => {
     expect(await driver.fingerprint(namespace)).toBe(incarnation);
   });
 
-  it("keeps the same identity across a metadata write on a freshly created file", async () => {
+  nativeIt("keeps the same identity across a metadata write on a freshly created file", async () => {
     // A fresh object reports equal birth and change times. Deciding the hashing scheme by comparing
     // those two made the branch flip on the first metadata write, rehashing the same file and
     // 404-ing the share with nothing replaced. The scheme must depend only on whether the platform
@@ -60,7 +63,7 @@ describe("owner resource driver boundary", () => {
     expect(await driver.fingerprint(namespace)).toBe(atCreation);
   });
 
-  it("keeps a shared folder readable when a collaborator adds a file, and still catches a recreated one", async () => {
+  nativeIt("keeps a shared folder readable when a collaborator adds a file, and still catches a recreated one", async () => {
     // The incarnation exists to refuse a path whose bytes were swapped underneath it. Including
     // ctimeNs also made it refuse ordinary use, because a folder's ctime moves whenever an entry is
     // added or removed. Both halves are asserted here so neither can regress silently.
@@ -76,7 +79,7 @@ describe("owner resource driver boundary", () => {
     expect(await driver.fingerprint(namespace)).not.toBe(shared);
   });
 
-  it("checks the opened file identity before streaming a recreated path", async () => {
+  nativeIt("checks the opened file identity before streaming a recreated path", async () => {
     const namespace = { ownerId: OWNER, projectId: PROJECT, path: "README.md" };
     await writeFile(join(project, "README.md"), "original");
     const original = await driver.fingerprint(namespace);
@@ -90,7 +93,7 @@ describe("owner resource driver boundary", () => {
     expect(await new Response(current.stream).text()).toBe("replacement private bytes");
   });
 
-  it("streams chunks into place only when the whole upload matches its checksum", async () => {
+  nativeIt("streams chunks into place only when the whole upload matches its checksum", async () => {
     await writeFile(join(project, "upload.bin"), "old");
     const parts = ["first part ", "second part"].map((part) => new TextEncoder().encode(part));
     const whole = Buffer.concat(parts);
@@ -139,7 +142,7 @@ describe("owner resource driver boundary", () => {
       .rejects.toMatchObject({ code: "forbidden" });
   });
 
-  it("inspects a file as the same identity the read path verifies", async () => {
+  nativeIt("inspects a file as the same identity the read path verifies", async () => {
     const namespace = { ownerId: OWNER, projectId: PROJECT, path: "README.md" };
     await writeFile(join(project, "README.md"), "shared bytes");
     const observed = await driver.inspect!({ ...namespace, kind: "file" });
@@ -148,7 +151,7 @@ describe("owner resource driver boundary", () => {
     expect(await new Response(read.stream).text()).toBe("shared bytes");
   });
 
-  it("inspects a folder as the same identity the catalog records for its path", async () => {
+  nativeIt("inspects a folder as the same identity the catalog records for its path", async () => {
     await mkdir(join(project, "docs"));
     const namespace = { ownerId: OWNER, projectId: PROJECT, path: "docs" };
     const observed = await driver.inspect!({ ...namespace, kind: "folder" });

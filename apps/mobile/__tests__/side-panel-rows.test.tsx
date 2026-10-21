@@ -116,7 +116,9 @@ describe("SidePanel chats", () => {
 
       const row = screen.getAllByTestId("recent-chat-skeleton-row")[0];
       expect(flat(row)).toMatchObject({ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 });
-      const [circle, bar] = row.children as Parameters<typeof flat>[0][];
+      // The same placeholder block, and so the same sweep, as every other loading state.
+      const circle = screen.getAllByTestId("recent-chat-skeleton-icon")[0];
+      const bar = screen.getAllByTestId("recent-chat-skeleton-text")[0];
       expect(flat(circle)).toMatchObject({ width: 40, height: 40, borderRadius: 9999, backgroundColor: "#F2F2F0" });
       expect(flat(bar)).toMatchObject({ height: 14, width: "72%", borderRadius: 9999, backgroundColor: "#F2F2F0" });
       expect(flat(screen.getByTestId("recent-chat-skeleton")).gap).toBe(4);

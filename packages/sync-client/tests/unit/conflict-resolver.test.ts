@@ -80,6 +80,14 @@ describe("generateConflictPath", () => {
     expect(result).toBe("src/index (conflict - hamed-macbook - 2026-04-14).ts");
   });
 
+  it("sanitizes hostile peer ids in linear time", () => {
+    const started = performance.now();
+    expect(generateConflictPath("a.txt", `${"_".repeat(100_000)}peer${"!".repeat(100_000)}`, new Date("2026-01-15")))
+      .toBe("a (conflict - peer - 2026-01-15).txt");
+    expect(generateConflictPath("a.txt", "___", new Date("2026-01-15"))).toBe("a (conflict - unknown - 2026-01-15).txt");
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it("handles files with no directory component", () => {
     const result = generateConflictPath(
       "README.md",

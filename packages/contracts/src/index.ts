@@ -85,6 +85,10 @@ export * from "#funded-ai";
 export * from "#jev";
 export * from "#jev-inbox";
 export * from "#getting-started";
+export * from "#integration-connections";
+export * from "#onboarding-widget";
+export * from "#onboarding-widget-catalog";
+export * from "#onboarding-widget-view";
 export * from "#safe-client-error";
 export * from "#speech";
 export * from "#support-chat-properties";
@@ -1469,3 +1473,4 @@ export * from "#chat-navigation";
 
 export * from "#remote-browser";
 export * from "#shared-browser";
+export * from "#funded-host-activation";

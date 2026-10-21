@@ -344,7 +344,7 @@ export async function ownerRuntimeIdentity(
   body: Uint8Array,
   requestedRuntimeId: string,
   organizationId?: string,
-): Promise<{ actorId: string; ownerId: string; runtimeId: string; organizationId?: string }> {
+): Promise<{ actorId: string; ownerId: string; runtimeId: string; organizationId?: string; authorityGeneration?: number }> {
   const credentials = readDirectCredentials(c);
   if (credentials) {
     if (!options.ownerRuntimeSessions) throw new CollaborationAuthorizationError("unavailable", "Owner runtime sessions are unavailable");
@@ -355,7 +355,7 @@ export async function ownerRuntimeIdentity(
     if (requestedRuntimeId !== options.runtimeId || (organizationId && session.organizationId !== organizationId)) {
       throw new CollaborationAuthorizationError("forbidden", "Owner runtime access is required");
     }
-    return { actorId: session.actorId, ownerId: session.actorId, runtimeId: options.runtimeId, organizationId: session.organizationId };
+    return { actorId: session.actorId, ownerId: session.actorId, runtimeId: options.runtimeId, organizationId: session.organizationId, authorityGeneration: session.authorityGeneration };
   }
   const proof = await verifyHttp(options.verifier, c, body);
   requireOwnerCreationProof(proof, requestedRuntimeId, options.runtimeId);
