@@ -1,3 +1,4 @@
+import { admitGmailSend, type BeforeGmailSend } from "./gmail-send-admission.js";
 import { z } from "zod/v4";
 import { EMAIL_TRIAGE_LABELS, JevInboxGmailIdSchema } from "@matrix-os/contracts";
 import { boundedOperation } from "../bounded-operation.js";
@@ -28,7 +29,7 @@ export function createBoundedPipedreamLabels(options: {
 }) {
   const project = z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/).parse(options.projectId);
   const environment = z.enum(["development", "production"]).parse(options.environment);
-  return async (raw: unknown, callerSignal?: AbortSignal): Promise<unknown> => {
+  return async (raw: unknown, callerSignal?: AbortSignal, beforeSend?: BeforeGmailSend): Promise<unknown> => {
     const input = BoundedGmailLabelsSchema.parse(raw);
     return boundedOperation(async signal => {
       const target = new URL("https://gmail.googleapis.com/gmail/v1/users/me/labels");
@@ -43,7 +44,9 @@ export function createBoundedPipedreamLabels(options: {
       }
       const url = new URL(`https://api.pipedream.com/v1/connect/${project}/proxy/${Buffer.from(target.href).toString("base64url")}`);
       url.searchParams.set("external_user_id", input.externalUserId); url.searchParams.set("account_id", input.accountId);
-      const token = await options.getAccessToken(); signal.throwIfAborted();
+      const token = await options.getAccessToken();
+      await admitGmailSend(signal, beforeSend);
+      signal.throwIfAborted();
       const response = await (options.fetcher ?? fetch)(url.href, { method: body ? "POST" : "GET", body, signal,
         redirect: "error", headers: { Authorization: `Bearer ${token}`, "x-pd-environment": environment,
           Accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) } });
