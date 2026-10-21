@@ -47,6 +47,34 @@ it('preserves a completed original for owner recovery when durable artifact stor
     reason: 'original_store_failed', ownerReviewRequired: true,
   });
 });
+it.each(['before validation fails', 'while cancellation is acknowledged'])('preserves an unverified original completed %s', async timing => {
+  const { options, homePath, original, emit, downloadPath, messages } = await rig();
+  let rejectValidation!: (error: Error) => void;
+  const validation = new Promise<Array<{ address: string; family: number }>>((_, reject) => { rejectValidation = reject; });
+  const completed = () => emit('Browser.downloadProgress', { guid: 'invoice-guid-123', receivedBytes: original.length, totalBytes: original.length, state: 'completed' });
+  const request = options.client.request;
+  options.client.request = async (method, params) => {
+    if (method === 'Browser.cancelDownload' && timing === 'while cancellation is acknowledged') completed();
+    return request(method, params);
+  };
+  options.trigger = async () => {
+    await writeFile(join(downloadPath(), 'invoice-guid-123'), original);
+    emit('Browser.downloadWillBegin', { frameId: 'agent-frame', guid: 'invoice-guid-123', url: 'https://unverified.example/original.pdf?private=token' });
+    if (timing === 'before validation fails') completed();
+    rejectValidation(new Error('Synthetic DNS lookup failure'));
+  };
+
+  const result = await collectChromeDownload({ ...options, resolveHost: () => validation });
+  expect(result).toHaveProperty('recoveryPath');
+  expect(result).not.toHaveProperty('original');
+  if (!('recoveryPath' in result)) throw new Error('Unverified original was reported as a verified artifact');
+  expect(await readFile(join(homePath, result.recoveryPath, 'invoice-guid-123'))).toEqual(original);
+  const manifest = await readFile(join(homePath, result.recoveryPath, 'recovery.json'), 'utf8');
+  expect(JSON.parse(manifest)).toMatchObject({ reason: 'source_validation_failed', ownerReviewRequired: true });
+  expect(manifest).not.toContain('private');
+  expect(await readdir(join(homePath, 'data/browser-artifacts'))).toEqual([result.recoveryPath.split('/').at(-1)]);
+  expect(messages.at(-1)?.params.behavior).toBe('default');
+});
 it('preserves a completed original for owner recovery when cancellation wins after completion', async () => {
   const { options, homePath, original, emit, downloadPath } = await rig();
   const controller = new AbortController(); options.signal = controller.signal;

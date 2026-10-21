@@ -103,7 +103,7 @@ describe("S05 direct transport path on real PostgreSQL", () => {
       socket.send(JSON.stringify({ protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, runtimeId: logicalRuntimeId, authorityGeneration: 2, fenceAt: clock.toISOString() }));
       await vi.waitFor(async () => expect((await authority.describe(denial.denialId))?.state).toBe("completed"));
       expect(await authority.describeOutbox(denial.denialId)).toEqual([{ runtimeId: logicalRuntimeId, attempts: 1, deadLetter: false, acknowledgedAt: clock.toISOString() }]);
-      expect((await direct.endpoints.resolve(logicalRuntimeId))?.lastControlAt).toBe(clock.toISOString());
+      await vi.waitFor(async () => expect((await direct.endpoints.resolve(logicalRuntimeId))?.lastControlAt).toBe(clock.toISOString()));
 
       // An oversized frame ends the connection instead of being parsed.
       const closed = once(socket, "close");
