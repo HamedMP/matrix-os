@@ -186,11 +186,13 @@ describe("rendered Browser toolbar launch", () => {
     }
     const view = render(<Windows/>);
     const browserFrame = await screen.findByTitle("Chrome on your Matrix computer") as HTMLIFrameElement;
+    const browserViewerUrl = browserFrame.src;
     const acknowledge = (frame: HTMLIFrameElement) => act(() => window.dispatchEvent(new MessageEvent("message", {
       data: { type: "matrix-browser-viewer", connected: true }, origin: "https://app.matrix-os.com", source: frame.contentWindow,
     })));
     acknowledge(browserFrame);
     expect(within(screen.getByRole("region", { name: "Browser" })).getByText("Connected")).toBeTruthy();
+    expect(browserFrame.hasAttribute("inert")).toBe(false);
     const changed = vi.fn(); const unsubscribe = useWindowManager.subscribe(changed);
     try {
       const launch = screen.getByRole("button", { name: "Cloud desktop" });
@@ -202,7 +204,14 @@ describe("rendered Browser toolbar launch", () => {
       const cloudFrame = await screen.findByTitle("Your Matrix cloud desktop") as HTMLIFrameElement;
       acknowledge(cloudFrame);
       expect(within(screen.getByRole("region", { name: "Cloud desktop" })).getByText("Connected")).toBeTruthy();
-      expect(within(screen.getByRole("region", { name: "Browser" })).getByText("Ready when you return")).toBeTruthy();
+      const browserRegion = within(screen.getByRole("region", { name: "Browser" }));
+      expect(browserRegion.getByText("Paused")).toBeTruthy();
+      expect(browserRegion.getByTitle("Chrome on your Matrix computer")).toBe(browserFrame);
+      expect(browserFrame.src).toBe(browserViewerUrl);
+      expect(browserFrame.hasAttribute("inert")).toBe(true);
+      expect(browserFrame.tabIndex).toBe(-1);
+      expect(browserFrame.style.pointerEvents).toBe("none");
+      expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/browser-session"))).toHaveLength(2);
       expect(useWindowManager.getState().windows.find(win => win.id === cloud.id)).toMatchObject({
         x: cloud.x, y: cloud.y, width: cloud.width, height: cloud.height, minimized: false,
       });
