@@ -238,7 +238,7 @@ export async function forwardBotInference(
         if (deps.googleData && (!(await planPolicy("dispatch")).allowed || !await planLive())) throw new GoogleInferencePolicyError();
         return authority.infer(candidate, body, signal);
       },
-      ...(authority.inferStream ? { inferStream: (candidate: PiRuntimeBinding, body: string, signal: AbortSignal) => {
+      ...(authority.inferStream ? { inferStream: async (candidate: PiRuntimeBinding, body: string, signal: AbortSignal) => {
         if (deps.googleData && (!(await planPolicy("dispatch")).allowed || !await planLive())) throw new GoogleInferencePolicyError();
         return authority.inferStream!(candidate, body, signal);
       } } : {}),
