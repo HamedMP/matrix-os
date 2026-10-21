@@ -24,11 +24,11 @@ describe('platform/customer-vps', () => {
     expect(config.posthogPublicHost).toBe('https://eu.posthog.com');
   });
   it('keeps the preview provisioning limit bounded for missing or invalid configuration', () => {
-    expect(loadCustomerVpsConfig({}).previewProvisioningLimit).toBe(8);
+    expect(loadCustomerVpsConfig({}).previewProvisioningLimit).toBe(16);
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '4' }).previewProvisioningLimit).toBe(4);
-    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '0' }).previewProvisioningLimit).toBe(8);
-    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '17' }).previewProvisioningLimit).toBe(8);
-    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '0' }).previewProvisioningLimit).toBe(16);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '17' }).previewProvisioningLimit).toBe(16);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(16);
   });
   it('keeps golden snapshots disabled by default and bounds every control-plane budget', () => {
     expect(loadCustomerVpsConfig({}).goldenSnapshots).toMatchObject({

@@ -1,7 +1,7 @@
 // The reviewed source authority remains Main. Auxiliary jobs execute on a
 // distinct, protected, tree-identical child so their checks cannot attach to Main.
 const sha=/^[a-f0-9]{40}$/;
-const workflows=new Set(['.github/workflows/ci.yml','.github/workflows/ci-dedicated.yml','.github/workflows/preview-vps.yml']);
+const workflows=new Set(['.github/workflows/ci.yml','.github/workflows/ci-dedicated.yml','.github/workflows/preview-vps.yml','.github/workflows/preview-review.yml','.github/workflows/preview-desktop.yml']);
 const request={timeout:10000};
 const positive=value=>Number.isSafeInteger(value)&&value>0;
 const sameRepo=(name,repo)=>typeof name==='string'&&name.toLowerCase()===`${repo.owner}/${repo.repo}`.toLowerCase();

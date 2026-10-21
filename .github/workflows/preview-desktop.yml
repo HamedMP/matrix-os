@@ -1,0 +1,107 @@
+name: Preview Desktop
+run-name: preview-desktop-v1 pr=${{ inputs.pr }} head=${{ inputs.head }} lease=${{ inputs.lease }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Same-repository PR number reserved by the preview controller.
+        type: string
+        required: true
+      head:
+        description: Immutable 40-character PR head.
+        type: string
+        required: true
+      lease:
+        description: Source-bound preview Deployment reservation ID.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# One reservation owns a build. The controller cancels obsolete runs after
+# checking their immutable source, rather than an untrusted dispatch canceling it.
+concurrency:
+  group: preview-desktop-${{ inputs.pr }}-${{ inputs.lease }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    name: Verify preview desktop request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.verify.outputs.pr }}
+      head: ${{ steps.verify.outputs.head }}
+      lease: ${{ steps.verify.outputs.lease }}
+      version_suffix: ${{ steps.verify.outputs.version_suffix }}
+      artifact_prefix: ${{ steps.verify.outputs.artifact_prefix }}
+    steps:
+      - name: Require reviewed controller configuration
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          MATRIX_CI_CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+        with:
+          retries: 0
+          script: |
+            const pin = process.env.MATRIX_CI_CONTROLLER_SHA;
+            if (!/^[a-f0-9]{40}$/.test(pin || '') || context.eventName !== 'workflow_dispatch' || context.ref !== `refs/heads/ci-execution/${pin}`) {
+              throw new Error('Reviewed isolated preview desktop controller is required');
+            }
+
+      - name: Checkout reviewed preview verifiers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+
+      - name: Verify execution origin and preview reservation
+        id: verify
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          MATRIX_CI_CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          PREVIEW_WORKFLOW_REF: ${{ github.workflow_ref }}
+          PREVIEW_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        with:
+          retries: 0
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const { resolve } = require('node:path');
+            const controllerSha = process.env.MATRIX_CI_CONTROLLER_SHA;
+            const moduleUrl = name => pathToFileURL(resolve(process.env.GITHUB_WORKSPACE, 'scripts/ci', name)).href;
+            const { verifyIsolatedExecutionOrigin } = await import(moduleUrl('execution-origin.mjs'));
+            await verifyIsolatedExecutionOrigin(github, context.repo, {
+              ref: context.ref, sha: context.sha,
+              workflowRef: process.env.PREVIEW_WORKFLOW_REF, workflowSha: process.env.PREVIEW_WORKFLOW_SHA,
+            }, { workflowPath: '.github/workflows/preview-desktop.yml', controllerSha });
+            const { verifyPreviewRequest } = await import(moduleUrl('preview-review-request.mjs'));
+            const { pr, head, lease } = await verifyPreviewRequest(github, context.repo, {
+              ...context.payload.inputs, controllerSha,
+            });
+            core.setOutput('pr', String(pr));
+            core.setOutput('head', head);
+            core.setOutput('lease', String(lease));
+            core.setOutput('version_suffix', `pr${pr}.${head.slice(0, 12)}`);
+            core.setOutput('artifact_prefix', `preview-desktop-pr${pr}-${head}-lease${lease}`);
+
+  build:
+    name: Build matching preview desktop installers
+    needs: request
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/desktop-build.yml
+    with:
+      source_ref: ${{ needs.request.outputs.head }}
+      channel: dev
+      version_suffix: ${{ needs.request.outputs.version_suffix }}
+      artifact_prefix: ${{ needs.request.outputs.artifact_prefix }}
+      retention_days: 3
+      build_windows: false
+    secrets: inherit

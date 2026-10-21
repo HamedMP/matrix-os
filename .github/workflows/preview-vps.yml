@@ -25,6 +25,7 @@
 # then query with ./scripts/preview-logs.sh --handle pr-<N>.
 
 name: Preview VPS
+run-name: ${{ inputs.preview_lease && format('preview-web-v1 pr={0} head={1} lease={2}', inputs.pr, inputs.expected_head, inputs.preview_lease) || 'Preview VPS' }}
 
 on:
   pull_request:
@@ -33,6 +34,14 @@ on:
     - cron: "23 5 * * *"
   workflow_dispatch:
     inputs:
+      expected_head:
+        description: Exact head reserved by the unified preview queue
+        type: string
+        default: ''
+      preview_lease:
+        description: Source-bound queue Deployment reservation ID
+        type: string
+        default: ''
       pr:
         description: "PR number to deploy a preview VPS for"
         required: true
@@ -66,6 +75,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  deployments: read
 
 concurrency:
   group: preview-${{ vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'route' || 'execution' }}-${{ github.event_name == 'workflow_dispatch' && inputs.bundle_only && 'bundle' || 'vps' }}-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.event.label.name != 'preview-collaboration' && github.run_id || 'active' }}
@@ -119,6 +129,7 @@ jobs:
             const inputs={pr:scheduled?'0':String(input.pr??''),version:scheduled?'':String(input.version??''),
               bundle_only:scheduled?'false':boolean(input.bundle_only),verify_inventory:scheduled?'false':boolean(input.verify_inventory),
               teardown_preview:scheduled?'false':boolean(input.teardown_preview),reap:scheduled?'true':boolean(input.reap)};
+            if(!scheduled && input.preview_lease){inputs.expected_head=String(input.expected_head??'');inputs.preview_lease=String(input.preview_lease);}
             // No retry: an ambiguous dispatch result is an attended reconciliation.
             await github.rest.actions.createWorkflowDispatch({...context.repo,workflow_id:'preview-vps.yml',ref:branch,inputs,request:{timeout:10000}});
             core.notice('Preview request forwarded to its isolated execution origin.');
@@ -192,6 +203,26 @@ jobs:
       author: ${{ steps.decide.outputs.author }}
       teardown_private: ${{ steps.decide.outputs.teardown_private }}
     steps:
+      - name: Checkout trusted queued preview verifier
+        if: inputs.preview_lease != ''
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.execution_origin.outputs.trusted_ref }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Verify queued preview reservation
+        if: inputs.preview_lease != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+        with:
+          retries: 0
+          script: |
+            if (context.eventName !== 'workflow_dispatch' || context.ref !== `refs/heads/ci-execution/${process.env.CONTROLLER}`) throw new Error('Queued previews require isolated execution');
+            const {pathToFileURL} = require('node:url');
+            const {resolve} = require('node:path');
+            const {verifyPreviewRequest} = await import(pathToFileURL(resolve('scripts/ci/preview-review-request.mjs')).href);
+            await verifyPreviewRequest(github,context.repo,{pr:context.payload.inputs.pr,head:context.payload.inputs.expected_head,lease:context.payload.inputs.preview_lease,controllerSha:process.env.CONTROLLER});
       - name: Decide action
         id: decide
         env:
@@ -208,6 +239,7 @@ jobs:
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           EVENT_AUTHOR: ${{ github.event.pull_request.user.login }}
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
           REQUESTED_VERSION: ${{ inputs.version }}
           BUNDLE_ONLY: ${{ inputs.bundle_only }}
           VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
@@ -240,9 +272,13 @@ jobs:
             head_sha="$(jq -r .head.sha <<< "$pr_json")"
             head_ref="$(jq -r .head.ref <<< "$pr_json")"
             head_repo="$(jq -r .head.repo.full_name <<< "$pr_json")"
-            has_preview_label="$(jq -r 'any(.labels[]?; .name == "preview-vps")' <<< "$pr_json")"
+            has_preview_label="$(jq -r 'any(.labels[]?; .name == "preview-vps" or .name == "preview")' <<< "$pr_json")"
             has_collaboration_label="$(jq -r 'any(.labels[]?; .name == "preview-collaboration")' <<< "$pr_json")"
             author="$(jq -r '.user.login // ""' <<< "$pr_json")"
+          fi
+          if [ -n "${EXPECTED_HEAD:-}" ] && [ "$EXPECTED_HEAD" != "$head_sha" ]; then
+            echo "Queued preview head changed before build" >&2
+            exit 1
           fi
           # Registered as bundle provenance; the platform accepts plain GitHub logins only.
           if ! printf '%s' "$author" | grep -Eq '^[A-Za-z0-9-]{1,39}$'; then
@@ -455,6 +491,17 @@ jobs:
           name: preview-bundle-${{ needs.gate.outputs.pr }}
           path: dist/host-bundle
 
+      - name: Revalidate queued source before publication
+        if: inputs.preview_lease != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          retries: 0
+          script: |
+            const {data:pr}=await github.rest.pulls.get({...context.repo,pull_number:Number(context.payload.inputs.pr),request:{timeout:10000}});
+            if(pr.state!=='open'||pr.head.sha!==context.payload.inputs.expected_head||!pr.labels.some(l=>l.name==='preview'))throw new Error('Queued preview source changed before publication');
+            const {data:lease}=await github.rest.repos.getDeployment({...context.repo,deployment_id:Number(context.payload.inputs.preview_lease),request:{timeout:10000}});
+            const {data:states}=await github.rest.repos.listDeploymentStatuses({...context.repo,deployment_id:lease.id,per_page:1,request:{timeout:10000}});
+            if(lease.creator?.login!=='github-actions[bot]'||lease.sha!==pr.head.sha||lease.payload?.schema!=='matrix-preview-v1'||lease.payload.pr!==pr.number||lease.payload.head!==pr.head.sha||Date.parse(lease.payload.expiresAt)<=Date.now()||!['pending','in_progress','success'].includes(states[0]?.state)||states[0]?.description?.startsWith('Cleanup started: '))throw new Error('Queued preview reservation expired or stopped');
       - name: Publish release (register-only, no channel)
         if: needs.gate.outputs.action == 'deploy'
         env:
@@ -842,7 +889,7 @@ jobs:
           if-no-files-found: error
 
       - name: Comment preview URL on PR
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && inputs.preview_lease == ''
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.gate.outputs.pr }}
@@ -908,7 +955,7 @@ jobs:
             --changelog "Private Preview bundle for PR #${PR}" "${provenance[@]}"
 
       - name: Comment bundle on PR
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && inputs.preview_lease == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
