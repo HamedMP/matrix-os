@@ -12,9 +12,10 @@ export function resolveCanonicalChatAttention(record: ChatNavigationRecord): Can
 }
 
 /** Completion placement survives read acknowledgement; attention still wins. */
-export function resolveCanonicalChatLifecycleGroup(record: ChatNavigationRecord): 'needsYou' | 'working' | 'done' | 'recent' {
+export function resolveCanonicalChatLifecycleGroup(record: ChatNavigationRecord): 'needsYou' | 'failed' | 'working' | 'done' | 'recent' {
   const state = resolveCanonicalChatAttention(record);
-  if (state === 'approval_required' || state === 'input_required' || state === 'failed') return 'needsYou';
+  if (state === 'approval_required' || state === 'input_required') return 'needsYou';
+  if (state === 'failed') return 'failed';
   if (state === 'running') return 'working';
   return state === 'unseen_completion' || record.latestSuccessfulCompletion ? 'done' : 'recent';
 }

@@ -2,7 +2,7 @@
 
 import { Ellipsis } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ChatContextMenu, OverflowingChatTitle, ChatImportSourceIcon } from "@matrix-os/ui";
+import { ChatContextMenu, ChatImportSourceIcon, OverflowingChatTitle, resolveCanonicalChatAttention } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 export interface RenameableConversation {
@@ -92,6 +92,7 @@ export function RenameableConversationRow({
     if (renameTimerRef.current !== null) window.clearTimeout(renameTimerRef.current);
   }, []);
   const title = conversation.title || conversation.preview || "New chat";
+  const failed = conversation.canonicalRecord ? resolveCanonicalChatAttention(conversation.canonicalRecord) === "failed" : false;
   const row = editing ? (
     <div className={`flex w-full items-center px-2.5 ${mobile ? "py-3" : "py-1.5"}`}>
       <ChatTitleEditor title={title} pending={renamePending} onCommit={onRenameCommit} onCancel={onRenameCancel} />
@@ -99,7 +100,7 @@ export function RenameableConversationRow({
   ) : (
     <button
       type="button"
-      aria-label={title}
+      aria-label={failed ? `${title}, agent failed` : title}
       aria-current={active ? "page" : undefined}
       onClick={(event) => {
         if (!onRenameStart || event.detail === 0) {
@@ -123,7 +124,7 @@ export function RenameableConversationRow({
       }`}
     >
       {conversation.canonicalRecord?.importSource ? <ChatImportSourceIcon harness={conversation.canonicalRecord.importSource.harness}/> : null}
-      <span className={`matrix-web-chat-title flex min-w-0 flex-1 ${conversation.readState?.unread ? "font-semibold" : ""}`}><OverflowingChatTitle title={title}/></span>
+      <span className={`matrix-web-chat-title flex min-w-0 flex-1 flex-col ${conversation.readState?.unread ? "font-semibold" : ""}`}><OverflowingChatTitle title={title}/>{failed ? <span className="text-[11px] font-normal leading-[14px] text-[var(--destructive-text,var(--danger-text,var(--destructive)))]">Agent failed</span> : null}</span>
       {conversation.readState?.unread ? <span aria-label={`Unread ${title}`} className="size-2 shrink-0 rounded-full bg-primary" /> : null}
     </button>
   );

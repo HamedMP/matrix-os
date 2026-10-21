@@ -456,6 +456,7 @@
 .matrix-chat-rail-section-heading:hover .matrix-chat-rail-section-chevron, .matrix-chat-rail-section-heading:focus-visible .matrix-chat-rail-section-chevron { opacity: 1; }
 .matrix-chat-rail-section-count { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--matrix-chat-rail-count, var(--text-tertiary, var(--muted-foreground))); }
 .matrix-chat-rail-section-count[data-attention="true"] { min-width: 16px; height: 16px; display: grid; place-items: center; border-radius: 999px; background: var(--matrix-chat-rail-warning, var(--warning, var(--matrix-warning))); color: var(--text-on-accent, white); }
+.matrix-chat-rail-section-count[data-failure="true"] { min-width: 16px; height: 16px; display: grid; place-items: center; border-radius: 999px; background: var(--danger, var(--destructive)); color: var(--text-on-danger, var(--destructive-foreground, white)); }
 
 .matrix-web-chat-row-item { position: relative; border: 1px solid transparent; border-radius: 8px; }
 .matrix-web-chat-row-item:hover, .matrix-web-chat-row-item:focus-within { background: var(--matrix-chat-rail-hover, var(--bg-hover, var(--secondary))); }

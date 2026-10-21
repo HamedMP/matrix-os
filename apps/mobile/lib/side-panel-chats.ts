@@ -2,21 +2,27 @@ import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
 type Chats = readonly CanonicalChatRecord[];
 
-/** Whether the chat is waiting on the person: an approval, an answer, or a failed run. */
+/** Whether the chat is waiting on the person for an approval or an answer. */
 export function chatNeedsUser(record: CanonicalChatRecord): boolean {
-  return record.chat.attention !== "none";
+  return record.chat.attention === "approval_required" || record.chat.attention === "input_required"
+    || record.activeRun?.status === "waiting_for_approval" || record.activeRun?.status === "waiting_for_input";
+}
+
+export function chatFailed(record: CanonicalChatRecord): boolean {
+  return record.chat.attention === "failed" && !record.activeRun;
 }
 
 export interface SidePanelChatGroups {
   needsYou: CanonicalChatRecord[];
+  failed: CanonicalChatRecord[];
   recent: CanonicalChatRecord[];
 }
 
-/** The side panel's two groups. Each keeps the order of `chats`, which the server sorts by activity. */
+/** The side panel's groups. Each keeps the order of `chats`, which the server sorts by activity. */
 export function groupSidePanelChats(chats: Chats): SidePanelChatGroups {
-  const groups: SidePanelChatGroups = { needsYou: [], recent: [] };
+  const groups: SidePanelChatGroups = { needsYou: [], failed: [], recent: [] };
   for (const record of chats) {
-    (chatNeedsUser(record) ? groups.needsYou : groups.recent).push(record);
+    (chatNeedsUser(record) ? groups.needsYou : chatFailed(record) ? groups.failed : groups.recent).push(record);
   }
   return groups;
 }

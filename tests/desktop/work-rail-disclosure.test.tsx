@@ -11,7 +11,7 @@ function signIn(userId = "viewer-a", runtimeSlot: "primary" | "local" = "primary
 it("starts Done expanded and remembers explicit section and Agent collapse for this viewer and Computer", () => {
   signIn();
   const first = renderHook(useWorkRailDisclosure);
-  expect(first.result.current.sections).toEqual({ agents: true, pinned: true, projects: true, needsYou: true, working: true, done: true });
+  expect(first.result.current.sections).toEqual({ agents: true, pinned: true, projects: true, needsYou: true, failed: true, working: true, done: true });
   act(() => first.result.current.setExpanded("done", false));
   act(() => first.result.current.setExpanded("agents", false));
   first.unmount();
@@ -136,7 +136,7 @@ it.each(['{', '[]', '{"done":"yes","unknown":true}', "x".repeat(513)])("retains 
   localStorage.setItem(key, raw);
   act(() => view.result.current.setExpanded("agents", false));
   const saved = JSON.parse(localStorage.getItem(key)!);
-  expect(saved).toEqual({ agents: false, pinned: true, projects: true, needsYou: true, working: true, done: false });
+  expect(saved).toEqual({ agents: false, pinned: true, projects: true, needsYou: true, failed: true, working: true, done: false });
   expect(localStorage.getItem(key)!.length).toBeLessThanOrEqual(512);
 });
 

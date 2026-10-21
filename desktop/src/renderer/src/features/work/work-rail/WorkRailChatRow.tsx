@@ -17,7 +17,7 @@ const railStateLabel: Record<Exclude<WorkRailAgentState, "idle">, string> = {
   approval_required: "Approval required",
   input_required: "Waiting for your reply",
   running: "Working…",
-  failed: "Needs attention",
+  failed: "Agent failed",
   unseen_completion: "Completed",
 };
 
@@ -134,7 +134,7 @@ export function WorkRailChatRow({
           {record.importSource ? <ChatImportSourceIcon harness={record.importSource.harness}/> : null}
           <span className="work-rail-chat-label min-w-0 flex-1">
             <span className={isChatUnread(record) ? "flex min-w-0 font-semibold" : "flex min-w-0"}><OverflowingChatTitle title={record.chat.title} /></span>
-            {agentState !== "idle" ? <span className="block text-[11px] leading-[14.3px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{railStateLabel[agentState]}</span> : null}
+            {agentState !== "idle" ? <span className="block text-[11px] leading-[14.3px] font-normal" style={{ color: agentState === "failed" ? "var(--danger-text, var(--danger))" : "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{railStateLabel[agentState]}</span> : null}
           </span>
           {isChatUnread(record) && (record.readState || agentState !== "unseen_completion") ? <span aria-label={`Unread ${record.chat.title}`} className="size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
           <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} fresh={fresh} />
@@ -187,5 +187,5 @@ function ChatAgentStateIndicator({
         ? `Input required for ${title}`
         : `Agent failed for ${title}`;
   return <span aria-label={fresh?label:`Last known: ${label}; syncing`} className="ml-auto size-[6px] shrink-0 rounded-full"
-    style={{ background: state === "running" ? "var(--matrix-chat-rail-success, var(--success))" : "var(--matrix-chat-rail-warning, var(--warning))" }} />;
+    style={{ background: state === "failed" ? "var(--danger)" : state === "running" ? "var(--matrix-chat-rail-success, var(--success))" : "var(--matrix-chat-rail-warning, var(--warning))" }} />;
 }
