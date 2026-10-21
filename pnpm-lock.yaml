@@ -824,6 +824,9 @@ importers:
       turndown:
         specifier: ^7.2.4
         version: 7.2.4
+      yaml:
+        specifier: 2.8.2
+        version: 2.8.2
       zod:
         specifier: ^4.4.3
         version: 4.4.3

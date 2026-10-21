@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -13,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { clearSkillCache, loadSkills } from "../../packages/kernel/src/skills.js";
 
 function writeSkill(root: string, dirName: string, skillName: string): void {
   const skillDir = join(root, dirName);
@@ -57,6 +59,43 @@ function extractHermesFallbackSkillList(script: string): string[] {
 }
 
 describe("Matrix coding-agent skill sync", () => {
+  it("installs the shipped shipping workflow and its resources for every supported agent", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-ship-sync-${Date.now()}`), { recursive: true }));
+    const source = join(root, "skills", "matrix");
+    const cliHome = join(root, "cli-home");
+    const matrixHome = join(root, "matrix-home");
+    const hermesHome = join(root, "hermes-home");
+    const ownerAgentHome = join(root, "existing-agent-home");
+    const ownerSkillsRoot = join(root, "existing-agent-skills");
+    const inheritedEnvironment = { ...process.env, AGENT_HOME: ownerAgentHome, MATRIX_AGENT_SKILLS_ROOT: ownerSkillsRoot };
+    try {
+      writeSkill(join(ownerAgentHome, "skills"), "existing", "matrix-existing-home");
+      writeSkill(ownerSkillsRoot, "existing", "matrix-existing-root");
+      writeSkill(source, "app-builder", "matrix-app-builder");
+      cpSync(join(process.cwd(), "skills", "matrix", "ship"), join(source, "ship"), { recursive: true });
+      execFileSync("bash", [join(process.cwd(), "scripts/sync-matrix-agent-skills.sh"), source], {
+        env: { ...inheritedEnvironment, HOME: cliHome, MATRIX_HOME: matrixHome, HERMES_HOME: hermesHome,
+          MATRIX_AGENT_SKILLS_ROOT: join(cliHome, ".agent", "skills"),
+          MATRIX_SKILL_TARGETS: "matrix,claude,codex,agent,hermes" }, stdio: "pipe",
+      });
+      for (const skillsRoot of [join(matrixHome, ".agents", "skills"), join(matrixHome, ".claude", "skills"),
+        join(cliHome, ".agents", "skills"), join(cliHome, ".claude", "skills"),
+        join(cliHome, ".agent", "skills"), join(hermesHome, "skills")]) {
+        const target = join(skillsRoot, "matrix-ship");
+        expect(realpathSync(target)).toBe(realpathSync(join(source, "ship")));
+        expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+        expect(existsSync(join(target, "references", "qualification.md"))).toBe(true);
+        expect(existsSync(join(target, "agents", "openai.yaml"))).toBe(true);
+      }
+      clearSkillCache();
+      expect(loadSkills(matrixHome)).toContainEqual(expect.objectContaining({ name: "matrix-ship", format: "directory",
+        triggers: ["qualify PR", "ship PR", "diagnose CI", "PR preview"] }));
+      expect(readFileSync(join(ownerAgentHome, "skills", "existing", "SKILL.md"), "utf8")).toContain("name: matrix-existing-home");
+      expect(readFileSync(join(ownerSkillsRoot, "existing", "SKILL.md"), "utf8")).toContain("name: matrix-existing-root");
+      expect(existsSync(join(ownerSkillsRoot, "matrix-ship"))).toBe(false);
+    } finally { clearSkillCache(); rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("projects canonical Hermes-format skills into Matrix, Claude, Codex, and Hermes locations", () => {
     const root = resolve(mkdirSync(join(tmpdir(), `matrix-skills-sync-${Date.now()}`), { recursive: true }));
     const source = join(root, "skills", "matrix");

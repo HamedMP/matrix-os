@@ -17,10 +17,11 @@ describe("land skill", () => {
     );
 
     const mergeCommands = skill.match(/^gh pr merge .*$/gm) ?? [];
-    expect(mergeCommands).toContain('gh pr merge --squash --body "$pr_body"');
+    expect(mergeCommands).toContain('gh pr merge --squash --body "$pr_body" --match-head-commit "$reviewed_head"');
     expect(mergeCommands).not.toHaveLength(0);
     for (const command of mergeCommands) {
       expect(command).not.toMatch(/\s(?:--subject|-s)(?:\s|=|$)/);
+      expect(command).toContain('--match-head-commit "$reviewed_head"');
     }
   });
 });

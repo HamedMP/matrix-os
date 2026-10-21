@@ -54,6 +54,44 @@ describe("server-catalogued Chat Agent recipes", () => {
     });
   });
 
+  it("discovers bundled skills with Codex metadata and pins their actual instructions", async () => {
+    const root = await fixture();
+    await mkdir(join(root, "shipping"));
+    await writeFile(join(root, "shipping/SKILL.md"), [
+      "---", "name: matrix-ship", "description: Qualify a PR.",
+      "metadata:", "  author: Matrix OS", "---", "", "Preserve every qualification gate.",
+    ].join("\n"));
+    const resolver = createChatAgentRecipeResolver({ skillsRoot: root, services });
+    expect((await resolver.catalog()).skills.map(skill => skill.id)).toContain("matrix-ship");
+    const accepted = await resolver.resolve({ skills: ["matrix-ship"], integrations: [], output: "Qualification report" });
+    expect(accepted.skills[0]).toMatchObject({ id: "matrix-ship", instructions: "Preserve every qualification gate.",
+      sourceFile: join(root, "shipping/SKILL.md") });
+    await expect(resolver.revalidate(accepted)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    "author: Other owner\nmetadata:\n  author: Matrix OS",
+    "author: Matrix OS\nmetadata:\n  author: Other owner",
+    "metadata:\n  author: Other owner",
+    "metadata: Matrix OS",
+    "metadata: [Matrix OS]",
+    "metadata:\n  author: [Matrix OS]",
+    "author: Matrix OS\nauthor: Matrix OS",
+    "owner: &owner Matrix OS\nmetadata:\n  author: *owner",
+    "author: Matrix OS\n...\n--- \nauthor: Other owner",
+  ])("rejects untrusted or conflicting bundled authorship: %s", async authorship => {
+    const root = await fixture();
+    await mkdir(join(root, "untrusted"));
+    await writeFile(join(root, "untrusted/SKILL.md"), [
+      "---", "name: untrusted-skill", "description: Not a bundled Matrix skill.",
+      authorship, "---", "", "Must not enter the trusted bundled catalog.",
+    ].join("\n"));
+    const resolver = createChatAgentRecipeResolver({ skillsRoot: root, services });
+    expect((await resolver.catalog()).skills.map(skill => skill.id)).not.toContain("untrusted-skill");
+    await expect(resolver.resolve({ skills: ["untrusted-skill"], integrations: [], output: "No admission" }))
+      .rejects.toMatchObject({ code: "recipe_unavailable" });
+  });
+
   it("discovers owner-installed and legacy skills, deduplicates mirrors, and refreshes after changes", async () => {
     const root = await fixture();
     const homePath = await mkdtemp(join(tmpdir(), "matrix-recipe-owner-"));

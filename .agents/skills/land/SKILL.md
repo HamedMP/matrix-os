@@ -47,10 +47,20 @@ head before closing tickets or safely removing clean, unused worktrees.
 
 The remaining recipe applies only to a standalone PR whose base is `main`.
 
+Run `node scripts/review/pr-readiness.mjs <pr>` before monitoring and immediately
+before merge. This is the same report used by push and both monitors. It
+delegates Greptile validity to the existing carry-over verifier and lists
+unresolved threads, independent approval and required checks. Exit 1 is blocked;
+exit 3 is unknown. Exit 0 is advisory only: verify authentic exact-source full
+qualification, issue-comment findings, ticket, applicable surface evidence and
+authorization before merging. Never rely on the watcher alone for eligibility.
+
 ## Steps
 
 1. Locate the PR for the current branch.
-2. Confirm the full gauntlet is green locally before any push.
+2. Confirm required validation is complete for the current inputs before any push.
+   Reuse completed results with matching source, dependencies, command and
+   toolchain from the push workflow; do not rerun simply on entering land.
    - `bun run typecheck`
    - `bun run check:patterns`
    - `bun run test`
@@ -122,7 +132,9 @@ if ! gh pr checks --watch; then
 fi
 
 # Squash-merge (remote branches auto-delete on merge in this repo)
-gh pr merge --squash --body "$pr_body"
+# Re-run the shared report and verify its manual gates before this command.
+# Obtain reviewed_head from that frozen, verified report.
+gh pr merge --squash --body "$pr_body" --match-head-commit "$reviewed_head"
 ```
 
 ## Async Watch Helper
@@ -145,8 +157,8 @@ Exit codes:
 - If checks fail, pull details with `gh pr checks` and `gh run view --log`, then
   fix locally, commit with the `commit` skill, push with the `push` skill, and
   re-run the watch.
-- Use judgment to identify flaky failures. If a failure is a flake (e.g., a
-  timeout on only one platform), you may proceed without fixing it.
+- Diagnose suspected flakes and obtain a genuine passing required run. A flaky
+  failure is not permission to merge with a failed required gate.
 - If CI pushes an auto-fix commit (authored by GitHub Actions), it does not
   trigger a fresh CI run. Detect the updated PR head, pull locally, merge
   `origin/main` if needed, add a real author commit, and force-push to retrigger
@@ -158,8 +170,9 @@ Exit codes:
 - Codex review jobs retry on failure and are non-blocking; use the presence of
   `## Codex Review — <persona>` issue comments (not job status) as the signal
   that review feedback is available.
-- Do not enable auto-merge; this repo has no required checks so auto-merge can
-  skip tests.
+- The repository has required checks. Inspect live requirements; their passing
+  rollup alone does not establish all written review/evidence requirements.
+  Do not enable auto-merge as a substitute for those gates.
 - If the remote PR branch advanced due to your own prior force-push or merge,
   avoid redundant merges; re-run the formatter locally if needed and
   `git push --force-with-lease`.

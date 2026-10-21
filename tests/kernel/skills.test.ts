@@ -36,6 +36,41 @@ describe("T100b: Skills system", () => {
   });
 
   describe("loadSkills", () => {
+    it("loads comma-separated triggers from standard skill extension metadata", () => {
+      writeFileSync(join(homePath, "agents/skills/ship.md"), [
+        "---", "name: matrix-ship", "description: Qualify a PR.",
+        "metadata:", "  author: Matrix OS", "  triggers: qualify PR, ship PR",
+        "---", "", "Preserve the existing checks.",
+      ].join("\n"));
+      expect(loadSkills(homePath)).toContainEqual(expect.objectContaining({
+        name: "matrix-ship", triggers: ["qualify PR", "ship PR"],
+      }));
+    });
+
+    it("preserves legacy triggers when extension metadata is also present", () => {
+      writeFileSync(join(homePath, "agents/skills/legacy.md"), [
+        "---", "name: legacy", "description: Existing skill.", "triggers:", "  - existing trigger",
+        "metadata:", "  triggers: new trigger", "---", "", "Keep existing behavior.",
+      ].join("\n"));
+      expect(loadSkills(homePath)).toContainEqual(expect.objectContaining({ name: "legacy", triggers: ["existing trigger"] }));
+    });
+
+    it("isolates invalid extension metadata without crashing skill discovery", () => {
+      writeFileSync(join(homePath, "agents/skills/aliased.md"), [
+        "---", "name: aliased", "description: Invalid extension.", "values: &values [ship]",
+        "metadata:", "  triggers: *values", "---", "", "No alias expansion.",
+      ].join("\n"));
+      expect(loadSkills(homePath)).toEqual([]);
+    });
+
+    it("preserves owner metadata that was ignored by legacy discovery", () => {
+      writeFileSync(join(homePath, "agents/skills/legacy-owner.md"), [
+        "---", "name: legacy-owner", "description: Existing owner skill.", "owner: &owner Other owner",
+        "metadata:", "  author: *owner", "---", "", "Keep existing owner instructions.",
+      ].join("\n"));
+      expect(loadSkills(homePath)).toContainEqual(expect.objectContaining({ name: "legacy-owner", triggers: [] }));
+    });
+
     it("parses frontmatter from skill files", () => {
       writeFileSync(
         join(homePath, "agents", "skills", "weather.md"),
