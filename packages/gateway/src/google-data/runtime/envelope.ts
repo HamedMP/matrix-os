@@ -17,6 +17,8 @@ const Envelope = Claim.extend({ version: z.literal(1), requestId: z.uuid(),
   method: z.literal('POST'), path: z.enum(['/call', '/read-call']), bodyDigest: z.string().regex(/^[a-f0-9]{64}$/),
   issuedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), expiresAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 });
+// Structural validation only; callers must separately verify the machine signature.
+export const GoogleProcessingEnvelopeSchema = Envelope;
 export type GoogleProcessingClaim = z.infer<typeof Claim>;
 export type GoogleProcessingEnvelope = z.infer<typeof Envelope>;
 type RequestBinding = { method: string; path: string; body: string; machineToken: string; now?: number };
