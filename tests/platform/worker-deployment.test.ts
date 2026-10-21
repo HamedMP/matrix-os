@@ -26,6 +26,8 @@ const candidate = {
       resources: { limits: { cpu: "2", memory: "2Gi" } },
       env: [
         { name: "PLATFORM_BACKGROUND_WORKERS_ENABLED", value: "false" },
+        { name: "ACCOUNT_DELETION_CONFIGURED", value: "false" },
+        { name: "ACCOUNT_DELETION_ENABLED", value: "false" },
         { name: "PLATFORM_DATABASE_URL", valueFrom: { secretKeyRef: { name: "platform-database-url", key: "latest" } } },
       ],
     }],
@@ -67,7 +69,20 @@ describe("platform worker deployment", () => {
     expect(container.image).toBe(candidate.spec.containers[0].image);
     expect(container.resources).toEqual(candidate.spec.containers[0].resources);
     expect(container.env).toContainEqual({ name: "PLATFORM_BACKGROUND_WORKERS_ENABLED", value: "true" });
-    expect(container.env).toContainEqual(candidate.spec.containers[0].env[1]);
+    expect(container.env).toContainEqual({ name: "ACCOUNT_DELETION_ENABLED", value: "false" });
+    expect(container.env).toContainEqual(candidate.spec.containers[0].env[3]);
+  });
+
+  it("keeps configured deletion processing active while API admission is disabled", () => {
+    const source = structuredClone(candidate);
+    source.spec.containers[0].env[1].value = "true";
+    const result = render(source);
+    expect(result.status).toBe(0);
+    const worker = JSON.parse(result.stdout);
+    expect(worker.spec.template.spec.containers[0].env).toContainEqual({
+      name: "ACCOUNT_DELETION_ENABLED",
+      value: "true",
+    });
   });
 
   it("rejects a source revision already running background workers", () => {
