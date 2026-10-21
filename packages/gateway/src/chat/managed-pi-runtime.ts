@@ -48,6 +48,7 @@ interface Active {
 
 /** Two policies use one pinned worker/broker. Ordinary Chat has no recipe or bot grants. */
 export function createManagedPiRuntime(deps: {
+  toolOutputKey?: Buffer;
   homePath?: string; expectedOwnerId?: string | null; inputHistory?: BotInputHistoryReader;
   chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
@@ -186,18 +187,43 @@ export function createManagedPiRuntime(deps: {
       active.set(input.runId, run);
       const result = execute(input, run).finally(() => { active.delete(input.runId); deps.forgetRun(input.runId); run.queue.finish(); });
       let drained = false; let activities = 0;
+      // Worker starts are capped at60; terminal events evict and run exit drains.
+      const pendingTools = new Map<string, Extract<BotEvent["event"], { type: "tool_progress" }>>();
+      const toolFrames = new Map<string, number>(); // At most60 identities per turn, erased at exit.
       try {
         for await (const item of run.queue.values()) {
           if (item.kind === "canonical") { yield item.event; continue; }
           if (item.kind === "state") { yield { type: "state.updated", state: item.state }; continue; }
-          for (const event of mapBotEvent(item.event)) {
+          if (activities >= MAX_BOT_ACTIVITY_EVENTS && ["tool_progress", "activity"].includes(item.event.type)) continue;
+          if (item.event.type === "tool_progress") {
+            const progress = item.event;
+            const previous = pendingTools.get(progress.toolCallId);
+            if (progress.phase === "started") {
+              if (toolFrames.has(progress.toolCallId) || toolFrames.size >= 60) continue;
+              toolFrames.set(progress.toolCallId, 0);
+            } else if (!previous) continue;
+            if (progress.phase === "updated") {
+              const updates = toolFrames.get(progress.toolCallId) ?? 0;
+              if (updates >= 3) continue;
+              toolFrames.set(progress.toolCallId, updates + 1);
+            }
+            if (["started", "updated"].includes(progress.phase)) pendingTools.set(progress.toolCallId, progress);
+            else pendingTools.delete(progress.toolCallId);
+          }
+          for (const event of mapBotEvent(item.event, { toolOutputKey: deps.toolOutputKey })) {
             if (["tool.progress", "agent.activity"].includes(event.type) && ++activities > MAX_BOT_ACTIVITY_EVENTS) continue;
             yield CanonicalProviderRunEventSchema.parse(event);
           }
         }
         drained = true;
       } finally { if (!drained) await stop(input.runId); }
-      yield await result;
+      const terminal = await result;
+      for (const progress of terminal.type === "run.completed" && terminal.outcome === "completed" ? [] : pendingTools.values()) {
+        for (const event of mapBotEvent({ ...progress, phase: terminal.type === "run.completed" && terminal.outcome === "aborted" ? "cancelled" : "failed",
+          ...(progress.display ? { display: { ...progress.display, output: "The tool ended without a confirmed result." } } : {}) }, { toolOutputKey: deps.toolOutputKey })) yield event;
+      }
+      pendingTools.clear(); toolFrames.clear();
+      yield terminal;
     },
     async cancel(input) { const run = active.get(input.runId); if (run && run.ownerId === input.owner.ownerId && run.chatId === input.chatId) await stop(input.runId); },
     async submitApproval(input) {

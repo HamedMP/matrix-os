@@ -145,3 +145,59 @@ is covered by the component test, not represented as device acceptance.
 ![Electron Desktop expanded tool result](assets/chat-tool-details-electron.png)
 
 Pi and OpenCode retain their existing thread event/journal contracts. When their results enter canonical Chat, the shared coding adapter seals them with the runtime key before canonical activities and outbox persistence; missing keys leave coarse notices. Their pre-existing thread journals are outside this output-protection boundary. Legacy unsealed Codex output remains coarse because Codex sealing belongs before journal persistence.
+
+## Managed Matrix Pi (ENG265 follow-up)
+
+`matrix_pi` uses `managed-pi-runtime` and the pinned bot worker, not the native
+Pi CLI collector. The internal broker's optional `tool_progress.display`
+selects a tool name, known scalar input fields, an allowed command and recognized
+text blocks. It never forwards raw argument/result objects, binary content or
+model thinking. Gateway ingestion rechecks evidence and seals parameters and
+output with the existing owner key before canonical activity/outbox writes.
+Command evidence uses `protectedPreview`; selected parameters and result use
+`protectedOutput`. Private parameter paths are filtered independently, so they
+cannot hide an otherwise displayable result. Known credential context/results
+remain withheld even from the owner; absent keys retain coarse notices.
+
+Start, update and completion use the same toolCallId/activityId. Managed Pi
+`tool.output` entries are authoritative display snapshots; projections select
+the latest one rather than concatenate partial and final results. Codex/Claude
+retain append semantics. Worker tracking is capped at60 tools per turn, three
+updates per tool at least250ms apart, 750 characters of selected input, 3,000
+characters of result and 4,000 characters of command. Gateway repeats tool/update
+caps. The global event budget reserves a terminal slot for every tracked tool.
+Canonical retention remains500 records; full tool snapshots do not grow without
+bound. Snapshot replacement preserves parameters alongside the current result.
+
+Cancellation keeps the existing orchestrator rule rejecting late provider
+output. Pending managed cards derive stopped/failed/partial from the canonical
+Run when it is aborted/failed/completed, including after reload; explicit tool
+terminal states remain unchanged. Missing end events never imply success.
+Empty text, unavailable/unknown envelopes, hidden sensitive output and truncated
+output have separate notices. Historical payload-free events remain supported;
+previously discarded details cannot be reconstructed.
+
+SDK partial results and supported Custom MCP progress notifications update the
+same managed card. For MCP the existing authorized POST opts into a bounded
+NDJSON response: the pinned HTTPS requester parses complete SSE notifications
+from that same upstream call, RemoteMcpClient matches a unique per-call progress
+token, and owner tools encrypt the selected progress text before canonical
+persistence. There is no additional execution, reconnect retry or receipt
+consumption. Non-stream callers retain JSON behavior. Cancellation aborts this
+request without evicting a remote session shared by other invocations. Late or
+foreign updates are ignored. Three updates are sampled per call; the last
+snapshot announces that live updates paused until completion. The final result
+retains its own192KiB transport limit, with a separate bounded allowance for
+three progress frames and framing overhead.
+
+MCP progress messages describe service-provided progress; they are not an
+implicit stdout/stderr contract. Artifact and ordinary integration tools still
+return final results. No local shell executor or arbitrary server log feed is
+added. A producer returning final content only cannot show real intermediate
+output. Actual stdout acceptance needs a specifically identified producer
+that supplies those frames; fixture notifications cannot establish it.
+Broker-encoded MCP results reveal recognized text content and isError only;
+details/structuredContent are not serialized into the display. This changes
+display status without changing the model's execution result or approval rules.
+Private Preview and local Electron acceptance precede HumanReview; Greptile and
+formal CI follow user acceptance. Live evidence is still required separately.
