@@ -87,13 +87,19 @@ export function applyHarnessSettings(input: {
       if (input.settingsAvailable && saved.length > 0 && enabled.length === 0) {
         return unavailableInstance(instance, "disabled_in_settings");
       }
-      if (instance.driverKind === "claude_code" && saved.length > 0
+      // Native Claude runs only on an explicitly selected owner credential:
+      // the Claude subscription or the owner's own Anthropic API key, never Matrix AI.
+      const ownerKey = instance.driverKind === "claude_code" && enabled.length === 1
+        && enabled[0]!.accessSourceId === "owner_anthropic_key" && enabled[0]!.selectedAccountId === "owner_anthropic"
+        && (enabled[0]!.configuredAccessSourceId === undefined || enabled[0]!.configuredAccessSourceId === "owner_anthropic_key");
+      if (instance.driverKind === "claude_code" && saved.length > 0 && !ownerKey
         && (enabled.length !== 1 || enabled[0]!.accessSourceId !== "owner_claude_profile"
           || enabled[0]!.selectedAccountId !== "owner_claude_profile"
           || (enabled[0]!.configuredAccessSourceId !== undefined
             && enabled[0]!.configuredAccessSourceId !== "owner_claude_profile"))) {
         return unavailableInstance(instance, "runtime_not_runnable");
       }
+      if (ownerKey) return { ...instance, connectionLabel: "Anthropic API key" };
       const selectedSourceMatches = instance.driverKind === "codex" && input.settingsAvailable
         && enabled.length === 1
         && enabled[0]!.accessSourceId === "owner_openai_profile";
