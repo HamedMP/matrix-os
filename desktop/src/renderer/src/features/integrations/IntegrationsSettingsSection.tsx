@@ -6,7 +6,7 @@
 // for confirmation first. The renderer only displays name/category/label/
 // email/status and public app logos — never tokens or upstream error text.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { hasCompletedIntegrationConnection, parseIntegrationAttemptStatus, isCompletedIntegrationAttempt, type IntegrationAttemptStatus, type ConnectedIntegration } from "@matrix-os/contracts";
+import { hasCompletedIntegrationConnection, parseIntegrationAttemptStatus, isCompletedIntegrationAttempt, type IntegrationAttemptStatus, type AvailableIntegration, type ConnectedIntegration } from "@matrix-os/contracts";
 import type { GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
 import { fetchGmailConnectionOptions } from "./gmail-connection-request";
 import { diagnosticErrorKind } from "../../lib/errors";
@@ -32,6 +32,25 @@ async function readReceipt(api: NonNullable<ReturnType<typeof useConnection.getS
   if (!receipt || receipt.status === "failed" || receipt.status === "expired") throw new Error("Connection unavailable");
   if (receipt.status === "succeeded" && isCurrent()) await useIntegrations.getState().refresh(api);
   return receipt;
+}
+
+function integrationCatalog(available: readonly AvailableIntegration[], connections: readonly ConnectedIntegration[]): AvailableIntegration[] {
+  const known = new Set(available.map((service) => service.id));
+  const services = [
+    ...available,
+    ...connections
+      .filter((connection) => !known.has(connection.service))
+      .map((connection) => ({
+        id: connection.service,
+        name: displayIntegrationName(connection.service),
+        category: "other",
+      })),
+  ];
+  return services.sort((left, right) => {
+    const leftConnected = connections.some((connection) => connection.service === left.id);
+    const rightConnected = connections.some((connection) => connection.service === right.id);
+    return Number(rightConnected) - Number(leftConnected);
+  });
 }
 
 export interface IntegrationsSettingsSectionProps {
@@ -82,6 +101,9 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
   // Unmount teardown: a live poll must not settle into a gone component.
   useEffect(() => {
     return () => {
+      connectAttemptRef.current += 1;
+      receiptRef.current = null;
+      connectInFlight.current = false;
       cancelPollRef.current?.();
       cancelPollRef.current = null;
     };
@@ -90,6 +112,17 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
   const cancelConnectPoll = (): void => {
     cancelPollRef.current?.();
     cancelPollRef.current = null;
+  };
+
+  const settleConnect = (): void => {
+    connectAttemptRef.current += 1;
+    receiptRef.current = null;
+    previousConnectionsRef.current = null;
+    connectInFlight.current = false;
+    cancelConnectPoll();
+    setConnectingService(null);
+    setManualBusy(false);
+    setManualNote(null);
   };
 
   const refresh = (): void => {
@@ -115,7 +148,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
     if (isCurrentAttempt()) connectInFlight.current = false;
     if (!isCurrentAttempt()) return;
     if (!url) {
-      setConnectingService(null);
+      settleConnect();
       return;
     }
     try {
@@ -124,7 +157,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
       if (!isCurrentAttempt()) return;
       console.warn("[integrations] failed to open consent url:", diagnosticErrorKind(err));
       useIntegrations.getState().showError(GENERIC_ERROR);
-      setConnectingService(null);
+      settleConnect();
       return;
     }
     if (!isCurrentAttempt()) return;
@@ -148,7 +181,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
           } catch (error) {
             console.warn("[integrations] Receipt unavailable:", diagnosticErrorKind(error));
             if (!isCurrentAttempt()) return;
-            cancelConnectPoll(); setConnectingService(null);
+            settleConnect();
             useIntegrations.getState().showError(GENERIC_ERROR);
           }
           return;
@@ -163,7 +196,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
         if (!isCurrentAttempt()) return;
         cancelPollRef.current = null;
         if (found) {
-          setConnectingService(null);
+          settleConnect();
           return;
         }
         setManualNote("Still waiting — finish the sign-in in your browser, then select I've connected.");
@@ -190,7 +223,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
         const receipt = await readReceipt(api, receiptRef.current, isCurrentAttempt);
         if (!isCurrentAttempt()) return;
         if (isCompletedIntegrationAttempt(receipt, connectingService, useIntegrations.getState().connections)) {
-          cancelConnectPoll(); setConnectingService(null);
+          settleConnect();
         } else setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
         return;
       }
@@ -200,8 +233,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
         previousConnectionsRef.current, connectingService, useIntegrations.getState().connections,
       );
       if (landed) {
-        cancelConnectPoll();
-        setConnectingService(null);
+        settleConnect();
         return;
       }
       // "superseded" is not a failure: the account/computer changed underneath
@@ -214,20 +246,13 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
       setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
     } catch (error) {
       console.warn("[integrations] Receipt unavailable:", diagnosticErrorKind(error));
-      if (isCurrentAttempt()) { cancelConnectPoll(); setConnectingService(null); useIntegrations.getState().showError(GENERIC_ERROR); }
+      if (isCurrentAttempt()) { settleConnect(); useIntegrations.getState().showError(GENERIC_ERROR); }
     } finally {
       if (isCurrentAttempt()) setManualBusy(false);
     }
   };
 
-  const handleCancelConnect = (): void => {
-    connectAttemptRef.current += 1;
-    receiptRef.current = null;
-    connectInFlight.current = false;
-    cancelConnectPoll();
-    setConnectingService(null);
-    setManualNote(null);
-  };
+  const handleCancelConnect = settleConnect;
 
   const handleDisconnect = async (): Promise<void> => {
     if (!api || !confirmId) return;
@@ -249,24 +274,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
     ? (available.find((service) => service.id === connectingService)?.name ?? connectingService)
     : null;
 
-  const catalogServices = useMemo(() => {
-    const known = new Set(available.map((service) => service.id));
-    const services = [
-      ...available,
-      ...connections
-        .filter((connection) => !known.has(connection.service))
-        .map((connection) => ({
-          id: connection.service,
-          name: displayIntegrationName(connection.service),
-          category: "other",
-        })),
-    ];
-    return services.sort((left, right) => {
-      const leftConnected = connections.some((connection) => connection.service === left.id);
-      const rightConnected = connections.some((connection) => connection.service === right.id);
-      return Number(rightConnected) - Number(leftConnected);
-    });
-  }, [available, connections]);
+  const catalogServices = useMemo(() => integrationCatalog(available, connections), [available, connections]);
 
   function renderCatalog(services: typeof catalogServices, developer?: IntegrationRowPresentation) {
     const entries = developer ? withGithubDeveloperCatalogEntry(services) : services;

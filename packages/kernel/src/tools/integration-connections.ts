@@ -68,7 +68,7 @@ export async function connectServiceHandler(input: ConnectServiceInput, fetcher:
         return errorResult(unavailable);
       }
       const result = z.object({ url: z.url().max(8192).refine(value => new URL(value).protocol === 'https:'), service: z.literal(parsed.data.service), attemptId: z.uuid().optional() }).parse(await smallJson(response, signal, 16_384));
-      if (result.attemptId) return textResult(`To connect ${result.service}, open this URL in your browser:\n\n${result.url}\n\nAttempt ID: ${result.attemptId}. If get_connection_attempt is available, check this exact attempt with attempt_id. Otherwise confirm it in Connect Apps. Existing account availability does not prove this attempt completed.`);
+      if (result.attemptId) return textResult(`To connect ${result.service}, open this URL in your browser:\n\n${result.url}\n\nAttempt ID: ${result.attemptId}. If get_connection_attempt is available, check this exact attempt with attempt_id. If that owner tool is unavailable: This chat cannot confirm this attempt; start a new tracked connection from Connect Apps, or use an owner agent with get_connection_attempt. Existing account availability does not prove this attempt completed.`);
       return textResult(`To connect ${result.service}, open this URL in your browser:\n\n${result.url}\n\nAfter authorizing, the connection will appear automatically.`);
     });
   } catch (error) { console.error('[integrations] Connection unavailable:', error instanceof Error ? error.name : 'UnknownError'); return errorResult(unavailable); }
