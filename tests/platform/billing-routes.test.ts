@@ -47,6 +47,7 @@ describe('platform billing routes', () => {
     stripe = {
       apiTimeoutMs: 10_000,
       createCheckoutSession: vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session', id: 'cs_test_session' }),
+      expireCheckoutSession: vi.fn().mockRejectedValue(new Error('unexpected checkout expiry')),
       retrieveCheckoutSession: vi.fn().mockRejectedValue(new Error('unexpected checkout retrieval')),
       retrieveRecurringPrice: vi.fn().mockRejectedValue(new Error('unexpected price retrieval')),
       createPortalSession: vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' }),
@@ -807,6 +808,207 @@ describe('platform billing routes', () => {
     expect(repeated.status).toBe(200);
     await expect(repeated.json()).resolves.toEqual({ url: 'https://checkout.stripe.test/session' });
     expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
+  });
+
+  it('projects the authoritative active checkout selection without provider identifiers', async () => {
+    const app = createApp();
+    const checkout = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_starter',
+        interval: 'monthly',
+        regionSlug: 'region_nbg1',
+        runtimeSlot: 'studio',
+        developerTools: ['codex'],
+      }),
+    });
+    expect(checkout.status).toBe(200);
+
+    const status = await app.request('/billing/status?runtimeSlot=studio');
+
+    expect(status.status).toBe(200);
+    const body = await status.json();
+    expect(body.activeCheckout).toEqual({
+      status: 'open',
+      planSlug: 'matrix_starter',
+      interval: 'monthly',
+      regionSlug: 'region_nbg1',
+      developerTools: ['codex'],
+    });
+    expect(JSON.stringify(body.activeCheckout)).not.toContain('cs_test_session');
+    expect(JSON.stringify(body.activeCheckout)).not.toContain('checkout.stripe.test');
+  });
+
+  it('expires an open provider checkout before releasing its local reservation', async () => {
+    vi.mocked(stripe.expireCheckoutSession).mockResolvedValue({
+      status: 'expired',
+      url: null,
+      clerkUserId: 'user_123',
+      priceId: 'price_builder_monthly',
+      regionSlug: 'region_fsn1',
+    });
+    const app = createApp();
+    const checkout = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+    expect(checkout.status).toBe(200);
+
+    const abandoned = await app.request('/billing/checkout/abandon', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runtimeSlot: 'studio' }),
+    });
+
+    expect(abandoned.status).toBe(200);
+    await expect(abandoned.json()).resolves.toEqual({ abandoned: true });
+    expect(stripe.expireCheckoutSession).toHaveBeenCalledWith('cs_test_session');
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({ status: 'expired' });
+
+    vi.mocked(stripe.createCheckoutSession).mockResolvedValueOnce({
+      url: 'https://checkout.stripe.test/replacement',
+      id: 'cs_replacement',
+    });
+    const replacement = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_max',
+        interval: 'monthly',
+        regionSlug: 'region_nbg1',
+        runtimeSlot: 'studio',
+      }),
+    });
+    expect(replacement.status).toBe(200);
+  });
+
+  it('keeps the reservation when Stripe reports that checkout completed', async () => {
+    vi.mocked(stripe.expireCheckoutSession).mockResolvedValue({
+      status: 'complete',
+      url: null,
+      clerkUserId: 'user_123',
+      priceId: 'price_builder_monthly',
+      regionSlug: 'region_fsn1',
+    });
+    const app = createApp();
+    await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    const abandoned = await app.request('/billing/checkout/abandon', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runtimeSlot: 'studio' }),
+    });
+
+    expect(abandoned.status).toBe(409);
+    await expect(abandoned.json()).resolves.toEqual({
+      error: 'Checkout is already starting',
+      code: 'checkout_pending',
+    });
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({ status: 'paid' });
+  });
+
+  it('releases a reserved card trial only after provider-confirmed abandonment', async () => {
+    vi.mocked(stripe.expireCheckoutSession).mockResolvedValue({
+      status: 'expired',
+      url: null,
+      clerkUserId: 'user_123',
+      priceId: 'price_builder_monthly',
+      regionSlug: 'region_fsn1',
+    });
+    const app = createApp('user_123', { ...env, MATRIX_CARD_TRIALS_ENABLED: 'true' });
+    await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'primary',
+      }),
+    });
+
+    const abandoned = await app.request('/billing/checkout/abandon', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runtimeSlot: 'primary' }),
+    });
+    const status = await app.request('/billing/status?runtimeSlot=primary');
+
+    expect(abandoned.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({
+      activeCheckout: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+    });
+  });
+
+  it('validates checkout abandonment before calling Stripe', async () => {
+    const app = createApp();
+    const response = await app.request('/billing/checkout/abandon', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runtimeSlot: '../other', attemptId: 'attempt_secret' }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'Invalid request' });
+    expect(stripe.expireCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('rolls back local abandonment when prebilling cleanup fails', async () => {
+    vi.mocked(stripe.expireCheckoutSession).mockResolvedValue({
+      status: 'expired',
+      url: null,
+      clerkUserId: 'user_123',
+      priceId: 'price_builder_monthly',
+      regionSlug: 'region_fsn1',
+    });
+    await insertCheckoutAttempt(db, {
+      id: 'attempt_primary',
+      clerkUserId: 'user_123',
+      stripeSessionId: 'cs_primary',
+      runtimeSlot: 'primary',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      regionSlug: 'region_fsn1',
+      createdAt: '2026-05-30T00:00:00.000Z',
+      status: 'open',
+    });
+    const prebilling = {
+      createIntent: vi.fn(), startPreparation: vi.fn(), retryPreparation: vi.fn(),
+      resumePreparation: vi.fn(), reconcilePreparations: vi.fn(), getPreparationStatus: vi.fn(),
+      authorizeSubscription: vi.fn(), expireCheckout: vi.fn().mockRejectedValue(new Error('cleanup failed')),
+    };
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db, stripe, env, prebilling,
+      resolveClerkUserId: () => Promise.resolve('user_123'),
+      now: () => new Date('2026-05-30T00:01:00.000Z'),
+    }));
+
+    const abandoned = await app.request('/billing/checkout/abandon', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runtimeSlot: 'primary' }),
+    });
+
+    expect(abandoned.status).toBe(503);
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({ status: 'open' });
   });
 
   it('retries an ambiguous Checkout failure with the same persisted idempotency key', async () => {

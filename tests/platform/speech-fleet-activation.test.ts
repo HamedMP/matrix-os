@@ -80,3 +80,76 @@ describe("platform speech fleet activation", () => {
     });
   });
 });
+
+describe('speech activation cancellation', () => {
+  it('aborts a slow host request with its parent page and awaits all work', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true });
+    }));
+    const pending = activatePlatformSpeechFleet({ machines: [machine], platformOrigin: 'https://app.matrix-os.com', platformSecret: 'p'.repeat(32), fetchImpl: fetchImpl as typeof fetch, signal: controller.signal });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
+    controller.abort();
+    expect(fetchImpl.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    expect(await pending).toMatchObject({ activated: 0, failed: 1 });
+    expect(fetchImpl.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  });
+  it('stops between probes without starting a request after page cancellation', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn(async () => Response.json({ status: 'restarting' }, { status: 202 }));
+    const result = await activatePlatformSpeechFleet({ machines: [machine], platformOrigin: 'https://app.matrix-os.com', platformSecret: 'p'.repeat(32), fetchImpl, signal: controller.signal, wait: async () => { controller.abort(); } });
+    expect(result).toMatchObject({ activated: 0, failed: 1 });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+});
+
+describe('already-working speech on a pinned platform origin', () => {
+  const capabilities = {
+    contractVersion: 1,
+    fileTranscription: {
+      status: 'ready',
+      dictation: { enabled: true, maxBytes: 10485760, maxDurationMs: 120000, maxTranscriptChars: 32000, supportedMediaTypes: ['audio/wav'], languageHints: false },
+      ownerAudio: { enabled: false },
+    },
+  };
+
+  it('accepts ready speech only after verifying the exact runtime identity when reconfiguration is rejected', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response('Invalid request', { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ runtime: { handle: machine.handle, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot } }))
+      .mockResolvedValueOnce(Response.json(capabilities));
+    const result = await activatePlatformSpeechFleet({ machines: [machine], platformOrigin: 'https://api.matrix-os.com', platformSecret: 'p'.repeat(32), fetchImpl });
+    expect(result).toMatchObject({ activated: 1, failed: 0 });
+    expect(fetchImpl.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      ['https://203.0.113.10:443/api/internal/platform-speech/config', 'POST'],
+      ['https://203.0.113.10:443/api/system/info', 'GET'],
+      ['https://203.0.113.10:443/api/speech/capabilities', 'GET'],
+    ]);
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(init.redirect).toBe('error');
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it.each(['handle', 'machineId', 'runtimeSlot'])('rejects a different %s before requesting speech readiness', async (field) => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response('Invalid request', { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ runtime: { handle: machine.handle, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot, [field]: 'another' } }));
+    const result = await activatePlatformSpeechFleet({ machines: [machine], platformOrigin: 'https://api.matrix-os.com', platformSecret: 'p'.repeat(32), fetchImpl });
+    expect(result).toMatchObject({ activated: 0, failed: 1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['disabled', { ...capabilities, fileTranscription: { ...capabilities.fileTranscription, status: 'unavailable', reason: 'disabled' } }],
+    ['malformed', { ready: true }],
+    ['dictation disabled', { ...capabilities, fileTranscription: { ...capabilities.fileTranscription, dictation: { ...capabilities.fileTranscription.dictation, enabled: false } } }],
+  ])('does not accept %s capability data as working speech', async (_label, payload) => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response('Invalid request', { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ runtime: { handle: machine.handle, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot } }))
+      .mockResolvedValueOnce(Response.json(payload));
+    const result = await activatePlatformSpeechFleet({ machines: [machine], platformOrigin: 'https://api.matrix-os.com', platformSecret: 'p'.repeat(32), fetchImpl });
+    expect(result).toMatchObject({ activated: 0, failed: 1 });
+  });
+});

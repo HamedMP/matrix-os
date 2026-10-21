@@ -6,6 +6,8 @@ import type { AgentListRow } from "../components/agents/agent-rows";
 import { AgentMascot } from "../components/ui/AgentMascot";
 import { EmptyState } from "../components/ui/EmptyState";
 import { Icon } from "../components/ui/Icon";
+import { listItemExit } from "../components/ui/list-motion-animations";
+import { ItemRowSkeletons } from "../components/ui/Skeleton";
 import { AddIcon } from "../components/ui/icons";
 import { StatusDot } from "../components/ui/StatusDot";
 
@@ -160,10 +162,19 @@ describe("agents list screen", () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the existing skeleton rows while the list loads", () => {
+  it("fades the list in, and lets rows that leave fade out while the rest move up", () => {
+    renderList();
+
+    expect(screen.getByTestId("agents-list").props.itemLayoutAnimation).toMatchObject({ animationName: "LinearTransition" });
+    expect(screen.UNSAFE_getAllByProps({ exiting: listItemExit }).length)
+      .toBeGreaterThan(0);
+  });
+
+  it("waits on placeholders shaped like the agent rows: a round mascot and two lines", () => {
     renderList({ state: "loading", rows: [] });
 
     expect(screen.getAllByTestId("agents-skeleton-row").length).toBeGreaterThan(0);
+    expect(screen.UNSAFE_getByType(ItemRowSkeletons).props).toMatchObject({ leadingSize: 36, leadingShape: "round" });
     expect(flat(screen.getByTestId("agents-loading")).paddingHorizontal).toBe(20);
     expect(screen.queryByTestId("agents-list")).toBeNull();
     expect(screen.getByTestId("agents-new")).toBeTruthy();

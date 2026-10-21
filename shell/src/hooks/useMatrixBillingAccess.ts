@@ -2,7 +2,11 @@
 
 import { useAuth } from "@clerk/nextjs";
 import {
+  MatrixBillingActiveCheckoutSchema,
   MatrixBillingPublicEntitlementSchema,
+  MatrixBillingTrialOfferSchema,
+  type MatrixBillingStatus,
+  type MatrixBillingActiveCheckout,
   type MatrixBillingPublicEntitlement,
 } from "@matrix-os/contracts";
 import {
@@ -38,6 +42,7 @@ type BillingAccessState = {
   checking: boolean;
   entitlement: BillingEntitlementSummary | null;
   trialOffer: BillingTrialOffer | null;
+  activeCheckout?: MatrixBillingActiveCheckout | null;
   accessReason: string | null;
   accessIssue: BillingAccessIssue;
   retry: () => void;
@@ -45,10 +50,7 @@ type BillingAccessState = {
 
 export type BillingAccessIssue = "auth" | "status" | null;
 
-export type BillingTrialOffer = {
-  eligible: boolean;
-  durationDays: number;
-};
+export type BillingTrialOffer = MatrixBillingStatus["trialOffer"];
 
 export type BillingEntitlementSummary = MatrixBillingPublicEntitlement;
 
@@ -56,6 +58,7 @@ type BillingAccessRemoteState = {
   active: boolean | null;
   entitlement: BillingEntitlementSummary | null;
   trialOffer: BillingTrialOffer | null;
+  activeCheckout?: MatrixBillingActiveCheckout | null;
   accessReason: string | null;
   accessIssue: BillingAccessIssue;
 };
@@ -64,6 +67,7 @@ const BILLING_STATUS_UNAVAILABLE_STATE: BillingAccessRemoteState = {
   active: null,
   entitlement: null,
   trialOffer: null,
+  activeCheckout: null,
   accessReason: "billing_status_unavailable",
   accessIssue: "status",
 };
@@ -91,6 +95,24 @@ export function useMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
     getServerE2eBillingScenario,
   );
   if (!e2eBillingBypass) return state;
+  if (e2eBillingScenario === "open-checkout") {
+    return {
+      active: false,
+      checking: false,
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+      activeCheckout: {
+        status: "open",
+        planSlug: "matrix_starter",
+        interval: "monthly",
+        regionSlug: "region_nbg1",
+        developerTools: ["codex"],
+      },
+      accessReason: "e2e_open_checkout",
+      accessIssue: null,
+      retry: state.retry,
+    };
+  }
   if (e2eBillingScenario === "legacy-trial") {
     return {
       active: true,
@@ -206,8 +228,13 @@ export function useMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
     checking: false,
     entitlement: null,
     // Keep browser screenshots deterministic while exercising the same
-    // three-day offer shown to eligible first-time hosted customers.
-    trialOffer: { eligible: true, durationDays: 3 },
+    // current Starter offer shown to eligible first-time hosted customers.
+    trialOffer: {
+      eligible: true,
+      durationDays: 3,
+      eligiblePlanSlugs: ["matrix_starter", "matrix_builder", "matrix_max"],
+      durationDaysByPlan: { matrix_starter: 14, matrix_builder: 3, matrix_max: 3 },
+    },
     accessReason: "e2e_test_bypass",
     accessIssue: null,
     retry: state.retry,
@@ -229,7 +256,7 @@ function useManagedMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
   const previousCacheKeyRef = useRef<string | null>(null);
   const retryBillingStatus = useCallback(() => {
     failedAttemptsRef.current = 0;
-    setRemoteState(null);
+    billingStatusSnapshot = null;
     setRemoteChecked(false);
     setRetryTick((current) => current + 1);
   }, []);
@@ -346,12 +373,24 @@ function useManagedMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
       retry: retryBillingStatus,
     };
   }
-  if (!remoteChecked) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null, retry: retryBillingStatus };
+  if (!remoteChecked) {
+    return {
+      active: remoteState?.active ?? null,
+      checking: true,
+      entitlement: remoteState?.entitlement ?? null,
+      trialOffer: remoteState?.trialOffer ?? null,
+      activeCheckout: remoteState?.activeCheckout ?? null,
+      accessReason: remoteState?.accessReason ?? null,
+      accessIssue: remoteState?.accessIssue ?? null,
+      retry: retryBillingStatus,
+    };
+  }
   return {
     active: remoteState?.active === true,
     checking: false,
     entitlement: remoteState?.entitlement ?? null,
     trialOffer: remoteState?.trialOffer ?? null,
+    activeCheckout: remoteState?.activeCheckout ?? null,
     accessReason: remoteState?.accessReason ?? null,
     accessIssue: null,
     retry: retryBillingStatus,
@@ -382,9 +421,10 @@ function readRemoteBillingStatus(
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), BILLING_STATUS_TIMEOUT_MS);
-  const statusPath = options.runtimeSlot
-    ? `/billing/status?runtimeSlot=${encodeURIComponent(options.runtimeSlot)}`
-    : "/billing/status";
+  const statusQuery = new URLSearchParams();
+  if (options.runtimeSlot) statusQuery.set("runtimeSlot", options.runtimeSlot);
+  statusQuery.set("trialOfferVersion", "2");
+  const statusPath = `/billing/status?${statusQuery.toString()}`;
   const promise = fetch(statusPath, {
     method: "GET",
     credentials: "include",
@@ -414,7 +454,8 @@ function readRemoteBillingStatus(
       const body = (await response.json()) as {
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
         entitlement?: unknown;
-        trialOffer?: { eligible?: unknown; durationDays?: unknown };
+        trialOffer?: unknown;
+        activeCheckout?: unknown;
       };
       const parsedEntitlement = body.entitlement === null || body.entitlement === undefined
         ? null
@@ -424,6 +465,9 @@ function readRemoteBillingStatus(
         active: body.access?.runtimeProxyAllowed === true,
         entitlement: parsedEntitlement?.data ?? null,
         trialOffer: parseBillingTrialOffer(body.trialOffer),
+        activeCheckout: body.activeCheckout === null || body.activeCheckout === undefined
+          ? null
+          : MatrixBillingActiveCheckoutSchema.parse(body.activeCheckout),
         accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
         accessIssue: null,
       };
@@ -443,18 +487,7 @@ function readRemoteBillingStatus(
   return promise;
 }
 
-function parseBillingTrialOffer(value: {
-  eligible?: unknown;
-  durationDays?: unknown;
-} | undefined): BillingTrialOffer | null {
-  if (
-    typeof value?.eligible !== "boolean"
-    || typeof value.durationDays !== "number"
-    || !Number.isInteger(value.durationDays)
-    || value.durationDays <= 0
-    || value.durationDays > 30
-  ) {
-    return null;
-  }
-  return { eligible: value.eligible, durationDays: value.durationDays };
+function parseBillingTrialOffer(value: unknown): BillingTrialOffer | null {
+  const parsed = MatrixBillingTrialOfferSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }

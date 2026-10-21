@@ -1,3 +1,5 @@
+import { executeFinanceWriteAction } from "./finance-writes.js";
+import { isBoundedManagedAction, BoundedManagedActionError } from "./bounded-managed-action.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { validateActionParams } from "./parameter-validation.js";
@@ -36,6 +38,14 @@ export async function executeIntegrationAction(opts: {
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");
   }
+  if (isBoundedManagedAction(serviceId, actionId)) {
+    if (!pipedream.boundedManagedAction) throw new BoundedManagedActionError();
+    return { data: await pipedream.boundedManagedAction({ externalUserId,
+      accountId: connection.pipedream_account_id, serviceId, actionId, params }) };
+  }
+  const financeWrite = await executeFinanceWriteAction({ pipedream, externalUserId,
+    accountId: connection.pipedream_account_id, serviceId, actionId, params });
+  if (financeWrite) return financeWrite;
   const boundCatalog = await executeCatalogBoundAction({ pipedream, externalUserId,
     accountId: connection.pipedream_account_id, serviceId, actionId, params });
   if (boundCatalog) return boundCatalog;

@@ -1,5 +1,8 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import * as Haptics from "expo-haptics";
+import { AccessibilityInfo } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
+import * as Reanimated from "react-native-reanimated";
 
 import { TABS, TabBar } from "../components/shell/TabBar";
 import { Icon } from "../components/ui/Icon";
@@ -11,16 +14,28 @@ import {
   TerminalTabIcon,
 } from "../components/ui/icons";
 
-import { flat, pressedStyle } from "./ui-test-utils";
+import { motion } from "../lib/theme-v2";
+import { flat, heldScale, resetReduceMotion } from "./ui-test-utils";
+
+function bar(props: Partial<React.ComponentProps<typeof TabBar>>, onTabPress: jest.Mock, bottomInset: number) {
+  return (
+    <SafeAreaInsetsContext.Provider value={{ top: 62, right: 0, bottom: bottomInset, left: 0 }}>
+      <TabBar testID="tab-bar" activeRoute="(chats)" onTabPress={onTabPress} {...props} />
+    </SafeAreaInsetsContext.Provider>
+  );
+}
 
 function renderBar(props: Partial<React.ComponentProps<typeof TabBar>> = {}, bottomInset = 34) {
   const onTabPress = jest.fn();
-  render(
-    <SafeAreaInsetsContext.Provider value={{ top: 62, right: 0, bottom: bottomInset, left: 0 }}>
-      <TabBar testID="tab-bar" activeRoute="(chats)" onTabPress={onTabPress} {...props} />
-    </SafeAreaInsetsContext.Provider>,
-  );
+  render(bar(props, onTabPress, bottomInset));
   return onTabPress;
+}
+
+/** Lays the five tabs out side by side, 70pt wide and 47pt high, 8pt below the bar's top. */
+function layOutTabs() {
+  screen.getAllByRole("tab").forEach((tab, index) => {
+    fireEvent(tab, "layout", { nativeEvent: { layout: { x: 12 + index * 76, y: 8, width: 70, height: 47 } } });
+  });
 }
 
 describe("TabBar", () => {
@@ -174,9 +189,84 @@ describe("TabBar", () => {
     expect(onTabLongPress).toHaveBeenCalledWith("settings");
   });
 
-  it("dims a tab to 0.65 while it is pressed", () => {
+  it("shrinks a tab a little while it is pressed", () => {
     renderBar();
 
-    expect(pressedStyle({ accessibilityLabel: "Agents" }).opacity).toBe(0.65);
+    expect(heldScale({ accessibilityLabel: "Agents" })).toBe(motion.pressScale);
+  });
+
+  it("plays the selection tick when it moves to another tab, not when the open tab is pressed again", () => {
+    jest.mocked(Haptics.selectionAsync).mockClear();
+    renderBar({ activeRoute: "(chats)" });
+
+    fireEvent.press(screen.getByRole("tab", { name: "Chats" }));
+    expect(Haptics.selectionAsync).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole("tab", { name: "Terminal" }));
+    expect(Haptics.selectionAsync).toHaveBeenCalledTimes(1);
+  });
+
+  describe("highlight", () => {
+    beforeEach(resetReduceMotion);
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it("takes over the active tab's fill once the tabs are laid out", () => {
+      renderBar({ activeRoute: "agents" });
+      expect(screen.queryByTestId("tab-highlight")).toBeNull();
+
+      layOutTabs();
+
+      const highlight = screen.getByTestId("tab-highlight");
+      expect(flat(highlight)).toMatchObject({
+        position: "absolute",
+        top: 8,
+        height: 47,
+        width: 70,
+        borderRadius: 8,
+        backgroundColor: "#FAF9F7",
+        transform: [{ translateX: 88 }],
+      });
+      expect(highlight.props.pointerEvents).toBe("none");
+      expect(flat(screen.getByRole("tab", { name: "Agents" })).backgroundColor).toBeUndefined();
+    });
+
+    it("slides to the new tab with the gentle spring", () => {
+      const spring = jest.spyOn(Reanimated, "withSpring");
+      const onTabPress = jest.fn();
+      const view = render(bar({ activeRoute: "(chats)" }, onTabPress, 34));
+      layOutTabs();
+      expect(spring).not.toHaveBeenCalled();
+
+      view.rerender(bar({ activeRoute: "terminal" }, onTabPress, 34));
+      expect(spring).toHaveBeenCalledWith(12 + 3 * 76, motion.spring.gentle);
+
+      // The mock spring lands at once; the next draw shows where it went.
+      view.rerender(bar({ activeRoute: "terminal" }, onTabPress, 34));
+      expect(flat(screen.getByTestId("tab-highlight")).transform).toEqual([{ translateX: 12 + 3 * 76 }]);
+    });
+
+    it("jumps instead of sliding when the person has asked for reduced motion", async () => {
+      jest.spyOn(AccessibilityInfo, "isReduceMotionEnabled").mockResolvedValue(true);
+      const spring = jest.spyOn(Reanimated, "withSpring");
+      const onTabPress = jest.fn();
+      const view = render(bar({ activeRoute: "(chats)" }, onTabPress, 34));
+      await act(async () => {});
+      layOutTabs();
+
+      view.rerender(bar({ activeRoute: "settings" }, onTabPress, 34));
+      view.rerender(bar({ activeRoute: "settings" }, onTabPress, 34));
+
+      expect(spring).not.toHaveBeenCalled();
+      expect(flat(screen.getByTestId("tab-highlight")).transform).toEqual([{ translateX: 12 + 4 * 76 }]);
+    });
+
+    it("draws no highlight for a screen that is not one of the tabs", () => {
+      renderBar({ activeRoute: "" });
+      layOutTabs();
+
+      expect(screen.queryByTestId("tab-highlight")).toBeNull();
+    });
   });
 });

@@ -15,7 +15,6 @@ export default function IntegrationDetailLayout() {
       iconColor={theme.v2.appColors.ink}
       iconTestID="integrations-back-icon"
       buttonSize={32}
-      pressedOpacity={1}
       onPress={() => router.back()}
     />
   );

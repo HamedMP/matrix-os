@@ -134,7 +134,7 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
   });
   it("keeps the existing scoped service credentials, trigger and ten-minute limit", () => {
     expect(job.needs).toBe("changes");
-    expect(job.if).toBe("needs.changes.outputs.should_run == 'true'");
+    expect(job.if).toBe("always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')");
     expect(job["timeout-minutes"]).toBe(10);
     expect(job.services.postgres.image).toBe("mirror.gcr.io/library/postgres:16");
     expect(job.services.postgres.env).toEqual({ POSTGRES_USER: "matrix_test",

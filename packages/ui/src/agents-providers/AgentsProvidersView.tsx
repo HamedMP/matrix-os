@@ -9,11 +9,12 @@ import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { RetainedHarnessAction } from "./RetainedHarnessAction.js";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AccountLifecycleActions } from "./AccountLifecycleActions.js";
+import { CodexAccountActions } from "./CodexAccountActions.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
 import { CheckedAt } from "./CheckedAt.js";
 import { YourSubscriptions } from "./YourSubscriptions.js";
-import { managedConnectionCapability } from "./managed-connection-capability.js";
+import { isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
 import { useHarnessEnablement } from "./use-harness-enablement.js";
 import { ConnectedAccountCard } from "./ConnectedAccountCard.js";
@@ -256,14 +257,21 @@ export function AgentsProvidersView({
             );
             const guided = Boolean(workflowClient && capability);
             const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
-            const nativeSource = harness.harness !== "claude" || isNativeAccountSource("claude", source, selectedAccount);
-            const allowedSavedConnection = nativeSource && (harness.harness !== "codex" || source?.fundingKind === "owner_api_key" || selectedAccount?.authMethod === "api_key");
+            const nativeSource = (harness.harness !== "claude" && harness.harness !== "codex") || isNativeAccountSource(harness.harness, source, selectedAccount);
+            const nativeCodexReconnect = harness.harness === "codex" && source?.fundingKind === "owner_account";
+            const allowedSavedConnection = nativeSource && (!nativeCodexReconnect || guided && Boolean(workflowClient?.startConnection) && capability?.connectionOptions?.some(isCodexNativeLoginOption));
+            const connectSaved = async () => {
+              if (nativeCodexReconnect) { await requestConnect(harness.id); return; }
+              await enablement.connectSaved(harness);
+            };
             const connected = nativeSource && (hasConfiguredConnection(harness, source) || hasStaleHermesConnection(harness, source));
+            const savedNativeAccount = nativeSource && harness.harness === "codex" && selectedAccount?.authState === "authenticated" && !connected;
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
                 {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={snapshot.refreshedAt} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
+                {savedNativeAccount ? <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} saved disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
                 {!guided ? <ConnectionChoices
                   snapshot={snapshot}
                   harness={harness}
@@ -288,8 +296,8 @@ export function AgentsProvidersView({
                   && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source) ?
                   <button type="button" className="matrix-ap-button"
                     disabled={mutationsDisabled || workflowPermission === "forbidden" || !onRefreshForConnection}
-                    onClick={() => void enablement.connectSaved(harness)}>Connect saved connection</button> : null}
-                {!guided && (harness.configuredEnabled ?? harness.enabled) && supports("set_harness_enabled") ?
+                    onClick={() => void connectSaved()}>Connect saved connection</button> : null}
+                {!guided && harness.harness !== "codex" && (harness.configuredEnabled ?? harness.enabled) && supports("set_harness_enabled") ?
                   <RetainedHarnessAction scopeKey={`${harness.harness}:${harness.id}:disconnect`} scopeOwner={workflowClient} label="Disconnect" disabled={mutationsDisabled || workflowPermission === "forbidden"}
                     action={() => onMutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false })}
                     onSuccess={refreshSettings} /> : null}
@@ -323,13 +331,18 @@ export function AgentsProvidersView({
                         onMutate={onMutate} onRefresh={refreshSettings} />
                     </> : undefined}
                     renderConnection={connected ? connectionCard : undefined}
-                    renderAccountActions={(operationDisabled) => <AccountLifecycleActions
+                    renderAccountActions={(operationDisabled) => harness.harness === "codex" ? <CodexAccountActions
+                      account={nativeSource ? selectedAccount : undefined} harnessId={harness.id} scopeOwner={workflowClient}
+                      disabled={operationDisabled || workflowPermission === "forbidden"}
+                      canLogout={supports("logout_account")} canChangeAccount={Boolean(capability?.connectionOptions?.some(option => option.availability === "available"
+                        && (option.authKind === "api_key" ? workflowClient.submitConnectionKey : workflowClient.startConnection)))}
+                      onMutate={onMutate} onRefresh={refreshSettings}/> : <AccountLifecycleActions
                       accounts={snapshot.accounts.filter(item => harness.accountIds.includes(item.id))}
                       snapshot={snapshot} harnessId={harness.id} scopeOwner={workflowClient}
                       disabled={operationDisabled || workflowPermission === "forbidden"}
                       canLogout={supports("logout_account")} canRemove={supports("remove_account")} canReassign={supports("reassign_account")}
                       onMutate={onMutate} onRefresh={refreshSettings} />}
-                    onConnectSaved={allowedSavedConnection && supports("set_harness_enabled") && (harness.configuredEnabled ?? harness.enabled) === false && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source) ? () => enablement.connectSaved(harness) : undefined}
+                    onConnectSaved={allowedSavedConnection && supports("set_harness_enabled") && (savedNativeAccount && nativeCodexReconnect || (harness.configuredEnabled ?? harness.enabled) === false && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source)) ? connectSaved : undefined}
                     connectSavedDisabled={workflowPermission === "forbidden" || !onRefreshForConnection}
                     source={source}
                     harness={harness}
@@ -359,7 +372,7 @@ export function AgentsProvidersView({
                       setWorkflowStatus(current => updateWorkflowRowStatus(current, harness.id, status))
                     }
                     onDisconnect={
-                      supports("set_harness_enabled")
+                      harness.harness !== "codex" && supports("set_harness_enabled")
                         ? async () => {
                             return await onMutate({
                               type: "set_harness_enabled",

@@ -497,21 +497,6 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
       targetBundleVersion: bundleRef.imageVersion,
       targetBundleSha256: bundleRef.sha256 ?? '0'.repeat(64),
     };
-    const hostConfig = buildHostConfig(
-      deps.config,
-      {
-        clerkUserId: active.clerkUserId,
-        handle: active.handle,
-        runtimeSlot: active.runtimeSlot,
-        developerTools: active.developerTools,
-        provisioningClass: active.provisioningClass,
-      },
-      machineId,
-      registration.token,
-      registration.expiresAt,
-      postgresPassword,
-      bundleRef,
-    );
     if (deps.config.goldenSnapshots.enabled) {
       recoveryImage = await chooseRecoveryImage(deps.db, deps.config.goldenSnapshots, {
         machineId,
@@ -614,6 +599,22 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
     let createPending = false;
     let createOutcomeAmbiguous = false;
     try {
+      const hostConfig = buildHostConfig(
+        deps.config,
+        {
+          clerkUserId: existing.clerkUserId,
+          handle: existing.handle,
+          runtimeSlot: existing.runtimeSlot,
+          developerTools: existing.developerTools,
+          provisioningClass: existing.provisioningClass,
+        },
+        existing.machineId,
+        registration.token,
+        registration.expiresAt,
+        postgresPassword,
+        bundleRef,
+        existing.runtimeTokenEpoch,
+      );
       const userData = renderCloudInitTemplate(
         deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
         {
