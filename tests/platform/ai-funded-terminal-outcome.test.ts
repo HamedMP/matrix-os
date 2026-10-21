@@ -197,6 +197,38 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect(await finance()).toEqual(before);
   });
 
+  it("preserves slot_busy when a terminal receipt commits while authorization waits to enter its transaction", async () => {
+    const auth = await authorize("cap-waiting-a", 500_001);
+    await repo.startReservation({ reservationId: auth.reservation.reservationId,
+      tokenId: credential.tokenId, executionId: "cap-waiting-attempt" });
+    const entered = Promise.withResolvers<void>(); const resume = Promise.withResolvers<void>();
+    const waitingDb: PlatformDB = { ...db, async transaction(work) {
+      entered.resolve(); await resume.promise; return db.transaction(work);
+    } };
+    const waitingRepo = createAiFundedPolicyRepository({ db: waitingDb, credentialHashSecret: "h".repeat(32),
+      now: () => new Date(clock), credentialTtlMs: 3_600_000, inFlightTtlMs: 30 * 60_000 });
+    clock = new Date(Date.parse(initialTime) + 29_000);
+    const admission = Promise.allSettled([waitingRepo.authorize({ credential: credential.token,
+      requestId: "cap-waiting-b", modelId, billingMode: "usage", maxCostMicrousd: 100 })]);
+    await entered.promise;
+    let saved: Awaited<ReturnType<typeof row>>;
+    const before = await finance();
+    try {
+      clock = new Date(Date.parse(initialTime) + 30_000);
+      expect((await terminal(await receipt())).status).toBe(200);
+      saved = await row();
+      expect(saved.execution_admission_release).toBeNull();
+    } finally { resume.resolve(); }
+    expect((await admission)[0]).toMatchObject({ status: "rejected",
+      reason: { code: "rate_limited", reason: "slot_busy" } });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute()).toEqual([saved!]);
+    // The ordinary capacity claim commits the existing authorization snapshot's
+    // timestamp; all amounts, holds and financial records stay unchanged.
+    expect(await finance()).toEqual({ ...before, balances: before.balances.map(balance => ({
+      ...balance, updated_at: "2026-09-10T12:00:29.000Z",
+    })) });
+  });
+
   it("keeps legacy start response bytes and never rebinds or downgrades a persisted attempt", async () => {
     const auth = await authorize("attempt-binding");
     const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };

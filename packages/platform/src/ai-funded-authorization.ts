@@ -77,7 +77,9 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${credential.owner_id}`}, 0))`.execute(trx.executor);
       // Recovery acquires machine rows; take those before any runtime/balance
       // locks to match policy updates. Later validation rolls this back on refusal.
-      await recoverTerminalOutcomes(trx.executor, credential.owner_id, checked);
+      // A receipt can commit while admission waits for this owner lock; recovery
+      // must compare its chronology against the locked time, not the entry snapshot.
+      await recoverTerminalOutcomes(trx.executor, credential.owner_id, deps.now());
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
       const machine = await trx.executor.selectFrom("user_machines").select([
