@@ -16,9 +16,15 @@ export interface CanonicalToolActivity {
   detail?: string;
 }
 
-function activityState(
+export function canonicalChatToolActivityState(
+  run: CanonicalChatRun,
   status: "queued" | "running" | "completed" | "failed" | "cancelled" | "partial",
 ): CanonicalToolActivityState {
+  if (["matrix_pi", "matrix_bot"].includes(run.driverKind) && ["queued", "running"].includes(status)) {
+    if (run.status === "aborted") return "stopped";
+    if (run.status === "failed") return "failed";
+    if (run.status === "completed") return "partial";
+  }
   if (status === "failed") return "failed";
   if (status === "cancelled") return "stopped";
   if (status === "partial") return "partial";
@@ -65,7 +71,8 @@ export function canonicalChatToolActivities(run: CanonicalChatRun, activities: C
       if (!agentActivities.has(activity.activityId)) order.push({ type: "agent", id: activity.activityId });
       agentActivities.set(activity.activityId, activity);
     } else if (activity.type === "tool.output") {
-      const output = toolOutput.get(activity.toolCallId) ?? [];
+      // Managed Pi publishes bounded complete snapshots, not append-only chunks.
+      const output = run.driverKind === "matrix_pi" || run.driverKind === "matrix_bot" ? [] : toolOutput.get(activity.toolCallId) ?? [];
       output.push(activity.truncated ? `${activity.text}\nOutput was truncated for display.` : activity.text);
       toolOutput.set(activity.toolCallId, output);
     }
@@ -80,7 +87,7 @@ export function canonicalChatToolActivities(run: CanonicalChatRun, activities: C
       return [{
         id: activity.activityId,
         kind: activity.kind,
-        state: activityState(activity.status),
+        state: canonicalChatToolActivityState(run, activity.status),
         label: activity.label,
         ...(activity.subagent ? { subagent: projectChatSubagent(activity.subagent, run.status) } : {}),
         ...(preview ? { preview, previewKind: activity.previewKind ?? "text" } : {}),
@@ -93,7 +100,7 @@ export function canonicalChatToolActivities(run: CanonicalChatRun, activities: C
     return [{
       id: activity.toolCallId,
       kind: "tool",
-      state: activityState(activity.status),
+      state: canonicalChatToolActivityState(run, activity.status),
       label: activity.label,
       ...(detail ? { detail } : {}),
     }];
