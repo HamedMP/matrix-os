@@ -175,8 +175,11 @@
 }
 
 /* Scope new control states to the standard product presentation. */
-:root:not([data-theme-style]) button:disabled,
-:root[data-theme-style="flat"] button:disabled,
+/* Filled form buttons own the muted disabled treatment. Native buttons also
+   implement backdrops, window controls and quiet navigation; recoloring those
+   makes locked billing opaque and replaces every sidebar row with a gray block. */
+:root:not([data-theme-style]) [data-slot="button"]:is([data-variant="default"], [data-variant="secondary"], [data-variant="outline"], [data-variant="destructive"]):disabled,
+:root[data-theme-style="flat"] [data-slot="button"]:is([data-variant="default"], [data-variant="secondary"], [data-variant="outline"], [data-variant="destructive"]):disabled,
 :root:not([data-theme-style]) input:disabled,
 :root:not([data-theme-style]) select:disabled,
 :root:not([data-theme-style]) textarea:disabled {

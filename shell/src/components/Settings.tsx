@@ -216,6 +216,8 @@ function SettingsFrame({
   const resolvedLockedSection = !showBillingSection && canonicalLockedSection === "billing"
     ? undefined
     : canonicalLockedSection;
+  const setupBackdrop = onboardingMode
+    || (resolvedLockedSection === "billing" && billingMode !== "settings");
   const standardFrameSections: SettingsSection[] = showBillingSection
     ? visibleSections
     : visibleSections.filter((section) => section.id !== "billing" && section.id !== "organization");
@@ -298,7 +300,7 @@ function SettingsFrame({
   const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
   return (
     <div className="fixed inset-0" style={{ zIndex: SHELL_Z_INDEX.settings }}>
-      {onboardingMode ? (
+      {setupBackdrop ? (
         <Image
           src={platformShellAssetPath("/wallpapers/matrix-dusk.webp")}
           alt=""
@@ -327,7 +329,7 @@ function SettingsFrame({
 
       <div className="pointer-events-none relative z-10 flex h-full items-center justify-center overflow-hidden sm:p-4">
         <div
-          className="pointer-events-auto flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl xl:h-[760px] xl:w-[1180px]"
+          className={`pointer-events-auto flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl xl:w-[1180px] ${setupBackdrop ? "xl:h-[800px]" : "xl:h-[760px]"}`}
           style={{
             opacity: visible ? 1 : 0,
             transform: visible ? "scale(1) translateY(0)" : "scale(0.96) translateY(8px)",
@@ -360,7 +362,7 @@ function SettingsFrame({
             <aside className="flex w-full shrink-0 flex-col border-b border-sidebar-border bg-sidebar text-sidebar-foreground p-2 sm:w-52 sm:border-b-0 sm:border-r">
               <nav
                 aria-label="Settings sections"
-                className="flex flex-wrap gap-1 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:flex-nowrap sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:pb-0"
+                className={`flex gap-1 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:flex-nowrap sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:pb-0 ${resolvedLockedSection ? "flex-nowrap" : "flex-wrap"}`}
               >
                 {frameVisibleSections.map((section) => {
                   const Icon = section.icon;
