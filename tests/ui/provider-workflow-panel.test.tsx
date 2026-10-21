@@ -69,7 +69,7 @@ it("keeps keys transient and presents safe rejection with retry", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Connect" }));
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "The key could not be verified",
+      "OpenAI didn't accept this key",
     ),
   );
   expect(document.body.textContent).not.toContain("sk-secret");

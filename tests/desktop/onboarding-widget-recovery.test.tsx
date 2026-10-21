@@ -9,7 +9,7 @@ import {
   type OnboardingWidgetEvent,
   type OnboardingWidgetInit,
 } from "@matrix-os/contracts";
-import { useOnboardingAiConnect, useOnboardingRun } from "@matrix-os/ui";
+import { ProviderWorkflowClientError, useOnboardingAiConnect, useOnboardingRun } from "@matrix-os/ui";
 import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { createDesktopOnboardingChatPort } from "@desktop/renderer/src/features/onboarding-widget/onboarding-widget-runner";
@@ -314,6 +314,21 @@ describe("onboarding AI sign-in", () => {
     save();
     await flush();
     expect(dispatch).toHaveBeenCalledWith({ type: "ai.connected", provider: "claude" });
+  });
+
+  it.each([
+    ["rejected", "rejected"],
+    ["key_workspace_required", "workspace_required"],
+    ["unavailable", "unavailable"],
+  ] as const)("reports a %s key save failure with its reason", async (reason, failure) => {
+    const { client } = keyClient();
+    client.submitConnectionKey = vi.fn(async () => { throw new ProviderWorkflowClientError(reason); });
+    workflow.client = client;
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useDesktopAiConnect(dispatch));
+    act(() => result.current.submitKey("claude", "sk-ant-test"));
+    await flush();
+    expect(dispatch).toHaveBeenCalledWith({ type: "ai.failed", failure });
   });
 
   it("does not switch the AI when a key save finishes after its panel was closed", async () => {

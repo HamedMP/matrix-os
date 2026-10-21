@@ -6,6 +6,7 @@ import type {
   ProviderWorkflowConnectionOption,
 } from "@matrix-os/contracts";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
+import { keyFailureMessage } from "./key-format.js";
 import { hasConfiguredConnection, hasStaleHermesConnection } from "./harness-connection.js";
 import { isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
 import { useWorkflowPolling } from "./use-workflow-polling.js";
@@ -72,6 +73,9 @@ export function useHarnessWorkflowController({
   const [providerId, setProviderId] = useState(
     capability.apiKeyProviders[0] ?? "openai",
   );
+  // The provider whose key is being connected names the provider in key failures.
+  const keyProviderId = selectedOption?.authKind === "api_key" ? selectedOption.providerId : providerId;
+  const keyFailureProvider = keyProviderId === "anthropic" || keyProviderId === "openrouter" ? keyProviderId : "openai";
   const [authorizationCode, setAuthorizationCode] = useState("");
   const [codeSubmitted, setCodeSubmitted] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -245,17 +249,18 @@ export function useHarnessWorkflowController({
           context === "start" && caught instanceof ProviderWorkflowClientError && caught.reason === "conflict"
             ? "Another connection or agent operation is running. Finish or cancel it, then try again."
             : method === "key"
-            ? caught instanceof ProviderWorkflowClientError &&
-              caught.reason === "rejected"
-              ? "The key could not be verified. Check it and try again."
-              : "Could not confirm the connection. Check its status before trying again."
+            ? keyFailureMessage(
+                caught instanceof ProviderWorkflowClientError && (caught.reason === "rejected" || caught.reason === "key_workspace_required")
+                  ? caught.reason : "unavailable",
+                keyFailureProvider,
+              )
             : "The connection could not be updated. Try again.",
         );
         if (
           method === "key" &&
           !(
             caught instanceof ProviderWorkflowClientError &&
-            caught.reason === "rejected"
+            (caught.reason === "rejected" || caught.reason === "key_workspace_required")
           )
         )
           onRefresh();

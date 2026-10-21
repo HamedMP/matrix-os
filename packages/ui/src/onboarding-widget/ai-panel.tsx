@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { codingAgentArtworkSrc } from "../coding-agent-artwork.js";
 import { ButtonRow, Icon, RabbitAvatar } from "./parts.js";
 import { AI_KEY_MAX_CHARS, PROVIDER_COPY } from "./helpers.js";
+import { keyFailureMessage } from "../agents-providers/key-format.js";
 import type { OnboardingWidgetActions } from "./types.js";
 
 const PROVIDER_MARKS: Record<OnboardingAiProvider, string> = {
@@ -221,7 +222,9 @@ export function AiFlow({ panel, actions, keepName, signInCode, needsCode = false
           disabled={panel.status === "saving"}
         />
         {panel.status === "failed"
-          ? <span className="mxo-failed-line"><Icon icon={Alert02Icon} size={12} />That key didn't work</span>
+          ? <span className="mxo-failed-line"><Icon icon={Alert02Icon} size={12} />{keyFailureMessage(
+            panel.failure === "workspace_required" ? "key_workspace_required" : panel.failure ?? "unavailable",
+            panel.provider === "claude" ? "anthropic" : "openai", "short")}</span>
           : <span className="mxo-muted">Stored on your computer only.</span>}
         <ButtonRow>
           <button type="submit" className="mxo-btn mxo-btn--dark" disabled={panel.status === "saving"}>

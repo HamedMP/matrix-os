@@ -338,6 +338,18 @@ describe("OnboardingWidget", () => {
     expect(within(within(menu).getByRole("menuitemradio", { name: /Matrix AI/ })).getByText("Not available on this computer")).toBeInTheDocument();
   });
 
+  it.each([
+    ["rejected", "Anthropic didn't accept this key"],
+    ["workspace_required", "This key isn't in a workspace"],
+    ["unavailable", "Couldn't connect right now. Try again."],
+  ] as const)("explains a %s key failure", (failure, text) => {
+    const events: OnboardingWidgetEvent[] = [{ type: "ai.menuToggled" }, { type: "ai.providerPicked", provider: "claude" },
+      { type: "ai.methodPicked", method: "api_key" }, { type: "ai.keySubmitted" }, { type: "ai.failed", failure }];
+    render(<Harness actions={makeActions()} activeAi="matrix" events={events} />);
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.queryByText("That key didn't work")).not.toBeInTheDocument();
+  });
+
   it("keeps the plan wording when the connection is not known", () => {
     render(<Harness actions={makeActions()} activeAi="claude" matrixAvailable={false} connectedProviders={["claude"]} />);
     fireEvent.click(screen.getByRole("button", { name: "Change" }));

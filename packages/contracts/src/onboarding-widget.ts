@@ -11,6 +11,8 @@ import {
 export type OnboardingWidgetSize = "bubble" | "corner";
 export type OnboardingAiProvider = "claude" | "codex";
 export type OnboardingAiChoice = "matrix" | OnboardingAiProvider;
+/** Why a key did not connect: the provider refused it, it belongs to no workspace, or the outcome is uncertain. */
+export type OnboardingKeyFailure = "rejected" | "workspace_required" | "unavailable";
 
 const AI_LABELS: Record<OnboardingAiChoice, string> = { matrix: "Matrix AI", claude: "Claude", codex: "ChatGPT" };
 
@@ -47,7 +49,7 @@ export type OnboardingAiPanel =
   | { step: "menu" }
   | { step: "method"; provider: OnboardingAiProvider }
   | { step: "waiting"; provider: OnboardingAiProvider; status: "waiting" | "failed" }
-  | { step: "key"; provider: OnboardingAiProvider; status: "idle" | "saving" | "failed" }
+  | { step: "key"; provider: OnboardingAiProvider; status: "idle" | "saving" | "failed"; failure?: OnboardingKeyFailure }
   /** The provider offers no sign-in the widget can finish (not installed, terminal-only, key-only). */
   | { step: "settings"; provider: OnboardingAiProvider };
 
@@ -91,7 +93,7 @@ export type OnboardingWidgetEvent =
   | { type: "ai.providerPicked"; provider: OnboardingAiProvider }
   | { type: "ai.methodPicked"; method: "account" | "api_key" }
   | { type: "ai.keySubmitted" }
-  | { type: "ai.failed" }
+  | { type: "ai.failed"; failure?: OnboardingKeyFailure }
   | { type: "ai.needsSettings" }
   | { type: "ai.retried" }
   | { type: "ai.connected"; provider: OnboardingAiProvider }
@@ -320,9 +322,12 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
           : { step: "key", provider: state.ai.provider, status: "idle" },
       };
     case "ai.keySubmitted":
-      return state.ai?.step === "key" ? { ...state, ai: { ...state.ai, status: "saving" } } : state;
+      return state.ai?.step === "key" ? { ...state, ai: { step: "key", provider: state.ai.provider, status: "saving" } } : state;
     case "ai.failed":
-      if (state.ai?.step === "waiting" || state.ai?.step === "key") {
+      if (state.ai?.step === "key") {
+        return { ...state, ai: { step: "key", provider: state.ai.provider, status: "failed", ...(event.failure ? { failure: event.failure } : {}) } };
+      }
+      if (state.ai?.step === "waiting") {
         return { ...state, ai: { ...state.ai, status: "failed" } };
       }
       return state;
