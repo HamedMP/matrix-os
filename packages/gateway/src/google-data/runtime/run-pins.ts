@@ -21,44 +21,54 @@ const normalized = (value: GoogleRunPinInput): GoogleRunPinInput => ({ ...value,
 
 /** Durable identity latch, NEVER an approval cache. Host registry guarantees a fresh run/generation
  * after at most 20 minutes; policy expiry never removes a latch early and permits silent replacement.
- * Host owns migration/startCleanup/close ordering and the injected pool. No content or credentials. */
+ * Host owns migration/startCleanup/close ordering and bounded acquisition of the injected pool. Close
+ * stops admission and drains all accepted SQL work and its sweep; it never destroys the host pool.
+ * A fixed 64-operation ledger bounds accepted in-flight work. No content or credentials. */
 export function createGoogleRunPinStore<DB>(db: Kysely<DB>, options: { maxPins?: number; maxPinsPerOwner?: number } = {}) {
   const totalCap = options.maxPins ?? 4096; const ownerCap = options.maxPinsPerOwner ?? 64;
   if (![totalCap, ownerCap].every(Number.isSafeInteger) || totalCap < 1 || totalCap > 4096 || ownerCap < 1 || ownerCap > 64) deny();
   let closed = false; let timer: ReturnType<typeof setInterval> | undefined; let sweeping: Promise<unknown> | undefined;
   const active = () => { if (closed) deny(); };
+  let inFlight = 0; let drained: Promise<void> = Promise.resolve(); let resolveDrained: (() => void) | undefined;
+  // A caller can abandon an awaited operation on abort while PostgreSQL still owns its work.
+  // Count accepted operations until their transaction (including commit/rollback) actually settles.
+  async function tracked<T>(work: () => Promise<T>): Promise<T> {
+    active(); if (inFlight >= 64) deny();
+    if (inFlight === 0) drained = new Promise<void>(resolve => { resolveDrained = resolve; });
+    inFlight++;
+    try { return await work(); }
+    finally { inFlight--; if (inFlight === 0) { resolveDrained?.(); resolveDrained = undefined; } }
+  }
   async function cleanup() {
-    active();
-    return boundedProvenanceTransaction(db, async tx => {
+    return tracked(() => boundedProvenanceTransaction(db, async tx => {
       const result = await sql`DELETE FROM google_runtime_policy_pins WHERE ctid IN
         (SELECT ctid FROM google_runtime_policy_pins WHERE retire_at <= clock_timestamp() ORDER BY retire_at LIMIT 200) RETURNING run_id`.execute(tx);
       return result.rows.length;
-    });
+    }));
   }
   return {
     async migrate() {
-      active();
-      await boundedProvenanceTransaction(db, async tx => {
+      await tracked(() => boundedProvenanceTransaction(db, async tx => {
         await sql`SELECT pg_advisory_xact_lock(551035505)`.execute(tx);
         await sql`CREATE TABLE IF NOT EXISTS google_runtime_policy_pins (
           owner_id TEXT NOT NULL, chat_id TEXT NOT NULL, run_id TEXT NOT NULL, runtime_handle TEXT NOT NULL, execution_generation TEXT NOT NULL,
           payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL, retire_at TIMESTAMPTZ NOT NULL,
           PRIMARY KEY(owner_id,runtime_handle,execution_generation,run_id), CHECK(retire_at <= created_at+interval '20 minutes'))`.execute(tx);
         await sql`CREATE INDEX IF NOT EXISTS google_runtime_pin_retirement ON google_runtime_policy_pins(retire_at)`.execute(tx);
-      });
+      }));
     },
     async get(value: GoogleRunPinKey): Promise<GoogleRunPin | null> {
-      active(); const key = keySchema.parse(value);
-      return boundedProvenanceTransaction(db, async tx => {
+      const key = keySchema.parse(value);
+      return tracked(() => boundedProvenanceTransaction(db, async tx => {
         const row = (await sql<PinRow>`SELECT payload,created_at,expires_at,retire_at FROM google_runtime_policy_pins
           WHERE owner_id=${key.ownerId} AND chat_id=${key.chatId} AND run_id=${key.runId} AND runtime_handle=${key.runtimeHandle}
           AND execution_generation=${key.executionGeneration}`.execute(tx)).rows[0];
         return row ? project(row) : null;
-      });
+      }));
     },
     async latch(value: GoogleRunPinInput): Promise<GoogleRunPin> {
-      active(); const input = normalized(pinSchema.parse(value));
-      return boundedProvenanceTransaction(db, async tx => {
+      const input = normalized(pinSchema.parse(value));
+      return tracked(() => boundedProvenanceTransaction(db, async tx => {
         await sql`SELECT pg_advisory_xact_lock(551035505)`.execute(tx);
         const at = Date.now(); const expires = new Date(Math.min(...input.stamps.map(s => Date.parse(s.expiresAt))));
         if (expires.getTime() <= at) deny();
@@ -79,7 +89,7 @@ export function createGoogleRunPinStore<DB>(db: Kysely<DB>, options: { maxPins?:
           statement_timestamp(),${expires},statement_timestamp()+interval '20 minutes' WHERE ${expires}::timestamptz > clock_timestamp()
           ON CONFLICT DO NOTHING RETURNING payload,created_at,expires_at,retire_at`.execute(tx)).rows[0];
         if (!inserted) deny(); return project(inserted);
-      });
+      }));
     },
     cleanup,
     startCleanup() {
@@ -87,7 +97,7 @@ export function createGoogleRunPinStore<DB>(db: Kysely<DB>, options: { maxPins?:
       timer = setInterval(() => { if (!sweeping) sweeping = cleanup().catch(error => console.warn('[google-data] Run pin cleanup unavailable:', error instanceof Error ? error.name : 'UnknownError')).finally(() => { sweeping = undefined; }); }, 30000);
       timer.unref();
     },
-    async close() { if (timer) clearInterval(timer); timer = undefined; closed = true; await sweeping; },
+    async close() { if (timer) clearInterval(timer); timer = undefined; closed = true; await drained; await sweeping; },
   };
 }
 export type GoogleRunPinStore = ReturnType<typeof createGoogleRunPinStore>;

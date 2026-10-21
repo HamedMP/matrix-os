@@ -1,12 +1,13 @@
+import { ZodError } from 'zod/v4';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { BotRuntimeRegistry, PiRuntimeBinding } from '../../bots/runtime-registry.js';
 import type { GoogleContext, GoogleContextStore } from './contexts.js';
 import { GoogleDataStampSchema, type GoogleDataStamp } from '../profiles.js';
 import { GoogleInferenceIdentitySchema } from './profile-resolution.js';
-import type { createGooglePlatformPolicyClient } from './platform-client.js';
+import { GooglePlatformPolicyError, type createGooglePlatformPolicyClient } from './platform-client.js';
 import type { GoogleDataInferenceAuthority } from './inference-policy.js';
-import type { GoogleRunPinKey, GoogleRunPinStore } from './run-pins.js';
+import { GoogleRunPinError, type GoogleRunPinKey, type GoogleRunPinStore } from './run-pins.js';
 
 interface Dependencies {
   registry: Pick<BotRuntimeRegistry, 'lookupRun' | 'inferenceSignal'>;
@@ -103,8 +104,12 @@ export function createGoogleRuntimeInferenceAuthority(deps: Dependencies): Googl
         await sameContext();
         if (pin.stamps.some(stamp => Date.parse(stamp.expiresAt) <= now().getTime())) deny();
         live(); return { allowed: true, googleOrigin: true };
-      } catch {
-        // Never expose provider account identity, policy state, credentials or underlying errors to the broker/model.
+      } catch (error: unknown) {
+        // Expected policy/schema denials are quiet. Unexpected diagnostics contain a type name only.
+        if (!(error instanceof RuntimePolicyUnavailable) && !(error instanceof ZodError)
+          && !(error instanceof GooglePlatformPolicyError) && !(error instanceof GoogleRunPinError)) {
+          console.warn('[google-data] Runtime authority unavailable:', error instanceof Error ? error.name : 'UnknownError');
+        }
         return { allowed: false };
       }
     },
