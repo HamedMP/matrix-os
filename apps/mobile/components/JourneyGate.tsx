@@ -1,5 +1,7 @@
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+
+import { StartupLoading } from "@/components/StartupScreen";
 import {
   PROVISIONING_STAGE_LABEL,
   type JourneyFetchResult,
@@ -98,14 +100,9 @@ function PlanRequired({ detail, plansUrl, onOpenUrl, onRefresh, onSignOut }: Pla
  */
 export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, onSignOut = () => {}, working = false }: JourneyGateProps) {
   const { theme } = useUnistyles();
-  if (!result) {
-    return (
-      <Centered>
-        <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />
-        <Body>Loading your Matrix computer…</Body>
-      </Centered>
-    );
-  }
+  // The first answer is still on its way: hold the startup screen rather than
+  // switching to a loading layout of its own for a moment.
+  if (!result) return <StartupLoading testID="journey-loading" />;
 
   if (result.status === "unauthorized") {
     return (

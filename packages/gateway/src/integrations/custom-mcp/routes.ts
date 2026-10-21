@@ -104,6 +104,9 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
       if (error.code === "action_required") {
         return context.json({ error: "Action required" }, 409);
       }
+      if (error.code === "oauth_client_setup_required") {
+        return context.json({ error: "Administrator setup is required before sign-in", code: "oauth_client_setup_required" }, 409);
+      }
     }
     console.error("[custom-mcp] route failed:", error instanceof Error ? error.message : String(error));
     return context.json({ error: "Custom MCP request failed" }, 502);

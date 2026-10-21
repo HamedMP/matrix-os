@@ -26,6 +26,7 @@ type Admission = { kind: 'write'; durable?: boolean } | { kind: 'login'; recover
   /** Trusted coordinator proof: no create requested, or its exact writer drained. */
   confirmDrained?: () => Promise<boolean> };
 export interface NativeProviderProfileGuard {
+  assertReadable(profile: NativeProviderProfile): Promise<void>;
   acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void | Promise<void>>;
   run<T>(profile: NativeProviderProfile, admission: Admission, operation: () => Promise<T>): Promise<T>;
 }
@@ -124,6 +125,7 @@ export function createNativeProviderProfileGuard(options: {
     };
   }
   return {
+    assertReadable: profile => assertAvailable(profile, { kind: "write" }),
     acquire,
     async run<T>(profile: NativeProviderProfile, admission: Admission, operation: () => Promise<T>): Promise<T> {
       const release = await acquire(profile, admission.kind === "write" ? { ...admission, durable: true } : admission);

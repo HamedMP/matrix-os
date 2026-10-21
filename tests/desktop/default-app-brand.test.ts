@@ -1,15 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
-import { desktopPalette } from '@matrix-os/brand';
+import { desktopPalette, productColors } from '@matrix-os/brand';
 import { matrix } from '../../desktop/src/renderer/src/design/themes/matrix';
-it('keeps the Matrix default app theme on the approved brand while retaining a real dark variant', () => {
-  expect(matrix.light?.chrome.primary).toBe(desktopPalette.forest);
-  expect(matrix.light?.chrome.background).toBe(desktopPalette.paper);
-  expect(matrix.light?.chrome.foreground).toBe(desktopPalette.forest);
+it('uses the approved product palette and preserves pinned brand identity', () => {
+  expect(matrix.light?.chrome.primary).toBe(productColors.ink);
+  expect(matrix.light?.chrome.background).toBe(productColors.paper);
+  expect(matrix.light?.chrome.foreground).toBe(productColors.ink);
   expect(matrix.dark?.chrome.background).not.toBe(matrix.light?.chrome.background);
   const css = readFileSync('desktop/src/renderer/src/design/tokens.css', 'utf8');
   expect(css).toContain(`--brand-forest: ${desktopPalette.forest.toLowerCase()};`);
-  expect(css).toContain('--font-ui: "Geist"');
+  expect(css).toMatch(/--font-ui:\s*(?:"Geist"|Geist)[,;]/);
   expect(css).toContain('--font-editorial: "Bricolage Grotesque"');
 });
 

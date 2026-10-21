@@ -1,6 +1,8 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
 import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
+import { ActiveChatProvider } from "../components/chat/active-chat";
+import { ActiveChatScreen } from "../components/chat/ActiveChatScreen";
 import { createCanonicalChatFixture } from "../../../tests/contracts/fixtures/canonical-chat";
 
 const mockSend = jest.fn();
@@ -52,10 +54,16 @@ jest.mock("@/components/chat/ChatScreenView", () => {
   ) };
 });
 
+beforeEach(() => {
+  mockActiveChatId = "chat_one";
+  mockDetail = detail("chat_one", "plan", "full_access");
+});
 afterEach(() => { cleanup(); mockSend.mockReset(); });
 
-it("sends a saved Chat's accepted modes and uses the second Chat's own modes after switching", () => {
-  const view = render(<ChatScreen />);
+it.each(["Chats tab", "project chat"])("%s sends accepted modes and switches to the second Chat's own modes", (surface) => {
+  const subject = () => <ActiveChatProvider>{surface === "Chats tab"
+    ? <ChatScreen /> : <ActiveChatScreen onBack={() => undefined} />}</ActiveChatProvider>;
+  const view = render(subject());
   fireEvent.changeText(screen.getByLabelText("Test message"), "Open example.com");
   fireEvent.press(screen.getByRole("button", { name: "Send follow-up" }));
   expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -65,8 +73,18 @@ it("sends a saved Chat's accepted modes and uses the second Chat's own modes aft
 
   mockActiveChatId = "chat_two";
   mockDetail = detail("chat_two", "default", "supervised");
-  view.rerender(<ChatScreen />);
+  view.rerender(subject());
   fireEvent.changeText(screen.getByLabelText("Test message"), "Tell me the title");
+  fireEvent.press(screen.getByRole("button", { name: "Send follow-up" }));
+  expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({
+    chatId: "chat_two", interactionMode: "default", permissionMode: "supervised",
+  }), expect.anything());
+});
+
+it("does not reuse accepted controls while the loaded detail belongs to the previous Chat", () => {
+  mockActiveChatId = "chat_two";
+  render(<ActiveChatProvider><ChatScreen /></ActiveChatProvider>);
+  fireEvent.changeText(screen.getByLabelText("Test message"), "Read the next page");
   fireEvent.press(screen.getByRole("button", { name: "Send follow-up" }));
   expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({
     chatId: "chat_two", interactionMode: "default", permissionMode: "supervised",

@@ -416,6 +416,8 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("POST", `${HOME}/runtimes/:runtimeId/scopes`, { request: "CollaborationCreateScopeRequestSchema" }),
   home("POST", `${HOME}/runtimes/:runtimeId/catalog/lookup`, { request: "CollaborationOwnerCatalogResolveRequestSchema", response: "CollaborationOwnerCatalogLookupResponseSchema" }),
   home("POST", `${HOME}/runtimes/:runtimeId/catalog/resolve`, { request: "CollaborationOwnerCatalogResolveRequestSchema", response: "CollaborationOwnerCatalogResolveResponseSchema" }),
+  home("POST", `${HOME}/runtimes/:runtimeId/catalog/:resourceId/reauthorization/inspect`, { request: "CollaborationOwnerResourceReauthorizationInspectRequestSchema", response: "CollaborationOwnerResourceReauthorizationInspectionResponseSchema" }),
+  home("POST", `${HOME}/runtimes/:runtimeId/catalog/:resourceId/reauthorization/confirm`, { request: "CollaborationOwnerResourceReauthorizationConfirmRequestSchema", response: "CollaborationOwnerResourceReauthorizationResponseSchema" }),
   home("GET", SCOPE, { response: "CollaborationScopeSchema" }),
   home("GET", `${SCOPE}/access`, { response: "CollaborationEffectiveAccessSchema" }),
   home("GET", `${SCOPE}/grants`, { response: "CollaborationGrantSchema[]" }),

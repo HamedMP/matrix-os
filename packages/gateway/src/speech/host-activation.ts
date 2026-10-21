@@ -65,19 +65,11 @@ async function applyHostConfig(config: z.output<typeof ConfigSchema>): Promise<v
   );
 }
 
-async function scheduleGatewayRestart(): Promise<void> {
-  const unit = `matrix-platform-speech-restart-${process.pid}-${Date.now()}`;
-  await runFixedCommand("/usr/bin/sudo", [
-    "-n", "/usr/bin/systemd-run", `--unit=${unit}`, "--collect", "--on-active=2s",
-    "/usr/bin/systemctl", "restart", "matrix-gateway.service",
-  ]);
-}
-
 export function createPlatformSpeechHostConfigRoutes(options: {
   env?: NodeJS.ProcessEnv;
   applyConfig?: (config: z.output<typeof ConfigSchema>) => Promise<void>;
-  scheduleRestart?: () => Promise<void>;
-} = {}): Hono {
+  scheduleRestart: () => void | Promise<void>;
+}): Hono {
   const env = options.env ?? process.env;
   const app = new Hono();
   const authorize = (authorization: string | undefined) => {
@@ -117,7 +109,7 @@ export function createPlatformSpeechHostConfigRoutes(options: {
     }
     try {
       await (options.applyConfig ?? applyHostConfig)(parsed.data);
-      await (options.scheduleRestart ?? scheduleGatewayRestart)();
+      await options.scheduleRestart();
       return c.json({ status: "restarting" }, 202);
     } catch (error: unknown) {
       console.warn("[gateway-speech] host activation failed", error instanceof Error ? error.name : "UnknownError");

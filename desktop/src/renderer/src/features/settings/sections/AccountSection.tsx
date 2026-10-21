@@ -28,7 +28,7 @@ export default function AccountSection() {
         <div className="flex items-center gap-3">
           <div
             className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-semibold"
-            style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+            style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}
           >
             {imageUrl ? (
               <img

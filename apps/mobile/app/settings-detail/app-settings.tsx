@@ -22,6 +22,7 @@ import {
   enablePushNotifications,
   isPushNotificationsEnabled,
 } from "@/lib/push";
+import { selectHaptic } from "@/lib/haptics";
 import { fetchActiveComputer, mobileQueryKeys } from "@/lib/requests";
 import { getSettings, HOSTED_GATEWAY_URL, saveSettings, type AppSettings } from "@/lib/storage";
 import { applyMobileThemePreference, type MobileThemePreference } from "@/lib/theme-preference";
@@ -104,7 +105,10 @@ export default function AppSettingsScreen() {
                 accessibilityLabel={biometricLabel}
                 disabled={!biometricAvailable || changingBiometric}
                 value={settings.biometricEnabled}
-                onValueChange={(enabled) => void changeBiometric(enabled)}
+                onValueChange={(enabled) => {
+                  selectHaptic();
+                  void changeBiometric(enabled);
+                }}
                 trackColor={{ false: uiTheme.v2.appColors.line, true: uiTheme.v2.appColors.green }}
                 thumbColor={uiTheme.v2.appColors.surface}
               />
@@ -120,7 +124,10 @@ export default function AppSettingsScreen() {
                 accessibilityLabel="Push notifications"
                 disabled={!activeComputer.data || changingPush}
                 value={settings.notificationsEnabled}
-                onValueChange={(enabled) => void changePush(enabled)}
+                onValueChange={(enabled) => {
+                  selectHaptic();
+                  void changePush(enabled);
+                }}
                 trackColor={{ false: uiTheme.v2.appColors.line, true: uiTheme.v2.appColors.green }}
                 thumbColor={uiTheme.v2.appColors.surface}
               />
@@ -141,7 +148,6 @@ export default function AppSettingsScreen() {
             icon={Cancel01Icon}
             iconSize={22}
             buttonSize={32}
-            pressedOpacity={1}
             onPress={() => setThemeSheetVisible(false)}
           />
           <Text style={styles.sheetTitle}>Choose theme</Text>

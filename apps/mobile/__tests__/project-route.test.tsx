@@ -1,4 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { TextInput } from "react-native";
 
 import * as mockRoutes from "./project-route-test-utils";
 import ProjectRoute from "../app/(drawer)/(tabs)/(chats)/projects/[projectId]";
@@ -15,7 +16,6 @@ jest.mock("react-native-safe-area-context", () => ({
 }));
 jest.mock("@/lib/use-keyboard-visible", () => ({ useKeyboardVisible: () => false }));
 jest.mock("@/lib/canonical-chat-session-context", () => ({ useCanonicalChatSession: () => mockRoutes.shell }));
-jest.mock("@/lib/use-shell-navigation", () => ({ useShowChatScreen: () => mockRoutes.shell.showChatScreen }));
 jest.mock("@/lib/use-session-token-warmup", () => ({
   useSessionTokenWarmup: () => mockRoutes.shell.warmSessionToken,
 }));
@@ -32,12 +32,19 @@ const reanimated = jest.requireMock<{ cancelAnimation?: unknown }>("react-native
 reanimated.cancelAnimation ??= jest.fn();
 
 const {
-  requests, router, route, shell, portfolio, catalog, sonnet, opus, caseStudy, landing, pricing,
+  requests, router, route, navigation, shell, portfolio, catalog, sonnet, opus, caseStudy, landing, pricing,
   GATEWAY_URL, TOKEN, pendingRequest, chatTitles, modelPickerProps,
 } = mockRoutes;
 
 const renderProject = (params?: typeof route.params) => mockRoutes.renderProjectRoute(<ProjectRoute />, params);
 const renderPortfolio = () => mockRoutes.renderPortfolio(<ProjectRoute />);
+
+/** Where a chat of Portfolio opens: above the project, so back returns to it. */
+const projectChat = (chatId: string) => ({
+  pathname: "/projects/[projectId]/chats/[chatId]",
+  params: { projectId: "proj_portfolio", chatId },
+});
+const focus = TextInput.prototype.focus as jest.Mock;
 
 const list = () => screen.getByTestId("project-chats");
 const input = () => screen.getByLabelText("Message Matrix");
@@ -200,13 +207,14 @@ describe("project route", () => {
       await waitFor(() => expect(chatTitles()).toEqual(["Case study", "Landing page copy", "Pricing page"]));
     });
 
-    it("opens the chat whose row is pressed on the chat screen", async () => {
+    it("opens the chat whose row is pressed above the project, so back returns to its chats", async () => {
       await renderPortfolio();
 
       fireEvent.press(screen.getByTestId("project-chat-chat_landing"));
 
       expect(shell.selectChat).toHaveBeenCalledWith("chat_landing");
-      expect(shell.showChatScreen).toHaveBeenCalledTimes(1);
+      expect(router.push).toHaveBeenCalledTimes(1);
+      expect(router.push).toHaveBeenCalledWith(projectChat("chat_landing"));
       expect(shell.setSelectionOverride).not.toHaveBeenCalled();
     });
 
@@ -268,6 +276,37 @@ describe("project route", () => {
       expect(shell.warmSessionToken).toHaveBeenCalledTimes(2);
     });
 
+    it("leaves the keyboard closed when the project is opened", async () => {
+      focus.mockClear();
+      await renderPortfolio();
+
+      expect(focus).not.toHaveBeenCalled();
+      expect(navigation.setParams).not.toHaveBeenCalled();
+    });
+
+    it("puts the cursor in the composer once when a chat of the project asks for a new chat", async () => {
+      focus.mockClear();
+      await renderProject({ projectId: portfolio.id, newChat: "1" });
+
+      await waitFor(() => expect(focus).toHaveBeenCalledTimes(1));
+      expect(navigation.setParams).toHaveBeenCalledWith({ newChat: undefined });
+    });
+
+    it("waits for the composer before taking a new-chat request made while the project was still loading", async () => {
+      focus.mockClear();
+      const read = pendingRequest<unknown[]>();
+      requests.fetchProjects.mockReturnValue(read.promise);
+      await renderProject({ projectId: portfolio.id, newChat: "1" });
+
+      expect(focus).not.toHaveBeenCalled();
+      expect(navigation.setParams).not.toHaveBeenCalled();
+
+      await act(async () => read.resolve([portfolio]));
+
+      await waitFor(() => expect(focus).toHaveBeenCalledTimes(1));
+      expect(navigation.setParams).toHaveBeenCalledWith({ newChat: undefined });
+    });
+
     it("cannot send a blank message", async () => {
       await renderPortfolio();
 
@@ -278,7 +317,7 @@ describe("project route", () => {
       expect(requests.createChat).not.toHaveBeenCalled();
     });
 
-    it("starts a chat in the project with the message, then shows it on the chat screen", async () => {
+    it("starts a chat in the project with the message, then opens it above the project", async () => {
       const admitted = pendingRequest<typeof admission>();
       requests.createChat.mockResolvedValue(created);
       requests.admitChatTurn.mockReturnValue(admitted.promise);
@@ -303,12 +342,15 @@ describe("project route", () => {
       // Until the server has the message it stays in the box and nothing moves.
       expect(input().props.value).toBe("  Draft the case study ");
       expect(screen.getByRole("button", { name: "Stop" }).props.accessibilityState).toMatchObject({ disabled: true });
-      expect(shell.showChatScreen).not.toHaveBeenCalled();
+      expect(router.push).not.toHaveBeenCalled();
 
       await act(async () => admitted.resolve(admission));
 
-      await waitFor(() => expect(shell.showChatScreen).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(projectChat("chat_new")));
+      expect(router.push).toHaveBeenCalledTimes(1);
+      // The send made the new chat the open one; selecting it again would drop the model it was started with.
       expect(shell.bindDraftChatId).toHaveBeenCalledWith("chat_new");
+      expect(shell.selectChat).not.toHaveBeenCalled();
       expect(shell.setSelectionOverride).toHaveBeenCalledWith(sonnet);
       expect(input().props.value).toBe("");
     });
@@ -343,7 +385,7 @@ describe("project route", () => {
       await waitFor(() => expect(requests.createChat).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(sendButton()).toBeTruthy());
       expect(input().props.value).toBe("Draft the case study");
-      expect(shell.showChatScreen).not.toHaveBeenCalled();
+      expect(router.push).not.toHaveBeenCalled();
       expect(shell.setSelectionOverride).not.toHaveBeenCalled();
       expect(screen.queryByText(/upstream/)).toBeNull();
     });
@@ -359,7 +401,7 @@ describe("project route", () => {
       await waitFor(() => expect(requests.admitChatTurn).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(sendButton().props.accessibilityState).toMatchObject({ disabled: false }));
       fireEvent.press(sendButton());
-      await waitFor(() => expect(shell.showChatScreen).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
 
       const [first, second] = requests.createChat.mock.calls.map(([, , body]) => (body as { clientRequestId: string }).clientRequestId);
       expect(second).toBe(first);
@@ -398,7 +440,7 @@ describe("project route", () => {
       await act(async () => admitted.resolve(admission));
 
       await waitFor(() => expect(shell.setSelectionOverride).toHaveBeenCalledWith(sonnet));
-      expect(shell.showChatScreen).not.toHaveBeenCalled();
+      expect(router.push).not.toHaveBeenCalled();
     });
   });
 });
