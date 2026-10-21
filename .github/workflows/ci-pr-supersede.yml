@@ -48,11 +48,12 @@ jobs:
               for (const run of data.workflow_runs) {
                 const associated = run.pull_requests?.find(candidate =>
                   candidate.number === pr.number && candidate.base?.repo?.id === live.base.repo.id);
+                // GitHub refreshes run.pull_requests with live PR refs; only
+                // run.head_sha identifies the immutable source of an older run.
                 if (run.event !== 'pull_request' || !active.has(run.status) ||
                     !Number.isSafeInteger(run.id) || run.id <= 0 ||
                     !shaPattern.test(run.head_sha ?? '') ||
                     !shaPattern.test(associated?.head?.sha ?? '') ||
-                    associated.head.sha === live.head.sha ||
                     run.head_sha === live.head.sha || run.head_sha === live.merge_commit_sha) continue;
                 // Events can arrive out of order. Stop immediately if the PR moved.
                 const { data: latest } = await github.rest.pulls.get(request);
