@@ -33,6 +33,7 @@ export async function createTurnHarness(options: {
   initialOutcome?: "completed" | "aborted";
   globalThread?: boolean;
   provider?: CodingAgentProviderAdapter;
+  providerAdmission?: import("../../packages/gateway/src/coding-agents/codex-harness-admission.js").CodingAgentProviderAdmission;
   maxTurnDispatches?: number;
   turnDispatchTimeoutMs?: number;
   projectionPublisher?: CodingAgentThreadProjectionPublisher;
@@ -67,6 +68,7 @@ export async function createTurnHarness(options: {
   const threads = createCodingAgentThreadStore({
     homePath,
     providers: [provider],
+    providerAdmission: options.providerAdmission,
     relationValidator: {
       validateCreate: async () => undefined,
       validateThread,
@@ -77,7 +79,7 @@ export async function createTurnHarness(options: {
     now: () => turnNow,
   });
   const created = await threads.createThread(ownerPrincipal, {
-    providerId: "codex",
+    providerId: provider.providerId,
     prompt: "Start the implementation.",
     ...(options.globalThread ? {} : { projectId: "matrix-os", taskId: "task_auth" }),
     clientRequestId: "req_thread_turn_fixture",

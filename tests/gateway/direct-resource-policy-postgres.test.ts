@@ -107,8 +107,10 @@ class MemoryDriver implements CollaborationResourceDriver {
   async write(input: { ownerId: string; projectId: string | null; path: string; content: Uint8Array }) {
     this.writeChunkSizes.set(this.key(input), [input.content.byteLength]);
     this.files.set(this.key(input), input.content);
-    this.incarnations.set(this.key(input), randomUUID());
+    const incarnation = randomUUID();
+    this.incarnations.set(this.key(input), incarnation);
     if (this.onWrite) await this.onWrite(input.path);
+    return incarnation;
   }
   async writeChunks(input: {
     ownerId: string; projectId: string | null; path: string; size: number; sha256: string;
@@ -130,6 +132,9 @@ class MemoryDriver implements CollaborationResourceDriver {
     if (digest.digest("hex") !== input.sha256) throw new ResourceCatalogError("conflict");
     this.writeChunkSizes.set(this.key(input), sizes);
     this.files.set(this.key(input), Buffer.concat(collected));
+    const incarnation = randomUUID();
+    this.incarnations.set(this.key(input), incarnation);
+    return incarnation;
   }
   readonly removed: Array<{ path: string; kind: "file" | "folder" }> = [];
   async remove(input: { ownerId: string; projectId: string | null; path: string; kind: "file" | "folder" }) {
@@ -158,6 +163,7 @@ class MemoryDriver implements CollaborationResourceDriver {
   }
   async mkdir(input: { ownerId: string; projectId: string | null; path: string }) {
     this.folders.add(this.key(input));
+    this.incarnations.set(this.key(input), randomUUID());
   }
   async fingerprint(input: { ownerId: string; projectId: string | null; path: string }) {
     const incarnation = this.incarnations.get(this.key(input));
@@ -327,6 +333,7 @@ describe("S12 direct resource policy", () => {
     driver.files.set(`${owner}:${PROJECT_ID}:docs/guide.md`, new TextEncoder().encode("guide"));
     driver.files.set(`${owner}:-:notes/today.md`, new TextEncoder().encode("today"));
     driver.incarnations.set(`${owner}:${PROJECT_ID}:README.md`, "inc-readme-1");
+    driver.incarnations.set(`${owner}:${PROJECT_ID}:docs`, "inc-docs-1");
     driver.incarnations.set(`${owner}:${PROJECT_ID}:docs/guide.md`, "inc-guide-1");
     driver.incarnations.set(`${owner}:-:notes/today.md`, "inc-notes-1");
     driver.folders.add(`${owner}:${PROJECT_ID}:docs`);
@@ -678,9 +685,12 @@ describe("S12 direct resource policy", () => {
       const nested = await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "folder", path: "docs/sub/nested", incarnation: "inc-nested" });
       driver.folders.add(`${owner}:${PROJECT_ID}:docs/sub`);
       driver.folders.add(`${owner}:${PROJECT_ID}:docs/sub/nested`);
+      driver.incarnations.set(`${owner}:${PROJECT_ID}:docs/sub`, sub.incarnation);
+      driver.incarnations.set(`${owner}:${PROJECT_ID}:docs/sub/nested`, nested.incarnation);
       for (const extra of input.extras ?? []) {
         await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "file", path: `docs/sub/${extra}`, incarnation: `inc-${extra}` });
         driver.files.set(`${owner}:${PROJECT_ID}:docs/sub/${extra}`, new TextEncoder().encode(extra));
+        driver.incarnations.set(`${owner}:${PROJECT_ID}:docs/sub/${extra}`, `inc-${extra}`);
       }
       const childPath = `docs/sub/nested/${input.name}`;
       const release = deferred();

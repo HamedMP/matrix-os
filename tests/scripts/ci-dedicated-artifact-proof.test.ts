@@ -14,3 +14,14 @@ it.each(['sourceKind','requester','attempt','controller','parents','image','dige
  if(['requester','attempt','controller'].includes(kind)){r.requestDigest=createHash('sha256').update(canonicalRequest(r.request)).digest('hex');(f.evidence as any).requestDigest=r.requestDigest;}
  expect(()=>verifyControllerArtifact(r,f.evidence,f.expected,f.run,f.parents,f.check)).toThrow();
 });
+
+
+it('binds the isolated envelope to its immutable origin while leaving the host receipt unchanged',()=>{
+ const f=fixture(),origin={schemaVersion:1,controllerSha:f.evidence.controllerSha,controllerRef:'refs/heads/main',executionRef:`refs/heads/ci-execution/${f.evidence.controllerSha}`,executionSha:'1'.repeat(40),executionWorkflowSha:'1'.repeat(40),workflowPath:'.github/workflows/ci-dedicated.yml',treeSha:'2'.repeat(40)};
+ const evidence={...f.evidence,schemaVersion:4,executionOrigin:origin};
+ const before=JSON.stringify(f.receipt);
+ expect(verifyControllerArtifact({schemaVersion:2,executionOrigin:origin,receipt:f.receipt},evidence,f.expected,f.run,f.parents,f.check)).toBeNull();
+ expect(JSON.stringify(f.receipt)).toBe(before);
+ for(const envelope of [f.receipt,{schemaVersion:2,executionOrigin:{...origin,executionSha:'3'.repeat(40)},receipt:f.receipt},{schemaVersion:2,executionOrigin:origin}])expect(()=>verifyControllerArtifact(envelope,evidence,f.expected,f.run,f.parents,f.check)).toThrow(/envelope/);
+ expect(()=>verifyControllerArtifact({schemaVersion:2,executionOrigin:origin,receipt:f.receipt},{...f.evidence,schemaVersion:3},f.expected,f.run,f.parents,f.check)).toThrow(/versioned/);
+});

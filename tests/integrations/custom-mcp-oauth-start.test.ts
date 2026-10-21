@@ -129,3 +129,32 @@ describe("OAuth full start deadline", () => {
     expect(f.db.updateCustomMcpCredentialsIfCurrent).not.toHaveBeenCalled();
   });
 });
+
+
+describe("OAuth requested scope bounds", () => {
+  it.each([["invalid scope"], ["scope\nsecret"], Array(101).fill("read"), ["s".repeat(257)], [5]].map(scopes => [scopes]))("rejects malformed scope sets before persisting a grant (%#)", async scopes => {
+    const f = fixture();
+    await expect(f.manager.start("owner", "server", { scopes: scopes as string[] })).rejects.toMatchObject({ code: "upstream" });
+    expect(f.db.updateCustomMcpCredentialsIfCurrent).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("OAuth client secret lifetime", () => {
+  it.each([null, 60, 0, -60])("reuses live or non-expiring clients and replaces expired clients (%s)", async delta => {
+    const expiry = delta === null ? 0 : new Date("2026-10-07T12:00:00Z").getTime() / 1000 + delta;
+    const f = fixture({ clientIssuer: "https://auth.example/", clientId: "old-client", clientSecret: "old-secret", tokenEndpointAuthMethod: "client_secret_basic", clientSecretExpiresAt: expiry });
+    const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async input => {
+      if (input.url.endsWith("/register")) return { status: 201, body: { client_id: "new-client", client_secret: "new-secret", token_endpoint_auth_method: "client_secret_basic", client_secret_expires_at: 1891388800 } } as never;
+      const response = await original(input);
+      return { ...response, body: { ...response.body, token_endpoint_auth_methods_supported: ["client_secret_basic"] } };
+    });
+    const manager = new CustomMcpOAuthManager({ db: f.db as unknown as PlatformDb, encryptionKey: Buffer.alloc(32, 14),
+      redirectUri: "https://matrix.example/callback", request: f.request, validateUrl: f.validateUrl, now: () => f.now });
+    const expired = expiry !== 0 && expiry <= f.now.getTime() / 1000;
+    await manager.start("owner", "server");
+    expect(f.credential().oauth?.clientId).toBe(expired ? "new-client" : "old-client");
+    expect(f.credential().oauth?.clientSecretExpiresAt).toBe(expired ? 1891388800 : expiry);
+  });
+});

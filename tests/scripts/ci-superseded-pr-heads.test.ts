@@ -45,9 +45,9 @@ describe("superseded PR head short-circuit", () => {
 
   it("skips every heavy lane for a stale head without failing the aggregate trigger check", () => {
     const stale = "steps.superseded.outputs.stale == 'true'";
-    expect(changes.outputs.should_run).toBe(`\${{ ${stale} && 'false' || steps.changed.outputs.should_run }}`);
-    expect(changes.outputs.trigger_requested).toBe(`\${{ ${stale} && 'true' || steps.changed.outputs.trigger_requested }}`);
-    expect(changes.outputs.docs_contract_tests).toBe(`\${{ ${stale} && 'false' || steps.changed.outputs.docs_contract_tests }}`);
-    expect(changes.outputs.os_view_parity_tests).toBe(`\${{ ${stale} && 'false' || steps.changed.outputs.os_view_parity_tests }}`);
+    expect(changes.outputs.should_run).toBe(`\${{ needs.redirect.outputs.routed == 'true' && 'false' || (${stale} && 'false' || steps.changed.outputs.should_run) }}`);
+    expect(changes.outputs.trigger_requested).toBe(`\${{ needs.redirect.outputs.routed == 'true' && 'true' || (${stale} && 'true' || steps.changed.outputs.trigger_requested) }}`);
+    expect(changes.outputs.docs_contract_tests).toBe(`\${{ needs.redirect.outputs.routed == 'true' && 'false' || (${stale} && 'false' || steps.changed.outputs.docs_contract_tests) }}`);
+    expect(changes.outputs.os_view_parity_tests).toBe(`\${{ needs.redirect.outputs.routed == 'true' && 'false' || (${stale} && 'false' || steps.changed.outputs.os_view_parity_tests) }}`);
   });
 });

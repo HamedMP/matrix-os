@@ -30,7 +30,7 @@ function execute(metadata: unknown, exitCode = 0, configured = true, deploy = fa
         MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false", MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "test-key",
         CUSTOM_MCP_ENABLED: "false", IMAGE: "synthetic-image:test", PR_NUMBER: "2450",
         CLOUD_RUN_SERVICE_ACCOUNT: "synthetic-runner@example.test",
-        MATRIX_CARD_TRIALS_ENABLED: "true", MATRIX_CARD_TRIAL_DAYS: "3",
+        MATRIX_CARD_TRIALS_ENABLED: "true", MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
         CLOUD_RUN_PREVIEW_SERVICE: configured ? "matrix-platform-preview" : undefined },
     });
     return { status: result.status, stdout: result.stdout.trim(),

@@ -99,6 +99,7 @@ const HMAC_WEBHOOK_PREFIXES = [
 const ROUTE_SCOPED_BEARER_PATHS = [
   "/api/internal/upgrade",
   "/api/internal/platform-speech/config",
+  "/api/internal/platform-funded-ai/config",
 ];
 const ROUTE_SCOPED_SIGNATURE_PATHS = [
   "/api/internal/terminal-acceptance/run",

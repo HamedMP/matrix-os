@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { productColors, productScales } from "../../packages/brand/src/tokens.js";
 
 const RENDERER_SRC = path.resolve(import.meta.dirname, "../../desktop/src/renderer/src");
 
@@ -143,14 +144,17 @@ describe("Figma semantic surface tokens", () => {
   });
 
   it("defines the integration icon surface and danger text tokens in both modes", () => {
-    expect(tokenValue(themeBlock(tokensCss, ":root"), "--surface-card-foreground-subtle")).toBe(
-      "#fafaf6",
-    );
-    expect(tokenValue(themeBlock(tokensCss, ":root"), "--text-danger")).toBe("#b42318");
-    expect(tokenValue(themeBlock(tokensCss, '[data-theme="dark"]'), "--surface-card-foreground-subtle")).toBe(
-      "#242923",
-    );
-    expect(tokenValue(themeBlock(tokensCss, '[data-theme="dark"]'), "--text-danger")).toBe("#f28b82");
+    for (const [selector, card, danger] of [
+      [":root", productColors.card, productScales.coral[600]],
+      ['[data-theme="dark"]', productColors.ink, productScales.coral[200]],
+    ] as const) {
+      const block = themeBlock(tokensCss, selector);
+      expect(tokenValue(block, "--surface-card-foreground-subtle")).toBe(card);
+      expect(tokenValue(block, "--text-danger")).toBe(danger);
+      for (const surface of [card, tokenValue(block, "--bg-app")]) {
+        expect(contrastRatio(tokenValue(block, "--text-danger"), surface)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 });
 

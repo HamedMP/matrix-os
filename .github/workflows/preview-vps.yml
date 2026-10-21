@@ -57,21 +57,129 @@ on:
         default: false
         type: boolean
 
+      reap:
+        description: "Internal isolated cleanup request (no PR operation)"
+        required: false
+        default: false
+        type: boolean
+
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  group: preview-${{ github.event_name == 'workflow_dispatch' && inputs.bundle_only && 'bundle' || 'vps' }}-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.event.label.name != 'preview-collaboration' && github.run_id || 'active' }}
-  cancel-in-progress: ${{ github.event.action != 'closed' && github.event_name != 'schedule' }}
+  group: preview-${{ vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && 'route' || 'execution' }}-${{ github.event_name == 'workflow_dispatch' && inputs.bundle_only && 'bundle' || 'vps' }}-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.event.label.name != 'preview-collaboration' && github.run_id || 'active' }}
+  cancel-in-progress: ${{ github.event.action != 'closed' && github.event_name != 'schedule' && !inputs.reap }}
 
 env:
   PREVIEW_TTL_HOURS: 72
 
 jobs:
+  # Main keeps only the bounded router once isolated execution is activated.
+  # The rollout flag stays off until the reviewed pin and protected P exist.
+  # vars is a job snapshot: drain old preview invocations before activation/pin changes.
+  route_execution:
+    name: Route preview to isolated execution
+    if: vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout reviewed origin verifier
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Dispatch isolated preview once
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          MATRIX_CI_CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+        with:
+          retries: 0
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const pin=process.env.MATRIX_CI_CONTROLLER_SHA;
+            if(!/^[0-9a-f]{40}$/.test(pin??''))throw new Error('Reviewed preview controller is not configured');
+            const branch=`ci-execution/${pin}`;
+            const {data:execution}=await github.rest.repos.getBranch({...context.repo,branch,request:{timeout:10000}});
+            const workflowPath='.github/workflows/preview-vps.yml';
+            const ref=`refs/heads/${branch}`;
+            const {verifyIsolatedExecutionOrigin}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/execution-origin.mjs')).href);
+            await verifyIsolatedExecutionOrigin(github,context.repo,{
+              ref,sha:execution.commit.sha,workflowSha:execution.commit.sha,
+              workflowRef:`${context.repo.owner}/${context.repo.repo}/${workflowPath}@${ref}`,
+            },{workflowPath,controllerSha:pin});
+            const input=context.payload.inputs??{};
+            const boolean=value=>String(value===true||value==='true');
+            const scheduled=context.eventName==='schedule';
+            const inputs={pr:scheduled?'0':String(input.pr??''),version:scheduled?'':String(input.version??''),
+              bundle_only:scheduled?'false':boolean(input.bundle_only),verify_inventory:scheduled?'false':boolean(input.verify_inventory),
+              teardown_preview:scheduled?'false':boolean(input.teardown_preview),reap:scheduled?'true':boolean(input.reap)};
+            // No retry: an ambiguous dispatch result is an attended reconciliation.
+            await github.rest.actions.createWorkflowDispatch({...context.repo,workflow_id:'preview-vps.yml',ref:branch,inputs,request:{timeout:10000}});
+            core.notice('Preview request forwarded to its isolated execution origin.');
+
+  execution_origin:
+    name: Verify preview execution origin
+    if: github.event_name == 'pull_request' || vars.MATRIX_CI_ISOLATED_EXECUTION != 'true' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      allowed: ${{ steps.verify.outputs.allowed }}
+      mode: ${{ steps.verify.outputs.mode }}
+      trusted_ref: ${{ steps.verify.outputs.trusted_ref }}
+    steps:
+      - name: Checkout reviewed origin verifier
+        if: github.event_name != 'pull_request' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Verify actual workflow origin before preview credentials
+        id: verify
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
+          MATRIX_CI_CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          PREVIEW_WORKFLOW_REF: ${{ github.workflow_ref }}
+          PREVIEW_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        with:
+          retries: 0
+          script: |
+            if(context.eventName==='pull_request'){
+              core.setOutput('mode','pull_request');core.setOutput('trusted_ref','main');
+            }else if(process.env.ISOLATED_EXECUTION!=='true'){
+              // Explicit bootstrap compatibility; activation is a separate operator step.
+              core.setOutput('mode','legacy');core.setOutput('trusted_ref','main');
+            }else{
+              const input=context.payload.inputs??{};
+              if(input.reap===true||input.reap==='true'){
+                if(input.pr!=='0'||(input.version??'')!==''||['bundle_only','verify_inventory','teardown_preview'].some(key=>input[key]===true||input[key]==='true'))
+                  throw new Error('Invalid isolated maintenance request');
+              }
+              const {pathToFileURL}=require('node:url');
+              const {resolve}=require('node:path');
+              const pin=process.env.MATRIX_CI_CONTROLLER_SHA;
+              if(!/^[0-9a-f]{40}$/.test(pin??''))throw new Error('Reviewed preview controller is not configured');
+              const {verifyIsolatedExecutionOrigin}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/execution-origin.mjs')).href);
+              const proof=await verifyIsolatedExecutionOrigin(github,context.repo,{
+                ref:context.ref,sha:context.sha,workflowRef:process.env.PREVIEW_WORKFLOW_REF,workflowSha:process.env.PREVIEW_WORKFLOW_SHA,
+              },{workflowPath:'.github/workflows/preview-vps.yml',controllerSha:pin});
+              core.setOutput('mode','isolated');core.setOutput('trusted_ref',proof.executionSha);
+            }
+            core.setOutput('allowed','true');
+
   gate:
     name: Gate
-    if: github.event_name != 'schedule'
+    needs: execution_origin
+    if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && github.event_name != 'schedule' && !inputs.reap
     runs-on: ubuntu-latest
     outputs:
       action: ${{ steps.decide.outputs.action }}
@@ -87,6 +195,8 @@ jobs:
       - name: Decide action
         id: decide
         env:
+          EXECUTION_ORIGIN_VERIFIED: ${{ needs.execution_origin.outputs.allowed }}
+          EXECUTION_ORIGIN_MODE: ${{ needs.execution_origin.outputs.mode }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
@@ -193,8 +303,9 @@ jobs:
             exit 1
           fi
           if [ "$action" = "deploy_existing" ]; then
-            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-              echo "Pinned Preview deployments must run from the trusted main workflow." >&2
+            if [ "${EXECUTION_ORIGIN_VERIFIED:-false}" != "true" ] ||
+              { [ "${EXECUTION_ORIGIN_MODE:-}" != "isolated" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; }; then
+              echo "Pinned Preview deployments require a verified trusted workflow origin." >&2
               exit 1
             fi
             if ! printf '%s' "$REQUESTED_VERSION" |
@@ -219,8 +330,8 @@ jobs:
 
   build:
     name: Build preview bundle
-    needs: gate
-    if: needs.gate.outputs.action == 'deploy' || needs.gate.outputs.action == 'bundle'
+    needs: [execution_origin, gate]
+    if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && (needs.gate.outputs.action == 'deploy' || needs.gate.outputs.action == 'bundle')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -300,8 +411,8 @@ jobs:
 
   deploy:
     name: Publish and deploy preview VPS
-    needs: [gate, build]
-    if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')
+    needs: [execution_origin, gate, build]
+    if: always() && needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')
     runs-on: ubuntu-latest
     timeout-minutes: 105
     # A preview-collaboration PR provisions under the collaboration-only owner, which only the
@@ -335,7 +446,7 @@ jobs:
         if: needs.gate.outputs.action == 'deploy_existing'
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ needs.execution_origin.outputs.trusted_ref }}
 
       - name: Download bundle artifact
         if: needs.gate.outputs.action == 'deploy'
@@ -759,8 +870,8 @@ jobs:
 
   publish_bundle:
     name: Publish Private Preview bundle
-    needs: [gate, build]
-    if: needs.gate.outputs.action == 'bundle' && needs.build.result == 'success'
+    needs: [execution_origin, gate, build]
+    if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && needs.gate.outputs.action == 'bundle' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -780,7 +891,7 @@ jobs:
       - name: Checkout trusted release scripts
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ needs.execution_origin.outputs.trusted_ref }}
 
       - name: Download bundle artifact
         uses: actions/download-artifact@v8
@@ -818,8 +929,8 @@ jobs:
 
   verify_inventory:
     name: Verify preview computer inventory
-    needs: gate
-    if: needs.gate.outputs.action == 'verify'
+    needs: [execution_origin, gate]
+    if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && needs.gate.outputs.action == 'verify'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -902,8 +1013,8 @@ jobs:
 
   teardown:
     name: Teardown preview VPS
-    needs: gate
-    if: needs.gate.outputs.action == 'teardown'
+    needs: [execution_origin, gate]
+    if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && needs.gate.outputs.action == 'teardown'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -953,7 +1064,8 @@ jobs:
 
   reaper:
     name: Reap stale preview VPSes
-    if: github.event_name == 'schedule'
+    needs: execution_origin
+    if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && ((vars.MATRIX_CI_ISOLATED_EXECUTION != 'true' && github.event_name == 'schedule') || (vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.event_name == 'workflow_dispatch' && inputs.reap))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

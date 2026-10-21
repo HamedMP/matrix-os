@@ -52,6 +52,19 @@ export class CanonicalCliError extends Error {
   }
 }
 
+type CanonicalCliDeadline =
+  | {
+    /** Absolute process lifetime. Never refreshed by provider activity. */
+    timeoutMs: number;
+    /** Inactivity deadline, refreshed after accepted stdout or stdin writes. */
+    idleTimeoutMs?: number;
+  }
+  | {
+    timeoutMs?: number;
+    /** Inactivity deadline, refreshed after accepted stdout or stdin writes. */
+    idleTimeoutMs: number;
+  };
+
 export async function runCanonicalCli(options: {
   command: string;
   args: string[];
@@ -59,14 +72,13 @@ export async function runCanonicalCli(options: {
   env: Record<string, string>;
   replaceEnv?: boolean;
   signal: AbortSignal;
-  timeoutMs: number;
   maxStdoutBytes: number;
   maxStderrBytes?: number;
   spawnFn?: CanonicalCliSpawn;
   onStart?: (write: (frame: string) => Promise<void>, end: () => void) => void;
   onStdout: (chunk: Buffer) => void;
   onStderr?: (chunk: Buffer) => void;
-}): Promise<void> {
+} & CanonicalCliDeadline): Promise<void> {
   const maxStderrBytes = options.maxStderrBytes ?? 8_192;
   let stdoutBytes = 0;
   let stderrBytes = 0;
@@ -90,6 +102,7 @@ export async function runCanonicalCli(options: {
 
   await new Promise<void>((resolve, reject) => {
     let timeout: NodeJS.Timeout | undefined;
+    let idleTimeout: NodeJS.Timeout | undefined;
     let forceKillTimer: NodeJS.Timeout | undefined;
     let forceSettleTimer: NodeJS.Timeout | undefined;
     let terminationError: Error | undefined;
@@ -97,6 +110,7 @@ export async function runCanonicalCli(options: {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
+      if (idleTimeout) clearTimeout(idleTimeout);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       if (forceSettleTimer) clearTimeout(forceSettleTimer);
       options.signal.removeEventListener("abort", abort);
@@ -116,8 +130,17 @@ export async function runCanonicalCli(options: {
       forceKillTimer.unref?.();
     };
     const abort = () => terminate(new CanonicalCliError("aborted"));
-    timeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.timeoutMs);
-    timeout.unref?.();
+    const resetIdleTimeout = () => {
+      if (options.idleTimeoutMs === undefined || settled || terminationError) return;
+      if (idleTimeout) clearTimeout(idleTimeout);
+      idleTimeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.idleTimeoutMs);
+      idleTimeout.unref?.();
+    };
+    if (options.timeoutMs !== undefined) {
+      timeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.timeoutMs);
+      timeout.unref?.();
+    }
+    resetIdleTimeout();
 
     if (options.signal.aborted) {
       abort();
@@ -133,6 +156,7 @@ export async function runCanonicalCli(options: {
       }
       try {
         options.onStdout(chunk);
+        resetIdleTimeout();
       } catch (error: unknown) {
         console.warn(
           "[chat-cli] Provider CLI stdout observer failed:",
@@ -168,7 +192,11 @@ export async function runCanonicalCli(options: {
         const timer = setTimeout(() => rejectWrite(new CanonicalCliError("timeout")), 10_000);
         timer.unref?.();
         try {
-          child.stdin.write(frame, error => { clearTimeout(timer); if (error) rejectWrite(error); else resolveWrite(); });
+          child.stdin.write(frame, error => {
+            clearTimeout(timer);
+            if (error) rejectWrite(error);
+            else { resetIdleTimeout(); resolveWrite(); }
+          });
         } catch (error) { clearTimeout(timer); rejectWrite(error); }
       });
       try { options.onStart(write, () => child.stdin?.end?.()); } catch (error) {

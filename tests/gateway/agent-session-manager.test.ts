@@ -1,3 +1,4 @@
+import { isSessionStartClean } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, realpath, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
@@ -102,6 +103,26 @@ describe("agent-session-manager", () => {
     };
   }
 
+  it.each(["ensureWorkspace", "createTab"] as const)("proves clean failure only before child acquisition (%s)", async phase => {
+    const { manager, terminalRuntime } = createManager({ terminalRuntime: {
+      [phase]: vi.fn(async () => { throw new Error("acquisition failed"); }),
+    } });
+    try {
+      const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", sessionId: "sess_clean" });
+      expect(result.ok).toBe(false);
+      expect(isSessionStartClean(result, "user_a", "sess_clean")).toBe(phase === "ensureWorkspace");
+      expect(isSessionStartClean({ ...result }, "user_a", "sess_clean")).toBe(false);
+      if (phase === "ensureWorkspace") expect(terminalRuntime.createTab).not.toHaveBeenCalled();
+    } finally { await manager.shutdown(); }
+  });
+  it("proves a launch preflight rejection has no child", async () => {
+    const { manager, agentLauncher } = createManager();
+    agentLauncher.buildLaunch.mockImplementationOnce(() => { throw new Error("bad launch"); });
+    try {
+      const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", sessionId: "sess_preflight" });
+      expect(isSessionStartClean(result, "user_a", "sess_preflight")).toBe(true);
+    } finally { await manager.shutdown(); }
+  });
   it("starts background Chat without touching a full interactive Terminal workspace", async () => {
     const backgroundRuntime = {
       start: vi.fn(async () => ({ id: "bg_00000000000000000000000000000001" })),

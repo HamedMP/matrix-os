@@ -51,6 +51,9 @@ export async function activateSpeechFleet({
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
   maxPages = 1_000,
   maxAttempts = 20,
+  activationPath = '/vps/speech/activate',
+  allowEmpty = false,
+  logLabel = 'Managed speech',
 }) {
   const deadline = now() + budgetMs;
   let totalActivated = 0;
@@ -64,7 +67,7 @@ export async function activateSpeechFleet({
         throw new Error('Managed speech fleet verification exceeded its elapsed-time budget.');
       }
       try {
-        const response = await fetchImpl(`${platformUrl.replace(/\/$/, '')}/vps/speech/activate`, {
+        const response = await fetchImpl(`${platformUrl.replace(/\/$/, '')}${activationPath}`, {
           method: 'POST',
           headers: {
             authorization: `Bearer ${platformSecret}`,
@@ -72,6 +75,7 @@ export async function activateSpeechFleet({
           },
           body: JSON.stringify(pageCursor ? { afterMachineId: pageCursor } : {}),
           signal: AbortSignal.timeout(Math.min(150_000, remainingMs)),
+          redirect: 'error',
         });
         if (!response.ok) throw new Error('Speech fleet activation request failed.');
         const result = parseActivationPage(await response.json(), pageCursor);
@@ -79,9 +83,9 @@ export async function activateSpeechFleet({
           verifiedPage = result;
           break;
         }
-        console.log(`Managed speech fleet verification is still converging: page=${page} activated=${result.activated} failed=${result.failed} attempt=${attempt}/${maxAttempts}`);
+        console.log(`${logLabel} fleet verification is still converging: page=${page} activated=${result.activated} failed=${result.failed} attempt=${attempt}/${maxAttempts}`);
       } catch (error) {
-        console.log(`Managed speech fleet verification request will retry: page=${page} attempt=${attempt}/${maxAttempts}`);
+        console.log(`${logLabel} fleet verification request will retry: page=${page} attempt=${attempt}/${maxAttempts}`);
         if (attempt === maxAttempts) throw error;
       }
       const retryRemainingMs = deadline - now();
@@ -95,7 +99,7 @@ export async function activateSpeechFleet({
     }
     totalActivated += verifiedPage.activated;
     if (verifiedPage.complete) {
-      if (totalActivated === 0) {
+      if (totalActivated === 0 && !allowEmpty) {
         throw new Error('Managed speech fleet verification found no eligible customer computers.');
       }
       return { activated: totalActivated };
@@ -103,6 +107,10 @@ export async function activateSpeechFleet({
     pageCursor = verifiedPage.nextCursor;
   }
   throw new Error('Speech fleet verification exceeded the bounded page count.');
+}
+
+export function activateManagedFeaturesFleet(options) {
+  return activateSpeechFleet({ ...options, activationPath: '/vps/managed-features/activate', allowEmpty: true, logLabel: 'Managed features' });
 }
 
 async function readStdinJson() {
@@ -123,14 +131,15 @@ async function main() {
     process.stdout.write(`${target.handle}\n`);
     return;
   }
-  if (mode === 'activate-fleet') {
+  if (mode === 'activate-fleet' || mode === 'activate-managed-features') {
     const platformUrl = process.env.PLATFORM_PUBLIC_URL ?? '';
     const platformSecret = process.env.PLATFORM_SECRET ?? '';
     if (!platformUrl.startsWith('https://') || !platformSecret) {
       throw new Error('Platform maintenance configuration is invalid.');
     }
-    const result = await activateSpeechFleet({ platformUrl, platformSecret });
-    console.log(`Managed speech fleet verification complete: activated=${result.activated} failed=0`);
+    const managed = mode === 'activate-managed-features';
+    const result = await (managed ? activateManagedFeaturesFleet : activateSpeechFleet)({ platformUrl, platformSecret });
+    console.log(`${managed ? 'Managed features' : 'Managed speech'} fleet verification complete: activated=${result.activated} failed=0`);
     return;
   }
   throw new Error('Unknown targeted fleet maintenance mode.');
