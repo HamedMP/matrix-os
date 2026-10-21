@@ -770,7 +770,7 @@ describe("Integration Routes", () => {
       expect(selected.status).toBe(200);
       expect(pipedream.proxyGet).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         accountId: "pd_acc_personal",
-      }));
+      }), undefined, expect.any(AbortSignal));
       vi.mocked(pipedream.proxyGet).mockClear();
 
       for (const label of ["Missing", "Foreign"]) {
