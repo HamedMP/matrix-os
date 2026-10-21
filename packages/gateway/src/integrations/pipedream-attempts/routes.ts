@@ -24,6 +24,7 @@ const unavailable = { error: "Connection unavailable" };
 export function createPipedreamGmailAttemptRoutes(options: {
   db: PlatformDb; pipedream: PipedreamConnectClient; config: PipedreamGmailAttemptConfig;
   resolveUserId(c: Context): Promise<string | null>; admit?: VerifiedConnectedWebhookAdmission; emit: IntegrationBroadcast;
+  isEligible(userId: string): Promise<boolean>;
 }) {
   const app = new Hono(); const store = options.db.pipedreamGmailAttempts;
   if (!store || !options.pipedream.inspectAccount) throw new Error("Gmail connection receipts unavailable");
@@ -34,6 +35,8 @@ export function createPipedreamGmailAttemptRoutes(options: {
     catch (error) { if (!(error instanceof z.ZodError || error instanceof SyntaxError)) console.warn("[gmail-attempt] Invalid connection request"); return c.json(unavailable, 400); }
     if (input.service !== "gmail") return next();
     const userId = await options.resolveUserId(c); if (!userId) return c.json({ error: "Unauthorized" }, 401);
+    try { if (!await options.isEligible(userId)) return next(); }
+    catch (error) { console.warn('[gmail-attempt] Eligibility unavailable:', error instanceof Error ? error.name : 'UnknownError'); return c.json(unavailable, 503); }
     const attemptId = randomUUID(); const proof = randomBytes(32).toString("hex");
     try {
       const user = await options.db.getUserById(userId); if (!user) return c.json(unavailable, 503);

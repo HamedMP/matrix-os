@@ -255,6 +255,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   if (!opts.nativeGmail) app.route("/", createNativeGmailConnectionRoutes({ db, resolveUserId, isEligible: opts.nativeGmailEligible ?? (async () => false) }));
   if (!opts.nativeGmail && opts.nativeGmailCleanup) app.route("/", createNativeGmailDisconnectRoutes({ db, cleanup: opts.nativeGmailCleanup, resolveUserId, broadcast }));
   if (opts.pipedreamGmailAttempts) app.route("/", createPipedreamGmailAttemptRoutes({ db, pipedream,
+    isEligible: opts.nativeGmailEligible ?? (async () => false),
     config: opts.pipedreamGmailAttempts, resolveUserId, admit: opts.verifiedConnectedWebhook, emit }));
   app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
