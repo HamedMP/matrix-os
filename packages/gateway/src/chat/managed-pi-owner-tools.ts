@@ -1,5 +1,7 @@
 /** Gateway-only owner tools. No recipe identity or bearer reaches the Pi worker. */
 import { randomUUID } from "node:crypto";
+import type { GoogleCollectionClientDependencies } from "../google-data/runtime/collection-client.js";
+import type { GoogleProcessingClaim } from "../google-data/runtime/envelope.js";
 import { SharedBrowserError, type SharedBrowserBroker, type SharedBrowserBinding } from "../shared-browser/broker.js";
 import type { BotToolCapability, BotToolRequest, BotToolResult, CanonicalChatApprovalDecision, CanonicalOwnerScope } from "@matrix-os/contracts";
 import type { BotIntegrationClient, BotIntegrationConnection } from "../bots/integration-client.js";
@@ -51,6 +53,8 @@ export function createManagedPiOwnerTools(deps: {
   mcp?: ManagedPiMcpClient;
   approvals?: CustomMcpApprovalClient;
   sharedBrowser?: SharedBrowserBroker;
+  googleCollection?: { prepare(binding: ManagedPiRuntimeBinding, accountId: string, signal: AbortSignal,
+    requestConsent: GoogleCollectionClientDependencies['requestConsent']): Promise<GoogleProcessingClaim> };
 }) {
   const runs = new Map<string, Run>(); // capacity64, close on terminal/cancel; run deadline bounds lifetime.
   const capabilities: BotToolCapability[] = [
@@ -113,8 +117,7 @@ export function createManagedPiOwnerTools(deps: {
       || Object.keys(args.params).some(key => !Object.hasOwn(matches[0]!.params, key))) throw new BotBrokerActionError("invalid_arguments");
     return reviewed;
   }
-  async function ask(run: Run, request: BotToolRequest, selected: BotIntegrationConnection, signal: AbortSignal): Promise<void> {
-    const description = `Account ${selected.label} (${selected.connectionId})\n${JSON.stringify(request.args)}`;
+  async function askOwner(run: Run, title: string, description: string, signal: AbortSignal): Promise<void> {
     if (description.length > 4000 || run.pending) throw new BotBrokerActionError("invalid_arguments");
     const id = randomUUID();
     await new Promise<void>((resolve, reject) => {
@@ -130,7 +133,7 @@ export function createManagedPiOwnerTools(deps: {
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) { abort(); return; }
       run.emit(CanonicalProviderRunEventSchema.parse({ type: "approval.requested", approvalId: id,
-        title: "Allow this connected service action?", safeDescription: description, risk: "high", allowedDecisions: ["approve", "decline", "cancel"] }));
+        title, safeDescription: description, risk: "high", allowedDecisions: ["approve", "decline", "cancel"] }));
     });
   }
   async function prepare(binding: ManagedPiRuntimeBinding, request: BotToolRequest, callerSignal: AbortSignal): Promise<void> {
@@ -145,7 +148,7 @@ export function createManagedPiOwnerTools(deps: {
       const action = await actionFor(binding, request.args, permissionMode, signal);
       if (action.risk !== "read" && permissionMode !== "full_access") throw new BotBrokerActionError("denied");
       prepared.account = await account(binding, request.args, signal);
-      if (action.risk !== "read") await ask(run, request, prepared.account, signal);
+      if (action.risk !== "read") await askOwner(run, "Allow this connected service action?", `Account ${prepared.account.label} (${prepared.account.connectionId})\n${JSON.stringify(request.args)}`, signal);
     } else if (request.capability === "mcp.call") {
       if (permissionMode !== "full_access" || !deps.approvals) throw new BotBrokerActionError("denied");
       const control = await initializeMcp(run);
@@ -223,8 +226,31 @@ export function createManagedPiOwnerTools(deps: {
         if (!prepared.account || selected.connectionId !== prepared.account.connectionId || selected.label !== prepared.account.label) throw new BotBrokerActionError("not_granted");
         const action = await actionFor(binding, request.args, permissionMode, signal);
         await live(binding, signal);
+        let processingClaim: GoogleProcessingClaim | undefined;
+        if (selected.service === "gmail") {
+          if (!deps.googleCollection) throw new BotBrokerActionError("unavailable");
+          processingClaim = await deps.googleCollection.prepare(binding, selected.connectionId, signal, async (notice, consentSignal) => {
+            const { disclosure, expiresAt } = notice;
+            const kinds = { 'gmail-metadata': 'Email details', 'gmail-content': 'Email contents',
+              'gmail-attachments': 'Attachments', 'google-derived-context': 'Saved email context' };
+            const seconds = disclosure.retention.maxAgeSeconds;
+            const unit = seconds % 86400 === 0 ? [seconds / 86400, "day"] as const
+              : seconds % 3600 === 0 ? [seconds / 3600, "hour"] as const
+                : seconds % 60 === 0 ? [seconds / 60, "minute"] as const : [seconds, "second"] as const;
+            const duration = `${unit[0]} ${unit[1]}${unit[0] === 1 ? "" : "s"}`;
+            const description = [`Account: ${selected.label}`, `Purpose: ${disclosure.purpose}`,
+              `Recipients: ${disclosure.recipients.map(recipient => `${recipient.name} (${recipient.role})`).join(", ")}`,
+              `Data: ${disclosure.dataKinds.map(kind => kinds[kind]).join(", ")}`,
+              `Retention: up to ${duration}`, `Permission expires: ${expiresAt}`,
+              'This permission is separate from connecting Gmail.'].join("\n");
+            await askOwner(run, "Allow this AI to use Gmail data?", description, consentSignal);
+            return true;
+          });
+          await live(binding, signal);
+        }
         return text(await deps.integrations!.call(binding.ownerId, { service: request.args.service, action: request.args.action,
-          label: selected.label, params: request.args.params, read: action.risk === "read" }, signal));
+          label: selected.label, connectionId: selected.connectionId, params: request.args.params, read: action.risk === "read",
+          ...(processingClaim ? { processingClaim } : {}) }, signal));
       }
       if (request.capability === "mcp.inventory") return text(await deps.mcp!.inventory(binding.ownerId, signal));
       if (request.capability === "mcp.describe") return text(await deps.mcp!.describe(binding.ownerId, request.args.serverId, signal));
