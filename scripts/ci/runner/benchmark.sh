@@ -42,6 +42,11 @@ else
 fi
 measure install pnpm install --frozen-lockfile
 measure prerequisites pnpm --filter @matrix-os/observability --filter @matrix-os/kernel --filter @matrix-os/integrations-mcp build
+# Build the checkout's identity provider before direct Vitest lanes. No runtime
+# compilation or timestamp fallback is permitted when the addon is unavailable.
+if [[ -f packages/gateway/native/build.mjs ]]; then
+  measure filesystem-identity node packages/gateway/native/build.mjs
+fi
 # Historical baselines predate the no-emit helper; retain their existing wrapper.
 # Inspect JSON only and emit one of two fixed script names.
 typecheck_script=$(node --input-type=module -e '

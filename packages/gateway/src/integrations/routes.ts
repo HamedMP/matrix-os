@@ -161,13 +161,7 @@ export interface IntegrationRoutesOpts {
   };
 }
 
-export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
-  const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
-  const emit = broadcast ?? (() => {});
-  const app = new Hono();
-  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
-  app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
-
+function createPendingLabelQueue() {
   // Pending labels from /connect that need to survive the OAuth round-trip.
   // Queued per "externalUserId:appSlug", TTL 10 minutes, capped at 1000 entries.
   const pendingLabels = new Map<string, Array<{ label: string; ts: number }>>();
@@ -240,6 +234,18 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
   }, 5 * 60 * 1000);
   pendingLabelCleanup.unref();
+
+  return { enqueuePendingLabel, consumePendingLabel };
+}
+
+export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
+  const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
+  const emit = broadcast ?? (() => {});
+  const app = new Hono();
+  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
+  app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
+
+  const { enqueuePendingLabel, consumePendingLabel } = createPendingLabelQueue();
 
   // -----------------------------------------------------------------------
   // Auth helper -- returns userId or sends 401

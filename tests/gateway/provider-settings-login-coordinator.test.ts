@@ -65,6 +65,20 @@ describe("provider terminal login coordinator", () => {
     await rm(homePath, { recursive: true, force: true });
   });
 
+  it('admits only the installed native Codex Terminal CLI through the durable coordinator', async () => {
+    const login = createProviderTerminalLoginCoordinator({ homePath, registry, enabledHarnesses: ['codex'], codexExecutable: '/synthetic/qualified/codex' });
+    const harness = { id: 'harness_codex', driverId: 'codex', harness: 'codex' as const, installState: 'installed' as const, providerId: 'openai', modelId: 'gpt-test' };
+    expect(login.supportedMethods(harness)).toEqual(['terminal']);
+    const input = { harness, mutation: { type: 'start_login' as const, harnessInstanceId: harness.id, accountId: null, method: 'terminal' as const, expectedRevision: 0, idempotencyKey: 'owner-codex-cli' } };
+    await login.startLogin(input);
+    expect(registry.create).toHaveBeenCalledWith(expect.objectContaining({ agent: 'codex', cmd: expect.stringContaining('device-auth') }));
+    expect(registry.create).toHaveBeenCalledWith(expect.objectContaining({ cmd: expect.stringContaining('/synthetic/qualified/codex') }));
+    await login.startLogin(input);
+    expect(registry.create).toHaveBeenCalledOnce();
+    await expect(login.startLogin({ ...input, harness: { ...harness, providerId: 'anthropic' }, mutation: { ...input.mutation, idempotencyKey: 'wrong-provider' } })).rejects.toMatchObject({ code: 'lifecycle_unavailable' });
+    expect(registry.create).toHaveBeenCalledOnce();
+  });
+
   function coordinator(enabledHarnesses: Array<"codex" | "claude"> = ["codex", "claude"]) {
     return createProviderTerminalLoginCoordinator({
       homePath,

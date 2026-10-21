@@ -3,11 +3,15 @@ import { Alert } from "react-native";
 
 import AgentsScreen from "../app/(drawer)/(tabs)/agents/index";
 import { StatusDot } from "../components/ui/StatusDot";
+import { ToastHost } from "../components/ui/Toast";
+
+import { menuAround, menuItem, menuItemLabels } from "./context-menu-test-utils";
 
 const mockSelectChat = jest.fn();
 const mockShowChatScreen = jest.fn();
 const mockPush = jest.fn();
 const mockEnsureChat = jest.fn();
+const mockArchiveAgent = jest.fn();
 const mockRefetchAgents = jest.fn(() => Promise.resolve());
 const mockRefetchStatuses = jest.fn(() => Promise.resolve());
 const mockUseAgents = jest.fn();
@@ -31,7 +35,9 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
 jest.mock("@/lib/queries/use-agents", () => ({
   useAgents: () => mockUseAgents(),
   useEnsureAgentChat: () => ({ mutateAsync: mockEnsureChat }),
+  useArchiveAgent: () => ({ mutateAsync: mockArchiveAgent }),
 }));
+jest.mock("@expo/ui/swift-ui", () => jest.requireActual("./context-menu-test-utils").swiftUiContextMenuModule());
 jest.mock("@/lib/queries/use-agent-statuses", () => ({
   useAgentStatuses: (...args: unknown[]) => mockUseAgentStatuses(...args),
 }));
@@ -42,7 +48,7 @@ jest.mock("@/lib/use-shell-navigation", () => ({ useShowChatScreen: () => mockSh
 
 const research = { id: "bot_research", name: "Account research", description: "Briefs you before every sales call" };
 const inbox = { id: "bot_inbox", name: "My inbox", description: "Sorts your inbox" };
-const launch = { id: "bot_launch", name: "Launch tracker", description: "Keeps the launch on track" };
+const launch = { id: "bot_launch", name: "Launch tracker", description: "Keeps the launch on track", revision: 3 };
 const agents = [research, inbox, launch];
 
 function agentsResult(overrides: Record<string, unknown> = {}) {
@@ -107,6 +113,24 @@ describe("agents tab root", () => {
     expect(within(idle).getByText("Keeps the launch on track")).toBeTruthy();
     expect(within(idle).queryByText("No open tasks")).toBeNull();
     expect(within(idle).UNSAFE_queryByType(StatusDot)).toBeNull();
+  });
+
+  it("archives an agent from its row's long-press menu after asking, and says so", async () => {
+    mockArchiveAgent.mockResolvedValue(undefined);
+    render(<><AgentsScreen /><ToastHost /></>);
+
+    const row = screen.getByTestId("agent-row-bot_launch");
+    expect(menuItemLabels(menuAround(row))).toEqual(["Archive"]);
+    expect(menuItem(row, "Archive").props.menuRole).toBe("destructive");
+    fireEvent.press(menuItem(row, "Archive"));
+
+    const [title, , buttons] = alert.mock.calls.at(-1) as [string, string, { text: string; onPress?: () => void }[]];
+    expect(title).toBe("Archive Launch tracker?");
+    expect(mockArchiveAgent).not.toHaveBeenCalled();
+    await act(async () => buttons.find((button) => button.text === "Archive")!.onPress?.());
+
+    expect(mockArchiveAgent).toHaveBeenCalledWith({ agentId: "bot_launch", baseRevision: 3 });
+    await waitFor(() => expect(screen.getByText("Agent archived")).toBeTruthy());
   });
 
   it("opens New agent from the header", () => {

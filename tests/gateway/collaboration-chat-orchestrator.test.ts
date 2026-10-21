@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createExecutionAdmissionFence } from "../../packages/gateway/src/execution-admission-fence.js";
+import { createManagedFeatureRestartCoordinator } from "../../packages/gateway/src/managed-feature-restart.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { SharedChatRunPreparationError } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
@@ -225,6 +227,41 @@ describe("canonical shared Chat orchestration", () => {
     const requests = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
     expect(requests).toMatchObject([{ id: "qturn_interrupted_dispatch", state: "interrupted" }]);
     expect(client.runChat).toHaveBeenCalledTimes(1);
+  });
+  it.each(["defer_restart", "shutdown"])("accounts for a claimed shared turn during asynchronous adapter preparation: %s", async mode => {
+    await enqueueSharedRequest("qturn_pending_restart");
+    const fence = createExecutionAdmissionFence();
+    let release!: () => void, preparing = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const start = vi.fn(async function* () { yield { type: "run.completed" as const, outcome: "completed" as const }; });
+    const orchestrator = new CanonicalChatOrchestrator({ repository, executionAdmissionFence: fence,
+      catalog: { getCatalog: async () => { throw new Error("personal catalog must not be used"); } },
+      adapters: new CanonicalChatProviderRegistry([]), now: () => new Date(now) });
+    const dispatch = orchestrator.dispatchNextSharedQueued(owner, collaborationIds.chat, collaborationIds.scope, async () => {
+      preparing = true; await gate;
+      return { driverKind: "claude_code", stateSchemaVersion: 1, parseState: value => value, serializeState: value => value, start };
+    });
+    try {
+      await vi.waitFor(() => expect(preparing).toBe(true));
+      expect(orchestrator.activeCount).toBe(0); expect(orchestrator.pendingCount).toBe(1);
+      expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toMatchObject([{ state: "claimed" }]);
+      if (mode === "shutdown") fence.close();
+      else {
+        vi.useFakeTimers(); const restart = vi.fn().mockResolvedValue(undefined);
+        const coordinator = createManagedFeatureRestartCoordinator({ fence,
+          isIdle: () => orchestrator.activeCount === 0 && orchestrator.pendingCount === 0, restart });
+        coordinator.schedule(); await vi.advanceTimersByTimeAsync(2_000);
+        expect(restart).not.toHaveBeenCalled(); vi.useRealTimers();
+      }
+      release(); await dispatch; await orchestrator.drain();
+      expect(orchestrator.pendingCount).toBe(0);
+      const runs = await fixture.db.selectFrom("chat_runs").select("status").where("chat_id", "=", collaborationIds.chat).execute();
+      expect(runs).toEqual([{ status: mode === "shutdown" ? "failed" : "completed" }]);
+      expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toMatchObject([
+        { state: mode === "shutdown" ? "interrupted" : "completed" },
+      ]);
+      expect(start).toHaveBeenCalledTimes(mode === "shutdown" ? 0 : 1);
+    } finally { release(); vi.useRealTimers(); await dispatch.catch(error => { if (!(error instanceof Error)) throw error; }); await orchestrator.close(); }
   });
   async function enqueueSharedRequest(queuedTurnId: string): Promise<void> {
     await repository.enqueueSharedQueuedTurn(owner, {

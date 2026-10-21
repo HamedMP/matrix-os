@@ -1,3 +1,4 @@
+import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
 import { Kysely, PostgresDialect, sql, type InsertObject } from "kysely";
 import pg from "pg";
 import { createCustomMcpCredentialMutations } from "./integrations/custom-mcp/credential-mutations.js";
@@ -161,6 +162,8 @@ export interface CreateCustomMcpServerInput {
 }
 
 export interface UpdateCustomMcpServerInput {
+  /** Internal preset migration only; routes do not accept arbitrary URL patches. */
+  url?: string;
   name?: string;
   enabled?: boolean;
   status?: CustomMcpStatus;
@@ -255,8 +258,8 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
   if (typeof opts === "string") {
     pool = new pg.Pool({ connectionString: opts, max: 10,
       connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
-    pool.on("error", (err) => {
-      console.error("[platform-db] Idle pool client error:", err.message);
+    observePostgresPoolErrors(pool, (err) => {
+      console.error("[platform-db] Postgres connection error:", err.message);
     });
     kysely = new Kysely<PlatformDatabase>({ dialect: new PostgresDialect({ pool }) });
   } else {
@@ -803,6 +806,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
         revision: sql`revision + 1`,
         updated_at: sql`now()`,
       };
+      if (update.url !== undefined) values.url = update.url;
       if (update.name !== undefined) values.name = update.name;
       if (update.enabled !== undefined) values.enabled = update.enabled;
       if (update.status !== undefined) values.status = update.status;

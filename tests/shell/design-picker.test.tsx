@@ -28,6 +28,7 @@ const shared = vi.hoisted(() => ({
 
 vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => shared.theme,
+  useThemeState: () => ({ theme: shared.theme, loaded: true, loadError: false, writePending: false }),
   saveTheme: shared.saveThemeMock,
   DEFAULT_THEME: { name: "default", colors: {}, fonts: {}, radius: "0.75rem" },
 }));

@@ -46,7 +46,7 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
   return (
     <div
       className={`flex items-center justify-center font-semibold shadow-[var(--shadow-1)] ${large ? "h-16 w-16 rounded-[18px] text-xl" : "h-11 w-11 rounded-xl text-lg"}`}
-      style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+      style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}
     >
       {name.charAt(0).toUpperCase()}
     </div>

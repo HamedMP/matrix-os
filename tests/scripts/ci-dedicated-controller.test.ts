@@ -145,7 +145,7 @@ export async function verifyDedicatedLeaseGrant(){${grant}}`);
   const root=await stubWorkspace('throw new Error("Invalid main commit proof");','');
   await expect(execute('Settle source-head check',root,{CHECK_ID:'456',SOURCE_KIND:'main',PR_NUMBER:'0',MERGE_PARENTS:'[]',DISPATCH_OUTCOME:'failure'})).rejects.toThrow('setFailed Current PR revision could not be revalidated');
  });
- it.each(['A newer controller superseded this lease','A newer requesting CI attempt superseded this lease'])('marks dispatch superseded on %s',async message=>{
+ it.each(['A newer controller superseded this lease','A newer requesting CI attempt superseded this lease','Requesting CI attempt already completed successfully'])('marks dispatch superseded on %s',async message=>{
   const root=await stubWorkspace('return {};',`throw new Error(${JSON.stringify(message)});`);
   const result=await execute('Dispatch authenticated PR qualification lease',root);
   expect(result.outputs.superseded).toBe('true');expect(result.outputs.verified).toBeUndefined();

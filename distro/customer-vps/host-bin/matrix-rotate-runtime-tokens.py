@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import fcntl
 import os
 import re
 import stat
@@ -54,6 +55,22 @@ def host_verifier_digest(env_path):
 
 
 def apply_rotation(env_path, key_path, envelope_path):
+    # All managed host.env writers share this lock so independent features and
+    # runtime-token rotation cannot overwrite one another's assignments.
+    lock = os.open(os.path.join(os.path.dirname(os.path.abspath(env_path)), '.host.env.funded-repair.lock'),
+                   os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(lock)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != 0o600 or (os.geteuid() == 0 and info.st_uid != 0)):
+            raise ValueError('Unsafe host environment lock')
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return _apply_rotation_unlocked(env_path, key_path, envelope_path)
+    finally:
+        os.close(lock)
+
+
+def _apply_rotation_unlocked(env_path, key_path, envelope_path):
     env_bytes = read_regular(env_path, 65536)
     private_key = serialization.load_pem_private_key(read_regular(key_path, 8192, True), password=None)
     envelope = json.loads(read_regular(envelope_path, 65536))

@@ -93,7 +93,7 @@ describe("getPreset", () => {
     const preset = getPreset("default");
     expect(preset).toBeDefined();
     expect(preset!.name).toBe("default");
-    expect(preset!.colors.primary).toBe("#434E3F");
+    expect(preset!.colors.primary).toBe("#242323");
   });
 
   it("returns nord preset", () => {
@@ -107,18 +107,18 @@ describe("getPreset", () => {
       name: "light",
       mode: "light",
       colors: expect.objectContaining({
-        background: "#FAFAF9",
-        primary: "#434E3F",
-        ring: "#D06F25",
+        background: "#fafafa",
+        primary: "#242323",
+        ring: "#e0aa52",
       }),
     });
     expect(getPreset("matrix-dark")).toMatchObject({
       name: "matrix-dark",
       mode: "dark",
       colors: expect.objectContaining({
-        background: "#1C2019",
-        primary: "#9CB77A",
-        ring: "#CF7835",
+        background: "#0d0c0c",
+        primary: "#fafafa",
+        ring: "#e0aa52",
       }),
     });
     expect(getPreset("matrix")).toMatchObject({

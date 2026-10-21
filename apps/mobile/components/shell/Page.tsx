@@ -3,6 +3,7 @@ import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Spacer } from "@/components/ui";
+import { withRefreshTap } from "@/lib/haptics";
 
 interface PageProps {
   /** Left out where a navigator header already names the screen. */
@@ -56,7 +57,7 @@ export function Page({
             <RefreshControl
               testID="page-refresh-control"
               refreshing={refreshing}
-              onRefresh={onRefresh}
+              onRefresh={withRefreshTap(onRefresh)}
               tintColor={theme.v2.appColors.ink}
               colors={[theme.v2.appColors.ink]}
               progressBackgroundColor={theme.v2.appColors.canvas}

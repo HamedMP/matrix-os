@@ -3,6 +3,10 @@ import {createHash} from 'node:crypto';
 import {canonicalRequest,validateLeaseRequest,verifyLeaseReceipt} from './dedicated-ssh.mjs';
 import {validInfrastructureProof} from './dedicated-outcome.mjs';
 export function verifyControllerArtifact(receipt,evidence,expected,run,parents,check){
+ if(evidence.schemaVersion===4){
+  if(receipt?.schemaVersion!==2||JSON.stringify(receipt.executionOrigin)!==JSON.stringify(evidence.executionOrigin)||!receipt.receipt)throw new Error('Immutable isolated execution envelope mismatch');
+  receipt=receipt.receipt;
+ }else if(receipt?.schemaVersion===2)throw new Error('Isolated artifact requires versioned controller evidence');
  const value=validateLeaseRequest(receipt?.request),digest=createHash('sha256').update(canonicalRequest(value)).digest('hex');
  if(receipt.schemaVersion!==1||receipt.leaseId!==evidence.leaseId||receipt.requestDigest!==digest||evidence.requestDigest!==digest||receipt.sourceSha!==expected.sourceSha||canonicalRequest(receipt.parents)!==canonicalRequest(parents)||receipt.imageDigest!==expected.imageDigest||receipt.harnessDigest!==expected.harnessDigest)throw new Error('Immutable controller receipt identity mismatch');
  const tuple={repository:`${expected.owner}/${expected.repo}`,sourceKind:expected.sourceKind,prNumber:expected.prNumber,headSha:expected.headSha,baseSha:expected.baseSha,baseRef:expected.baseRef,mergeSha:expected.sourceSha,mergeParents:parents,requestingRunId:expected.requestingRunId,requestingRunAttempt:expected.requestingRunAttempt,controllerRunId:run.id,controllerRunAttempt:run.run_attempt,controllerSha:evidence.controllerSha,imageDigest:expected.imageDigest,harnessDigest:expected.harnessDigest,mode:expected.mode,suite:'qualification'};
