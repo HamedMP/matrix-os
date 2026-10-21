@@ -62,28 +62,6 @@ remains unconfirmed; the new sanitized diagnostics make it observable if repeate
 Intermittent viewer admission failures and black frames remain separate open
 validation items.
 
-## Private Preview installation prerequisite
-
-A clean Private Preview does not inherit an earlier VM's Browser Lab services.
-The host bundle and the separately installed Browser Lab have distinct provenance.
-Build the Lab frontend from the reviewed source before using its installer.
-
-The installer accepts a legacy `pr-N` target only when handle and runtime slot
-match exactly. A private `pv-N-<8hex>` target additionally requires the explicit
-machine UUID and Clerk owner ID from the authenticated owner workflow. Before
-any installation, its host environment must contain exactly one matching handle,
-slot, machine ID and owner ID; an optional user projection must match that owner.
-Missing, duplicate, malformed or mismatched identity fails closed. Do not rename
-a private VM to impersonate a legacy preview or skip the guard.
-
-Use the owner inventory and runtime identity to verify the target before
-invocation. Installation affects only that target's browser dependencies, local
-viewer configuration, services and gateway; existing non-root execution and
-loopback listener restrictions remain unchanged. It does not change platform
-IAM, account permissions or shared deployment configuration. Never log or export
-the generated stream credential. Record both the host bundle commit and the
-installer source commit in private acceptance evidence.
-
 A separate documentation PR in FinnaAI/matrix-os-site/content/docs is a release
 deliverable for the new focus/reconnect behavior. It is deferred alongside remote
 PR publication under the current no-CI/no-deployment scope. No site copy is
