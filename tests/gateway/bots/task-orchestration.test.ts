@@ -415,6 +415,65 @@ describe("bot turns through the matrix_bot adapter", () => {
     void stuck;
   });
 
+  it("ENG344 Stop fences a late completed Bot worker reply in adapter and durable task", async () => {
+    let finish: () => void = () => undefined;
+    const controller = new AbortController();
+    const { adapter, commands } = setup({
+      worker: (input) => new Promise((resolve) => {
+        finish = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 });
+      }),
+    });
+    const running = collect(adapter.start(turn(controller.signal)));
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    controller.abort();
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run", "bot.cancel"]));
+    // The worker ignored Stop and reported success after cancellation was acknowledged.
+    finish();
+    expect.soft((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    expect.soft(await tasks()).toEqual([expect.objectContaining({ status: "cancelled", run_id: "run_turn1" })]);
+  });
+
+  it("keeps Stop as the first cause after the deadline and a late blocked reply", async () => {
+    let finish: () => void = () => undefined;
+    let markStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const controller = new AbortController();
+    const { adapter, commands } = setup({
+      activeDeadlineMs: 150,
+      worker: (input) => {
+        markStarted();
+        return new Promise((resolve) => {
+          finish = () => resolve({ runId: input.command.runId, status: "blocked", blockedReason: "tool_unavailable", toolActions: 0, sessionRevision: 1 });
+        });
+      },
+    });
+    const running = collect(adapter.start(turn(controller.signal)));
+    await started;
+    controller.abort();
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toContain("bot.cancel"));
+    await new Promise((resolve) => setTimeout(resolve, 175));
+    finish();
+    expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled", run_id: "run_turn1" })]);
+  });
+
+  it("keeps the deadline as the first stop cause when Stop follows it", async () => {
+    let finish: () => void = () => undefined;
+    const controller = new AbortController();
+    const { adapter, commands } = setup({
+      activeDeadlineMs: 30,
+      worker: (input) => new Promise((resolve) => {
+        finish = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 });
+      }),
+    });
+    const running = collect(adapter.start(turn(controller.signal)));
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run", "bot.cancel"]));
+    controller.abort();
+    finish();
+    expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "completed", run_id: "run_turn1" })]);
+  });
+
   it("cancels the bot when Chat stops reading the turn early", async () => {
     let finish: (value: unknown) => void = () => undefined;
     const { adapter, commands } = setup({

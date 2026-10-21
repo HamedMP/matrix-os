@@ -342,6 +342,8 @@ export function createBotTaskOrchestrator(deps: {
       await deps.assertSource?.(binding, input.signal);
       if (input.signal.aborted || run.stopping) return await settle(task, "cancelled");
       const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId } });
+      // Stop is final even if an uncooperative worker replies with success afterward.
+      if (run.stopping === "cancelled") return await settle(task, "cancelled");
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
       // Past the deadline only a finished reply stands; anything else would need more time.
       if (run.stopping === "deadline" && (!outcome?.success || outcome.data.status !== "completed")) {
