@@ -74,7 +74,7 @@ Limits:
 - Timeouts: inference 30 seconds per request, integration calls 10 seconds, artifact writes 30 seconds.
 - `egress.fetch` stays disabled for bot runtimes. Web access goes through `integration.call` or the M4 computer service.
 
-Error results use allowlisted codes only: `denied`, `not_granted`, `approval_required`, `invalid_arguments`, `unavailable`, `timeout`, `budget_exhausted`, `stale_generation`. Tool error text returned to the model is generic. Internal errors are logged on the gateway with a correlation ID.
+Error results use allowlisted codes only: `denied`, `not_granted`, `approval_required`, `invalid_arguments`, `artifact_digest_mismatch`, `unavailable`, `timeout`, `budget_exhausted`, `stale_generation`. Tool error text returned to the model is generic. Internal errors are logged on the gateway with a correlation ID.
 
 ## Capability arguments (examples)
 
@@ -83,3 +83,34 @@ Error results use allowlisted codes only: `denied`, `not_granted`, `approval_req
 - Every `bot.tool` request is bounded to 240 KiB once serialized, so JSON escaping cannot push it past the 256 KiB broker limit.
 - `artifact.write`: `{ relPath ≤256, content ≤192 KiB (UTF-8), mimeType (text/markdown, text/plain, text/csv, application/json, text/html), replace?: { baseRevision } }`. The cap leaves room for the envelope inside the 256 KiB broker request limit. The path must resolve within the run's workspace root; exclusive create unless `replace` is given.
 - `interaction.create`: `{ kind, payload, blocking }`. The server validates the payload per kind and designates the responder.
+
+
+## Artifact digest refusal and recovery
+
+### 1. Scope / Trigger
+An authorized `artifact.read` may contain a wrong or obsolete attachment digest. A digest refusal does not prove that the run or execution generation was superseded.
+
+### 2. Signatures
+`read_artifact({ path, chunk? })` maps to the existing broker `artifact.read { relPath, chunk? }`. `chunk` contains bounded `offset`, `length` and a 64-character hexadecimal `sha256`.
+
+### 3. Contracts
+Workspace text uses a path-only read within the existing 192 KiB limit. Attachment chunks require the exact digest supplied by the saved reference. The gateway hashes the authorized bytes before returning a chunk. A mismatch returns `{ ok: false, code: "artifact_digest_mismatch" }`; the worker supplies safe recovery guidance. The worker never silently removes a supplied digest. No owner, root, source, grant, generation, cancellation, size or offset check is relaxed.
+
+### 4. Validation & Error Matrix
+| Condition | Result |
+| --- | --- |
+| Authorized workspace text, no chunk | Existing bounded UTF-8 result |
+| Matching attachment digest and valid bounds | Existing bounded base64 chunk |
+| Wrong digest or changed attachment bytes | `artifact_digest_mismatch`, no file bytes |
+| Actual replaced runtime/root/generation | Existing `stale_generation` and stop guidance |
+| Invalid offset, oversize or unauthorized path | Existing validation/authority refusal |
+
+### 5. Good / Base / Bad Cases
+Good: after a digest refusal, the same active agent explicitly issues a path-only workspace read and retains both tool receipts. Base: valid attachment chunking remains unchanged. Bad: treating all digest mismatches as superseded runs, silently stripping chunk integrity, or guessing an attachment digest.
+
+### 6. Tests Required
+`artifact-digest-recovery.test.ts` verifies contract decoding, safe guidance, successful path-only recovery, matching chunks, changed-byte refusal and genuine stale-generation behavior. `artifact-digest-recovery-loop.test.ts` runs the actual Pi loop with a scripted provider, verifies failed/completed tool events and persisted receipts, repeated mismatch non-disclosure, and the real Responses SDK's optional chunk schema through the final ChatGPT subscription wire. The wire defaults omitted tool `strict` to `false`, preserving optional arguments and the SDK schema; an explicit `strict: true` remains unchanged. Scripted recovery is not evidence that a live model will choose the retry; record real Preview/Electron acceptance separately.
+
+### 7. Wrong vs Correct
+Wrong: `if (sha256 !== args.chunk.sha256) throw new BotBrokerActionError("stale_generation")`.
+Correct: return `artifact_digest_mismatch`, keep integrity enforcement, and explain the explicit path-only or exact-reference recovery options. Release Gateway/contracts and the matching Pi worker together; gateway-only replacement is insufficient for a strict new error enum. The isolation profile and its digest are unchanged because SDK version, mounts, properties and authority are unchanged.

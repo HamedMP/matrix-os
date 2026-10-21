@@ -2,6 +2,8 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { CustomMcpBroker, CustomMcpBrokerError } from "./broker.js";
+import { MCP_TOOL_STREAM_TYPE } from "./tool-progress.js";
+import { toolProgressResponse } from "./tool-progress-response.js";
 
 const MUTATION_BODY_LIMIT = 64 * 1024;
 const UUID = z.uuid();
@@ -269,6 +271,14 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
         return context.json({ error: "Tool approval is unavailable" }, 403);
       }
       if (!parsed.success) return context.json({ error: "Invalid request body" }, 400);
+      if (context.req.header("accept") === MCP_TOOL_STREAM_TYPE) {
+        return toolProgressResponse(context.req.raw.signal, (onProgress, signal) => options.broker.callSelectedTool({
+          userId, serverId: parsedId.data, toolName: parsed.data.tool, arguments: parsed.data.arguments,
+          approvalGranted: parsed.data.approvalGranted, approvalReceipt: parsed.data.approvalReceipt,
+          actorId: options.resolveActorId?.(context) ?? undefined, runId: context.req.header("x-matrix-mcp-run-id"),
+          onProgress, signal,
+        }));
+      }
       try {
         return context.json(await options.broker.callSelectedTool({
           userId,

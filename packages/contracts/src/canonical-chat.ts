@@ -624,4 +624,4 @@ export type CanonicalChatAgentActivityKind = z.infer<typeof CanonicalChatAgentAc
 export type CanonicalChatAgentActivityStatus = z.infer<typeof CanonicalChatAgentActivityStatusSchema>;
 
 export { canonicalChatToolDetail } from "#canonical-chat-tool-details";
-export { canonicalChatToolActivities, type CanonicalToolActivity } from "#canonical-chat-tool-activities";
+export { canonicalChatToolActivities, canonicalChatToolActivityState, type CanonicalToolActivity } from "#canonical-chat-tool-activities";
