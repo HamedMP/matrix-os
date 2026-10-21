@@ -6,6 +6,7 @@ const databases: TestPlatformDb[] = [];
 
 beforeEach(() => { vi.resetModules(); vi.restoreAllMocks(); });
 afterEach(async () => {
+  vi.clearAllMocks();
   vi.restoreAllMocks();
   for (const { db } of databases.splice(0)) await db.destroy();
 });

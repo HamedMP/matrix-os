@@ -69,24 +69,26 @@ export async function getBillingEntitlement(
 }
 
 export async function upsertBillingOverride(db: PlatformDB, record: NewBillingEntitlementOverride): Promise<void> {
-  await db.ready;
-  const row = toBillingOverrideRow(record);
-  await db.executor
-    .insertInto('billing_entitlement_overrides')
-    .values(row)
-    .onConflict((oc) => oc.column('id').doUpdateSet({
-      plan_slug: row.plan_slug,
-      status: row.status,
-      max_runtime_slots: row.max_runtime_slots,
-      included_runtime_slots: row.included_runtime_slots,
-      addon_runtime_slots: row.addon_runtime_slots,
-      default_server_type: row.default_server_type,
-      allowed_server_types: row.allowed_server_types,
-      reason: row.reason,
-      created_by: row.created_by,
-      expires_at: row.expires_at,
-    }))
-    .execute();
+  return withAccountDeletionOwnerLock(db, record.clerkUserId, async (db, admission) => {
+    if (!admission.newWorkAllowed) return;
+    const row = toBillingOverrideRow(record);
+    await db.executor
+      .insertInto('billing_entitlement_overrides')
+      .values(row)
+      .onConflict((oc) => oc.column('id').doUpdateSet({
+        plan_slug: row.plan_slug,
+        status: row.status,
+        max_runtime_slots: row.max_runtime_slots,
+        included_runtime_slots: row.included_runtime_slots,
+        addon_runtime_slots: row.addon_runtime_slots,
+        default_server_type: row.default_server_type,
+        allowed_server_types: row.allowed_server_types,
+        reason: row.reason,
+        created_by: row.created_by,
+        expires_at: row.expires_at,
+      }))
+      .execute();
+  });
 }
 
 export async function getBillingOverride(

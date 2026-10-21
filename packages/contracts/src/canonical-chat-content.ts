@@ -3,6 +3,7 @@ import { CanonicalChatDetailResponseSchema, CanonicalChatRecordSchema, Canonical
 import { CanonicalChatMessageSchema } from "#canonical-chat";
 import type { CanonicalChatSafeError } from "#canonical-chat";
 export { canonicalChatApprovals, canonicalChatApprovalOutcome, canonicalChatApprovalTitle, type CanonicalChatApprovalView } from "#canonical-chat-approvals";
+export { supervisedToolApproval, supervisedToolApprovalCopy, supervisedToolRetryDraft, supervisedToolRetryPrompt, SUPERVISED_TOOL_APPROVAL_TTL_MS, type SupervisedToolApproval, type SupervisedToolApprovalSource } from "#supervised-tool-approval";
 
 // Opt-in v2 frames. Never send these to an unversioned notification client.
 export const CanonicalChatContentSchema = z.object({

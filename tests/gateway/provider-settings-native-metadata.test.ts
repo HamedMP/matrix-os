@@ -61,7 +61,7 @@ describe('owner native account enrichment', () => {
     const after = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(after.accounts.find(account => account.id === 'owner_openai')?.displayName).toBe('owner@example.test');
     expect(after.accounts.find(account => account.id === 'owner_openai')?.connectionDetails).toEqual({ email: 'owner@example.test', planName: 'ChatGPT Pro' });
-    expect(after.accessSources.find(source => source.id === 'owner_openai_profile')).toMatchObject({ readiness: { state: 'unknown' }, usage: { kind: 'subscription_allowance', usedBasisPoints: 2000 } });
+    expect(after.accessSources.find(source => source.id === 'owner_openai_profile')).toMatchObject({ readiness: { state: 'auth_required' }, usage: { kind: 'subscription_allowance', usedBasisPoints: 2000 } });
     const expired = await projectProviderSettings({ canonical, config, now: new Date(now.getTime() + 31_000), supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(expired.accounts.find(account => account.id === 'owner_openai')?.displayName).toBe('Codex');
     expect(expired.accounts.find(account => account.id === 'owner_openai')?.connectionDetails).toBeUndefined();
@@ -70,8 +70,8 @@ describe('owner native account enrichment', () => {
     const { canonical, config } = codexFixture();
     const verified = await verifyNativeAccountMetadata(bindNativeAccountMetadata({ ...metadata }, async () => true));
     const snapshot = await projectProviderSettings({ canonical, config, now: new Date(now.getTime() + 6000), supportedActions: [], codexNativeAccountMetadata: verified });
-    expect(snapshot.harnesses.find(h => h.harness === 'codex')).toMatchObject({ authState: 'authenticated', enabled: true, configuredEnabled: true, connectivity: 'unknown', selectedAccountId: 'owner_openai', accessSourceId: 'owner_openai_profile' });
-    expect(snapshot.accessSources.find(s => s.id === 'owner_openai_profile')?.readiness.state).toBe('unknown');
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')).toMatchObject({ authState: 'authenticated', enabled: false, configuredEnabled: true, connectivity: 'unknown', selectedAccountId: 'owner_openai', accessSourceId: 'owner_openai_profile' });
+    expect(snapshot.accessSources.find(s => s.id === 'owner_openai_profile')?.readiness.state).toBe('auth_required');
   });
   it('keeps an explicitly disabled Codex disabled with verified credentials', async () => {
     const { canonical, config } = codexFixture(); config.harnesses.find(h => h.harness === 'codex')!.enabled = false;

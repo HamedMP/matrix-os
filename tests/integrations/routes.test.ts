@@ -822,7 +822,7 @@ describe("Integration Routes", () => {
       expect(pipedream.proxyGet).toHaveBeenCalled();
     });
 
-    it("returns a generic 501 when an action is not implemented", async () => {
+    it("fails closed when Drive upload has no bounded executor", async () => {
       await db.connectService({
         userId,
         service: "google_drive",
@@ -840,9 +840,9 @@ describe("Integration Routes", () => {
           params: { name: "notes.txt", content: "hello" },
         }),
       });
-      expect(res.status).toBe(501);
+      expect(res.status).toBe(502);
       const data = await res.json();
-      expect(data.error).toBe("Action not available");
+      expect(data.error).toBe("Integration call failed");
       expect(data.error).not.toMatch(/packages\/gateway|registry\.ts|componentKey/);
     });
 

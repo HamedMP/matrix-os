@@ -41,10 +41,14 @@ export function generateConflictPath(
   peerId: string,
   date: Date,
 ): string {
-  const safePeerId = peerId
+  const collapsedPeerId = peerId
     .replace(/[^A-Za-z0-9_-]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "") || "unknown";
+    .replace(/_+/g, "_");
+  let start = 0;
+  let end = collapsedPeerId.length;
+  while (start < end && collapsedPeerId[start] === "_") start += 1;
+  while (end > start && collapsedPeerId[end - 1] === "_") end -= 1;
+  const safePeerId = collapsedPeerId.slice(start, end) || "unknown";
   const dateStr = date.toISOString().split("T")[0]!;
   const ext = extname(filePath);
   const base = filePath.slice(0, filePath.length - ext.length);

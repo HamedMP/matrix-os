@@ -74,12 +74,12 @@ describe("side panel layout", () => {
       });
     });
 
-    it("plays a medium haptic when the panel opens and closes", () => {
+    it("plays a light tap when the panel opens and closes", () => {
       render(<DrawerLayout />);
 
       expect(Haptics.impactAsync).not.toHaveBeenCalled();
       drawer.listeners?.state?.({ data: { state: { history: [{ type: "drawer", status: "open" }] } } });
-      expect(Haptics.impactAsync).toHaveBeenCalledWith(Haptics.ImpactFeedbackStyle.Medium);
+      expect(Haptics.impactAsync).toHaveBeenCalledWith(Haptics.ImpactFeedbackStyle.Light);
       drawer.listeners?.state?.({ data: { state: { history: [] } } });
       expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
     });

@@ -5,6 +5,7 @@ import {
 } from "node:crypto";
 import { createOAuthDeadline, withinOAuthDeadline, pinnedOAuthRequest as pinnedRequest } from "./oauth-request.js";
 import { resolveCustomMcpOAuthAuthorization } from "./oauth-refresh.js";
+import { registerOAuthClient, oauthClientRequest } from "./oauth-client.js";
 import type { PlatformDb, CustomMcpServerBrokerRow } from "../../platform-db.js";
 import {
   decryptCustomMcpOAuthState,
@@ -26,6 +27,7 @@ interface OAuthMetadata {
   revocation_endpoint?: string;
   code_challenge_methods_supported?: string[];
   scopes_supported?: string[];
+  token_endpoint_auth_methods_supported?: string[];
 }
 
 interface ProtectedResourceMetadata {
@@ -40,12 +42,6 @@ interface OAuthTokenResponse {
   expires_in?: number;
   refresh_token?: string;
   scope?: string;
-}
-
-interface OAuthClientRegistrationResponse {
-  client_id: string;
-  token_endpoint_auth_method?: string;
-  client_secret?: string;
 }
 
 function exactStateMatch(left: string | undefined, right: string): boolean {
@@ -114,19 +110,6 @@ function canonicalIssuer(value: string): string {
   return url.href;
 }
 
-function parseClientRegistration(value: unknown): OAuthClientRegistrationResponse {
-  const object = assertObject(value);
-  if (typeof object.client_id !== "string"
-    || object.client_id.length < 1
-    || object.client_id.length > 2_048
-    || object.client_secret !== undefined
-    || (object.token_endpoint_auth_method !== undefined
-      && object.token_endpoint_auth_method !== "none")) {
-    throw new CustomMcpBrokerError("upstream");
-  }
-  return object as unknown as OAuthClientRegistrationResponse;
-}
-
 export class CustomMcpOAuthManager {
   private readonly configuredClientId: string | undefined;
 
@@ -154,12 +137,12 @@ export class CustomMcpOAuthManager {
     }
   }
 
-  async start(userId: string, serverId: string, options?: { scopes?: readonly string[] }): Promise<string> {
+  async start(userId: string, serverId: string, options?: { scopes?: readonly string[]; managedWriteAccess?: boolean }): Promise<string> {
     const signal = createOAuthDeadline();
     return withinOAuthDeadline(this.startWithinDeadline(userId, serverId, signal, options), signal);
   }
 
-  private async startWithinDeadline(userId: string, serverId: string, signal: AbortSignal, options?: { scopes?: readonly string[] }): Promise<string> {
+  private async startWithinDeadline(userId: string, serverId: string, signal: AbortSignal, options?: { scopes?: readonly string[]; managedWriteAccess?: boolean }): Promise<string> {
     const row = await withinOAuthDeadline(this.requireOAuthRow(userId, serverId), signal);
     // A failed removal retains the grant for revocation retry. Reconnect must
     // not overwrite that evidence with a new grant or begin remote discovery.
@@ -216,16 +199,29 @@ export class CustomMcpOAuthManager {
     // Advertising a scope is not a request to grant it. In particular PostHog
     // publishes both read and write scopes; managed presets choose least privilege.
     const scopes = options?.scopes ? [...options.scopes] : this.options.scopes ?? resource.scopes_supported ?? metadata.scopes_supported ?? [];
-    const persistedClientId = existingCredential.oauth?.clientIssuer === clientIssuer
-      ? existingCredential.oauth.clientId
-      : undefined;
-    const clientId = persistedClientId
-      ?? this.configuredClientId
-      ?? (metadata.client_id_metadata_document_supported === true ? this.options.clientMetadataUrl : undefined)
-      ?? await withinOAuthDeadline(this.registerClient(metadata, signal), signal);
+    if (!Array.isArray(scopes) || scopes.length > 100 || !scopes.every(scope =>
+      typeof scope === "string" && scope.length > 0 && scope.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(scope))) {
+      throw new CustomMcpBrokerError("upstream");
+    }
+    const sameIssuer = existingCredential.oauth?.clientIssuer === clientIssuer;
+    const secretExpiry = existingCredential.oauth?.clientSecretExpiresAt;
+    const secretExpired = secretExpiry !== undefined && secretExpiry !== 0 && secretExpiry <= now.getTime() / 1000;
+    const existingClient = sameIssuer && !secretExpired && existingCredential.oauth?.clientId ? {
+      clientId: existingCredential.oauth.clientId,
+      clientSecret: existingCredential.oauth.clientSecret,
+      clientSecretExpiresAt: existingCredential.oauth.clientSecretExpiresAt,
+      tokenEndpointAuthMethod: existingCredential.oauth.tokenEndpointAuthMethod,
+    } : undefined;
+    const configuredClientId = this.configuredClientId
+      ?? (metadata.client_id_metadata_document_supported === true ? this.options.clientMetadataUrl : undefined);
+    const client = existingClient ?? (configuredClientId ? { clientId: configuredClientId } : await registerOAuthClient({
+      endpoint: metadata.registration_endpoint, methods: metadata.token_endpoint_auth_methods_supported,
+      redirectUri: this.options.redirectUri, signal, request,
+    }));
+    const { clientId } = client;
     const credential: CustomMcpCredential = {
       oauth: {
-        ...existingCredential.oauth,
+        ...(existingCredential.oauth?.clientIssuer && !sameIssuer ? {} : existingCredential.oauth),
         refreshing: undefined,
         refreshStartedAt: undefined,
         state,
@@ -236,9 +232,14 @@ export class CustomMcpOAuthManager {
         resource: resource.resource,
         revocationEndpoint: metadata.revocation_endpoint,
         clientId,
+        clientSecret: client.clientSecret,
+        clientSecretExpiresAt: client.clientSecretExpiresAt,
+        tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
         clientIssuer,
         redirectUri: this.options.redirectUri,
         scopes,
+        grantedScopes: undefined,
+        managedWriteAccess: options?.managedWriteAccess === true,
       },
     } as CustomMcpCredential;
     signal.throwIfAborted();
@@ -319,7 +320,7 @@ export class CustomMcpOAuthManager {
       redirect_uri: oauth.redirectUri,
       code_verifier: oauth.verifier,
       resource: oauth.resource,
-    });
+    }, oauth);
     const next: CustomMcpCredential = {
       oauth: {
         ...oauth,
@@ -330,6 +331,7 @@ export class CustomMcpOAuthManager {
         refreshStartedAt: undefined,
         accessToken: token.access_token,
         refreshToken: token.refresh_token,
+        grantedScopes: token.scope === undefined ? [...(oauth.scopes ?? [])] : token.scope.split(" ").filter(Boolean),
         expiresAt: token.expires_in
           ? new Date(now.getTime() + token.expires_in * 1_000).toISOString()
           : undefined,
@@ -342,7 +344,7 @@ export class CustomMcpOAuthManager {
   async resolveAuthorization(userId: string, row: CustomMcpServerBrokerRow): Promise<string | undefined> {
     return resolveCustomMcpOAuthAuthorization({ db: this.options.db, encryptionKey: this.options.encryptionKey,
       userId, row, now: this.options.now?.() ?? new Date(), configuredClientId: this.configuredClientId,
-      exchangeToken: (endpoint, fields) => this.exchangeToken(endpoint, fields) });
+      exchangeToken: (endpoint, fields, oauth) => this.exchangeToken(endpoint, fields, oauth) });
   }
 
   async revoke(credential: CustomMcpCredential): Promise<void> {
@@ -355,60 +357,38 @@ export class CustomMcpOAuthManager {
     if (!token) return;
     const clientId = oauth.clientId ?? this.configuredClientId;
     if (!clientId) throw new CustomMcpBrokerError("action_required");
-    const body = new URLSearchParams({
+    const input = oauthClientRequest({
       token,
       client_id: clientId,
-    }).toString();
+    }, oauth);
     const response = await (this.options.request ?? pinnedRequest)({
       method: "POST",
       url: oauth.revocationEndpoint,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body,
+      ...input,
     });
     if (response.status < 200 || response.status >= 300) throw new Error("OAuth revocation failed");
   }
 
-  private async exchangeToken(endpoint: string, fields: Record<string, string>): Promise<OAuthTokenResponse> {
-    const body = new URLSearchParams(fields).toString();
+  private async exchangeToken(endpoint: string, fields: Record<string, string>, oauth?: CustomMcpCredential["oauth"]): Promise<OAuthTokenResponse> {
+    const input = oauthClientRequest(fields, oauth);
     const response = await (this.options.request ?? pinnedRequest)({
       method: "POST",
       url: endpoint,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body,
+      ...input,
     });
     if (response.status < 200 || response.status >= 300) throw new CustomMcpBrokerError("upstream");
     const object = assertObject(response.body);
     if (typeof object.access_token !== "string" || object.access_token.length < 1 || object.access_token.length > 8192 || /[\s\x00-\x1f\x7f]/.test(object.access_token)
       || (object.refresh_token !== undefined && (typeof object.refresh_token !== "string" || object.refresh_token.length < 1 || object.refresh_token.length > 8192 || /[\s\x00-\x1f\x7f]/.test(object.refresh_token)))
       || (object.expires_in !== undefined && (typeof object.expires_in !== "number" || !Number.isInteger(object.expires_in) || object.expires_in < 1 || object.expires_in > 31_536_000))
+      || (object.scope !== undefined && (typeof object.scope !== "string" || object.scope.length > 8192
+        || /[\x00-\x1f\x7f]/.test(object.scope) || object.scope.split(" ").filter(Boolean).length > 100
+        || object.scope.split(" ").some(scope => scope.length > 256)))
       || typeof object.token_type !== "string"
       || object.token_type.toLowerCase() !== "bearer") {
       throw new CustomMcpBrokerError("upstream");
     }
     return object as unknown as OAuthTokenResponse;
-  }
-
-  private async registerClient(metadata: OAuthMetadata, signal?: AbortSignal): Promise<string> {
-    if (!metadata.registration_endpoint) {
-      throw new CustomMcpBrokerError("upstream");
-    }
-    const body = JSON.stringify({
-      client_name: "Matrix OS",
-      redirect_uris: [this.options.redirectUri],
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none",
-      application_type: "web",
-    });
-    const response = await (this.options.request ?? pinnedRequest)({
-      method: "POST",
-      url: metadata.registration_endpoint,
-      signal,
-      headers: { "content-type": "application/json" },
-      body,
-    });
-    if (response.status !== 201) throw new CustomMcpBrokerError("upstream");
-    return parseClientRegistration(response.body).client_id;
   }
 
   private async requireOAuthRow(userId: string, serverId: string): Promise<CustomMcpServerBrokerRow> {

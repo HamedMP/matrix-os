@@ -23,6 +23,11 @@
       "types": "./src/events.ts",
       "import": "./dist/events.js",
       "default": "./dist/events.js"
+    },
+    "./postgres": {
+      "types": "./src/postgres.ts",
+      "import": "./dist/postgres.js",
+      "default": "./dist/postgres.js"
     }
   },
   "scripts": {
