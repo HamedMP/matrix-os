@@ -29,6 +29,21 @@ describe("funded generation readiness timeout budgets", () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
+  it.each([FUNDED_GLM_FLASH, FUNDED_SONNET])("bypasses cache at the actual %s readiness target without storing payloads", async model => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(reply(model));
+    expect(await probeFundedModel(config(), model, fetchFn)).toBe(true);
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe(model === FUNDED_GLM_FLASH
+      ? `https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/${model}`
+      : `${config().gatewayBaseUrl}/v1/messages`);
+    const headers = new Headers(init?.headers);
+    expect(headers.get("cf-aig-skip-cache")).toBe("true");
+    expect(headers.get("cf-aig-collect-log-payload")).toBe("false");
+    for (const name of ["cf-aig-cache-key", "cf-aig-cache-ttl", "cf-cache-ttl", "cf-skip-cache"]) expect(headers.has(name)).toBe(false);
+    expect(init?.signal).toBeInstanceOf(AbortSignal); expect(init?.redirect).toBe("error");
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
   it("logs only bounded model/correlation/outcome metadata without retaining upstream bodies", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
