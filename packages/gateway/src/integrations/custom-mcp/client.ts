@@ -1,6 +1,8 @@
 import { request as httpsRequest } from "node:https";
 import { createPinnedCustomMcpLookup } from "./pinned-lookup.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
+import { McpToolProgressSchema, type McpProgressListener } from "./tool-progress.js";
 import { validateCustomMcpUrl } from "./security.js";
 import type { CustomMcpTool } from "./types.js";
 
@@ -18,6 +20,8 @@ export interface RemoteMcpRequest {
   headers: Record<string, string>;
   body?: unknown;
   timeoutMs: number;
+  signal?: AbortSignal;
+  onNotification?: (message: unknown) => void;
 }
 
 export interface RemoteMcpResponse {
@@ -77,6 +81,7 @@ export const pinnedRemoteMcpRequester: RemoteMcpRequester = async (input) => {
       lookup,
       servername: target.url.hostname,
       timeout: input.timeoutMs,
+      signal: input.signal,
     }, (response) => {
       const status = response.statusCode ?? 502;
       if (status >= 300 && status < 400) {
@@ -86,6 +91,8 @@ export const pinnedRemoteMcpRequester: RemoteMcpRequester = async (input) => {
       }
       const chunks: Buffer[] = [];
       let total = 0;
+      const decoder = new StringDecoder("utf8");
+      let pending = "";
       response.on("data", (chunk: Buffer) => {
         total += chunk.length;
         if (total > MAX_RESPONSE_BYTES) {
@@ -93,6 +100,25 @@ export const pinnedRemoteMcpRequester: RemoteMcpRequester = async (input) => {
           return;
         }
         chunks.push(chunk);
+        if (input.onNotification && status >= 200 && status < 300 && String(response.headers["content-type"]).includes("text/event-stream")) {
+          pending += decoder.write(chunk);
+          let boundary: RegExpExecArray | null;
+          while ((boundary = /\r?\n\r?\n/.exec(pending))) {
+            const frame = pending.slice(0, boundary.index);
+            pending = pending.slice(boundary.index + boundary[0].length);
+            try {
+              const data = frame.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
+              if (data) {
+                const message: unknown = JSON.parse(data);
+                if (message && typeof message === "object" && !("id" in message)) input.onNotification(message);
+              }
+            } catch (error: unknown) {
+              response.destroy(new Error("Custom MCP returned an invalid response"));
+              reject(error instanceof Error ? new Error("Custom MCP returned an invalid response") : new Error("Custom MCP unavailable"));
+              return;
+            }
+          }
+        }
       });
       response.on("error", reject);
       response.on("end", () => {
@@ -134,6 +160,8 @@ export interface RemoteMcpConnection {
 export interface RemoteMcpCall extends RemoteMcpConnection {
   toolName: string;
   arguments?: Record<string, unknown>;
+  signal?: AbortSignal;
+  onProgress?: McpProgressListener;
 }
 
 interface Session {
@@ -213,14 +241,28 @@ export class RemoteMcpClient {
     }
     const session = await this.getSession(call);
     let response;
+    const progressToken = call.onProgress ? randomUUID() : undefined;
+    let listening = true; let updates = 0;
     try {
       response = await this.rpc(call, session, "tools/call", {
         name: call.toolName,
         arguments: call.arguments ?? {},
-      }, TOOL_TIMEOUT_MS);
+        ...(progressToken ? { _meta: { progressToken } } : {}),
+      }, TOOL_TIMEOUT_MS, {
+        signal: call.signal,
+        ...(call.onProgress ? { onNotification: (value: unknown) => {
+          if (!listening || call.signal?.aborted || updates >= 3 || !value || typeof value !== "object") return;
+          const notification = value as { method?: unknown; params?: { progressToken?: unknown } };
+          if (notification.method !== "notifications/progress" || notification.params?.progressToken !== progressToken) return;
+          const parsed = McpToolProgressSchema.safeParse(notification.params);
+          if (parsed.success) { updates++; call.onProgress!(parsed.data); }
+        } } : {}),
+      });
     } catch (error) {
-      await this.evict(call.serverId);
+      if (!call.signal?.aborted) await this.evict(call.serverId);
       throw error;
+    } finally {
+      listening = false;
     }
     return response.result;
   }
@@ -381,6 +423,7 @@ export class RemoteMcpClient {
     method: string,
     params: unknown,
     timeoutMs: number,
+    delivery?: Pick<RemoteMcpRequest, "signal" | "onNotification">,
   ): Promise<JsonRpcResponse & { headers: Record<string, string> }> {
     const id = session.nextRequestId++;
     const result = await this.requester({
@@ -388,6 +431,7 @@ export class RemoteMcpClient {
       headers: session.headers,
       body: { jsonrpc: "2.0", id, method, params },
       timeoutMs,
+      ...delivery,
     });
     if (result.status < 200 || result.status >= 300) {
       throw new Error("Custom MCP server request failed");
