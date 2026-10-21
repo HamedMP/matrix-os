@@ -10,6 +10,7 @@ import { Icon, Spacer } from "@/components/ui";
 import { formatDeletionDeadline } from "@/lib/account-deletion";
 import { useAccountDeletion } from "@/lib/queries/use-account-deletion";
 import type { AccountDeletionStatus } from "@/lib/requests";
+import { motion } from "@/lib/theme-v2";
 
 const ACCOUNT_URL = "https://accounts.matrix-os.com/user";
 
@@ -35,6 +36,7 @@ export default function AccountSettingsScreen() {
       {user?.imageUrl ? (
         <>
           <Image
+            transition={motion.duration.fast}
             source={{ uri: user.imageUrl }}
             accessibilityLabel={`${name} profile image`}
             style={styles.avatar}

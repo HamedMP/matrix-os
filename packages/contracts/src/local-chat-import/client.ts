@@ -90,6 +90,7 @@ export async function uploadLocalChatArchive(payload: LocalChatImportPayload, so
     }
     if (await hash.digest() !== payload.sourceHash) throw new LocalChatTransferError("source_changed");
     aborted(signal);
+    options.onProgress?.({ phase: "verifying", uploadedBytes: payload.rawSize, totalBytes: payload.rawSize, jobId: job.jobId });
     try { job = state(await request(`${base}/complete`, {})); }
     catch(error:unknown){
       aborted(signal);
@@ -105,6 +106,7 @@ export async function uploadLocalChatArchive(payload: LocalChatImportPayload, so
     if (job.status === "uploading") throw new LocalChatTransferError("unavailable"); // Reseal recovery requires a fresh source verification.
   }
   if (!job.chatId) throw new LocalChatTransferError("invalid_response");
+  options.onProgress?.({ phase: "verifying", uploadedBytes: payload.rawSize, totalBytes: payload.rawSize, jobId: job.jobId });
   const detail = checked(z.object({ record: z.object({ chat: z.object({ id: z.literal(job.chatId), messageCount: z.number().int().min(1).max(100_000) }) }) }), await request(`/api/chats/${job.chatId}?limit=1`));
   return { jobId: job.jobId, chatId: job.chatId, messageCount: detail.record.chat.messageCount };
 }

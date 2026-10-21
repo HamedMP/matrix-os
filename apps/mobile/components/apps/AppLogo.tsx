@@ -5,6 +5,7 @@ import { View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Icon } from "@/components/ui";
+import { motion } from "@/lib/theme-v2";
 
 import { APP_ARTWORK_FOOTPRINT, APP_ICON_SQUIRCLE } from "./app-icon-shape";
 
@@ -32,6 +33,7 @@ function AppIcon({ name, uri, authorization }: AppLogoProps) {
     <View testID={`app-icon-${name}`} style={[styles.artwork, !imageUri && styles.placeholder]}>
       {imageUri ? (
         <Image
+          transition={motion.duration.fast}
           source={{
             uri: imageUri,
             headers: authorization ? { Authorization: authorization } : undefined,

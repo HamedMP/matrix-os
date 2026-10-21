@@ -3,10 +3,12 @@ import { join, basename } from "node:path";
 import { loadAppManifest, type AppManifest } from "./app-manifest.js";
 
 export function generateSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  let start = 0;
+  let end = slug.length;
+  while (start < end && slug[start] === "-") start += 1;
+  while (end > start && slug[end - 1] === "-") end -= 1;
+  return slug.slice(start, end);
 }
 
 interface ValidationResult {

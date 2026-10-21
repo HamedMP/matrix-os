@@ -22,6 +22,9 @@ import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js
 import type { CanonicalProviderRunEvent } from "../../../packages/gateway/src/chat/provider-adapter.js";
 import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
+// Reset must release fixture closures instead of restoring an original implementation.
+const fixtureMock = <T extends (...args: never[]) => unknown>(implementation: T) => vi.fn<T>().mockImplementation(implementation);
+
 const CHAT = "chat_botdirect1";
 const RUNTIME = `runtime_${"f".repeat(32)}`;
 const ROUTE: BotModelRoute = { api: "anthropic-messages", modelId: "claude-sonnet-5", input: ["text"], contextWindow: 200_000, maxOutputTokens: 8_192 };
@@ -41,7 +44,7 @@ beforeEach(async () => {
   await insertChat(db, CHAT);
   await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: "2026-09-27T12:00:00.000Z" });
 });
-afterEach(async () => { vi.unstubAllEnvs(); await destroy(); });
+afterEach(async () => { vi.unstubAllEnvs(); try { await destroy(); } finally { vi.resetAllMocks(); vi.restoreAllMocks(); } });
 
 function setup(options: {
   homePath?: string;
@@ -60,15 +63,15 @@ function setup(options: {
 } = {}) {
   const registry = new BotRuntimeRegistry();
   const admission = {
-    admit: vi.fn(options.admit ?? (async (request: Parameters<typeof registry.bind>[0]) => {
+    admit: fixtureMock(options.admit ?? (async (request: Parameters<typeof registry.bind>[0]) => {
       registry.bind({ ...request, runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) });
       return { runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) };
     }) as never),
-    release: vi.fn(async (handle: string) => registry.release(handle)),
+    release: fixtureMock(async (handle: string) => registry.release(handle)),
   };
   let orchestrator: ReturnType<typeof createBotTaskOrchestrator>;
   const commands: RunBotInput["command"][] = [];
-  const runBot = vi.fn(async (input: RunBotInput) => {
+  const runBot = fixtureMock(async (input: RunBotInput) => {
     commands.push(input.command);
     if (input.command.kind !== "bot.run") {
       if (input.command.kind === "bot.cancel") {
@@ -92,7 +95,7 @@ function setup(options: {
     transact,
     interactions: options.answerWithMessage ? { answerWithMessage: options.answerWithMessage } : interactions,
     memory: { admitted: options.admitted ?? (async () => options.memory ?? []) },
-    agents: { get: vi.fn(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
+    agents: { get: fixtureMock(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
     recipes: createBotRecipeCatalog(),
     resolveProcedure: options.resolveProcedure,
     resolveRoute: options.resolveRoute ?? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })),
@@ -103,7 +106,7 @@ function setup(options: {
     ...(options.activeDeadlineMs ? { activeDeadlineMs: options.activeDeadlineMs } : {}),
     ...(options.cancelGraceMs ? { cancelGraceMs: options.cancelGraceMs } : {}),
   });
-  const stopRuntime = vi.fn(async () => undefined);
+  const stopRuntime = fixtureMock(async () => undefined);
   const adapter = createMatrixBotChatProviderAdapter({ orchestrator, stopRuntime });
   return { adapter, orchestrator, admission, registry, commands, stopRuntime, interactions };
 }
@@ -165,13 +168,13 @@ describe("bot turns through the matrix_bot adapter", () => {
     const selection = { instanceId: "matrix_anthropic_api", model: ROUTE.modelId,
       options: [{ id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: generation }] };
     const anthropicApi = { connectionRevision: 3, credentialGeneration: generation };
-    const resolveRoute = vi.fn(async (selected?: CanonicalChatModelSelection) => {
+    const resolveRoute = fixtureMock(async (selected?: CanonicalChatModelSelection) => {
       expect(selected).toEqual(selection);
       return { route: ROUTE, accessSourceId: "owner_anthropic_key" as const, anthropicApi };
     });
     const { forwardBotInference } = await import("../../../packages/gateway/src/bots/broker-inference.js");
-    const fetcher = vi.fn<typeof fetch>(async () => new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }));
-    const authority = { observe: vi.fn(), resolve: vi.fn(), credential: vi.fn(async () => "synthetic-owner-key"), revalidate: vi.fn(async () => true) };
+    const fetcher = fixtureMock<typeof fetch>(async () => new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }));
+    const authority = { observe: vi.fn(), resolve: vi.fn(), credential: fixtureMock(async () => "synthetic-owner-key"), revalidate: fixtureMock(async () => true) };
     const { adapter, admission, registry } = setup({ agent: { ...AGENT, selection }, resolveRoute, worker: async input => {
       const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
       expect(binding.anthropicApi).toEqual(anthropicApi);
@@ -219,7 +222,7 @@ describe("bot turns through the matrix_bot adapter", () => {
   });
 
   it("keeps legacy Automatic routing when an internal caller omits selection", async () => {
-    const resolveRoute = vi.fn(async (selection?: unknown) => {
+    const resolveRoute = fixtureMock(async (selection?: unknown) => {
       if (selection !== undefined) throw new BotRouteError("model_unavailable");
       return { route: ROUTE, accessSourceId: "matrix_included" as const };
     });
@@ -231,8 +234,8 @@ describe("bot turns through the matrix_bot adapter", () => {
   });
 
   it("runs shared Preview coordinator tools without consulting the host owner's native executor", async () => {
-    const execution = vi.fn(async () => { throw new Error("foreign native owner"); });
-    const admit = vi.fn(async () => { throw new Error("foreign native owner"); });
+    const execution = fixtureMock(async () => { throw new Error("foreign native owner"); });
+    const admit = fixtureMock(async () => { throw new Error("foreign native owner"); });
     const executorReady = createBotExecutorReadiness({ runtimeOwnerId: "different_host_owner", computerId: "preview", nativeTasks: true, connections: { execution, admit } });
     const { adapter, orchestrator } = setup({ executorReady, worker: async (input) => {
       const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
@@ -248,7 +251,7 @@ describe("bot turns through the matrix_bot adapter", () => {
   });
 
   it("advertises the selected native task executor only after fresh Bot authorization with a Matrix-funded coordinator", async () => {
-    const executorReady = vi.fn(async () => true);
+    const executorReady = fixtureMock(async () => true);
     const { adapter, orchestrator, admission } = setup({ executorReady, worker: async (input) => {
       const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
       expect(spec.capabilities).toContain("agent.task"); expect(spec.route).toEqual(ROUTE);
@@ -305,7 +308,7 @@ describe("bot turns through the matrix_bot adapter", () => {
   });
 
   it("continues the waiting task with the owner's next message, answering its open question", async () => {
-    const worker = vi.fn(async (input: RunBotInput) => ({ runId: input.command.runId, status: "waiting_person", toolActions: 0, sessionRevision: 1 }));
+    const worker = fixtureMock(async (input: RunBotInput) => ({ runId: input.command.runId, status: "waiting_person", toolActions: 0, sessionRevision: 1 }));
     const { adapter, interactions, orchestrator } = setup({ worker, memory: ["(preference) Keep it short."] });
     await collect(adapter.start(turn()));
     const [task] = await db.selectFrom("bot_tasks").selectAll().execute();
@@ -520,11 +523,11 @@ describe("bot turns through the matrix_bot adapter", () => {
 it("runs new custom coordinators through the Bot adapter with exact subscription and revision on fresh/resumed turns", async () => {
  const selection={instanceId:"matrix_chatgpt_plan",model:"gpt-custom",options:[{id:"accountId",value:"own-account"},{id:"grantRevision",value:"3"}]};
  const agent={...AGENT,selection,instructions:"Use only confirmed data",recipeRef:{recipeId:"custom-coordinator",version:"1"}};
- const resolveProcedure=vi.fn(async()=>({...agent.recipeRef,name:agent.name,description:"",instructions:agent.instructions,
+ const resolveProcedure=fixtureMock(async()=>({...agent.recipeRef,name:agent.name,description:"",instructions:agent.instructions,
   capabilities:["artifact.read" as const,"memory.search" as const],integrations:[],output:"A truthful answer"}));
  const subscription={peerId:"d16576f5-6a86-4768-8f97-06a718efda36",accountId:"own-account",computerId:"own-computer",grantRevision:3};
  const route={...ROUTE,api:"openai-responses" as const,modelId:selection.model};
- const resolveRoute=vi.fn(async(selected?:CanonicalChatModelSelection)=>{expect(selected).toEqual(selection);return {route,accessSourceId:"matrix_chatgpt_plan" as const,subscription};});
+ const resolveRoute=fixtureMock(async(selected?:CanonicalChatModelSelection)=>{expect(selected).toEqual(selection);return {route,accessSourceId:"matrix_chatgpt_plan" as const,subscription};});
  const x=setup({agent,resolveProcedure,resolveRoute,worker:async(input)=>{
   const spec=await x.orchestrator.runSource.loadRunSpec({runId:input.command.runId, ownerId:OWNER, chatId:CHAT, runtimeHandle:RUNTIME, executionGeneration:"3"} as never);
   expect(spec.systemPrompt).toContain(agent.instructions); expect(spec.route).toEqual(route);

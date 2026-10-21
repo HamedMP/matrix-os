@@ -24,6 +24,9 @@ interface UiState {
   // surface that crosses into an embed must hold one overlay lease so the
   // active embed can detach until that surface closes.
   rendererOverlayCount: number;
+  // The PostHog support panel and the onboarding widget share a screen
+  // corner, so each steps aside when the other opens.
+  supportPanelOpen: boolean;
   homeRefreshRequest: number;
   desktopBackgroundRefreshRequest: number;
   // One-shot request for which Settings section the next Settings render
@@ -37,6 +40,7 @@ interface UiState {
   setAppLauncherOpen: (open: boolean) => void;
   acquireRendererOverlay: () => void;
   releaseRendererOverlay: () => void;
+  setSupportPanelOpen: (open: boolean) => void;
   requestHomeRefresh: () => void;
   requestDesktopBackgroundRefresh: () => void;
   requestSettingsSection: (section: string) => void;
@@ -56,6 +60,7 @@ export const useUi = create<UiState>()((set) => ({
   quickOpenOpen: false,
   appLauncherOpen: false,
   rendererOverlayCount: 0,
+  supportPanelOpen: false,
   homeRefreshRequest: 0,
   desktopBackgroundRefreshRequest: 0,
   requestedSettingsSection: null,
@@ -71,6 +76,7 @@ export const useUi = create<UiState>()((set) => ({
   releaseRendererOverlay: () => set((state) => ({
     rendererOverlayCount: Math.max(0, state.rendererOverlayCount - 1),
   })),
+  setSupportPanelOpen: (open) => set({ supportPanelOpen: open }),
   requestHomeRefresh: () => set((state) => ({
     homeRefreshRequest: (state.homeRefreshRequest + 1) % 1_000_000,
   })),

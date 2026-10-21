@@ -37,6 +37,7 @@ import { Linking, RefreshControl, StyleSheet as NativeStyleSheet } from "react-n
 
 import IntegrationsScreen from "../app/(drawer)/(tabs)/(apps)/integrations";
 import InstalledIntegrationsScreen from "../app/integrations-installed/index";
+import { ToastHost } from "../components/ui/Toast";
 
 describe("drawer integrations screen", () => {
   beforeEach(() => {
@@ -183,6 +184,16 @@ describe("drawer integrations screen", () => {
 
     fireEvent.press(screen.getByLabelText("Confirm delete connection"));
     expect(mockDeleteConnection).toHaveBeenCalledWith("connection-1");
+  });
+
+  it("says so with a toast once a connection is deleted", async () => {
+    mockDeleteConnection.mockResolvedValue(undefined);
+    render(<><InstalledIntegrationsScreen /><ToastHost /></>);
+
+    fireEvent.press(screen.getByLabelText("Delete Work GitHub connection"));
+    await act(async () => fireEvent.press(screen.getByLabelText("Confirm delete connection")));
+
+    expect(screen.getByText("Connection deleted")).toBeTruthy();
   });
 
   it("replaces the refresh glyph with a spinner for the refreshing connection", () => {

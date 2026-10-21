@@ -1,3 +1,5 @@
+import { createBoundedFinanceAction } from "./finance-write-request.js";
+import { createBoundedManagedAction } from "./bounded-managed-action.js";
 import { collectPipedreamPages } from "./pipedream-pagination.js";
 import { createBoundedPipedreamGet } from "./pipedream-bounded-get.js";
 import { createBoundedPipedreamLabels } from "./pipedream-bounded-labels.js";
@@ -23,6 +25,8 @@ export interface RunActionResult {
 }
 
 export interface PipedreamConnectClient {
+  boundedFinanceAction?: ReturnType<typeof createBoundedFinanceAction>;
+  boundedManagedAction?: ReturnType<typeof createBoundedManagedAction>;
   readDriveFile?: ReturnType<typeof createDriveContentReader>;
   /** Available only to the bound recipe read path; ordinary integration calls stay unchanged. */
   boundedGmailGet?: ReturnType<typeof createBoundedPipedreamGet>;
@@ -139,6 +143,10 @@ export async function createPipedreamClient(
   const coalesceRead = createReadCoalescer();
 
   return {
+    boundedFinanceAction: createBoundedFinanceAction({ projectId: config.projectId,
+      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
+    boundedManagedAction: createBoundedManagedAction({ projectId: config.projectId,
+      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
     readDriveFile: createDriveContentReader({ projectId: config.projectId,
       environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
     boundedGmailLabels: createBoundedPipedreamLabels({ projectId: config.projectId,

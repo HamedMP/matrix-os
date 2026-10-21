@@ -3,6 +3,7 @@ import { Alert } from "react-native";
 
 import * as mockRoute from "./agent-chat-route-test-utils";
 import AgentChatRoute from "../app/(drawer)/(tabs)/agents/[agentId]";
+import { ToastHost } from "../components/ui/Toast";
 import { AgentRequestError } from "../lib/requests/bots";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -191,6 +192,17 @@ describe("agent chat route: details and archiving", () => {
       expect(router.dismissAll).toHaveBeenCalledTimes(1);
       expect(router.replace).not.toHaveBeenCalled();
       expect(alert).toHaveBeenCalledTimes(1);
+    });
+
+    it("says so with a toast once the agent is archived", async () => {
+      shell.archive.mockResolvedValue(undefined);
+      render(<><AgentChatRoute /><ToastHost /></>);
+      fireEvent.press(screen.getByRole("button", { name: "Agent details" }));
+      fireEvent.press(screen.getByRole("button", { name: "Archive agent" }));
+
+      await act(async () => alertButton("Archive").onPress?.());
+
+      expect(screen.getByText("Agent archived")).toBeTruthy();
     });
 
     it("goes to the Agents list when there is no screen under this one to return to", async () => {

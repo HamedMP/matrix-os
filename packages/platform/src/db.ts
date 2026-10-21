@@ -10,7 +10,8 @@ import {
   type Transaction,
   type Updateable,
 } from 'kysely';
-import pg from 'pg';
+import type pg from 'pg';
+import { createPostgresPool } from './database/postgres-connections.js';
 import { wrapPlatformDb } from './database/transaction-scope.js';
 import { runPlatformStartupMigrations } from './database/run-migrations.js';
 import { parseStringArray } from './database/json.js';
@@ -1311,10 +1312,7 @@ export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_P
   let pool: pg.Pool | null = null;
   const kysely = typeof opts === 'string'
     ? (() => {
-        pool = new pg.Pool({ connectionString: opts, max: 10 });
-        pool.on('error', (err) => {
-          console.error('[platform-db] Idle pool client error:', err.message);
-        });
+        pool = createPostgresPool({ connectionString: opts, max: 10 }, 'platform-db');
         return new Kysely<PlatformDatabase>({ dialect: new PostgresDialect({ pool }) });
       })()
     : new Kysely<PlatformDatabase>({ dialect: opts.dialect as never });

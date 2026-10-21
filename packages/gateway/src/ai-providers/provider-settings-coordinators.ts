@@ -41,6 +41,7 @@ export interface ProviderLifecycleAccount {
   installState: ProviderHarnessInstallState;
   authenticated: boolean;
   /** Private native identity proof; never serialized in snapshots or receipts. */
+  nativeCodexAccount?: import("./codex-native-account-metadata.js").CodexNativeAccountMetadata;
   nativeClaudeAccount?: import("./claude-native-account-metadata.js").ClaudeNativeAccountMetadata;
   nativeClaudeSignedOut?: import("./claude-native-signed-out.js").ClaudeNativeSignedOut;
   /** Distinct credentials addressing the same native store; aliases count once. */
@@ -67,6 +68,7 @@ export interface ProviderSettingsRuntimeMutationInput {
   snapshot?: ProviderSettingsSnapshot;
   /** Trusted server completion, never populated from a public mutation request. */
   claudeNativeCompletion?: boolean;
+  codexNativeCompletion?: boolean;
 }
 
 /** Applies settings to the real runtime/control plane and durably deduplicates the key. */

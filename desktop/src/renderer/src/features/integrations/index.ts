@@ -8,7 +8,7 @@ export {
 } from "./IntegrationsSettingsSection";
 export { default } from "./IntegrationsSettingsSection";
 export { useIntegrations, integrationsStore, type IntegrationsStatus } from "./integrations-store";
-export { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll, type ConnectPollOptions } from "./connect-poll";
+export { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll, type ConnectPollOptions } from "@matrix-os/ui";
 export {
   MAX_AVAILABLE_INTEGRATIONS,
   MAX_CONNECTED_INTEGRATIONS,
