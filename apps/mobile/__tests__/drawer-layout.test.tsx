@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
 import * as Haptics from "expo-haptics";
 import { Keyboard } from "react-native";
+import type { PanGesture } from "react-native-gesture-handler";
 
 import * as mockLayout from "./drawer-layout-test-utils";
 import { chatRows } from "./side-panel-test-utils";
@@ -38,6 +39,37 @@ jest.mock("expo-router", () => ({ useSegments: () => mockLayout.drawer.segments 
 jest.mock("expo-router/drawer", () => mockLayout.drawerModule());
 
 const { drawer, mocks, chatPages } = mockLayout;
+
+// The real builder, without the native module that the package index loads.
+const { PanGesture: RealPanGesture } = jest.requireActual<{ PanGesture: new () => PanGesture }>(
+  "react-native-gesture-handler/lib/commonjs/handlers/gestures/panGesture",
+);
+
+/** The pan react-native-drawer-layout 4.2.5 builds, passed through the layout's hook. */
+function panelPan() {
+  const pan = new RealPanGesture().activeOffsetX([-5, 5]).failOffsetY([-5, 5]);
+  const configure = drawer.options?.configureGestureHandler as ((gesture: PanGesture) => PanGesture) | undefined;
+  return configure ? configure(pan) : pan;
+}
+
+/**
+ * What RNGH's native pan handler does with a first horizontal move of `dx` points.
+ * RNPanHandler.m and PanGestureHandler.kt both check the fail offsets before the
+ * active ones, so a fail offset wins where a move crosses both.
+ */
+function firstMove(pan: PanGesture, dx: number): "fails" | "activates" | "waits" {
+  const { failOffsetXStart, failOffsetXEnd, activeOffsetXStart, activeOffsetXEnd } = pan.config as Record<
+    string,
+    number | undefined
+  >;
+  const crosses = (start?: number, end?: number) =>
+    (start !== undefined && dx < start) || (end !== undefined && dx > end);
+  if (crosses(failOffsetXStart, failOffsetXEnd)) return "fails";
+  if (crosses(activeOffsetXStart, activeOffsetXEnd)) return "activates";
+  return "waits";
+}
+
+const OPEN_PANEL: mockLayout.DrawerState = { history: [{ type: "drawer", status: "open" }] };
 
 const SHOW_CHAT_SCREEN = ["(tabs)", { screen: "(chats)", params: { screen: "index" } }];
 const SHOW_SHARED_SCREEN = ["(tabs)", { screen: "(chats)", params: { screen: "shared" } }];
@@ -146,6 +178,38 @@ describe("side panel layout", () => {
         render(<DrawerLayout />);
         expect(drawer.options?.swipeEnabled).toBe(false);
       }
+    });
+
+    it("opens a closed panel only for a rightward swipe, so a leftward one never pulls it out", () => {
+      render(<DrawerLayout />);
+
+      expect(firstMove(panelPan(), -6)).toBe("fails");
+      expect(firstMove(panelPan(), 6)).toBe("activates");
+      expect(firstMove(panelPan(), -4)).toBe("waits");
+    });
+
+    it("keeps the leftward swipe that closes an open panel, also when the panel was restored open", () => {
+      drawer.state = OPEN_PANEL;
+      render(<DrawerLayout />);
+      expect(firstMove(panelPan(), -6)).toBe("activates");
+      cleanup();
+
+      drawer.state = { history: [], default: "open" };
+      render(<DrawerLayout />);
+      expect(firstMove(panelPan(), -6)).toBe("activates");
+    });
+
+    it("switches the leftward swipe off and on again as the panel opens and closes", () => {
+      render(<DrawerLayout />);
+      expect(firstMove(panelPan(), -6)).toBe("fails");
+
+      drawer.state = OPEN_PANEL;
+      screen.rerender(<DrawerLayout />);
+      expect(firstMove(panelPan(), -6)).toBe("activates");
+
+      drawer.state = { history: [] };
+      screen.rerender(<DrawerLayout />);
+      expect(firstMove(panelPan(), -6)).toBe("fails");
     });
   });
 
