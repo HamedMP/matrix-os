@@ -57,6 +57,7 @@ function fixture(mode: "Chat" | "Bot") {
         ...resolveManagedPiRoute(snapshot, selection), capabilities: ["artifact.read"], requestClass: "interactive" as const }),
       toolAuthority: async () => ({ permissionMode: "supervised" as const }),
       release: async () => undefined, workspace: async () => "/owned/chat",
+      startRenewal: () => ({ stop: async () => undefined }),
     },
     host: { client: { runBot } } as unknown as ScopeRuntimeHost,
     providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal,

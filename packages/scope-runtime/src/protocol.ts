@@ -84,6 +84,15 @@ const RuntimeStopRequestSchema = z.object({
   runtimeHandle: RuntimeHandleSchema,
 }).strict();
 
+/** Only the existing runtime identity can renew a supervisor-owned Pi lease. */
+const RuntimeRenewRequestSchema = z.object({
+  version: z.literal(1),
+  type: z.literal("runtime.renew"),
+  requestId: RequestIdSchema,
+  runtimeHandle: RuntimeHandleSchema,
+  executionGeneration: GenerationSchema,
+}).strict();
+
 const RuntimeChatRequestSchema = z.object({
   version: z.literal(1),
   type: z.literal("runtime.chat"),
@@ -124,6 +133,7 @@ export const ScopeRuntimeRequestSchema = z.discriminatedUnion("type", [
   CapabilityRequestSchema,
   RuntimeCreateRequestSchema,
   RuntimeStopRequestSchema,
+  RuntimeRenewRequestSchema,
   RuntimeChatRequestSchema,
   RuntimeBotRequestSchema,
 ]);

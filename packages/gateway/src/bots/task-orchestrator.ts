@@ -16,9 +16,9 @@ import { recipeCoordinatorSelection } from "./coordinator-selection.js";
  *    broker receives until the worker answers with the run's outcome.
  * 5. Move the task to its final state, then release the runtime.
  *
- * The run ends early on cancellation or at the task's 10-minute active-work
- * deadline. Waits for a person or for capacity end the run; they never hold
- * a runtime. Active runs are bounded by the runtime registry's capacity.
+ * A running workload keeps its supervised runtime lease alive. Waits for a
+ * person or for capacity end the run; they never hold a runtime. Active runs
+ * are bounded by the runtime registry's capacity.
  */
 import {
   BotRunOutcomeSchema,
@@ -41,11 +41,11 @@ import type { BotInteractionService } from "./interactions.js";
 import type { BotMemoryService } from "./memory-service.js";
 import { createBotTasksRepository, type BotBlockedReason, type BotTask } from "./repositories/tasks.js";
 import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
-import { BOT_RUNTIME_REGISTRY_CAPACITY, type BotRuntimeRegistry } from "./runtime-registry.js";
+import { BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
 import { readOwnerSoul, OwnerPersonalityError, type OwnerPersonalityConfig } from "./owner-personality.js";
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
+import { BotSetupStepError, runBotSetupStep } from "./setup-step.js";
 
-const ACTIVE_DEADLINE_MS = 10 * 60_000;
 /** How long a worker that took the cancel has to end its run before its runtime is stopped. */
 const CANCEL_GRACE_MS = 10_000;
 const MAX_QUEUED_EVENTS = 1_000;
@@ -81,12 +81,15 @@ interface ActiveRun {
   chatId: string;
   inputs?: PreparedBotInputs;
   signal: AbortSignal;
+  setupAbort: AbortController;
   spec?: BotRunSpec;
   runtime?: { runtimeHandle: string; executionGeneration: string };
+  renewal?: { stop(): Promise<void> };
   queue: CanonicalCliEventQueue<BotTurnEvent>;
-  stopping?: "cancelled" | "deadline";
+  stopping?: "cancelled" | "lease_lost";
   finished?: boolean;
   grace?: ReturnType<typeof setTimeout>;
+  releasing?: Promise<void>;
 }
 
 export class BotTurnError extends Error {
@@ -109,21 +112,18 @@ export function createBotTaskOrchestrator(deps: {
   resolveProcedure?(ownerId: string, agent: ChatAgent): Promise<import("./recipe-catalog.js").BotRecipe>;
   resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
   executorReady?(ownerId: string, botId: string): Promise<boolean>;
-  admission: Pick<PrivateBotAdmission, "admit" | "release"> & Partial<Pick<PrivateBotAdmission, "ownsDirectChat">>;
+  admission: Pick<PrivateBotAdmission, "admit" | "release" | "startRenewal"> & Partial<Pick<PrivateBotAdmission, "ownsDirectChat">>;
   personality?: OwnerPersonalityConfig;
   isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
   registry: Pick<BotRuntimeRegistry, "lookupRun" | "cancelInference">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
   onRunFinished?(runId: string): void;
   now?: () => Date;
-  /** Active-work deadline per task; 10 minutes, and never longer. */
-  activeDeadlineMs?: number;
   /** Test hook; 10 seconds, and never longer. */
   cancelGraceMs?: number;
 }) {
   const limits = readTrustedBotRunLimits();
   const now = () => (deps.now?.() ?? new Date()).toISOString();
-  const activeDeadlineMs = Math.max(1, Math.min(Math.trunc(deps.activeDeadlineMs ?? ACTIVE_DEADLINE_MS), ACTIVE_DEADLINE_MS));
   const cancelGraceMs = Math.max(1, Math.min(Math.trunc(deps.cancelGraceMs ?? CANCEL_GRACE_MS), CANCEL_GRACE_MS));
   /** At most one entry per bound runtime; the registry allows 64. */
   const active = new Map<string, ActiveRun>();
@@ -189,39 +189,84 @@ export function createBotTaskOrchestrator(deps: {
    * which ends the pending `bot.run` relay; one that takes it but does not
    * end its run within the grace period is stopped the same way.
    */
-  async function stopRuntime(run: ActiveRun, runId: string, reason: "cancelled" | "deadline"): Promise<void> {
-    run.stopping ??= reason;
+  async function stopRenewal(run: ActiveRun): Promise<void> {
+    try {
+      await run.renewal?.stop();
+    } catch (error: unknown) {
+      console.warn("[bots] bot runtime renewal could not stop:", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+
+  function releaseRuntime(run: ActiveRun, runtimeHandle: string): Promise<void> {
+    return run.releasing ??= deps.admission.release(runtimeHandle);
+  }
+
+  async function stopRuntime(run: ActiveRun, runId: string, reason: "cancelled" | "lease_lost"): Promise<void> {
+    if (run.stopping) return;
+    run.stopping = reason;
+    run.setupAbort.abort();
     run.inputs?.dispose();
+    const renewalStopped = stopRenewal(run);
     const runtime = run.runtime;
-    if (!runtime || run.finished) return;
-    const binding = deps.registry.lookupRun({ ...runtime, runId });
+    const wasRunning = Boolean(runtime && !run.finished);
+    const binding = runtime && wasRunning ? deps.registry.lookupRun({ ...runtime, runId }) : undefined;
     if (binding) deps.registry.cancelInference(binding);
+    let cancelReply: Promise<boolean> | undefined;
+    try {
+      if (runtime && wasRunning) cancelReply = deps.client.runBot({ ...runtime, command: { version: 1, kind: "bot.cancel", runId } }).then(
+        (reply) => reply.ok,
+        (error: unknown) => {
+          console.warn("[bots] bot cancel was not delivered:", error instanceof Error ? error.name : "UnknownError");
+          return false;
+        },
+      );
+    } catch (error: unknown) {
+      console.warn("[bots] bot cancel was not delivered:", error instanceof Error ? error.name : "UnknownError");
+    }
+    await renewalStopped;
+    if (!runtime || !wasRunning) return;
     let delivered = false;
     try {
-      delivered = (await deps.client.runBot({ ...runtime, command: { version: 1, kind: "bot.cancel", runId } })).ok;
+      delivered = await cancelReply ?? false;
     } catch (error: unknown) {
       console.warn("[bots] bot cancel was not delivered:", error instanceof Error ? error.name : "UnknownError");
     }
     if (!delivered) {
-      await deps.admission.release(runtime.runtimeHandle);
+      await releaseRuntime(run, runtime.runtimeHandle);
       return;
     }
+    if (run.finished) return;
     run.grace ??= setTimeout(() => {
-      if (!run.finished) void deps.admission.release(runtime.runtimeHandle);
+      if (!run.finished) void releaseRuntime(run, runtime.runtimeHandle).catch((error: unknown) => {
+        console.warn("[bots] bot runtime grace release failed:", error instanceof Error ? error.name : "UnknownError");
+      });
     }, cancelGraceMs);
     run.grace.unref?.();
   }
 
   async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
     const owner = { type: "personal" as const, ownerId: input.ownerId };
-    const botId = await directBot(input.ownerId, input.chatId);
-    const agent = botId ? await deps.agents.get(owner, botId) : null;
+    const setup = <T>(operation: () => Promise<T>, onLateSuccess?: (value: T) => void | Promise<void>) =>
+      runBotSetupStep(operation, run.setupAbort.signal, onLateSuccess);
+    const interrupted = (error: unknown) => error instanceof BotSetupStepError;
+    const interruptedStatus = (): BotRunStatus => run.stopping === "cancelled" ? "cancelled" : "failed";
+    let botId: string | null;
+    let agent: ChatAgent | null;
+    try {
+      botId = await setup(() => directBot(input.ownerId, input.chatId));
+      const savedBotId = botId;
+      agent = savedBotId ? await setup(() => deps.agents.get(owner, savedBotId)) : null;
+    } catch (error: unknown) {
+      if (!interrupted(error)) console.warn("[bots] bot binding unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return { status: interruptedStatus() };
+    }
     if (!botId || !agent || agent.archived || !agent.recipeRef) return { status: "failed" };
     let recipe;
     try {
       if (isManagedCustomBot(agent) && (!deps.resolveProcedure || !sameCustomCoordinatorSelection(input.selection, agent.selection))) return { status: "failed" };
-      recipe = deps.resolveProcedure ? await deps.resolveProcedure(input.ownerId, agent) : deps.recipes.resolve(agent.recipeRef);
+      recipe = deps.resolveProcedure ? await setup(() => deps.resolveProcedure!(input.ownerId, agent)) : deps.recipes.resolve(agent.recipeRef);
     } catch (error: unknown) {
+      if (interrupted(error)) return { status: interruptedStatus() };
       if (error instanceof BotRecipeCatalogError || error instanceof BotRouteError) return { status: "failed" };
       throw error;
     }
@@ -243,55 +288,68 @@ export function createBotTaskOrchestrator(deps: {
       console.warn("[bots] coordinator unavailable:", error instanceof Error ? error.name : "UnknownError");
       return { status: "blocked", blockedReason: "policy_denied" };
     }
-    const { task, continued } = await begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId });
+    let task: BotTask;
+    let continued: boolean;
+    try {
+      ({ task, continued } = await setup(
+        () => begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId }),
+        ({ task: lateTask }) => settle(lateTask, interruptedStatus()).then(() => undefined),
+      ));
+    } catch (error: unknown) {
+      if (!interrupted(error)) console.warn("[bots] bot task could not begin:", error instanceof Error ? error.name : "UnknownError");
+      return { status: interruptedStatus() };
+    }
     run.queue.push({ kind: "state", state: { taskId: task.taskId } });
     if (isolatedModel && continued) return settle(task, "blocked", "policy_denied");
     // A reply in Chat answers a question the waiting task still has open.
     try {
-      if (continued) await deps.interactions?.answerWithMessage({ ownerId: input.ownerId, taskId: task.taskId, chatId: input.chatId, text: input.text });
+      if (continued) await setup(async () => { await deps.interactions?.answerWithMessage({ ownerId: input.ownerId, taskId: task.taskId, chatId: input.chatId, text: input.text }); });
     } catch (error: unknown) {
       console.warn("[bots] task answer failed:", error instanceof Error ? error.name : "UnknownError");
-      return settle(task, "failed");
+      return settle(task, interrupted(error) ? interruptedStatus() : "failed");
     }
     if (input.signal.aborted) return settle(task, "cancelled");
 
     let resolved: ResolvedBotRoute;
     try {
-      resolved = await deps.resolveRoute(isolatedModel ? selection : recipeCoordinatorSelection(input.selection, agent.selection));
+      resolved = await setup(() => deps.resolveRoute(isolatedModel ? selection : recipeCoordinatorSelection(input.selection, agent.selection)));
       if (isolatedModel) {
         if (resolved.accessSourceId !== "matrix_included" || resolved.subscription || resolved.anthropicApi
           || !isolatedChatModelMatches(isolatedModel, resolved.route.modelId)) throw new BotRouteError("model_unavailable");
         resolved = { ...resolved, route: { ...resolved.route, maxOutputTokens: 256 } };
       }
     } catch (error: unknown) {
+      if (interrupted(error)) return settle(task, interruptedStatus());
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
     }
     try {
-      run.inputs = await prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, history: isolatedModel ? undefined : deps.inputHistory, historyFileRead: recipe.capabilities.includes("artifact.read"), parts: input.parts ?? [], route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal: input.signal,
-        assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } });
+      run.inputs = await setup(() => prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, history: isolatedModel ? undefined : deps.inputHistory, historyFileRead: recipe.capabilities.includes("artifact.read"), parts: input.parts ?? [], route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal: input.signal,
+        assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } }),
+      (lateInputs) => lateInputs.dispose());
     } catch (error: unknown) {
+      if (interrupted(error)) return settle(task, interruptedStatus());
       if (!(error instanceof BotBrokerActionError)) console.warn("[bots] submitted input unavailable:", error instanceof Error ? error.name : "UnknownError");
       return { ...await settle(task, input.signal.aborted ? "cancelled" : "blocked", "policy_denied"), inputUnavailable: !input.signal.aborted };
     }
     const capabilities = isolatedModel ? [] : recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
     if (run.inputs.fileAliases.length && !capabilities.includes("artifact.read")) return settle(task, "blocked", "policy_denied");
-    try { if (!isolatedModel && await deps.executorReady?.(input.ownerId, botId)) capabilities.push('agent.task'); }
-    catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return settle(task, 'blocked', 'policy_denied'); }
+    try { if (!isolatedModel && await setup(async () => await deps.executorReady?.(input.ownerId, botId))) capabilities.push('agent.task'); }
+    catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return interrupted(error) ? settle(task, interruptedStatus()) : settle(task, 'blocked', 'policy_denied'); }
     let memory: string[];
     try {
-      memory = deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
+      memory = deps.memory ? await setup(() => deps.memory!.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId })) : [];
     } catch (error: unknown) {
       console.warn("[bots] admitted memory failed:", error instanceof Error ? error.name : "UnknownError");
-      return settle(task, "failed");
+      return settle(task, interrupted(error) ? interruptedStatus() : "failed");
     }
     try {
       let ownerSoul: string | undefined;
       if (recipe.identitySource === "owner_soul" && deps.personality?.runtimeOwnerId === input.ownerId) {
-        if (!await deps.admission.ownsDirectChat?.({ ownerId: input.ownerId, botId, chatId: input.chatId })) {
+        if (!await setup(async () => await deps.admission.ownsDirectChat?.({ ownerId: input.ownerId, botId, chatId: input.chatId }))) {
           throw new OwnerPersonalityError("unsafe_file");
         }
-        ownerSoul = await readOwnerSoul(deps.personality.homePath);
+        ownerSoul = await setup(() => readOwnerSoul(deps.personality!.homePath));
       }
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
@@ -301,6 +359,7 @@ export function createBotTaskOrchestrator(deps: {
         turn: { kind: "prompt", text: run.inputs.prompt(input.text), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) },
       });
     } catch (error: unknown) {
+      if (interrupted(error)) return settle(task, interruptedStatus());
       if (error instanceof OwnerPersonalityError) console.warn("[bots] personality unavailable:", error.code);
       else if (!(error instanceof BotSystemPromptError)) console.warn("[bots] run spec invalid:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "policy_denied");
@@ -308,59 +367,70 @@ export function createBotTaskOrchestrator(deps: {
 
     let runtime;
     try {
-      await run.inputs.revalidate();
-      runtime = await deps.admission.admit({
+      await setup(() => run.inputs!.revalidate());
+      runtime = await setup(() => deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
         ...(isolatedModel ? { recipeRef: agent.recipeRef } : {}),
         ...(isManagedCustomBot(agent) ? { managedDefinitionRevision: agent.revision } : {}),
         route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: "interactive",
-      });
+      }), (lateRuntime) => deps.admission.release(lateRuntime.runtimeHandle));
     } catch (error: unknown) {
+      if (interrupted(error)) return settle(task, interruptedStatus());
       if (!(error instanceof BotAdmissionError)) throw error;
       return settle(task, "blocked", error.code === "capacity_exceeded" ? "capacity_unavailable" : "root_unavailable");
     }
     const binding = deps.registry.lookupRun({ runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration, runId: input.runId });
-    if (!binding) { await deps.admission.release(runtime.runtimeHandle); return settle(task, "failed"); }
+    if (!binding || isManagedPiBinding(binding)) { await deps.admission.release(runtime.runtimeHandle); return settle(task, "failed"); }
     run.runtime = { runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration };
     run.queue.push({ kind: "state", state: { taskId: task.taskId, ...run.runtime } });
 
-    const onAbort = () => { void stopRuntime(run, input.runId, "cancelled"); };
-    input.signal.addEventListener("abort", onAbort, { once: true });
-    const deadline = setTimeout(() => { void stopRuntime(run, input.runId, "deadline"); }, Math.max(1, activeDeadlineMs - task.activeMs));
+    let onStopped: () => void = () => undefined;
+    const stopped = new Promise<null>((resolve) => {
+      onStopped = () => resolve(null);
+      if (run.setupAbort.signal.aborted) resolve(null);
+      else run.setupAbort.signal.addEventListener("abort", onStopped, { once: true });
+    });
     try {
+      run.renewal = deps.admission.startRenewal(binding, (error: unknown) => {
+        console.warn("[bots] bot runtime lease lost:", error instanceof Error ? error.name : "UnknownError");
+        void stopRuntime(run, input.runId, "lease_lost").catch((stopError: unknown) => {
+          console.warn("[bots] bot lease-loss cancellation failed:", stopError instanceof Error ? stopError.name : "UnknownError");
+        });
+      });
       // Cancelled while the runtime was being admitted: the run never starts.
-      if (input.signal.aborted || run.stopping) return await settle(task, "cancelled");
+      if (input.signal.aborted || run.stopping) return await settle(task, run.stopping === "lease_lost" ? "failed" : "cancelled");
       run.inputs.bind(binding);
       if (isolatedModel) {
         const binding = deps.registry.lookupRun({ ...run.runtime, runId: input.runId });
         if (!binding) return await settle(task, "blocked", "policy_denied");
-        const isolatedTurn = await deps.isolatedChat!.claim(binding);
+        const isolatedTurn = await setup(() => deps.isolatedChat!.claim(binding));
+        if (run.stopping === "lease_lost") return await settle(task, "failed");
         if (!isolatedTurn?.target) return await settle(task, "blocked", "policy_denied");
         run.spec = BotRunSpecSchema.parse({ ...run.spec, isolatedTurn });
       }
-      await run.inputs.revalidate();
-      await deps.assertSource?.(binding, input.signal);
-      if (input.signal.aborted || run.stopping) return await settle(task, "cancelled");
-      const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId } });
+      await setup(() => run.inputs!.revalidate());
+      if (run.stopping === "lease_lost") return await settle(task, "failed");
+      await setup(async () => { await deps.assertSource?.(binding, input.signal); });
+      if (input.signal.aborted || run.stopping) return await settle(task, run.stopping === "lease_lost" ? "failed" : "cancelled");
+      const reply = await Promise.race([
+        deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId } }),
+        stopped,
+      ]);
       // Stop is final even if an uncooperative worker replies with success afterward.
       if (run.stopping === "cancelled") return await settle(task, "cancelled");
+      if (run.stopping === "lease_lost" || reply === null) return await settle(task, "failed");
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
-      // Past the deadline only a finished reply stands; anything else would need more time.
-      if (run.stopping === "deadline" && (!outcome?.success || outcome.data.status !== "completed")) {
-        return await settle(task, "blocked", "deadline_reached");
-      }
-      if (!outcome?.success || outcome.data.runId !== input.runId) return await settle(task, run.stopping ? "cancelled" : "failed");
+      if (!outcome?.success || outcome.data.runId !== input.runId) return await settle(task, "failed");
       return await settle(task, outcome.data.status, outcome.data.blockedReason);
     } catch (error: unknown) {
       if (!run.stopping) console.warn("[bots] bot run failed:", error instanceof Error ? error.name : "UnknownError");
-      return await settle(task, run.stopping === "deadline" ? "blocked" : run.stopping ? "cancelled" : "failed",
-        run.stopping === "deadline" ? "deadline_reached" : undefined);
+      return await settle(task, run.stopping === "cancelled" ? "cancelled" : "failed");
     } finally {
       run.finished = true;
       if (run.grace) clearTimeout(run.grace);
-      clearTimeout(deadline);
-      input.signal.removeEventListener("abort", onAbort);
-      await deps.admission.release(run.runtime.runtimeHandle);
+      run.setupAbort.signal.removeEventListener("abort", onStopped);
+      await stopRenewal(run);
+      await releaseRuntime(run, run.runtime.runtimeHandle);
     }
   }
 
@@ -387,7 +457,10 @@ export function createBotTaskOrchestrator(deps: {
   const eventSink: BotEventSink = {
     async publish(binding, event) {
       const run = active.get(binding.runId);
-      if (!run || run.ownerId !== binding.ownerId) throw new BotBrokerActionError("stale_generation");
+      if (!run || run.stopping || run.finished || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
+        || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration) {
+        throw new BotBrokerActionError("stale_generation");
+      }
       run.queue.push({ kind: "event", event: event.event });
     },
   };
@@ -410,9 +483,18 @@ export function createBotTaskOrchestrator(deps: {
     start(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }): BotTurnHandle {
       if (!input.text.trim() && !input.parts?.some(part => part.type === "attachment_reference")) throw new BotTurnError("invalid_request");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new BotTurnError("capacity_exceeded");
-      const run: ActiveRun = { ownerId: input.ownerId, chatId: input.chatId, signal: input.signal, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
+      const run: ActiveRun = { ownerId: input.ownerId, chatId: input.chatId, signal: input.signal, setupAbort: new AbortController(), queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
       active.set(input.runId, run);
+      const onAbort = () => {
+        void stopRuntime(run, input.runId, "cancelled").catch((error: unknown) => {
+          console.warn("[bots] bot cancellation failed:", error instanceof Error ? error.name : "UnknownError");
+        });
+      };
+      input.signal.addEventListener("abort", onAbort, { once: true });
+      if (input.signal.aborted) onAbort();
       const result = execute(input, run).finally(() => {
+        run.finished = true;
+        input.signal.removeEventListener("abort", onAbort);
         run.inputs?.dispose();
         active.delete(input.runId);
         deps.onRunFinished?.(input.runId);

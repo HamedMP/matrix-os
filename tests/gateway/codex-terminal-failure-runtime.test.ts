@@ -35,7 +35,7 @@ describe("native terminal failures reach canonical Chat", () => {
         const config = Buffer.from(JSON.stringify({ prompt: "Read only", approvalPolicy: "never", sandbox: "read-only", writableRoots: [homePath] })).toString("base64");
         child = spawn(process.execPath, [join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs"),
           transcriptPath, process.version.slice(1), process.execPath, join(process.cwd(), "tests/fixtures/codex-terminal-failure.mjs"), config], {
-          cwd: homePath, stdio: ["ignore", "ignore", "ignore"], env: { ...process.env, MATRIX_TEST_TERMINAL_FAILURE: mode, ...(mode === "watchdog" ? { MATRIX_CODEX_NO_PROGRESS_MS: "120" } : {}) },
+          cwd: homePath, stdio: ["ignore", "ignore", "ignore"], env: { ...process.env, MATRIX_TEST_TERMINAL_FAILURE: mode, ...(mode === "watchdog" ? { MATRIX_CODEX_TOOL_DEADLINE_MS: "120" } : {}) },
         });
         ended = once(child, "close");
         return { events: [{ type: "thread.status", eventId: nextEventId(), threadId: thread.id,

@@ -1,42 +1,62 @@
-# Agent waiting and attachment limits
+# Agent execution, waiting and input limits
 
 Tracks [ENG-344](https://linear.app/matrix-os/issue/ENG-344/investigate-unified-matrix-agent-runtime-approval-output-and-upload).
-Implementation scope: [633-agent-waiting-policy](../../specs/633-agent-waiting-policy/spec.md).
+Implementation contract: [633-agent-waiting-policy](../../specs/633-agent-waiting-policy/spec.md).
 
-## Independent clocks
+## Busy turns and idle sessions
 
-An execution deadline, a work-inactivity deadline, a human response deadline and credential expiry protect different resources. Human waiting suspends only the work-inactivity clock. It never extends an absolute execution deadline, an upstream request timeout, funded credential validity or an approval's authority.
+An ordinary busy turn has no Matrix-imposed aggregate execution deadline. Silence during an active turn does not make its session idle. Session reclamation starts only after active work ends. This follows T3 Code’s separation of busy turns and session idleness; see its [session manager](https://github.com/pingdotgg/t3code/blob/b5a0696a989a171530cc3c0ff831a99f51ce6f09/apps/server/src/orchestration-v2/ProviderSessionManager.ts).
 
-The shared CLI idle control is optional. Claude's canonical adapter uses normalized approval/input request identities to suspend its existing idle timer while at least one request is pending. Resolving one of several requests cannot restart it. Resolving the final request starts a fresh idle interval; provider output during waiting cannot rearm it.
+This policy is shared by managed Matrix AI Chat, Recipe Bot and owner-backed Claude, Codex, Pi, OpenCode, Hermes and OpenClaw adapters. They are different executors: selecting a model in Matrix AI does not execute its corresponding coding CLI. A trusted caller may still request an explicit task timebox. Retired funded-CLI compatibility contracts retain their supplied credential deadline; they do not establish the policy of managed Matrix AI. The separate restricted collaboration profile retains its own 90-second workload limit.
 
-Claude question waiting is bounded independently at 30 minutes by default. Approval controllers retain their existing TTLs. Expired/cancelled/closed questions cannot grant permission or deliver a late answer. The pending registry and all timers are cleared on close.
+Each startup, credential preparation, connection, control exchange, individual model request and started tool keeps its own bound. A long-lived owned stream can continue while its run is active and cancellable; it is not an unbounded ordinary HTTP request. Upstream service outages, credential revocation, failed authorization, exhausted credit or tool/inference budgets can still stop a run. Removing an aggregate clock does not guarantee that every task will finish.
 
-## Timeout versus Stop
+## Managed workers and ownership leases
 
-Managed Matrix AI keeps its existing 10-minute absolute deadline. An execution timeout uses the existing reviewed failure: “The agent timed out. Check progress before trying again.” It is not offered as an automatic retry because earlier tools may already have produced effects.
+Matrix AI and Recipe Bot use a renewable execution lease rather than a fixed worker lifetime. The gateway renews every 30 seconds while that exact owner/chat/run/generation/root binding remains current. Each renewal attempt has a 30-second bound. The supervisor accepts renewal only for an existing, unexpired Pi runtime with the exact execution generation; renewal cannot create a worker or increase its isolation privileges. A missing gateway is reclaimed after a 15-minute lease, checked every 30 seconds.
 
-User Stop and subsystem shutdown remain cancellation outcomes. The first abort cause wins, including when the worker responds late or another abort source fires afterward. Cancellation must still revoke local approvals, cancel inference and drain/release the owned runtime.
+Worker profile version 2 removes the old 15-minute systemd total lifetime and binds worker units to the supervisor service. CPU, memory, task count, mount, root and broker-only network restrictions remain. A 60-second systemd watchdog monitors the supervisor event loop independently of its lease sweep; its fixed notifier runs every 15 seconds. Supervisor failure/restart stops bound workers. These systemd properties require host qualification; fake-clock and socket tests cannot prove live systemd behavior.
 
-Recipe Bot also preserves explicit user cancellation when its worker later reports completion: both the adapter outcome and durable task stay cancelled. Its existing active-deadline behavior remains distinct and may accept a valid completed worker result when the deadline was the first stop cause.
+Setup steps remain independently bounded at 60 seconds. Long bot.run IPC follows caller cancellation, connection closure and the lease instead of a second aggregate timer. Stop stops renewal, revokes the current binding, cancels inference and requests worker termination. It does not refresh credentials or grant permission.
 
-Managed Pi integration approvals keep their existing ten-minute human-response lifetime. Submission checks that lifetime again after asynchronous ownership/authority checks. At or after expiry, it cancels and cleans the pending wait without executing the mutation, even when the expiry timer has not run. An expired response cannot be replayed as approval.
+## Human waiting, Stop and retry
 
-No source, spending or output limit is increased by this change. Native coding harnesses retain their own transport and approval constraints; a Matrix Chat label is not evidence that the same underlying executor is in use.
+Human waiting is an explicit state, with a separate response lifetime. It does not run a session-idle clock during a busy turn and cannot extend an approval’s authority. Claude questions expire after 30 minutes by default. Managed integration approvals retain their 10-minute response lifetime. Other adapters retain their own human-control policies; these numbers are not universal provider limits.
 
-## Native Mobile preflight
+Submission rechecks expiry after asynchronous ownership and authority checks. An expired, cancelled or closed request cannot execute a prepared mutation, accept a late answer or be replayed. Pending controls and timers are cleaned on terminal paths.
 
-Native Mobile uses the contracts' managed attachment policy with the current selected instance, model and options before upload or optimistic draft clearing. The same check applies when retrying a failed message under a changed selection.
+User Stop and shutdown are cancellation outcomes. The first stop cause wins, including a worker’s late success. Local cancellation must settle even if the worker does not respond. Resource cleanup can outlive that settlement; a cancellation event alone does not prove physical process termination or rollback of earlier tool effects.
 
-Managed Matrix AI input remains capped at eight attachments, four images, 2 MiB per image, 1 MiB per ordinary file and 8 MiB total. Images require model vision support and PNG, JPEG or WebP. Default Matrix-funded images additionally share a 1 MiB total budget.
+OpenClaw submits an agent task once, uses the pinned runtime’s zero timeout sentinel and observes the same run through bounded agent.wait requests. A wait timeout means keep waiting, not resubmit the task. Transport failure triggers best-effort remote cancellation. A lost acknowledgement can leave effects uncertain; no adapter automatically replays a possibly completed write.
 
-The generic picker and upload endpoint may allow larger files. Their success does not authorize a larger Agent input. Server admission, ownership checks and actual-file validation remain authoritative.
+## Credentials, cost and context
 
-An invalid attachment stays available for removal/editing with a safe error. Upload is not document extraction: PDF/Office parsing and long-term attachment/draft retention remain separate concerns.
+A credential lease, a model request and an agent turn have separate lifetimes. Managed Pi obtains credentials through the gateway for each inference and revalidates current authority. Credential expiry does not become a total conversation deadline; it also cannot be ignored. Funding admission, usage holds, credit/budget checks and cancellation remain authoritative for each paid request. No credential becomes permanent and no balance or spending ceiling is increased by this change.
 
-## Verification and release evidence
+Model context windows, prompt/input token admission, output-token budgets and maximum tool/inference steps remain bounded. Display truncation cannot increase a model’s context. A file being uploaded successfully does not mean that it can be parsed or admitted as model input.
 
-Use fake clocks and fake workers/processes for deadline, waiting, expiry and cancellation ordering. Mock upload/admission to check that invalid combinations fail before any network upload and preserve local draft data. Existing output and funding suites must remain green.
+## Output presentation and protocol guards
 
-The affected surfaces are Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile. The first four consume existing canonical events and reviewed failure copy; Native Mobile additionally changes its preflight. Local unit tests do not qualify any running surface.
+The live canonical assistant preview retains a prefix within a 96 KiB JSON-encoded text budget and at most 64 message identities. It reserves one visible truncation notice, then continues consuming tools, state and terminal events. Later text, including a final explanation, may be omitted. Credential sidecars are retained only when their complete masked placeholder fits; truncation cannot move an existing credential’s message offset. This is not a full output log.
 
-Before review/merge readiness, collect current live screenshots and a short recording for each affected surface, validate Native Mobile on an approved device/runtime, and publish the corresponding public behavior documentation in the private matrix-os-site repository. Follow the repository evidence-sharing policy only when external posting is authorized. Do not deploy unreviewed changes to production to obtain evidence.
+Run activity uses a rolling 500-row window. Pending approvals, input requests, unconsumed submission claims and terminal records are protected; resolved input ledgers are removed as a group. Removed activity IDs are broadcast through the existing outbox. If every slot is protected, ordinary display may be dropped; a control that cannot be persisted fails closed.
+
+Claude no longer applies 16 MiB as a cumulative stdout lifetime budget. It still rejects an oversized single or unfinished frame and retains its bounded event queue. Hermes truncates its 96 KiB presentation while retaining the 512 KiB transport-frame guard. Pi and OpenCode distinguish cumulative display from bounded protocol records and publication queues; omitted presentation gets a generic notice, while controls cannot silently disappear. Each publication remains independently bounded and cancellable.
+
+These changes do not implement universal lossless backpressure. Shared CLI, managed Pi, Recipe Bot and OpenClaw retain bounded queues; a malformed/oversized frame or exhausted control capacity may still fail a run. Recovery snapshots retain their existing 96 KiB limit. Native and legacy Codex still use a 16 MiB append-only event file with absolute reader offsets; adapting its display and reserved control budget is a separate follow-up. Native Codex’s 500-item bound applies to concurrently unfinished items, which are released on completion; it is not a cumulative tool-count limit.
+
+Large durable results should be explicit artifacts with their own owner access, retention and quotas. Unified complete raw-log archival, output download and parser recovery are not delivered by this preview truncation change.
+
+## Attachments
+
+Native Mobile applies the shared managed-input policy using the current selected instance, model and options before upload or optimistic draft clearing. Retry applies the current selection policy again. The same server admission and actual-file validation remain authoritative across Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile.
+
+Managed Matrix AI input is capped at eight attachments, four images, 2 MiB per image, 1 MiB per ordinary file and 8 MiB total. Images require model vision support and PNG, JPEG or WebP. Default Matrix-funded images additionally share a 1 MiB total budget. Other upload endpoints and picker limits have separate purposes and do not authorize larger Agent input.
+
+Invalid attachments remain available for removal or editing with a safe error. PDF/Office extraction, durable drafts and attachment retention are separate work; upload is not document parsing.
+
+## Qualification
+
+Regression tests must keep a silent busy turn active past each old aggregate deadline, then complete it or Stop it. They must separately prove lost renewal, stale generation, revoked authority, pending-control expiry and remaining funding/resource protections. Use fake clocks, small output fixtures and real local Unix sockets; do not substitute fake provider progress for elapsed time.
+
+Record source commit, backend bundle, worker profile and local client provenance before live acceptance. Earlier short Chat/Bot successes from another bundle do not qualify this behavior. Local tests do not prove a deployed runtime, upstream provider liveness or live systemd cleanup. User review precedes formal Greptile/CI and merge; public documentation in the separate site repository and the applicable live surface/device evidence remain release requirements.

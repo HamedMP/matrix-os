@@ -39,7 +39,6 @@ const MAX_COMMAND_FRAME_BYTES = 16 * 1024;
 /** One active run plus its steer and cancel commands. */
 const MAX_COMMAND_CONNECTIONS = 4;
 const FRAME_READ_TIMEOUT_MS = 10_000;
-const RUN_TIMEOUT_MS = 920_000;
 const CONTROL_TIMEOUT_MS = 10_000;
 const SHUTDOWN_GRACE_MS = 5_000;
 /** A funded background request may wait in the owner's queue for up to ten minutes before it is sent. */
@@ -124,7 +123,7 @@ async function dispatch(
     const frames = raw.split("\n").filter((frame) => frame.trim().length > 0);
     if (frames.length !== 1) return { version: 1, ok: false, error: "invalid_command" };
     const command = parseScopeRuntimeBotCommandFrame(JSON.parse(frames[0]!), invocation);
-    socket.setTimeout(command.kind === "bot.run" ? RUN_TIMEOUT_MS : CONTROL_TIMEOUT_MS, () => socket.destroy());
+    socket.setTimeout(command.kind === "bot.run" ? 0 : CONTROL_TIMEOUT_MS, () => socket.destroy());
     const reply = await handler.handle(command);
     return ScopeRuntimeBotWorkerReplySchema.parse({ version: 1, ok: true, reply });
   } catch (error: unknown) {
@@ -161,22 +160,39 @@ export async function startBotCommandServer(options: {
     });
     let input = "";
     let oversized = false;
+    let dispatched = false;
     socket.setEncoding("utf8");
     socket.setTimeout(FRAME_READ_TIMEOUT_MS, () => socket.destroy());
     socket.on("data", (chunk: string) => {
       if (oversized) return;
+      if (dispatched) { socket.destroy(); return; }
       input += chunk;
       if (Buffer.byteLength(input, "utf8") > MAX_COMMAND_FRAME_BYTES) {
         oversized = true;
         socket.destroy();
+        return;
+      }
+      if (input.includes("\n")) {
+        try {
+          const command = parseScopeRuntimeBotCommandFrame(JSON.parse(input.trim()), options.invocation);
+          if (command.kind === "bot.run") respond();
+        } catch (error: unknown) {
+          // The EOF path returns the existing allowlisted invalid-command reply.
+          if (!(error instanceof SyntaxError)) console.warn("[scope-runtime] rejected bot command frame");
+        }
       }
     });
     socket.once("end", () => {
+      if (dispatched) { socket.destroy(); return; }
+      respond();
+    });
+    function respond(): void {
       if (oversized) return;
+      dispatched = true;
       void dispatch(input, options.invocation, options.handler, socket).then((reply) => {
         if (!socket.destroyed) socket.end(replyFrame(reply));
       });
-    });
+    }
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

@@ -1,22 +1,27 @@
-# Agent human waiting and cancellation
+# Agent execution, waiting and cancellation
 
 ## Scope
 
-Shared CLI work-inactivity, Claude canonical human controls, managed Pi stop causes and Native Mobile attachment preflight. See specs/633-agent-waiting-policy/spec.md and docs/dev/chat-run-limits.md.
+Cross-provider busy/idle semantics, managed Pi and Recipe Bot renewable execution leases, canonical human controls and attachment preflight. Source contracts: specs/633-agent-waiting-policy/spec.md and docs/dev/chat-run-limits.md.
 
 ## Contracts
 
-- The shared CLI onStart receives an optional-use idle control. pause/resume affects only work inactivity; absolute deadline, input-write timeout and output budgets continue.
-- createCanonicalCliHumanWait tracks bounded type-prefixed approval/input identities. Only resolving the last pending request restarts idle. Close drains state.
-- Claude questions have independent 30-minute human TTLs and canonical expiresAt. Synchronously reject overdue submissions even before the timer callback runs. After an on-time validated response claims native delivery, clear the human TTL and rely on the existing bounded stdin write; expiry must not send a second response. Unknown delivery cannot be replayed.
-- Managed Pi preserves the first abort source. Its existing absolute deadline maps to reviewed execution_timeout/failed with no automatic retry; Stop and shutdown remain aborted. A late worker result cannot turn cancellation into success.
-- Recipe Bot must fence late worker outcomes after explicit user cancellation before accepting a successful reply. Preserve the first stop cause and the separate existing active-deadline completion exception; assert both canonical adapter and durable task outcomes.
-- Managed Pi integration approval submission rechecks its existing human TTL after awaiting authority, using internal pending expiry without widening the canonical event schema. Expiry consumes/cancels the wait once and clears its timer/listener before rejecting; delayed timer delivery must not authorize a write.
-- Cancellation-aware awaits dispose late inputs/admissions/tools. Release is attempted once. The cleanup wait bound does not prove physical termination: unchanged admission release revokes broker registry authority synchronously before awaiting stopRuntime.
-- Native preflight consumes the contracts pure policy with current catalog/model/options before upload/optimistic clearing, including failed-message retry. Preserve picker availability and server admission authority.
+- An ordinary busy turn is not an idle session. Silence or aggregate elapsed time does not end it. Reap idle sessions only after active turns end. No artificial provider progress is used as a keepalive.
+- Keep preparation, connect/header/control exchanges, started tools and inference independently bounded. Owned streams follow cancellation and runtime ownership. Explicit trusted timeboxes and credential validity are distinct from a default total run deadline.
+- Managed workers renew exact current owner/chat/run/generation/root bindings every 30 seconds. Each attempt is bounded at 30 seconds; Stop aborts it and drains for at most one second. Recheck authority around awaited host renewal, preserve the existing inference AbortController and never revive an expired/revoked binding.
+- The supervisor accepts renewal only for existing unexpired Pi profile/generation pairs. Its 900-second lease and 30-second sweep reclaim lost gateways; profile version/digest records the policy. Worker units bind to the supervisor service; an independent 60-second systemd watchdog protects against supervisor event-loop stalls. Other profile resource and isolation caps remain.
+- Long bot.run IPC follows caller/connection/lease cancellation. Short RPCs remain bounded; active/renew/control capacity stays fixed and Stop must have headroom. Cleanup failure retains revocation; late worker success after Stop or expiry is rejected.
+- Shared CLI optional idle controls suspend only their own legacy work-inactivity timer. Human wait uses bounded type-prefixed identities and independent TTLs. The ordinary Claude owner adapter has no default busy inactivity timer.
+- Claude questions retain 30-minute human TTLs and canonical expiresAt. After an on-time response claims native delivery, clear that TTL and rely on bounded stdin. Unknown delivery cannot be replayed.
+- Managed integration approval expiry is rechecked after authority awaits. Expiry consumes/cancels the wait once before rejecting, even if the timer has not fired. It cannot authorize mutation or a second response.
+- First cancellation cause wins; canonical and durable Bot outcomes stay cancelled after late success. Stop must settle local worker waiting without a worker reply. Late setup resources are disposed and failures are observed. A local terminal event does not prove physical termination or rollback of effects.
+- OpenClaw submits once and observes the same run via bounded agent.wait, never resubmitting after a wait timeout. Preserve immediate acceptance/event ordering, bounded subscriptions, Stop ownership checks and best-effort abort of unconfirmed remote work.
+- Credentials, per-inference credit/budget checks, context/token/tool budgets, approval TTLs and upload policy remain authoritative. Matrix AI routing is not a coding CLI. Do not generalize one adapter’s numeric bounds to other providers.
+- Bounded display truncation must continue state/control/terminal consumption. Preserve complete credentials only within retained output, parser/per-frame limits and permission delivery integrity. Never replace a bounded buffer with unbounded accumulation or claim full raw logs from display storage.
+- Native preflight uses current catalog/model/options before upload or optimistic clearing, including retry. Client validation is advisory; server actual-file/ownership checks remain authoritative.
 
-## Regression checks
+## Required regression checks
 
-Cover multiple pending requests, provider output while paused, absolute expiry during human wait, synchronous clock advancement without timer delivery, uncertain writes, cancellation ordering, noncooperative worker/cancel/cleanup, late resources, and Native retries after changing source/model/options.
+A silent busy turn crosses each old ten/fifteen/thirty-minute or 24-hour boundary, then completes or accepts Stop. Exercise real local sockets with fake time, lost/expired/stale leases, supervisor/watchdog configuration, connection drains and Stop capacity. Check multiple pending controls, synchronous expiry without timer delivery, uncertain writes, noncooperative worker/setup/cleanup, late resources, small output truncation fixtures and Native retries after selection changes.
 
-Local tests do not replace current live evidence on each applicable OS view. Keep spending limits, credential validity, worker bounds and upload/output budgets unchanged unless separately approved.
+Record exact source, bundle, worker profile and client for live qualification. Local tests and another bundle’s short Chat replies do not qualify the deployed long-run behavior. No real long waits, model requests, large-output stress or deployment are needed for isolated regression tests. Keep the separate public-site documentation and applicable surface/device evidence in release gates.

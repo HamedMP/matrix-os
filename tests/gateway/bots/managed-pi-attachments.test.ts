@@ -85,6 +85,7 @@ it.each([{ mode: "Chat", revoke: false }, { mode: "Bot", revoke: false }, { mode
   const stopRuntime = vi.fn(async () => undefined);
   const host = { available: true, client: {
     createRuntime: async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }), stopRuntime,
+    renewRuntime: async (input: { runtimeHandle: string; executionGeneration: string }) => ({ ...input, state: "running" as const }),
     runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
       const call = async (body: Record<string, unknown>) => {
         const reply = await actions.handleFrame({ version: 1, requestId: randomUUID(), runtimeHandle: request.runtimeHandle, executionGeneration: request.executionGeneration, runId: request.command.runId, ...body });
@@ -124,7 +125,8 @@ it.each([{ mode: "Chat", revoke: false }, { mode: "Bot", revoke: false }, { mode
       const current = await host.client.createRuntime({} as never);
       const root = await resolveBotWorkspaceRoot({ homePath: home, owner: { type: "personal", ownerId: OWNER }, ref: { kind: "bot_workspace", botId: BOT } });
       registry.bind({ ...request, ...current, rootFingerprint: root.fingerprint }); return { ...current, rootFingerprint: root.fingerprint };
-    }, release: async handle => { registry.release(handle); await stopRuntime(handle); } },
+    }, release: async handle => { registry.release(handle); await stopRuntime(handle); },
+    startRenewal: () => ({ stop: async () => undefined }) },
     onRunFinished: runId => actions.forgetRun(runId),
   }) : undefined;
   const adapter = recipeRuntime ? createMatrixBotChatProviderAdapter({ orchestrator: recipeRuntime, stopRuntime }) : runtime.adapter;

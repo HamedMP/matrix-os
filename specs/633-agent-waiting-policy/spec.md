@@ -1,47 +1,71 @@
-# ENG-344: bounded agent waiting and input parity
+# ENG-344: unified agent execution and waiting
 
 Ticket: https://linear.app/matrix-os/issue/ENG-344/investigate-unified-matrix-agent-runtime-approval-output-and-upload
 
-The requester approved the lightweight T3-inspired design on 2026-10-21 (Asia/Shanghai). This first batch changes existing flows: human waiting and work-idle clocks, explicit run-timeout outcomes, and Native Mobile attachment preflight. It does not replace the harness architecture.
+## Intent and correction
 
-## Requirements
+The requester approved the T3 approach, then explicitly clarified that fixing long-running failures is the core requirement. The earlier first pass only suspended work-idle during human waiting, distinguished timeout from Stop, and added Native Mobile attachment preflight. It left a managed ten-minute turn limit in place and therefore did not satisfy the original goal. This amendment supersedes that scope; the earlier commits and validation remain historical evidence only.
 
-- Human approvals and input requests retain explicit canonical waiting events. For an adapter using the shared CLI inactivity clock, pending human input suspends that clock; accepting/expiring/cancelling the final pending request starts a fresh idle interval. Multiple pending requests must not resume the clock early.
-- Absolute process deadlines, funded credential validity, funded inference and relay timeouts, worker lifetime and existing approval TTLs remain enforced. Waiting must never refresh or suspend those limits.
-- Claude AskUserQuestion must retain a bounded human-wait lifetime when it no longer consumes the work-idle timer: use a separate 30-minute default human-input TTL, with bounded pending state and cleanup. Expiry cannot authorize a tool and cannot write an answer after cancellation.
-- A managed Pi run reaching its existing 10-minute absolute deadline produces the existing reviewed execution_timeout failure, distinct from user Stop and subsystem shutdown. Preserve the first cancellation cause and make cleanup deterministic. Do not auto-retry possibly completed writes.
-- Native Mobile validates the actual selected instance/model/options and attachments with the contracts' managed input policy before any upload or optimistic clearing. Cover ordinary chats and agent chats sharing the composer. Retrying a failed message must apply the current selection policy. Invalid files stay editable/removable and have a safe actionable error. Server admission remains authoritative.
-- Keep upload counts, per-file/aggregate bytes, supported image types, funded image budget, all cost controls and output caps unchanged. Full-log archival, streaming backpressure, document extraction and durable draft redesign are separate follow-ups.
+## Runtime contract
 
-## Accepted follow-up: cancellation and approval races
+- An ordinary active turn is busy until terminal completion or cancellation, even when it emits no output. No default aggregate run deadline or progress-idle timer may terminate it. Session idle reclamation runs only when there are no active turns. Do not emit fake progress to keep a turn alive.
+- Apply this user semantic across managed Matrix AI Chat, Recipe Bot and existing owner-backed Claude, Codex, Pi, OpenCode, Hermes and OpenClaw adapters. A model source and a coding harness are distinct. Keep source-specific credential/protocol requirements and explicit trusted timeboxes separate.
+- Keep bounded preparation/startup, connection/header/control requests, individual inference/tool requests, human permission TTLs, output/parser buffers, model input/context budgets, credit/spending checks and OS isolation. A cancellable owned stream follows its run lifecycle rather than an ordinary one-shot request timeout. This is the explicit long-stream interpretation of the constitution’s external-call bounds.
+- Do not make credentials permanent, extend paid admission, remove source revocation, increase monetary budgets or automatically replay an operation whose effects may already exist. The retired funded CLI contract may still provide an absolute credential deadline; that compatibility input must not be generalized to managed Pi.
 
-The latest-main audit reproduced two existing boundary defects with isolated workers and clocks. The requester approved these two fixes on 2026-10-21; they add no limit-policy change.
+## Managed Pi and Recipe Bot
 
-- Recipe Bot must retain a user-cancelled terminal state in both canonical adapter output and durable task state when an uncooperative worker subsequently reports success. Preserve the first stop cause and the existing deadline rule that permits an already completed valid worker result.
-- Managed Pi integration approval submission must check the existing human-response expiry synchronously after asynchronous authority checks. At or after expiry, refuse approval and consume/clean up the expired wait once, even if its timer callback has not run. Never execute the prepared mutation or permit replay. On-time responses retain existing behavior.
+Remove the ten-minute default aggregate deadline from managed Chat and Bot orchestration. Bound each setup operation independently at 60 seconds. Setup cancellation must settle without waiting for an uncooperative dependency; late runtime/start results must be cleaned rather than admitted after Stop.
 
-Verify the original two RED probes on the actual PR branch, add focused ordering/boundary coverage, and run relevant Bot/managed Pi regressions and repository typechecks. Independently review the patch and repeat compatible focused checks against the pinned latest-main merge-test snapshot. Do not rerun the unchanged Native Mobile full suite. Preview, live qualification and formal review remain separately pending.
+An active execution binding has a renewable lease. The gateway renews every 30 seconds; each renewal attempt is bounded at 30 seconds and Stop drains it for at most one second. Recheck exact owner/chat/run/generation/root authority before and after asynchronous renewal. Registry renewal preserves the existing inference AbortController, cannot create a binding or revive revoked/expired state, and unbind precedes host Stop.
 
-## Security and integration
+The supervisor owns a 900-second Pi execution lease with a 30-second sweep. It renews only existing unexpired Pi runtimes with the exact generation. Profile version 2 records the lifecycle change in its digest. Replace fixed systemd RuntimeMaxSec and nested worker/launcher/client/server aggregate timers with this lease and connection/caller cancellation. Keep all short control/connect bounds. The distinct restricted collaboration profile retains its 90-second workload lifetime.
 
-No new endpoint, auth mode, database schema or permission grant. Existing personal owner/chat/run fences remain the source of authority. The shared contracts policy is pure and provides client hints only; gateway file revalidation and admission remain mandatory. Human waits are capped, resolved/closed state is removed, all new timers clear on terminal paths, and only reviewed error copy reaches clients.
+Worker units use BindsTo and After for matrix-scope-runtime.service. The supervisor service has a 60-second systemd watchdog, serviced by a fixed notifier every 15 seconds after server startup; notifier execution is bounded at five seconds with at most one child. Workload units belong to other cgroups and cannot satisfy that watchdog. Keep CPU/memory/PID, filesystem, root, capability and broker-only network limits unchanged. Supervisor startup reconciles old Pi workers instead of assuming ownership. Failed cleanup keeps the runtime revoked and retries; no late worker reply may become a success after Stop or lease expiry.
 
-Surface matrix: Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile receive the same existing canonical timeout/wait events; Native Mobile gains preflight parity with the already wired Web/Electron composers. No renderer-specific runtime policy.
+## Other adapters
 
-## Acceptance and validation
+- Claude: remove default busy-turn 30-minute progress-idle. Preserve a 30-second first-valid-frame startup bound and 10-second stdin bound, explicit injected timeboxes, and separate human question expiry.
+- Native Codex App Server: remove the whole-turn 24-hour and turn-no-progress cutoffs. Keep separately started tool/command bounds, human-wait handling, bounded event correlation and terminal-only idle hibernation. Legacy Codex must not retain its own default ten-minute child kill.
+- Coding store, Pi and OpenCode: no nested default ten-minute aggregate deadline. Credential preparation remains bounded at 30 seconds. OpenCode response headers/control calls remain bounded; owned SSE and message completion follow run cancellation.
+- Hermes: remove the default 30-minute turn timer. Preserve startup, individual RPC and interruption/cleanup bounds.
+- OpenClaw: pinned official runtime 2026.7.1, commit 842a951d5d0843aa6eb77575dc9867bf0603835c, accepts timeout 0 as its no-run-timeout sentinel. Submit agent once, synchronously accept run identity, then observe that same run through bounded agent.wait requests. Wait timeout is not terminal and never resubmits agent. Retain bounded event buffering and best-effort remote abort on local Stop or an unconfirmed transport failure. Upstream timer-safe sentinel and upstream liveness are separate from Matrix’s policy.
 
-TDD with fake clocks, fake child processes/workers and mocked upload transports; no real model calls, long waits, large-output stress, GUI/Electron launch, VPS, deployment, CI or external messages in this work. Preserve prior research execution restrictions except local code/dependency setup/tests/commits now authorized by the implementation request.
+## Waiting, cancellation and retry
 
-The checkout started at main 17a1ec7642 in a manual worktree. The main directory has unrelated uncommitted work and must not be edited. Parent .codex/.agents/Trellis configuration is not assumed inherited; implementers must read their task manifests and the parent instructions explicitly.
+A busy turn may wait for a person without consuming a session-idle deadline. Permission authority remains bounded independently: Claude questions default to 30 minutes; managed integration approvals retain ten minutes. Other provider policies remain adapter-specific. Multiple outstanding controls do not resume idle after the first response. Final resolution, expiry and close clean pending state and timers.
 
-Live captures for all affected surfaces, a Native Mobile device check and the separate FinnaAI/matrix-os-site documentation PR remain release/review-readiness requirements. They cannot be claimed completed by unit tests and are not authorized by this local implementation task. Prepare public-safe behavior notes; no Slack send or PR/CI launch in this batch.
+Approval submission rechecks expiry after asynchronous authority validation. At or after expiry it refuses and consumes the wait once, even if the timer callback has not run. It cannot execute a prepared mutation, deliver a late answer or authorize replay.
 
-## Local validation snapshot — 2026-10-21
+First cancellation cause wins. Explicit Stop must immediately settle local waiting even when a worker ignores cancellation. Bot durable state and canonical result remain cancelled if a late worker reports success. Cleanup, confirmed process exit and effects already produced are distinct; do not claim cancellation rolls them back. Resume/retry must revalidate current authority and input selection and must never automatically replay uncertain writes.
 
-The implemented paths passed 136 waiting/CLI regression tests and 74 managed Pi regression tests. A further 108 existing Hermes, coding-provider and Web/Electron parity tests passed. Native Mobile's full Jest run passed all 255 suites / 3,123 tests; the changed-file React Doctor scan reported no issues. Repository TypeScript checks passed across the configured backend and Electron projects.
+## Output and input
 
-Native Mobile TypeScript still reports 63 existing errors across 15 files; comparison found no added diagnostics and none in changed files. The pattern scan reports zero violations and one path-operation warning caused by Promise/controller `resolve` calls rather than filesystem paths. These local results do not replace the live surface/device evidence, public-site documentation PR, CI or Greptile required before merge.
+Cumulative display output and active-work lifetime are independent. Keep a bounded presentation, mark truncation once, and continue consuming control, state and terminal events. Per-frame/parser/queue limits protect memory and protocol integrity. Full raw-log archival, guaranteed lossless backpressure, document extraction and durable draft storage are separate deliverables; do not claim them from display truncation. The task result must inventory remaining adapter-specific cumulative limits and all preserved bounds precisely.
 
-The two follow-up probes were reconfirmed RED on the original PR head before production edits. After the fixes, nine focused Bot/managed Pi suites passed 171 tests with one environment-dependent database test skipped. Repository typechecks passed all eight configured projects. Applying only the four-file follow-up patch to GitHub's existing merge-test snapshot (`71326f95aa`, parents main `e30ffdf016` and PR `8bf1c74918`) passed six suites / 105 tests, including the newer progress and artifact-recovery regressions. This was a local compatibility check, not a branch merge or deployment. Native Mobile checks were not repeated for this backend-only increment.
+Native Mobile validates the current instance/model/options and attachment selection before upload or optimistic draft clearing, including retry. Invalid input remains editable/removable with safe copy; server ownership and actual-file admission remain authoritative. Preserve eight attachments, four images, 2 MiB/image, 1 MiB/ordinary file, 8 MiB total and default-funded aggregate image budget 1 MiB. Preserve image capability/type checks. Generic upload limits, extraction and model context admission are separate contracts.
 
-Independent review found no introduced defects in the seven-file increment. The scoped pattern scan reported zero violations and two manually checked warnings: existing bounded per-run Map/Set state and Promise/controller/catalog `resolve` calls. No new path construction is introduced. The pre-existing race in which Stop arrives only after the worker reply has been accepted and asynchronous settlement has begun is outside the reproduced late-reply case; this increment does not claim to resolve it.
+## Auth and resource matrix
+
+| Boundary | Authority and validation | Public? | Bound/cleanup |
+| --- | --- | --- | --- |
+| Existing canonical Chat/Stop/control routes | Existing owner/chat/run access, strict canonical schemas, expiry recheck after awaits | No | Existing body/rate bounds and terminal cleanup |
+| Internal runtime.renew | Gateway-owned supervisor Unix socket; strict runtime handle and exact execution generation; existing unexpired Pi profile only | No | 900-second renewable lease, bounded lanes/sockets, 30-second sweep |
+| Managed binding renewal | Current owner/chat/run/generation/root and source authorization, checked around awaited host renewal | No | Capped registry, no replacement cancellation signal, Stop abort/drain |
+| Bot worker command socket | Supervisor-owned relay to exact active runtime/generation; bounded single frame | No | Caller/connection/lease cancellation; short commands bounded |
+| Per-inference broker | Existing owner/source/model/credit admission and cancellation, fresh credential resolution | No | Existing request, token, cost and concurrency bounds |
+| Native attachment preflight | Advisory shared contracts; actual server admission remains source of truth | No new endpoint | Existing counts/bytes/types, safe failures preserve local edit state |
+
+No new external HTTP endpoint, permission grant, database schema or credential export is introduced. Workers cannot call the supervisor renewal socket. All new maps, timers and subprocesses must be bounded and drained. Log error types server-side; expose only reviewed generic error copy.
+
+## Verification and deliverables
+
+1. RED on the prior implementation: a silent busy turn crosses each old ten/fifteen/thirty-minute or 24-hour threshold and fails. GREEN: the same turn stays busy, then completes or accepts Stop. Do not simulate ordinary provider progress during the gap.
+2. Exercise real local Unix sockets through gateway client, supervisor controller, systemd launcher relay and worker command server with synthetic workers and fake time. Prove renewal across old deadlines, lost lease reclamation, stale generation/late completion rejection, connection cleanup and Stop headroom under bounded load.
+3. Verify current authority revocation, funding/credit refusal, per-inference cancellation, renewal stalls, setup stalls, human expiry ordering, late worker success and terminal-only session reaping. Use small output thresholds/fixtures for truncation and protected controls.
+4. Run affected gateway, coding, scope-runtime and deployment-contract tests plus configured typechecks after source settles. Do not rerun the unchanged 3,123 Native tests for this backend increment. Preserve the earlier Native TypeScript baseline of 63 existing errors in 15 files; never call the whole project green.
+5. Independently review lifetime/authority/Stop/output boundaries and publish a Chinese limitation ledger with code versus live evidence, exact source and test provenance, remaining limits, cost/security tradeoffs and follow-up boundaries.
+6. Update this spec, developer behavior documentation and applicable Trellis guardrails. Prepare the separate public documentation change in FinnaAI/matrix-os-site; it remains a separate constitution deliverable.
+7. Reuse Draft PR2794 and the existing authorized Private Preview. Record exact new source/bundle/worker/Electron provenance before testing. The previous 05d466 short live successes cannot qualify this runtime correction. Preserve the user’s ordering: implementation and private acceptance, user review, then formal Greptile/CI. No production/shared Platform deploy or merge.
+
+Applicable surfaces are Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile. Shared backend semantics do not establish live five-surface or Native device qualification. No source policy may depend on one renderer.

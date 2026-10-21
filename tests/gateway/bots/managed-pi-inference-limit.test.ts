@@ -46,7 +46,8 @@ function fixture(isolated = false) {
   } } } as unknown as ScopeRuntimeHost;
   const runtime: ReturnType<typeof createManagedPiRuntime> = createManagedPiRuntime({
     admission: { admit: async () => binding, release: async () => undefined,
-      toolAuthority: async () => ({ permissionMode: "supervised" }), workspace: async () => "/owned/chat" },
+      toolAuthority: async () => ({ permissionMode: "supervised" }), workspace: async () => "/owned/chat",
+      startRenewal: () => ({ stop: async () => undefined }) },
     host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal,
     forgetRun: () => undefined, cancelInference: () => undefined,
     ...(isolated ? { isolatedChat: { select: () => true, targets: () => true,

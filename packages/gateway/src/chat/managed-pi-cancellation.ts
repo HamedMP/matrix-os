@@ -1,30 +1,45 @@
-/** One absolute deadline and the first cancellation cause, including explicit Stop. */
+/** First cancellation cause, including explicit Stop. Busy work has no total run deadline. */
 export function createManagedPiRunCancellation(signals: AbortSignal[]) {
-  const deadline = new AbortController();
-  const timeoutReason = new DOMException("Managed run deadline", "TimeoutError");
-  const timer = setTimeout(() => deadline.abort(timeoutReason), 10 * 60_000);
-  timer.unref();
-  const signal = AbortSignal.any([...signals, deadline.signal]);
+  const signal = AbortSignal.any(signals);
+  const SETUP_STEP_TIMEOUT_MS = 60_000;
+  function waitFor<T>(operation: () => Promise<T>, discard: ((value: T) => void | Promise<void>) | undefined, timeoutMs?: number): Promise<T> {
+    signal.throwIfAborted();
+    return new Promise<T>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const finish = (result: { ok: true; value: T } | { ok: false; error: unknown }) => {
+        if (settled) return false;
+        settled = true;
+        signal.removeEventListener("abort", abort);
+        if (timer) clearTimeout(timer);
+        if (result.ok) resolve(result.value);
+        else reject(result.error);
+        return true;
+      };
+      const abort = () => { finish({ ok: false, error: signal.reason }); };
+      signal.addEventListener("abort", abort, { once: true });
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => { finish({ ok: false, error: new DOMException("Managed setup step timed out", "TimeoutError") }); }, timeoutMs);
+        timer.unref?.();
+      }
+      let pending: Promise<T>;
+      try { pending = operation(); }
+      catch (error: unknown) { finish({ ok: false, error }); return; }
+      void pending.then(value => {
+        if (finish({ ok: true, value })) return;
+        if (discard) void Promise.resolve().then(() => discard(value)).catch((error: unknown) => console.warn("[managed-pi] late resource cleanup failed", error instanceof Error ? "Error" : "UnknownError"));
+      }, (error: unknown) => { finish({ ok: false, error }); });
+    });
+  }
   return {
     signal,
-    timedOut: () => signal.aborted && signal.reason === timeoutReason,
-    dispose: () => clearTimeout(timer),
-    /** Settle even if the operation ignores cancellation; dispose resources it acquires late. */
+    /** Each setup step is bounded independently; the worker's busy turn is not. */
     async wait<T>(operation: () => Promise<T>, discard?: (value: T) => void | Promise<void>): Promise<T> {
-      signal.throwIfAborted();
-      return new Promise<T>((resolve, reject) => {
-        const abort = () => reject(signal.reason);
-        signal.addEventListener("abort", abort, { once: true });
-        let pending: Promise<T>;
-        try { pending = operation(); }
-        catch (error: unknown) { signal.removeEventListener("abort", abort); reject(error); return; }
-        void pending.then(value => {
-          signal.removeEventListener("abort", abort);
-          if (!signal.aborted) { resolve(value); return; }
-          if (discard) void Promise.resolve().then(() => discard(value)).catch((error: unknown) => console.warn("[managed-pi] late resource cleanup failed", error instanceof Error ? "Error" : "UnknownError"));
-          reject(signal.reason);
-        }, (error: unknown) => { signal.removeEventListener("abort", abort); reject(error); });
-      });
+      return waitFor(operation, discard, SETUP_STEP_TIMEOUT_MS);
+    },
+    /** The active worker is governed by a renewable runtime lease, not a wall-clock run timer. */
+    waitBusy<T>(operation: () => Promise<T>): Promise<T> {
+      return waitFor(operation, undefined);
     },
   };
 }

@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { canonicalAgentFailure } from "@matrix-os/contracts";
 import { createManagedPiRuntime } from "../../../packages/gateway/src/chat/managed-pi-runtime.js";
 import { resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
+import type { ResolvedBotRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
+import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
 import type { ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import type { ManagedPiOwnerTools } from "../../../packages/gateway/src/chat/managed-pi-owner-tools.js";
 import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runtime-host/index.js";
 import type { CanonicalProviderRunEvent } from "../../../packages/gateway/src/chat/provider-adapter.js";
 import { makeAiProviderSnapshot } from "../../fixtures/ai-provider-snapshot.js";
+import { BotBrokerActionError } from "../../../packages/gateway/src/bots/broker-actions.js";
 
-const DEADLINE = 10 * 60_000;
-const timeoutEvent = { type: "run.completed", outcome: "failed", error: canonicalAgentFailure("execution_timeout") };
+const LEASE_FAILURE = { type: "run.completed", outcome: "failed", error: {
+  code: "run_failed", safeMessage: "Matrix AI could not finish this request. Check progress before trying again.", retryable: false, recoveryActions: [],
+} };
 const abortedEvent = { type: "run.completed", outcome: "aborted" };
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -28,35 +31,73 @@ beforeEach(() => {
 });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
-function fixture(phase: "route" | "input" | "admission" | "tools" | "source" | "worker" = "worker", preAborted = false) {
+const sources = {
+  funded: { selection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" }, accessSourceId: "matrix_included", api: "anthropic-messages" },
+  anthropicApi: { selection: { instanceId: "matrix_pi_anthropic_api", model: "claude-sonnet-5", options: [
+    { id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: "12345678-1234-4123-8123-123456789abc" },
+  ] }, accessSourceId: "owner_anthropic_key", api: "anthropic-messages" },
+  chatgptPlan: { selection: { instanceId: "matrix_pi_chatgpt_plan", model: "gpt-account-model", options: [
+    { id: "accountId", value: "account_1" }, { id: "grantRevision", value: "3" },
+  ] }, accessSourceId: "matrix_chatgpt_plan", api: "openai-responses" },
+};
+type Source = keyof typeof sources;
+const longRunningSources: ReadonlyArray<{ name: string; source: Source }> = [
+  { name: "Matrix funded", source: "funded" },
+  { name: "owner Anthropic API", source: "anthropicApi" },
+  { name: "owner ChatGPT subscription", source: "chatgptPlan" },
+];
+
+function fixture(phase: "route" | "input" | "admission" | "tools" | "source" | "worker" = "worker", preAborted = false, source: Source = "funded") {
   const gate = deferred<void>();
   const worker = deferred<{ ok: true; reply: { runId: string; status: "completed"; toolActions: number } }>();
   const snapshot = makeAiProviderSnapshot();
   const owner = { type: "personal" as const, ownerId: "owner" };
-  const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+  const selection: CanonicalChatModelSelection = sources[source].selection;
+  const funded = resolveManagedPiRoute(snapshot, sources.funded.selection);
+  const resolved: ResolvedBotRoute = source === "anthropicApi" ? {
+    ...funded, accessSourceId: "owner_anthropic_key",
+    anthropicApi: { connectionRevision: 3, credentialGeneration: "12345678-1234-4123-8123-123456789abc" },
+  } : source === "chatgptPlan" ? {
+    ...funded, accessSourceId: "matrix_chatgpt_plan", route: { ...funded.route, api: "openai-responses", modelId: selection.model },
+    subscription: { peerId: "peer_1", accountId: "account_1", grantRevision: 3, computerId: "main" },
+  } : funded;
   const binding: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: owner.ownerId, chatId: "chat_cancel", runId: "run_cancel",
     runtimeHandle: `runtime_${"a".repeat(32)}`, executionGeneration: "1", workspace: { kind: "chat_workspace" }, rootFingerprint: "a".repeat(64),
-    ...resolveManagedPiRoute(snapshot, selection), capabilities: ["artifact.read"], requestClass: "interactive" };
+    ...resolved, capabilities: ["artifact.read"], requestClass: "interactive" };
   const phaseEntered = vi.fn();
   const wait = async (current: typeof phase) => { if (phase === current) { phaseEntered(); await gate.promise; } };
   const release = vi.fn<(runtimeHandle: string) => Promise<void>>(async () => undefined);
   const closeRun = vi.fn<(runId: string) => Promise<void>>(async () => undefined);
   const forgetRun = vi.fn();
   const cancelInference = vi.fn();
+  let loseLease: () => void = () => { throw new Error("Renewal was not started"); };
+  const renewalStop = vi.fn(async () => undefined);
+  const startRenewal = vi.fn((_binding: ManagedPiRuntimeBinding, onFailure: (error: unknown) => void) => {
+    loseLease = () => onFailure(new Error("PRIVATE LEASE FAILURE"));
+    return { stop: renewalStop };
+  });
   const runBot = vi.fn(async (request: { command: { kind: string } }) => {
     if (request.command.kind === "bot.cancel") return { ok: true };
     phaseEntered(); return worker.promise;
   });
-  const admit = vi.fn(async () => { await wait("admission"); return binding; });
+  const admit = vi.fn(async (input: { ownerId: string; chatId: string; runId: string; resolved: ResolvedBotRoute }) => {
+    expect(input).toEqual({ ownerId: owner.ownerId, chatId: binding.chatId, runId: binding.runId, resolved });
+    await wait("admission"); return binding;
+  });
+  const resolvePlan = vi.fn(async () => resolved);
+  const resolveAnthropic = vi.fn(async () => resolved);
+  const getSnapshot = vi.fn(async () => { await wait("route"); return snapshot; });
   const lifetime = new AbortController();
   const input = new AbortController();
   if (preAborted) input.abort();
   const runtime = createManagedPiRuntime({ homePath: "/owned", expectedOwnerId: owner.ownerId,
     ...(phase === "input" ? { inputHistory: async () => { await wait("input"); return { references: [], assertCurrent: async () => undefined }; } } : {}),
-    admission: { admit, release, workspace: async () => "/owned/chat", toolAuthority: async () => ({ permissionMode: "supervised" }) },
+    admission: { admit, release, renew: async () => undefined, startRenewal,
+      workspace: async () => "/owned/chat", toolAuthority: async () => ({ permissionMode: "supervised" }) },
     ownerTools: { open: async () => wait("tools"), closeRun } as unknown as ManagedPiOwnerTools,
     assertSource: async () => wait("source"),
-    providers: { getSnapshot: async () => { await wait("route"); return snapshot; } }, lifetime: lifetime.signal,
+    providers: { getSnapshot }, chatgptPlan: { resolve: resolvePlan } as never, matrixAnthropic: { resolve: resolveAnthropic } as never,
+    lifetime: lifetime.signal,
     host: { client: { runBot } } as unknown as ScopeRuntimeHost, forgetRun, cancelInference });
   const events: CanonicalProviderRunEvent[] = [];
   let terminal: CanonicalProviderRunEvent | undefined;
@@ -66,50 +107,112 @@ function fixture(phase: "route" | "input" | "admission" | "tools" | "source" | "
       events.push(event); if (event.type === "run.completed") terminal = event;
     }
   })();
-  return { runtime, input, lifetime, gate, worker, binding, release, closeRun, forgetRun, cancelInference, phaseEntered, runBot, admit, done, events,
+  return { runtime, input, lifetime, gate, worker, binding, release, startRenewal, renewalStop, loseLease: () => loseLease(), closeRun, forgetRun, cancelInference, phaseEntered, runBot, admit, done, events,
+    getSnapshot, resolvePlan, resolveAnthropic,
     terminal: () => terminal,
-    stop: () => runtime.adapter.cancel({ owner, chatId: binding.chatId, runId: binding.runId }) };
+    stop: () => runtime.adapter.cancel!({ owner, chatId: binding.chatId, runId: binding.runId }) };
 }
 async function ready(test: ReturnType<typeof fixture>) {
   await vi.advanceTimersByTimeAsync(0);
   expect(test.phaseEntered).toHaveBeenCalledOnce();
 }
 
-it("fails at the unchanged absolute deadline even when the worker never replies", async () => {
-  const test = fixture(); await ready(test);
-  await vi.advanceTimersByTimeAsync(DEADLINE - 1);
+it.each(longRunningSources)("keeps a silent busy $name turn alive beyond thirty minutes and accepts its eventual result", async ({ source }) => {
+  const test = fixture("worker", false, source); await ready(test);
+  expect(test.binding).toMatchObject({ accessSourceId: sources[source].accessSourceId,
+    route: { api: sources[source].api, modelId: sources[source].selection.model } });
+  expect(test.admit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ resolved: expect.objectContaining({
+    accessSourceId: sources[source].accessSourceId, route: expect.objectContaining({ api: sources[source].api, modelId: sources[source].selection.model }),
+  }) }));
+  expect(test.getSnapshot).toHaveBeenCalledTimes(source === "funded" ? 1 : 0);
+  expect(test.resolvePlan).toHaveBeenCalledTimes(source === "chatgptPlan" ? 1 : 0);
+  expect(test.resolveAnthropic).toHaveBeenCalledTimes(source === "anthropicApi" ? 1 : 0);
+  if (source === "chatgptPlan") expect(test.resolvePlan).toHaveBeenCalledExactlyOnceWith(
+    { ...sources.chatgptPlan.selection, instanceId: "matrix_chatgpt_plan" }, "owner", "interactive");
+  if (source === "anthropicApi") expect(test.resolveAnthropic).toHaveBeenCalledExactlyOnceWith(
+    sources.anthropicApi.selection, "owner", "interactive");
+  await vi.advanceTimersByTimeAsync(31 * 60_000);
   expect(test.terminal()).toBeUndefined();
-  await vi.advanceTimersByTimeAsync(1);
-  expect(test.terminal()).toEqual(timeoutEvent);
-  await test.done;
-  expect(test.cancelInference).toHaveBeenCalledExactlyOnceWith(test.binding);
+  expect(test.cancelInference).not.toHaveBeenCalled();
+  test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 1 } });
+  await vi.advanceTimersByTimeAsync(0); await test.done;
+  expect(test.terminal()).toEqual({ type: "run.completed", outcome: "completed" });
   expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
-  expect(test.forgetRun).toHaveBeenCalledExactlyOnceWith(test.binding.runId);
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("keeps timeout as the first cause when Stop arrives before a late successful reply", async () => {
+it.each(longRunningSources)("keeps $name Stop aborted after thirty-one silent minutes despite a late completed reply", async ({ source }) => {
+  const test = fixture("worker", false, source); await ready(test);
+  await vi.advanceTimersByTimeAsync(31 * 60_000);
+  expect(test.terminal()).toBeUndefined();
+  const stopping = test.stop();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(test.terminal()).toEqual(abortedEvent);
+  test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 1 } });
+  await vi.advanceTimersByTimeAsync(0); await stopping; await test.done;
+  expect(test.events.filter(event => event.type === "run.completed")).toEqual([abortedEvent]);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("cancels an unresponsive worker when the runtime lease cannot be renewed", async () => {
   const test = fixture(); await ready(test);
-  vi.advanceTimersByTime(DEADLINE);
+  test.loseLease();
+  await vi.advanceTimersByTimeAsync(0); await test.done;
+  expect(test.terminal()).toEqual(LEASE_FAILURE);
+  expect(test.cancelInference).toHaveBeenCalledExactlyOnceWith(test.binding);
+  expect(test.renewalStop).toHaveBeenCalledOnce();
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 1 } });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(test.terminal()).toEqual(LEASE_FAILURE);
+});
+
+it("bounds a stalled setup step to sixty seconds without dispatching a late worker", async () => {
+  const test = fixture("route"); await ready(test);
+  await vi.advanceTimersByTimeAsync(59_999);
+  expect(test.terminal()).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(test.terminal()).toMatchObject({ type: "run.completed", outcome: "failed" });
+  await test.done;
+  test.gate.resolve(); await vi.advanceTimersByTimeAsync(0);
+  expect(test.admit).not.toHaveBeenCalled();
+  expect(test.runBot).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps lease loss as the first cause when Stop arrives before a late successful reply", async () => {
+  const test = fixture(); await ready(test);
+  test.loseLease();
   const stopping = test.stop();
   test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 1 } });
   await vi.advanceTimersByTimeAsync(0); await stopping;
-  expect(test.terminal()).toEqual(timeoutEvent);
+  expect(test.terminal()).toEqual(LEASE_FAILURE);
   await test.done;
   expect(test.events.filter(event => event.type === "run.completed")).toHaveLength(1);
 });
 
-it("keeps Stop as the first cause when the deadline and successful reply arrive later", async () => {
+it("keeps Stop as the first cause when lease loss and a successful reply arrive later", async () => {
   const test = fixture(); await ready(test);
-  await vi.advanceTimersByTimeAsync(DEADLINE - 1);
   const stopping = test.stop();
-  vi.advanceTimersByTime(1);
+  test.loseLease();
   test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 1 } });
   await vi.advanceTimersByTimeAsync(0);
   expect(test.terminal()).toEqual(abortedEvent);
   await stopping; await test.done;
   expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("refuses late worker events after Stop before a worker result settles", async () => {
+  const test = fixture(); await ready(test);
+  const stopping = test.stop();
+  await expect(test.runtime.events.publish(test.binding, { seq: 1, event: { type: "assistant_delta", text: "late reply" } }))
+    .rejects.toEqual(new BotBrokerActionError("stale_generation"));
+  test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 1 } });
+  await vi.advanceTimersByTimeAsync(0); await stopping; await test.done;
+  expect(test.events).not.toContainEqual({ type: "assistant.delta", text: "late reply" });
+  expect(test.terminal()).toEqual(abortedEvent);
 });
 
 it.each(["input", "lifetime", "close"] as const)("reports %s cancellation as aborted without a worker reply", async cause => {
@@ -124,16 +227,16 @@ it.each(["input", "lifetime", "close"] as const)("reports %s cancellation as abo
   expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
 });
 
-it.each(["route", "input", "admission", "tools", "source"] as const)("settles a deadline while %s is pending and cleans up late resources", async phase => {
+it.each(["route", "input", "admission", "tools", "source"] as const)("bounds a stalled %s setup step and cleans up late resources", async phase => {
   const test = fixture(phase); await ready(test);
-  await vi.advanceTimersByTimeAsync(DEADLINE);
-  expect(test.terminal()).toEqual(timeoutEvent);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(test.terminal()).toMatchObject({ type: "run.completed", outcome: "failed" });
   await test.done;
   test.gate.resolve(); await vi.advanceTimersByTimeAsync(0);
   expect(test.runBot.mock.calls.filter(([request]) => request.command.kind === "bot.run")).toHaveLength(0);
   if (["admission", "tools", "source"].includes(phase)) expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
   else { expect(test.admit).not.toHaveBeenCalled(); expect(test.release).not.toHaveBeenCalled(); }
-  if (phase === "tools") expect(test.closeRun).toHaveBeenCalledTimes(3);
+  if (phase === "tools") expect(test.closeRun).toHaveBeenCalledTimes(2);
   expect(test.forgetRun).toHaveBeenCalledExactlyOnceWith(test.binding.runId);
   expect(vi.getTimerCount()).toBe(0);
 });
@@ -175,12 +278,13 @@ it("bounds shutdown when the worker never acknowledges cancellation", async () =
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("clears the absolute deadline after normal completion", async () => {
+it("stops runtime renewal after normal completion", async () => {
   const test = fixture(); await ready(test);
   test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 0 } });
   await vi.advanceTimersByTimeAsync(0); await test.done;
   expect(test.terminal()).toEqual({ type: "run.completed", outcome: "completed" });
   expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(test.renewalStop).toHaveBeenCalledOnce();
   expect(test.cancelInference).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
@@ -243,21 +347,21 @@ it("handles a synchronous worker transport exception without exposing its messag
 it("handles late admission cleanup rejection after terminal settlement", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const test = fixture("admission"); await ready(test);
-  await vi.advanceTimersByTimeAsync(DEADLINE); await test.done;
+  await vi.advanceTimersByTimeAsync(60_000); await test.done;
   test.release.mockRejectedValueOnce(new Error("PRIVATE RELEASE"));
   test.gate.resolve(); await vi.advanceTimersByTimeAsync(0);
-  expect(test.terminal()).toEqual(timeoutEvent);
+  expect(test.terminal()).toMatchObject({ type: "run.completed", outcome: "failed" });
   expect(warn).toHaveBeenCalledWith("[managed-pi] late resource cleanup failed", "Error");
   expect(JSON.stringify(warn.mock.calls)).not.toContain("PRIVATE RELEASE");
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("reports failed approval cleanup without losing the timeout outcome", async () => {
+it("reports failed approval cleanup without losing the lease failure outcome", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const test = fixture(); await ready(test);
   test.closeRun.mockRejectedValue(new Error("PRIVATE CLOSE"));
-  await vi.advanceTimersByTimeAsync(DEADLINE); await test.done;
-  expect(test.terminal()).toEqual(timeoutEvent);
+  test.loseLease(); await vi.advanceTimersByTimeAsync(0); await test.done;
+  expect(test.terminal()).toEqual(LEASE_FAILURE);
   expect(warn).toHaveBeenCalledWith("[managed-pi] cleanup failed", "Error");
   expect(JSON.stringify(warn.mock.calls)).not.toContain("PRIVATE CLOSE");
   expect(test.release).toHaveBeenCalledOnce();
