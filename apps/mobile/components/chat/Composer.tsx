@@ -8,6 +8,7 @@ import { isComposerSpeechBusy, type ComposerSpeech } from "@/lib/speech/composer
 
 import { AttachmentTray } from "./AttachmentTray";
 import { SpeechButton, SpeechToolbarStatus } from "./ComposerSpeechControls";
+import { useInputRelayout } from "./use-input-relayout";
 
 const TOOLBAR_ICON_SIZE = 18;
 const STOP_ICON_SIZE = 16;
@@ -78,6 +79,8 @@ export function Composer({
   const { colors } = theme.v2;
   // While recording or transcribing, dictation stands in for the add and model controls.
   const speechStatus = speech?.phase === "recording" || speech?.phase === "transcribing" ? speech : null;
+  // Grows to fit text the app puts in (dictation, a suggestion) as it does for typing.
+  const { handleChangeText, minHeightNudge } = useInputRelayout(draft, onChangeDraft);
 
   return (
     <View testID="composer" style={[styles.wrap, keyboardOpen && styles.wrapOnKeyboard]}>
@@ -101,7 +104,7 @@ export function Composer({
           accessibilityLabel="Message Matrix"
           multiline
           value={draft}
-          onChangeText={onChangeDraft}
+          onChangeText={handleChangeText}
           onFocus={onFocus}
           onBlur={onBlur}
           placeholder={(speech && SPEECH_PLACEHOLDERS[speech.phase]) ?? placeholder}
@@ -111,7 +114,7 @@ export function Composer({
           cursorColor={colors.success}
           editable={editable}
           autoFocus={autoFocus}
-          style={styles.input}
+          style={styles.input(minHeightNudge)}
         />
         <View testID="composer-toolbar" style={styles.toolbar}>
           <View testID="composer-toolbar-leading" style={styles.leading}>
@@ -212,7 +215,7 @@ const styles = StyleSheet.create((theme) => ({
   // to the input so that a tap anywhere in them focuses it. It is one line
   // high when empty and grows with the draft up to MAX_INPUT_LINES, after
   // which the text scrolls inside it.
-  input: {
+  input: (minHeightNudge: number) => ({
     fontFamily: theme.v2.text.body.fontFamily,
     fontSize: theme.v2.text.body.fontSize,
     lineHeight: theme.v2.text.body.lineHeight,
@@ -221,9 +224,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.v2.space[14],
     paddingHorizontal: theme.v2.space[14],
     paddingBottom: theme.v2.space[10],
-    minHeight: theme.v2.space[14] + theme.v2.text.body.lineHeight + theme.v2.space[10],
+    minHeight: theme.v2.space[14] + theme.v2.text.body.lineHeight + theme.v2.space[10] + minHeightNudge,
     maxHeight: theme.v2.space[14] + MAX_INPUT_LINES * theme.v2.text.body.lineHeight + theme.v2.space[10],
-  },
+  }),
   toolbar: {
     flexDirection: "row",
     alignItems: "center",

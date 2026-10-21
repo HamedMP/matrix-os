@@ -113,6 +113,40 @@ describe("Composer", () => {
     expect(input.props.scrollEnabled).not.toBe(false);
   });
 
+  describe("text put in from outside the keyboard", () => {
+    // React Native sizes the input from the text of its previous layout, so
+    // the input is laid out once more when its text came from the app.
+    function minHeightAfter(change: (input: ReturnType<typeof screen.getByLabelText>) => void, draft: string) {
+      const props: ComposerProps = {
+        draft: "",
+        onChangeDraft: jest.fn(),
+        placeholder: "Ask anything",
+        canSend: false,
+        onSend: jest.fn(),
+        keyboardOpen: false,
+      };
+      render(<Composer {...props} />);
+      const input = () => screen.getByLabelText("Message Matrix");
+      const before = Number(flat(input()).minHeight);
+      change(input());
+      screen.rerender(<Composer {...props} draft={draft} />);
+      return { before, after: Number(flat(input()).minHeight) };
+    }
+
+    it("lays the input out again when the app puts text in it, too slightly to see", () => {
+      const { before, after } = minHeightAfter(() => undefined, "A dictated message long enough to need a second line in the input");
+
+      expect(after).not.toBe(before);
+      expect(Math.abs(after - before)).toBeLessThan(0.1);
+    });
+
+    it("does not when the person types the text", () => {
+      const { before, after } = minHeightAfter((input) => fireEvent.changeText(input, "Typed"), "Typed");
+
+      expect(after).toBe(before);
+    });
+  });
+
   it("cannot be typed in while it is not editable", () => {
     renderComposer({ placeholder: "Signing in…", editable: false });
 
