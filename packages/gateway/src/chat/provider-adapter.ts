@@ -91,6 +91,7 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     decision: CanonicalChatApprovalDecisionSchema,
     browserApproval: BrowserApprovalLifecycleSchema.optional(),
     browserGrant: BrowserGrantViewSchema.optional(),
+    reason: z.enum(["expired"]).optional(),
   }).strict(),
   z.object({
     type: z.literal("input.requested"),

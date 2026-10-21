@@ -46,6 +46,9 @@ export async function pinnedOAuthRequest(input: {
       response.on("end", () => {
         try {
           signal.throwIfAborted();
+          // Error bodies may be HTML/plain text and can contain credentials.
+          // Preserve the bounded HTTP outcome without decoding or exposing them.
+          if (status < 200 || status >= 300) { resolve({ status, body: undefined }); return; }
           const raw = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, bytes));
           resolve({ status, body: raw ? JSON.parse(raw) : undefined });
         } catch (error: unknown) {

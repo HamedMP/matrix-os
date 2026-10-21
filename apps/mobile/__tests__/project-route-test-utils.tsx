@@ -42,8 +42,14 @@ export const router = {
 
 /** The route the project screen is on. */
 export const route = {
-  params: {} as { projectId?: string | string[] },
+  params: {} as { projectId?: string | string[]; newChat?: string },
   focused: true,
+};
+
+/** The project screen's own navigator. */
+export const navigation = {
+  isFocused: () => route.focused,
+  setParams: jest.fn(),
 };
 
 /** Stands in for `expo-router`. */
@@ -51,7 +57,7 @@ export function expoRouterModule() {
   return {
     useRouter: () => router,
     useLocalSearchParams: () => route.params,
-    useNavigation: () => ({ isFocused: () => route.focused }),
+    useNavigation: () => navigation,
   };
 }
 
@@ -60,7 +66,6 @@ export const shell = {
   selectChat: jest.fn(),
   setSelectionOverride: jest.fn(),
   bindDraftChatId: jest.fn(),
-  showChatScreen: jest.fn(),
   warmSessionToken: jest.fn(),
   /** Called with the props the screen gives the model picker. */
   modelPicker: jest.fn(),
@@ -163,6 +168,7 @@ export const pricing = projectChat("chat_pricing", "Pricing page");
 export function resetProjectRoute() {
   resetProjectRoutes();
   for (const mock of Object.values(shell)) mock.mockReset();
+  navigation.setParams.mockReset();
   route.params = {};
   route.focused = true;
   requests.fetchProjects.mockResolvedValue([{ ...portfolio, updatedAt: new Date().toISOString() }, matrix, admin]);

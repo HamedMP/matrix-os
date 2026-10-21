@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 import { BOKIO_PRESET, BOKIO_READ_SCOPES, BokioIntegrationError, BokioUuid, requestBokio } from "./bokio-integration.js";
+import { BOKIO_WRITE_SCOPES } from "@matrix-os/contracts/bokio-integration";
 
 export interface BokioCredentialRow {
   id: string; user_id: string; preset_id: string | null; url: string; auth_mode: string; status: string; revision: number;
@@ -22,15 +23,19 @@ export interface BokioCredentialCrypto {
 }
 const CLAIM_LEASE_MS = 30_000;
 const text = z.string().min(1).max(8192).regex(/^[^\s\x00-\x1f\x7f]+$/);
+const allowedScopes = [...BOKIO_READ_SCOPES, ...BOKIO_WRITE_SCOPES] as const;
+const scopesSchema = z.array(z.enum(allowedScopes)).max(allowedScopes.length);
 const credentialSchema = z.strictObject({
   kind: z.literal("bokio"), companyId: BokioUuid.optional(), connectionId: BokioUuid.optional(),
   accessToken: text.optional(), refreshToken: text.optional(), expiresAt: z.iso.datetime().optional(),
   state: text.optional(), stateExpiresAt: z.iso.datetime().optional(), refreshing: z.boolean().optional(), authorizing: z.boolean().optional(),
   refreshStartedAt: z.iso.datetime().optional(), authorizingStartedAt: z.iso.datetime().optional(),
   removingAt: z.iso.datetime().optional(), removalFailed: z.boolean().optional(),
+  scopes: scopesSchema.optional(), requestedScopes: scopesSchema.optional(),
 });
 type Credential = z.infer<typeof credentialSchema>;
-const tokenSchema = z.object({ tenant_id: BokioUuid, tenant_type: z.literal("company"), access_token: text, token_type: z.string().regex(/^bearer$/i), expires_in: z.number().int().min(1).max(86400), refresh_token: text, connection_id: BokioUuid });
+const tokenSchema = z.object({ tenant_id: BokioUuid, tenant_type: z.literal("company"), access_token: text, token_type: z.string().regex(/^bearer$/i), expires_in: z.number().int().min(1).max(86400), refresh_token: text, connection_id: BokioUuid,
+  scope: z.string().max(2048).regex(/^[A-Za-z0-9: _.-]*$/).optional() });
 const stateSchema = z.strictObject({ kind: z.literal("bokio"), userId: z.string().min(1).max(128), serverId: z.string().min(1).max(128) });
 
 /** Uses the platform's encrypted credential store; never projects REST tokens as MCP tools. */
@@ -56,11 +61,11 @@ export class BokioOAuthManager {
     const old = this.decrypt(row);
     if (old.removingAt || this.activeClaim(old)) throw new BokioIntegrationError("action_required");
     const state = this.options.credentialCrypto!.encryptCustomMcpOAuthState({ kind: "bokio", userId, serverId }, this.options.encryptionKey);
-    const credential: Credential = { kind: "bokio", ...(old.companyId ? { companyId: old.companyId } : {}), ...(old.connectionId ? { connectionId: old.connectionId } : {}), state, stateExpiresAt: new Date(this.now().getTime() + 10 * 60 * 1000).toISOString() };
+    const credential: Credential = { kind: "bokio", ...(old.companyId ? { companyId: old.companyId } : {}), ...(old.connectionId ? { connectionId: old.connectionId } : {}), state, stateExpiresAt: new Date(this.now().getTime() + 10 * 60 * 1000).toISOString(), requestedScopes: [...allowedScopes] };
     await this.persist(row, credential, "auth_required");
     const url = new URL(`${BOKIO_PRESET.url}/authorize`);
     url.searchParams.set("client_id", this.options.clientId!); url.searchParams.set("redirect_uri", this.redirectUri!);
-    url.searchParams.set("response_type", "code"); url.searchParams.set("state", state); url.searchParams.set("scope", BOKIO_READ_SCOPES.join(" "));
+    url.searchParams.set("response_type", "code"); url.searchParams.set("state", state); url.searchParams.set("scope", allowedScopes.join(" "));
     if (old.companyId) { url.searchParams.set("bokio_tenantid", old.companyId); url.searchParams.set("bokio_tenanttype", "company"); }
     return url.href;
   }
@@ -78,7 +83,7 @@ export class BokioOAuthManager {
     try {
       const token = await this.exchange({ grant_type: "authorization_code", code, redirect_uri: this.redirectUri! });
       if (old.companyId && old.companyId !== token.tenant_id) throw new BokioIntegrationError("invalid");
-      await this.persist({ ...row, revision }, this.fromToken(token), "ready");
+      await this.persist({ ...row, revision }, this.fromToken(token, old.requestedScopes ?? [...BOKIO_READ_SCOPES], false), "ready");
       return { serverId: row.id };
     } catch (error: unknown) {
       // The one-use code is consumed even on failure. Preserve only the exact
@@ -106,7 +111,7 @@ export class BokioOAuthManager {
     try {
       const token = await this.exchange({ grant_type: "refresh_token", refresh_token: old.refreshToken });
       if (token.tenant_id !== old.companyId || token.connection_id !== old.connectionId) throw new BokioIntegrationError("invalid");
-      await this.persist({ ...row, revision }, this.fromToken(token), "ready");
+      await this.persist({ ...row, revision }, this.fromToken(token, old.scopes ?? [...BOKIO_READ_SCOPES], true), "ready");
       return { authorization: `Bearer ${token.access_token}`, companyId: old.companyId };
     } catch (error: unknown) {
       // A timed out refresh may already have consumed the rotating token. Require
@@ -114,6 +119,14 @@ export class BokioOAuthManager {
       await this.persist({ ...row, revision }, this.identity(old), "action_required").catch((persistError: unknown) => console.warn("[bokio] refresh recovery changed concurrently", { errorName: persistError instanceof Error ? persistError.name : "UnknownError" }));
       throw new BokioIntegrationError("action_required");
     }
+  }
+  /** Current encrypted grant proof only; legacy credentials retain read authority. */
+  async grantedScopes(userId: string, suppliedRow: BokioCredentialRow): Promise<string[]> {
+    this.requireConfigured();
+    const row = await this.requireRow(userId, suppliedRow.id);
+    const credential = this.decrypt(row);
+    if (row.status !== "ready" || credential.removingAt || this.activeClaim(credential)) return [];
+    return [...(credential.scopes ?? BOKIO_READ_SCOPES)];
   }
   async disconnect(userId: string, selected: BokioCredentialRow): Promise<void> {
     this.requireConfigured();
@@ -177,7 +190,12 @@ export class BokioOAuthManager {
     try { return tokenSchema.parse(await this.tokenRequest(fields)); }
     catch (error: unknown) { throw new BokioIntegrationError("upstream"); }
   }
-  private fromToken(token: z.infer<typeof tokenSchema>): Credential {
-    return { kind: "bokio", companyId: token.tenant_id, connectionId: token.connection_id, accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: new Date(this.now().getTime() + token.expires_in * 1000).toISOString() };
+  private fromToken(token: z.infer<typeof tokenSchema>, previousScopes: Credential["scopes"], refreshing: boolean): Credential {
+    // Company API docs do not currently promise a scope response. Omission on
+    // initial consent is never write proof; rotating refresh cannot widen grants.
+    const ceiling = previousScopes ?? [...BOKIO_READ_SCOPES];
+    const reported: readonly string[] = token.scope === undefined ? refreshing ? ceiling : BOKIO_READ_SCOPES : token.scope.split(" ");
+    const scopes = allowedScopes.filter(scope => ceiling.includes(scope) && reported.includes(scope));
+    return { kind: "bokio", companyId: token.tenant_id, connectionId: token.connection_id, accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: new Date(this.now().getTime() + token.expires_in * 1000).toISOString(), scopes };
   }
 }

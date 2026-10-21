@@ -155,13 +155,28 @@ it("fails closed for unavailable installed SDK and revoked prelaunch access", as
   const second = adapter(); await expect(second.generate({ ...input(), revalidate: async () => false })).rejects.toThrow("App AI"); await second.close();
 });
 it("cancels an idle SDK and confirms real child exit before lease release", async () => {
+  const ready = join(home, "idle-child.json");
   const source = await readFile(fixture, "utf8");
-  await writeFile(fixture, source.replace("return {role:'assistant'", "await new Promise(resolve=>setTimeout(resolve,10000));return {role:'assistant'"));
+  await writeFile(fixture, source.replace("return {role:'assistant'", `await writeFile(${JSON.stringify(ready)},JSON.stringify({pid:process.pid}));await new Promise(()=>{setInterval(()=>{},1000);});return {role:'assistant'`));
   const value = adapter(); const abort = new AbortController();
   const generated = value.generate({ ...input(), signal: abort.signal });
-  setTimeout(() => abort.abort(), 100);
-  await expect(generated).rejects.toThrow("App AI"); await value.close();
-  expect(release).toHaveBeenCalledOnce();
+  const drained = generated.catch(() => undefined);
+  try {
+    let childPid = 0;
+    await vi.waitFor(async () => {
+      childPid = JSON.parse(await readFile(ready, "utf8")).pid;
+      expect(Number.isSafeInteger(childPid) && childPid > 0 && childPid !== process.pid).toBe(true);
+    });
+    expect(acquire).toHaveBeenCalledExactlyOnceWith("pi");
+    expect(release).not.toHaveBeenCalled();
+    expect(() => process.kill(childPid, 0)).not.toThrow();
+    release.mockImplementation(async () => {
+      expect(() => process.kill(childPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    });
+    abort.abort();
+    await expect(generated).rejects.toThrow("App AI");
+    expect(release).toHaveBeenCalledOnce();
+  } finally { abort.abort(); await drained; await value.close(); }
 });
 it("preserves exact custom physical model configuration and refuses credential overlays", async () => {
   await writeFile(join(home, ".pi/agent/models.json"), JSON.stringify({ providers: { openai: { models: [{ id: "fixture", api: "openai-completions", baseUrl: "https://api.openai.com/v1" }] } } }));

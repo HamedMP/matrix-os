@@ -3,11 +3,13 @@ import { browserCanonicalDecision, type BrowserPermissionChoice, type CanonicalC
 import {
   CanonicalChatRunIdSchema,
   canonicalChatApprovalOutcome,
+  supervisedToolApproval,
   type CanonicalChatApprovalDecision,
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
+import { SupervisedToolApprovalCard } from "@matrix-os/ui";
 
 const APPROVAL_DECISIONS = new Set<CanonicalChatApprovalDecision>([
   "approve", "approve_for_session", "decline", "cancel",
@@ -24,6 +26,7 @@ interface CanonicalApprovalView {
   decision?: CanonicalChatApprovalDecision;
   browserApproval?: CanonicalChatApprovalView["browserApproval"];
   browserGrant?: CanonicalChatApprovalView["browserGrant"];
+  reason?: "expired";
 }
 
 export function canonicalApproval(message: ChatMessage): CanonicalApprovalView | null {
@@ -38,7 +41,11 @@ export function canonicalApproval(message: ChatMessage): CanonicalApprovalView |
     typeof decision === "string" && APPROVAL_DECISIONS.has(decision as CanonicalChatApprovalDecision));
   if (allowedDecisions.length === 0) return null;
   const decision = candidate.decision && APPROVAL_DECISIONS.has(candidate.decision) ? candidate.decision : undefined;
-  return { ...candidate, runId: runId.data, allowedDecisions, decision } as CanonicalApprovalView;
+  const reason = candidate.reason === "expired" ? candidate.reason : undefined;
+  return {
+    ...candidate, runId: runId.data, allowedDecisions, decision,
+    ...(reason ? { reason } : {}),
+  } as CanonicalApprovalView;
 }
 
 function approvalLabel(decision: CanonicalChatApprovalDecision): string {
@@ -50,6 +57,9 @@ export function CanonicalApprovalMessage({
   message,
   chatId,
   submitting,
+  permissionMode,
+  onPermissionMode,
+  onTryAgain,
   onSubmit,
   browserPermissions,
   onOpenPermissionMode,
@@ -59,6 +69,9 @@ export function CanonicalApprovalMessage({
   browserPermissions?: BrowserPermissionClient;
   onOpenPermissionMode?: () => void;
   submitting: boolean;
+  permissionMode?: string;
+  onPermissionMode?: (mode: "supervised" | "full_access") => void;
+  onTryAgain?: (prompt: string) => void;
   onSubmit?: (runId: string, approvalId: string, decision: CanonicalChatApprovalDecision, browserChoice?: BrowserPermissionChoice) => Promise<void>;
 }) {
   const [failed, setFailed] = useState<{ runId: string; approvalId: string } | null>(null);
@@ -76,6 +89,23 @@ export function CanonicalApprovalMessage({
       console.warn("[chat] Approval submission failed", error instanceof Error ? error.name : "UnknownError");
       setFailed({ runId: approval.runId, approvalId: approval.approvalId });
     }
+  }
+  const failureNotice = approval.pending && failed?.runId === approval.runId && failed.approvalId === approval.approvalId
+    ? <p role="alert">Could not submit approval. Try again.</p> : null;
+  const tool = supervisedToolApproval(approval);
+  if (tool) {
+    return (<>
+      <SupervisedToolApprovalCard
+        approval={tool}
+        anchorId={`tool-approval-${approval.approvalId}`}
+        submitting={submitting}
+        permissionMode={permissionMode}
+        onPermissionMode={onPermissionMode}
+        onTryAgain={onTryAgain}
+        onDecision={onSubmit ? (decision) => void submitGeneric(decision) : undefined}
+      />
+      {failureNotice}
+    </>);
   }
   return (
     <div className="space-y-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
@@ -99,7 +129,7 @@ export function CanonicalApprovalMessage({
           ))}
         </div>
       ) : <p className="text-muted-foreground">{approval.pending ? "Approval unavailable" : canonicalChatApprovalOutcome(approval.decision)}</p>}
-      {approval.pending && failed?.runId === approval.runId && failed.approvalId === approval.approvalId ? <p role="alert">Could not submit approval. Try again.</p> : null}
+      {failureNotice}
     </div>
   );
 }

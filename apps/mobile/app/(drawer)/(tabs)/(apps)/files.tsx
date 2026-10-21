@@ -16,7 +16,7 @@ import {
   SearchField,
 } from "@/components/shell/Controls";
 import { Page } from "@/components/shell/Page";
-import { Spacer } from "@/components/ui";
+import { SettleIn, Spacer } from "@/components/ui";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
@@ -67,27 +67,29 @@ function FilesScreen() {
           <Text style={styles.statusText}>No files match “{query.trim()}”.</Text>
         ) : null}
         {!isPending && !isError && visibleEntries.length > 0 ? (
-          <GridTileGrid>
-            {visibleEntries.map((entry) => (
-              <GridTile
-                key={entry.name}
-                label={entry.name}
-                icon={entry.type === "directory" ? Folder01Icon : File01Icon}
-                accessibilityLabel={entry.type === "directory"
-                  ? `Open ${entry.name} folder`
-                  : `Open ${entry.name} file`}
-                onPress={entry.type === "directory"
-                  ? () => router.push({
-                    pathname: "/file-browser",
-                    params: { folder: entry.name },
-                  } as never)
-                  : () => router.push({
-                    pathname: "/file-browser/file",
-                    params: { name: entry.name, path: entry.name },
-                  } as never)}
-              />
-            ))}
-          </GridTileGrid>
+          <SettleIn>
+            <GridTileGrid>
+              {visibleEntries.map((entry) => (
+                <GridTile
+                  key={entry.name}
+                  label={entry.name}
+                  icon={entry.type === "directory" ? Folder01Icon : File01Icon}
+                  accessibilityLabel={entry.type === "directory"
+                    ? `Open ${entry.name} folder`
+                    : `Open ${entry.name} file`}
+                  onPress={entry.type === "directory"
+                    ? () => router.push({
+                      pathname: "/file-browser",
+                      params: { folder: entry.name },
+                    } as never)
+                    : () => router.push({
+                      pathname: "/file-browser/file",
+                      params: { name: entry.name, path: entry.name },
+                    } as never)}
+                />
+              ))}
+            </GridTileGrid>
+          </SettleIn>
         ) : null}
       </Page>
       <FileCreationControls currentPath="" />

@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
-import { space, type SpaceStep } from "@/lib/theme-v2";
+import { motion, space, type SpaceStep } from "@/lib/theme-v2";
 
-import { PRESSED_OPACITY } from "./pressable-state";
+import { PressableScale } from "./PressableScale";
 
 export interface ItemRowProps {
   title: string;
@@ -70,16 +70,17 @@ export function ItemRow({
   }
 
   return (
-    <Pressable
+    <PressableScale
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
       onLongPress={onLongPress}
-      style={({ pressed }) => [styles.row, styles[density], pressed && styles.pressed]}
+      pressedScale={motion.rowPressScale}
+      style={[styles.row, styles[density]]}
     >
       {content}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -124,8 +125,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   trailing: {
     marginLeft: theme.v2.space[8],
-  },
-  pressed: {
-    opacity: PRESSED_OPACITY,
   },
 }));

@@ -1,4 +1,6 @@
 import { StyleSheet } from "react-native-unistyles";
+
+import { initialMobileTheme } from "@/lib/initial-theme";
 import {
   colors,
   designShadows,
@@ -139,8 +141,8 @@ StyleSheet.configure({
   themes: appThemes,
   breakpoints,
   settings: {
-    // The mobile shell is light-first today; keep it deterministic. Flip to
-    // `adaptiveThemes: true` to follow the system color scheme.
-    initialTheme: "light",
+    // The saved theme, or the device's, from the very first frame. The theme
+    // controller in lib/theme-preference takes over from there.
+    initialTheme: initialMobileTheme,
   },
 });

@@ -5,9 +5,10 @@ import File01Icon from "@hugeicons/core-free-icons/File01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 
 import { EmptyFolderState } from "@/components/files/EmptyFolderState";
-import { Spacer } from "@/components/ui";
+import { SettleIn, Spacer } from "@/components/ui";
 import { FileTileSkeletonGrid, GridTile, GridTileGrid } from "./Controls";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
+import { withRefreshTap } from "@/lib/haptics";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export function FolderWorkspace({ segments }: { segments: string[] }) {
@@ -28,7 +29,7 @@ export function FolderWorkspace({ segments }: { segments: string[] }) {
         <RefreshControl
           testID="file-browser-refresh-control"
           refreshing={pullToRefresh.refreshing}
-          onRefresh={pullToRefresh.onRefresh}
+          onRefresh={withRefreshTap(pullToRefresh.onRefresh)}
           tintColor={theme.v2.appColors.ink}
           colors={[theme.v2.appColors.ink]}
           progressBackgroundColor={theme.v2.appColors.canvas}
@@ -40,7 +41,7 @@ export function FolderWorkspace({ segments }: { segments: string[] }) {
       {isPending ? <FileTileSkeletonGrid /> : null}
       {isError ? <Text style={styles.statusText}>Files unavailable. Try again.</Text> : null}
       {!isPending && !isError && entries.length === 0 ? <EmptyFolderState /> : null}
-      {!isPending && !isError && entries.length > 0 ? <GridTileGrid>
+      {!isPending && !isError && entries.length > 0 ? <SettleIn><GridTileGrid>
         {entries.map((entry) => (
           <GridTile
             key={entry.name}
@@ -63,7 +64,7 @@ export function FolderWorkspace({ segments }: { segments: string[] }) {
                 } as never)}
           />
         ))}
-      </GridTileGrid> : null}
+      </GridTileGrid></SettleIn> : null}
       <Spacer size="3xl" />
     </ScrollView>
   );
