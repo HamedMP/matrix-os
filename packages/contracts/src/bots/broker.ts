@@ -1,3 +1,4 @@
+import { BotToolDisplaySchema } from "#bots/tool-display";
 import { z } from "zod/v4";
 import { SharedBrowserActionSchema } from "#shared-browser";
 import { canonicalBoundedText, canonicalEncodedByteLength, canonicalOwnerRelativePath, canonicalReferenceId } from "#canonical-chat-primitives";
@@ -106,6 +107,7 @@ export const BotToolErrorCodeSchema = z.enum([
   "not_granted",
   "approval_required",
   "invalid_arguments",
+  "artifact_digest_mismatch",
   "unavailable",
   "timeout",
   "budget_exhausted",
@@ -129,7 +131,8 @@ export const BotEventSchema = z.object({
       type: z.literal("tool_progress"),
       toolCallId: ToolCallIdSchema,
       capability: BotToolCapabilitySchema,
-      phase: z.enum(["started", "completed", "failed"]),
+      phase: z.enum(["started", "updated", "completed", "failed", "cancelled"]),
+      display: BotToolDisplaySchema.optional(),
     }).strict(),
     z.object({ type: z.literal("activity"), label: canonicalBoundedText(200, 800), state: z.enum(["started", "completed", "failed"]) }).strict(),
   ]),

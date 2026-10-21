@@ -1,3 +1,4 @@
+import { projectBotToolDisplay } from "./tool-event-display.js";
 /**
  * The `matrix_bot` canonical Chat adapter (spec 536). It turns a person's
  * message in a bot's direct chat into one bot run, and maps the worker's
@@ -56,7 +57,7 @@ function safeRef(prefix: string, value: string): string {
   return SAFE_REF.test(value) ? value : `${prefix}_${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
 }
 
-export function mapBotEvent(event: BotEvent["event"]): CanonicalProviderRunEvent[] {
+export function mapBotEvent(event: BotEvent["event"], options: { toolOutputKey?: Buffer } = {}): CanonicalProviderRunEvent[] {
   switch (event.type) {
     case "assistant_delta": {
       const deltas: CanonicalProviderRunEvent[] = [];
@@ -66,11 +67,11 @@ export function mapBotEvent(event: BotEvent["event"]): CanonicalProviderRunEvent
       return deltas;
     }
     case "tool_progress":
-      return [{
+      return projectBotToolDisplay(event, safeRef("tool", event.toolCallId), TOOL_LABELS[event.capability] ?? "Using a tool", options.toolOutputKey) ?? [{
         type: "tool.progress",
         toolCallId: safeRef("tool", event.toolCallId),
         label: TOOL_LABELS[event.capability] ?? "Using a tool",
-        status: event.phase === "started" ? "running" : event.phase,
+        status: event.phase === "started" || event.phase === "updated" ? "running" : event.phase,
       }];
     case "activity":
       return [{

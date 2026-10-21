@@ -76,7 +76,7 @@ it("serves hash-bound binary chunks and rejects binary data on a plain text read
   const { createHash } = await import("node:crypto"); const sha256 = createHash("sha256").update(bytes).digest("hex");
   const result = JSON.parse((await prepared.readArtifact(binding, { relPath, chunk: { sha256, offset: 0, length: 2 } }))!);
   expect(result).toMatchObject({ data: bytes.subarray(0, 2).toString("base64"), nextOffset: 2, eof: false, sha256, untrusted: true });
-  await expect(prepared.readArtifact(binding, { relPath, chunk: { sha256: "0".repeat(64), offset: 0, length: 2 } })).rejects.toMatchObject({ code: "stale_generation" });
+  await expect(prepared.readArtifact(binding, { relPath, chunk: { sha256: "0".repeat(64), offset: 0, length: 2 } })).rejects.toMatchObject({ code: "artifact_digest_mismatch" });
   await expect(prepared.readImageChunk(binding, { index: 0, offset: 0 })).rejects.toMatchObject({ code: "invalid_arguments" }); prepared.dispose();
 });
 it("checks actual captured image bytes against the source aggregate budget when metadata omits size", async () => {
