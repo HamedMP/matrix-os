@@ -82,6 +82,7 @@ describe("funded PostgreSQL CI coverage", () => {
       "exec", "vitest", "run", "tests/platform/ai-funded-usage-postgres.test.ts",
       "tests/platform/ai-funded-model-probes-postgres.test.ts",
       "tests/platform/ai-funded-recovery-migration.test.ts",
+      "tests/platform/ai-funded-terminal-concurrency.test.ts",
       "tests/platform/ai-funded-usage-waiver.test.ts", "tests/platform/ai-funded-usage-waiver-cli.test.ts",
       "tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
