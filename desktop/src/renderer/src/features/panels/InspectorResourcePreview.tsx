@@ -11,6 +11,7 @@ import { isManagedBrowserPath } from "../files/browser-entries";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { ProjectPreviewEditor } from "./ProjectPreviewEditor";
 import { openChatWebLink } from "../chat/chat-web-navigation";
+import { targetForPreviewLink } from "./inspector-preview-links";
 
 const MAX_PROJECT_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const PROJECT_TEXT_PREFIX_BYTES = 64 * 1024;
@@ -101,7 +102,7 @@ export function InspectorResourcePreview({ target, onDirtyChange, onOpenFile }: 
       : <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
       <FilePreviewContent key={`${contentUrl}:${attempt}`} descriptor={descriptor} contentUrl={contentUrl} loadBlob={loadBlob} loadText={loadText} renderSource={(text, name) => <MonacoReadOnlyEditor path={name} content={text} />} onOpenLink={(link) => {
         if (link.kind === "web") { openChatWebLink(link.url); return; }
-        onOpenFile?.({ ...target, path: link.path, label: link.path.split("/").at(-1) ?? link.path });
+        onOpenFile?.(targetForPreviewLink(target, link));
       }} textPreviewBytes={textPrefix ? PROJECT_TEXT_PREFIX_BYTES : undefined} retry={() => setAttempt((value) => value + 1)} />
     </div>}
   </div></FilePreviewActions>;

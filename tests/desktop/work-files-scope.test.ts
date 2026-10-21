@@ -1,5 +1,6 @@
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { resolveWorkFilesScope, resolveChatInspectorTargetForRun, scopeForInspectorTarget } from "@desktop/renderer/src/features/work/work-files-scope";
+import { targetForPreviewLink } from "@desktop/renderer/src/features/panels/inspector-preview-links";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { describe, expect, it } from "vitest";
@@ -56,6 +57,13 @@ function detail(options: {
 }
 
 describe("resolveWorkFilesScope", () => {
+  it("routes absolute home Markdown links outside the selected project worktree", () => {
+    const selected = { kind: "project" as const, projectId: "matrix-os", worktreeId: "wt_old", path: "README.md", label: "README.md" };
+    expect(targetForPreviewLink(selected, { kind: "file", path: "notes.md", scope: "home" }))
+      .toEqual({ kind: "home", path: "notes.md", label: "notes.md" });
+    expect(targetForPreviewLink(selected, { kind: "file", path: "docs/guide.md", scope: "same" }))
+      .toMatchObject({ kind: "project", projectId: "matrix-os", worktreeId: "wt_old", path: "docs/guide.md" });
+  });
   it("builds the file tree from a historical directory target", () => {
     const active = { kind: "project" as const, chatId: "chat-1", projectId: "matrix-os", worktreeId: "wt_new", label: "Matrix OS" };
     expect(scopeForInspectorTarget(active, { kind: "project", path: "src", label: "src", projectId: "matrix-os", worktreeId: "wt_old" }))

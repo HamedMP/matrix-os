@@ -30,9 +30,11 @@ describe("FilePreviewContent", () => {
     vi.unstubAllGlobals();
     const openLink = vi.fn();
     render(<FilePreviewContent descriptor={{ ...base, resource: { kind: "project", projectId: "repo", worktreeId: "old", path: "notes/readme.md" }, name: "readme.md", kind: "markdown" }}
-      contentUrl="/notes" loadText={vi.fn(async () => "[Guide](./docs/guide.md) [Web](https://example.com)")} onOpenLink={openLink} />);
+      contentUrl="/notes" loadText={vi.fn(async () => "[Guide](./docs/guide.md) [Home](~/notes.md) [Web](https://example.com)")} onOpenLink={openLink} />);
     fireEvent.click(await screen.findByRole("link", { name: "Guide" }));
-    expect(openLink).toHaveBeenCalledWith({ kind: "file", path: "notes/docs/guide.md" });
+    expect(openLink).toHaveBeenCalledWith({ kind: "file", path: "notes/docs/guide.md", scope: "same" });
+    fireEvent.click(screen.getByRole("link", { name: "Home" }));
+    expect(openLink).toHaveBeenCalledWith({ kind: "file", path: "notes.md", scope: "home" });
     fireEvent.click(screen.getByRole("link", { name: "Web" }));
     expect(openLink).toHaveBeenCalledWith({ kind: "web", url: "https://example.com/" });
     expect(resolvePreviewLink("../../escape.md", { kind: "home", path: "notes/readme.md" })).toBeNull();
