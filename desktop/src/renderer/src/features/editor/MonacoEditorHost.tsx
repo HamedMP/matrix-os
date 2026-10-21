@@ -1,3 +1,5 @@
+import { getThemeVariant, MONO_FONT_OPTIONS } from "@matrix-os/brand/themes";
+import { monacoTheme } from "@matrix-os/brand/themes/editor";
 import { useEffect, useRef, useState } from "react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { Button } from "../../design/primitives";
@@ -58,8 +60,12 @@ export default function MonacoEditorHost({
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
-  const appearanceMode = useAppearance((state) => state.mode);
+  const appearanceMode = useAppearance((state) => state.resolvedMode);
   const appearanceThemeId = useAppearance((state) => state.themeId);
+  const customTheme = useAppearance((state) => state.customTheme);
+  const monoFontId = useAppearance((state) => state.monoFontId);
+  const appearanceRef = useRef({ appearanceThemeId, appearanceMode, customTheme, monoFontId });
+  useEffect(() => { appearanceRef.current = { appearanceThemeId, appearanceMode, customTheme, monoFontId }; }, [appearanceThemeId, appearanceMode, customTheme, monoFontId]);
   const hostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const fileRef = useRef<OpenedFile | null>(null);
@@ -124,12 +130,14 @@ export default function MonacoEditorHost({
     setMonacoState("pending");
     void import("monaco-editor").then((monaco) => {
       if (!current) return;
+      const { appearanceThemeId, appearanceMode, customTheme, monoFontId } = appearanceRef.current;
       model = monaco.editor.createModel(contentRef.current, languageForPath(path));
+      monaco.editor.defineTheme("matrix-appearance", monacoTheme(getThemeVariant(appearanceThemeId, appearanceMode, customTheme), appearanceMode === "dark"));
       const editor = monaco.editor.create(host, {
         model,
         automaticLayout: true,
         minimap: { enabled: true, maxColumn: 80 },
-        fontFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontFamily: MONO_FONT_OPTIONS.find(font => font.id === monoFontId)!.family,
         fontSize: 13,
         lineHeight: 20,
         lineNumbersMinChars: 3,
@@ -139,7 +147,7 @@ export default function MonacoEditorHost({
         smoothScrolling: true,
         wordWrap: "off",
         padding: { top: 10, bottom: 10 },
-        theme: monacoThemeForDocument(document.documentElement),
+        theme: "matrix-appearance",
         ariaLabel: `Edit ${path}`,
       });
       editor.onDidChangeModelContent(() => {
@@ -164,7 +172,20 @@ export default function MonacoEditorHost({
       editorRef.current = null;
       model?.dispose();
     };
-  }, [appearanceMode, appearanceThemeId, documentRevision, loadState, path, supportsMonaco]);
+  }, [documentRevision, loadState, path, supportsMonaco]);
+
+  useEffect(() => {
+    let current = true;
+    const editor = editorRef.current;
+    if (!editor || monacoState !== 'ready') return;
+    editor.updateOptions({ fontFamily: MONO_FONT_OPTIONS.find(font => font.id === monoFontId)!.family });
+    void import('monaco-editor').then(monaco => {
+      if (!current) return;
+      monaco.editor.defineTheme('matrix-appearance', monacoTheme(getThemeVariant(appearanceThemeId, appearanceMode, customTheme), appearanceMode === 'dark'));
+      monaco.editor.setTheme('matrix-appearance');
+    }).catch(error => console.warn('[desktop-editor] Theme update failed:', error instanceof Error ? error.name : typeof error));
+    return () => { current = false; };
+  }, [appearanceMode, appearanceThemeId, customTheme, monoFontId, monacoState]);
 
   useEffect(() => {
     if (!active) return;

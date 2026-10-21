@@ -1,3 +1,4 @@
+import { SessionStartBusyError, type SessionStartScope } from "./session-start-guard.js";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, opendir, realpath, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -23,7 +24,7 @@ type ProjectManager = Pick<ReturnType<typeof createProjectManager>, "getProject"
 type AgentSessionManager = Pick<
   ReturnType<typeof createAgentSessionManager>,
   "startSession" | "listSessions" | "getSession" | "sendInput" | "killSession"
->;
+> & Partial<Pick<ReturnType<typeof createAgentSessionManager>, "withSessionStart">>;
 type AgentSandbox = Pick<ReturnType<typeof createAgentSandbox>, "preflight" | "cleanup">;
 type SessionRuntimeBridge = Pick<ReturnType<typeof createSessionRuntimeBridge>, "registerSession">;
 type SessionAttachMode = "observe" | "owner";
@@ -348,105 +349,147 @@ export function createWorkspaceSessionOrchestrator(options: {
     }
   }
 
-  return {
-    async startSession(input: StartWorkspaceSessionInput): Promise<
-      { ok: true; status: number; session: WorkspaceSessionView } | Failure
-    > {
-      const request: StartWorkspaceSessionRequest =
-        input.request.kind === "agent" && input.request.agent === "claude"
-        ? { ...input.request, approvalPolicy: input.request.approvalPolicy ?? "on_request" }
-        : input.request;
-      const sessionId = request.sessionId ?? idGenerator();
-      if (!/^sess_[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return failure(400, "invalid_session_id", "Session identifier is invalid");
-      let sandbox: AgentLaunchSandbox | undefined;
-      let effectiveRequest = request;
-      let ownsRootWorkspace = false;
-      let reuseCodexScratch = false;
+  type StartResult = { ok: true; status: number; session: WorkspaceSessionView } | Failure;
+  type ManagerScope = SessionStartScope<unknown, StartResult>;
+  async function startPrepared(input: StartWorkspaceSessionInput, scope?: ManagerScope): Promise<StartResult> {
+    const request: StartWorkspaceSessionRequest =
+      input.request.kind === "agent" && input.request.agent === "claude"
+      ? { ...input.request, approvalPolicy: input.request.approvalPolicy ?? "on_request" }
+      : input.request;
+    const sessionId = request.sessionId ?? idGenerator();
+    if (!/^sess_[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return failure(400, "invalid_session_id", "Session identifier is invalid");
+    const cleanPrelaunchFailure = scope?.cleanFailure ?? (async <T extends object>(result: T) => result);
+    let sandbox: AgentLaunchSandbox | undefined;
+    let effectiveRequest = request;
+    let ownsRootWorkspace = false;
+    let reuseCodexScratch = false;
 
-      // Only the internal, owner-scoped native-thread recovery path may reuse
-      // sandbox files. Ordinary starts retain exclusive-create semantics.
-      if (request.agent === "codex" && request.providerThreadId
-        && input.ownerScope.type === "user"
-        && input.recoveryThreadId === `thread_${sessionId.slice(5)}`) {
-        const previous = await options.agentSessionManager.getSession(sessionId);
-        reuseCodexScratch = previous.ok && previous.session.id === sessionId
-          && previous.session.ownerId === input.ownerScope.id
-          && previous.session.kind === "agent" && previous.session.agent === "codex"
-          && previous.session.projectSlug === request.projectSlug
-          && previous.session.worktreeId === request.worktreeId;
-      }
+    // Only the internal, owner-scoped native-thread recovery path may reuse
+    // sandbox files. Ordinary starts retain exclusive-create semantics.
+    if (request.agent === "codex" && request.providerThreadId
+      && input.ownerScope.type === "user"
+      && input.recoveryThreadId === `thread_${sessionId.slice(5)}`) {
+      const previous = await options.agentSessionManager.getSession(sessionId);
+      reuseCodexScratch = previous.ok && previous.session.id === sessionId
+        && previous.session.ownerId === input.ownerScope.id
+        && previous.session.kind === "agent" && previous.session.agent === "codex"
+        && previous.session.projectSlug === request.projectSlug
+        && previous.session.worktreeId === request.worktreeId;
+    }
 
-      if (request.agent === "codex" || request.agent === "claude") {
-        let workspacePath: string;
-        let resolvedWorktreeId: string | undefined;
-        if (request.projectSlug) {
-          const workspaceRoot = await resolveAgentWorkspaceRoot(
-            options.projectManager,
-            options.worktreeManager,
-            input.ownerScope,
-            request.projectSlug,
-            request.worktreeId,
+    if (request.agent === "codex" || request.agent === "claude") {
+      let workspacePath: string;
+      let resolvedWorktreeId: string | undefined;
+      if (request.projectSlug) {
+        const workspaceRoot = await resolveAgentWorkspaceRoot(
+          options.projectManager,
+          options.worktreeManager,
+          input.ownerScope,
+          request.projectSlug,
+          request.worktreeId,
+        );
+        if (!workspaceRoot.ok) return cleanPrelaunchFailure(workspaceRoot);
+        workspacePath = workspaceRoot.path;
+        resolvedWorktreeId = workspaceRoot.worktreeId;
+      } else {
+        if (!prepareRootWorkspace) {
+          return cleanPrelaunchFailure(failure(503, "sandbox_unavailable", "Agent sandbox is unavailable"));
+        }
+        try {
+          const prepared = await prepareRootWorkspace(sessionId, async () => {
+            if (input.ownerScope.type !== "user" || input.recoveryThreadId !== `thread_${sessionId.slice(5)}`) return false;
+            const prior = await options.agentSessionManager.getSession(sessionId);
+            return prior.ok && prior.session.ownerId === input.ownerScope.id
+              && prior.session.kind === "agent" && prior.session.agent === request.agent
+              && !prior.session.projectSlug;
+          });
+          workspacePath = prepared.path;
+          ownsRootWorkspace = prepared.created;
+        } catch (error: unknown) {
+          console.warn(
+            "[workspace-session-orchestrator] Root Chat workspace setup failed:",
+            error instanceof Error ? error.name : "UnknownError",
           );
-          if (!workspaceRoot.ok) return workspaceRoot;
-          workspacePath = workspaceRoot.path;
-          resolvedWorktreeId = workspaceRoot.worktreeId;
-        } else {
-          if (!prepareRootWorkspace) {
-            return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable");
-          }
-          try {
-            const prepared = await prepareRootWorkspace(sessionId, async () => {
-              if (input.ownerScope.type !== "user" || input.recoveryThreadId !== `thread_${sessionId.slice(5)}`) return false;
-              const prior = await options.agentSessionManager.getSession(sessionId);
-              return prior.ok && prior.session.ownerId === input.ownerScope.id
-                && prior.session.kind === "agent" && prior.session.agent === request.agent
-                && !prior.session.projectSlug;
-            });
-            workspacePath = prepared.path;
-            ownsRootWorkspace = prepared.created;
-          } catch (error: unknown) {
-            console.warn(
-              "[workspace-session-orchestrator] Root Chat workspace setup failed:",
-              error instanceof Error ? error.name : "UnknownError",
-            );
-            return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable");
-          }
+          return cleanPrelaunchFailure(failure(503, "sandbox_unavailable", "Agent sandbox is unavailable"));
         }
-        effectiveRequest = {
-          ...request,
-          ...(resolvedWorktreeId ? { worktreeId: resolvedWorktreeId } : {}),
-          ...(!request.projectSlug ? { workspaceRoot: workspacePath } : {}),
-        };
-        const preflight = await resolveAgentSandbox({
-          agentSandbox: options.agentSandbox,
-          agent: request.agent,
-          request: effectiveRequest,
-          sessionId,
-          workspacePath,
-          reuseCodexScratch,
-        });
-        if (!preflight.ok) {
-          if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
-          return preflight;
-        }
-        sandbox = preflight.sandbox;
       }
-
-      const result = await options.agentSessionManager.startSession({
-        ...effectiveRequest,
+      effectiveRequest = {
+        ...request,
+        ...(resolvedWorktreeId ? { worktreeId: resolvedWorktreeId } : {}),
+        ...(!request.projectSlug ? { workspaceRoot: workspacePath } : {}),
+      };
+      const preflight = await resolveAgentSandbox({
+        agentSandbox: options.agentSandbox,
+        agent: request.agent,
+        request: effectiveRequest,
         sessionId,
-        ownerId: input.ownerScope.id,
-        sandbox,
+        workspacePath,
+        reuseCodexScratch,
+      }).catch((error: unknown) => {
+        console.warn("[workspace-session-orchestrator] Sandbox preflight failed", error instanceof Error ? error.name : "UnknownError");
+        return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable");
       });
-      if (!result.ok) {
-        if (result.error.code === "runtime_ownership_retained") return result;
-        if (sandbox && !reuseCodexScratch) await cleanupSessionScratch(sessionId);
+      if (!preflight.ok) {
         if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
-        return result;
+        return cleanPrelaunchFailure(preflight);
       }
+      sandbox = preflight.sandbox;
+    }
 
-      await publishSessionStarted(result.session);
+    const result = await (scope?.startSession ?? options.agentSessionManager.startSession)({
+      ...effectiveRequest,
+      sessionId,
+      ownerId: input.ownerScope.id,
+      sandbox,
+    });
+    if (!result.ok) {
+      if (result.error.code === "runtime_ownership_retained") return result;
+      if (sandbox && !reuseCodexScratch) await cleanupSessionScratch(sessionId);
+      if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
       return result;
+    }
+
+    await publishSessionStarted(result.session);
+    return result;
+  }
+  async function withSessionStart<T>(ownerId: string, sessionId: string,
+    operation: (scope: SessionStartScope<StartWorkspaceSessionInput, StartResult>) => Promise<T>): Promise<T> {
+    const prepare = async (scope?: ManagerScope) => {
+      let active = true;
+      let dispatched = false;
+      let preparedTask: Promise<StartResult> | undefined;
+      try {
+        return await operation({
+          cleanFailure: async (result, stillAllowed) => !scope ? result : scope.cleanFailure(result,
+            () => active && !dispatched && (!stillAllowed || stillAllowed())),
+          startSession: async input => {
+            if (!active || dispatched || input.ownerScope.id !== ownerId || input.request.sessionId !== sessionId) throw new SessionStartBusyError();
+            dispatched = true;
+            preparedTask = startPrepared(input, scope);
+            return preparedTask;
+          },
+        });
+      } finally {
+        active = false;
+        if (preparedTask) await Promise.allSettled([preparedTask]);
+      }
+    };
+    return options.agentSessionManager.withSessionStart
+      ? options.agentSessionManager.withSessionStart(ownerId, sessionId, prepare) : prepare();
+  }
+  return {
+    withSessionStart,
+    async startSession(input: StartWorkspaceSessionInput): Promise<StartResult> {
+      const sessionId = input.request.sessionId ?? idGenerator();
+      if (!/^sess_[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return failure(400, "invalid_session_id", "Session identifier is invalid");
+      try {
+        return await withSessionStart(input.ownerScope.id, sessionId, scope => scope.startSession({
+          ...input, request: { ...input.request, sessionId },
+        }));
+      } catch (error: unknown) {
+        if (error instanceof SessionStartBusyError) return failure(503, "runtime_ownership_retained", "Session runtime is unavailable");
+        throw error;
+      }
     },
 
     async listSessions(input: ListSessionsInput = {}) {

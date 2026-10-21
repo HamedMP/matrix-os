@@ -1,11 +1,11 @@
-import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
+import { KeyboardAvoidingView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
 import { Composer, type ComposerProps } from "@/components/chat/Composer";
 import { MessageList, type MessageListProps } from "@/components/chat/MessageList";
 import { UnsentMessageActionsProvider, type UnsentMessageActions } from "@/components/chat/unsent-message-actions";
-import { ListRowSkeletonStack } from "@/components/shell/Controls";
+import { ChatMessagesSkeleton } from "@/components/chat/ChatLoadState";
 import { AgentMascot, BackIcon, Button, InfoIcon, TopBar, TopBarButton } from "@/components/ui";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
@@ -56,8 +56,6 @@ export function AgentChatScreen({
 }: AgentChatScreenProps) {
   const insets = useSafeAreaInsets();
   const keyboardOpen = useKeyboardVisible();
-  // Android shrinks the window for the keyboard, which then covers this space.
-  const homeIndicatorSpace = Platform.OS === "android" && keyboardOpen ? 0 : insets.bottom;
 
   return (
     // With no tab bar below, the screen ends at the bottom of the window, so
@@ -66,7 +64,7 @@ export function AgentChatScreen({
     // only the rest of its height is made room for.
     <KeyboardAvoidingView
       style={[styles.screen, { paddingTop: insets.top }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior="padding"
       keyboardVerticalOffset={-insets.bottom}
     >
       <TopBar
@@ -89,8 +87,10 @@ export function AgentChatScreen({
       />
       {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
       {state === "loading" ? (
-        <View testID="agent-chat-loading" style={styles.body}>
-          <ListRowSkeletonStack testID="agent-chat-skeleton-row" />
+        <View testID="agent-chat-loading" style={styles.loading}>
+          {/* The shapes of a short exchange, as the main chat shows while it loads,
+              inset like the messages that replace them. */}
+          <ChatMessagesSkeleton />
         </View>
       ) : state === "failed" ? (
         <View testID="agent-chat-failed" style={[styles.body, styles.failed]}>
@@ -112,7 +112,7 @@ export function AgentChatScreen({
           <Composer {...composer} placeholder={`Ask ${agent.name}…`} keyboardOpen={keyboardOpen} />
         </>
       )}
-      <View testID="agent-chat-bottom-inset" style={{ height: homeIndicatorSpace }} />
+      <View testID="agent-chat-bottom-inset" style={{ height: insets.bottom }} />
     </KeyboardAvoidingView>
   );
 }
@@ -131,6 +131,9 @@ const styles = StyleSheet.create((theme) => ({
   body: {
     flex: 1,
     paddingHorizontal: theme.v2.space[20],
+  },
+  loading: {
+    flex: 1,
   },
   failed: {
     alignItems: "center",

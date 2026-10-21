@@ -248,6 +248,48 @@ describe('platform/stripe-billing', () => {
     });
   });
 
+  it('expires a checkout session and returns only the authoritative lifecycle projection', async () => {
+    const sessionsExpire = vi.fn().mockResolvedValue({
+      status: 'expired',
+      url: null,
+      client_reference_id: 'user_123',
+      metadata: { matrix_region_slug: 'region_nbg1' },
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ checkout: { sessions: { expire: sessionsExpire } } }),
+    });
+
+    await expect(client.expireCheckoutSession?.('cs_open')).resolves.toEqual({
+      status: 'expired',
+      url: null,
+      clerkUserId: 'user_123',
+      priceId: null,
+      regionSlug: 'region_nbg1',
+    });
+    expect(sessionsExpire).toHaveBeenCalledWith('cs_open');
+  });
+
+  it('reconciles an ambiguous expiry against Stripe before releasing local state', async () => {
+    const sessionsExpire = vi.fn().mockRejectedValue(new Error('timeout'));
+    const sessionsRetrieve = vi.fn().mockResolvedValue({
+      status: 'complete',
+      url: null,
+      client_reference_id: 'user_123',
+      metadata: { matrix_region_slug: 'region_fsn1' },
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ checkout: { sessions: { expire: sessionsExpire, retrieve: sessionsRetrieve } } }),
+    });
+
+    await expect(client.expireCheckoutSession?.('cs_raced')).resolves.toMatchObject({
+      status: 'complete',
+      clerkUserId: 'user_123',
+    });
+    expect(sessionsRetrieve).toHaveBeenCalledWith('cs_raced');
+  });
+
   it('retrieves the authoritative recurring amount for legacy subscriptions', async () => {
     const pricesRetrieve = vi.fn().mockResolvedValue({
       id: 'price_legacy_builder_monthly',

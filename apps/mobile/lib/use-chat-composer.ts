@@ -20,7 +20,7 @@ import {
   type SentAttachmentUris,
 } from "@/lib/chat-attachments";
 import { chatDraftKey, moveChatDraft, writeChatDraft, type ChatDrafts } from "@/lib/chat-drafts";
-import { warningHaptic } from "@/lib/haptics";
+import { tapHaptic, warningHaptic } from "@/lib/haptics";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import { canonicalChatRequestId } from "@/lib/requests";
 
@@ -330,6 +330,8 @@ export function useChatComposer({
 
   const dispatch = useCallback((outgoing: Outgoing, fromComposer: boolean) => {
     if (!selection || !turnModes) return;
+    // Felt as the message leaves, before anything has been heard back.
+    tapHaptic();
     const { text, attachments: sent, chatRequestId, turnRequestId } = outgoing;
     const optimisticId = `optimistic-${turnRequestId}`;
     // The send's callbacks land later, possibly after a switch to another

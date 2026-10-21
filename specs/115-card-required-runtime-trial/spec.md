@@ -7,6 +7,11 @@
 
 ## Summary
 
+**Superseded in part:** `specs/631-starter-trial-retention/spec.md` adds the
+14-day Starter offer (Builder/Max remain three days) and an operator-reviewed
+expired-trial deletion policy. Earlier retention promises require separate
+notice; this does not retroactively enroll existing machines.
+
 Matrix offers one Stripe-native subscription trial for an account's first primary hosted computer. The product default is three days; operators may set `MATRIX_CARD_TRIAL_DAYS` to an integer from 1 through 30 for a controlled rollout. Stripe Checkout collects a card before Matrix provisions the VPS, charges $0 at trial creation, and automatically attempts the selected Starter, Builder, or Max price when Stripe's authoritative `trial_end` arrives. Checkout redirects never grant access; signed Stripe subscription and invoice webhooks project the entitlement used by provisioning and routing.
 
 This specification supersedes the "no trials" requirements in `specs/084-stripe-runtime-plans/spec.md`. It also narrows that specification's dynamic-payment-method rule: trial Checkout is card-only and always collects a payment method, while paid and additional-computer Checkout continues to use Stripe's configured dynamic methods.

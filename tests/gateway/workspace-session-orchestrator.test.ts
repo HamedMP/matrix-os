@@ -1,3 +1,4 @@
+import { isSessionStartClean } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { access, mkdir, mkdtemp, rm, symlink, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -83,6 +84,30 @@ describe("workspace session orchestrator", () => {
     };
   }
 
+  it.each(["root", "sandbox", "sandbox_throw", "project"] as const)("does not invent proof for %s prelaunch failure without a manager reservation", async phase => {
+    const d = deps();
+    d.agentSessionManager.getSession.mockResolvedValue({ ok: false, status: 404, error: { code: "not_found" } } as never);
+    if (phase === "sandbox_throw") d.agentSandbox.preflight.mockRejectedValue(new Error("preflight failed"));
+    if (phase === "sandbox") d.agentSandbox.preflight.mockResolvedValue({ ok: false, status: 503, error: { code: "sandbox_unavailable", message: "Unavailable" } } as never);
+    if (phase === "project") d.worktreeManager.listWorktrees.mockResolvedValue({ ok: true, worktrees: [] });
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d, idGenerator: () => "sess_clean_prelaunch" });
+    const result = await orchestrator.startSession({ ownerScope: { type: "user", id: "user_workspace" },
+      request: { kind: "agent", agent: "codex", ...(phase !== "root" ? { projectSlug: "repo", worktreeId: worktree.id } : {}) },
+    });
+    expect(result.ok).toBe(false);
+    expect(d.agentSessionManager.startSession).not.toHaveBeenCalled();
+    expect(isSessionStartClean(result, "user_workspace", "sess_clean_prelaunch")).toBe(false);
+    expect(isSessionStartClean({ ...result }, "user_workspace", "sess_clean_prelaunch")).toBe(false);
+  });
+  it.each(["present", "unavailable"] as const)("retains unknown startup ownership when session observation is %s", async state => {
+    const d = deps();
+    if (state === "unavailable") d.agentSessionManager.getSession.mockResolvedValue({ ok: false, status: 503, error: { code: "unavailable" } } as never);
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d, idGenerator: () => "sess_unconfirmed" });
+    const result = await orchestrator.startSession({ ownerScope: { type: "user", id: "user_workspace" }, request: { kind: "agent", agent: "codex" } });
+    expect(result.ok).toBe(false);
+    expect(d.agentSessionManager.startSession).not.toHaveBeenCalled();
+    expect(isSessionStartClean(result, "user_workspace", "sess_unconfirmed")).toBe(false);
+  });
   it("starts codex sessions with sandbox preflight, owner scope, and a session event", async () => {
     const d = deps();
     const orchestrator = createWorkspaceSessionOrchestrator({

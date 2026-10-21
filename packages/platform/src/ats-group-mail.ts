@@ -36,8 +36,34 @@ export async function normalizeGroupMail(raw: Uint8Array, receivedAt: string, ar
   });
 }
 
-function htmlMailText(html:string){
- return html.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi,'').replace(/<(?:br|\/p|\/div|\/li|\/tr)\b[^>]*>/gi,'\n').replace(/<[^>]*>/g,'')
+function htmlMailText(html: string) {
+  // Plain text only. Each tag is consumed once; an absent raw close is searched
+  // at most once per raw tag kind, even for arbitrarily many unmatched openings.
+  let output = '';
+  let copiedUntil = 0;
+  let opening = html.indexOf('<');
+  const missingClose = { script: false, style: false };
+  while (opening !== -1) {
+    const closing = html.indexOf('>', opening + 1);
+    if (closing === -1) break;
+    const markup = html.slice(opening + 1, closing);
+    const rawName = /^(script|style)(?=[\s/]|$)/i.exec(markup)?.[1]?.toLowerCase();
+    const raw = rawName === 'script' || rawName === 'style' ? rawName : null;
+    let consumed = closing + 1;
+    if (raw && !missingClose[raw]) {
+      const endTag = new RegExp(`</${raw}(?=[\\s/>])`, 'gi');
+      endTag.lastIndex = consumed;
+      const end = endTag.exec(html);
+      const endAt = end ? html.indexOf('>', endTag.lastIndex) : -1;
+      if (endAt !== -1) consumed = endAt + 1;
+      else missingClose[raw] = true;
+    }
+    const lineBreak = /^(?:br|\/(?:p|div|li|tr))\b/i.test(markup) ? '\n' : '';
+    output += html.slice(copiedUntil, opening) + lineBreak;
+    copiedUntil = consumed;
+    opening = html.indexOf('<', consumed);
+  }
+  return (output + html.slice(copiedUntil))
   .replace(/&#(x[0-9a-f]+|\d+);/gi,(_,code:string)=>{const point=code.toLowerCase().startsWith('x')?parseInt(code.slice(1),16):parseInt(code,10);return point<=0x10ffff?String.fromCodePoint(point):'�';})
   .replace(/&(amp|lt|gt|quot|apos|nbsp);/g,(_,name:string)=>({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",nbsp:' '}[name]||''));
 }

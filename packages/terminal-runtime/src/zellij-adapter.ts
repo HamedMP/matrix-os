@@ -20,6 +20,7 @@ import {
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
 import { terminalCommandStateFromPanes, type TerminalCommandState } from "./terminal-command-state.js";
+import { terminalCommandResultFromPanes, type TerminalCommandResult } from './terminal-command-state.js';
 import { ArchiveTabInventorySchema, ArchivePaneInventorySchema, archivedTabRuntimeIdentity } from "./terminal-ended-tab-archive.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
@@ -571,6 +572,15 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   }
 
   async getCommandState(sessionNameInput: string, tabIdInput: number, paneIdInput: string): Promise<TerminalCommandState> {
+    return this.readCommandObservation(sessionNameInput, tabIdInput, paneIdInput, terminalCommandStateFromPanes, 'unknown');
+  }
+
+  async getCommandResult(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandResult> {
+    return this.readCommandObservation(sessionName, tabId, paneId, terminalCommandResultFromPanes, { state: 'unknown' });
+  }
+
+  private async readCommandObservation<T>(sessionNameInput: string, tabIdInput: number, paneIdInput: string,
+    project: (value: unknown, tabId: number, paneId: string) => T, unavailable: T): Promise<T> {
     const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
     const tabId = z.number().int().min(0).parse(tabIdInput);
     const paneId = z.string().regex(PANE_ID).parse(paneIdInput);
@@ -579,10 +589,10 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
         ["--session", sessionName, "action", "list-panes", "--all", "--json"], binaryPath,
         TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
       );
-      return terminalCommandStateFromPanes(JSON.parse(output), tabId, paneId);
+      return project(JSON.parse(output), tabId, paneId);
     } catch (error) {
       console.warn("[terminal-runtime] command state unavailable", error instanceof Error ? error.name : "unknown_error");
-      return "unknown";
+      return unavailable;
     }
   }
 

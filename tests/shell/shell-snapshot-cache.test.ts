@@ -92,6 +92,18 @@ describe("shell snapshot cache", () => {
     );
   });
 
+  it("retains only normalized appearance preferences", () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    saveShellSnapshot(scope, { theme: { ...freshSnapshot.theme, mode: "dark", appearance: {
+      mode: "system", themeId: "unknown-theme", fontId: "unknown-font", monoFontId: "unknown-font", customTheme: null,
+      ignored: "x".repeat(10_000),
+    } } } as never, storage);
+    expect(loadShellSnapshot(scope, storage)?.theme?.appearance).toEqual({
+      mode: "system", themeId: "matrix", fontId: "geist", monoFontId: "jetbrains", customTheme: null,
+    });
+    expect(storage.getItem(scope!.storageKey)).not.toContain("ignored");
+  });
+
   it("preserves an explicitly empty Desktop icon layout", () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();

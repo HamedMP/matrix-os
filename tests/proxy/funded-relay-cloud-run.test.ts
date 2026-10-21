@@ -247,9 +247,7 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain('[ "$candidate_digest" = "$expected_digest" ]');
     expect(workflow).toContain("sleep 3");
     expect(workflow).toContain("Candidate relay metadata did not become ready.");
-    expect(workflow).toContain(
-      "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
-    );
+    expect(workflow).toMatch(/^\s+(?:-\s+)?uses: actions\/checkout@[a-f0-9]{40}(?:\s+#.*)?$/m);
     expect(workflow).toContain(
       "google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3",
     );

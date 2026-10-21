@@ -6,10 +6,11 @@ const mockFetchMobileJourney = jest.fn();
 let mockHostedGateway = true;
 let mockGatewayUrl = "https://example.test";
 let mockSignedInUserId: string | null = "user_a";
+let mockSignedIn = true;
 
 jest.mock("expo-router", () => ({ useRouter: () => ({ replace: mockReplace }) }));
 jest.mock("@clerk/clerk-expo", () => ({
-  useAuth: () => ({ isSignedIn: true, userId: "user_a", getToken: mockGetToken, signOut: jest.fn() }),
+  useAuth: () => ({ isSignedIn: mockSignedIn, userId: "user_a", getToken: mockGetToken, signOut: jest.fn() }),
   getClerkInstance: () => ({ user: mockSignedInUserId ? { id: mockSignedInUserId } : null }),
 }));
 jest.mock("@/lib/storage", () => ({
@@ -44,6 +45,7 @@ beforeEach(async () => {
   mockHostedGateway = true;
   mockGatewayUrl = "https://example.test";
   mockSignedInUserId = "user_a";
+  mockSignedIn = true;
   await AsyncStorage.clear();
   jest.spyOn(console, "warn").mockImplementation(() => undefined);
 });
@@ -183,4 +185,12 @@ it("enters a self-hosted computer without asking for a journey", async () => {
 
   expect(mockReplace).toHaveBeenCalledWith("/(drawer)");
   expect(mockFetchMobileJourney).not.toHaveBeenCalled();
+});
+
+it("waits on the startup screen while it looks for a self-hosted computer, signed out", async () => {
+  mockSignedIn = false;
+  render(<Index />);
+
+  expect(screen.getByTestId("startup-screen")).toBeTruthy();
+  await flush();
 });

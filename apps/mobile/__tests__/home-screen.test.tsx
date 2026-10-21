@@ -5,11 +5,15 @@ import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
 
 import * as mockContextMenu from "./context-menu-test-utils";
-import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
+import ChatScreenRoute from "../app/(drawer)/(tabs)/(chats)/index";
+import { ActiveChatProvider } from "../components/chat/active-chat";
 import { Icon } from "../components/ui/Icon";
 import { SidePanelIcon } from "../components/ui/icons";
 
 import { menuItem } from "./context-menu-test-utils";
+
+// The Chats stack's layout holds the open chat's state above its screens.
+const ChatScreen = () => <ActiveChatProvider><ChatScreenRoute /></ActiveChatProvider>;
 
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: false }) }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));

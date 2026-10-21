@@ -6,6 +6,7 @@ type Engine = InstanceType<typeof KyselyPGlite>;
 const engines: Engine[] = [];
 beforeEach(() => { vi.resetModules(); vi.restoreAllMocks(); });
 afterEach(async () => {
+  vi.clearAllMocks();
   vi.restoreAllMocks();
   for (const engine of engines.splice(0)) if (!engine.client.closed) await engine.client.close();
 });
