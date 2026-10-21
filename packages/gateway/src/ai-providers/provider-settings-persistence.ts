@@ -2,6 +2,7 @@ import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:f
 import { basename, dirname } from "node:path";
 import { join } from "node:path";
 import {
+  MATRIX_CHATGPT_PLAN_INSTANCE_ID,
   ProviderAccentColorSchema,
   ProviderConnectionAttemptSchema,
   ProviderGatewayPolicySchema,
@@ -27,6 +28,8 @@ export const HarnessConfigurationSchema = z.object({
   displayName: z.string().min(1).max(120),
   accentColor: ProviderAccentColorSchema.nullable(),
   enabled: z.boolean(),
+  nativeAccountGeneration: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  nativeAccountConsentRevision: z.number().int().nonnegative().optional(),
   enablementOrigin: z.enum(["generated_default", "owner_configuration"]).optional(),
   selectedAccountId: SafeRefSchema.nullable(),
   accessSourceId: SafeRefSchema.nullable(),
@@ -181,8 +184,9 @@ function sourceForHarness(
   harness: ProviderHarnessKind,
   canonical: AiProviderSnapshotV3,
 ) {
+  // This source executes on its paired device, never through a native CLI profile.
   const candidates = canonical.accessSources.filter((source) =>
-    source.eligibleModelIds.some((modelId) => canonical.models.some((model) =>
+    source.id !== MATRIX_CHATGPT_PLAN_INSTANCE_ID && source.eligibleModelIds.some((modelId) => canonical.models.some((model) =>
       model.id === modelId && model.vendor === source.vendor
         && model.status !== "retired" && model.status !== "unavailable")));
   if (harness === "codex") {
@@ -278,7 +282,7 @@ function reconcileProviderSettingsConfiguration(
     const fallback = defaultHarnessConfiguration(driver, canonical, genericModelCatalog, now);
     const existing = config.harnesses.find((harness) => harness.driverId === driver.id);
     if (genericModelCatalog && existing?.enablementOrigin === "generated_default"
-      && (existing.harness === "pi" || existing.harness === "opencode" || existing.harness === "hermes")) {
+      && (existing.harness === "pi" || existing.harness === "opencode" || existing.harness === "hermes" || existing.harness === "openclaw")) {
       const native = generatedNativeHarnessConfiguration(driver, genericModelCatalog, now);
       // Bind an unconfigured generated default once. Fresh availability never
       // rewrites durable permission or replaces a previously usable native route.

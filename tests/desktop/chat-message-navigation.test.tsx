@@ -172,3 +172,16 @@ it("keeps file links mounted when navigation callbacks refresh", () => {
   expect(current).toHaveBeenCalledWith("src/App.tsx");
   expect(previous).not.toHaveBeenCalled();
 });
+
+it("preserves a bot workspace root when resolving and opening its app artifact", () => {
+  const resolveApp = vi.fn(() => ({ name: "Bot Chart" }));
+  const openApp = vi.fn(() => true);
+  const root = { kind: "bot_workspace" as const, botId: "bot_abcdefgh" };
+  render(<ConversationTranscript callbacks={{ copyText: vi.fn(), resolveApp, openApp }} turns={[{
+    id: "turn_bot", startedAt: 1, endedAt: 2, active: false, work: [], executionRoot: root,
+    final: { kind: "message", id: "assistant", role: "assistant", phase: "final", markdown: "`apps/chart`", copyText: "", timestamp: 2 },
+  }]} />);
+  fireEvent.click(screen.getByRole("button", { name: "Open app Bot Chart" }));
+  expect(resolveApp).toHaveBeenCalledWith("apps/chart", root);
+  expect(openApp).toHaveBeenCalledWith("apps/chart", root);
+});

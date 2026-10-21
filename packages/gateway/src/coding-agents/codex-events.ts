@@ -1,4 +1,5 @@
 import { codexToolOutput, coarseToolOutputText } from "./codex-tool-output.mjs";
+import { CODEX_FAILURE_REASONS, codexTerminalFailureReason, type CodexFailureReason } from "./codex-terminal-failure.mjs";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
@@ -169,6 +170,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     preview: AgentToolPreviewSchema.optional().catch(undefined),
     previewKind: z.enum(["command", "path", "text"]).optional().catch(undefined),
     detail: AgentToolDetailSchema.optional().catch(undefined),
+    protectedPreview: ProtectedToolOutputSchema.optional().catch(undefined),
   }).strict(),
   z.object({
     type: z.literal("matrix.codex.tool.output"),
@@ -181,6 +183,10 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.completed"),
     toolCallId: CodexItemIdSchema,
     outcome: z.enum(["success", "failed", "cancelled"]),
+    preview: AgentToolPreviewSchema.optional().catch(undefined),
+    previewKind: z.enum(["command", "path", "text"]).optional().catch(undefined),
+    detail: AgentToolDetailSchema.optional().catch(undefined),
+    protectedPreview: ProtectedToolOutputSchema.optional().catch(undefined),
   }).strict(),
 ]);
 
@@ -194,6 +200,7 @@ export interface CodexEventParseResult {
   events: AgentThreadEvent[];
   providerThreadId?: string;
   outcome?: "completed" | "failed" | "aborted";
+  failureReason?: CodexFailureReason;
   tokenUsage?: AiTokenUsage;
 }
 
@@ -321,6 +328,7 @@ function appServerRecordEvents(
       toolCallId: record.toolCallId,
       displayName: record.displayName,
       kind: record.kind,
+      ...(record.protectedPreview ? { protectedPreview: record.protectedPreview } : {}),
       ...(record.preview && record.previewKind ? { preview: record.preview, previewKind: record.previewKind } : {}),
       ...(record.detail ? { detail: record.detail } : {}),
     })];
@@ -338,6 +346,9 @@ function appServerRecordEvents(
     type: "tool.completed",
     toolCallId: record.toolCallId,
     outcome: record.outcome,
+    ...(record.preview && record.previewKind ? { preview: record.preview, previewKind: record.previewKind } : {}),
+    ...(record.detail ? { detail: record.detail } : {}),
+    ...(record.protectedPreview ? { protectedPreview: record.protectedPreview } : {}),
   })];
 }
 
@@ -494,7 +505,11 @@ export function parseCodexExecJsonLine(
     return { events: [], outcome: "completed", ...(tokenUsage ? { tokenUsage } : {}) };
   }
   if (codexEvent.type === "turn.aborted") return { events: [], outcome: "aborted" };
-  if (codexEvent.type === "turn.failed") return { events: [], outcome: "failed" };
+  if (codexEvent.type === "turn.failed") {
+    const parsedReason = z.enum(CODEX_FAILURE_REASONS).safeParse(codexEvent.failureReason);
+    const failureReason = parsedReason.success ? parsedReason.data : codexTerminalFailureReason(codexEvent.error);
+    return { events: [], outcome: "failed", ...(failureReason ? { failureReason } : {}) };
+  }
   if (codexEvent.type === "item.started") {
     return { events: startedItemEvents(context, codexEvent.item) };
   }

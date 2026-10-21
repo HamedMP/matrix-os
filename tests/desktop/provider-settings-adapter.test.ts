@@ -19,8 +19,9 @@ const checkedAt = "2026-08-30T10:00:00.000Z";
 const providerWorkspaceId = "tws_11111111111111111111111111111111";
 const providerTabId = "tt_22222222222222222222222222222222";
 const providerTerminalRef = `${providerWorkspaceId}:${providerTabId}`;
+const providerAuthSessionName = `provider-auth-${"0".repeat(50)}`;
 
-function providerTerminalWorkspaces(status: "running" | "exited" = "running") {
+function providerTerminalWorkspaces(status: "running" | "exited" = "running", name = "provider-login") {
   return {
     workspaces: [{
       id: providerWorkspaceId,
@@ -28,7 +29,7 @@ function providerTerminalWorkspaces(status: "running" | "exited" = "running") {
       tabs: [{
         id: providerTabId,
         revision: 1,
-        name: "provider-login",
+        name,
         cwd: "projects",
         status,
       }],
@@ -139,7 +140,7 @@ describe("desktop provider settings transport", () => {
       const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
       const transport = createDesktopProviderSettingsTransport(client);
       await transport.getSnapshot(new AbortController().signal);
-      expect(timeout).toHaveBeenLastCalledWith(15_000);
+      expect(timeout).toHaveBeenLastCalledWith(32_000);
       await client.get("/api/auth/status");
       expect(timeout).toHaveBeenLastCalledWith(10_000);
       await transport.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_hermes", enabled: false,
@@ -154,10 +155,10 @@ describe("desktop provider settings transport", () => {
     const abort = new AbortController();
 
     await expect(transport.getSnapshot(abort.signal)).resolves.toEqual(snapshot());
-    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true", {
+    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true", {
       maxBytes: 1024 * 1024,
       signal: abort.signal,
-      timeoutMs: 15_000,
+      timeoutMs: 32_000,
     });
   });
 
@@ -173,7 +174,7 @@ describe("desktop provider settings transport", () => {
     const transport = createDesktopProviderSettingsTransport(api({ post }));
     await expect(transport.mutate(mutation, new AbortController().signal))
       .resolves.toMatchObject({ kind: "snapshot", snapshot: { revision: 2 } });
-    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions?includeCapabilities=true", mutation, expect.objectContaining({
+    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeMatrixAnthropicConnection=true", mutation, expect.objectContaining({
       maxBytes: 1024 * 1024,
       signal: expect.any(AbortSignal),
     }));
@@ -314,14 +315,22 @@ describe("desktop provider connection actions", () => {
     expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it("scopes provider state to owner, runtime slot, host, and credential generation", () => {
-    expect(desktopProviderIdentityKey({
+  it("scopes provider state to owner user ID, runtime slot, host, and credential generation", () => {
+    const identity = {
       status: "signed-in",
       handle: "alice",
       platformHost: "https://app.matrix-os.com",
       runtimeSlot: "vm-2",
       authGeneration: 7,
-    })).toBe("signed-in|alice|https://app.matrix-os.com|vm-2|7");
+    } as const;
+    expect(desktopProviderIdentityKey({ ...identity, userId: "user_alice" }))
+      .toBe("signed-in|alice|user_alice|https://app.matrix-os.com|vm-2|7");
+    expect(desktopProviderIdentityKey({ ...identity, userId: "user_other" }))
+      .not.toBe(desktopProviderIdentityKey({ ...identity, userId: "user_alice" }));
+    expect(desktopProviderIdentityKey(identity))
+      .toBe("signed-in|alice|none|https://app.matrix-os.com|vm-2|7");
+    expect(desktopProviderIdentityKey({ ...identity, userId: null }))
+      .toBe(desktopProviderIdentityKey(identity));
   });
 
   it("opens and requests only the exact existing canonical Terminal tab without creating one", async () => {
@@ -341,13 +350,73 @@ describe("desktop provider connection actions", () => {
     expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
   });
 
-  it("rejects invalid, missing, or exited terminal refs without opening Terminal", async () => {
+  it("resolves a server-issued provider auth name to its unique existing Terminal ref", async () => {
+    const get = vi.fn().mockResolvedValue(providerTerminalWorkspaces("running", providerAuthSessionName));
+    await expect(openExistingProviderTerminalSession(
+      api({ get }), providerAuthSessionName,
+    )).resolves.toBe(true);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
+  });
+
+  it("rejects an ambiguous provider auth name without opening either Terminal", async () => {
+    const listing = providerTerminalWorkspaces("running", providerAuthSessionName);
+    listing.workspaces[0]!.tabs.push({
+      ...listing.workspaces[0]!.tabs[0]!, id: "tt_33333333333333333333333333333333",
+    });
+    await expect(openExistingProviderTerminalSession(
+      api({ get: vi.fn().mockResolvedValue(listing) }), providerAuthSessionName,
+    )).resolves.toBe(false);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
+  it("rejects invalid or exited terminal refs without opening Terminal", async () => {
     const get = vi.fn().mockResolvedValue(providerTerminalWorkspaces("exited"));
     const client = api({ get });
     await expect(openExistingProviderTerminalSession(client, "../../secret")).resolves.toBe(false);
     await expect(openExistingProviderTerminalSession(client, providerTerminalRef)).resolves.toBe(false);
     expect(useTabs.getState().tabs).toEqual([]);
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops looking for a missing provider terminal after a short bounded wait", async () => {
+    vi.useFakeTimers();
+    const get = vi.fn().mockResolvedValue({ workspaces: [] });
+    const opening = openExistingProviderTerminalSession(api({ get }), providerTerminalRef);
+    await vi.runAllTimersAsync();
+
+    await expect(opening).resolves.toBe(false);
+    expect(get).toHaveBeenCalledTimes(8);
+    expect(useTabs.getState().tabs).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("waits briefly for a newly created provider terminal to appear before opening it", async () => {
+    vi.useFakeTimers();
+    const get = vi.fn()
+      .mockResolvedValueOnce({ workspaces: [] })
+      .mockResolvedValueOnce(providerTerminalWorkspaces());
+    const opening = openExistingProviderTerminalSession(api({ get }), providerTerminalRef);
+    await vi.advanceTimersByTimeAsync(300);
+
+    await expect(opening).resolves.toBe(true);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
+    vi.useRealTimers();
+  });
+
+  it("stops waiting for a provider terminal when the desktop identity changes", async () => {
+    vi.useFakeTimers();
+    let current = true;
+    const get = vi.fn().mockImplementation(async () => {
+      current = false;
+      return { workspaces: [] };
+    });
+    await expect(openExistingProviderTerminalSession(
+      api({ get }), providerTerminalRef, () => current,
+    )).resolves.toBe(false);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(useTabs.getState().tabs).toEqual([]);
+    vi.useRealTimers();
   });
 
   it("continues an existing login while an ordinary Terminal poll is still pending", async () => {
@@ -534,5 +603,24 @@ describe("desktop provider connection actions", () => {
       openExternal,
     })).resolves.toBe(false);
     expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("quiet managed credit desktop transport", () => {
+  it.each([404, 405, 401, 403])("preserves HTTP%s classification through the actual API", async status => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response("unsupported or denied", { status }));
+    const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
+    const transport = createDesktopProviderSettingsTransport(client);
+    await expect(transport.getManagedCredit!(new AbortController().signal)).rejects.toMatchObject({ code: status === 404 || status === 405 ? "managed_credit_unsupported" : "managed_credit_unauthorized" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(fetchFn.mock.calls[0]?.[0]).toBe("https://runtime.example.test/api/ai/provider-settings/managed-credit");
+    expect(fetchFn.mock.calls[0]?.[1]).toMatchObject({ cache: "no-store" });
+  });
+  it("uses a bounded authenticated runtime read for a strict credit observation", async () => {
+    const { observation } = await import("../ui/provider-managed-credit-fixture");
+    const response = observation(); const get = vi.fn().mockResolvedValue(response);
+    const transport = createDesktopProviderSettingsTransport(api({ get })); const abort = new AbortController();
+    await expect(transport.getManagedCredit!(abort.signal)).resolves.toEqual(response);
+    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings/managed-credit", { maxBytes: 16 * 1024, signal: abort.signal, timeoutMs: 10_000, cache: "no-store", omitErrorBody: true });
   });
 });

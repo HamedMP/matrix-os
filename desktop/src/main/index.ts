@@ -1,10 +1,15 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
 import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
 import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
 import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization-drive-file-io";
 import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
+import { createNativeChatgptPlanService } from "./chatgpt-plan/service";
+import { createPlanVault } from "./chatgpt-plan/vault";
+import { createNavigationCache } from "./persistence/navigation-cache";
+import { registerNavigationCacheIpc } from "./ipc/navigation-cache";
+import { registerChatgptPlanIpc } from "./ipc/chatgpt-plan";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
 import { readDesktopBuildSource } from "./build-source";
@@ -50,6 +55,7 @@ import {
   updateHermesConfiguration,
 } from "./hermes/configuration-client";
 import { createNativeChatImportService } from "./files/local-chat-import";
+import { discoverLocalChats } from "./files/local-chat-discovery";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
@@ -65,9 +71,11 @@ import {
 import { windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
-import { safeExternalHttpUrl } from "./external-url";
+import { safeExternalHttpUrl, safeChatgptAuthorizationUrl } from "./external-url";
 import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./renderer-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
+import { createNativeAppCapabilityRequester, createNativeAppAiRoutesRequester } from "./embeds/native-app-capabilities";
+import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
@@ -85,6 +93,12 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
+let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
+let navigationCacheDrained = false;
+let drainingNavigationCache = false;
+let planDrained = false;
+let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
 let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
@@ -232,6 +246,7 @@ if (!gotLock) {
       const runtimeSelectionOrigin = process.env.MATRIX_API_ORIGIN
         ?? (platformHost === DEFAULT_PLATFORM_HOST ? "https://api.matrix-os.com" : platformHost);
 
+      let invalidateAppCapabilities: (() => void) | undefined;
       const auth = new AuthService({
         credentialStore,
         platformHost,
@@ -240,6 +255,10 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          invalidateAppCapabilities?.();
+          navigationCache?.observe(status);
+          chatgptPlan?.cancelAll();
+          chatgptPlan?.resume();
           fileDownloads?.cancelAll();
           organizationDriveTransfers?.cancelAll();
           localChatImports?.cancelAll();
@@ -254,6 +273,30 @@ if (!gotLock) {
         },
       });
       await auth.init();
+      navigationCache = createNavigationCache({ dir: userData, getStatus: () => auth.getStatus() });
+      registerNavigationCacheIpc(ipcMain, navigationCache, rawEvent => {
+        const event = rawEvent as IpcMainInvokeEvent;
+        const contents = mainWindow?.webContents;
+        const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+        return !!contents && !contents.isDestroyed() && event.sender === contents
+          && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
+      });
+      chatgptPlan = createNativeChatgptPlanService({
+        auth, vault: createPlanVault({ dir: userData, safeStorage }),
+        openBrowser: async url => {
+          const authorizationUrl = safeChatgptAuthorizationUrl(url);
+          if (!authorizationUrl) throw new Error("invalid authorization URL");
+          await shell.openExternal(authorizationUrl);
+        },
+      });
+      chatgptPlan.resume();
+      registerChatgptPlanIpc(ipcMain, chatgptPlan, rawEvent => {
+        const event = rawEvent as IpcMainInvokeEvent;
+        const contents = mainWindow?.webContents;
+        const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+        return !!contents && !contents.isDestroyed() && event.sender === contents
+          && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
+      });
 
       const rendererOrigin = desktopRendererUrl
         ? new URL(desktopRendererUrl).origin
@@ -276,12 +319,27 @@ if (!gotLock) {
       );
 
       const nativeAppBridge = new NativeAppBridge({
+        getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
+        resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
+        openApp: (app) => {
+          const status = auth.getStatus();
+          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
+          sendEvent("app:open", { ...app, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        },
         authGeneration: () => auth.getStatus().authGeneration,
         generate: (app, context) => {
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
           sendEvent("app:generate", { app, context, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
         },
+        capabilityRequest: createNativeAppCapabilityRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
+        aiRoutesRequest: createNativeAppAiRoutesRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
         aiRequest: createNativeAppAiRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
           getToken: () => auth.getToken(),
@@ -296,6 +354,7 @@ if (!gotLock) {
           getToken: () => auth.getToken(),
         }),
       });
+      invalidateAppCapabilities = () => nativeAppBridge.clear();
       nativeAppBridge.registerIpc(ipcMain);
 
       const embeds = new EmbedService({
@@ -389,12 +448,7 @@ if (!gotLock) {
         saveDownload: saveDriveDownloadFile,
       });
       localChatImports = createNativeChatImportService({auth, progress:progress=>sendEvent("runtime:chat-import-progress",progress),
-        chooseFile:async harness=>{
-          const root=harness==="codex"?process.env.CODEX_HOME??join(app.getPath("home"),".codex"):process.env.CLAUDE_CONFIG_DIR??join(app.getPath("home"),".claude");
-          const options={title:`Import ${harness==="codex"?"Codex":"Claude Code"} transcript`,defaultPath:join(root,harness==="codex"?"sessions":"projects"),filters:[{name:"Transcript",extensions:["jsonl"]}],properties:["openFile"] as Array<"openFile">};
-          const result=mainWindow&&!mainWindow.isDestroyed()?await dialog.showOpenDialog(mainWindow,options):await dialog.showOpenDialog(options);
-          return result.canceled?null:result.filePaths[0]??null;
-        }});
+        discoverSources:signal=>discoverLocalChats({home:app.getPath("home"),codexRoot:process.env.CODEX_HOME,claudeRoot:process.env.CLAUDE_CONFIG_DIR},signal)});
       registerLocalChatImportIpc(ipcMain,localChatImports,rawEvent=>{
         const event=rawEvent as IpcMainInvokeEvent;const contents=mainWindow?.webContents;
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
@@ -437,6 +491,9 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
+          navigationCache?.observe(auth.getStatus());
+          chatgptPlan?.cancelAll();
+          chatgptPlan?.resume();
           downloads.cancelAll();
           driveTransfers.cancelAll();
           localChatImports?.cancelAll();
@@ -576,6 +633,24 @@ if (!gotLock) {
   app.on("before-quit", (event) => {
     organizationDriveTransfers?.cancelAll();
     if (handleAnalyticsBeforeQuit?.(event)) return;
+    if (!navigationCacheDrained && navigationCache) {
+      event.preventDefault();
+      if (!drainingNavigationCache) {
+        drainingNavigationCache = true;
+        void navigationCache.drain().catch((error: unknown) => logMainError("navigation cache cleanup failed", error))
+          .finally(() => { navigationCacheDrained = true; app.quit(); });
+      }
+      return;
+    }
+    if (!planDrained && chatgptPlan) {
+      event.preventDefault();
+      if (!drainingPlan) {
+        drainingPlan = true;
+        void chatgptPlan.dispose().catch((error: unknown) => logMainError("subscription cleanup failed", error))
+          .finally(() => { planDrained = true; app.quit(); });
+      }
+      return;
+    }
     if(!importsDrained&&localChatImports){
       event.preventDefault();
       if(!drainingImports){drainingImports=true;void localChatImports.dispose().catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}

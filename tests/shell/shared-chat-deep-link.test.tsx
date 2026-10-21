@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import SharedChatPage from "../../shell/src/app/shared/chat/[scopeId]/page";
 import SharedTerminalPage from "../../shell/src/app/shared/terminal/[scopeId]/page";
+import SharedProjectPage from "../../shell/src/app/shared/project/[scopeId]/page";
 import SharedInvitationPage from "../../shell/src/app/shared/invitations/[invitationId]/page";
 import { MobileShell } from "../../shell/src/components/mobile/MobileShell";
 import {
@@ -126,6 +127,23 @@ describe("shared Terminal deep link", () => {
     await waitFor(() => expect(document.querySelector(
       `[data-shared-scope="${requestedScopeId}"]`,
     )).not.toBeNull());
+  });
+});
+
+describe("shared project deep link", () => {
+  it("opens the shared project inside the Chats app instead of a standalone page", async () => {
+    const page = await SharedProjectPage({ params: Promise.resolve({ scopeId }) });
+    const names = componentNames(page);
+
+    expect(names).toContain("ShellHome");
+    expect(names).not.toContain("CollaborationPage");
+    expect(JSON.stringify(page)).toContain(`"kind":"project","scopeId":"${scopeId}"`);
+  });
+
+  it("rejects malformed scope IDs at the server route boundary", async () => {
+    await expect(SharedProjectPage({
+      params: Promise.resolve({ scopeId: "../../not-a-scope" }),
+    })).rejects.toThrow("NEXT_NOT_FOUND");
   });
 });
 

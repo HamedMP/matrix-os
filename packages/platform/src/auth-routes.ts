@@ -181,6 +181,7 @@ function applyNoFrameHeaders(
   const scriptSrc = scriptNonce
     ? `'self' 'nonce-${scriptNonce}' https://clerk.matrix-os.com`
     : `'self' https://clerk.matrix-os.com`;
+  const googleTagSrc = ' https://www.googletagmanager.com';
   const captchaSrc = options.allowClerkCaptcha
     ? ' https://challenges.cloudflare.com'
     : '';
@@ -190,7 +191,7 @@ function applyNoFrameHeaders(
   const styleSrc = `'self' 'unsafe-inline' https://fonts.googleapis.com`;
   c.header(
     'Content-Security-Policy',
-    `frame-ancestors 'none'; script-src ${scriptSrc}${captchaSrc};${captchaDirectives} style-src ${styleSrc}; font-src 'self' https://fonts.gstatic.com; object-src 'none'; base-uri 'none'`,
+    `frame-ancestors 'none'; script-src ${scriptSrc}${googleTagSrc}${captchaSrc};${captchaDirectives} style-src ${styleSrc}; font-src 'self' https://fonts.gstatic.com; object-src 'none'; base-uri 'none'`,
   );
 }
 
@@ -254,6 +255,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         clerkUserId,
         handle,
         gatewayUrl,
+        sessionProvenance: 'clerk-device',
         runtimeSlot: runtimeSlot ?? machine?.runtimeSlot,
       });
       // Best-effort display profile; never let it break sign-in.

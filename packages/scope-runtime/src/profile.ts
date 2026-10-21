@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import {
   SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION,
   SCOPE_RUNTIME_CODEX_HARNESS_VERSION,
-} from "./worker.js";
+} from "./worker-common.js";
 
 export const SCOPE_RUNTIME_PROFILE_ID = "scope-runtime-chat-v1";
 export const SCOPE_RUNTIME_PROFILE_VERSION = 2;

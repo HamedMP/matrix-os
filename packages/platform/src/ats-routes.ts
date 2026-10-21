@@ -21,6 +21,7 @@ import {
 import { ATS_DISPOSITIONS, ATS_STAGES } from './ats-types.js';
 import type { AtsDB } from './ats-db.js';
 import { timingSafeTokenEquals } from './platform-token.js';
+import { createAtsMailRoutes } from './ats-mail-routes.js';
 
 const APPLICATION_BODY_LIMIT = 6 * 1024 * 1024;
 const RESUME_SIZE_LIMIT = 5 * 1024 * 1024;
@@ -67,6 +68,7 @@ const TaskSchema = z.object({
 });
 const MetadataSchema = z.object({
   baseRevision: z.number().int().positive(),
+  roleSlug: z.string().trim().min(1).max(200).optional(),
   ownerId: z.string().trim().min(1).max(200).nullable(),
   tags: z.array(z.string().trim().min(1).max(50)).max(20).transform((tags) => [...new Set(tags)]),
   nextActionAt: z.iso.datetime().nullable(),
@@ -131,6 +133,7 @@ export function createAtsRoutes(options: {
   db: AtsDB;
   ingestSecret: string;
   adminSecret: string;
+  mailSecret?: string;
   allowedRoleSlugs: readonly string[];
   bookingBaseUrl?: string;
   publicSiteUrl?: string;
@@ -241,6 +244,7 @@ export function createAtsRoutes(options: {
     c.header('Cache-Control', 'no-store, private');
     return next();
   });
+  app.route('/', createAtsMailRoutes({ db: options.db, mailSecret: options.mailSecret ?? '', allowedRoleSlugs: options.allowedRoleSlugs }));
 
   app.get('/api/ats/admin/applications', async (c) => {
     const query = z.object({
@@ -292,6 +296,9 @@ export function createAtsRoutes(options: {
     const id = z.uuid().safeParse(c.req.param('id'));
     const body = await readJson(c, MetadataSchema);
     if (!id.success || !body) return c.json({ error: 'Invalid candidate update' }, 422);
+    if (body.roleSlug && !options.allowedRoleSlugs.includes(body.roleSlug)) {
+      return c.json({ error: 'Invalid candidate update' }, 422);
+    }
     try {
       const application = await updateAtsApplicationMetadata(options.db, {
         applicationId: id.data,

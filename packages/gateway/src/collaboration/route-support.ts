@@ -248,7 +248,7 @@ export async function authorizeOwnerScope(
   return context;
 }
 
-async function authenticateOwnerProject(
+export async function authenticateOwnerProject(
   options: { ownerRuntimeSessions?: OwnerRuntimeSessionService; repository?: CollaborationRepository; runtimeId?: string },
   c: Context,
   body: Uint8Array,
@@ -256,12 +256,13 @@ async function authenticateOwnerProject(
 ): Promise<CollaborationScopeRecord> {
   const credentials = readDirectCredentials(c);
   const verb = method(c);
-  if (!credentials || !options.ownerRuntimeSessions || !options.repository || !options.runtimeId
-    || (verb !== "GET" && verb !== "POST")) {
+  if (!credentials || !options.ownerRuntimeSessions || !options.repository || !options.runtimeId || verb === "PUT") {
     throw new DirectAuthError("invalid_signature", "Owner project session is required");
   }
+  const conditional = optionalDeleteConditions(c);
   const session = await options.ownerRuntimeSessions.authenticate({
     ...credentials, method: verb, path: c.req.path, query: rawQuery(c), body,
+    ...(conditional ? { conditionalHeadersDigest: digestDeleteConditions(conditional) } : {}),
   });
   const scope = await requireScope(options.repository, scopeId);
   if (scope.kind !== "project" || scope.membershipMode !== "direct"
@@ -343,7 +344,7 @@ export async function ownerRuntimeIdentity(
   body: Uint8Array,
   requestedRuntimeId: string,
   organizationId?: string,
-): Promise<{ actorId: string; ownerId: string; runtimeId: string; organizationId?: string }> {
+): Promise<{ actorId: string; ownerId: string; runtimeId: string; organizationId?: string; authorityGeneration?: number }> {
   const credentials = readDirectCredentials(c);
   if (credentials) {
     if (!options.ownerRuntimeSessions) throw new CollaborationAuthorizationError("unavailable", "Owner runtime sessions are unavailable");
@@ -354,7 +355,7 @@ export async function ownerRuntimeIdentity(
     if (requestedRuntimeId !== options.runtimeId || (organizationId && session.organizationId !== organizationId)) {
       throw new CollaborationAuthorizationError("forbidden", "Owner runtime access is required");
     }
-    return { actorId: session.actorId, ownerId: session.actorId, runtimeId: options.runtimeId, organizationId: session.organizationId };
+    return { actorId: session.actorId, ownerId: session.actorId, runtimeId: options.runtimeId, organizationId: session.organizationId, authorityGeneration: session.authorityGeneration };
   }
   const proof = await verifyHttp(options.verifier, c, body);
   requireOwnerCreationProof(proof, requestedRuntimeId, options.runtimeId);

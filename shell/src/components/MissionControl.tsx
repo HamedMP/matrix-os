@@ -8,6 +8,7 @@ import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
 import { groupLauncherApps } from "@/lib/dock-sections";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { getGatewayUrl } from "@/lib/gateway";
 import { AppTile } from "./AppTile";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { Launchpad } from "./launchpad/Launchpad";
@@ -17,7 +18,7 @@ import {
   Loader2Icon,
   CheckCircle2Icon,
 } from "@/lib/hugeicons";
-import type { OsViewDesktopAddResult, OsViewDesktopBounds } from "@matrix-os/contracts";
+import { osViewIconUrlForApp, type OsViewDesktopAddResult, type OsViewDesktopBounds } from "@matrix-os/contracts";
 
 interface AppEntry {
   name: string;
@@ -160,7 +161,7 @@ export function MissionControl({
         }}
       >
         <div className="flex items-center justify-between px-6 py-4">
-          <h2 className="text-lg font-semibold text-white">Launcher</h2>
+          <h2 className="text-lg font-semibold text-white">Apps</h2>
           <button
             type="button"
             onClick={onClose}
@@ -170,6 +171,10 @@ export function MissionControl({
             <XIcon className="size-4" />
           </button>
         </div>
+
+        <p className="px-6 pb-4 text-sm text-white/80">
+          Open an installed app, or choose Create app to start in Chat.
+        </p>
 
         {provision.active && (
           <div className="flex items-center gap-2 mx-6 mb-3 px-3 py-1.5 rounded-lg bg-muted/50 text-xs text-muted-foreground">
@@ -298,7 +303,7 @@ function LauncherGrid({
           }}
           pinned={!isOsViewDestination && pinnedApps.includes(app.path)}
           onTogglePin={isOsViewDestination ? undefined : () => onTogglePin(app.path)}
-          iconUrl={app.iconUrl}
+          iconUrl={osViewIconUrlForApp(app, getGatewayUrl())}
           onRegenerateIcon={isOsViewDestination ? undefined : () => onRegenerateIcon(slug)}
           onRename={!isOsViewDestination && onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
           onRemoveFromCanvas={!isOsViewDestination && onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}

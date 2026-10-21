@@ -1,5 +1,9 @@
+import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
 import { createClaudeInputController } from "./claude-input-control.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
+import { createClaudeBuiltinToolApprovalControl } from "./claude-builtin-tool-approval.js";
+import { createClaudeIntegrationApprovalControl } from "./claude-integration-approval.js";
+import type { PreviewDrivePlatformClient } from "./preview-drive-platform-client.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import { z } from "zod/v4";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
@@ -27,9 +31,12 @@ import {
   classifyAssistantCredentialBoundaryPrefix,
   createAssistantTextStreamProjector,
   isCompleteAssistantCredentialKeyword,
-  safeToolPreview,
   sanitizeAssistantText,
+  projectAssistantTextWithCaptures,
+  type CapturedAssistantText,
 } from "./safe-activity-projection.js";
+import { projectClaudeToolPreview } from "./claude-tool-preview.js";
+import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 
 const ClaudeChatStateSchema = z.object({
   sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/),
@@ -61,7 +68,7 @@ const ClaudeStreamLineSchema = z.object({
 }).passthrough();
 
 type ClaudeChatState = z.infer<typeof ClaudeChatStateSchema>;
-const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 // Claude's stream-json protocol repeats bounded tool-result envelopes throughout
 // a Run, so healthy repository tasks routinely exceed one MiB in total. This is
 // still a hard process-output ceiling; per-event projection and the queue remain
@@ -97,15 +104,6 @@ function permissionMode(value: string, interactionMode: string) {
   throw new Error("Unsupported Claude permission mode");
 }
 
-function outputChunks(text: string): string[] {
-  const chunks: string[] = [];
-  for (let index = 0; index < text.length; index += 4_000) {
-    const chunk = text.slice(index, index + 4_000);
-    if (chunk) chunks.push(chunk);
-  }
-  return chunks;
-}
-
 function claudeActivity(name: string) {
   const normalized = name.trim().toLowerCase();
   if (["bash", "shell", "terminal", "execute", "run_command"].includes(normalized)) {
@@ -127,12 +125,12 @@ function canonicalClaudeActivityEvent(
   activity: ClaudeActivity,
   status: "running" | "completed",
 ): CanonicalProviderRunEvent {
-  const projected = CanonicalProviderRunEventSchema.safeParse({
+  const fullProjection = CanonicalProviderRunEventSchema.safeParse({
     type: "agent.activity",
     ...activity,
     status,
   });
-  if (projected.success) return projected.data;
+  if (fullProjection.success) return fullProjection.data;
 
   let retained = CanonicalProviderRunEventSchema.parse({
     type: "agent.activity",
@@ -154,91 +152,21 @@ function canonicalClaudeActivityEvent(
   return retained;
 }
 
-function classifiedClaudeFailureEvidence(text: string) {
-  if (/\b(?:unsupported|invalid) model\b|\bmodel\b.{0,120}\b(?:does not exist|not found|not available|unavailable|unsupported)\b/i.test(text)) {
-    return {
-      category: "unsupported_model" as const,
-      safeError: {
-        code: "model_unavailable" as const,
-        safeMessage: "The selected Claude model is unavailable. Choose another model and try again.",
-        retryable: false,
-        recoveryActions: ["select_provider" as const],
-      },
-    };
-  }
-  if (/\b(?:authentication (?:failed|required)|unauthorized|not logged in|login required|invalid (?:api[ -]?key|x-api-key)|api[ -]?key.{0,80}(?:missing|required|invalid)|oauth.{0,80}(?:expired|required)|credentials?.{0,80}(?:missing|invalid|expired|required))\b|\bplease (?:run )?\/?login\b/i.test(text)) {
-    return {
-      category: "authentication" as const,
-      safeError: {
-        code: "authorization_failed" as const,
-        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
-        retryable: false,
-        recoveryActions: ["open_setup_terminal" as const],
-      },
-    };
-  }
-  if (/\b(?:permission denied|not permitted|operation not permitted|access denied|requires? permission)\b/i.test(text)) {
-    return {
-      category: "permission" as const,
-      safeError: {
-        code: "authorization_failed" as const,
-        safeMessage: "Claude was blocked by its current permissions. Review the permission mode and try again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  return undefined;
-}
-
-function classifiedClaudeCliFailure(error: unknown) {
-  if (!(error instanceof CanonicalCliError)) return undefined;
-  if (error.kind === "startup") {
-    return {
-      category: "startup" as const,
-      safeError: {
-        code: "provider_unavailable" as const,
-        safeMessage: "Claude is not available on this runtime. Open setup and install or reconnect Claude.",
-        retryable: false,
-        recoveryActions: ["open_setup_terminal" as const],
-      },
-    };
-  }
-  if (error.kind === "timeout") {
-    return {
-      category: "timeout" as const,
-      safeError: {
-        code: "service_unavailable" as const,
-        safeMessage: "Claude took too long to respond. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  if (error.kind === "invalid_output" || error.kind === "stdout_limit") {
-    return {
-      category: "invalid_protocol" as const,
-      safeError: {
-        code: "run_failed" as const,
-        safeMessage: "Claude returned an invalid response. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  return undefined;
-}
 
 export function createClaudeChatProviderAdapter(options: {
   homePath: string;
+  credentialKey?: Buffer;
   spawnFn?: CanonicalCliSpawn;
+  /** Maximum time without CLI output or accepted input. */
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
-  resolveCredentialLaunch?: () => Promise<KernelCredentialLaunch>;
+  /** The run id doubles as the funded priority claim key for this turn. */
+  resolveCredentialLaunch?: (context: { runId: string; instanceId: string }) => Promise<KernelCredentialLaunch>;
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
+  previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const idleTimeoutMs = options.timeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const activeRuns = new Map<string, {
     ownerId: string;
     ownerType: CanonicalProviderRunInput["owner"]["type"];
@@ -262,27 +190,31 @@ export function createClaudeChatProviderAdapter(options: {
     // Presentation is projected from the exact scope requested at issuance.
     // A presentation selector never authorizes a Gateway request.
     const mcpScope = approvalReady && input.interactionMode === "default" && selectedPermission !== "plan"
-      ? "call" : "discovery";
+      ? "chat_call" : "chat_discovery";
     const capability = options.matrixMcpCapabilityIssuer?.issue({
       owner: input.owner,
       runId: input.runId,
       // Review is read-only even if its saved permission choice says full access.
       // Unknown future interaction modes receive discovery only.
       scope: mcpScope,
-      ...(input.context?.drives?.length ? {driveContext:true} : {}),
+      fullAccess,
+      ...(input.context?.drives?.length ? { driveContext: true } : {}),
     }) ?? null;
     if (input.context?.drives?.length && !capability) throw new Error("Company drive tools unavailable");
+    const previewDrive = capability?.surface === "preview_drive_call";
     const recipeGuidance = input.context?.agent?.recipe
-      ? "Selected integration dependencies are unavailable through this route. "
-        + (capability
-          ? "Discover Custom MCP servers with list_custom_mcp_servers, then inspect enabled tools with describe_custom_mcp_server. "
-            + (mcpScope === "call"
+      ? (capability
+          ? previewDrive
+            ? "Discover the connected Google Drive account with list_integration_inventory and describe_service. Preserve its exact account label. Only call google_drive/list_files with maxResults from 1 to 3 after this user's approval. "
+            : "Discover built-in integrations with list_integration_inventory and describe_service. Preserve the exact account label for calls. "
+            + "Discover Custom MCP servers with list_custom_mcp_servers, then inspect enabled tools with describe_custom_mcp_server. "
+            + (mcpScope === "chat_call"
               ? "Use call_custom_mcp_tool only when the user needs an enabled tool; the broker owns tool policy and approval."
               : "This run supports discovery only; remote tool calls are unavailable.")
           : "No Matrix tools are available for this run.")
       : undefined;
     const nativePrompt = recipeGuidance ? `${input.prompt}\n\n${recipeGuidance}` : input.prompt;
-    let approvalClient = approvalReady && capability && selectedPermission === "default" && input.interactionMode === "default"
+    let approvalClient = approvalReady && capability && !previewDrive && selectedPermission === "default" && input.interactionMode === "default"
       ? options.customMcpApprovalClient : undefined;
     let registeredGeneration: number | undefined;
     let launch: ReturnType<typeof buildAgentLaunch>;
@@ -305,7 +237,7 @@ export function createClaudeChatProviderAdapter(options: {
         claudeIncludePartialMessages: true,
         matrixCustomMcp: capability !== null,
         matrixDriveContext: Boolean(input.context?.drives?.length),
-        matrixCustomMcpScope: mcpScope,
+        matrixCustomMcpScope: previewDrive ? "preview_drive_call" : mcpScope,
       });
       if (resumeState) {
         const separator = launch.args.indexOf("--");
@@ -315,11 +247,13 @@ export function createClaudeChatProviderAdapter(options: {
       if (promptSeparator >= 0) launch.args.splice(promptSeparator);
       launch.args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio");
       credentialLaunch = options.resolveCredentialLaunch
-        ? await options.resolveCredentialLaunch()
+        ? await options.resolveCredentialLaunch({ runId: input.runId, instanceId: input.selection.instanceId })
         : {
             env: await (
               options.resolveCredentialEnv
-              ?? (() => buildKernelCredentialLaunch(options.homePath).then((value) => value.env))
+              ?? (() => buildKernelCredentialLaunch(options.homePath, process.env, undefined, undefined, {
+                requestClass: "interactive",
+              }).then((value) => value.env))
             )(),
           };
       if (approvalClient) {
@@ -342,12 +276,16 @@ export function createClaudeChatProviderAdapter(options: {
     }
     const credentialEnv = credentialLaunch.env;
     const runEnv = credentialEnv === undefined
-      ? capability ? definedEnvironment({ ...process.env, ...launch.env }) : launch.env
+      ? definedEnvironment({ ...process.env, ...launch.env })
       : definedEnvironment({ ...credentialEnv, ...launch.env });
+    // Host control credentials are never delegated, including launches where
+    // scoped capability issuance fails (for example shared Preview runtimes).
+    for (const name of ["MATRIX_AUTH_TOKEN", "UPGRADE_TOKEN", "MATRIX_CODE_PROXY_TOKEN", "AI_RELAY_CONTROL_TOKEN"]) {
+      delete runEnv[name];
+    }
     if (capability) {
       // The MCP child receives only this actor/run capability, never the VPS
       // machine bearer. The wrapper requires the scoped bearer for this launch.
-      delete runEnv.MATRIX_AUTH_TOKEN;
       runEnv.MATRIX_AGENT_INTEGRATIONS_TOKEN = capability.token;
     }
 
@@ -357,6 +295,7 @@ export function createClaudeChatProviderAdapter(options: {
     let stderrEvidenceBytes = 0;
     let streamedText = false;
     let resultText = "";
+    let bufferedResultEvents: CanonicalProviderRunEvent[] = [];
     let sawResult = false;
     let resultFailed = false;
     let usageFailure: ReturnType<typeof classifyClaudeUsageFailure>;
@@ -373,12 +312,30 @@ export function createClaudeChatProviderAdapter(options: {
       emit: event => queue.push(event),
       onError: error => console.warn("[chat-claude] Custom MCP approval failed", error instanceof Error ? error.name : "UnknownError"),
     }) : undefined;
+    const integrationApproval = capability ? createClaudeIntegrationApprovalControl({
+      runId: input.runId, homePath: options.homePath, capability,
+      verify: options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient),
+      ...(previewDrive && options.previewDriveClient ? { previewDriveClient: options.previewDriveClient } : {}),
+      emit: event => queue.push(event), onError: () => processController.abort(),
+    }) : undefined;
+    const verifyBuiltinToolDecision = options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient);
+    // Auto Accept Edits still asks for non-edit tools; Auto's classifier refusals are deliberate and stay denied.
+    const builtinToolApproval = verifyBuiltinToolDecision
+      && (selectedPermission === "default" || selectedPermission === "acceptEdits")
+      && input.interactionMode === "default"
+      ? createClaudeBuiltinToolApprovalControl({
+        runId: input.runId, chatId: input.chatId, homePath: options.homePath, verify: verifyBuiltinToolDecision,
+        emit: event => queue.push(event),
+        onError: () => processController.abort(),
+      }) : undefined;
     let approvalRevoked = false;
     let finalRevokePromise: Promise<void> | undefined;
     let clearApprovalPromise: Promise<boolean> | undefined;
     const revokeApproval = (reason: "final" | "steer" = "final") => {
       capability?.revoke();
       approvalControl?.close();
+      integrationApproval?.close();
+      builtinToolApproval?.close();
       if (reason === "steer") {
         if (approvalClient && registeredGeneration && !clearApprovalPromise) {
           clearApprovalPromise = approvalClient.clearRunApprovals(input.runId, registeredGeneration)
@@ -401,7 +358,8 @@ export function createClaudeChatProviderAdapter(options: {
       write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Input transport unavailable")),
       emit: event => queue.push(event),
       onError: () => processController.abort(),
-      onToolPermission: approvalControl?.onToolPermission ?? (approvalReady && capability && selectedPermission === "default"
+      onToolPermission: (request, respond) => integrationApproval?.onToolPermission(request, respond)
+        || (approvalControl?.onToolPermission ?? (approvalReady && capability && !previewDrive && selectedPermission === "default"
         && input.interactionMode === "default" ? (request, respond) => {
           if (request.toolName !== CALL_TOOL) return false;
           // The broker remains the policy authority. An unavailable approval
@@ -413,8 +371,14 @@ export function createClaudeChatProviderAdapter(options: {
             processController.abort();
           });
           return true;
-        } : undefined),
-      onToolPermissionCancel: approvalControl?.onToolPermissionCancel,
+        } : undefined))?.(request, respond)
+        || builtinToolApproval?.onToolPermission(request, respond)
+        || false,
+      onToolPermissionCancel: id => {
+        integrationApproval?.onToolPermissionCancel(id);
+        approvalControl?.onToolPermissionCancel(id);
+        builtinToolApproval?.onToolPermissionCancel(id);
+      },
     });
     const activeRun = {
       ownerId: input.owner.ownerId,
@@ -422,7 +386,12 @@ export function createClaudeChatProviderAdapter(options: {
       chatId: input.chatId,
       abort: () => { cancellationRequested = true; revokeApproval(); processController.abort(); },
       submitInput: inputControl.submit,
-      submitApproval: approvalControl?.submit,
+      submitApproval: async (id: string, decision: Parameters<NonNullable<typeof approvalControl>["submit"]>[1], provenance?: Parameters<NonNullable<typeof approvalControl>["submit"]>[2]) => {
+        if (integrationApproval?.has(id)) return integrationApproval.submit(id, decision, provenance);
+        if (builtinToolApproval?.has(id)) return builtinToolApproval.submit(id, decision, provenance);
+        if (approvalControl) return approvalControl.submit(id, decision, provenance);
+        throw new Error("Approval unavailable");
+      },
       steer(prompt: string) {
         if (!emittedState) throw new Error("Claude Run state unavailable");
         steerPrompt = prompt;
@@ -442,6 +411,7 @@ export function createClaudeChatProviderAdapter(options: {
       if (activeRuns.get(input.runId) === activeRun) activeRuns.delete(input.runId);
     };
     let pendingDelta = "";
+    let pendingCaptures: CapturedAssistantText["captures"] = [];
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
     const pathProjection = {
@@ -450,6 +420,11 @@ export function createClaudeChatProviderAdapter(options: {
       showPrivatePaths: !input.sharedScopeId,
     };
     const textProjector = createAssistantTextStreamProjector(pathProjection);
+    const credentialEmitter = createAssistantCredentialEmitter({
+      ownerType: input.owner.type,
+      ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
+      key: options.credentialKey, sharedScopeId: input.sharedScopeId,
+    });
     let projectedMessageId: string | undefined;
     let boundaryProbe: {
       originMessageId?: string;
@@ -466,21 +441,19 @@ export function createClaudeChatProviderAdapter(options: {
       deltaFlushScheduled = false;
       if (!pendingDelta) return;
       const text = pendingDelta;
+      const captures = pendingCaptures;
       const messageId = pendingDeltaMessageId;
       pendingDelta = "";
+      pendingCaptures = [];
       pendingDeltaMessageId = undefined;
-      for (const delta of outputChunks(text)) {
-        queue.push(CanonicalProviderRunEventSchema.parse({
-          type: "assistant.delta",
-          ...(messageId ? { messageId } : {}),
-          delta,
-        }));
-      }
+      for (const event of credentialEmitter.emit({ text, captures }, messageId)) queue.push(event);
     };
 
-    const enqueueDelta = (delta: string, messageId?: string) => {
+    const enqueueDelta = (delta: string, messageId?: string, captures: CapturedAssistantText["captures"] = []) => {
       if (pendingDelta && pendingDeltaMessageId !== messageId) flushPendingDelta();
       pendingDeltaMessageId = messageId;
+      pendingCaptures.push(...captures.slice(0, Math.max(0, 16 - pendingCaptures.length))
+        .map((capture) => ({ ...capture, offset: capture.offset + pendingDelta.length })));
       pendingDelta += delta;
       if (pendingDelta.length >= 4_000) {
         flushPendingDelta();
@@ -505,8 +478,8 @@ export function createClaudeChatProviderAdapter(options: {
         // marker. Release it only when the old context cannot make it a token.
         const ordinaryCompletedKeyword = textProjector.hasNonCredentialPathContext()
           && isCompleteAssistantCredentialKeyword(boundaryProbe.text);
-        const projected = textProjector.flushIndependentBoundary();
-        if (projected) enqueueDelta(projected, projectedMessageId);
+        const projected = textProjector.flushIndependentBoundaryCaptured();
+        if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
         if (ordinaryCompletedKeyword) {
           for (const segment of boundaryProbe.segments) {
             const word = sanitizeAssistantText(segment.text, pathProjection);
@@ -517,8 +490,8 @@ export function createClaudeChatProviderAdapter(options: {
         projectedMessageId = undefined;
       }
       droppingBoundaryProbe = false;
-      const projected = textProjector.flush();
-      if (projected) enqueueDelta(projected, projectedMessageId);
+      const projected = textProjector.flushCaptured();
+      if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
       projectedMessageId = undefined;
     };
     const flushSafeProjectedText = (nextCharacter?: string) => {
@@ -533,8 +506,8 @@ export function createClaudeChatProviderAdapter(options: {
       droppingBoundaryProbe = false;
     };
     const flushIndependentProjectedText = () => {
-      const projected = textProjector.flushIndependentBoundary();
-      if (projected) enqueueDelta(projected, projectedMessageId);
+      const projected = textProjector.flushIndependentBoundaryCaptured();
+      if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
       projectedMessageId = undefined;
     };
     const projectResolvedDelta = (delta: string, messageId?: string) => {
@@ -546,21 +519,21 @@ export function createClaudeChatProviderAdapter(options: {
         // continuation to that block; the rest belongs to the new block.
         let offset = 0;
         for (const character of delta) {
-          const projected = textProjector.push(character);
-          if (projected) enqueueDelta(projected, projectedMessageId);
+          const projected = textProjector.pushCaptured(character);
+          if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
           offset += character.length;
           if (!textProjector.hasPending()) {
             projectedMessageId = messageId;
-            const remainder = textProjector.push(delta.slice(offset));
-            if (remainder) enqueueDelta(remainder, messageId);
+            const remainder = textProjector.pushCaptured(delta.slice(offset));
+            if (remainder.text) enqueueDelta(remainder.text, messageId, remainder.captures);
             return;
           }
         }
         return;
       }
       projectedMessageId = messageId;
-      const projected = textProjector.push(delta);
-      if (projected) enqueueDelta(projected, messageId);
+      const projected = textProjector.pushCaptured(delta);
+      if (projected.text) enqueueDelta(projected.text, messageId, projected.captures);
     };
     const projectDelta = (delta: string, messageId?: string) => {
       if (droppingBoundaryProbe) return;
@@ -675,7 +648,7 @@ export function createClaudeChatProviderAdapter(options: {
           const activity = {
             activityId: block.id,
             ...claudeActivity(block.name),
-            ...safeToolPreview(block.name, block.input, pathProjection),
+            ...projectClaudeToolPreview(block.name, block.input, pathProjection),
           };
           activityByIndex.set(line.event.index, activity);
           toolInputByIndex.set(line.event.index, "");
@@ -700,7 +673,7 @@ export function createClaudeChatProviderAdapter(options: {
               const parsedInput: unknown = JSON.parse(partialInput);
               completedActivity = {
                 ...activity,
-                ...safeToolPreview(toolName, parsedInput, pathProjection),
+                ...projectClaudeToolPreview(toolName, parsedInput, pathProjection),
               };
             } catch (error: unknown) {
               console.warn("[chat-claude] Ignoring malformed bounded tool input:", error instanceof Error ? error.name : "UnknownError");
@@ -717,17 +690,18 @@ export function createClaudeChatProviderAdapter(options: {
           : line.subtype === undefined
             ? undefined
             : "other";
-        resultText = sanitizeAssistantText(line.result ?? "", pathProjection);
+        const projectedResult = projectAssistantTextWithCaptures(line.result ?? "", pathProjection);
+        resultText = projectedResult.text;
         resultFailed = line.is_error === true || line.subtype === "error";
+        if (!resultFailed && !streamedText) bufferedResultEvents = credentialEmitter.emit(projectedResult);
         finishInput?.();
       }
     };
 
     const emitBufferedResult = () => {
       if (!resultFailed && !streamedText && resultText) {
-        for (const delta of outputChunks(resultText)) {
-          queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
-        }
+        for (const event of bufferedResultEvents) queue.push(event);
+        bufferedResultEvents = [];
       }
     };
 
@@ -736,9 +710,14 @@ export function createClaudeChatProviderAdapter(options: {
       args: launch.args,
       cwd: launch.cwd,
       env: runEnv,
-      replaceEnv: credentialEnv !== undefined || capability !== null,
+      replaceEnv: true,
       signal: processSignal,
-      timeoutMs: Math.min(timeoutMs, credentialLaunch.fundedRunTimeoutMs ?? timeoutMs),
+      // Funding supplies a strict total deadline; owner credentials only use
+      // the progress-aware idle deadline.
+      ...(credentialLaunch.fundedRunTimeoutMs === undefined
+        ? {}
+        : { timeoutMs: credentialLaunch.fundedRunTimeoutMs }),
+      idleTimeoutMs: Math.min(idleTimeoutMs, credentialLaunch.fundedRunTimeoutMs ?? idleTimeoutMs),
       maxStdoutBytes: MAX_STREAM_BYTES,
       maxStderrBytes: MAX_STDERR_BYTES,
       spawnFn: options.spawnFn,
@@ -789,12 +768,7 @@ export function createClaudeChatProviderAdapter(options: {
                   retryable: true,
                   recoveryActions: ["retry", "open_setup_terminal"],
                 }
-              : {
-                  code: "run_failed",
-                  safeMessage: "Claude returned an invalid response. Try the Run again.",
-                  retryable: true,
-                  recoveryActions: ["retry"],
-                }),
+              : classifiedClaudeCliFailure(new CanonicalCliError("invalid_output"))!.safeError),
           }
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
@@ -882,7 +856,7 @@ export function createClaudeChatProviderAdapter(options: {
       }));
       queue.finish();
     }).finally(() => { if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
-      capability?.revoke(); approvalControl?.close();
+      capability?.revoke(); approvalControl?.close(); integrationApproval?.close(); builtinToolApproval?.close();
     } else revokeApproval(); });
 
     let streamCompleted = false;
@@ -898,7 +872,7 @@ export function createClaudeChatProviderAdapter(options: {
         revokeApproval();
         await finalRevokePromise;
       } else if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
-        capability?.revoke(); approvalControl?.close();
+        capability?.revoke(); approvalControl?.close(); integrationApproval?.close(); builtinToolApproval?.close();
       } else revokeApproval();
       capability?.revoke();
     }

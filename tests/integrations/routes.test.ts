@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
-import { KyselyPGlite } from "kysely-pglite";
-import { createPlatformDb, type PlatformDb } from "../../packages/gateway/src/platform-db.js";
+import { createTestIntegrationDb } from "./native-integration-db-test-helper.js";
+import { type PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import { getService } from "../../packages/gateway/src/integrations/registry.js";
@@ -36,15 +36,12 @@ const WEBHOOK_SECRET = "whsec_test_secret_123";
 
 describe("Integration Routes", () => {
   let db: PlatformDb;
-  let pglite: InstanceType<typeof KyselyPGlite>;
   let pipedream: ReturnType<typeof mockPipedream>;
   let app: Hono;
   let userId: string;
 
   beforeEach(async () => {
-    pglite = await KyselyPGlite.create();
-    db = createPlatformDb({ dialect: pglite.dialect });
-    await db.migrate();
+    ({ db } = await createTestIntegrationDb());
 
     pipedream = mockPipedream();
 
@@ -642,7 +639,7 @@ describe("Integration Routes", () => {
       expect(services[0].account_label).toBe("Personal Gmail");
     });
 
-    it("does not store Slack usernames in account_email", async () => {
+    it("does not spend a proxy call that cannot return a Slack email", async () => {
       pipedream.proxyGet = vi.fn().mockImplementation(async (opts: { url: string }) => {
         if (opts.url === "https://slack.com/api/auth.test") {
           return { user: "slack-display-name" };
@@ -669,6 +666,7 @@ describe("Integration Routes", () => {
       const services = await db.listConnectedServices(userId);
       expect(services).toHaveLength(1);
       expect(services[0].account_email).toBeNull();
+      expect(pipedream.proxyGet).not.toHaveBeenCalled();
     });
   });
 
@@ -824,7 +822,7 @@ describe("Integration Routes", () => {
       expect(pipedream.proxyGet).toHaveBeenCalled();
     });
 
-    it("returns a generic 501 when an action is not implemented", async () => {
+    it("fails closed when Drive upload has no bounded executor", async () => {
       await db.connectService({
         userId,
         service: "google_drive",
@@ -842,9 +840,9 @@ describe("Integration Routes", () => {
           params: { name: "notes.txt", content: "hello" },
         }),
       });
-      expect(res.status).toBe(501);
+      expect(res.status).toBe(502);
       const data = await res.json();
-      expect(data.error).toBe("Action not available");
+      expect(data.error).toBe("Integration call failed");
       expect(data.error).not.toMatch(/packages\/gateway|registry\.ts|componentKey/);
     });
 

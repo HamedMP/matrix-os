@@ -1,7 +1,6 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronRight,
-  CircleHelp,
   CreditCard,
   LogOut,
   Settings,
@@ -11,8 +10,6 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
-import { openHelpInMatrixBrowser } from "../browser/help-navigation";
-import { DesktopOrganizationMenuItems } from "./DesktopOrganizationMenuItems";
 
 const MENU_ROW_CLASS = "flex h-9 cursor-default items-center gap-2 px-2 text-left text-[13px] outline-none data-[highlighted]:bg-[var(--bg-hover)]";
 
@@ -88,7 +85,7 @@ function AccountMenuTrigger({
     >
       <span
         className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ${compact ? "size-6" : "h-7 w-7"}`}
-        style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+        style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}
       >
         <AccountAvatar key={imageUrl} imageUrl={imageUrl} label={primaryLabel} />
       </span>
@@ -142,8 +139,8 @@ export default function AccountMenu({
           <DropdownMenu.Content
             aria-label="Account"
             aria-labelledby={undefined}
-            side="top"
-            align="start"
+            side={compact ? "bottom" : "top"}
+            align={compact ? "end" : "start"}
             sideOffset={4}
             className="border p-1 outline-none"
             style={{
@@ -174,23 +171,12 @@ export default function AccountMenu({
               </span>
             </DropdownMenu.Label>
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
-            <DesktopOrganizationMenuItems itemClass={MENU_ROW_CLASS} />
             <MenuRow icon={<Settings size={14} />} label="Settings" trailing onSelect={() => openSettings("account")} />
-            <MenuRow
-              icon={<CircleHelp size={14} />}
-              label="Get help"
-              trailing
-              onSelect={() => {
-                setOpen(false);
-                openHelpInMatrixBrowser(openTab);
-              }}
-            />
-            <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
             <MenuRow icon={<CreditCard size={14} />} label="View plans" onSelect={() => openSettings("billing")} />
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
             <MenuRow
               icon={<LogOut size={14} />}
-              label="Logout"
+              label="Log out"
               danger
               onSelect={() => {
                 setOpen(false);

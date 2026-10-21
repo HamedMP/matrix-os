@@ -207,12 +207,13 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(controller).toContain("install)");
     expect(controller).toContain("/opt/matrix/bin/matrix-install-hermes");
     expect(controller).toContain("/opt/matrix/bin/matrix-install-openclaw");
-    expect(controller).toContain('timeout "$install_timeout_seconds" "$installer"');
+    expect(controller).toContain('--property="RuntimeMaxSec=$install_timeout_seconds"');
+    expect(controller).toContain('systemd-run --unit="matrix-agent-install-$runtime" --wait --pipe --collect');
     expect(controller).not.toContain('systemctl start "$unit"');
     await expect(access(legacyInstallUnitPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("exposes only exact status, install, switch, and stop commands", async () => {
+  it("exposes only exact status and validated runtime lifecycle commands", async () => {
     const controller = await readFile(controllerPath, "utf8");
 
     expect(controller).toContain('case "${1:-}" in');
@@ -224,17 +225,10 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(controller).toContain("hermes)");
     expect(controller).toContain("openclaw)");
     expect(controller).toContain("flock -w 30");
-    expect(controller).toContain(
-      'install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_GROUP" -m 0700 "$lock_dir"',
-    );
-    const lockOpen = controller.indexOf('exec 9>"$lock_dir/host-control.lock"');
-    const lockOwnerRepair = controller.indexOf(
-      'chown "$MATRIX_RUNTIME_USER:$MATRIX_RUNTIME_GROUP" "$lock_dir/host-control.lock"',
-    );
-    const lockAcquire = controller.indexOf("flock -w 30");
-    expect(lockOpen).toBeGreaterThan(-1);
-    expect(lockOwnerRepair).toBeGreaterThan(lockOpen);
-    expect(lockAcquire).toBeGreaterThan(lockOwnerRepair);
+    expect(controller).toContain('install -d -o root -g root -m 0755 "$state_dir"');
+    expect(controller).toContain('exec 9>"$state_dir/host-control.lock"');
+    expect(controller).toContain('cancel-install)');
+    expect(controller).toContain('uninstall)');
     expect(controller).toContain("matrix-hermes-dashboard.service");
     expect(controller).toContain("matrix-openclaw-gateway.service");
     expect(controller).toContain("systemctl is-active --quiet");

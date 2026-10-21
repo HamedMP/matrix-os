@@ -7,6 +7,8 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // Signed app-frame authorization does not carry to separate artwork requests.
+    assetsInlineLimit: (filePath) => filePath.endsWith("/app-artwork/notes.png") ? true : undefined,
     rollupOptions: {
       output: {
         manualChunks(id) {

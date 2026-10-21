@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  FundedAiChatAvailabilitySchema,
+  FundedAiRuntimeChatFundingSummaryResponseSchema,
+  FundedAiRuntimeFundingSummaryRequestSchema,
   FundedAiAuthorizationRequestSchema,
   FundedAiAuthorizationResponseSchema,
   FundedAiFinalizationRequestSchema,
@@ -12,6 +15,7 @@ import {
   FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiPolicyCheckRequestSchema,
   FundedAiPolicyCheckResponseSchema,
+  FundedAiRuntimeCredentialIssueRequestSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiSafeErrorSchema,
   FundedAiSettlementResponseSchema,
@@ -48,6 +52,24 @@ const funding = {
 } as const;
 
 describe("funded AI control-plane contracts", () => {
+  it("negotiates Chat availability independently without weakening legacy financial contracts", () => {
+    const chatAvailability = { contractVersion: 1, asOf: now, eligibleBalanceMicrousd: 400_000, availableBalanceMicrousd: 200_000 };
+    const value = { contractVersion: 1, funding, policy, chatAvailability };
+    expect(FundedAiRuntimeChatFundingSummaryResponseSchema.parse(value)).toEqual(value);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse(value).success).toBe(false);
+    expect(FundedAiRuntimeFundingSummaryRequestSchema.parse({})).toEqual({});
+    expect(FundedAiRuntimeFundingSummaryRequestSchema.parse({ includeChatAvailability: true })).toEqual({ includeChatAvailability: true });
+    for (const bad of [{ includeChatAvailability: false }, { includeChatAvailability: true, ownerId: "spoof" }]) {
+      expect(FundedAiRuntimeFundingSummaryRequestSchema.safeParse(bad).success).toBe(false);
+    }
+    for (const bad of [{ ...chatAvailability, availableBalanceMicrousd: 400_001 }, { ...chatAvailability, contractVersion: 2 }, { ...chatAvailability, eligibleBalanceMicrousd: -1 }, { ...chatAvailability, token: "secret" }]) {
+      expect(FundedAiChatAvailabilitySchema.safeParse(bad).success).toBe(false);
+    }
+    for (const bad of [{ ...value, funding: { ...funding, remainingBalanceMicrousd: 2 } }, { ...value, policy: { ...policy, monthlyBudgetMicrousd: 2 } }, { ...value, chatAvailability: { ...chatAvailability, asOf: staleAfter } }, { ...value, chatAvailability: { ...chatAvailability, eligibleBalanceMicrousd: 1_000_001 } }]) {
+      expect(FundedAiRuntimeChatFundingSummaryResponseSchema.safeParse(bad).success).toBe(false);
+    }
+  });
+
   it("represents a bounded dynamic global policy without credentials", () => {
     const value = {
       enabled: true,
@@ -365,5 +387,57 @@ describe("funded AI control-plane contracts", () => {
       ...grantResponse,
       grant: { ...grantResponse.grant, entryId: "machine_123" },
     }).success).toBe(false);
+  });
+});
+
+describe("funded AI request classes and priority", () => {
+  const issued = {
+    contractVersion: 1,
+    credential: {
+      token: credential,
+      tokenId,
+      audience: "matrix-funded-relay",
+      scope: "ai:invoke",
+      issuedAt: now,
+      expiresAt,
+    },
+    identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+    policy,
+  } as const;
+
+  it("issues credentials for an explicit class and keeps the legacy empty body interactive", () => {
+    expect(FundedAiRuntimeCredentialIssueRequestSchema.parse({ requestClass: "background" })).toEqual({ requestClass: "background" });
+    expect(FundedAiRuntimeCredentialIssueRequestSchema.parse({})).toEqual({ requestClass: "interactive" });
+    expect(FundedAiRuntimeCredentialIssueRequestSchema.safeParse({ requestClass: "urgent" }).success).toBe(false);
+    expect(FundedAiRuntimeCredentialIssueRequestSchema.safeParse({ requestClass: "background", ownerId: "user_bob" }).success).toBe(false);
+  });
+
+  it("echoes the class only as an optional top-level field so older gateways keep parsing", () => {
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.parse(issued)).toEqual(issued);
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.parse({ ...issued, requestClass: "background" }).requestClass).toBe("background");
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.safeParse({
+      ...issued,
+      credential: { ...issued.credential, requestClass: "background" },
+    }).success).toBe(false);
+  });
+
+  it("accepts only a bounded claim key on authorization", () => {
+    const base = { credential, requestId: "request_1", modelId: "anthropic/claude-sonnet-5", maxCostMicrousd: 100 };
+    expect(FundedAiAuthorizationRequestSchema.parse({ ...base, claimKey: "run_abc:turn.1" }).claimKey).toBe("run_abc:turn.1");
+    expect(FundedAiAuthorizationRequestSchema.safeParse({ ...base, claimKey: "" }).success).toBe(false);
+    expect(FundedAiAuthorizationRequestSchema.safeParse({ ...base, claimKey: "x".repeat(129) }).success).toBe(false);
+    expect(FundedAiAuthorizationRequestSchema.safeParse({ ...base, claimKey: "turn one" }).success).toBe(false);
+  });
+
+  it("allows only allowlisted priority reasons on rate-limited errors", () => {
+    for (const reason of ["slot_busy", "priority_hold", "priority_queue", "priority_full"]) {
+      expect(FundedAiSafeErrorSchema.parse({ error: { code: "rate_limited", message: "Try again later", reason } }).error)
+        .toEqual({ code: "rate_limited", message: "Try again later", reason });
+    }
+    expect(FundedAiSafeErrorSchema.parse({ error: { code: "rate_limited", message: "Try again later" } }).error.code).toBe("rate_limited");
+    expect(FundedAiSafeErrorSchema.safeParse({ error: { code: "rate_limited", message: "Try again later", reason: "owner_alice_busy" } }).success)
+      .toBe(false);
+    expect(FundedAiSafeErrorSchema.safeParse({ error: { code: "unavailable", message: "Service unavailable", reason: "slot_busy" } }).success)
+      .toBe(false);
   });
 });

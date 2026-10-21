@@ -17,6 +17,8 @@ const IntegrationServiceSchema = z.object({
   name: z.string().min(1).max(100),
   category: z.string().min(1).max(64),
   icon: z.string().min(1).max(64),
+  description: z.string().max(180).optional(),
+  authType: z.enum(["oauth", "keys"]).optional(),
   logoUrl: z.string().max(2_048).optional(),
 });
 

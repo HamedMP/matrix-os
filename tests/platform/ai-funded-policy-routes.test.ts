@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  FUNDED_AI_READINESS_TIMEOUTS,
   FundedAiAuthorizationResponseSchema,
   JEV_MODEL_ID,
   FundedAiOperatorGlobalPolicyResponseSchema,
@@ -9,6 +10,7 @@ import {
   FundedAiPolicyCheckResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
+  FundedAiRuntimeChatFundingSummaryResponseSchema,
   FundedAiRouteReadinessReceiptSchema,
   FundedAiSettlementResponseSchema,
   FundedAiStartResponseSchema,
@@ -27,8 +29,8 @@ import {
   buildPlatformRuntimeVerificationToken,
   buildPlatformSpeechRuntimeVerificationToken,
 } from "../../packages/platform/src/platform-token.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
-import type { FundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
+import { createFundedModelProbeService, type FundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
@@ -73,10 +75,15 @@ describe("funded AI policy routes", () => {
     vi.restoreAllMocks();
   });
 
-  async function createTestApp(options: { promotionalGrantEnabled?: boolean; topUpEnabled?: boolean; routeProbes?: FundedModelProbeService } = {}) {
+  async function createTestApp(options: {
+    promotionalGrantEnabled?: boolean;
+    topUpEnabled?: boolean;
+    routeProbes?: FundedModelProbeService;
+    tokenIdFactory?: () => string;
+  } = {}) {
     const repository = createAiFundedPolicyRepository({
       db, credentialHashSecret: hashSecret, now: () => new Date(now),
-      tokenIdFactory: () => "credential_123", tokenSecretFactory: () => "s".repeat(43),
+      tokenIdFactory: options.tokenIdFactory ?? (() => "credential_123"), tokenSecretFactory: () => "s".repeat(43),
       issueCooldownMs: 60_000,
     });
     await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
@@ -148,6 +155,33 @@ describe("funded AI policy routes", () => {
     expect(after.funding.creditBalanceMicrousd).toBe(before.funding.creditBalanceMicrousd);
   });
 
+  it.each(["disabled", "exhausted"])("rechecks %s owner policy while sharing older priced provider health", async (state) => {
+    let providerClock = new Date(Date.parse(now) - 60_000);
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({
+      ready: true, priceValidThrough: "2026-08-31T20:00:00.000Z",
+    }));
+    const probes = createFundedModelProbeService({ db, relayBaseUrl: "https://relay.example.test",
+      relayControlToken, dailyLimit: 2, minuteLimit: 2, fetchFn, now: () => providerClock });
+    const health = await probes.probe(modelId);
+    expect(health.ready).toBe(true);
+    providerClock = new Date(now);
+    const { app, repository } = await createTestApp({ routeProbes: probes });
+    const reads = vi.spyOn(repository, "getCheckoutFundingSummary");
+    const request = () => app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST", headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" }, body: "{}",
+    });
+    const first = FundedAiRouteReadinessReceiptSchema.parse(await (await request()).json());
+    expect(first).toMatchObject({ checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z", readyModelIds: [modelId] });
+    expect(health.checkedAt).toBe("2026-08-30T19:59:00.000Z");
+    await repository.setRuntimePolicy({ identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+      expectedRevision: 1, enabled: state !== "disabled", allowedModelIds: [modelId], expiresAt: null,
+      monthlyBudgetMicrousd: state === "exhausted" ? 0 : 1_000 });
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await (await request()).json()).readyModelIds).toEqual([]);
+    expect(reads).toHaveBeenCalledTimes(4);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(await probes.probe(modelId)).toEqual(health);
+  });
+
   it("wires an exact runtime token through Platform receipt to Gateway readiness", async () => {
     const probe = vi.fn(async () => ({ ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z" }));
     const { app } = await createTestApp({ routeProbes: { probe } });
@@ -168,7 +202,6 @@ describe("funded AI policy routes", () => {
   });
 
   it("fails closed after an asynchronous probe when owner policy is revoked", async () => {
-    let repository!: ReturnType<typeof createAiFundedPolicyRepository>;
     const probe = vi.fn(async () => {
       await repository.setRuntimePolicy({
         identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
@@ -178,7 +211,7 @@ describe("funded AI policy routes", () => {
       return { ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z" };
     });
     const created = await createTestApp({ routeProbes: { probe } });
-    repository = created.repository;
+    const repository = created.repository;
     const response = await created.app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
       method: "POST", headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" }, body: "{}",
     });
@@ -205,7 +238,7 @@ describe("funded AI policy routes", () => {
     });
     expect(response.status).toBe(503);
     expect(probe).not.toHaveBeenCalled();
-  }, 15_000);
+  }, FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs + 5_000);
 
   it("normalizes relay control token transport whitespace without changing identity or hash secrets", () => {
     expect(loadAiFundedControlPlaneConfig({
@@ -611,6 +644,50 @@ describe("funded AI policy routes", () => {
     })).status).toBe(401);
   });
 
+  it("issues class-bound credentials with per-class cooldowns and keeps the legacy shape", async () => {
+    let counter = 0;
+    const { app } = await createTestApp({ tokenIdFactory: () => `credential_class_${++counter}` });
+    const issue = (body: string) => app.request(fundedCredentialPath(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body,
+    });
+
+    const background = await issue(JSON.stringify({ requestClass: "background" }));
+    expect(background.status).toBe(200);
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.parse(await background.json()).requestClass).toBe("background");
+    const legacy = await issue("{}");
+    expect(legacy.status).toBe(200);
+    expect(await legacy.json()).not.toHaveProperty("requestClass");
+    expect((await issue(JSON.stringify({ requestClass: "interactive" }))).status).toBe(429);
+    expect((await issue(JSON.stringify({ requestClass: "background" }))).status).toBe(429);
+    const invalid = await issue(JSON.stringify({ requestClass: "urgent" }));
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ error: { code: "invalid_request", message: "Invalid request" } });
+  });
+
+  it("returns the allowlisted priority reason on a rate-limited authorization", async () => {
+    const { app } = await createTestApp();
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await (await app.request(fundedCredentialPath(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: JSON.stringify({ requestClass: "background" }),
+    })).json());
+    await db.executor.insertInto("ai_funded_priority_claims").values({
+      owner_id: "user_alice", machine_id: "machine_other", runtime_slot: "primary", billing_mode: "usage",
+      created_at: now, expires_at: new Date(Date.parse(now) + 120_000).toISOString(),
+    }).execute();
+
+    const response = await app.request("/internal/ai/funded/authorize", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, requestId: "request_held", modelId, maxCostMicrousd: 100 }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: { code: "rate_limited", message: "Try again later", reason: "priority_hold" } });
+  });
+
   it("rejects the prior runtime token after this machine's epoch advances", async () => {
     const { app } = await createTestApp();
     await db.executor.updateTable("user_machines")
@@ -667,6 +744,23 @@ describe("funded AI policy routes", () => {
       machineId: "machine_staging",
       runtimeSlot: "staging",
     });
+  });
+
+  it("negotiates an identity-free Chat projection while retaining the exact legacy response", async () => {
+    const { app } = await createTestApp();
+    const request = (body: unknown, authorization = `Bearer ${bearerFor("alice")}`) => app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST", headers: { authorization, "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    const legacy = await (await request({})).json();
+    const response = await request({ includeChatAvailability: true });
+    expect(response.status).toBe(200);
+    const modern = FundedAiRuntimeChatFundingSummaryResponseSchema.parse(await response.json());
+    expect(modern).toEqual({ ...legacy, chatAvailability: { contractVersion: 1, asOf: now, eligibleBalanceMicrousd: 1_500, availableBalanceMicrousd: 1_500 } });
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse(modern).success).toBe(false);
+    expect((await request({ includeChatAvailability: true }, "Bearer invalid")).status).toBe(401);
+    expect((await request({ includeChatAvailability: true, ownerId: "spoof" })).status).toBe(400);
+    expect((await request({ includeChatAvailability: false })).status).toBe(400);
+    expect(JSON.stringify(modern.chatAvailability)).not.toMatch(/user_alice|machine_123|token|credential/);
   });
 
   it("returns the exact identity-free Postgres funding summary for the authenticated runtime", async () => {

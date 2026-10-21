@@ -1,3 +1,4 @@
+import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -9,7 +10,7 @@ it("retries answers with the same identity while preserving the normal composer 
   const record = { chat, activeRun: { runId: "run_input", turnId: "cturn_input", status: "waiting_for_input" } };
   const requests: RequestInit[] = [];
   vi.spyOn(console, "warn").mockImplementation(() => {});
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events")) return new Response(new ReadableStream(), { headers: { "content-type": "text/event-stream" } });
     if (url.includes("/inputs/")) {
       requests.push(init!);
@@ -39,7 +40,7 @@ it("does not reload the previous chat after a late input response", async () => 
   const first = makeRecord("chat_first"), second = makeRecord("chat_second");
   let finish!: (response: Response) => void;
   const reads: string[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  stubLegacyChatFetch( vi.fn(async (url: string) => {
     if (url.includes("/events")) return new Response(new ReadableStream(), { headers: { "content-type": "text/event-stream" } });
     if (url.includes("/inputs/")) return new Promise<Response>(resolve => { finish = resolve; });
     if (url.includes("/api/chats?")) return Response.json({ items: [first, second] });

@@ -1,6 +1,6 @@
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
-import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
-import { useEffect, useState } from "react";
+
+import { useState } from "react";
 import type {
   ProviderAccessSource,
   ProviderAccentColor,
@@ -10,6 +10,7 @@ import type {
 } from "@matrix-os/contracts";
 import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
+import { gatewayPolicyAllowsModel } from "./utils.js";
 
 const ACCENTS: ProviderAccentColor[] = ["blue", "green", "orange", "red", "purple", "cyan", "teal"];
 
@@ -36,7 +37,7 @@ function sourceSupportsModel(
       route: { kind: "configurable", providerId: source.providerId, modelId },
     }, source)) return false;
   if (source.kind !== "matrix_gateway") return true;
-  return snapshot.gatewayPolicy?.allowedModelIds.includes(modelId) === true;
+  return gatewayPolicyAllowsModel(snapshot.gatewayPolicy, modelId);
 }
 
 function routeTargetForProvider(snapshot: ProviderSettingsSnapshot, provider: ProviderModelProvider, harness: ProviderHarnessInstance) {
@@ -71,7 +72,11 @@ export function HarnessEditor({
   onRefresh: () => void;
 }) {
   const [displayName, setDisplayName] = useState(harness.displayName);
-  useEffect(() => setDisplayName(harness.displayName), [harness.displayName, harness.id]);
+  const [savedName, setSavedName] = useState({ id: harness.id, name: harness.displayName });
+  if (savedName.id !== harness.id || savedName.name !== harness.displayName) {
+    setSavedName({ id: harness.id, name: harness.displayName });
+    setDisplayName(harness.displayName);
+  }
   const provider = providerFor(snapshot, harness);
   const model = provider?.models.find((candidate) => candidate.id === harness.route.modelId) ?? null;
   const accessSource = snapshot.accessSources.find((source) => source.id === harness.accessSourceId) ?? null;
@@ -132,8 +137,8 @@ export function HarnessEditor({
           <div><strong>{harness.displayName} {harness.installState === "missing" ? "is not installed" : "installation needs checking"}</strong><span>Install from this computer’s Terminal, then check again.</span></div>
         </div>
       ) : null}
-      {harness.connectivity !== "online" ? (
-        <div className="matrix-ap-notice" data-tone="warning"><strong>Connection not verified</strong>{harness.localObservation ? <span>{codexLocalObservationLabel(harness.localObservation)}</span> : null}<button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button></div>
+      {harness.connectivity === "offline" || harness.connectivity === "degraded" ? (
+        <div className="matrix-ap-notice" data-tone="warning"><strong>Connection unavailable</strong><button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button></div>
       ) : null}
       {routeUnavailable ? (
         <div className="matrix-ap-notice" data-tone="warning">
@@ -217,7 +222,7 @@ export function HarnessEditor({
           {accessSource?.kind === "harness_profile" ? (
             <div className="matrix-ap-field">
               <span>Authentication</span>
-              <div className="matrix-ap-readonly-value">{accessSource.localObservation ? codexLocalObservationLabel(accessSource.localObservation) : `Managed by ${harness.displayName}`}</div>
+              <div className="matrix-ap-readonly-value">{`Managed by ${harness.displayName}`}</div>
             </div>
           ) : (
             <label className="matrix-ap-field">
@@ -246,7 +251,7 @@ export function HarnessEditor({
           ? "Connect your own provider account in Terminal. Matrix AI funding is not supported for this agent yet."
           : "Use Matrix AI credit or connect your own account. Only supported connections appear here."}</p>
         {accessSource?.kind === "harness_profile" ? (
-          <p className="matrix-ap-help">{harness.displayName} manages authentication for this route. Add or switch accounts from its visible Terminal flow.</p>
+          <p className="matrix-ap-help">{harness.displayName} manages authentication for this route. Connect or switch accounts in Settings.</p>
         ) : null}
         {account ? <p className="matrix-ap-help">Selected account: {account.displayName}</p> : null}
       </div>

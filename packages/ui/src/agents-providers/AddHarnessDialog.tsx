@@ -7,13 +7,14 @@ import {
 } from "@matrix-os/contracts";
 import { FeatureDialog } from "./FeatureDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
+import { gatewayPolicyAllowsModel } from "./utils.js";
 
 function routesFor(snapshot: ProviderSettingsSnapshot, harness: ProviderGenericHarnessKind) {
   return snapshot.accessSources.flatMap((source) => {
     const provider = snapshot.modelProviders.find((item) => item.id === source.providerId);
     return (provider?.models ?? []).filter((model) => model.enabled
       && source.eligibleModelIds.includes(model.id)
-      && (source.kind !== "matrix_gateway" || snapshot.gatewayPolicy?.allowedModelIds.includes(model.id))
+      && (source.kind !== "matrix_gateway" || gatewayPolicyAllowsModel(snapshot.gatewayPolicy, model.id))
       && isSupportedGenericHarnessCredentialRoute({
         harness, accessSourceId: source.id, route: { kind: "configurable", providerId: source.providerId, modelId: model.id },
       }, source)).map((model) => ({ source, model, provider: provider! }));

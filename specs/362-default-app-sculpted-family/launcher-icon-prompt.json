@@ -1,0 +1,8 @@
+{
+  "generator": "image_gen.imagegen",
+  "style": "Ubuntu-inspired sculpted Matrix icon family",
+  "subject": "Four separate beveled app tiles in a 2 by 2 grid; forest teal, golden yellow, coral, sky blue. Transparent gaps and background. No enclosing plate, text or glyphs. Readable at 44px.",
+  "reference": "shell/public/system-app-icons/v2/files.png",
+  "generatedSource": "exec-5d176353-7e36-46b9-bbcd-14232c8b22f5.png",
+  "output": "shell/public/system-app-icons/v2/launcher.png"
+}

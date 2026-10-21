@@ -1,4 +1,4 @@
-import { isChatAgentDriver, jevHermesRoute } from "@matrix-os/contracts";
+import { isChatAgentDriver, isManagedCustomBot, jevHermesRoute, matrixAnthropicSelectionBinding, sameMatrixAnthropicSelectionBinding, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID } from "@matrix-os/contracts";
 import {
   ChatAgentIdSchema, ChatAgentSchema, ChatAgentListResponseSchema, ChatMentionSearchResponseSchema,
   ChatAgentRecipeCatalogSchema,
@@ -8,6 +8,7 @@ import {
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { isDeepStrictEqual } from "node:util";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 import { ChatAgentStoreError, type ChatAgentStore } from "./agent-store.js";
 import { ChatAgentContextError, type ChatAgentContext } from "./agent-context.js";
@@ -16,11 +17,17 @@ import { bindJevInboxRecipe, isJevInboxRecipe, JevRecipeBindingError, type Gmail
 import { revokeHermesJevCapabilitiesForAgent } from "./hermes-integration-capability.js";
 import type { ChatRepository } from "./repository.js";
 import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
+import { ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "../bots/custom-definition.js";
 
 const SearchSchema = z.object({
   query: z.string().trim().max(200).default(""),
   chatId: CanonicalChatIdSchema.optional(),
 }).strict();
+
+function selectionIdentity(selection: CanonicalChatModelSelection) {
+  return { instanceId: selection.instanceId, model: selection.model,
+    options: [...(selection.options ?? [])].sort((a, b) => a.id.localeCompare(b.id)) };
+}
 
 export function createChatAgentRoutes(options: {
   agents?: ChatAgentStore;
@@ -43,6 +50,8 @@ export function createChatAgentRoutes(options: {
     }
     if (error instanceof Error && error.name === "BodyLimitError") return context.json({ error: "Request too large" }, 413);
     if (error instanceof z.ZodError || error instanceof SyntaxError) return context.json({ error: "Invalid request" }, 400);
+    if (error instanceof ManagedCustomDefinitionError) return context.json({ error: error.code === "unsupported_skill"
+      ? "Choose a supported Bot skill." : "Shorten the Bot instructions or remove some skills." }, 400);
     if (error instanceof ChatAgentStoreError && error.code === "agent_not_found"
       || error instanceof ChatAgentContextError && error.code === "context_unavailable") {
       return context.json({ error: "Agent or Chat not found" }, 404);
@@ -68,10 +77,15 @@ export function createChatAgentRoutes(options: {
   }
   async function validSelection(principal: RequestPrincipal, selection: CanonicalChatModelSelection, jev = false): Promise<boolean> {
     const catalog = await options.catalog.getCatalog(principal);
+    if (selection.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID) {
+      const instance = catalog.instances.find(candidate => candidate.id === selection.instanceId);
+      if (!matrixAnthropicSelectionBinding(selection.options) || instance?.driverKind !== "matrix_bot"
+        || !sameMatrixAnthropicSelectionBinding(selection.options, instance.defaultSelection?.options)) return false;
+    }
     const checked = validateChatProviderSelection({ catalog, selection,
-      requirements: { interactionMode: "default", permissionMode: "full_access" },
+      requirements: { interactionMode: "default", permissionMode: ["matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(selection.instanceId) ? "default" : "full_access" },
     });
-    return checked.ok && isChatAgentDriver(checked.instance.driverKind)
+    return checked.ok && (["matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(selection.instanceId) || isChatAgentDriver(checked.instance.driverKind))
       && (!jev || (jevHermesRoute(selection) !== null && checked.instance.driverKind === "hermes"
         && checked.instance.defaultSelection?.model === selection.model));
   }
@@ -96,6 +110,8 @@ export function createChatAgentRoutes(options: {
     const scope = { type: "personal" as const, ownerId: principal.userId };
     const existing = await agents.findCreated(scope, input);
     if (existing) return c.json(ChatAgentSchema.parse(existing), 201);
+    if ([MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) return c.json({ error: "Choose an available Agent model." }, 400);
+    if (["matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) return c.json({ error: "Choose a Matrix Bot for this connection." }, 400);
     if (!await validSelection(principal, input.selection, isJevInboxRecipe(input.recipe))) return c.json({ error: "Choose an available Agent model." }, 400);
     let recipe;
     try {
@@ -117,10 +133,31 @@ export function createChatAgentRoutes(options: {
     const input = UpdateChatAgentRequestSchema.parse(await c.req.json());
     const current = await agents.get({ type: "personal", ownerId: principal.userId }, id);
     if (!current) return c.json({ error: "Agent or Chat not found" }, 404);
+    const managed = isManagedCustomBot(current);
+    const selectionChanged = input.selection !== undefined && (!managed
+      || !isDeepStrictEqual(selectionIdentity(input.selection), selectionIdentity(current.selection)));
+    const recipeChanged = input.recipe !== undefined && (!managed
+      || !isDeepStrictEqual(input.recipe ?? undefined, current.recipe));
+    // Editors resubmit unchanged executable fields. Description/withdrawal
+    // recovery must not depend on rereading skills or rebinding the same source.
+    if (managed && input.recipe?.skills.includes("matrix-jev-email-triage")) throw new ManagedCustomDefinitionError("unsupported_skill");
+    if (managed && (input.name !== undefined && input.name !== current.name
+      || input.instructions !== undefined && input.instructions !== current.instructions
+      || recipeChanged || selectionChanged || input.archived === false)) {
+      await resolveManagedCustomDefinition({ ...current, ...input,
+        recipe: input.recipe === null ? undefined : input.recipe ?? current.recipe }, options.recipes);
+    }
+    if (input.selection && [MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) return c.json({ error: "Choose an available Agent model." }, 400);
+    if (input.selection && ["matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId) && !current.recipeRef) return c.json({ error: "Choose a Matrix Bot for this connection." }, 400);
+    const automatic = input.selection?.instanceId === "matrix_bot_default" && input.selection.model === "auto"
+      && !Object.keys(input.selection.options ?? {}).length;
+    if (input.selection && current.recipeRef && !automatic && ! ["matrix_pi_default", "matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) {
+      return c.json({ error: "Choose an available Matrix AI model." }, 400);
+    }
     const jev = isJevInboxRecipe(input.recipe === null ? undefined : input.recipe ?? current.recipe);
-    if ((input.selection || (input.recipe && jev) || (jev && input.archived === false))
-      && !await validSelection(principal, input.selection ?? current.selection, jev)) return c.json({ error: "Choose an available Agent model." }, 400);
-    const recipe = input.recipe ? await bindJevInboxRecipe({ ownerId: principal.userId, recipe: input.recipe,
+    if ((selectionChanged || (recipeChanged && input.recipe && jev) || (jev && input.archived === false))
+      && !(current.recipeRef && automatic) && !await validSelection(principal, input.selection ?? current.selection, jev)) return c.json({ error: "Choose an available Agent model." }, 400);
+    const recipe = input.recipe && recipeChanged ? await bindJevInboxRecipe({ ownerId: principal.userId, recipe: input.recipe,
       listGmailAccounts: options.listGmailAccounts }) : undefined;
     const updated = await agents.update({ type: "personal", ownerId: principal.userId }, id, input, recipe);
     revokeHermesJevCapabilitiesForAgent(principal.userId, id);

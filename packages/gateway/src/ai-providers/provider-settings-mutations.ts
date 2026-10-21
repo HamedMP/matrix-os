@@ -187,11 +187,13 @@ export function applyProviderConfigurationMutation(input: {
       if (!source || !gatewayAllowed || source.providerId !== harness.route.providerId
         || !source.eligibleModelIds.includes(harness.route.modelId)
         || !genericHarnessRouteIsSupported({ ...harness, accessSourceId: source.id }, source)
-        || (harness.enabled && !mayEnableObservedNativeRoute({ ...harness, accessSourceId: source.id }, source, input.now ?? new Date()))) {
+        || ((harness.enabled || mutation.enableHarness === true) && !mayEnableObservedNativeRoute({ ...harness, accessSourceId: source.id }, source, input.now ?? new Date()))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
+      if (mutation.enableHarness === true && input.canonical.drivers.find(driver => driver.id === resolveProviderSettingsDriverId({ driverId: harness.driverId, harness: harness.harness, canonical: input.canonical }))?.installState !== "installed") throw new ProviderSettingsStoreError("invalid_request", 400);
       harness.accessSourceId = source.id;
       harness.selectedAccountId = source.accountId;
+      if (mutation.enableHarness === true) harness.enabled = true;
       harness.enablementOrigin = "owner_configuration";
       return true;
     }

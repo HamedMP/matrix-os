@@ -159,6 +159,20 @@ describe("project collaboration app adapter", () => {
     expect(bridgeCalls.every((call) => call.transactional === true)).toBe(true);
   });
 
+  it("allows conditional writes only through the mutation envelope for an authorized editor", async () => {
+    bridge.execute = vi.fn(async () => ({ ok: false }));
+    const apps = adapter();
+    const editor = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: EDITOR_ID, action: "mutate_project" });
+    const viewer = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: VIEWER_ID, action: "read" });
+    const action = { app: "board", table: "cards", action: "compareAndSwap", id: "row-id", expectedPayload: { title: "Original" }, data: { payload: { title: "Changed" } } };
+    await expect(apps.query(editor, { appId: APP_ID, action })).rejects.toMatchObject({ code: "invalid_action" });
+    const envelope = { appId: APP_ID, clientRequestId: "50000000-0000-4000-8000-000000000095", expectedRevision: 2, action };
+    await expect(apps.mutate(viewer, envelope)).rejects.toMatchObject({ code: "forbidden" });
+    expect(bridge.execute).not.toHaveBeenCalled();
+    await expect(apps.mutate(editor, envelope)).resolves.toMatchObject({ result: { ok: false } });
+    expect(bridge.execute).toHaveBeenCalledWith(expect.objectContaining({ actorId: EDITOR_ID, storageSchema: "board", transaction: expect.anything(), action: expect.objectContaining({ action: "compareAndSwap", expectedPayload: action.expectedPayload }) }));
+  });
+
   it("keeps viewer access read-only at the adapter boundary", async () => {
     const viewer = await authority.authorize({
       scopeId: PROJECT_SCOPE_ID,

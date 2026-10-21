@@ -1,5 +1,6 @@
 import type { ChatSubagent, CanonicalChatApprovalDecision, ImportedChatAssetRef } from "@matrix-os/contracts";
 import type { ChatRunContext, CanonicalChatExecutionRootRef, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
+import type { ReactNode } from "react";
 export type ConversationMessageRole = "user" | "assistant";
 
 export interface ConversationAttachmentPresentation {
@@ -76,6 +77,7 @@ export interface ConversationNoticePresentation {
   kind: "notice";
   id: string;
   phase: "commentary" | "final";
+  failureCode?: import("@matrix-os/contracts").CanonicalChatSafeError["code"];
   tone: "neutral" | "info" | "success" | "warning" | "stopped" | "failed";
   label: string;
   markdown: string;
@@ -91,6 +93,7 @@ export interface ConversationRequestPresentation {
   requestKind: "approval" | "input";
   requestId: string;
   decision?: CanonicalChatApprovalDecision;
+  reason?: "expired";
   state: "waiting" | "resolved";
   label: string;
   detail?: string;
@@ -119,6 +122,8 @@ export type ConversationTurnTimelinePresentation =
   | { kind: "user-followup"; message: ConversationMessagePresentation };
 
 export interface ConversationTurnPresentation {
+  /** All attempts belong to this persisted turn; Bot tasks bind by run ID. */
+  runIds?: string[];
   agentLabel?: string;
   runContext?: ChatRunContext;
   executionRoot?: CanonicalChatExecutionRootRef;
@@ -135,6 +140,7 @@ export interface ConversationTurnPresentation {
 }
 
 export interface ConversationPresentationCallbacks {
+  renderCredentialMarker?: (message: ConversationMessagePresentation, offset: number, marker: string, number: number) => ReactNode;
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
   loadFileImage?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => Promise<Blob>;
@@ -143,6 +149,9 @@ export interface ConversationPresentationCallbacks {
   submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
+  permissionMode?: string;
+  onPermissionMode?: (mode: "supervised" | "full_access") => void;
+  onTryAgain?: (prompt: string) => void;
   openFile?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
   openImportedAsset?: (asset: ImportedChatAssetRef) => Promise<void>;
   openAttachment?: (path: string) => boolean;

@@ -147,7 +147,7 @@ it.each([
     });
     await waitFor(() => expect(hook.result.current.detail?.record.activeRun).toBeUndefined());
     expect(hook.result.current.detail?.runs.find((candidate) => candidate.id === run.id)?.status).toBe("completed");
-    // One initial snapshot; reconnection deliberately reconciles once. Healthy
+    // One route load plus one bounded refresh per replay checkpoint. Healthy
     // steering/content delivery never uses per-event polling or reload.
     expect(getDetail).toHaveBeenCalledTimes(initialDetailCalls + (reconnect ? 1 : 0));
   } finally {

@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import {
   topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
@@ -6,10 +6,20 @@ import {
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
+import { useConnection } from "../../stores/connection";
+import { useAppsQuery } from "../apps/apps.api";
+import { desktopTabsWithLiveAppArtwork } from "./bundled-app-icons";
 import DesktopTabStrip from "./DesktopTabStrip";
 
 export default function DesktopHeaderTabs() {
   const tabs = useTabs((state) => state.tabs);
+  const platformHost = useConnection((state) => state.platformHost);
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const { data: installedApps = [] } = useAppsQuery();
+  const displayTabs = useMemo(
+    () => desktopTabsWithLiveAppArtwork(tabs, installedApps, platformHost, runtimeSlot),
+    [tabs, installedApps, platformHost, runtimeSlot],
+  );
   const activeTabId = useTabs((state) => state.activeTabId);
   const focusTab = useTabs((state) => state.focusTab);
   const closeTab = useTabs((state) => state.closeTab);
@@ -70,7 +80,7 @@ export default function DesktopHeaderTabs() {
 
   return (
     <DesktopTabStrip
-      tabs={tabs}
+      tabs={displayTabs}
       surfaces={surfaces}
       activeTabId={activeTabId}
       onActivate={activate}

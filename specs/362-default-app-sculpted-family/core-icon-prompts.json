@@ -1,0 +1,89 @@
+{
+  "generator": "image_gen.imagegen",
+  "style": "Matrix sculpted icon family",
+  "brandReference": "https://www.figma.com/design/xPG2FeYRtC9owCKSVXCqWA/brand?node-id=1-545",
+  "output": {
+    "format": "PNG",
+    "width": 256,
+    "height": 256
+  },
+  "apps": [
+    {
+      "id": "chat",
+      "subject": "Two soft glazed sky blue and pearl speech bubbles with a gentle overlap.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: Two soft glazed sky blue and pearl speech bubbles with a gentle overlap.",
+      "generatedSource": "exec-167ea236-10cb-484c-94a7-f802ea662fc3.png",
+      "output": "shell/public/system-app-icons/v2/chat.png"
+    },
+    {
+      "id": "settings",
+      "subject": "A satin silver ceramic gear with a small brushed brass central hub.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: A satin silver ceramic gear with a small brushed brass central hub.",
+      "generatedSource": "exec-e21c907f-cee8-4636-909b-49950771613c.png",
+      "output": "shell/public/system-app-icons/v2/settings.png"
+    },
+    {
+      "id": "plugins",
+      "subject": "Two modular lavender and mint connector pieces, one plug and one socket.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: Two modular lavender and mint connector pieces, one plug and one socket.",
+      "generatedSource": "exec-190eb6d4-2772-44f4-a7bc-97a97a4fb57c.png",
+      "output": "shell/public/system-app-icons/v2/plugins.png"
+    },
+    {
+      "id": "browser",
+      "subject": "A sky blue frosted globe with simple brass meridians.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: A sky blue frosted globe with simple brass meridians.",
+      "generatedSource": "exec-053f75ad-e6ef-4e3f-bc03-8a13770c68e6.png",
+      "output": "shell/public/system-app-icons/v2/browser.png"
+    },
+    {
+      "id": "canvas",
+      "subject": "Four softly sculpted mint glass window panes in a single grid.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: Four softly sculpted mint glass window panes in a single grid.",
+      "generatedSource": "exec-a9d9a3a9-d55b-4c8d-8f83-d8ae0bcde67d.png",
+      "output": "shell/public/system-app-icons/v2/canvas.png"
+    },
+    {
+      "id": "desktop",
+      "subject": "A pearl ceramic computer monitor with a subtle sky blue frosted screen.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: A pearl ceramic computer monitor with a subtle sky blue frosted screen.",
+      "generatedSource": "exec-a787bbc2-c1ce-4f99-bef4-9de85fb22b96.png",
+      "output": "shell/public/system-app-icons/v2/desktop.png"
+    },
+    {
+      "id": "create-app",
+      "subject": "One chunky mint glazed plus sign.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: One chunky mint glazed plus sign.",
+      "generatedSource": "exec-8fafc666-3103-4cef-b88e-3906114bdd8b.png",
+      "output": "shell/public/system-app-icons/v2/create-app.png"
+    },
+    {
+      "id": "resource-manager",
+      "subject": "A small blue glass gauge with a readable raised needle and brass pivot.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: A small blue glass gauge with a readable raised needle and brass pivot.",
+      "generatedSource": "exec-fd14e66b-c1a6-4be4-8cca-8b0394133f73.png",
+      "output": "home/system/icons/resource-manager.png"
+    },
+    {
+      "id": "terminal",
+      "subject": "A dark graphite rounded terminal slab with a sculpted ivory chevron and a mint cursor.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: A dark graphite rounded terminal slab with a sculpted ivory chevron and a mint cursor.",
+      "generatedSource": "exec-01e33b0b-c73d-456f-b555-043e3f3205fe.png",
+      "output": "shell/public/system-app-icons/v2/terminal.png"
+    },
+    {
+      "id": "editor",
+      "subject": "A pearl document and one diagonally resting sky blue fountain pen.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: A pearl document and one diagonally resting sky blue fountain pen.",
+      "generatedSource": "exec-ed9883ef-f76f-4fb4-a3f6-b3d609370dd2.png",
+      "output": "shell/public/system-app-icons/v2/editor.png"
+    },
+    {
+      "id": "app-gallery",
+      "subject": "Four pastel mint, sky, clay and gold ceramic tiles arranged in a small grid.",
+      "prompt": "Use case: stylized-concept. Asset type: premium Matrix OS application icon, one single square image. Style: exquisite soft 3D sculpted macOS icon family, tactile glazed ceramic and frosted glass with subtle brushed brass accents. Warm ivory rounded-square tile fills the entire square canvas, radius about 24%, subtle beveled edge, seamless warm ivory background (no white rectangular margin), elegant small shadow beneath the centered object. Soft studio illumination from upper left, restrained specular highlights, generous breathing space, front three-quarter view, object occupies 65% of canvas. Purposefully simple readable silhouette at 64 pixels. No letters, no text, no gradients outside tile, no border frame, no watermark, no busy background. Not a flat line icon or neon game aesthetic. Subject: Four pastel mint, sky, clay and gold ceramic tiles arranged in a small grid.",
+      "generatedSource": "exec-0afa2e36-f901-4800-8cf8-13c397d8d35e.png",
+      "output": "home/system/icons/app-gallery.png"
+    }
+  ]
+}

@@ -26,6 +26,7 @@ import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { canonicalProviderAvailabilityLabel } from "../../packages/ui/src/canonical-provider-choice.js";
+import { deriveChatPickerEntries } from "../../packages/ui/src/chat-picker-entries.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
 import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
@@ -788,6 +789,11 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings", displayName: "Codex" });
     expect(catalog.instances.find((instance) => instance.id === "claude_code_default"))
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings", displayName: "Claude" });
+    for (const selection of [{ instanceId: "codex_default", model: "gpt-5.4" }, { instanceId: "claude_code_default", model: "opus" }]) {
+      const scoped = await service.getCatalog(principal, selection);
+      expect(scoped.instances).toEqual([expect.objectContaining({ availability: "unavailable", unavailabilityReason: "disabled_in_settings" })]);
+      expect(validateChatProviderSelection({ catalog: scoped, selection }).ok).toBe(false);
+    }
   });
 
   it("keeps a Codex route admitted for a user attempt while qualifying its local-only status", async () => {
@@ -879,7 +885,23 @@ describe("canonical Chat Provider catalog", () => {
 
     expect((await service.getCatalog(principal)).instances.find((instance) => (
       instance.id === "claude_code_default"
-    ))).toMatchObject({ availability: "available", displayName: "Claude" });
+    ))).toMatchObject({ availability: "available", displayName: "Claude",
+      connectionLabel: "Claude subscription",
+      supports: { approvals: true, tools: ["integrations", "custom_mcp"] } });
+  });
+
+  it.each(["matrix_included", "owner_anthropic_key"])("does not advertise native Claude with the saved %s source", async accessSourceId => {
+    const settings = await harnessSettings([{ ...configuredHarness("claude", true), accessSourceId }]).getSnapshot();
+    const before = structuredClone(settings);
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider(), codingProvider({ id: "claude", kind: "claude" })]),
+      agentRuntimeSource: runtimeSource(), harnessSettingsSource: { getSnapshot: async () => settings },
+    });
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find(instance => instance.id === "claude_code_default"))
+      .toMatchObject({ availability: "unavailable", models: [], connectionLabel: "Claude subscription" });
+    expect(catalog.instances.find(instance => instance.id === "codex_default")?.availability).toBe("available");
+    expect(settings).toEqual(before);
   });
 
   it("keeps a configured Hermes runtime available without a duplicate settings row", async () => {
@@ -1229,13 +1251,43 @@ describe("canonical Chat Provider catalog", () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([]), agentRuntimeSource: runtimeSource(),
       aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
-      executableDriverKinds: ["kernel"],
+      executableDriverKinds: ["matrix_pi"],
     });
     const catalog = await service.getCatalog(principal);
-    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included"))
+    expect(catalog.instances.find((instance) => instance.id === "matrix_pi_default"))
       .toMatchObject({ displayName: "Matrix AI", availability: "available" });
-    expect(catalog.drivers.find((driver) => driver.kind === "kernel"))
-      .toMatchObject({ displayName: "Claude SDK", capabilityClass: "system_agent" });
+    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
+  });
+
+  it("offers only subscription Claude Code while retaining Claude through Matrix Pi", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "claude", kind: "claude", displayName: "Claude",
+        availability: "auth_required", authStatus: "unauthenticated",
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
+      executableDriverKinds: ["claude_code", "matrix_pi"],
+    });
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "claude_code_default")?.availability)
+      .toBe("auth_required");
+    expect(catalog.instances.find((instance) => instance.id === "claude_code_matrix_included"))
+      .toBeUndefined();
+    expect(catalog.instances.find((instance) => instance.id === "matrix_pi_default"))
+      .toMatchObject({ availability: "available", models: [{ id: "claude-sonnet-5" }] });
+    const picker = deriveChatPickerEntries(catalog);
+    expect(picker.flatMap(entry => entry.instances).filter(instance => instance.driverKind === "claude_code")
+      .map(instance => instance.id)).toEqual(["claude_code_default"]);
+    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
+    const selected = await service.getCatalog(principal, {
+      instanceId: "claude_code_matrix_included", model: "claude-sonnet-5",
+    });
+    expect(selected.instances).toEqual([]);
+    expect(selected.drivers).toEqual([]);
+    expect(validateChatProviderSelection({ catalog: selected,
+      selection: { instanceId: "claude_code_matrix_included", model: "claude-sonnet-5" } }))
+      .toMatchObject({ ok: false, error: { code: "provider_unavailable", recoveryActions: ["start_new_chat"] } });
   });
 
   it("retains unavailable Matrix AI without exposing models or acquiring credentials", async () => {
@@ -1260,8 +1312,9 @@ describe("canonical Chat Provider catalog", () => {
 
       const catalog = await service.getCatalog(principal);
 
-      expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included"))
-        .toMatchObject({ availability: "unavailable", connectionState: "unavailable", models: [] });
+      expect(catalog.instances.find((instance) => instance.id === "matrix_pi_default"))
+        .toMatchObject({ availability: "unavailable", models: [] });
+      expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
       expect(JSON.stringify(catalog)).not.toContain("platform-secret");
     } finally {
       aiProviderSource.close();

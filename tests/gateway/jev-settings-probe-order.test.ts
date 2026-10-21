@@ -42,7 +42,8 @@ async function fixture() {
     jevInboxTriage: { version: 1, ownerId: baseInput.owner.ownerId, ...account } } };
   const paidJev = vi.fn(); const primary = fakeGateway(); const profile = vi.fn(async () => ({ emailAddress: "foreign@example.test" }));
   const runtime = createProductionJevInboxRuntime({ homePath: home, ownerId: baseInput.owner.ownerId, fundedOwnerId: "funded_fixture", settings,
-    getAgent: async () => agent, service: { evaluate: paidJev }, summary: { getFundingSummary: async () => ({ policy, funding }) },
+    getAgent: async () => agent, service: { evaluate: paidJev }, summary: { getFundingSummary: async () => ({ policy, funding, chatAvailability: { contractVersion: 1 as const,
+      asOf: funding.asOf, eligibleBalanceMicrousd: 5_000_000, availableBalanceMicrousd: 5_000_000 } }) },
     routes: { getRouteReadiness: paidJev }, internalBaseUrl: null,
     db: { listConnectedServices: async () => [{ id: account.connectionId, user_id: baseInput.owner.ownerId, service: "gmail", status: "active",
       account_label: "Work", account_email: account.expectedEmail, pipedream_account_id: "apn_fixture" }],

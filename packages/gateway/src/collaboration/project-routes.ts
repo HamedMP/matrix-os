@@ -5,6 +5,7 @@ import {
   CollaborationGitOperationSchema,
   CollaborationProjectAccessReadinessSchema,
   CollaborationProjectSchema,
+  CollaborationProjectOverviewSchema,
   CollaborationProjectConfirmRequestSchema,
   CollaborationProjectInventorySchema,
   CollaborationProjectTransitionSchema,
@@ -29,6 +30,14 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     return c.json(CollaborationProjectSchema.parse(
       await requireProjectSharing(options.projectSharing).read({ scopeId }),
+    ));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/project/overview", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    await authorize(options, c, new Uint8Array(), "read", scopeId);
+    return c.json(CollaborationProjectOverviewSchema.parse(
+      await requireProjectSharing(options.projectSharing).overview({ scopeId }),
     ));
   }));
 

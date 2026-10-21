@@ -17,6 +17,7 @@ import {
   DownloadIcon,
   CheckCircle2Icon,
   UploadIcon,
+  UsersIcon,
 } from "@/lib/hugeicons";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
@@ -46,14 +47,16 @@ import { DesignCaptionButtons } from "./window/DesignCaptionButtons";
 import { DefaultInstallsStep } from "./onboarding/DefaultInstallsStep";
 import type { DeveloperToolId } from "./onboarding/developer-tools";
 import type { TerminalLaunchAction } from "@/lib/terminal-launch";
+import OrganizationSection from "./settings/sections/OrganizationSection";
 
 
 const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
+  { id: "organization", label: "Organization", icon: UsersIcon },
   { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
   { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
-  { id: "integrations", label: "Services", icon: CableIcon },
+  { id: "integrations", label: "Connect Apps", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "chat-import", label: "Import chats", icon: UploadIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
@@ -213,9 +216,11 @@ function SettingsFrame({
   const resolvedLockedSection = !showBillingSection && canonicalLockedSection === "billing"
     ? undefined
     : canonicalLockedSection;
+  const setupBackdrop = onboardingMode
+    || (resolvedLockedSection === "billing" && billingMode !== "settings");
   const standardFrameSections: SettingsSection[] = showBillingSection
     ? visibleSections
-    : visibleSections.filter((section) => section.id !== "billing");
+    : visibleSections.filter((section) => section.id !== "billing" && section.id !== "organization");
   const frameVisibleSections: SettingsSection[] = onboardingMode
     ? standardFrameSections.reduce<SettingsSection[]>((result, section) => {
         result.push(section);
@@ -295,7 +300,7 @@ function SettingsFrame({
   const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
   return (
     <div className="fixed inset-0" style={{ zIndex: SHELL_Z_INDEX.settings }}>
-      {onboardingMode ? (
+      {setupBackdrop ? (
         <Image
           src={platformShellAssetPath("/wallpapers/matrix-dusk.webp")}
           alt=""
@@ -324,7 +329,7 @@ function SettingsFrame({
 
       <div className="pointer-events-none relative z-10 flex h-full items-center justify-center overflow-hidden sm:p-4">
         <div
-          className="pointer-events-auto flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl xl:h-[760px] xl:w-[1180px]"
+          className={`pointer-events-auto flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl xl:w-[1180px] ${setupBackdrop ? "xl:h-[800px]" : "xl:h-[760px]"}`}
           style={{
             opacity: visible ? 1 : 0,
             transform: visible ? "scale(1) translateY(0)" : "scale(0.96) translateY(8px)",
@@ -354,10 +359,10 @@ function SettingsFrame({
           </header>
 
           <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-            <aside className="flex w-full shrink-0 flex-col border-b border-border/40 bg-card/50 p-2 sm:w-52 sm:border-b-0 sm:border-r">
+            <aside className="flex w-full shrink-0 flex-col border-b border-sidebar-border bg-sidebar text-sidebar-foreground p-2 sm:w-52 sm:border-b-0 sm:border-r">
               <nav
                 aria-label="Settings sections"
-                className="flex flex-wrap gap-1 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:flex-nowrap sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:pb-0"
+                className={`flex gap-1 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:flex-nowrap sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:pb-0 ${resolvedLockedSection ? "flex-nowrap" : "flex-wrap"}`}
               >
                 {frameVisibleSections.map((section) => {
                   const Icon = section.icon;
@@ -384,7 +389,7 @@ function SettingsFrame({
                       aria-current={active ? "page" : undefined}
                       className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2.5 text-[13px] transition-colors sm:order-none sm:px-2.5 sm:py-1.5 ${
                         active
-                          ? "order-first bg-ember/12 text-deep font-semibold"
+                          ? "order-first bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
                           : locked
                             ? "cursor-not-allowed text-muted-foreground/45"
                             : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
@@ -392,7 +397,7 @@ function SettingsFrame({
                     >
                       <Icon
                         className={`size-4 shrink-0 ${
-                          active ? "text-ember" : ""
+                          active ? "text-sidebar-accent-foreground" : ""
                         }`}
                       />
                       <span>{section.label}</span>
@@ -409,8 +414,9 @@ function SettingsFrame({
 
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
+              {activeSection === "organization" && <OrganizationSection />}
               {activeSection === "agents-providers" && (
-                <AgentSection onOpenTerminal={onOpenProviderTerminalSession} />
+                <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}

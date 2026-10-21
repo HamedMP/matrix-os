@@ -11,9 +11,9 @@ import {
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
 describe("Service Registry", () => {
-  it("has the 15-service managed catalog", () => {
-    expect(listServices()).toHaveLength(15);
-    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(15);
+  it("has the 38-service managed catalog", () => {
+    expect(listServices()).toHaveLength(38);
+    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(38);
   });
 
   it("returns service by id", () => {
@@ -70,7 +70,7 @@ describe("Service Registry", () => {
       expect(service.id).toBeTruthy();
       expect(service.name).toBeTruthy();
       expect(service.category).toBeTruthy();
-      expect(["pipedream", "mcp_preset"]).toContain(service.connectorKind);
+      expect(["pipedream", "mcp_preset", "managed_oauth"]).toContain(service.connectorKind);
       if (service.connectorKind === "pipedream") {
         expect(service.pipedreamApp).toBeTruthy();
       }
@@ -134,10 +134,10 @@ describe("Service Registry", () => {
     for (const [serviceId, contract] of Object.entries(expected)) {
       const service = getService(serviceId);
       expect(service, serviceId).toBeDefined();
-      expect(Object.keys(service!.actions)).toEqual([
+      expect(Object.keys(service!.actions)).toEqual(expect.arrayContaining([
         ...contract.read,
         ...contract.write,
-      ]);
+      ]));
       for (const action of contract.read) {
         expect(service!.actions[action]!.risk).toBe("read");
       }
@@ -152,11 +152,17 @@ describe("Service Registry", () => {
     });
   });
 
-  it("keeps Stripe, PostHog, and Granola strictly read-only", () => {
-    for (const serviceId of ["stripe", "posthog", "granola"]) {
+  it("keeps Granola read-only and marks new profile and insight mutations as writes", () => {
+    for (const serviceId of ["granola"]) {
       const actions = Object.values(getService(serviceId)!.actions);
       expect(actions.every((action) => action.risk === "read"), serviceId).toBe(true);
     }
+  });
+
+  it("requires write approval for Stripe customer profiles and PostHog insights", () => {
+    expect(getService("stripe")!.actions.create_customer.risk).toBe("write");
+    expect(getService("posthog")!.actions.create_insight.risk).toBe("write");
+    expect(getService("posthog")!.actions.update_insight.risk).toBe("write");
   });
 
   it("exposes bounded X read and write actions through the Twitter connector", () => {

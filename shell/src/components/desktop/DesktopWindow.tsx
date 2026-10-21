@@ -1,10 +1,11 @@
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
-import type { CSSProperties, PointerEvent } from "react";
+import { useCallback, type CSSProperties, type PointerEvent } from "react";
 import type { ChatState } from "@/hooks/useChatState";
 import type { AppWindow } from "@/hooks/useWindowManager";
 import type { DockConfig } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { routeAppBridgeLaunch } from "@/lib/builtin-apps";
 import { desktopLaunchBarInset } from "@/lib/desktop-work-area";
 import { cn } from "@/lib/utils";
 import {
@@ -87,6 +88,7 @@ export function DesktopWindow({
   onToggleFullscreen,
   topInset = 0,
 }: DesktopWindowProps) {
+  const onAppOpen = useCallback((name: string, path: string) => routeAppBridgeLaunch(name, path, onOpenWindow), [onOpenWindow]);
   const focusedWindowId = useWindowManager((state) => state.focusedWindowId);
   const isFullscreen = win.id === fullscreenWindowId;
   const isMinimizing = minimizingIds.has(win.id);
@@ -213,16 +215,20 @@ export function DesktopWindow({
               <ChatApp
                 collaborationView={chat.collaborationView}
                 onOpenSharedChat={chat.openSharedChat}
+                onOpenSharedProject={chat.openSharedProject}
                 onOpenSharedHome={chat.openSharedHome}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 active={focusedWindowId === win.id && !win.minimized}
+                visible={!win.minimized}
                 readState={chat.readState}
                 displayedThroughSeq={chat.displayedThroughSeq}
                 onUpdateReadState={chat.updateReadState}
                 messages={chat.messages}
                 sessionId={chat.sessionId}
                 busy={chat.busy}
+                activeRunId={chat.activeRunId}
+                onAbortCurrent={chat.abortCurrent}
                 connected={chat.connected}
                 conversations={chat.conversations}
                 onNewChat={chat.newChat}
@@ -230,7 +236,7 @@ export function DesktopWindow({
                 activeConversationTitle={chat.activeConversationTitle}
                 onRenameConversation={chat.renameConversation}
                 onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
+              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
                 onSubmitApproval={chat.submitApproval}
                 onSubmitInput={chat.submitInput}
                 providerSelection={chat.providerSelection}
@@ -243,7 +249,7 @@ export function DesktopWindow({
         ) : win.path === "__activity-monitor__" ? (
           <ActivityMonitorApp />
         ) : (
-          <AppViewer path={win.path} onOpenApp={onOpenWindow} />
+          <AppViewer path={win.path} onOpenApp={onAppOpen} />
         )}
         {interacting && (
           <div className="absolute inset-0 z-10" />

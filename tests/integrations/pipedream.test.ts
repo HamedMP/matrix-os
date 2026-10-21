@@ -9,11 +9,15 @@ const {
   mockTokensCreate,
   mockAccountsDelete,
   mockProxyPost,
+  mockProxyGet,
+  mockRunAction,
   mockPipedreamConstructors,
 } = vi.hoisted(() => ({
   mockTokensCreate: vi.fn(),
   mockAccountsDelete: vi.fn(),
   mockProxyPost: vi.fn(),
+  mockProxyGet: vi.fn(),
+  mockRunAction: vi.fn(),
   mockPipedreamConstructors: vi.fn(),
 }));
 
@@ -26,7 +30,8 @@ vi.mock("@pipedream/sdk", () => {
 
       tokens = { create: mockTokensCreate };
       accounts = { delete: mockAccountsDelete };
-      proxy = { post: mockProxyPost };
+      proxy = { get: mockProxyGet, post: mockProxyPost, put: mockProxyPost, patch: mockProxyPost, delete: mockProxyPost };
+      actions = { run: mockRunAction };
     },
   };
 });
@@ -45,6 +50,35 @@ const TEST_CONFIG: PipedreamConfig = {
 describe("Pipedream Connect SDK Wrapper", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each(["proxyGet", "proxyPost", "proxyPut", "proxyPatch", "proxyDelete", "callAction"] as const)("disables hidden billable retries and bounds %s", async (method) => {
+    mockProxyGet.mockResolvedValue({ ok: true }); mockProxyPost.mockResolvedValue({ ok: true });
+    const client = await createPipedreamClient(TEST_CONFIG);
+    await client[method]({ externalUserId: "owner", accountId: "apn_test", url: "https://example.com/read", body: {} });
+    const mock = method === "proxyGet" ? mockProxyGet : mockProxyPost;
+    expect(mock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ maxRetries: 0, abortSignal: expect.any(AbortSignal) }));
+  });
+  it("does not automatically repeat a component execution", async () => {
+    mockRunAction.mockResolvedValue({ ret: {} });
+    const client = await createPipedreamClient(TEST_CONFIG);
+    await client.runAction({ externalUserId: "owner", componentKey: "app-action", configuredProps: {} });
+    expect(mockRunAction).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ maxRetries: 0, abortSignal: expect.any(AbortSignal) }));
+  });
+  it("shares only concurrent identical proxy reads and keeps account/parameter identity", async () => {
+    let release!: (value: unknown) => void;
+    mockProxyGet.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const client = await createPipedreamClient(TEST_CONFIG);
+    const opts = { externalUserId: "owner", accountId: "apn_test", url: "https://example.com/read" };
+    const first = client.proxyGet(opts); const second = client.proxyGet(opts);
+    await vi.waitFor(() => expect(mockProxyGet).toHaveBeenCalledOnce());
+    release({ fresh: true }); await Promise.all([first, second]);
+    mockProxyGet.mockResolvedValue({ fresh: true });
+    await client.proxyGet(opts);
+    await client.proxyGet({ ...opts, externalUserId: "other" });
+    await client.proxyGet({ ...opts, accountId: "apn_other" });
+    await client.proxyGet({ ...opts, params: { page: "2" } });
+    expect(mockProxyGet).toHaveBeenCalledTimes(5);
   });
 
   it("passes projectEnvironment to the Pipedream SDK", async () => {

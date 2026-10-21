@@ -1,10 +1,12 @@
 ---
+triggers: ["Matrix VPS", "develop Matrix", "hot reload", "preview server"]
 name: matrix-dev-vps
 description: Work on Matrix OS from inside a Matrix user VPS with near-realtime development, hot reload, previews, and safe separation between customer code and platform secrets.
-version: 1.0.0
+version: 1.1.0
 author: Matrix OS
 license: MIT
 platforms: [linux]
+related_skills: [matrix-app-builder, matrix-debug-app, matrix-integrations]
 metadata:
   agent:
     tags: [Matrix OS, VPS, development, HMR, devops]
@@ -19,8 +21,11 @@ Use this when developing Matrix itself, Matrix apps, or Matrix-adjacent projects
 
 ## Mental Model
 
-- Production user VPSes run the built Matrix image.
-- A dev VPS can run most services in containers while shell and backend run natively with hot reload.
+- Production user VPSes run immutable VPS-native host bundles with systemd services.
+- Updates replace `/opt/matrix/app` only; owner files and Postgres data stay intact.
+- Local development may use documented Docker services; Docker Compose/image rebuilds
+  are not the production customer deployment path.
+- A dev VPS uses the documented source development loop with native hot reload.
 - Platform owns shared sensitive integration credentials.
 - User/project work happens in the user's home and project directories.
 - The dev loop should feel like a normal user coding inside Matrix, with preview URLs routed back into Matrix.
@@ -47,7 +52,7 @@ pnpm --filter './packages/gateway' dev
 pnpm --filter './shell' dev
 ```
 
-For Docker-backed services, prefer the repo's documented compose file and env file:
+For explicitly configured local Docker-backed development services only, use the repo's documented compose file and env file:
 
 ```bash
 docker compose --env-file .env -f docker-compose.dev-vps.yml up -d
@@ -87,7 +92,7 @@ pnpm build
 - Store platform Pipedream, Clerk, or provider secrets on a customer VPS.
 - Modify production platform state directly from a dev VPS.
 - Use Docker volume reset commands unless explicitly resetting state.
-- Build Matrix features that only work outside Canvas mode.
+- Build Matrix features that work on only one surface: validate Web Canvas, Web Desktop, and Electron Desktop, plus supported Web Mobile/Native Mobile behavior.
 
 ## Verification
 

@@ -1,3 +1,4 @@
+import type { NativeProviderProfileGuard } from "../ai-providers/native-provider-profile-guard.js";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -254,6 +255,7 @@ export function createSettingsRoutes(opts: {
   agentRuntimeSource?: AgentRuntimeSource;
   agentRuntimeController?: AgentRuntimeController;
   aiProviderService?: AiProviderSnapshotReader;
+  nativeProviderProfileGuard?: NativeProviderProfileGuard;
 }) {
   const {
     homePath,
@@ -690,10 +692,10 @@ export function createSettingsRoutes(opts: {
   app.post("/api-key", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
     let body: { apiKey: string };
     try {
-      body = await c.req.json<{ apiKey: string }>();
+      body = z.object({ apiKey: z.string().trim().min(1).max(4096) }).strict().parse(await c.req.json());
     } catch (err) {
-      if (!(err instanceof SyntaxError)) {
-        console.warn("[settings] Failed to parse API key request:", err);
+      if (!(err instanceof SyntaxError) && !(err instanceof z.ZodError)) {
+        console.warn("[settings] Failed to parse API key request:", err instanceof Error ? err.name : "UnknownError");
       }
       return c.json({ valid: false, error: "Invalid request" }, 400);
     }
@@ -712,7 +714,11 @@ export function createSettingsRoutes(opts: {
       return c.json(liveResult, 400);
     }
 
-    await storeApiKey(homePath, body.apiKey);
+    try { await storeApiKey(homePath, body.apiKey, opts.nativeProviderProfileGuard); }
+    catch (error) {
+      console.warn("[settings] Owner key update unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return c.json({ valid: false, error: "Unable to update API key" }, 503);
+    }
     return c.json({ valid: true });
   });
 

@@ -1,3 +1,4 @@
+import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { CUSTOM_MCP_UNAVAILABLE } from '@matrix-os/contracts';
 import { Hono, type Context, type Next } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -8,6 +9,7 @@ import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platfor
 import { HANDLE_PATTERN } from './platform-route-utils.js';
 import { PRIVATE_PREVIEW_HANDLE_PATTERN } from './customer-vps-schema.js';
 import type { PrivatePreviewEligibility } from './private-preview-eligibility.js';
+import { MATRIX_OAUTH_CLIENT_METADATA } from './oauth-client-metadata.js';
 
 const HandleSchema = z.string().regex(HANDLE_PATTERN);
 const BODY_LIMIT = 64 * 1024;
@@ -107,6 +109,11 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
   privatePreviewEligibility?: PrivatePreviewEligibility;
 }): void {
   const external = new Hono<{ Variables: McpVariables }>();
+  // CIMD must be readable by authorization servers without a Matrix session.
+  external.get('/oauth/client-metadata', (c) => {
+    c.header('Cache-Control', 'public, max-age=300');
+    return c.json(MATRIX_OAUTH_CLIENT_METADATA);
+  });
   external.use('*', bodyLimit({ maxSize: BODY_LIMIT }), async (c, next) => {
     if (c.req.method === 'GET' && c.req.path === OAUTH_CALLBACK_PATH) {
       c.header('Cache-Control', 'no-store, private');
@@ -120,6 +127,9 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
     }
     return next();
   });
+  const externalDeletionGuard = createAccountDeletionMutationGuard({ db: options.db,
+    resolveOwner: (c) => c.get('platformUserId') as string | undefined });
+  external.use('*', (c, next) => c.req.path === OAUTH_CALLBACK_PATH ? next() : externalDeletionGuard(c, next));
   mountBackend(external, options.customMcpRoutes);
   app.route('/api/mcp-servers', external);
 
@@ -165,6 +175,8 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
   const mountInternal = (backend?: Hono<any>) => {
     const internal = new Hono<{ Variables: McpVariables }>();
     internal.use('*', bodyLimit({ maxSize: BODY_LIMIT }), internalAuth);
+    internal.use('*', createAccountDeletionMutationGuard({ db: options.db,
+      resolveOwner: (c) => c.get('internalContainerClerkUserId') as string | undefined }));
     mountBackend(internal, backend);
     return internal;
   };

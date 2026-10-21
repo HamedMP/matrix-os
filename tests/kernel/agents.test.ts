@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
   parseFrontmatter,
@@ -168,5 +169,27 @@ describe("loadCustomAgents", () => {
     const agents = loadCustomAgents("./home/agents/custom", "/test/home");
     expect(agents.builder.prompt).toContain("/test/home/modules/");
     expect(agents.builder.prompt).not.toContain("~/modules/");
+  });
+});
+
+const home = `${process.cwd()}/home`;
+describe("registered builder product style direction", () => {
+  it.each([
+    ["core builder", () => getCoreAgents("/test/owner").builder.prompt],
+    ["template builder", () => loadCustomAgents(`${home}/agents/custom`, "/test/owner").builder.prompt],
+    ["runtime knowledge", () => readFileSync(`${home}/agents/knowledge/app-generation.md`, "utf8")],
+  ])("%s permits coherent product styles without forcing platform colors", (_name, read) => {
+    const prompt = read();
+    for (const direction of ["neo-brutalism", "minimalism", "playful", "retro", "neumorphism", "DESIGN.md", "app-local", "random", "once", "shadcn", "responsive-layout.md", "360", "1440", "44"]) {
+      expect(prompt).toContain(direction);
+    }
+    expect(prompt).not.toMatch(/always apply -- non-negotiable|ALWAYS inherit|literal colors are fallbacks only|explicit app branding only|Use inherited typography|Use inherited fonts|inherit Matrix\s+tokens and fonts/i);
+    expect(prompt).toContain("No remote");
+  });
+  it("keeps the core builder's tools and persistence boundary unchanged", () => {
+    const builder = getCoreAgents("/test/owner").builder;
+    expect(builder.tools).toEqual(["Read", "Write", "Edit", "Glob", "Grep", "Bash", "mcp__matrix-os-ipc__claim_task", "mcp__matrix-os-ipc__complete_task", "mcp__matrix-os-ipc__fail_task", "mcp__matrix-os-ipc__send_message"]);
+    expect(builder.prompt).toContain("window.MatrixOS.db");
+    expect(builder.prompt).toContain("Only use tools present in this run");
   });
 });

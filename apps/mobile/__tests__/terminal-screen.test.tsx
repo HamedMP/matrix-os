@@ -28,6 +28,8 @@ jest.mock("@/lib/queries/use-computer-terminals", () => ({
   useComputerTerminals: () => mockUseComputerTerminals(),
 }));
 
+jest.mock("@expo/ui/swift-ui", () => jest.requireActual("./context-menu-test-utils").swiftUiContextMenuModule());
+
 jest.mock("@expo/ui", () => {
   const React = jest.requireActual("react") as typeof import("react");
   const { View } = jest.requireActual("react-native") as typeof import("react-native");
@@ -40,21 +42,52 @@ jest.mock("@expo/ui", () => {
 });
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import { RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 
-import TerminalScreen from "../app/(drawer)/terminal";
-import { appColors, palette } from "@/lib/theme-v2";
+import TerminalScreen from "../app/(drawer)/(tabs)/terminal";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { ToastHost } from "../components/ui/Toast";
+import { palette } from "@/lib/theme-v2";
+
+import { menuAround, menuItem, menuItemLabels } from "./context-menu-test-utils";
+
+const WORKSPACE = "tws_00000000000000000000000000000001";
+
+function terminalSession(tabSuffix: string, overrides: Record<string, unknown>) {
+  const tabId = `tt_${tabSuffix.padStart(32, "0")}`;
+  return {
+    id: `${WORKSPACE}:${tabId}`,
+    workspaceId: WORKSPACE,
+    tabId,
+    revision: 3,
+    cwd: "",
+    status: "active",
+    visualStatus: "running",
+    ...overrides,
+  };
+}
+
+const mainSession = terminalSession("a", {
+  name: "main",
+  cwd: "projects/matrix-os",
+  branch: "main",
+  agent: "claude",
+});
+const reviewSession = terminalSession("b", {
+  name: "review-pr-42",
+  status: "degraded",
+  visualStatus: "waiting",
+  cwd: "projects/approval-flow",
+  agent: "codex",
+});
+const notesSession = terminalSession("c", { name: "notes", visualStatus: "idle" });
 
 describe("drawer terminal screen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUseComputerTerminals.mockReturnValue({
-      sessions: [
-        { name: "main", status: "active", visualStatus: "running", cwd: "projects/matrix-os", branch: "main", agent: "claude" },
-        { name: "review-pr-42", status: "active", visualStatus: "waiting", subtitle: "Waiting for approval", agent: "codex" },
-        { name: "notes", status: "active", visualStatus: "idle", cwd: "~" },
-      ],
+      sessions: [mainSession, reviewSession, notesSession],
       isPending: false,
       isError: false,
       renameSession: mockRenameSession,
@@ -91,8 +124,9 @@ describe("drawer terminal screen", () => {
     expect(screen.getByText("review-pr-42")).toBeTruthy();
     expect(screen.getByText("notes")).toBeTruthy();
     expect(screen.queryByText("solar-vale")).toBeNull();
+    // A running session's tile is the same neutral as an idle one: only waiting is coloured.
     expect(NativeStyleSheet.flatten(screen.getByTestId("list-row-icon-main").props.style).backgroundColor)
-      .toBe(palette.green[100]);
+      .toBe(palette.neutral[200]);
     expect(NativeStyleSheet.flatten(screen.getByTestId("list-row-icon-review-pr-42").props.style).backgroundColor)
       .toBe(palette.gold[100]);
     expect(NativeStyleSheet.flatten(screen.getByTestId("list-row-icon-notes").props.style).backgroundColor)
@@ -106,6 +140,8 @@ describe("drawer terminal screen", () => {
     expect(screen.getByTestId("terminal-session-agent-logo-image-claude")).toBeTruthy();
     expect(screen.getAllByTestId("terminal-session-agent-separator")).toHaveLength(2);
     expect(screen.getByTestId("terminal-session-agent-logo-codex")).toBeTruthy();
+    expect(NativeStyleSheet.flatten(screen.getByTestId("terminal-session-agent-logo-codex").props.style).backgroundColor)
+      .toBe("#171717");
     expect(screen.queryByTestId("terminal-session-agent-logo-notes")).toBeNull();
   });
 
@@ -124,7 +160,7 @@ describe("drawer terminal screen", () => {
     expect(skeletons).toHaveLength(3);
     expect(NativeStyleSheet.flatten(skeletons[0].props.style)).toMatchObject({
       height: 66,
-      backgroundColor: appColors.light.soft,
+      backgroundColor: "#F2F2F0",
     });
     expect(screen.getAllByTestId("terminal-skeleton-shimmer")).toHaveLength(3);
   });
@@ -151,7 +187,108 @@ describe("drawer terminal screen", () => {
     fireEvent.changeText(screen.getByLabelText("Terminal session name"), "renamed-session");
     fireEvent.press(screen.getByLabelText("Save terminal name"));
 
-    expect(mockRenameSession).toHaveBeenCalledWith("main", "renamed-session");
+    expect(mockRenameSession).toHaveBeenCalledWith(mainSession, "renamed-session");
+  });
+
+  it("accepts a display name with spaces and capitals", async () => {
+    mockRenameSession.mockResolvedValue(undefined);
+    render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Rename main terminal"));
+    fireEvent.changeText(screen.getByLabelText("Terminal session name"), "  Deploy logs  ");
+    fireEvent.press(screen.getByLabelText("Save terminal name"));
+
+    expect(mockRenameSession).toHaveBeenCalledWith(mainSession, "Deploy logs");
+  });
+
+  it("explains the name rule instead of sending a blank name", () => {
+    render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Rename main terminal"));
+    fireEvent.changeText(screen.getByLabelText("Terminal session name"), "   ");
+    fireEvent.press(screen.getByLabelText("Save terminal name"));
+
+    expect(mockRenameSession).not.toHaveBeenCalled();
+    expect(screen.getAllByText("Use a name between 1 and 120 characters.")).toHaveLength(2);
+  });
+
+  it("keeps the rename popup open with an error when the computer refuses it", async () => {
+    mockRenameSession.mockRejectedValue(new Error("Could not rename terminal. Try again."));
+    render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Rename main terminal"));
+    fireEvent.changeText(screen.getByLabelText("Terminal session name"), "renamed-session");
+    await React.act(async () => {
+      fireEvent.press(screen.getByLabelText("Save terminal name"));
+    });
+
+    expect(screen.getByText("Could not rename terminal. Try again.")).toBeTruthy();
+    expect(screen.getByLabelText("Terminal session name")).toBeTruthy();
+  });
+
+  it("retries a refused rename with the revision the reloaded list shows", async () => {
+    mockRenameSession.mockRejectedValueOnce(new Error("Could not rename terminal. Try again."));
+    mockRenameSession.mockResolvedValueOnce(undefined);
+    const rendered = render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Rename main terminal"));
+    fireEvent.changeText(screen.getByLabelText("Terminal session name"), "renamed-session");
+    await React.act(async () => {
+      fireEvent.press(screen.getByLabelText("Save terminal name"));
+    });
+    expect(mockRenameSession).toHaveBeenLastCalledWith(mainSession, "renamed-session");
+
+    // The refused rename reloaded the list: the tab is now at a newer revision.
+    const reloaded = { ...mainSession, revision: 7 };
+    mockUseComputerTerminals.mockReturnValue({
+      sessions: [reloaded, reviewSession, notesSession],
+      isPending: false,
+      isError: false,
+      renameSession: mockRenameSession,
+      deleteSession: mockDeleteSession,
+      createSession: mockCreateSession,
+      refresh: mockRefreshTerminals,
+    });
+    rendered.rerender(<TerminalScreen />);
+    await React.act(async () => {
+      fireEvent.press(screen.getByLabelText("Save terminal name"));
+    });
+
+    expect(mockRenameSession).toHaveBeenLastCalledWith(reloaded, "renamed-session");
+    expect(screen.queryByLabelText("Terminal session name")).toBeNull();
+  });
+
+  it("offers the swipe's Rename and Delete from a long press on a terminal, Delete in red", () => {
+    mockDeleteSession.mockResolvedValue(undefined);
+    render(<TerminalScreen />);
+
+    const row = screen.getByLabelText("Open main terminal");
+    expect(menuItemLabels(menuAround(row))).toEqual(["Rename", "Delete"]);
+    expect(menuItem(row, "Delete").props.menuRole).toBe("destructive");
+
+    fireEvent.press(menuItem(row, "Delete"));
+    expect(screen.getByText("Delete terminal session?")).toBeTruthy();
+    fireEvent.press(menuItem(row, "Rename"));
+    expect(screen.getByLabelText("Terminal session name").props.value).toBe("main");
+  });
+
+  it("says so with a toast once a terminal is renamed or deleted", async () => {
+    mockRenameSession.mockResolvedValue(undefined);
+    mockDeleteSession.mockResolvedValue(undefined);
+    render(<><TerminalScreen /><ToastHost /></>);
+
+    fireEvent.press(screen.getByLabelText("Rename main terminal"));
+    fireEvent.changeText(screen.getByLabelText("Terminal session name"), "renamed-session");
+    await act(async () => fireEvent.press(screen.getByLabelText("Save terminal name")));
+    expect(screen.getByText("Terminal renamed")).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText("Delete notes terminal"));
+    await act(async () => fireEvent.press(screen.getByLabelText("Confirm delete terminal")));
+    expect(screen.getByText("Terminal deleted")).toBeTruthy();
+    // The dialog fades away still naming the terminal it asked about.
+    const dialog = screen.UNSAFE_getByType(ConfirmDialog);
+    expect(dialog.props.visible).toBe(false);
+    expect(dialog.props.message).toContain("“notes”");
   });
 
   it("requires popup confirmation before deleting a swiped terminal", () => {
@@ -165,7 +302,83 @@ describe("drawer terminal screen", () => {
 
     fireEvent.press(screen.getByLabelText("Confirm delete terminal"));
 
-    expect(mockDeleteSession).toHaveBeenCalledWith("main");
+    expect(mockDeleteSession).toHaveBeenCalledWith(mainSession);
+  });
+
+  it("keeps the delete popup open with an error when the computer refuses it", async () => {
+    mockDeleteSession.mockRejectedValue(new Error("Could not delete terminal. Try again."));
+    render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Delete main terminal"));
+    await React.act(async () => {
+      fireEvent.press(screen.getByLabelText("Confirm delete terminal"));
+    });
+
+    expect(screen.getByText("Could not delete terminal. Try again.")).toBeTruthy();
+    expect(screen.getByText("Delete terminal session?")).toBeTruthy();
+  });
+
+  it("opens a terminal by its workspace tab reference", () => {
+    render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Open main terminal"));
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/terminal-session/[session]",
+      params: { session: mainSession.id },
+    });
+  });
+
+  it("lists two terminals that share a display name", () => {
+    mockUseComputerTerminals.mockReturnValue({
+      sessions: [
+        terminalSession("d", { name: "Shell" }),
+        terminalSession("e", { name: "Shell", cwd: "projects" }),
+      ],
+      isPending: false,
+      isError: false,
+      renameSession: mockRenameSession,
+      deleteSession: mockDeleteSession,
+      createSession: mockCreateSession,
+      refresh: mockRefreshTerminals,
+    });
+    render(<TerminalScreen />);
+
+    expect(screen.getAllByText("Shell")).toHaveLength(2);
+    expect(screen.getByText("~")).toBeTruthy();
+    expect(screen.getByText("~/projects")).toBeTruthy();
+  });
+
+  it("groups exited terminals under closed sessions", () => {
+    mockUseComputerTerminals.mockReturnValue({
+      sessions: [mainSession, terminalSession("f", { name: "old-build", status: "exited", visualStatus: "idle" })],
+      isPending: false,
+      isError: false,
+      renameSession: mockRenameSession,
+      deleteSession: mockDeleteSession,
+      createSession: mockCreateSession,
+      refresh: mockRefreshTerminals,
+    });
+    render(<TerminalScreen />);
+
+    expect(screen.getByText("CLOSED SESSIONS")).toBeTruthy();
+    expect(screen.getByText("old-build")).toBeTruthy();
+  });
+
+  it("says terminals are unavailable when the list could not be loaded", () => {
+    mockUseComputerTerminals.mockReturnValue({
+      sessions: [],
+      isPending: false,
+      isError: true,
+      renameSession: mockRenameSession,
+      deleteSession: mockDeleteSession,
+      createSession: mockCreateSession,
+      refresh: mockRefreshTerminals,
+    });
+    render(<TerminalScreen />);
+
+    expect(screen.getByText("Terminals unavailable. Try again.")).toBeTruthy();
+    expect(screen.queryByText("No active terminal sessions.")).toBeNull();
   });
 
   it("stretches square swipe actions to the terminal row height without a fixed size", () => {
@@ -195,7 +408,7 @@ describe("drawer terminal screen", () => {
     expect(screen.queryByTestId("new-terminal-session-chevron")).toBeNull();
     expect(screen.getByTestId("new-terminal-session-loading")).toBeTruthy();
 
-    await React.act(async () => resolveCreate?.("swift-falcon"));
+    await React.act(async () => resolveCreate?.(`${WORKSPACE}:tt_0000000000000000000000000000000f`));
 
     expect(screen.queryByTestId("terminal-manage-sheet")).toBeNull();
     await React.act(async () => {
@@ -203,7 +416,21 @@ describe("drawer terminal screen", () => {
     });
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/terminal-session/[session]",
-      params: { session: "swift-falcon" },
+      params: { session: `${WORKSPACE}:tt_0000000000000000000000000000000f` },
     });
+  });
+
+  it("keeps the manage sheet open with an error when a session could not be created", async () => {
+    mockCreateSession.mockRejectedValue(new Error("Could not create terminal. Try again."));
+    render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Manage terminals"));
+    await React.act(async () => {
+      fireEvent.press(screen.getByLabelText("New session"));
+    });
+
+    expect(screen.getByText("Could not create terminal. Try again.")).toBeTruthy();
+    expect(screen.getByTestId("terminal-manage-sheet")).toBeTruthy();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });

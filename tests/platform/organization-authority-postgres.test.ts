@@ -124,7 +124,7 @@ describe.skipIf(!connectionString)("organization authority on real PostgreSQL (T
     const repository = new PlatformOrganizationRepository(db);
     await applyClerkOrganizationEvent(repository, membershipEvent({ eventId: "o1", type: "organizationMembership.created", actorId: member, updatedAt: 1_000 }));
     let clock = new Date("2026-09-20T12:00:00.000Z");
-    let upstreamAvailable = true;
+    let upstreamAvailable = false;
     const projection = createOrganizationMembershipProjection({
       repository,
       now: () => clock,
@@ -138,8 +138,11 @@ describe.skipIf(!connectionString)("organization authority on real PostgreSQL (T
         },
       },
     });
-    // A webhook alone is not fresh positive authority.
+    // A known active webhook member triggers on-demand verification. Without
+    // that upstream proof, the webhook alone cannot produce positive evidence.
     expect((await projection.assert({ organizationId: org, actorId: member, requestStartedAt: clock })).member).toBe(false);
+    upstreamAvailable = true;
+    clock = new Date(clock.getTime() + 11_000); // Pass the failed refresh's 10s retry backoff.
     await projection.reconcile(org);
     const fresh = await projection.assert({ organizationId: org, actorId: member, requestStartedAt: clock });
     expect(fresh.member).toBe(true);
@@ -150,6 +153,9 @@ describe.skipIf(!connectionString)("organization authority on real PostgreSQL (T
     await projection.reconcile(org);
     expect((await projection.assert({ organizationId: org, actorId: member, requestStartedAt: clock })).member).toBe(false);
     upstreamAvailable = true;
+    // Restoring connectivity does not renew evidence during the retry backoff.
+    expect((await projection.assert({ organizationId: org, actorId: member, requestStartedAt: clock })).member).toBe(false);
+    clock = new Date(clock.getTime() + 11_000);
     await projection.reconcile(org);
     expect((await projection.assert({ organizationId: org, actorId: member, requestStartedAt: clock })).member).toBe(true);
     await projection.shutdown();

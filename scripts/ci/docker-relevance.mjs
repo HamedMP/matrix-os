@@ -51,7 +51,16 @@ const DOCKER_INPUT_PREFIXES = Object.freeze([
   "skills/",
 ]);
 
-export function classifyDockerChanges(changedPaths = []) {
+// Pull requests run the Docker dev-image suite only when Docker build inputs change. Production is
+// VPS-native, so app source changes get Docker coverage on main pushes and the nightly matrix instead
+// of occupying hosted runners on every product PR.
+const PR_DOCKER_INPUT_PREFIXES = Object.freeze(["distro/observability/", "scripts/docker-test/"]);
+const SCOPES = Object.freeze(["full", "pr"]);
+
+export function classifyDockerChanges(changedPaths = [], { scope = "full" } = {}) {
+  if (!SCOPES.includes(scope)) {
+    throw new Error(`Docker relevance scope must be one of: ${SCOPES.join(", ")}`);
+  }
   if (!Array.isArray(changedPaths)) {
     throw new Error("Changed paths must be an array");
   }
@@ -62,7 +71,7 @@ export function classifyDockerChanges(changedPaths = []) {
   const matchedPaths = [];
   for (const path of changedPaths) {
     const normalized = normalizePath(path);
-    if (!normalized || !isDockerRelevantPath(normalized)) {
+    if (!normalized || !isDockerRelevantPath(normalized, scope)) {
       continue;
     }
     if (matchedPaths.length < MAX_MATCHED_PATHS && !matchedPaths.includes(normalized)) {
@@ -157,7 +166,7 @@ function normalizePath(path) {
   return path.replaceAll("\\", "/").replace(/^\.\/+/, "").replace(/\/{2,}/g, "/");
 }
 
-function isDockerRelevantPath(path) {
+function isDockerRelevantPath(path, scope) {
   if (ROOT_DOCKER_INPUTS.includes(path) || EXACT_DOCKER_INPUTS.includes(path)) {
     return true;
   }
@@ -167,7 +176,8 @@ function isDockerRelevantPath(path) {
   if (/^distro\/docker-compose\.(?:local|multi)\.ya?ml$/.test(path)) {
     return true;
   }
-  return DOCKER_INPUT_PREFIXES.some((prefix) => path.startsWith(prefix));
+  const prefixes = scope === "pr" ? PR_DOCKER_INPUT_PREFIXES : DOCKER_INPUT_PREFIXES;
+  return prefixes.some((prefix) => path.startsWith(prefix));
 }
 
 function truncateDiagnostic(message) {
@@ -185,6 +195,7 @@ function parseArgs(argv) {
     commit: "",
     paths: [],
     format: "json",
+    scope: "full",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -194,6 +205,7 @@ function parseArgs(argv) {
     else if (arg === "--commit") parsed.commit = requireValue(argv, ++index, arg);
     else if (arg === "--path") parsed.paths.push(requireValue(argv, ++index, arg));
     else if (arg === "--format") parsed.format = requireValue(argv, ++index, arg);
+    else if (arg === "--scope") parsed.scope = requireValue(argv, ++index, arg);
     else if (arg === "--help" || arg === "-h") parsed.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -241,6 +253,10 @@ Change source (choose one):
 Output:
   --format json              Emit the decision as JSON (default)
   --format github            Emit should_run=true|false for GITHUB_OUTPUT
+
+Scope:
+  --scope full               Docker inputs plus app source trees (default; push/nightly)
+  --scope pr                 Docker build inputs only (pull requests)
 `);
 }
 
@@ -251,7 +267,7 @@ function main() {
       printHelp();
       return;
     }
-    const decision = classifyDockerChanges(resolveChangedPaths(args));
+    const decision = classifyDockerChanges(resolveChangedPaths(args), { scope: args.scope });
     const matches = decision.matchedPaths.length > 0 ? `: ${decision.matchedPaths.join(", ")}` : "";
     process.stderr.write(`docker-relevance: ${decision.reason}${matches}\n`);
     if (args.format === "github") {

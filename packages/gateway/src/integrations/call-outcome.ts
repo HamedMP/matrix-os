@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { PlatformDb } from "../platform-db.js";
 import { IntegrationActionNotImplementedError } from "./action-execution.js";
+import { DriveContentError } from "./drive-content.js";
 
 export function isConnectionError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -61,6 +62,19 @@ export async function integrationActionSuccess(c: Context, input: {
 
 /** Preserve general call's safe provider failure mapping for scoped reads. */
 export function integrationActionFailure(c: Context, err: unknown, service: string, action: string): Response {
+  if (err instanceof DriveContentError) {
+    const messages = {
+      unsupported_file_type: "This file type cannot be read as text. Choose a text file or a supported document export.",
+      file_too_large: "This file exceeds the 512 KiB text-read limit.",
+      file_access_denied: "File content access was denied. Check the account permissions and download restrictions.",
+      file_not_found: "The file could not be found for this account.",
+      rate_limited: "Too many requests. Please try again later.",
+      read_failed: "File content could not be read. Please try again later.",
+    };
+    const status = err.code === "rate_limited" ? 429 : err.code === "unsupported_file_type" ? 422
+      : err.code === "file_too_large" ? 413 : err.code === "file_access_denied" ? 403 : err.code === "file_not_found" ? 404 : 502;
+    return c.json({ error: messages[err.code], code: err.code }, status);
+  }
   if (err instanceof IntegrationActionNotImplementedError) {
     console.error(`[integrations] Action ${err.serviceId}/${err.actionId} has neither componentKey nor directApi -- registry incomplete`);
     return c.json({ error: "Action not available" }, 501);

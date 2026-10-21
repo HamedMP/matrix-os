@@ -66,8 +66,8 @@ describe("BrandPanel brand pinning", () => {
     );
     const darkTokens = css.match(/\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/)?.[1];
 
-    expect(darkTokens).toContain("--brand-forest: #434e3f;");
-    expect(darkTokens).toContain("--brand-forest-deep: #32352e;");
+    expect(darkTokens).toContain("--brand-forest: #0e3422;");
+    expect(darkTokens).toContain("--brand-forest-deep: #092417;");
     expect(darkTokens).toContain("--brand-forest-foreground: #fafaf5;");
     expect(darkTokens).toContain("--brand-forest-muted: rgba(250, 250, 245, 0.62);");
   });

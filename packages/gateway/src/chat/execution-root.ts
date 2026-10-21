@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
+import { resolveBotWorkspaceRoot } from "./bot-workspace-root.js";
 import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 import {
   CanonicalChatExecutionRootRefSchema,
@@ -54,8 +55,8 @@ export interface ChatExecutionRootProvenance {
 export interface ResolvedChatExecutionRoot extends ChatExecutionRootProvenance {
   /** Gateway-only derived value. Never persist or project this path to a client. */
   primaryWorkspaceRoot: string;
-  /** Gateway-only legacy workspace Provider key derived from ProjectConfig. */
-  projectSlug: string;
+  /** Gateway-only legacy workspace Provider key derived from ProjectConfig; absent for bot workspaces. */
+  projectSlug?: string;
 }
 
 export interface ChatExecutionRootResolver {
@@ -273,6 +274,8 @@ export function createChatExecutionRootResolver<
     }
     const owner = parsedOwner.data;
     const ref = parsedRef.data;
+    // Bot workspaces never go through Project authority; they are owner-private directories.
+    if (ref.kind === "bot_workspace") return resolveBotWorkspaceRoot({ homePath, owner, ref });
     const ownerScope = projectOwnerScope(owner);
     const project = await loadProject(ownerScope, ref.projectId);
 

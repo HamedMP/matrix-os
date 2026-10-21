@@ -10,6 +10,11 @@ it.each([
     await waitForStartupText(runner.eventPath, "turn.completed");
     await runner.closed;
     const start = (await runner.requests()).find((request) => request.method === method);
+    expect(start?.developerInstructions).toContain("## Matrix OS orientation");
+    expect(start?.developerInstructions).toContain("window.MatrixOS.db");
+    expect(start?.developerInstructions).toContain("matrix-app-builder");
+    expect(start?.developerInstructions).toContain("Only use tools present in this run");
+    expect(start?.developerInstructions).not.toContain("mcp__matrix-os-ipc__manage_cron");
     expect(start?.developerInstructions).toContain("matrix-integrations inventory");
     expect(start?.developerInstructions).toContain("matrix-integrations describe");
     expect(start?.developerInstructions).toContain("matrix-integrations call");

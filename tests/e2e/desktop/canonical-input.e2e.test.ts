@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
-import { CanonicalChatDetailResponseSchema, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { BotDirectChatResponseSchema, ChatAgentListResponseSchema, CanonicalChatDetailResponseSchema, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 const root = resolve(import.meta.dirname, "../../..");
 const hasDesktopBuild = existsSync(join(root, "desktop/out/main/index.js"));
@@ -30,6 +31,9 @@ const server = createServer((req, res) => {
     res.write('data: {"type":"chat.stream.attached"}\n\ndata: {"type":"chat.replay.end"}\n\n');
     streams.add(res); res.on("close", () => streams.delete(res)); return;
   }
+  // Ordinary Chat identity must be explicit; missing Bot fixtures correctly hide unknown identities.
+  if (path === "/api/chat-agents") { json(ChatAgentListResponseSchema.parse({ enabled: true, agents: [] })); return; }
+  if (path === `/api/chats/${detail.record.chat.id}/bot`) { json(BotDirectChatResponseSchema.parse({ agentId: null })); return; }
   if (path === "/api/chats") { json({ items: [detail.record] }); return; }
   if (path === `/api/chats/${detail.record.chat.id}`) { json(detail); return; }
   if (path === "/api/chat-providers") { json(createCanonicalChatFixture("input_required").providerCatalog); return; }
@@ -78,6 +82,7 @@ beforeAll(async () => {
   });
   writeFileSync(join(profile, "credential.bin"), Buffer.from(encrypted, "base64"));
   await app.close(); app = await launch(); page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
   await page.setViewportSize({ width: 1280, height: 900 });
 }, 60_000);
 afterAll(async () => {
@@ -91,7 +96,6 @@ it("answers in the existing run and receives intermediate output without reloadi
   await page.getByRole("button", { name: "Chat", exact: true }).first().dblclick({ timeout: 20_000 });
   await page.getByRole("button", { name: "Plan the report", exact: true }).click({ timeout: 20_000 });
   await page.getByRole("radio", { name: /Project folder/ }).waitFor();
-  await page.getByRole("button", { name: /Getting started —/ }).click();
   await page.getByRole("button", { name: "Maximize", exact: true }).click();
   await page.locator('[contenteditable="true"]').fill("Keep this unsent draft");
   detail.messages.push({ id: "msg_independent", chatId: detail.record.chat.id, runId: detail.runs[0]!.id, turnId: detail.turns[0]!.id, seq: 2, role: "assistant", state: "pending", parts: [{ type: "text", text: "I am preparing the report outline while you choose where to save it." }], createdAt: new Date().toISOString() });

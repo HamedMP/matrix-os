@@ -11,7 +11,7 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
  * Sharing exists only inside an organization, and every share control reads the
  * *active* organization through `useOrganization` (see `collaboration-organization.tsx`).
  * Clerk does not activate one on its own, so without a way to choose, those controls
- * render "Join an organization to share" permanently even for a user who belongs to one.
+ * remain in their loading state even for a user who belongs to one.
  *
  * Organization administration deliberately stays in the Clerk dashboard per the V1
  * scope decision; this only selects among memberships the user already has, and

@@ -1,26 +1,42 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneNode } from "../../shell/src/stores/terminal-store";
 import type { ShellSessionSummary } from "../../shell/src/components/terminal/terminal-session-state";
 
-// The real controls resolve a runtime and talk to the platform; these tests only
-// care that Web Desktop mounts them, and for which project or terminal.
+// The project control resolves a runtime and talks to the platform; the sidebar tests
+// only care that Web Desktop mounts it, and for which project.
 vi.mock("@/components/projects/ProjectSharing", () => ({
   ProjectSharing: ({ projectId }: { projectId: string }) => <span data-testid="project-share">{projectId}</span>,
-}));
-vi.mock("../../shell/src/components/terminal/TerminalSharing", () => ({
-  TerminalSharing: ({ terminalId }: { terminalId: string }) => <span data-testid="terminal-share">{terminalId}</span>,
 }));
 vi.mock("../../shell/src/components/terminal/TerminalThemePicker", () => ({
   ThemePickerButton: () => null,
 }));
+// A signed-in member inside an organization, on a runtime with collaboration on: the
+// exact conditions under which a terminal share control used to appear.
+vi.mock("@clerk/nextjs", () => ({ useOrganization: () => ({ organization: { id: "org_matrix_team" } }) }));
 
 import { DesktopTerminalSidebar } from "../../shell/src/components/terminal/DesktopTerminalSidebar";
 import { DesktopTerminalSessionHeader } from "../../shell/src/components/terminal/DesktopTerminalWorkspace";
-import { getFocusedSessionId } from "../../shell/src/components/terminal/terminal-layout";
+import { TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "../../shell/src/components/terminal/TerminalChrome";
+import { TerminalAppContext, type TerminalAppContextType } from "../../shell/src/components/terminal/TerminalAppContext";
+
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    runtime: { handle: "owner", runtimeSlot: "primary", machineId: "10000000-0000-4000-8000-000000000001" },
+    capabilities: { collaboration: true },
+  }), { headers: { "content-type": "application/json" } })));
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+async function settle() {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+}
 
 function session(name: string, project?: string): ShellSessionSummary {
   return { name, workspaceId: project ?? "main", tabId: name, revision: 1, workspaceRevision: 1, ...(project ? { project } : {}) };
@@ -65,47 +81,42 @@ describe("Web Desktop terminal sidebar project sharing (#1798)", () => {
   });
 });
 
-describe("Web Desktop terminal session header sharing (#1798)", () => {
-  it("offers the terminal share control for the focused terminal", () => {
-    render(<DesktopTerminalSessionHeader title="api" terminalId="session-api" />);
+describe("terminal chrome offers no single-terminal share: projects are the only live-shareable resource", () => {
+  it("keeps the Web Desktop session header to its title and status", async () => {
+    render(<DesktopTerminalSessionHeader title="api" />);
+    await settle();
 
-    expect(screen.getByTestId("terminal-share").textContent).toBe("session-api");
+    const header = screen.getByTestId("terminal-desktop-session-header");
+    expect(within(header).getByRole("heading", { name: "api" })).toBeTruthy();
+    expect(within(header).getByText("Active")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
   });
 
-  it("offers no terminal share control before a session is attached", () => {
-    render(<DesktopTerminalSessionHeader title="api" terminalId={null} />);
+  const paneTree: PaneNode = { type: "pane", id: "pane-api", cwd: "/", sessionId: "session-api" };
+  function renderChrome(chrome: React.ReactNode, mobile: boolean) {
+    const ctx = {
+      tabs: [{ id: "tab-api", label: "api", paneTree }],
+      activeTabId: "tab-api",
+      focusedPaneId: "pane-api",
+      mobile,
+      sidebarOpen: false,
+      setSidebarOpen: vi.fn(),
+    } as unknown as TerminalAppContextType;
+    return render(<TerminalAppContext value={ctx}>{chrome}</TerminalAppContext>);
+  }
 
-    expect(screen.queryByTestId("terminal-share")).toBeNull();
-  });
-});
+  for (const mobile of [false, true]) {
+    it(`renders the ${mobile ? "mobile" : "Canvas"} workspace chrome without a share control`, async () => {
+      renderChrome(<TerminalWorkspaceChrome />, mobile);
+      await settle();
+      expect(screen.getByText("api")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
+    });
 
-describe("getFocusedSessionId", () => {
-  const tree: PaneNode = {
-    type: "split",
-    direction: "horizontal",
-    ratio: 0.5,
-    children: [
-      { type: "pane", id: "left", cwd: "/", sessionId: "s-left" },
-      { type: "pane", id: "right", cwd: "/", sessionId: "s-right" },
-    ],
-  };
-
-  it("returns the session of the focused pane", () => {
-    expect(getFocusedSessionId(tree, "right")).toBe("s-right");
-  });
-
-  it("falls back to the first pane when nothing is focused", () => {
-    expect(getFocusedSessionId(tree, null)).toBe("s-left");
-  });
-
-  it("falls back to the first pane when focus still names a pane from another tab", () => {
-    // After a layout conflict adopts a different tab, focus can lag behind; it must not
-    // hide the share control for a tab that does have an attached terminal.
-    expect(getFocusedSessionId(tree, "pane-from-previous-tab")).toBe("s-left");
-  });
-
-  it("returns null for a pane that has no session yet", () => {
-    const unattached: PaneNode = { type: "pane", id: "only", cwd: "/" };
-    expect(getFocusedSessionId(unattached, null)).toBeNull();
-  });
+    it(`renders the ${mobile ? "mobile" : "Canvas"} embedded toolbar without a share control`, async () => {
+      renderChrome(<TerminalEmbeddedToolbar />, mobile);
+      await settle();
+      expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
+    });
+  }
 });

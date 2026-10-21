@@ -1,0 +1,6 @@
+/* Canonical brand families, bundled locally for offline Electron Desktop. */
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 400; font-display: swap; src: url("@expo-google-fonts/geist/400Regular/Geist_400Regular.ttf") format("truetype"); }
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 500; font-display: swap; src: url("@expo-google-fonts/geist/500Medium/Geist_500Medium.ttf") format("truetype"); }
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 600; font-display: swap; src: url("@expo-google-fonts/geist/600SemiBold/Geist_600SemiBold.ttf") format("truetype"); }
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 700; font-display: swap; src: url("@expo-google-fonts/geist/700Bold/Geist_700Bold.ttf") format("truetype"); }
+@font-face { font-family: "Bricolage Grotesque"; font-style: normal; font-weight: 500; font-display: swap; src: url("@expo-google-fonts/bricolage-grotesque/500Medium/BricolageGrotesque_500Medium.ttf") format("truetype"); }

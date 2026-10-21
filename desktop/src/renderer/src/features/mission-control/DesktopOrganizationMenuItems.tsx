@@ -21,14 +21,14 @@ export function DesktopOrganizationMenuItems({ itemClass }: { itemClass: string 
   const listing = useDesktopOrganizations();
 
   if (listing.state === "loading") return null;
-  if (listing.state === "loaded" && listing.organizations.length === 0) return null;
+  if (listing.state === "loaded" && listing.complete && listing.organizations.length === 0) return null;
 
   return (
     <>
       <DropdownMenu.Label className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.04em]" style={{ color: "var(--text-tertiary)" }}>
         Organization
       </DropdownMenu.Label>
-      {listing.state === "loaded" ? (
+      {listing.state === "loaded" && listing.organizations.length > 0 ? (
         // menuitemradio + aria-checked, so the active organization is announced, not only drawn.
         <DropdownMenu.RadioGroup value={organizationId ?? ""}>
           {listing.organizations.map((organization) => (
@@ -53,7 +53,7 @@ export function DesktopOrganizationMenuItems({ itemClass }: { itemClass: string 
         </DropdownMenu.RadioGroup>
       ) : (
         <p role="alert" className="px-2 py-1.5 text-[12px]" style={{ color: "var(--danger)" }}>
-          Couldn&apos;t load your organizations.
+          Couldn&apos;t verify your organizations.
         </p>
       )}
       <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />

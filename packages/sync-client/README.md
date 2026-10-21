@@ -31,6 +31,28 @@ npm install -g @finnaai/matrix
 curl -sL get.matrix-os.com | sh
 ```
 
+## Update the CLI
+
+```bash
+matrix update          # install the latest stable CLI
+matrix update --check  # check without changing anything
+```
+
+The updater preserves Matrix profiles and sign-ins. Standalone macOS/Linux
+installs verify the release checksum and executable before replacing the CLI,
+and restore the previous binary if final validation fails. Homebrew and
+recognized pnpm global installs use their package manager. Other managed
+installs should be updated with their original package manager.
+
+For an older CLI that has no `update` command, rerun the official installer in
+its existing CLI directory:
+
+```bash
+curl -fsSL https://get.matrix-os.com | MATRIX_INSTALL_DIR="$(dirname "$(command -v matrix)")" sh
+```
+
+CLI updates do not update your Matrix computer or change its release channel.
+
 ## Usage
 
 ```bash

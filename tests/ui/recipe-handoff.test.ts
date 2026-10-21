@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveRecipeHandoff, buildAgentRecipePrompt } from "../../packages/ui/src/chat-agents/recipe-handoff.js";
+import { resolveRecipeHandoff, buildAgentRecipePrompt, isLaunchBotRecipeId } from "../../packages/ui/src/chat-agents/recipe-handoff.js";
 import { agentInspirations } from "../../packages/ui/src/chat-agents/agent-inspirations.generated.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -7,6 +7,9 @@ import { matrixRecipes, matrixRecipeCatalogContract } from "../../packages/ui/sr
 import { recipes as siteRecipesV1 } from "../contracts/fixtures/matrix-recipes.v1.js";
 
 describe("public recipe handoff", () => {
+  it("offers the canonical Matrix Bot in the shared launch recipe set", () => {
+    expect(isLaunchBotRecipeId("matrix-bot")).toBe(true);
+  });
   it("preserves the complete version 1 website contract and its exact prompt handoff", async () => {
     const bytes = await readFile(new URL("../contracts/fixtures/matrix-recipes.v1.ts", import.meta.url));
     expect(matrixRecipeCatalogContract).toEqual({

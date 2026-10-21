@@ -1,4 +1,5 @@
 import {
+  ProviderManagedCreditObservationSchema,
   ProviderConnectionAttemptActionSchema,
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
@@ -10,7 +11,7 @@ import {
   type ProviderSettingsSnapshot,
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
-import { openProviderAgentSetup } from "@matrix-os/ui";
+import { openProviderAgentSetup, canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath, providerSettingsManagedCreditPath } from "@matrix-os/ui";
 import type {
   ProviderSettingsTransport,
   ProviderSettingsTransportErrorCode,
@@ -23,11 +24,12 @@ import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stor
 import { useTabs } from "../../stores/tabs";
 import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 
-const PROVIDER_SETTINGS_PATH = "/api/ai/provider-settings";
-const PROVIDER_SETTINGS_ACTIONS_PATH = "/api/ai/provider-settings/actions";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MUTATION_BYTES = 64 * 1024;
 const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
+const PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS = 8;
+const PROVIDER_TERMINAL_DISCOVERY_INTERVAL_MS = 250;
+const PROVIDER_AUTH_SESSION_PATTERN = /^provider-auth-[0-9a-z]{50}$/;
 let latestTerminalHandoff: symbol | undefined;
 
 export { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
@@ -56,9 +58,25 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
   mutate(mutation: ProviderSettingsMutation, signal: AbortSignal): Promise<ProviderSettingsMutationResponse>;
 } {
   return {
+    async getManagedCredit(signal) {
+      try {
+        const value = await api.get<unknown>(providerSettingsManagedCreditPath, {
+          maxBytes: 16 * 1024, signal, timeoutMs: 10_000, cache: "no-store", omitErrorBody: true,
+        });
+        const parsed = ProviderManagedCreditObservationSchema.safeParse(value);
+        if (!parsed.success) throw new DesktopProviderSettingsTransportError("invalid_response");
+        return parsed.data;
+      } catch (error) {
+        if (error instanceof AppError) {
+          if (error.httpStatus === 404 || error.httpStatus === 405 || error.category === "notFound") throw new DesktopProviderSettingsTransportError("managed_credit_unsupported");
+          if (error.category === "unauthorized") throw new DesktopProviderSettingsTransportError("managed_credit_unauthorized");
+        }
+        throw mapTransportError(error);
+      }
+    },
     async getSnapshot(signal, options = {}) {
       try {
-        const value = await api.get<unknown>(`${PROVIDER_SETTINGS_PATH}?includeCapabilities=true${options.refresh ? "&refresh=true" : ""}`, {
+        const value = await api.get<unknown>(providerSettingsSnapshotPath(options.refresh), {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
           timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs,
@@ -78,7 +96,7 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
         throw new DesktopProviderSettingsTransportError("invalid_request");
       }
       try {
-        const value = await api.post<unknown>(`${PROVIDER_SETTINGS_ACTIONS_PATH}?includeCapabilities=true`, mutation.data, {
+        const value = await api.post<unknown>(providerSettingsActionsPath, mutation.data, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
         });
@@ -97,39 +115,58 @@ export async function openExistingProviderTerminalSession(
   terminalSessionId: string,
   isIdentityCurrent: () => boolean = () => true,
 ): Promise<boolean> {
-  if (!isValidShellSessionName(terminalSessionId) || !isIdentityCurrent()) return false;
+  const isTerminalRef = isValidShellSessionName(terminalSessionId);
+  if ((!isTerminalRef && !PROVIDER_AUTH_SESSION_PATTERN.test(terminalSessionId)) || !isIdentityCurrent()) return false;
   const handoff = Symbol();
   latestTerminalHandoff = handoff;
   const generation = captureRuntimeGeneration();
-  const revision = useShellSessions.getState().authoritativeRevision;
-  const sequence = useShellSessions.getState().loadSequence + 1;
-  // Invalidate polls issued before this read, while allowing polls issued after
-  // it to complete normally. Completion order alone is not snapshot freshness.
-  useShellSessions.setState({ loadSequence: sequence, loading: true, error: null });
-  // A background poll can supersede store.load while this user action waits.
-  // Validate the handoff independently without weakening latest-only polling.
-  try {
-    const sessions: ShellSessionSummary[] = await readShellSessions(api);
-    if (latestTerminalHandoff !== handoff || !isIdentityCurrent() || !isCurrentRuntimeGeneration(generation)) return false;
-    const current = useShellSessions.getState();
-    // A completed newer list or deletion owns the truth. In-flight polls alone
-    // cannot turn this successfully validated exact reference into "missing".
-    const superseded = current.authoritativeRevision !== revision;
-    const authoritativeSessions = superseded ? current.sessions : sessions;
-    if (!superseded) {
-      useShellSessions.setState((state) => ({
-        sessions,
-        authoritativeRevision: state.authoritativeRevision + 1,
-      }));
-    }
-    const exists = authoritativeSessions.some((session) => (
-      session.name === terminalSessionId && session.status === "active"
-    ));
-    if (!exists) return false;
+  const matchingSession = (sessions: ShellSessionSummary[]) => {
+    const matches = sessions.filter((session) => isTerminalRef
+      ? session.name === terminalSessionId : session.subtitle === terminalSessionId);
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+  const openSession = (session: ShellSessionSummary) => {
     const tabId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
     useDesktopSurfaces.getState().activateSurface(tabId);
-    useTabs.getState().requestTerminalSession(terminalSessionId);
+    useTabs.getState().requestTerminalSession(session.name);
     return true;
+  };
+  let sequence = useShellSessions.getState().loadSequence;
+  let acceptedRevision: number | undefined;
+  try {
+    for (let attempt = 0; attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS; attempt += 1) {
+      if (latestTerminalHandoff !== handoff || !isIdentityCurrent() || !isCurrentRuntimeGeneration(generation)) return false;
+      const currentBeforeRead = useShellSessions.getState();
+      if (acceptedRevision !== undefined && currentBeforeRead.authoritativeRevision !== acceptedRevision) {
+        const latest = matchingSession(currentBeforeRead.sessions);
+        return latest?.status === "active" ? openSession(latest) : false;
+      }
+      const revision = currentBeforeRead.authoritativeRevision;
+      sequence = useShellSessions.getState().loadSequence + 1;
+      // Fence older polls; newer completed lists or deletions remain authoritative.
+      useShellSessions.setState({ loadSequence: sequence, loading: true, error: null });
+      const sessions: ShellSessionSummary[] = await readShellSessions(api);
+      if (latestTerminalHandoff !== handoff || !isIdentityCurrent() || !isCurrentRuntimeGeneration(generation)) return false;
+      const current = useShellSessions.getState();
+      const superseded = current.authoritativeRevision !== revision;
+      const authoritativeSessions = superseded ? current.sessions : sessions;
+      if (!superseded) {
+        useShellSessions.setState((state) => ({
+          sessions,
+          authoritativeRevision: state.authoritativeRevision + 1,
+        }));
+      }
+      acceptedRevision = useShellSessions.getState().authoritativeRevision;
+      const matching = matchingSession(authoritativeSessions);
+      if (matching?.status === "active") return openSession(matching);
+      if (authoritativeSessions.filter((session) => isTerminalRef
+        ? session.name === terminalSessionId : session.subtitle === terminalSessionId).length > 1) return false;
+      if (superseded || matching?.status === "exited" || matching?.status === "degraded") return false;
+      if (attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, PROVIDER_TERMINAL_DISCOVERY_INTERVAL_MS));
+      }
+    }
+    return false;
   } catch (error) {
     console.warn("[provider-settings] Terminal handoff unavailable:", error instanceof Error ? error.name : typeof error);
     return false;
@@ -148,7 +185,7 @@ export async function openDesktopProviderAgentSetup(
 ): Promise<boolean> {
   return openProviderAgentSetup({
     harness,
-    getCatalog: () => api.get("/api/chat-providers?refresh=true&includeConnectionLabels=true", {
+    getCatalog: () => api.get(canonicalChatProviderCatalogPath(true, true), {
       maxBytes: MAX_RESPONSE_BYTES, timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs,
       signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
     }),

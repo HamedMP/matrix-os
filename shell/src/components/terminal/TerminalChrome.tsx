@@ -10,7 +10,7 @@ function isTerminalChromeControl(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("button,input,textarea,select,a,[role='button']"));
 }
 
-// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This pre-existing chrome composes desktop/mobile window controls and drag gating. Terminal sharing is isolated in TerminalSharingSlot; restructuring the established chrome is unrelated to this feature.
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This pre-existing chrome composes desktop/mobile window controls and drag gating. Restructuring the established chrome belongs in a focused refactor.
 export function TerminalWorkspaceChrome() {
   const ctx = useTerminalAppContext();
   const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);

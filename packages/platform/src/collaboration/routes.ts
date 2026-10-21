@@ -175,15 +175,72 @@ async function listDiscovery(
     : null;
   if (pageRequest.data.cursor && !cursor) return safeJson(c, "Invalid request", 422);
   try {
-    const phase = cursor?.phase ?? "indexed";
-    const page = phase === "indexed"
-      ? await options.repository.listForActorPage(actorId, status, {
-        limit: pageRequest.data.limit,
-        ...(cursor?.after ? { after: cursor.after } : {}),
-      })
-      : { items: [] as Awaited<ReturnType<PlatformCollaborationRepository["listForActorPage"]>>["items"], nextCursor: undefined };
-    // Metadata only: the client hydrates every item from the resource's home.
-    const items: unknown[] = page.items.map((entry) => ({
+    // One entry the contract cannot represent (an `invited` row with neither an invitation nor a
+    // grant pointer, such as a member grant indexed before grant pointers existed) must not take
+    // down the actor's whole inbox: it is dropped and counted for operators, never sent half-formed.
+    // A page that drops to nothing but has more behind it would read as "nothing shared", so the
+    // next pages are scanned -- a bounded number of them.
+    const valid: unknown[] = [];
+    let dropped = 0;
+    let current = cursor;
+    let nextCursor: string | undefined;
+    for (let scanned = 0; scanned < MAX_DISCOVERY_SCAN_PAGES; scanned += 1) {
+      const page = await readDiscoveryPage(actorId, status, pageRequest.data.limit, current, options);
+      for (const item of page.items) {
+        const parsed = CollaborationDiscoveryItemSchema.safeParse(item);
+        if (parsed.success) valid.push(parsed.data);
+        else dropped += 1;
+      }
+      nextCursor = page.nextCursor;
+      if (valid.length > 0 || !nextCursor) break;
+      current = decodeDiscoveryCursor(nextCursor, actorId, status);
+      if (!current) break;
+    }
+    if (dropped > 0) console.warn("[platform-collaboration] discovery items dropped", dropped);
+    c.header("Cache-Control", "private, no-store");
+    return c.json(CollaborationDiscoveryResponseSchema.parse({
+      items: valid,
+      ...(nextCursor ? { nextCursor } : {}),
+    }));
+  } catch (error: unknown) {
+    console.warn("[platform-collaboration] discovery listing failed", error instanceof Error ? error.name : "UnknownError");
+    return safeJson(c, "Collaboration unavailable", 503);
+  }
+}
+
+/** Upper bound on pages one discovery request reads past entries that all had to be dropped. */
+const MAX_DISCOVERY_SCAN_PAGES = 5;
+
+/** One discovery page as unvalidated items, plus the encoded cursor for the page after it. */
+async function readDiscoveryPage(
+  actorId: string,
+  status: "invited" | "accepted",
+  limit: number,
+  cursor: ReturnType<typeof decodeDiscoveryCursor>,
+  options: Parameters<typeof createPlatformCollaborationRoutes>[0],
+): Promise<{ items: unknown[]; nextCursor?: string }> {
+  const phase = cursor?.phase ?? "indexed";
+  const page = phase === "indexed"
+    ? await options.repository.listForActorPage(actorId, status, {
+      limit,
+      ...(cursor?.after ? { after: cursor.after } : {}),
+    })
+    : { items: [] as Awaited<ReturnType<PlatformCollaborationRepository["listForActorPage"]>>["items"], nextCursor: undefined };
+  // Metadata only: the client hydrates every item from the resource's home.
+  const items: unknown[] = page.items.map((entry) => (
+    // A pending grant addressed to this actor alone opens exactly like an organization-wide
+    // one (accept the grant on the home), so it uses the same entry and every client --
+    // including released ones, which parse the whole page strictly -- already handles it.
+    entry.status === "invited" && entry.grantId && !entry.invitationId ? {
+      scopeId: entry.scopeId,
+      runtimeId: entry.runtimeId,
+      ownerId: entry.ownerId,
+      kind: entry.kind,
+      authorityGeneration: entry.authorityGeneration,
+      status: "organization_pending",
+      organizationId: entry.organizationId,
+      grantId: entry.grantId,
+    } : {
       scopeId: entry.scopeId,
       runtimeId: entry.runtimeId,
       ownerId: entry.ownerId,
@@ -193,36 +250,28 @@ async function listDiscovery(
       ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
       ...(entry.organizationId ? { organizationId: entry.organizationId } : {}),
     }));
-    let nextCursor = page.nextCursor ? encodeDiscoveryCursor(actorId, status, "indexed", page.nextCursor) : undefined;
-    if (status === "invited" && !page.nextCursor && options.listOrganizationIds) {
-      const organizationIds = await options.listOrganizationIds(actorId);
-      const remaining = pageRequest.data.limit - items.length;
-      const pending = await options.repository.listOrganizationSharesForActorPage(actorId, organizationIds, {
-        limit: Math.max(1, remaining),
-        ...(phase === "pending" && cursor?.after ? { after: cursor.after } : {}),
-      });
-      if (remaining > 0) {
-        for (const entry of pending.items) {
-          items.push({
-            scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
-            authorityGeneration: entry.authorityGeneration, status: "organization_pending", organizationId: entry.organizationId,
-            grantId: entry.grantId,
-          });
-        }
-      }
-      if (pending.nextCursor || (remaining === 0 && pending.items.length > 0)) {
-        nextCursor = encodeDiscoveryCursor(actorId, status, "pending", remaining === 0 ? undefined : pending.nextCursor);
+  let nextCursor = page.nextCursor ? encodeDiscoveryCursor(actorId, status, "indexed", page.nextCursor) : undefined;
+  if (status === "invited" && !page.nextCursor && options.listOrganizationIds) {
+    const organizationIds = await options.listOrganizationIds(actorId);
+    const remaining = limit - items.length;
+    const pending = await options.repository.listOrganizationSharesForActorPage(actorId, organizationIds, {
+      limit: Math.max(1, remaining),
+      ...(phase === "pending" && cursor?.after ? { after: cursor.after } : {}),
+    });
+    if (remaining > 0) {
+      for (const entry of pending.items) {
+        items.push({
+          scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
+          authorityGeneration: entry.authorityGeneration, status: "organization_pending", organizationId: entry.organizationId,
+          grantId: entry.grantId,
+        });
       }
     }
-    c.header("Cache-Control", "private, no-store");
-    return c.json(CollaborationDiscoveryResponseSchema.parse({
-      items: items.map((item) => CollaborationDiscoveryItemSchema.parse(item)),
-      ...(nextCursor ? { nextCursor } : {}),
-    }));
-  } catch (error: unknown) {
-    console.warn("[platform-collaboration] discovery listing failed", error instanceof Error ? error.name : "UnknownError");
-    return safeJson(c, "Collaboration unavailable", 503);
+    if (pending.nextCursor || (remaining === 0 && pending.items.length > 0)) {
+      nextCursor = encodeDiscoveryCursor(actorId, status, "pending", remaining === 0 ? undefined : pending.nextCursor);
+    }
   }
+  return { items, ...(nextCursor ? { nextCursor } : {}) };
 }
 
 function exactDiscoveryQuery(c: RouteContext): Record<string, string> {

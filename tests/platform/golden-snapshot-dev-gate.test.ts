@@ -9,6 +9,10 @@ describe('golden snapshot developer gate', () => {
     const command = packageJson.scripts['test:golden-snapshots'];
     expect(command).not.toContain('tests/platform/customer-vps*.test.ts');
     expect(command).toContain('tests/platform/customer-vps.test.ts');
+    for (const suite of ['config-contracts','preview-slots','resize','bundle-provisioning','deploy',
+      'registration-delete','recovery','reconcile-billing']) {
+      expect(command).toContain(`tests/platform/customer-vps-${suite}.test.ts`);
+    }
     expect(command).toContain('tests/platform/customer-vps-cloud-init.test.ts');
     expect(command).toContain('tests/platform/customer-vps-hetzner.test.ts');
     expect(command).toContain('tests/platform/customer-vps-host-bundle.test.ts');
@@ -23,10 +27,9 @@ describe('golden snapshot developer gate', () => {
     const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
     const unitJob = workflow.slice(workflow.indexOf('\n  unit:'), workflow.indexOf('\n  docs-contract:'));
     const timeout = Number(/timeout-minutes:\s*(\d+)/.exec(unitJob)?.[1]);
-    // A floor, not an exact value. The guard exists so a shard that finished its tests
-    // still has a cleanup window; pinning the exact number made a legitimate raise fail
-    // instead, which is how a shard that had outgrown 20 minutes kept being reported as a
-    // test failure. Lowering it below the floor still fails.
-    expect(timeout).toBeGreaterThanOrEqual(20);
+    // A floor, not an exact value. Main run 37587908679 reached the previous 30-minute
+    // ceiling and cancelled shard 4 without a failing assertion, so keep enough bounded
+    // headroom for normal runner variance and post-job cleanup.
+    expect(timeout).toBeGreaterThanOrEqual(40);
   });
 });

@@ -1,7 +1,9 @@
+import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { Hono } from 'hono';
 import { canClerkUserAccessMachine, getPersonalAccountRestrictedMachineByHandle } from './customer-vps-preview.js';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from './db.js';
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
+import { createIntegrationChatApprovalRoutes } from './integration-chat-approval.js';
 import type { PrivatePreviewEligibility } from './private-preview-eligibility.js';
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
@@ -97,6 +99,9 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       await next();
     });
   });
+  internalIntegrationApp.use('*', createAccountDeletionMutationGuard({ db,
+    resolveOwner: (c) => c.get('internalContainerClerkUserId') as string | undefined }));
+  internalIntegrationApp.route('/', createIntegrationChatApprovalRoutes(platformSecret));
   internalIntegrationApp.route('/', options.internalIntegrationRoutes);
   app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
 }

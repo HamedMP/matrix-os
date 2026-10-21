@@ -1,6 +1,6 @@
 # Agent Matrix Skills
 
-Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skills teach Agent how to build and debug Matrix apps, use the Matrix design system, work with Matrix integrations, and operate on a dev VPS.
+Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skills teach agents how to build and debug Matrix apps, use the Matrix design system, work with Matrix integrations, and operate on a dev VPS. The pack also ships the owner-provided design and animation skill snapshots with their relative resources and per-skill `PROVENANCE.md`.
 
 `skills/matrix/` is the source of truth for Matrix-hosted coding agents. Runtime sync projects every skill directory with a `SKILL.md` into the tool-specific locations for Matrix, Claude Code, Codex, and Hermes.
 
@@ -14,7 +14,35 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `matrix-integrations` | Use platform-owned Matrix integrations without copying provider secrets into Agent or customer VPSes. |
 | `matrix-dev-vps` | Develop Matrix from inside a user/dev VPS with hot reload, previews, and auth-aware tunnels. |
 | `matrix-debug-app` | Fix `needs_build`, manifest problems, bundle/icon 404s, console errors, and integration proxy issues. |
-| `matrix-landing-design` | Build public Matrix OS marketing and landing surfaces without mixing those patterns into apps. |
+| `matrix-landing-design` | Build product landing pages matching their apps, while keeping public Matrix OS marketing on the shared brand. |
+| `matrix-chat-import` | Import owner-selected Codex/Claude transcripts as private Matrix Chats. |
+| `matrix-personal-daily-brief` | Prepare a personal briefing from connected services. |
+| `matrix-jev-email-triage` | Triage email through the scoped Matrix workflow. |
+| `emil-design-eng` | Refine hierarchy, components, UI details, and interaction polish. |
+| `apple-design` | Build fluid direct manipulation, gestures, and spatial continuity. |
+| `animate` | Choose and implement purposeful web motion with local recipe references. |
+| `animation-vocabulary` | Identify effects and useful motion terminology. |
+| `animation-accessibility` | Design/test reduced-motion alternatives and accessible media behavior. |
+| `animation-performance` | Diagnose dropped frames and choose efficient animation properties. |
+| `css-animations` | Implement CSS motion with worked recipes. |
+| `shadcn` | Compose current project-aware components, coherent presets and responsive charts from real saved data. |
+| `review-animations` | Inspect the implemented motion against craft/accessibility/performance criteria. |
+
+Every skill supplies top-level discovery triggers. Matrix companion names also appear
+in top-level `related_skills` and harness metadata; discovery presents names while
+full bodies and resources load on demand. Avoid eagerly injecting the entire pack.
+
+Saved Chat Agent recipes pin the admitted skill instructions and retain the actual
+server-selected skill file location separately. Resolve relative guide/resource links
+from that file's directory, using available authorized file-reading tools. Linked
+resources are current local files and may change; they do not replace the pinned
+instruction snapshot. Older snapshots without a source location omit this guidance
+rather than guessing a path. Public catalog metadata excludes source paths, and
+selecting a skill does not expand permissions or install tools.
+
+The local snapshots preserve upstream authorship and provenance. Matrix author metadata
+identifies the managed adaptation; it does not assert an upstream license that was not
+supplied. Host-specific configuration is excluded.
 
 ## Install Into Agent
 
@@ -34,34 +62,35 @@ MATRIX_SKILLS_SOURCE=HamedMP/matrix-os ./scripts/install-agent-matrix-skills.sh
 AGENT_BIN=/opt/matrix/runtime/node/bin/agent ./scripts/install-agent-matrix-skills.sh
 ```
 
-Equivalent manual command:
+Both installer scripts enumerate the same complete pack. A direct local
+`skills/matrix` path is accepted as well as a checkout root. Hermes local installation
+uses the shared synchronizer. Agent local installation also uses that synchronizer,
+without requiring the Agent CLI: repeating it refreshes marked Matrix links/copies
+from the selected source while preserving owner skills and custom aliases.
+Published-source installations fill missing names only, preserve existing files,
+directories and dangling links, and never use `--force`: the remote CLI cannot
+establish whether an existing skill belongs to Matrix. To refresh managed Agent
+skills, use a local checkout or direct `skills/matrix` source.
+
+Agent skills default to `${AGENT_HOME:-$HOME/.agent}/skills`. Set
+`MATRIX_AGENT_SKILLS_ROOT` for a nonstandard destination; the same root is used
+for local refresh and remote collision protection. Local refresh rejects an empty or invalid builder source and any source/destination
+overlap, including existing symlink targets, before modifying skills. Agent sync is opt-in and
+does not change the Matrix, Claude, Codex or Hermes defaults:
 
 ```bash
-for skill in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design; do
-  agent skills install "HamedMP/matrix-os/skills/matrix/$skill"
-done
+MATRIX_SKILL_TARGETS=agent ./scripts/sync-matrix-agent-skills.sh /path/to/skills/matrix
 ```
 
-### Manual Install
-
-From a running Agent environment with GitHub skill install support:
-
-```bash
-agent skills install HamedMP/matrix-os/skills/matrix/app-builder
-agent skills install HamedMP/matrix-os/skills/matrix/app-ui-patterns
-agent skills install HamedMP/matrix-os/skills/matrix/design-system
-agent skills install HamedMP/matrix-os/skills/matrix/integrations
-agent skills install HamedMP/matrix-os/skills/matrix/dev-vps
-agent skills install HamedMP/matrix-os/skills/matrix/debug-app
-agent skills install HamedMP/matrix-os/skills/matrix/landing-design
-```
-
-If Agent is running from a local checkout, install from the local path or add the repo as a tap:
-
-```bash
-agent skills tap add HamedMP/matrix-os
-agent skills browse matrix
-```
+Runtime sync preserves existing user-managed skills, including a same-name local
+`animate` or `apple-design`. Shipped vendored directories contain a `.matrix-os-managed`
+marker so a previous release's links/copies can be refreshed without assigning Matrix
+authorship to the underlying skill. Only current-source links, explicit markers, and
+legacy `matrix-*` directories authored by Matrix are eligible for cleanup. Uncertain
+or unmarked same-name installations remain untouched and a skip is reported. The
+source pack under the current release is the instruction/resource source of truth.
+Owner-named symlink aliases remain intact even when they point into the shipped
+pack: source ownership or a followed marker does not make an alias Matrix-managed.
 
 ## Codex Plugin
 
@@ -135,7 +164,7 @@ Use $matrix-handoff to move this task to Matrix with Codex, using --no-history.
 
 Recommended target state:
 
-1. The Matrix image includes Agent or installs it during first boot as the `matrix` user.
+1. The VPS-native host runtime includes Agent or installs it during first boot as the `matrix` user.
 2. First boot runs `scripts/install-agent-matrix-skills.sh`.
 3. Gateway startup runs `scripts/sync-matrix-agent-skills.sh` so Matrix, Claude Code, Codex, and Hermes see
    the same canonical skill pack.
@@ -247,15 +276,44 @@ reopen data, and inspect the main flow at normal and narrow sizes. Record untest
 A local Vite preview or successful build does not prove an authenticated Matrix launch.
 
 Design guidance lives in the builder's `references/app-craft.md`, with Matrix tokens and
-layout guidance in its companion skills. The runtime builder and kernel prompts route
-UI work through the installed `emil-design-eng`, `apple-design`, and task-specific `animate`
-skills from [Emil Kowalski's skills](https://github.com/emilkowalski/skills). Discover actual
-paths via the harness catalog; the external skills are separate from the Matrix pack.
-If absent, report that and use the shipped craft reference. Do not overwrite user-managed
-skills while syncing Matrix-owned skills.
+layout guidance in its companion skills. Discover actual paths through the harness
+catalog and load only task-relevant design/motion bodies and resources. The shipped
+local `emil-design-eng`, `apple-design`, `animate`, and supporting snapshots preserve
+their original attribution in `PROVENANCE.md`; do not assume they are official packages
+from a particular repository. If a skill is unavailable on a route, report that and
+use the craft reference. Runtime sync keeps unmarked user-managed versions intact.
 
 Choose task-specific layouts, clear typography, truthful states, and useful interactions.
 Gradients, glass, capsule controls, and mount staggering are not universal requirements.
 Frequent and keyboard actions stay immediate; occasional motion communicates state or
 spatial relationships and respects reduced motion. Verify in Web Canvas, Web Desktop,
 and Electron Desktop where available, plus supported mobile surfaces.
+
+
+## Direction, data and evidence
+
+Before scaffolding, builders keep a concise app `DESIGN.md` with the user's main task,
+layout/density, theme tokens, typography/spacing, data/state contract, and a concrete
+motion/reduced-motion recipe. Follow supplied references or existing app direction
+by default. Small alternatives are useful when requested or when they resolve a real
+ambiguity; they do not create a mandatory design approval pause.
+
+Build one complete vertical slice through the existing `window.MatrixOS.db` bridge
+and owner's Postgres: bounded read, create/edit, confirmation/failure rollback, and
+save/reopen verification. A missing bridge is a visible error, never successful
+local storage. Avoid fake records, duplicate seeding, stale rollback snapshots, and
+sequential multi-request workflows presented as database transactions. Structured
+data belongs in Postgres; code, manifests, `DESIGN.md`, and assets remain files.
+
+Inspect/refine in the actual available Web Canvas, Web Desktop, and Electron Desktop
+surfaces, and supported Web Mobile/Native Mobile. Record surface, viewport, theme,
+normal/reduced motion, keyboard behavior, empty/loading/error/saving/populated states,
+persistence result, and screenshot or recording evidence. A build/preflight or mock
+scenario does not establish live authenticated launch or visual quality; report any
+unavailable verification rather than implying it passed.
+
+Builders invite a style, app link or inspiration screenshot when the direction is unclear. The visual-reference workflow can delegate bounded similar-app research to available subagents, inspect actual screens, and record selected patterns in the owner project's design/references/ and DESIGN.md. It keeps references out of the shared pack and verifies rendered quality separately from real Postgres persistence.
+
+The remote Hermes installer skips any existing named skill directory or symlink before calling Hermes, since Hermes can replace filesystem-only entries even without `--force`. Use a local checkout and `sync-matrix-agent-skills.sh` to refresh Matrix-managed installations; remote repeat installs fill only missing names.
+
+Builders choose a coherent product style from the brief, references and user’s mood. Direction affects typography, shape, borders, spacing, materials, imagery and motion as well as palette. A delegated or surprise choice is recorded once in DESIGN.md and remains stable across screens and edits. Generated products may use bright minimal, neo-brutalist, playful, retro or neumorphic art direction with readable app-local semantic colors; Matrix platform chrome/auth/billing retains the shared brand.

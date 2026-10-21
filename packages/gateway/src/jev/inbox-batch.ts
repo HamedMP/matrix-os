@@ -1,15 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod/v4";
-import { JevInboxGmailIdSchema, EMAIL_TRIAGE_LABELS } from "@matrix-os/contracts";
+import { JevInboxGmailIdSchema, JevInboxBatchInputSchema, EMAIL_TRIAGE_LABELS } from "@matrix-os/contracts";
 import type { HermesJevScope } from "../chat/hermes-integration-capability.js";
 import { boundedOperation } from "../bounded-operation.js";
-import { BatchJobId, type BatchDocument, type JevInboxBatchStore } from "./inbox-batch-store.js";
-export const BatchInput = z.discriminatedUnion("operation", [
-  z.strictObject({ operation: z.literal("batch_start"), maxThreads: z.number().int().min(1).max(10000).optional() }),
-  z.strictObject({ operation: z.literal("batch_next"), jobId: BatchJobId, revision: z.number().int().min(1) }),
-  z.strictObject({ operation: z.literal("batch_resume"), jobId: BatchJobId }),
-  z.strictObject({ operation: z.literal("batch_status"), jobId: BatchJobId.optional() }),
-]);
+import { type BatchDocument, type JevInboxBatchStore } from "./inbox-batch-store.js";
+export const BatchInput = JevInboxBatchInputSchema;
 const Page = z.object({ threads: z.array(z.object({ id: JevInboxGmailIdSchema })).max(30).optional(), nextPageToken: z.string().min(1).max(4096).optional() });
 export type BatchProgress = {
   kind: "batch";
@@ -38,7 +33,7 @@ function present(d: BatchDocument): BatchProgress {
     messagesLabeled: d.items.filter(x => x.status === "labeled").reduce((n, x) => n + x.messages, 0), remainingQueued: d.queue.length,
     hasMore: !d.listed || d.pageToken !== null, maxThreads: d.maxThreads, last: d.last };
 }
-const stamp = (scope: HermesJevScope) => createHash("sha256").update(JSON.stringify([scope.agentId, scope.revision, scope.account])).digest("hex");
+const stamp = (scope: HermesJevScope) => createHash("sha256").update(JSON.stringify([scope.agentId, scope.revision, scope.account, ...(scope.authorityStamp ? [scope.authorityStamp] : [])])).digest("hex");
 export function createJevInboxBatch(options: {
   store: JevInboxBatchStore;
   authorize: (owner: string, scope: HermesJevScope) => Promise<void>;

@@ -12,7 +12,7 @@ import { companyDriveChatReference, resolveOrganizationDriveNavigation, Organiza
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
-import { createShellCollaborationApi } from "@/lib/collaboration";
+import { useShellCollaborationApi } from "@/lib/collaboration-organization";
 
 function safeError(error: unknown): string {
   if (error instanceof Error && error.message === "FileTooLarge") return "Files must be 100 MiB or smaller.";
@@ -21,7 +21,7 @@ function safeError(error: unknown): string {
 
 export function OrganizationDrivesView({ requestedScopeId, requestedIntentId, draftIdentity, mobile=false }: { requestedScopeId?: string; requestedIntentId?: string; draftIdentity?:string; mobile?:boolean }) {
   const origin = useBrowserOrigin();
-  const api = useMemo(() => origin ? createShellCollaborationApi(origin) : null, [origin]);
+  const api = useShellCollaborationApi(origin, Boolean(origin));
   const [options, setOptions] = useState<OrganizationDriveOption[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

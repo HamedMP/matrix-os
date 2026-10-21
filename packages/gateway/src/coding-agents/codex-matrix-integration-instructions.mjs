@@ -1,5 +1,8 @@
-/** Read-only CLI guidance for Codex threads that have no native Matrix integration tools. */
+import { buildMatrixAgentOrientation } from "../../../contracts/matrix-agent-orientation.mjs";
+
+/** Matrix orientation and read-only CLI guidance for native Codex threads. */
 export const MATRIX_INTEGRATIONS_INSTRUCTIONS = [
+  buildMatrixAgentOrientation({ surface: "codex" }),
   "When the user asks for a connected Matrix OS integration, prefer native Matrix integration tools if they are available.",
   "Otherwise, for read-only requests, run matrix-integrations inventory to identify the exact service and account label, then matrix-integrations describe <service> to find the exact action ID, risk, and supported parameters.",
   "Only if describe marks the action read, run matrix-integrations call <service> <action> '<JSON arguments>' '<exact account label>'. The CLI rejects writes and calls without an account label. Never choose another account or silently discard requested filters.",

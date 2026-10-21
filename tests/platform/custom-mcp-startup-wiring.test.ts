@@ -18,7 +18,7 @@ describe("Custom MCP platform startup wiring", () => {
     expect(source).not.toContain("cryptoModule.loadCustomMcpEncryptionKey");
     expect(source).toContain("await customDb.destroy()");
     expect(source).toMatch(/registerCustomMcpStartupCleanup\(closeCustomMcpDb\);\s*await customDb\.migrate\(\)/);
-    expect(source).toMatch(/catch \(startupError: unknown\)[\s\S]*await customMcpStartupCleanup\?\.\(\)[\s\S]*throw startupError/);
+    expect(source).toMatch(/runPlatformStartupWithCleanup\(registerCleanup\s*=>\s*startPlatformServerWithCleanup\(opts, registerCleanup\)\)/);
   });
 
   it("allows dynamic OAuth client registration without a static client ID", async () => {

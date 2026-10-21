@@ -11,6 +11,13 @@
     // Each profile's `channel` binds its builds to an EAS Update channel, so a
     // published update only reaches builds from the matching profile. Builds made
     // before these channels existed cannot receive updates at all.
+    //
+    // `preview` and `production` are the two release channels. Updates are
+    // published to `preview` and then promoted unchanged to `production`, so both
+    // profiles read the `production` EAS environment: the promoted bundle must see
+    // the same variables as the binary it lands on. Keep EXPO_PUBLIC_* values in
+    // that EAS environment, not in a profile `env` block, which `eas update`
+    // never reads.
     "development": {
       "extends": "base",
       "developmentClient": true,
@@ -33,6 +40,7 @@
       "extends": "base",
       "distribution": "internal",
       "channel": "preview",
+      "environment": "production",
       "ios": {
         "simulator": false
       }
@@ -41,15 +49,9 @@
       "extends": "base",
       "autoIncrement": true,
       "channel": "production",
+      "environment": "production",
       "android": {
         "buildType": "app-bundle"
-      },
-      // EXPO_PUBLIC_POSTHOG_API_KEY is intentionally NOT set here — provide it as
-      // an EAS secret/env var so the key is never committed. When it is absent the
-      // app runs analytics-free (see apps/mobile/lib/analytics.ts).
-      "env": {
-        "EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE": "1",
-        "EXPO_PUBLIC_POSTHOG_HOST": "https://eu.i.posthog.com"
       }
     }
   },

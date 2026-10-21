@@ -1,4 +1,6 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -123,4 +125,39 @@ describe("OpenClaw gateway token loading", () => {
     await expect(readOpenClawGatewayToken(homePath))
       .rejects.toMatchObject({ kind: "agent_config_invalid" });
   });
+});
+
+it("reasserts uninstall opt-out after a concurrent installer clears it before lock acquisition", async () => {
+  const path = await mkdtemp(join(tmpdir(), "host-uninstall-lock-"));
+  cleanupPaths.push(path);
+  const home = join(path, "owner");
+  await mkdir(join(home, ".local/bin"), {recursive: true});
+  await writeFile(join(home, ".local/bin/hermes"), `#!/usr/bin/env bash\nunset PYTHONPATH\nunset PYTHONHOME\nexec "${home}/.hermes/hermes-agent/venv/bin/python" "${home}/.hermes/hermes-agent/hermes" "$@"\n`);
+  await mkdir(join(home, ".hermes"));
+  await writeFile(join(home, ".hermes/auth.json"), "synthetic owner credentials");
+  const source = await readFile("distro/customer-vps/host-bin/matrix-agent-runtime-control", "utf8");
+  const functions = source.slice(source.indexOf("stop_install_unit()"), source.indexOf("switch_runtime()"));
+  const testScript = join(path, "uninstall.sh");
+  await writeFile(testScript, `set -euo pipefail
+state_dir=${JSON.stringify(path)}
+MATRIX_RUNTIME_HOME=${JSON.stringify(home)}
+MATRIX_RUNTIME_USER=fixture
+MATRIX_RUNTIME_GROUP=fixture
+action_timeout_seconds=5
+${functions}
+ensure_control_state() { :; }
+stop_install_unit() { test -f "$state_dir/disabled-hermes"; }
+# Deterministic install/uninstall interleaving: an installer acquired the lock
+# first and cleared the early marker; uninstall acquires it only afterward.
+acquire_control_lock() { rm -f "$state_dir/disabled-hermes"; }
+systemctl() { :; }
+timeout() { shift; "$@"; }
+setpriv() { shift 5; "$@"; }
+uninstall_runtime hermes
+`);
+  const result = await promisify(execFile)("bash", [testScript], {timeout: 5000});
+  expect(JSON.parse(result.stdout)).toMatchObject({ok: true, installed: false});
+  await expect(access(join(path, "disabled-hermes"))).resolves.toBeUndefined();
+  await expect(access(join(home, ".local/bin/hermes"))).rejects.toMatchObject({code: "ENOENT"});
+  expect(await readFile(join(home, ".hermes/auth.json"), "utf8")).toBe("synthetic owner credentials");
 });

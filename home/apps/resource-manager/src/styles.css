@@ -1,4 +1,12 @@
+@import "../../_shared/app-foundation.css";
+
 :root {
+  --app-bg: var(--matrix-bg, #eef3fc);
+  --app-fg: var(--matrix-fg, #202338);
+  --app-card: var(--matrix-card, #ffffff);
+  --app-muted: var(--matrix-muted, #f0f2f8);
+  --app-muted-fg: var(--matrix-muted-fg, #64687d);
+  --app-border: var(--matrix-border, #dedfeb);
   color-scheme: light;
   --bg: var(--matrix-bg, #FAFAF9);
   --panel: var(--matrix-card, #FCFCF8);
@@ -17,7 +25,7 @@
   --bad: var(--matrix-destructive, #D74A3A);
   --bad-bg: color-mix(in srgb, var(--bad) 12%, var(--panel));
   --shadow: 0 12px 28px rgba(30, 35, 28, 0.08);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--matrix-font-sans, Geist, system-ui, sans-serif);
   background: var(--bg);
   color: var(--text);
 }
@@ -48,7 +56,7 @@ button {
   height: 100%;
   min-height: 520px;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(240px, 1fr) auto;
   gap: 12px;
   padding: 16px;
   overflow: auto;
@@ -213,7 +221,7 @@ h2 {
 }
 
 .content-grid {
-  min-height: 0;
+  min-height: 240px;
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   gap: 12px;
@@ -349,4 +357,60 @@ h2 {
   .content-grid {
     grid-template-columns: 1fr;
   }
+}
+
+
+/* A quiet, compact instrument desk. Colored metrics use the approved brand
+   accents; the owner's shell neutrals still control light/dark surfaces. */
+:root:root:root {
+  --bg: var(--app-bg);
+  --panel: var(--app-card);
+  --panel-soft: var(--app-muted);
+  --text: var(--app-fg);
+  --muted: var(--app-muted-fg);
+  --border: var(--app-border);
+  --accent: var(--matrix-brand-teal);
+  --accent-fg: var(--matrix-brand-paper);
+  --shadow: none;
+}
+.resource-app {
+  height: 100dvh; min-height: 100%; gap: 16px;
+  padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  background: var(--bg);
+}
+.topbar { border: 0; box-shadow: none; background: transparent; padding: 0 0 8px; gap: 14px; }
+.mark { width: 52px; height: 52px; background: none; border: 0; border-radius: 0; object-fit: contain; }
+h1, h2, .metric-value { font-family: var(--matrix-font-heading, "Bricolage Grotesque", sans-serif); }
+h1 { font-size: 28px; font-weight: 500; letter-spacing: -.04em; }
+h2 { font-size: 18px; font-weight: 500; letter-spacing: -.025em; }
+.machine-strip, .panel, .metric-card { border-radius: 16px; padding: 18px; }
+.machine-strip { background: color-mix(in srgb, var(--matrix-brand-green) 12%, var(--panel)); }
+.metric-card { gap: 10px; box-shadow: none; }
+.metric-card:nth-child(1) { --metric-color: var(--matrix-brand-teal); }
+.metric-card:nth-child(2) { --metric-color: var(--matrix-brand-coral); }
+.metric-card:nth-child(3) { --metric-color: var(--matrix-brand-gold); }
+.metric-card:nth-child(4) { --metric-color: var(--matrix-brand-blue); }
+.metric-card { border-top: 3px solid var(--metric-color); }
+.metric-card .bar { background: var(--metric-color); }
+.metric-value { font-size: clamp(24px, 3vw, 32px); font-weight: 500; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.refresh-button { min-height: 44px; height: auto; padding: 10px 18px; border-radius: 10px; background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+.eyebrow { text-transform: none; font-size: 12px; font-weight: 500; }
+.service-row, .process-row, .suggestion-row { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 12px 0; }
+.pill { border-radius: 999px; font-weight: 600; }
+.process-stats { font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .resource-app { gap: 12px; grid-template-rows: auto auto auto auto auto; padding: 16px; }
+  .topbar { flex-wrap: wrap; align-items: center; }
+  .title-block { flex: 1 1 150px; }
+  .refresh-button { min-height: 44px; height: auto; margin-left: auto; }
+  .machine-strip, .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .content-grid { grid-template-columns: minmax(0, 1fr); }
+  .service-list, .process-list, .suggestion-list, .warning-list { max-height: 320px; }
+}
+@media (max-width: 420px) {
+  .resource-app { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .machine-strip, .panel, .metric-card { padding: 14px; }
+  .metrics-grid { grid-template-columns: minmax(0, 1fr); }
+  .panel-heading { align-items: flex-start; flex-wrap: wrap; }
+  h1 { font-size: 24px; }
 }

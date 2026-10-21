@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -18,6 +18,7 @@ import {
 function makeHomePath(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "dispatch-obs-")));
   mkdirSync(join(dir, "system", "logs"), { recursive: true });
+  writeFileSync(join(dir, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-test-key" } }));
   return dir;
 }
 

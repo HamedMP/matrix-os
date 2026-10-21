@@ -1,44 +1,25 @@
+import { rememberGoogleAttribution } from './billing/google-attribution-store.js';
+import { createStripeWebhookHandler } from './billing/webhook-handler.js';
+import { createBillingTrackingRoutes } from './billing/tracking-routes.js';
+import { resolveNewCardTrialDays } from './billing/trial-policy.js';
 import { Hono, type Context } from 'hono';
 import { createBillingStatusHandler } from './billing-status-route.js';
 import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
-import {
-  MATRIX_HOSTED_BILLING_REGIONS,
-  type MatrixBillingPublicEntitlement,
-  type MatrixHostedBillingRegionSlug,
-} from '@matrix-os/contracts';
-import { z } from 'zod/v4';
-import { appOrigin, resolveReturnPath } from './origins.js';
+
 import {
   abandonCreatingCheckoutAttempt,
   claimCardTrialCheckoutAttempt,
   claimCheckoutAttempt,
-  cancelOutstandingBillingRuntimeActions,
-  enqueueBillingRuntimeAction,
   finalizeCheckoutAttempt,
   getBillingCustomerByClerkUserId,
-  getBillingCustomerByStripeCustomerId,
-  consumeCardTrial,
-  getBillingEntitlement,
   getBillingSubscription,
-  getBillingSubscriptionByStripeId,
-  getActiveUserMachineByClerkId,
   getActiveCheckoutAttempt,
   getSettlingCheckoutAttempt,
-  insertBillingWebhookEvent,
-  isCardTrialOfferEligible,
-  projectTrialInvoiceEvent,
   resolveCheckoutAttempt,
-  runBillingWebhookTransaction,
-  listCurrentBillingSubscriptions,
-  persistBillingSubscriptionPriceSnapshot,
-  upsertBillingCustomer,
   upsertBillingEntitlement,
-  upsertBillingSubscription,
   type PlatformDB,
-  type BillingSubscriptionRecord,
-  type UserMachineRecord,
 } from './db.js';
 import {
   DEFAULT_BILLING_PLAN_DEFINITIONS,
@@ -46,33 +27,22 @@ import {
   getRuntimeAccessDecision,
   loadRuntimeCatalog,
   loadStripePriceCatalog,
-  parseBillingEntitlementRecord,
   resolveServerType,
-  type BillingEntitlementStatus,
-  type BillingEntitlement,
   type MatrixBillingPlanSlug,
   type MatrixBillingInterval,
-  type StripePriceCatalog,
-  type StripeSubscriptionProjection,
 } from './billing.js';
 import {
-  DeveloperToolsWithDefaultSchema,
   defaultDeveloperToolsForServerType,
   developerToolsAllowedForServerType,
   type DeveloperToolId,
 } from './developer-tools.js';
-import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
-import {
-  loadAiCreditCheckoutConfig,
-} from './ai-credit-checkout.js';
-import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
+
+import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
+
 import { createAiCreditCheckoutHandler } from './billing/ai-credit-checkout-route.js';
+import { createAiCreditHistoryHandler } from './billing/ai-credit-history-route.js';
 import type { RedditConversionsClient } from './reddit-conversions.js';
-import {
-  createRedditAttributionExpiry,
-  deliverRedditAttribution,
-  isSafeMarketingLandingPath,
-} from './reddit-purchase-attribution.js';
+import { createRedditAttributionExpiry } from './reddit-purchase-attribution.js';
 
 import {
   MAX_STRIPE_API_TIMEOUT_MS,
@@ -80,43 +50,22 @@ import {
   type StripeWebhookEvent,
 } from './billing/stripe-client.js';
 import {
-  CheckoutBillingRegionSlugSchema,
+  CheckoutAbandonRequestSchema,
   CheckoutPreparationStatusQuerySchema,
   CheckoutRequestSchema,
-  CLERK_USER_ID_PATTERN,
   HistoricalBillingRegionSlugSchema,
-  MarketingAttributionSchema,
   MATRIX_CARD_TRIAL_DAYS,
   PortalRequestSchema,
-  type CheckoutRequest,
 } from './billing/checkout-schemas.js';
 import {
   buildCheckoutTelemetryProperties,
-  buildSubscriptionTelemetryProperties,
-  planPriceUsd,
   resolveBillingReturnUrl,
   resolveCardTrialDays,
+  resolveStarterTrialDays,
   resolvePriceId,
   resolvePublicRecurringPrice,
   resolveRuntimePlacement,
-  storedRecurringPrice,
 } from './billing/checkout-support.js';
-import {
-  epochSecondsToIso,
-  isFirstPostTrialInvoice,
-  isSubscriptionEvent,
-  normalizeSubscriptionStatus,
-  projectSubscription,
-  readClerkUserIdFromCheckoutSession,
-  readClerkUserIdFromStripeMetadata,
-  readExpandableStripeId,
-  readInvoiceProjection,
-  readPrebillingIntentIdFromStripeMetadata,
-  readRegionSlugFromStripeMetadata,
-  readRuntimeSlotFromStripeMetadata,
-  readStripeObjectId,
-  recomputeStripeSummary,
-} from './billing/stripe-webhook-projection.js';
 
 // S01 / T007: keep the public surface of billing-routes.ts stable for existing consumers.
 export { MATRIX_CARD_TRIAL_DAYS } from './billing/checkout-schemas.js';
@@ -143,21 +92,8 @@ const BILLING_CHECKOUT_CREATED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_CREATED ?? 'matrix_billing_checkout_created';
 const BILLING_CHECKOUT_FAILED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_FAILED ?? 'matrix_billing_checkout_failed';
-const BILLING_CHECKOUT_COMPLETED_EVENT =
-  MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_COMPLETED ?? 'matrix_billing_checkout_completed';
 const BILLING_CHECKOUT_EXPIRED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_EXPIRED ?? 'matrix_billing_checkout_expired';
-const BILLING_SUBSCRIPTION_UPDATED_EVENT =
-  MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED ?? 'matrix_billing_subscription_updated';
-const BILLING_INVOICE_PAID_EVENT =
-  MATRIX_TELEMETRY_EVENTS.BILLING_INVOICE_PAID ?? 'matrix_billing_invoice_paid';
-const BILLING_INVOICE_PAYMENT_FAILED_EVENT =
-  MATRIX_TELEMETRY_EVENTS.BILLING_INVOICE_PAYMENT_FAILED ?? 'matrix_billing_invoice_payment_failed';
-const BILLING_TRIAL_STARTED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_STARTED;
-const BILLING_TRIAL_WILL_END_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_WILL_END;
-const BILLING_TRIAL_CONVERTED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_CONVERTED;
-const BILLING_TRIAL_PAYMENT_FAILED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_PAYMENT_FAILED;
-const TRIAL_PAYMENT_SUSPEND_DELAY_MS = 24 * 60 * 60 * 1000;
 export interface PrebillingCheckoutCoordinator {
   createIntent(input: {
     checkoutAttemptId: string;
@@ -224,6 +160,7 @@ export function createBillingRoutes(options: {
   const app = new Hono();
   const env = options.env ?? process.env;
   const cardTrialDays = resolveCardTrialDays(env);
+  const starterTrialDays = resolveStarterTrialDays(env);
   const primaryPrebillingRequired = env.CUSTOMER_VPS_ENABLED === 'true'
     && env.MATRIX_BILLING_PROVIDER === 'stripe';
   const now = options.now ?? (() => new Date());
@@ -405,12 +342,13 @@ export function createBillingRoutes(options: {
         regionSlug: parsed.data.regionSlug,
         ...(serverType ? { serverType } : {}),
       };
-      const claimAttempt = () => env.MATRIX_CARD_TRIALS_ENABLED === 'true'
-        && parsed.data.runtimeSlot === 'primary'
+      const claimAttempt = () => parsed.data.runtimeSlot === 'primary'
         ? claimCardTrialCheckoutAttempt(options.db, {
             id: randomUUID(),
             ...checkoutClaim,
-          }, cardTrialDays)
+          }, env.MATRIX_CARD_TRIALS_ENABLED === 'true'
+            ? resolveNewCardTrialDays(parsed.data.planSlug, starterTrialDays, cardTrialDays)
+            : null)
         : claimCheckoutAttempt(options.db, {
             id: randomUUID(),
             ...checkoutClaim,
@@ -525,6 +463,8 @@ export function createBillingRoutes(options: {
         await abandonCreatingCheckoutAttempt(options.db, attempt.attempt.id, currentTime.toISOString());
         return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
       }
+      const googleAnalytics = await rememberGoogleAttribution(options.db, attempt.attempt.id, clerkUserId,
+        parsed.data.googleAnalytics, currentTime.toISOString());
       const session = await options.stripe.createCheckoutSession({
         idempotencyKey: attempt.attempt.id,
         clerkUserId,
@@ -546,6 +486,9 @@ export function createBillingRoutes(options: {
           expiresAt: preparation.expiresAt,
         } : {}),
         attribution: parsed.data.attribution,
+        googleAnalytics,
+        planSlug: parsed.data.planSlug,
+        interval: parsed.data.interval,
         successUrl: resolveBillingReturnUrl(env, 'success', parsed.data.returnPath),
         cancelUrl: resolveBillingReturnUrl(env, 'canceled', parsed.data.returnPath),
       });
@@ -584,6 +527,88 @@ export function createBillingRoutes(options: {
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
+
+  app.post('/checkout/abandon', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), async (c) => {
+    const clerkUserId = await resolveRouteClerkUserId(c, 'checkout abandon');
+    if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) return c.json({ error: 'Invalid request' }, 400);
+      throw err;
+    }
+    const parsed = CheckoutAbandonRequestSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
+
+    try {
+      if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
+        throw new Error('stripe_timeout_exceeds_budget');
+      }
+      const activeAttempt = await getActiveCheckoutAttempt(
+        options.db,
+        clerkUserId,
+        parsed.data.runtimeSlot,
+      );
+      if (!activeAttempt) return c.json({ abandoned: false }, 200);
+      if (activeAttempt.status !== 'open' || !activeAttempt.stripeSessionId) {
+        return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
+      }
+      if (!options.stripe.expireCheckoutSession) throw new Error('stripe_checkout_expiry_unavailable');
+      const session = await options.stripe.expireCheckoutSession(activeAttempt.stripeSessionId);
+      if (session.clerkUserId !== clerkUserId) throw new Error('checkout_session_owner_mismatch');
+      const resolvedAt = now().toISOString();
+      if (session.status === 'complete') {
+        await resolveCheckoutAttempt(
+          options.db,
+          activeAttempt.stripeSessionId,
+          'paid',
+          resolvedAt,
+        );
+        return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
+      }
+      if (session.status !== 'expired') {
+        return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+      }
+      const abandoned = await options.db.transaction(async (trx) => {
+        const resolved = await resolveCheckoutAttempt(
+          trx,
+          activeAttempt.stripeSessionId!,
+          'expired',
+          resolvedAt,
+          true,
+        );
+        if (!resolved) return false;
+        await options.prebilling?.expireCheckout(trx, {
+          stripeSessionId: activeAttempt.stripeSessionId!,
+          clerkUserId,
+          now: resolvedAt,
+        });
+        return true;
+      });
+      if (abandoned) {
+        emitTelemetry(BILLING_CHECKOUT_EXPIRED_EVENT, {
+          distinctId: clerkUserId,
+          properties: {
+            plan_slug: activeAttempt.planSlug ?? undefined,
+            billing_interval: activeAttempt.billingInterval ?? undefined,
+            region_slug: activeAttempt.regionSlug ?? undefined,
+            runtime_slot: activeAttempt.runtimeSlot,
+            expiration_source: 'user_abandon',
+          },
+        });
+      }
+      return c.json({ abandoned }, 200);
+    } catch (err: unknown) {
+      console.error('[billing] checkout abandonment failed:', err instanceof Error ? err.message : String(err));
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
+  });
+
+  app.get('/ai-credit/history', createAiCreditHistoryHandler({
+    db: options.db,
+    resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'ai-credit history'),
+  }));
 
   app.post('/ai-credit/checkout', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), createAiCreditCheckoutHandler({
     db: options.db,
@@ -648,355 +673,21 @@ export function createBillingRoutes(options: {
     }
   });
 
+  app.route('/', createBillingTrackingRoutes({ ...options, resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'tracking') }));
+
   app.get('/status', createBillingStatusHandler({
     db: options.db,
     stripe: options.stripe,
     env,
     now,
     cardTrialDays,
+    starterTrialDays,
     resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'status'),
     resolvePublicRecurringPrice,
     resolveRuntimePlacement,
   }));
 
-  app.post('/webhooks/stripe', bodyLimit({ maxSize: STRIPE_WEBHOOK_BODY_LIMIT }), async (c) => {
-    const signature = c.req.header('stripe-signature');
-    const webhookSecret = env.STRIPE_WEBHOOK_SECRET;
-    if (!signature || !webhookSecret) return c.json({ error: 'Invalid webhook' }, 400);
-
-    const rawBody = await c.req.text();
-    let event: StripeWebhookEvent;
-    try {
-      event = options.stripe.constructWebhookEvent(rawBody, signature, webhookSecret);
-    } catch (err: unknown) {
-      console.warn('[billing] invalid Stripe webhook signature:', err instanceof Error ? err.message : String(err));
-      emitTelemetry(MATRIX_TELEMETRY_EVENTS.BILLING_WEBHOOK_FAILED, {
-        properties: { reason: 'invalid_signature' },
-      });
-      return c.json({ error: 'Invalid webhook' }, 400);
-    }
-
-    let preparationToResume: { intentId: string; clerkUserId: string } | undefined;
-    try {
-      const webhookProcessedAt = now();
-      const result = await runBillingWebhookTransaction(options.db, async (trx) => {
-        const inserted = await insertBillingWebhookEvent(trx, {
-          stripeEventId: event.id,
-          eventType: event.type,
-          createdAtFromStripe: epochSecondsToIso(event.created),
-          processedAt: webhookProcessedAt.toISOString(),
-          status: 'processed',
-          errorCode: null,
-        });
-        if (!inserted.inserted) {
-          return { received: true, duplicate: true };
-        }
-
-        const aiCreditResult = await processAiCreditWebhookEvent({
-          event, trx, repository: options.fundedAiRepository, at: webhookProcessedAt.toISOString(),
-        });
-        if (aiCreditResult) return aiCreditResult;
-
-        // Checkout session lifecycle drives the settling-attempt status: a
-        // confirmed payment marks the attempt `paid` (sticky), an expiry marks
-        // it `expired`. Both only transition `open` rows.
-        if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') {
-          const sessionId = readStripeObjectId(event.data.object);
-          if (sessionId) {
-            await resolveCheckoutAttempt(
-              trx,
-              sessionId,
-              event.type === 'checkout.session.completed' ? 'paid' : 'expired',
-              webhookProcessedAt.toISOString(),
-              true,
-            );
-            if (event.type === 'checkout.session.expired') {
-              const checkoutObject = event.data.object && typeof event.data.object === 'object'
-                ? event.data.object as { metadata?: unknown }
-                : undefined;
-              const intentId = readPrebillingIntentIdFromStripeMetadata(checkoutObject?.metadata);
-              const clerkUserId = readClerkUserIdFromCheckoutSession(event.data.object);
-              await options.prebilling?.expireCheckout(trx, {
-                stripeSessionId: sessionId,
-                ...(intentId ? { intentId } : {}),
-                ...(clerkUserId ? { clerkUserId } : {}),
-                now: webhookProcessedAt.toISOString(),
-              });
-            }
-          }
-          emitTelemetry(
-            event.type === 'checkout.session.completed'
-              ? BILLING_CHECKOUT_COMPLETED_EVENT
-              : BILLING_CHECKOUT_EXPIRED_EVENT,
-            {
-              distinctId: readClerkUserIdFromCheckoutSession(event.data.object) ?? undefined,
-              properties: { stripe_event_type: event.type },
-            },
-          );
-          return { received: true, processed: true };
-        }
-
-        if (!isSubscriptionEvent(event.type)) {
-          if (event.type !== 'invoice.paid' && event.type !== 'invoice.payment_failed') {
-            return { received: true, ignored: true };
-          }
-          const invoice = readInvoiceProjection(event.data.object);
-          if (!invoice) return { received: true, ignored: true };
-          const subscription = await getBillingSubscriptionByStripeId(trx, invoice.stripeSubscriptionId);
-          if (!subscription) return { received: true, ignored: true };
-          emitTelemetry(
-            event.type === 'invoice.paid'
-              ? BILLING_INVOICE_PAID_EVENT
-              : BILLING_INVOICE_PAYMENT_FAILED_EVENT,
-            {
-              distinctId: subscription.clerkUserId,
-              properties: {
-                amount_due_minor: invoice.amountDueMinor,
-                amount_paid_minor: invoice.amountPaidMinor,
-                currency: invoice.currency,
-                plan_slug: subscription.planSlug,
-                runtime_slot: subscription.runtimeSlot,
-              },
-            },
-          );
-          if (!isFirstPostTrialInvoice(invoice, subscription.trialEndsAt, subscription.trialConvertedAt)) {
-            return { received: true, ignored: true };
-          }
-          const paymentIsRecoveringFailedTrial = Boolean(subscription.firstTrialPaymentFailedAt);
-          const eventAt = epochSecondsToIso(event.created);
-          const invoiceProjection = await projectTrialInvoiceEvent(trx, {
-            stripeSubscriptionId: invoice.stripeSubscriptionId,
-            type: event.type,
-            eventCreatedAt: eventAt,
-            eventId: event.id,
-            lifecycleAt: eventAt,
-            updatedAt: webhookProcessedAt.toISOString(),
-          });
-          if (!invoiceProjection?.applied) return { received: true, ignored: true };
-          if (!invoiceProjection.lifecycleChanged) return { received: true, processed: true };
-          const updated = invoiceProjection.subscription;
-          if (event.type === 'invoice.payment_failed') {
-            const canceledResumes = await cancelOutstandingBillingRuntimeActions(
-              trx,
-              updated.stripeSubscriptionId,
-              'resume',
-              webhookProcessedAt.toISOString(),
-            );
-            await enqueueBillingRuntimeAction(trx, {
-              clerkUserId: updated.clerkUserId,
-              runtimeSlot: updated.runtimeSlot,
-              stripeSubscriptionId: updated.stripeSubscriptionId,
-              action: 'suspend',
-              reason: 'trial_payment_failed',
-              executeAfter: canceledResumes.running > 0
-                ? webhookProcessedAt.toISOString()
-                : new Date(Date.parse(eventAt) + TRIAL_PAYMENT_SUSPEND_DELAY_MS).toISOString(),
-              createdAt: webhookProcessedAt.toISOString(),
-            });
-            emitTelemetry(BILLING_TRIAL_PAYMENT_FAILED_EVENT, {
-              distinctId: updated.clerkUserId,
-              properties: { billing_interval: updated.billingInterval ?? undefined },
-            });
-          } else {
-            const canceledSuspensions = await cancelOutstandingBillingRuntimeActions(
-              trx,
-              updated.stripeSubscriptionId,
-              'suspend',
-              webhookProcessedAt.toISOString(),
-            );
-            const machine = paymentIsRecoveringFailedTrial
-              ? await getActiveUserMachineByClerkId(trx, updated.clerkUserId, updated.runtimeSlot)
-              : undefined;
-            const recoveryRequiresResume = paymentIsRecoveringFailedTrial && (
-              canceledSuspensions.running > 0
-              || machine?.status === 'suspended'
-              || machine?.status === 'suspending'
-            );
-            if (recoveryRequiresResume) {
-              await enqueueBillingRuntimeAction(trx, {
-                clerkUserId: updated.clerkUserId,
-                runtimeSlot: updated.runtimeSlot,
-                stripeSubscriptionId: updated.stripeSubscriptionId,
-                action: 'resume',
-                reason: 'payment_recovered',
-                executeAfter: webhookProcessedAt.toISOString(),
-                createdAt: webhookProcessedAt.toISOString(),
-              });
-            }
-            emitTelemetry(BILLING_TRIAL_CONVERTED_EVENT, {
-              distinctId: updated.clerkUserId,
-              properties: { billing_interval: updated.billingInterval ?? undefined },
-            });
-          }
-          const priceCatalog = loadStripePriceCatalog(env);
-          const summary = await recomputeStripeSummary(trx, updated.clerkUserId, priceCatalog, env, webhookProcessedAt);
-          if (summary) await persistEntitlement(trx, summary);
-          return { received: true, processed: true };
-        }
-
-        const projection = await projectSubscription(trx, event.data.object, webhookProcessedAt);
-        if (!projection) return { received: true, ignored: true };
-
-        const priceCatalog = loadStripePriceCatalog(env);
-        const entitlement = deriveStripeEntitlement(projection, {
-          priceCatalog,
-          runtimeCatalog: loadRuntimeCatalog(env),
-          now: webhookProcessedAt,
-        });
-        const priceEntry = entitlement.stripePriceId
-          ? priceCatalog.priceToPlan.get(entitlement.stripePriceId)
-          : undefined;
-        if (!priceEntry || !entitlement.stripePriceId) {
-          return { received: true, ignored: true };
-        }
-        const recurringItem = projection.items.find(
-          (item) => item.priceId === entitlement.stripePriceId,
-        );
-        const projectionApplied = await upsertBillingSubscription(trx, {
-          stripeSubscriptionId: projection.stripeSubscriptionId,
-          stripeCustomerId: projection.stripeCustomerId,
-          clerkUserId: projection.clerkUserId,
-          runtimeSlot: projection.runtimeSlot,
-          planSlug: priceEntry.planSlug,
-          stripePriceId: entitlement.stripePriceId,
-          billingInterval: recurringItem?.interval ?? priceEntry.interval,
-          priceUnitAmountMinor: recurringItem?.unitAmountMinor ?? null,
-          priceCurrency: recurringItem?.currency ?? null,
-          priceIntervalCount: recurringItem?.intervalCount ?? null,
-          priceQuantity: recurringItem?.quantity ?? 1,
-          status: entitlement.status,
-          currentPeriodEnd: projection.currentPeriodEnd ?? null,
-          gracePeriodEndsAt: entitlement.gracePeriodEndsAt,
-          trialStartedAt: projection.trialStartedAt ?? null,
-          trialEndsAt: projection.trialEndsAt ?? null,
-          trialConvertedAt: projection.trialConvertedAt ?? null,
-          firstTrialPaymentFailedAt: projection.firstTrialPaymentFailedAt ?? null,
-          latestEventCreatedAt: epochSecondsToIso(event.created),
-          latestEventId: event.id,
-          updatedAt: webhookProcessedAt.toISOString(),
-        });
-        if (!projectionApplied) return { received: true, processed: true };
-        if (projection.status === 'trialing' && !projection.firstTrialPaymentFailedAt) {
-          const canceledSuspensions = await cancelOutstandingBillingRuntimeActions(
-            trx,
-            projection.stripeSubscriptionId,
-            'suspend',
-            webhookProcessedAt.toISOString(),
-          );
-          const machine = await getActiveUserMachineByClerkId(
-            trx,
-            projection.clerkUserId,
-            projection.runtimeSlot,
-          );
-          if (
-            canceledSuspensions.running > 0
-            || machine?.status === 'suspended'
-            || machine?.status === 'suspending'
-          ) {
-            await enqueueBillingRuntimeAction(trx, {
-              clerkUserId: projection.clerkUserId,
-              runtimeSlot: projection.runtimeSlot,
-              stripeSubscriptionId: projection.stripeSubscriptionId,
-              action: 'resume',
-              reason: 'billing_recovered',
-              executeAfter: webhookProcessedAt.toISOString(),
-              createdAt: webhookProcessedAt.toISOString(),
-            });
-          }
-        }
-        const summary = await recomputeStripeSummary(trx, projection.clerkUserId, priceCatalog, env, webhookProcessedAt);
-        if (summary) await persistEntitlement(trx, summary);
-        if (
-          summary
-          && projection.prebillingIntentId
-          && getRuntimeAccessDecision(summary, webhookProcessedAt).runtimeProxyAllowed
-        ) {
-          if (!options.prebilling) throw new Error('prebilling_authorization_unavailable');
-          const authorization = await options.prebilling.authorizeSubscription(trx, {
-            intentId: projection.prebillingIntentId,
-            clerkUserId: projection.clerkUserId,
-            runtimeSlot: projection.runtimeSlot,
-            now: webhookProcessedAt.toISOString(),
-          });
-          if (!authorization.authorized) {
-            preparationToResume = {
-              intentId: projection.prebillingIntentId,
-              clerkUserId: projection.clerkUserId,
-            };
-          }
-        }
-        const telemetryMachine = await getActiveUserMachineByClerkId(
-          trx,
-          projection.clerkUserId,
-          projection.runtimeSlot,
-        );
-        emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
-          distinctId: entitlement.clerkUserId,
-          properties: buildSubscriptionTelemetryProperties({
-            entitlement,
-            recurringItem,
-            runtimeSlot: projection.runtimeSlot,
-            regionSlug: projection.regionSlug,
-            machine: telemetryMachine,
-          }),
-        });
-        if (event.type === 'customer.subscription.created' && projection.status === 'trialing') {
-          await consumeCardTrial(trx, projection.clerkUserId, webhookProcessedAt.toISOString());
-          emitTelemetry(BILLING_TRIAL_STARTED_EVENT, { distinctId: projection.clerkUserId });
-        }
-        if (event.type === 'customer.subscription.trial_will_end') {
-          emitTelemetry(BILLING_TRIAL_WILL_END_EVENT, { distinctId: projection.clerkUserId });
-        }
-        if (
-          projection.trialEndsAt
-          && !projection.trialConvertedAt
-          && (projection.status === 'canceled' || projection.status === 'unpaid' || projection.status === 'ended')
-        ) {
-          const canceledResumes = await cancelOutstandingBillingRuntimeActions(
-            trx,
-            projection.stripeSubscriptionId,
-            'resume',
-            webhookProcessedAt.toISOString(),
-          );
-          await enqueueBillingRuntimeAction(trx, {
-            clerkUserId: projection.clerkUserId,
-            runtimeSlot: projection.runtimeSlot,
-            stripeSubscriptionId: projection.stripeSubscriptionId,
-            action: 'suspend',
-            reason: 'trial_ended_unpaid',
-            executeAfter: canceledResumes.running > 0
-              ? webhookProcessedAt.toISOString()
-              : new Date(
-                Date.parse(projection.trialEndsAt) + TRIAL_PAYMENT_SUSPEND_DELAY_MS,
-              ).toISOString(),
-            createdAt: webhookProcessedAt.toISOString(),
-          });
-        }
-        return { received: true, processed: true };
-      });
-      if (preparationToResume && options.prebilling) {
-        void options.prebilling.resumePreparation(preparationToResume).catch((err: unknown) => {
-          console.error(
-            `[billing] paid preparation kick failed intent=${preparationToResume?.intentId ?? 'unknown'}`,
-            err instanceof Error ? err.name : typeof err,
-          );
-        });
-      }
-      const clearSubscriptionAttribution = options.stripe.clearSubscriptionAttribution?.bind(options.stripe);
-      await deliverRedditAttribution(
-        event,
-        options.redditConversions,
-        clearSubscriptionAttribution ? { clearSubscriptionAttribution } : undefined,
-      );
-      return c.json(result, 200);
-    } catch (err: unknown) {
-      console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));
-      emitTelemetry(MATRIX_TELEMETRY_EVENTS.BILLING_WEBHOOK_FAILED, {
-        properties: { reason: 'processing_error', event_type: event.type },
-      });
-      return c.json({ error: 'Webhook processing failed' }, 500);
-    }
-  });
+  app.post('/webhooks/stripe', bodyLimit({ maxSize: STRIPE_WEBHOOK_BODY_LIMIT }), createStripeWebhookHandler(options, emitTelemetry));
 
   app.all('*', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), (c) => {
     return c.json({ error: 'Not found' }, 404);

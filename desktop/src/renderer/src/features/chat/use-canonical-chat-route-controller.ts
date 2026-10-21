@@ -1,5 +1,5 @@
 import { useChatReadState, mergeChatReadState } from "@matrix-os/ui";
-import type { CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
+import { canonicalChatApprovals, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
@@ -14,6 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import type {
   CanonicalChatClient,
   CanonicalChatEventConsumer,
+  CanonicalChatInvalidation,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { createCanonicalChatRefresh, applyCanonicalChatContent } from "@matrix-os/ui";
@@ -62,14 +63,18 @@ export function useCanonicalChatRouteController({
   active,
   initialChatId = null,
   autoSelectFirst = true,
+  externalNavigation = false,
   eventSource,
+  onInvalidation,
 }: {
   client: CanonicalChatClient;
   projectId: string | null;
   active: boolean;
   initialChatId?: string | null;
   autoSelectFirst?: boolean;
+  externalNavigation?: boolean;
   eventSource?: CanonicalChatEventConsumer;
+  onInvalidation?: (event: CanonicalChatInvalidation) => void;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -78,6 +83,8 @@ export function useCanonicalChatRouteController({
   const [error, setError] = useState<string | null>(null);
   const activeChatIdRef = useRef<string | null>(initialChatId);
   const detailRef = useRef<CanonicalChatDetailResponse | null>(null);
+  const onInvalidationRef = useRef(onInvalidation);
+  onInvalidationRef.current = onInvalidation;
   const streamedMessagesRef = useRef<{ chatId: string | null; ids: string[] }>({
     chatId: initialChatId,
     ids: [],
@@ -143,6 +150,12 @@ export function useCanonicalChatRouteController({
 
   const load = useCallback(async (query = "", options: { background?: boolean } = {}) => {
     const sequence = ++listRequestSequence.current;
+    // WorkRail owns the complete navigation cohort. Detail reads and replay
+    // still run here; a selection must not restart its legacy list loader.
+    if (externalNavigation && !query.trim()) {
+      setStatus("ready");
+      return;
+    }
     if (!options.background) setStatus("loading");
     try {
       const page = query.trim()
@@ -172,7 +185,7 @@ export function useCanonicalChatRouteController({
       if (!options.background) setStatus("error");
       if (!options.background) setError("Chats could not be loaded. Try again.");
     }
-  }, [autoSelectFirst, client, projectId]);
+  }, [autoSelectFirst, client, externalNavigation, projectId]);
 
   useLayoutEffect(() => {
     const previousScope = routeScopeRef.current;
@@ -215,6 +228,9 @@ export function useCanonicalChatRouteController({
       listRefreshInFlight = false;
     };
     const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === activeChatIdRef.current) {
+        onInvalidationRef.current?.(event);
+      }
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setItems((current) => current.map((item) => item.chat.id === record.chat.id
@@ -381,7 +397,9 @@ export function useCanonicalChatRouteController({
   const moveProject = useCallback(async (targetProjectId: string | null) => {
     if (!detail) return null;
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const selectedChatId = detail.record.chat.id;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
+      && activeChatIdRef.current === selectedChatId);
     try {
       const record = await client.updateProject(detail.record.chat.id, {
         baseRevision: detail.record.chat.revision,
@@ -400,8 +418,8 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] project move failed:", diagnosticErrorKind(error));
       if (!isCurrentScope()) return null;
-      setError("The Chat could not be moved. Refresh and try again.");
       await loadDetail(detail.record.chat.id);
+      if (isCurrentScope()) setError("The Chat could not be moved. Refresh and try again.");
       return null;
     }
   }, [client, detail, loadDetail, updateDetail]);
@@ -795,9 +813,12 @@ export function useCanonicalChatRouteController({
     const routeScope = routeScopeRef.current;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
     try {
+      const approval = canonicalChatApprovals(current).find(item =>
+        item.pending && item.runId === activeRun.runId && item.approvalId === approvalId);
       await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, {
         clientRequestId: canonicalChatRequestId(),
         decision,
+        ...(approval?.actionDigest !== undefined ? { actionDigest: approval.actionDigest } : {}),
       });
       if (!isCurrentScope()) return false;
       await loadDetail(current.record.chat.id);

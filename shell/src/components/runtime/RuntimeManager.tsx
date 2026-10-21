@@ -1,4 +1,5 @@
 "use client";
+import { clearBrowserChatNavigationCache, clearChatNavigationScopes } from "@matrix-os/ui";
 
 import { RedirectToSignIn, useAuth, useClerk, useUser } from "@clerk/nextjs";
 import {
@@ -574,6 +575,7 @@ export function RuntimeManager({
   }
 
   async function handleSignOut(): Promise<void> {
+    clearChatNavigationScopes();clearBrowserChatNavigationCache();
     try {
       await fetchJson("/api/auth/app-session", { method: "DELETE" });
     } catch (error: unknown) {

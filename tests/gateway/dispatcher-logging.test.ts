@@ -11,6 +11,7 @@ import type { KernelEvent } from "@matrix-os/kernel";
 function makeHomePath(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "disp-log-")));
   mkdirSync(join(dir, "system", "logs"), { recursive: true });
+  writeFileSync(join(dir, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-test-key" } }));
   return dir;
 }
 
@@ -187,6 +188,7 @@ describe("Dispatcher Claude auth environment", () => {
   });
 
   it("prefers a Claude OAuth login in the Matrix home over the platform proxy key", async () => {
+    writeFileSync(join(homePath, "system/config.json"), "{}");
     writeFileSync(
       join(homePath, ".claude.json"),
       JSON.stringify({

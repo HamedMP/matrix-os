@@ -1,7 +1,7 @@
 import { boundedOperation } from "../bounded-operation.js";
-import { BatchInput, type BatchPresentation } from "./inbox-batch.js";
+import { type BatchPresentation } from "./inbox-batch.js";
 import { randomBytes } from "node:crypto";
-import { EMAIL_TRIAGE_LABELS, JevEmailTriageResultSchema, JevEmailTriageScoresSchema,
+import { EMAIL_TRIAGE_LABELS, JevInboxInputSchema, JevEmailTriageResultSchema, JevEmailTriageScoresSchema,
   evaluateEmailTriagePolicy } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { HermesJevScope } from "../chat/hermes-integration-capability.js";
@@ -9,13 +9,7 @@ import type { JevService } from "./service.js";
 import { assembleInboxEvidence, GmailId, threadIdentity } from "./inbox-evidence.js";
 import { JevLabelConfirmation, JevLabelInput } from "../integrations/jev-bound-labels.js";
 
-const Receipt = z.string().regex(/^[a-f0-9]{64}$/);
-const SingleInboxInput = z.discriminatedUnion("operation", [
-  z.strictObject({ operation: z.literal("discover") }),
-  z.strictObject({ operation: z.literal("select"), receipt: Receipt, threadId: GmailId }),
-  z.strictObject({ operation: z.literal("evaluate"), receipt: Receipt }),
-]);
-export const InboxPreviewInput = z.union([SingleInboxInput, BatchInput]);
+export const InboxPreviewInput = JevInboxInputSchema;
 const Discovery = z.object({ threads: z.array(z.object({ id: GmailId, snippet: z.string().max(4096).optional() })).max(30).optional(),
   nextPageToken: z.string().max(4096).optional() });
 const Profile = z.object({ emailAddress: z.email().max(320) });
@@ -23,6 +17,10 @@ const TTL = 15 * 60_000;
 const MAX_RUNS = 128;
 export class InboxPreviewError extends Error {
   constructor(readonly code: "denied" | "unavailable" | "invalid_request") { super("Inbox preview unavailable"); }
+}
+/** A receipt was refused before this call started classification or labeling. */
+export class InboxReceiptError extends InboxPreviewError {
+  constructor() { super("denied"); }
 }
 export function assertJevInboxProfile(raw: unknown, scope: HermesJevScope): void {
   const value = Profile.safeParse(raw);
@@ -59,7 +57,7 @@ export function createJevInboxBroker(options: {
   const records = new Map<string, RecordState>();
   const now = options.now ?? Date.now;
   const key = (owner: string, run: string) => JSON.stringify([owner, run]);
-  const fingerprint = (scope: HermesJevScope) => JSON.stringify([scope.agentId, scope.revision, scope.account]);
+  const fingerprint = (scope: HermesJevScope) => JSON.stringify([scope.agentId, scope.revision, scope.account, ...(scope.authorityStamp ? [scope.authorityStamp] : [])]);
   function sweep(): void { for (const [id, record] of records) if (record.expiresAt <= now()) records.delete(id); }
   function markReview(record: RecordState) { const result = review(); record.presentation = result; return result; }
   function alive(owner: string, scope: HermesJevScope, record: RecordState, signal?: AbortSignal): void {
@@ -142,7 +140,7 @@ export function createJevInboxBroker(options: {
         }
         return completed(current.discovering, current, false);
       }
-      if (!record) throw new InboxPreviewError("denied");
+      if (!record) throw new InboxReceiptError();
       const current = record;
       if (input.operation === "select") {
         if (input.receipt !== current.discoveryReceipt || !current.discovery?.threads.some((t) => t.id === input.threadId)
@@ -186,7 +184,7 @@ export function createJevInboxBroker(options: {
         return completed(current.selecting, current, false);
       }
       const selected = current.selection;
-      if (!selected?.evidence || !selected.identity || input.receipt !== selected.receipt) throw new InboxPreviewError("denied");
+      if (!selected?.evidence || !selected.identity || input.receipt !== selected.receipt) throw new InboxReceiptError();
       if (!current.evaluating) current.evaluating = (async () => {
         const prepared = await boundedOperation<PreparedEvaluation>(async preparationSignal => {
           await profile(ownerId, scope, current, preparationSignal);

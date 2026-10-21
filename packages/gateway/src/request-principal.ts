@@ -3,6 +3,7 @@ import type { SyncJwtClaims } from "./auth-jwt.js";
 export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
 export const PLATFORM_USER_ID_CONTEXT_KEY = "platformUserId";
 export const AUTH_CONTEXT_READY_CONTEXT_KEY = "authContextReady";
+export const VERIFIED_RUNTIME_BEARER_CONTEXT_KEY = "verifiedRuntimeBearer";
 export const SAFE_PRINCIPAL_USER_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
 export type PrincipalSource = "jwt" | "platform-verified" | "configured-container" | "dev-default";
@@ -55,6 +56,16 @@ export function markAuthContextReady(c: PrincipalContextWriter): void {
   if (typeof c.set === "function") {
     c.set(AUTH_CONTEXT_READY_CONTEXT_KEY as never, true);
   }
+}
+
+/** Only the authentication middleware may set this after actual header verification.
+ * Configured-owner and insecure-development identity alone are not bearer proof. */
+export function markVerifiedRuntimeBearer(c: PrincipalContextWriter): void {
+  if (typeof c.set === "function") c.set(VERIFIED_RUNTIME_BEARER_CONTEXT_KEY as never, true);
+}
+
+export function hasVerifiedRuntimeBearer(c: PrincipalContextReader): boolean {
+  return typeof c.get === "function" && c.get(VERIFIED_RUNTIME_BEARER_CONTEXT_KEY as never) === true;
 }
 
 export function isAuthContextReady(c: PrincipalContextReader): boolean {

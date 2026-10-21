@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import { Linking, Text, View, type TextStyle, type ViewStyle } from "react-native";
 
+import { FadeInText } from "@/lib/chat-fade-in-text";
+import type { TextFade } from "@/lib/chat-text-fade";
+
 export interface ChatMarkdownTheme {
   textStyle: TextStyle;
   mutedColor: string;
@@ -25,13 +28,50 @@ export function isSafeChatLink(value: string): boolean {
 }
 
 /**
+ * Wraps the parts of `text` that are still fading in. `offset` is where `text`
+ * starts in the message, which is what the fades are measured in. Text before
+ * the first fade has settled and stays a plain string.
+ */
+export function fadeInSpans(text: string, offset: number, fades: TextFade[]): ReactNode {
+  const end = offset + text.length;
+  const firstFade = fades[0];
+  if (!firstFade || end <= firstFade.from) return text;
+
+  const nodes: ReactNode[] = [];
+  if (offset < firstFade.from) nodes.push(text.slice(0, firstFade.from - offset));
+  fades.forEach((fade, index) => {
+    const from = Math.max(fade.from, offset);
+    const to = Math.min(fades[index + 1]?.from ?? end, end);
+    if (from >= to) return;
+    nodes.push(
+      <FadeInText key={fade.from} revealedAt={fade.revealedAt}>
+        {text.slice(from - offset, to - offset)}
+      </FadeInText>,
+    );
+  });
+  return nodes;
+}
+
+/**
  * Inline spans only (bold/strikethrough/italic/code/link). Pure function of
  * `text` -- called fresh on every render with whatever text currently
  * exists, so a growing streamed string re-renders progressively instead of
  * waiting for the message to finish before markdown applies.
+ *
+ * `offset` is where `text` starts in the whole message: `fades` are measured
+ * in message offsets, and markdown syntax (`**`, list markers, ...) means a
+ * rendered piece rarely starts where its line does.
  */
-function inlineNodes(text: string, keyPrefix: string, theme: ChatMarkdownTheme): ReactNode[] {
+function inlineNodes(
+  text: string,
+  keyPrefix: string,
+  theme: ChatMarkdownTheme,
+  offset: number,
+  fades: TextFade[],
+): ReactNode[] {
   const elements: ReactNode[] = [];
+  /** The visible text starting at `index` in `text`, with its still-fading parts wrapped. */
+  const piece = (value: string, index: number) => fadeInSpans(value, offset + index, fades);
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -39,14 +79,14 @@ function inlineNodes(text: string, keyPrefix: string, theme: ChatMarkdownTheme):
     if (match.index > lastIndex) {
       elements.push(
         <Text key={`${keyPrefix}-pre${lastIndex}`} style={theme.textStyle}>
-          {text.slice(lastIndex, match.index)}
+          {piece(text.slice(lastIndex, match.index), lastIndex)}
         </Text>,
       );
     }
     if (match[2] !== undefined) {
       elements.push(
         <Text key={`${keyPrefix}-tok${match.index}`} style={[theme.textStyle, { fontFamily: theme.boldFontFamily }]}>
-          {match[2]}
+          {piece(match[2], match.index + 2)}
         </Text>,
       );
     } else if (match[3] !== undefined) {
@@ -55,13 +95,13 @@ function inlineNodes(text: string, keyPrefix: string, theme: ChatMarkdownTheme):
           key={`${keyPrefix}-tok${match.index}`}
           style={[theme.textStyle, { textDecorationLine: "line-through", color: theme.mutedColor }]}
         >
-          {match[3]}
+          {piece(match[3], match.index + 2)}
         </Text>,
       );
     } else if (match[4] !== undefined) {
       elements.push(
         <Text key={`${keyPrefix}-tok${match.index}`} style={[theme.textStyle, { fontStyle: "italic" }]}>
-          {match[4]}
+          {piece(match[4], match.index + 1)}
         </Text>,
       );
     } else if (match[5] !== undefined) {
@@ -77,7 +117,7 @@ function inlineNodes(text: string, keyPrefix: string, theme: ChatMarkdownTheme):
             },
           ]}
         >
-          {match[5]}
+          {piece(match[5], match.index + 1)}
         </Text>,
       );
     } else if (match[6] !== undefined && match[7] !== undefined) {
@@ -89,7 +129,7 @@ function inlineNodes(text: string, keyPrefix: string, theme: ChatMarkdownTheme):
           style={safe ? [theme.textStyle, { color: theme.linkColor, textDecorationLine: "underline" }] : theme.textStyle}
           {...(safe ? { onPress: () => void Linking.openURL(url) } : {})}
         >
-          {match[6]}
+          {piece(match[6], match.index + 1)}
         </Text>,
       );
     }
@@ -99,7 +139,7 @@ function inlineNodes(text: string, keyPrefix: string, theme: ChatMarkdownTheme):
   if (lastIndex < text.length) {
     elements.push(
       <Text key={`${keyPrefix}-tail${lastIndex}`} style={theme.textStyle}>
-        {text.slice(lastIndex)}
+        {piece(text.slice(lastIndex), lastIndex)}
       </Text>,
     );
   }
@@ -115,7 +155,13 @@ const FENCE_RE = /^(```|~~~)(\S*)/;
 
 const HEADING_SIZE: Record<number, number> = { 1: 22, 2: 19, 3: 17, 4: 15, 5: 14, 6: 13 };
 
-function codeBlock(lines: string[], key: string, theme: ChatMarkdownTheme): ReactNode {
+function codeBlock(
+  lines: string[],
+  key: string,
+  theme: ChatMarkdownTheme,
+  offset: number,
+  fades: TextFade[],
+): ReactNode {
   const codeStyle: ViewStyle = {
     backgroundColor: theme.codeBackground,
     borderWidth: 1,
@@ -127,7 +173,7 @@ function codeBlock(lines: string[], key: string, theme: ChatMarkdownTheme): Reac
   return (
     <View key={key} style={codeStyle}>
       <Text style={{ fontFamily: theme.monoFontFamily, fontSize: 12.5, color: theme.textStyle.color }}>
-        {lines.join("\n")}
+        {fadeInSpans(lines.join("\n"), offset, fades)}
       </Text>
     </View>
   );
@@ -138,26 +184,41 @@ function codeBlock(lines: string[], key: string, theme: ChatMarkdownTheme): Reac
  * unclosed trailing fence mid-stream -- everything after it renders as code
  * until a close arrives), headings, blockquotes, ordered/unordered lists,
  * horizontal rules, and paragraphs of inline spans.
+ *
+ * `fades` marks the chunks of a streaming reply that are still fading in (see
+ * `useStreamedTextReveal`); a settled message passes none.
  */
-export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme): ReactNode[] {
+export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme, fades: TextFade[] = []): ReactNode[] {
   const lines = text.split("\n");
+  // Where each line starts in `text`, to translate positions back to message offsets.
+  const lineOffsets: number[] = [];
+  let nextLineOffset = 0;
+  for (const line of lines) {
+    lineOffsets.push(nextLineOffset);
+    nextLineOffset += line.length + 1;
+  }
   const blocks: ReactNode[] = [];
   let index = 0;
   let blockKey = 0;
 
   while (index < lines.length) {
     const line = lines[index]!;
+    // Block syntax sits at the start of a line, so the content it captures is
+    // always the line's tail.
+    const lineEnd = lineOffsets[index]! + line.length;
+    const tailOffset = (content: string) => lineEnd - content.length;
     const fence = line.match(FENCE_RE);
     if (fence) {
       const marker = fence[1];
       const codeLines: string[] = [];
       index += 1;
+      const codeOffset = lineOffsets[index] ?? text.length;
       while (index < lines.length && lines[index] !== marker) {
         codeLines.push(lines[index]!);
         index += 1;
       }
       if (index < lines.length) index += 1; // consume closing fence
-      blocks.push(codeBlock(codeLines, `code-${blockKey++}`, theme));
+      blocks.push(codeBlock(codeLines, `code-${blockKey++}`, theme, codeOffset, fades));
       continue;
     }
 
@@ -188,7 +249,7 @@ export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme): Reac
             },
           ]}
         >
-          {inlineNodes(heading[2] ?? "", `h${blockKey}`, theme)}
+          {inlineNodes(heading[2] ?? "", `h${blockKey}`, theme, tailOffset(heading[2] ?? ""), fades)}
         </Text>,
       );
       index += 1;
@@ -204,7 +265,7 @@ export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme): Reac
         >
           <View style={{ width: 3, borderRadius: 2, backgroundColor: theme.codeBorderColor }} />
           <Text style={[theme.textStyle, { color: theme.mutedColor, flexShrink: 1 }]}>
-            {inlineNodes(quote[1] ?? "", `q${blockKey}`, theme)}
+            {inlineNodes(quote[1] ?? "", `q${blockKey}`, theme, tailOffset(quote[1] ?? ""), fades)}
           </Text>
         </View>,
       );
@@ -218,7 +279,7 @@ export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme): Reac
       blocks.push(
         <Text key={`ol-${blockKey++}`} style={theme.textStyle}>
           <Text>{"  ".repeat(indent)}{ordered[2]}. </Text>
-          {inlineNodes(ordered[3] ?? "", `ol${blockKey}`, theme)}
+          {inlineNodes(ordered[3] ?? "", `ol${blockKey}`, theme, tailOffset(ordered[3] ?? ""), fades)}
         </Text>,
       );
       index += 1;
@@ -231,7 +292,7 @@ export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme): Reac
       blocks.push(
         <Text key={`ul-${blockKey++}`} style={theme.textStyle}>
           <Text>{"  ".repeat(indent)}{"•  "}</Text>
-          {inlineNodes(unordered[2] ?? "", `ul${blockKey}`, theme)}
+          {inlineNodes(unordered[2] ?? "", `ul${blockKey}`, theme, tailOffset(unordered[2] ?? ""), fades)}
         </Text>,
       );
       index += 1;
@@ -246,7 +307,7 @@ export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme): Reac
 
     blocks.push(
       <Text key={`p-${blockKey++}`} style={theme.textStyle}>
-        {inlineNodes(line, `p${blockKey}`, theme)}
+        {inlineNodes(line, `p${blockKey}`, theme, tailOffset(line), fades)}
       </Text>,
     );
     index += 1;

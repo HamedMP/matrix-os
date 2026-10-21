@@ -56,6 +56,7 @@ export function QueuedTurnsPanel({
   turns,
   disabled = false,
   canSteer = false,
+  canEdit = true,
   pendingAction = null,
   editingQueuedTurnId = null,
   onSteer,
@@ -66,6 +67,7 @@ export function QueuedTurnsPanel({
   turns: CanonicalChatQueuedTurn[];
   disabled?: boolean;
   canSteer?: boolean;
+  canEdit?: boolean;
   pendingAction?: { queuedTurnId: string; action: QueuedTurnAction } | null;
   editingQueuedTurnId?: string | null;
   onSteer: (queuedTurnId: string) => void;
@@ -213,6 +215,7 @@ export function QueuedTurnsPanel({
                       <QueueMenuItem
                         icon={<PencilIcon size={14} aria-hidden />}
                         label="Edit"
+                        disabled={!canEdit}
                         accessibleLabel={`Edit ${label}`}
                         onSelect={() => onEdit(turn.id)}
                       />

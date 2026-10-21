@@ -3,6 +3,7 @@ import {
   type MatrixBillingPublicEntitlement,
   type MatrixHostedBillingRegionSlug,
 } from '@matrix-os/contracts';
+import { withCheckoutSessionId } from './tracking-events.js';
 import { appOrigin, resolveReturnPath } from '../origins.js';
 import {
   persistBillingSubscriptionPriceSnapshot,
@@ -17,7 +18,7 @@ import {
   type MatrixBillingPlanSlug,
   type StripeSubscriptionProjection,
 } from '../billing.js';
-import { MATRIX_CARD_TRIAL_DAYS, MatrixCardTrialDaysSchema, type CheckoutRequest } from './checkout-schemas.js';
+import { MATRIX_CARD_TRIAL_DAYS, MATRIX_STARTER_TRIAL_DAYS, MatrixCardTrialDaysSchema, type CheckoutRequest } from './checkout-schemas.js';
 import { MAX_STRIPE_API_TIMEOUT_MS, type StripeBillingClient } from './stripe-client.js';
 
 /** Extracted verbatim from packages/platform/src/billing-routes.ts (S01 / T007): checkout telemetry, price and return-URL helpers. */
@@ -28,6 +29,16 @@ export function resolveCardTrialDays(env: NodeJS.ProcessEnv): number {
   const parsed = MatrixCardTrialDaysSchema.safeParse(configured);
   if (!parsed.success) {
     throw new Error('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30');
+  }
+  return parsed.data;
+}
+
+export function resolveStarterTrialDays(env: NodeJS.ProcessEnv): number {
+  const configured = env.MATRIX_STARTER_TRIAL_DAYS;
+  if (configured === undefined) return MATRIX_STARTER_TRIAL_DAYS;
+  const parsed = MatrixCardTrialDaysSchema.safeParse(configured);
+  if (!parsed.success) {
+    throw new Error('MATRIX_STARTER_TRIAL_DAYS must be an integer from 1 to 30');
   }
   return parsed.data;
 }
@@ -205,13 +216,13 @@ export function resolveBillingReturnUrl(
     const url = new URL(resolveReturnPath(returnPath), appBase.origin);
     url.searchParams.set('billing', state);
     if (state === 'success') url.searchParams.set('checkout', 'success');
-    return url.toString();
+    return state === 'success' ? withCheckoutSessionId(url.toString()) : url.toString();
   }
-  if (state === 'success' && env.STRIPE_CHECKOUT_SUCCESS_URL) return env.STRIPE_CHECKOUT_SUCCESS_URL;
+  if (state === 'success' && env.STRIPE_CHECKOUT_SUCCESS_URL) return withCheckoutSessionId(env.STRIPE_CHECKOUT_SUCCESS_URL);
   if (state === 'canceled' && env.STRIPE_CHECKOUT_CANCEL_URL) return env.STRIPE_CHECKOUT_CANCEL_URL;
   if (state === 'portal' && env.STRIPE_PORTAL_RETURN_URL) return env.STRIPE_PORTAL_RETURN_URL;
   const url = new URL(appUrl);
   url.searchParams.set('billing', state);
   if (state === 'success') url.searchParams.set('checkout', 'success');
-  return url.toString();
+  return state === 'success' ? withCheckoutSessionId(url.toString()) : url.toString();
 }

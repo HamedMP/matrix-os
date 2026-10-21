@@ -1,9 +1,11 @@
+import { ownerSdkAdapterFixture } from "./owner-sdk-home-test-support.js";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import type { CustomMcpApprovalClient } from "../../packages/gateway/src/chat/custom-mcp-approval-client.js";
+
+const createClaudeChatProviderAdapter = ownerSdkAdapterFixture();
 
 class FakeStream extends EventEmitter {}
 
@@ -48,7 +50,71 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
-  it("registers only the scoped Matrix Custom MCP broker on fresh and resumed supervised Runs", async () => {
+  it("does not fail a progressing owner Run after four hours", async () => {
+    vi.useFakeTimers();
+    try {
+      const stdout = new FakeStream();
+      const stderr = new FakeStream();
+      const process = new EventEmitter() as EventEmitter & {
+        stdout: FakeStream;
+        stderr: FakeStream;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      Object.assign(process, { stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } } });
+      process.stdout = stdout;
+      process.stderr = stderr;
+      process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
+      const spawnFn = vi.fn<CanonicalCliSpawn>(() => process);
+      const adapter = createClaudeChatProviderAdapter({
+        homePath: "/home/matrix/home",
+        spawnFn,
+        resolveCredentialEnv: async () => ({}),
+      });
+      const eventsPromise = (async () => {
+        const events = [];
+        for await (const event of adapter.start(baseInput)) events.push(event);
+        return events;
+      })();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(spawnFn).toHaveBeenCalledOnce();
+
+      const progress = JSON.stringify({ type: "stream_event", event: {
+        type: "content_block_delta", delta: { type: "text_delta", text: "working" },
+      } });
+      for (let minutes = 15; minutes <= 255; minutes += 15) {
+        await vi.advanceTimersByTimeAsync(15 * 60_000);
+        stdout.emit("data", Buffer.from(`${progress}\n`));
+      }
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(process.kill).not.toHaveBeenCalled();
+
+      stdout.emit("data", Buffer.from(`${JSON.stringify({
+        type: "result", subtype: "success", result: "done", session_id: "long_session",
+      })}\n`));
+      process.emit("exit", 0, null);
+      expect((await eventsPromise).at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("passes the subscription instance to credential resolution on fresh and resumed runs", async () => {
+    const resolveCredentialLaunch = vi.fn(async () => ({ env: {} }));
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn: vi.fn<CanonicalCliSpawn>(() => child([
+        JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "funded_session" }),
+      ])),
+      resolveCredentialLaunch,
+    });
+    for await (const _event of adapter.start(baseInput)) { /* Drain the Run. */ }
+    expect(resolveCredentialLaunch).toHaveBeenCalledWith({ instanceId: "claude_code_default", runId: baseInput.runId });
+    for await (const _event of adapter.resume!({ ...baseInput, runId: "run_owner_resumed",
+      resumeState: { sessionId: "funded_session" } })) { /* Drain the resumed owner Run. */ }
+    expect(resolveCredentialLaunch).toHaveBeenLastCalledWith({ instanceId: "claude_code_default", runId: "run_owner_resumed" });
+  });
+
+  it("registers scoped built-in and Custom MCP tools on fresh and resumed supervised Runs", async () => {
     vi.stubEnv("MATRIX_CLERK_USER_ID", "owner_claude");
     const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([
       JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "claude_mcp_session" }),
@@ -84,7 +150,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations"]);
       expect(config.mcpServers["matrix-integrations"]).toEqual({
         command: "/opt/matrix/bin/matrix-integrations-mcp",
-        args: ["--require-scoped-capability", "--tool-surface=custom-mcp-call"],
+        args: ["--require-scoped-capability", "--tool-surface=chat-call"],
       });
       expect(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toMatch(/^[a-f0-9]{64}$/);
 
@@ -94,6 +160,9 @@ describe("Claude canonical Chat Provider adapter", () => {
       };
       expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true });
       expect(settings.permissions.allow?.filter((rule) => rule.startsWith("mcp__"))).toEqual([
+        "mcp__matrix-integrations__list_integration_inventory",
+        "mcp__matrix-integrations__list_connected_services",
+        "mcp__matrix-integrations__describe_service",
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
       ]);
@@ -101,7 +170,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     }
   });
 
-  it("keeps review Runs discovery-only on fresh and resumed launches despite full-access selection", async () => {
+  it("keeps review Runs on built-in reads and Custom MCP discovery despite full-access selection", async () => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
     const seen: Array<{ args: string[]; token: string }> = [];
     const spawnFn = vi.fn<CanonicalCliSpawn>((_command, args, options) => {
@@ -125,7 +194,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     for (const { args, token } of seen) {
       const config = JSON.parse(args[args.indexOf("--mcp-config") + 1]!);
       expect(config.mcpServers["matrix-integrations"].args).toEqual([
-        "--require-scoped-capability", "--tool-surface=custom-mcp-discovery",
+        "--require-scoped-capability", "--tool-surface=chat-discovery",
       ]);
       expect(args.slice(args.indexOf("--permission-mode"), args.indexOf("--permission-mode") + 2))
         .toEqual(["--permission-mode", "plan"]);
@@ -133,6 +202,9 @@ describe("Claude canonical Chat Provider adapter", () => {
         permissions: { allow: string[]; deny: string[] };
       };
       expect(settings.permissions.allow).toEqual([
+        "mcp__matrix-integrations__list_integration_inventory",
+        "mcp__matrix-integrations__list_connected_services",
+        "mcp__matrix-integrations__describe_service",
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
       ]);
@@ -150,13 +222,17 @@ describe("Claude canonical Chat Provider adapter", () => {
       const token = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
       tokens.push(token);
       expect(options.env.MATRIX_AUTH_TOKEN).toBeUndefined();
+      expect(options.env.UPGRADE_TOKEN).toBeUndefined();
+      expect(options.env.MATRIX_CODE_PROXY_TOKEN).toBeUndefined();
+      expect(options.env.AI_RELAY_CONTROL_TOKEN).toBeUndefined();
       expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
       if (failStart) throw new Error("fixture executable unavailable");
       return child([JSON.stringify({ type: "result", subtype: "success", result: "done" })]);
     });
     const adapter = createClaudeChatProviderAdapter({
       homePath: "/home/matrix/home", spawnFn,
-      resolveCredentialEnv: async () => ({ MATRIX_AUTH_TOKEN: "machine-secret" }),
+      resolveCredentialEnv: async () => ({ MATRIX_AUTH_TOKEN: "machine-secret", UPGRADE_TOKEN: "machine-secret",
+        MATRIX_CODE_PROXY_TOKEN: "machine-secret", AI_RELAY_CONTROL_TOKEN: "relay-control" }),
       matrixMcpCapabilityIssuer: registry,
     });
 
@@ -629,7 +705,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     ]);
   });
 
-  it("preserves harmless JSX closers and prose separators while redacting real unrelated absolute paths in shared Chat", async () => {
+  it("preserves harmless JSX closers, prose separators, and owner-visible absolute paths", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({
         type: "result",
@@ -637,6 +713,27 @@ describe("Claude canonical Chat Provider adapter", () => {
         is_error: false,
         result: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
         session_id: "claude_path_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toContainEqual({
+      type: "assistant.delta",
+      delta: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
+    });
+  });
+
+  it("redacts unrelated absolute paths while preserving harmless syntax in shared Chat", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
+        session_id: "claude_shared_path_session",
       }),
     ]));
     const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
@@ -752,6 +849,8 @@ describe("Claude canonical Chat Provider adapter", () => {
       resolveCredentialEnv: vi.fn(async () => ({
         PATH: "/credential/bin",
         ANTHROPIC_API_KEY: "owner-key",
+        MATRIX_AUTH_TOKEN: "machine-secret", UPGRADE_TOKEN: "machine-secret",
+        MATRIX_CODE_PROXY_TOKEN: "machine-secret", AI_RELAY_CONTROL_TOKEN: "relay-control",
       })),
     });
 
@@ -764,9 +863,30 @@ describe("Claude canonical Chat Provider adapter", () => {
       HOME: "/home/matrix/home",
       MATRIX_HOME: "/home/matrix/home",
     });
+    for (const name of ["MATRIX_AUTH_TOKEN", "UPGRADE_TOKEN", "MATRIX_CODE_PROXY_TOKEN", "AI_RELAY_CONTROL_TOKEN"]) {
+      expect(spawnFn.mock.calls[0]![2].env[name]).toBeUndefined();
+    }
   });
 
-  it("uses the rotating funded credential and its shorter run deadline", async () => {
+  it("uses a fully sanitized replacement environment when no credentials or scoped capability are returned", async () => {
+    vi.stubEnv("UPGRADE_TOKEN", "host-secret");
+    vi.stubEnv("MATRIX_CODE_PROXY_TOKEN", "host-secret");
+    try {
+      const spawnFn = vi.fn<CanonicalCliSpawn>(() => {
+        return child([JSON.stringify({ type: "result", subtype: "success", result: "done" })]);
+      });
+      const adapter = createClaudeChatProviderAdapter({ homePath: "/safe/home", spawnFn,
+        resolveCredentialEnv: async () => undefined, matrixMcpCapabilityIssuer: { issue: () => null } });
+      for await (const _event of adapter.start(baseInput)) { /* Drain. */ }
+      expect(spawnFn).toHaveBeenCalledOnce();
+      const env = spawnFn.mock.calls[0]![2].env;
+      expect(env.UPGRADE_TOKEN).toBeUndefined();
+      expect(env.MATRIX_CODE_PROXY_TOKEN).toBeUndefined();
+      expect(env.PATH).toContain(process.env.PATH);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("honors an injected trusted credential resolver and its shorter run deadline", async () => {
     const stdout = new FakeStream();
     const stderr = new FakeStream();
     const process = new EventEmitter() as EventEmitter & {
@@ -804,10 +924,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "service_unavailable",
-        safeMessage: "Claude took too long to respond. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry"],
+        code: "run_failed",
+        safeMessage: "The agent timed out. Check progress before trying again.",
+        retryable: false,
+        recoveryActions: [],
       },
     });
   });
@@ -854,7 +974,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "run_failed",
-        safeMessage: "Claude returned an invalid response. Try the Run again.",
+        safeMessage: "Invalid agent response. Try again.",
         retryable: true,
         recoveryActions: ["retry"],
       },
@@ -881,7 +1001,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "model_unavailable",
-        safeMessage: "The selected Claude model is unavailable. Choose another model and try again.",
+        safeMessage: "Model unavailable. Choose another model.",
         retryable: false,
         recoveryActions: ["select_provider"],
       },
@@ -907,10 +1027,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "authorization_failed",
-        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
+        code: "provider_unavailable",
+        safeMessage: "Sign-in required. Reconnect in Agents & providers on this computer.",
         retryable: false,
-        recoveryActions: ["open_setup_terminal"],
+        recoveryActions: ["open_setup_terminal", "select_provider"],
       },
     }]);
     expect(JSON.stringify(events)).not.toContain("sk-ant-secret-value");
@@ -935,9 +1055,9 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "authorization_failed",
-        safeMessage: "Claude was blocked by its current permissions. Review the permission mode and try again.",
-        retryable: true,
-        recoveryActions: ["retry"],
+        safeMessage: "Permission denied. Review access settings.",
+        retryable: false,
+        recoveryActions: ["open_setup_terminal"],
       },
     }]);
     expect(JSON.stringify(events)).not.toContain("private.sh");
@@ -957,7 +1077,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "provider_unavailable",
-        safeMessage: "Claude is not available on this runtime. Open setup and install or reconnect Claude.",
+        safeMessage: "Agent unavailable. Install or reconnect in Agents & providers.",
         retryable: false,
         recoveryActions: ["open_setup_terminal"],
       },
@@ -977,7 +1097,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "run_failed",
-        safeMessage: "Claude returned an invalid response. Try the Run again.",
+        safeMessage: "Invalid agent response. Try again.",
         retryable: true,
         recoveryActions: ["retry"],
       },
@@ -998,10 +1118,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "authorization_failed",
-        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
+        code: "provider_unavailable",
+        safeMessage: "Sign-in required. Reconnect in Agents & providers on this computer.",
         retryable: false,
-        recoveryActions: ["open_setup_terminal"],
+        recoveryActions: ["open_setup_terminal", "select_provider"],
       },
     }]);
     expect(JSON.stringify(events)).not.toMatch(/Authentication required|secret|xxxx/);
@@ -1183,7 +1303,7 @@ it("answers Claude AskUserQuestion on the same running stdin connection", async 
   expect(spawnFn.mock.calls[0]?.[1]).not.toContain(baseInput.prompt);
 });
 
-it("retains safe command preview when a private cwd detail is rejected by the canonical schema", async () => {
+it("retains safe command preview and relative cwd detail in private Chat activity", async () => {
   const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([
     JSON.stringify({ type: "stream_event", event: { type: "content_block_start", index: 0,
       content_block: { type: "tool_use", id: "tool_safe_command", name: "Bash",
@@ -1198,7 +1318,7 @@ it("retains safe command preview when a private cwd detail is rejected by the ca
   expect(activities).toHaveLength(2);
   for (const activity of activities) {
     expect(activity).toMatchObject({ preview: "pnpm build", previewKind: "command" });
-    expect(activity).not.toHaveProperty("detail");
+    expect(activity).toHaveProperty("detail", "Working directory: ~/apps/demo");
   }
   expect(JSON.stringify(activities)).not.toContain("/home/matrix/home");
 });

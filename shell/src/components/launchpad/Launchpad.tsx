@@ -22,11 +22,13 @@ import {
   OS_VIEW_CREATE_APP_APPEARANCE,
   clampOsViewContextMenuPoint,
   osViewFixedAppAppearanceForPath,
+  osViewIconUrlForApp,
   type OsViewDesktopAddResult,
   type OsViewDesktopBounds,
   type OsViewFixedAppIcon,
 } from "@matrix-os/contracts";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
+import { getGatewayUrl } from "@/lib/gateway";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { groupLauncherApps } from "@/lib/dock-sections";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -183,7 +185,7 @@ export function Launchpad({
               ref={searchRef}
               type="text"
               aria-label="Search apps"
-              placeholder="Search"
+              placeholder="Search apps"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
@@ -193,6 +195,10 @@ export function Launchpad({
             />
           </div>
         </div>
+
+        <p className="px-6 pb-4 text-center text-sm text-white/80">
+          Open an installed app, or choose Create app to start in Chat.
+        </p>
 
         {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss surface: closes Launchpad only when the empty area around the grid (not a tile) is clicked. Keyboard dismiss is handled by the launcher's global Escape handler. */}
         <div
@@ -295,7 +301,9 @@ export function Launchpad({
 }
 
 function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaunch: () => void; onContextMenu?: (event: React.MouseEvent) => void }) {
-  const { showImage, onError } = useIconWithFallback(app.iconUrl);
+  const bundledIcon = osViewIconUrlForApp(app, getGatewayUrl());
+  const iconUrl = bundledIcon ?? app.iconUrl;
+  const { showImage, onError } = useIconWithFallback(iconUrl);
   const builtInAppearance = osViewFixedAppAppearanceForPath(app.path);
   const BuiltInIcon = builtInAppearance
     ? BUILT_IN_ICON_COMPONENTS[builtInAppearance.icon]
@@ -304,7 +312,9 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
   return (
     <button type="button" aria-label={app.name} data-launchpad-tile className="launchpad-tile" onClick={onLaunch} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); onContextMenu(event); } : undefined}>
       <span className="launchpad-icon">
-        {app.path === "__create-app__" ? (
+        {showImage && bundledIcon ? (
+          <img src={bundledIcon} alt="" draggable={false} onError={onError} />
+        ) : app.path === "__create-app__" ? (
           <span
             data-launchpad-create-icon
             className="flex size-full items-center justify-center"

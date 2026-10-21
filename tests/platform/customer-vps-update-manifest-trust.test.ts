@@ -71,7 +71,7 @@ log() { :; }
 json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$2" <<< "$1"; }
 release_url_for_version() { printf 'https://platform.example/system-bundles/releases/%s.json\\n' "$1"; }
 fetch_manifest() { printf '%s' "$TRUSTED_JSON"; }
-sudo() { :; }
+sudo() { if [ "$1" = /usr/bin/test ]; then return 1; fi; :; }
 current_version() { printf 'v2026.09.27-1\\n'; }
 ensure_update_headroom() { :; }
 write_update_phase() { :; }
@@ -183,13 +183,18 @@ function probeRetryUrl(refreshedUrl: string) {
   const updater = expandedUpdater();
   const start = updater.indexOf('bundle_url_is_https() {');
   const end = updater.indexOf('prepare_triggered_update_action=apply', start);
+  // Ubuntu pins its installed timeout. The macOS fixture uses the actual GNU
+  // timeout provided by its test PATH; the production script stays unchanged.
+  const downloadSource = process.platform === 'darwin'
+    ? updater.slice(start, end).replaceAll('/usr/bin/timeout', 'timeout')
+    : updater.slice(start, end);
   const script = `set -euo pipefail
 log() { :; }
 json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$2" <<< "$1"; }
 release_url_for_version() { printf 'https://platform.example/releases/%s.json\\n' "$1"; }
 fetch_manifest() { printf '%s' "$REFRESHED_JSON"; }
 write_update_error() { printf '%s' "$1" > "$ERROR_LOG"; }
-${updater.slice(start, end)}
+${downloadSource}
 download_bundle v2026.09.28-1 "$SHA256" 100 https://storage.example/initial "$1/bundle.tar.gz"`;
   try {
     const result = spawnSync('bash', ['-c', script, 'test', directory], {

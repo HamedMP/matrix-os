@@ -1,0 +1,26 @@
+{
+  "bounds": {
+    "x": 232,
+    "y": 204,
+    "width": 648,
+    "height": 285
+  },
+  "size": {
+    "width": 1296,
+    "height": 570
+  },
+  "url": "http://127.0.0.1:62309/apps/color-lab/",
+  "host": {
+    "x": 232,
+    "y": 204,
+    "width": 648,
+    "height": 285
+  },
+  "frame": {
+    "x": 231,
+    "y": 155,
+    "width": 650,
+    "height": 335
+  },
+  "head": "1ca816da7eba3e37cdc4a22b226c122bcf88cbb5"
+}

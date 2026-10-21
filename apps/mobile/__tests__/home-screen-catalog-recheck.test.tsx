@@ -1,0 +1,108 @@
+import React from "react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+
+import ChatScreenRoute from "../app/(drawer)/(tabs)/(chats)/index";
+import { ActiveChatProvider } from "../components/chat/active-chat";
+
+// The Chats stack's layout holds the open chat's state above its screens.
+const ChatScreen = () => <ActiveChatProvider><ChatScreenRoute /></ActiveChatProvider>;
+
+jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: null, isError: false }) }));
+jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));
+jest.mock("micromark", () => ({ micromark: jest.fn() }));
+jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+
+const mockSendMessage = jest.fn();
+const mockOpenSidePanel = jest.fn();
+let mockCatalogState: Record<string, unknown> = {};
+
+jest.mock("@clerk/clerk-expo", () => ({
+  useAuth: () => ({ isSignedIn: true, userId: "user_a" }),
+}));
+jest.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
+jest.mock("@/lib/canonical-chat-session-context", () => ({
+  useCanonicalChatSession: () => ({
+    activeChatId: null,
+    selectionOverride: null,
+    setSelectionOverride: jest.fn(),
+    selectedProjectId: null,
+    setSelectedProjectId: jest.fn(),
+    bindDraftChatId: jest.fn(),
+    startDraftChat: jest.fn(),
+    draftChatRequests: 0,
+  }),
+}));
+jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
+  useCanonicalChatDetail: () => ({ detail: undefined }),
+}));
+jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
+  useChatProviderCatalog: () => mockCatalogState,
+}));
+jest.mock("@/lib/queries/use-send-chat-message", () => ({
+  useSendChatMessage: () => ({ mutate: mockSendMessage, isPending: false }),
+}));
+jest.mock("@/lib/queries/use-retry-chat-turn", () => ({
+  useRetryChatTurn: () => ({ mutate: jest.fn(), isPending: false, isError: false, variables: undefined }),
+}));
+jest.mock("@/lib/queries/use-cancel-run", () => ({
+  useCancelRun: () => ({ mutate: jest.fn(), isPending: false }),
+}));
+jest.mock("@/lib/queries/use-canonical-chats", () => ({
+  useCanonicalChats: () => ({ chats: [] }),
+}));
+jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+const catalog = { instances: [{
+  id: "codex_default", driverKind: "codex", availability: "available", options: [],
+  defaultSelection: { instanceId: "codex_default", model: "gpt-test" },
+  models: [{ id: "gpt-test", displayName: "GPT Test", availability: "available" }],
+  supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"], attachments: [] },
+  skills: [],
+  commands: [],
+}] };
+
+function typeAndSend(text: string) {
+  fireEvent.changeText(screen.getByPlaceholderText("Ask anything"), text);
+  fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+}
+
+beforeEach(() => jest.useFakeTimers());
+afterEach(() => {
+  act(() => jest.runOnlyPendingTimers());
+  cleanup();
+  jest.useRealTimers();
+  mockSendMessage.mockClear();
+});
+
+describe("sending while the model catalog is fetched", () => {
+  it("sends with the models already on hand while they are being re-checked", () => {
+    mockCatalogState = { catalog, isPending: false, isFetching: true };
+    render(<ChatScreen />);
+
+    typeAndSend("hi");
+
+    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: null, text: "hi", selection: { instanceId: "codex_default", model: "gpt-test" },
+      interactionMode: "default", permissionMode: "supervised",
+    }), expect.anything());
+  });
+
+  it("holds a send back until there is a catalog to choose a model from", () => {
+    mockCatalogState = { catalog: null, isPending: true, isFetching: true };
+    render(<ChatScreen />);
+
+    typeAndSend("hi");
+
+    expect(mockSendMessage).not.toHaveBeenCalled();
+  });
+
+  it("shows the picker as checking while the catalog on hand is re-checked", () => {
+    mockCatalogState = { catalog, isPending: false, isFetching: true };
+    render(<ChatScreen />);
+
+    // The trigger is always in the toolbar now, focused or not.
+    expect(screen.getByLabelText("Checking model availability")).toBeTruthy();
+    expect(screen.getByText("GPT Test")).toBeTruthy();
+  });
+});

@@ -29,7 +29,15 @@
     "install": "pnpm install --ignore-workspace --prefer-offline",
     "command": "pnpm build",
     "output": "dist",
-    "timeout": 180
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "index.html",
+      "matrix.json",
+      "package.json",
+      "vite.config.ts"
+    ]
   },
   "listingTrust": "first_party"
 }

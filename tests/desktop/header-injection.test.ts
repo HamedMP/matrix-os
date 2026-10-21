@@ -175,7 +175,7 @@ describe("installGatewayCors", () => {
     const allowed = res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]
       .toLowerCase().split(/,\s*/);
     expect(allowed).toEqual(expect.arrayContaining([
-      "x-matrix-chat-metadata", "x-matrix-chat-protocol", "last-event-id",
+      "x-matrix-chat-metadata", "x-matrix-chat-import-source", "x-matrix-chat-protocol", "last-event-id",
     ]));
   });
 

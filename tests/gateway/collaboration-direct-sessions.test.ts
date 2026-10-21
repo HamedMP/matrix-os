@@ -138,6 +138,9 @@ describe("S05 direct sessions on the home", () => {
   afterEach(async () => {
     await service.shutdown();
     await fixture.destroy();
+    // Mock contexts retain service options and their closed database engines.
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it("exchanges a valid ticket once for a bounded identity session with fresh organization evidence", async () => {
@@ -285,6 +288,35 @@ describe("S05 direct sessions on the home", () => {
     await expect(service.renew(owner.id, { clientRequestId: randomUUID(), signedTicket: body.signedTicket })).rejects.toMatchObject({ code: "replayed" });
     service.close(owner.id);
     expect(service.describe(owner.id)).toBeNull();
+  });
+
+  it("ends a member's project Chat session when their project access is denied, and only then", async () => {
+    const projectScope = "10000000-0000-4000-8000-000000000201";
+    const chatScope = "10000000-0000-4000-8000-000000000202";
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: projectScope, owner_type: "personal", owner_id: collaborationActors.owner, organization_id: organizationId, kind: "project",
+      resource_id: "proj_direct", parent_scope_id: null, membership_mode: "direct", lifecycle: "shared",
+      authority_runtime_id: runtimeId, execution_generation: null, execution_eligibility: null, deleted_at: null, created_at: now, updated_at: now,
+    }).execute();
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: chatScope, owner_type: "personal", owner_id: collaborationActors.owner, organization_id: organizationId, kind: "chat",
+      resource_id: "chat_in_project", parent_scope_id: projectScope, membership_mode: "inherited", lifecycle: "shared",
+      authority_runtime_id: runtimeId, execution_generation: null, execution_eligibility: null, deleted_at: null, created_at: now, updated_at: now,
+    }).execute();
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: projectScope, actor_id: collaborationActors.editor, role: "editor", status: "accepted", organization_id: organizationId,
+      invitation_id: null, invited_by: collaborationActors.owner, accepted_at: now, expires_at: null, revision: 1,
+      joined_at: now, updated_at: now, dispositioned_at: null,
+    }).execute();
+    const projectChat = await service.create(sessionRequest(collaborationActors.editor, clientKey(), {
+      overrides: { resource: { scopeId: chatScope, kind: "chat" } },
+    }).body);
+    const unrelated = await service.create(sessionRequest(collaborationActors.editor).body);
+    const denial = { generation: 2, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" } as const;
+    expect(service.revoke({ ...denial, actorId: collaborationActors.owner, scopeId: projectScope } as never)).toEqual([]);
+    expect(service.revoke({ ...denial, actorId: collaborationActors.editor, scopeId: projectScope } as never)).toEqual([projectChat.id]);
+    expect(service.describe(projectChat.id)).toBeNull();
+    expect(service.describe(unrelated.id)).not.toBeNull();
   });
 
   it("fences synchronously: live sessions end once, their end hooks fire and new work is refused", async () => {

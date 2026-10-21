@@ -8,13 +8,21 @@ export function encryptRuntimeTokenRotation(payload, publicKey) {
       Object.values(payload.tokens).some((token) => typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token))) {
     throw new Error('Invalid rotation payload');
   }
+  return sealRuntimeTokenPayload(payload, publicKey, 1);
+}
+
+/** Internal encryption only; each caller validates its distinct payload contract. */
+export function sealRuntimeTokenPayload(payload, publicKey, version) {
+  if (![1, 2].includes(version) || Buffer.byteLength(JSON.stringify(payload)) > 8192) {
+    throw new Error('Invalid encrypted runtime payload');
+  }
   const key = randomBytes(32);
   const nonce = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, nonce);
   const ciphertext = Buffer.concat([cipher.update(JSON.stringify(payload)), cipher.final()]);
   const encryptedKey = publicEncrypt({ key: publicKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' }, key);
   return {
-    version: 1,
+    version,
     encryptedKey: encryptedKey.toString('base64'),
     nonce: nonce.toString('base64'),
     ciphertext: ciphertext.toString('base64'),

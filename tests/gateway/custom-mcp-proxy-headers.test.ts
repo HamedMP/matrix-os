@@ -8,10 +8,10 @@ import { proxyIntegrationRequest } from "../../packages/gateway/src/integrations
 afterEach(() => vi.unstubAllGlobals());
 
 describe("production Custom MCP proxy header provenance", () => {
-  it("forwards through the mounted route with server-derived Run identity and no caller proof", async () => {
+  it.each(["call", "chat_call"] as const)("forwards %s with server-derived Run identity and no caller proof", async scope => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: "owner" });
     const capability = registry.issue({ owner: { type: "personal", ownerId: "owner" },
-      runId: "run_real", scope: "call" })!;
+      runId: "run_real", scope })!;
     const upstream = vi.fn(async (url: string | URL | Request, init?: RequestInit) => new Response(JSON.stringify({
       url: String(url), method: init?.method, headers: Object.fromEntries(new Headers(init?.headers)),
       body: await (init?.body as Blob | undefined)?.text(),

@@ -1,14 +1,21 @@
+import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
+import { z } from 'zod/v4';
+import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
+import { createConfiguredAccountDeletionRuntime } from './account-deletion/wiring.js';
+import type { AccountDeletionAdapterOptions } from './account-deletion/adapters.js';
 import { serve } from '@hono/node-server';
 import {
   createPostHogErrorTracker,
   installPostHogProcessErrorTracking,
   type MatrixTelemetryEvent,
 } from '@matrix-os/observability';
-import type { Hono, Context } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
 import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
+import { resolvePlatformObjectStorage } from './object-storage-config.js';
+import { runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
@@ -20,6 +27,8 @@ import {
   type PlatformDB,
 } from './db.js';
 import { createAtsDb, resolveAtsDatabaseUrl, type AtsDB } from './ats-db.js';
+import { startAtsBackgroundWorker } from './ats-background-worker.js';
+import { startGooglePurchaseWorker } from './billing/google-purchases.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import { createClerkAuth, createClerkSessionRevoker } from './clerk-auth.js';
@@ -37,6 +46,9 @@ import {
 } from './runtime-mode.js';
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { createInternalCustomMcpApprovalRouteOptions } from './custom-mcp-approval-route-options.js';
+import { createPreviewDriveIntegration } from './preview-drive-integration.js';
+import { createPreviewDriveStore } from './preview-drive-store.js';
+import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
@@ -44,6 +56,12 @@ import {
   createGranolaPresetBroker,
   type ManagedMcpPresetBroker,
 } from './granola-preset-broker.js';
+import { MATRIX_OAUTH_CLIENT_METADATA, MATRIX_OAUTH_CLIENT_METADATA_URL } from './oauth-client-metadata.js';
+import { createManagedOAuthPresetBroker } from './managed-oauth-preset-broker.js';
+import { createManagedPresetRouter } from './managed-preset-router.js';
+import { BokioOAuthManager, type BokioCredentialStore, type BokioCredentialCrypto } from './bokio-oauth.js';
+import { createBokioPresetBroker } from './bokio-preset-broker.js';
+import { createManagedPresetLifecycle } from './managed-preset-lifecycle.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import {
@@ -52,6 +70,8 @@ import {
   type CustomerVpsReconciliationWorker,
 } from './customer-vps-reconciliation-worker.js';
 import { createPrivatePreviewSweep } from './private-preview-sweep.js';
+import { createFundedHostActivationRoutes } from './funded-host-activation.js';
+import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, type ManagedFeatureActivator } from './managed-feature-activation.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
@@ -78,11 +98,23 @@ import {
   loadPlatformSpeechConfig,
 } from './speech/config.js';
 import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
+import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
+import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 
 interface GatewayPlatformUser {
   id: string;
   clerk_id: string;
   handle: string;
+  pipedream_external_id?: string | null;
+}
+
+interface GatewayConnectedService {
+  id: string;
+  service: string;
+  account_label: string;
+  account_email: string | null;
+  status: string;
+  pipedream_account_id: string;
 }
 
 export function parseGoldenSnapshotReconciliationInterval(raw: string | undefined): number | undefined {
@@ -91,12 +123,14 @@ export function parseGoldenSnapshotReconciliationInterval(raw: string | undefine
   return value;
 }
 
-interface GatewayPlatformDb {
+interface GatewayPlatformDb extends BokioCredentialStore {
   migrate(): Promise<void>;
   destroy(): Promise<void>;
   sweepCustomMcpApprovals(now: Date): Promise<number>;
   getUserByClerkId(clerkId: string): Promise<GatewayPlatformUser | null>;
   getUserById(id: string): Promise<GatewayPlatformUser | null>;
+  listConnectedServices(userId: string): Promise<GatewayConnectedService[]>;
+  touchServiceUsage(connectionId: string): Promise<void>;
   ensureUser(input: {
     clerkId: string;
     handle: string;
@@ -114,20 +148,22 @@ interface GatewayCustomMcpModules {
       shutdown(): Promise<void>;
       getPreset(userId: string, presetId: string): Promise<any>;
       ensurePreset(input: { userId: string; presetId: string; name: string; url: string }): Promise<any>;
-      activatePreset(input: { userId: string; presetId: string; allowedTools: readonly string[]; requiredTools?: readonly string[] }): Promise<any>;
+      activatePreset(input: { userId: string; presetId: string; allowedTools: readonly string[]; requiredTools?: readonly string[]; expectedRevision?: number }): Promise<any>;
       callSelectedTool(input: { userId: string; serverId: string; toolName: string; arguments?: Record<string, unknown>; approvalGranted: boolean }): Promise<unknown>;
+      callManagedPresetTool(input: { userId: string; serverId: string; presetId: string; toolName: string; arguments?: Record<string, unknown> }): Promise<unknown>;
       remove(userId: string, serverId: string): Promise<void>;
+      removeForAccountDeletion(userId: string, serverId: string): Promise<void>;
     };
   };
   oauth: {
     CustomMcpOAuthManager: new (options: Record<string, unknown>) => {
-      start(userId: string, serverId: string): Promise<string>;
-      complete(userId: string, state: string, code: string): Promise<{ serverId: string }>;
+      start(userId: string, serverId: string, options?: { scopes?: readonly string[] }): Promise<string>;
+      complete(state: string, code: string): Promise<{ serverId: string }>;
       resolveAuthorization(userId: string, row: unknown): Promise<string | undefined>;
       revoke(credential: unknown): Promise<void>;
     };
   };
-  crypto: { parseCustomMcpEncryptionKey(value?: string): Buffer };
+  crypto: BokioCredentialCrypto & { parseCustomMcpEncryptionKey(value?: string): Buffer };
   routes: {
     createCustomMcpRoutes(options: Record<string, unknown>): Hono;
   };
@@ -148,7 +184,7 @@ interface GatewayPipedreamConfig {
 }
 
 interface GatewayPipedreamModule {
-  createPipedreamClient(config: GatewayPipedreamConfig): unknown;
+  createPipedreamClient(config: GatewayPipedreamConfig): Promise<NonNullable<AccountDeletionAdapterOptions['pipedream']>>;
 }
 
 interface GatewayIntegrationRoutesModule {
@@ -160,24 +196,29 @@ interface GatewayIntegrationRoutesModule {
     resolveUserId: (c: Context) => Promise<string | null>;
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
     mcpPresetBroker?: unknown;
+    verifiedConnectedWebhook?: ReturnType<typeof createAccountDeletionIntegrationWebhookAdmission>;
   }): Hono;
+  executeIntegrationAction(opts: {
+    pipedream: unknown; externalUserId: string;
+    connection: { pipedream_account_id: string };
+    def: any; actionDef: any; serviceId: string; actionId: string;
+    params: Record<string, unknown>;
+  }): Promise<{ data: unknown; summary?: string }>;
+}
+
+interface GatewayIntegrationRegistryModule {
+  getService(serviceId: string): any;
+  getAction(serviceId: string, actionId: string): any;
 }
 
 type GatewayR2Client = import("./r2-client.js").R2Client;
 
 interface GatewayR2ClientModule {
-  createR2Client(config: {
-    accountId?: string;
-    accessKeyId: string;
-    secretAccessKey: string;
-    bucket: string;
-    endpoint?: string;
-    publicEndpoint?: string;
-    forcePathStyle?: boolean;
-  }): Promise<GatewayR2Client>;
+  createR2Client(config: import('./r2-client.js').R2ClientConfig): Promise<GatewayR2Client>;
 }
 
 type CreatePlatformApp = (deps: {
+  accountDeletion?: import('./account-deletion/wiring.js').AccountDeletionRuntime;
   db: PlatformDB;
   atsDb?: AtsDB;
   docker?: Dockerode;
@@ -186,6 +227,7 @@ type CreatePlatformApp = (deps: {
   matrixProvisioner?: MatrixProvisioner;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  previewDriveIntegration?: PreviewDriveIntegration;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -194,10 +236,12 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  whatsappRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
+  activateManagedFeatures?: ManagedFeatureActivator;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
@@ -329,6 +373,7 @@ async function startPlatformServerWithCleanup(
       topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
       promotionalGrant: fundedAiConfig.promotionalGrant,
       routeProbes: fundedModelProbes,
+      isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
@@ -433,8 +478,12 @@ async function startPlatformServerWithCleanup(
     console.log(`[matrix] Provisioner enabled (${homeserverUrl})`);
   }
 
+  let deletionPipedream: AccountDeletionAdapterOptions['pipedream'];
+  let deletionCustomMcp: AccountDeletionAdapterOptions['customMcp'];
   let integrationRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
+  let previewDriveIntegration: PreviewDriveIntegration | undefined;
+  let previewDriveSweepInterval: NodeJS.Timeout | undefined;
   let customMcpRoutes: Hono | undefined;
   let internalCustomMcpRoutes: Hono | undefined;
   let internalCustomMcpApprovalRoutes: Hono | undefined;
@@ -460,13 +509,15 @@ async function startPlatformServerWithCleanup(
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
   if (integrationConfig) {
     const [
-      { createIntegrationRoutes, authorizeInternalJevLabels },
+      { createIntegrationRoutes, executeIntegrationAction, authorizeInternalJevLabels },
       { createPipedreamClient },
       { createPlatformDb: createGatewayPlatformDb },
+      { getService, getAction },
     ] = await Promise.all([
       importRuntimeModule<GatewayIntegrationRoutesModule>('../../gateway/dist/integrations/routes.js'),
       importRuntimeModule<GatewayPipedreamModule>('../../gateway/dist/integrations/pipedream.js'),
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
+      importRuntimeModule<GatewayIntegrationRegistryModule>('../../gateway/dist/integrations/registry.js'),
     ]);
 
     const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
@@ -477,6 +528,9 @@ async function startPlatformServerWithCleanup(
       projectId: integrationConfig.pipedreamProjectId,
       environment: integrationConfig.pipedreamEnvironment,
     });
+    deletionPipedream = pipedream;
+    const verifiedConnectedWebhook=process.env.ACCOUNT_DELETION_SECRET===undefined?undefined:
+      createAccountDeletionIntegrationWebhookAdmission({db,pipedream,env:process.env});
     const webhookSecret = integrationConfig.pipedreamWebhookSecret;
     const resolveIntegrationUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
       if (!clerkUserId) return null;
@@ -505,6 +559,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
+      verifiedConnectedWebhook,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('platformUserId') as string | undefined;
         const handle = c.get('platformHandle') as string | undefined;
@@ -516,6 +571,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
+      verifiedConnectedWebhook,
       authorizeJevLabelCall: authorizeInternalJevLabels,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('internalContainerClerkUserId') as string | undefined;
@@ -524,7 +580,22 @@ async function startPlatformServerWithCleanup(
       },
       ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
+    previewDriveIntegration = createPreviewDriveIntegration({
+      db: trustedPlatformDb, pipedream,
+      resolveUserId: actorId => resolveIntegrationUserId(actorId, undefined),
+      getService, getAction, executeAction: executeIntegrationAction,
+    });
   }
+
+  // Authorizations are durable across Cloud Run instances; recurring cleanup
+  // keeps the control-plane table bounded even after a Preview disappears.
+  const previewDriveStore = createPreviewDriveStore(db);
+  previewDriveSweepInterval = setInterval(() => {
+    void previewDriveStore.sweep().catch(error => {
+      console.warn('[preview-drive] Grant cleanup failed', error instanceof Error ? error.name : typeof error);
+    });
+  }, 5 * 60_000);
+  previewDriveSweepInterval.unref();
 
   if (process.env.CUSTOM_MCP_ENABLED === 'true') {
     const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
@@ -577,13 +648,26 @@ async function startPlatformServerWithCleanup(
       dispatcher: customerVpsProxyDispatcher,
       logError: logPlatformRouteError,
     });
-    let oauthManager: InstanceType<GatewayCustomMcpModules['oauth']['CustomMcpOAuthManager']>;
+    const oauthManager = new oauthModule.CustomMcpOAuthManager({
+      db: customDb,
+      encryptionKey,
+      clientId: oauthClientId,
+      redirectUri: oauthRedirectUri,
+      ...(MATRIX_OAUTH_CLIENT_METADATA.redirect_uris.includes(oauthRedirectUri) ? { clientMetadataUrl: MATRIX_OAUTH_CLIENT_METADATA_URL } : {}),
+    });
+    const bokioOAuth = new BokioOAuthManager({ db: customDb, encryptionKey, credentialCrypto: cryptoModule,
+      clientId: process.env.BOKIO_CLIENT_ID, clientSecret: process.env.BOKIO_CLIENT_SECRET,
+      redirectUri: process.env.BOKIO_OAUTH_REDIRECT_URI ?? oauthRedirectUri });
+    const bokioBroker = createBokioPresetBroker({ db: customDb, oauth: bokioOAuth });
+    const managedLifecycle = createManagedPresetLifecycle({ db: customDb, oauth: oauthManager,
+      bokioOAuth, bokioBroker, activatePreset: input => broker.activatePreset(input), decodeState: state => cryptoModule.decryptCustomMcpOAuthState<{ kind?: unknown; userId?: unknown }>(state, encryptionKey) });
     const broker = new brokerModule.CustomMcpBroker({
       db: customDb,
       encryptionKey,
       projection,
       resolveOAuthAuthorization: (userId: string, row: unknown) => oauthManager.resolveAuthorization(userId, row),
       revokeOAuth: (credential: unknown) => oauthManager.revoke(credential),
+      removeManagedPreset: managedLifecycle.removeManagedPreset,
     });
     let customMcpClosed = false;
     customMcpShutdown = async () => {
@@ -597,24 +681,33 @@ async function startPlatformServerWithCleanup(
       }
     };
     registerCustomMcpStartupCleanup(customMcpShutdown);
-    oauthManager = new oauthModule.CustomMcpOAuthManager({
-      db: customDb,
-      encryptionKey,
-      clientId: oauthClientId,
-      redirectUri: oauthRedirectUri,
+    deletionCustomMcp = { remove: (userId,serverId) => broker.removeForAccountDeletion(userId,serverId) };
+    const granolaBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
+    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker, oauth: oauthManager });
+    managedMcpPresetBroker = createManagedPresetRouter({
+      granola: granolaBroker, posthog_oauth: managedOAuthBroker, loops: managedOAuthBroker, lemlist: managedOAuthBroker,
+      bokio: bokioBroker,
     });
-    managedMcpPresetBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
-    customMcpRoutes = routesModule.createCustomMcpRoutes({
+    const managedOAuthFlow = managedLifecycle.oauth;
+    const publicCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
-      oauth: oauthManager,
+      oauth: managedOAuthFlow,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
         c.get('platformUserId') as string | undefined,
         c.get('platformHandle') as string | undefined,
       ),
     });
+    customMcpRoutes=new Hono();
+    customMcpRoutes.use('/oauth/callback',createAccountDeletionMutationGuard({db,env:process.env,isMutation:()=>true,
+      resolveOwner:async c=>{
+        const state=z.string().min(32).max(512).parse(c.req.query('state'));
+        const decoded=z.object({userId:z.string().min(1).max(128)}).parse(cryptoModule.decryptCustomMcpOAuthState(state,encryptionKey));
+        return (await customDb.getUserById(decoded.userId))?.clerk_id;
+      }}));
+    customMcpRoutes.route('/',publicCustomMcpRoutes);
     internalCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
-      oauth: oauthManager,
+      oauth: managedOAuthFlow,
       allowToolCalls: true,
       resolveActorId: (c: Context) => c.get('internalContainerClerkUserId') as string | null,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
@@ -642,27 +735,15 @@ async function startPlatformServerWithCleanup(
   let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
   let primaryStorageGate: R2CapabilityGate | undefined;
-  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
-  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
-  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
-  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? 'matrixos-sync';
-  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
+  const storageConfig = resolvePlatformObjectStorage(process.env);
   let createR2Client: GatewayR2ClientModule['createR2Client'] | undefined;
-  if (s3AccessKey && s3SecretKey && platformSecret) {
+  if (storageConfig.primary && platformSecret) {
     const [r2ClientModule, { createInternalSyncRoutes }] = await Promise.all([
       importRuntimeModule<GatewayR2ClientModule>('./r2-client.js'),
       import('./internal-sync-routes.js'),
     ]);
     createR2Client = r2ClientModule.createR2Client;
-    const r2 = await createR2Client({
-      accessKeyId: s3AccessKey,
-      secretAccessKey: s3SecretKey,
-      bucket: s3Bucket,
-      endpoint: s3Endpoint,
-      publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
-      accountId: process.env.R2_ACCOUNT_ID,
-      forcePathStyle: s3ForcePathStyle,
-    });
+    const r2 = await createR2Client(storageConfig.primary);
     internalSyncRoutes = createInternalSyncRoutes({
       db,
       r2,
@@ -674,28 +755,19 @@ async function startPlatformServerWithCleanup(
     primaryStorageGate = createR2CapabilityGate({ storage: r2 });
   }
 
-  const bundleS3Bucket = process.env.S3_BUNDLES_BUCKET ?? process.env.R2_BUNDLES_BUCKET;
-  const bundleS3AccessKey = process.env.S3_BUNDLES_ACCESS_KEY_ID ?? process.env.R2_BUNDLES_ACCESS_KEY_ID;
-  const bundleS3SecretKey = process.env.S3_BUNDLES_SECRET_ACCESS_KEY ?? process.env.R2_BUNDLES_SECRET_ACCESS_KEY;
-  if (bundleS3Bucket && bundleS3AccessKey && bundleS3SecretKey) {
+  if (storageConfig.bundles) {
     createR2Client ??= (
       await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js')
     ).createR2Client;
-    hostBundleObjectStore = await createR2Client({
-      accessKeyId: bundleS3AccessKey,
-      secretAccessKey: bundleS3SecretKey,
-      bucket: bundleS3Bucket,
-      endpoint: process.env.S3_BUNDLES_ENDPOINT ?? process.env.R2_BUNDLES_ENDPOINT,
-      publicEndpoint: process.env.S3_BUNDLES_PUBLIC_ENDPOINT ?? process.env.R2_BUNDLES_PUBLIC_ENDPOINT,
-      accountId: process.env.S3_BUNDLES_ACCOUNT_ID ?? process.env.R2_BUNDLES_ACCOUNT_ID ?? process.env.R2_ACCOUNT_ID,
-      forcePathStyle: process.env.S3_BUNDLES_FORCE_PATH_STYLE === 'true',
-    });
+    hostBundleObjectStore = await createR2Client(storageConfig.bundles);
   }
 
   let customerVpsService: CustomerVpsService | undefined;
+  let activateManagedFeatures: ManagedFeatureActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
   let customerVpsReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
+  let managedFeatureReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
   let goldenSnapshotInterval: ReturnType<typeof setInterval> | undefined;
   let goldenSnapshotPromise: Promise<void> | undefined;
   let billingRuntimeCaptureEvent: ((
@@ -745,6 +817,22 @@ async function startPlatformServerWithCleanup(
           )
         : undefined,
     });
+    activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
+      relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
+      speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
+      fetchDispatcher: customerVpsProxyDispatcher });
+    if (customerVpsConfig.fundedAiEnabled && internalFundedAiRuntimeRoutes) {
+      internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
+        platformSecret: customerVpsConfig.platformSecret, relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
+    }
+    const reconcileManagedFeatures = createManagedFeatureReconciliationPass(activateManagedFeatures);
+    if (backgroundWorkersEnabled) {
+      managedFeatureReconciliationWorker = startCustomerVpsReconciliationWorker({ intervalMs: 60_000, runPass: reconcileManagedFeatures });
+      registerCustomMcpStartupCleanup(async () => {
+        managedFeatureReconciliationWorker?.stop();
+        await managedFeatureReconciliationWorker?.drain();
+      });
+    }
     goldenSnapshotConfig = customerVpsConfig.goldenSnapshots;
     {
       const [
@@ -919,9 +1007,24 @@ async function startPlatformServerWithCleanup(
   });
 
   const appEnv = process.env;
+  const stopGooglePurchaseWorker = startGooglePurchaseWorker(db, appEnv, backgroundWorkersEnabled);
+  registerCustomMcpStartupCleanup(stopGooglePurchaseWorker);
+  const whatsappRuntime = createConfiguredWhatsAppRuntime({ db, env: appEnv, clerkAuth });
+  registerCustomMcpStartupCleanup(async () => { await whatsappRuntime?.shutdown(); });
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
+  const accountDeletion = await createConfiguredAccountDeletionRuntime({
+    db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, customMcp: deletionCustomMcp,
+  });
+  registerCustomMcpStartupCleanup(async () => {
+    accountDeletion?.stop();
+    await accountDeletion?.drain();
+    accountDeletion?.close();
+  });
+  const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
+  registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
   const app = createPlatformApp({
+    accountDeletion,
     db,
     atsDb,
     docker,
@@ -930,6 +1033,7 @@ async function startPlatformServerWithCleanup(
     matrixProvisioner,
     integrationRoutes,
     internalIntegrationRoutes,
+    previewDriveIntegration,
     customMcpRoutes,
     internalCustomMcpRoutes,
     internalCustomMcpApprovalRoutes,
@@ -938,10 +1042,12 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
+    whatsappRoutes: whatsappRuntime?.routes,
     fundedAiRepository,
     fundedModelProbes,
     collaboration,
     customerVpsService,
+    activateManagedFeatures,
     goldenSnapshotService,
     goldenSnapshotConfig,
     customerVpsObjectStore,
@@ -963,15 +1069,19 @@ async function startPlatformServerWithCleanup(
   const server = serve({ fetch: app.fetch, port }, () => {
     console.log(`Platform listening on :${port}`);
   });
+  if (backgroundWorkersEnabled) whatsappRuntime?.start();
 
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[platform] Received ${signal}, shutting down`);
+    accountDeletion?.stop();
     customerVpsReconciliationWorker?.stop();
+    managedFeatureReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
+    if (previewDriveSweepInterval) clearInterval(previewDriveSweepInterval);
     const shutdownTimer = setTimeout(() => {
       console.error('[platform] Graceful shutdown timed out');
       process.exit(1);
@@ -985,10 +1095,16 @@ async function startPlatformServerWithCleanup(
         console.error('[platform] HTTP server close failed:', err.message);
       }
       (async () => {
+        await accountDeletion?.drain();
+        accountDeletion?.close();
+        await atsBackgroundWorker?.shutdown();
         await customerVpsReconciliationWorker?.drain();
+        await managedFeatureReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
+          stopGooglePurchaseWorker(),
           collaboration?.shutdown(),
+          whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
@@ -1034,20 +1150,6 @@ async function startPlatformServerWithCleanup(
 }
 
 export async function startPlatformServer(opts: StartPlatformServerOptions): Promise<void> {
-  let customMcpStartupCleanup: (() => Promise<void>) | undefined;
-  try {
-    await startPlatformServerWithCleanup(opts, (cleanup) => {
-      customMcpStartupCleanup = cleanup;
-    });
-  } catch (startupError: unknown) {
-    try {
-      await customMcpStartupCleanup?.();
-    } catch (cleanupError: unknown) {
-      console.error(
-        '[platform] Custom MCP startup cleanup failed:',
-        cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-      );
-    }
-    throw startupError;
-  }
+  await runPlatformStartupWithCleanup(registerCleanup =>
+    startPlatformServerWithCleanup(opts, registerCleanup));
 }

@@ -7,7 +7,7 @@ import {
 } from '../../packages/platform/src/ats-db.js';
 import type { PlatformDB } from '../../packages/platform/src/db.js';
 import { createTestAtsDb, destroyTestAtsDb } from './ats-db-test-helper.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 describe('ATS database isolation', () => {
   let atsDb: AtsDB | undefined;
@@ -33,6 +33,8 @@ describe('ATS database isolation', () => {
   it('requires a dedicated database URL whenever ATS secrets enable recruiting', () => {
     expect(() => resolveAtsDatabaseUrl({ ATS_INGEST_SECRET: 'configured' })).toThrow(AtsDatabaseConfigError);
     expect(() => resolveAtsDatabaseUrl({ ATS_ADMIN_SECRET: 'configured' })).toThrow(AtsDatabaseConfigError);
+    expect(() => resolveAtsDatabaseUrl({ ATS_MAIL_INGEST_SECRET: 'configured' })).toThrow(AtsDatabaseConfigError);
+    expect(() => resolveAtsDatabaseUrl({ ATS_SLACK_BOT_TOKEN: 'configured' })).toThrow(AtsDatabaseConfigError);
     expect(resolveAtsDatabaseUrl({})).toBeUndefined();
     expect(resolveAtsDatabaseUrl({
       ATS_INGEST_SECRET: 'configured',

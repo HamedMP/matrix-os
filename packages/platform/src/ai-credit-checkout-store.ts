@@ -1,3 +1,4 @@
+import { withAccountDeletionAdmission } from './account-deletion/admission.js';
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import type { AiCreditPackageId } from "./ai-credit-checkout.js";
@@ -51,7 +52,7 @@ export async function prepareAiCreditCheckoutClaim(
   const createdAt = at.toISOString();
   const expiresAt = new Date(at.getTime() + CHECKOUT_ACTIVE_MS).toISOString();
   const windowStart = new Date(at.getTime() - CHECKOUT_WINDOW_MS).toISOString();
-  return db.transaction(async (trx) => {
+  return withAccountDeletionAdmission(db, input.ownerId, async (trx) => {
     const machine = await trx.executor.selectFrom("user_machines").select([
       "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
     ]).where("machine_id", "=", input.machineId).forUpdate().executeTakeFirst();

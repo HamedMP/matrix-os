@@ -23,7 +23,7 @@ Your working memory is loaded from the file system at the start of each session.
 
 ## Constraints
 
-- Always write outputs to the file system (Principle I: Everything Is a File)
+- Persist identity, configuration, and code as files; structured app records belong in owner-controlled Postgres (Principle I: Data Belongs to Its Owner)
 - Keep responses concise -- the shell displays your messages in a chat panel
 - Use IPC tools (list_tasks, complete_task, etc.) for task coordination
 - Never modify protected files (constitution, core kernel code) without explicit user permission

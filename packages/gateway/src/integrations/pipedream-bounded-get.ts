@@ -11,6 +11,7 @@ const Input = z.discriminatedUnion("kind", [
   z.strictObject({ ...Identity, kind: z.literal("threads"), pageToken: z.string().min(1).max(4096).optional() }),
   z.strictObject({ ...Identity, kind: z.literal("thread-ids"), id: Id }),
   z.strictObject({ ...Identity, kind: z.literal("message"), id: Id }),
+  z.strictObject({ ...Identity, kind: z.literal("attachment"), id: Id, attachmentId: z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/) }),
 ]);
 export type BoundedGmailRead = z.infer<typeof Input>;
 
@@ -75,6 +76,10 @@ export function createBoundedPipedreamGet(options: {
       target.pathname = `/gmail/v1/users/me/messages/${input.id}`;
       target.searchParams.set("format", "full");
       target.searchParams.set("fields", "id,threadId,internalDate,snippet,payload(mimeType,filename,headers,body,parts)");
+    } else if (input.kind === "attachment") {
+      // Base64 transport overhead plus bounded JSON framing, not a parsed SDK buffer.
+      maxBytes = Math.ceil((1024 * 1024) / 3) * 4 + 1024;
+      target.pathname = `/gmail/v1/users/me/messages/${input.id}/attachments/${input.attachmentId}`;
     }
     const url = new URL(`https://api.pipedream.com/v1/connect/${projectId}/proxy/${Buffer.from(target.href).toString("base64url")}`);
     url.searchParams.set("external_user_id", input.externalUserId);
@@ -108,7 +113,14 @@ export function createBoundedPipedreamGet(options: {
       }
       signal.throwIfAborted();
       const raw = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), bytes);
-      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw)) as unknown;
+      const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+      if (input.kind === "attachment") {
+        const attachment = z.object({ size: z.number().int().min(0).max(1024 * 1024), data: z.string().max(Math.ceil((1024 * 1024) / 3) * 4).regex(/^[A-Za-z0-9_-]*={0,2}$/) }).parse(value);
+        const decoded = Buffer.from(attachment.data, "base64url");
+        if (decoded.byteLength !== attachment.size || decoded.toString("base64url") !== attachment.data.replace(/=+$/, "")) throw new BoundedPipedreamReadError();
+        return { size: attachment.size, data: decoded.toString("base64url") };
+      }
+      return value;
     } catch (error: unknown) {
       cancel(reader);
       console.warn("[integrations] Bounded read failed", { errorName: error instanceof Error ? error.name : "UnknownError" });

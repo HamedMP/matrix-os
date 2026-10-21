@@ -15,7 +15,7 @@ import {
   promoteHostBundleChannelWithStableSnapshot,
   registerHostBundleReleaseWithStableSnapshot,
 } from '../../packages/platform/src/golden-snapshot-release-repository.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import {
   enqueueGoldenSnapshot,
   formatGoldenSnapshotEnqueueFailure,

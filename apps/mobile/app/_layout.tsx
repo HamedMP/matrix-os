@@ -3,8 +3,7 @@ import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
 import { Stack, useRouter, usePathname } from "expo-router";
 import { PostHogProvider } from "posthog-react-native";
-import { StatusBar } from "expo-status-bar";
-import { View, Text, ActivityIndicator } from "react-native";
+import { Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as SplashScreen from "expo-splash-screen";
 import * as SecureStore from "expo-secure-store";
@@ -33,13 +32,22 @@ import {
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
+import { GatewayClient } from "@/lib/gateway-client";
 import { CanonicalChatSessionProvider } from "@/lib/canonical-chat-session-context";
 import { mobileQueryClient } from "@/lib/query-client";
+import { mobileQueryPersistence } from "@/lib/query-cache-persistence";
+import { ROOT_SCREEN_OPTIONS } from "@/lib/root-screens";
+import { forgetJourneyConnectable } from "@/lib/journey-cache";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
+import { AppStatusBar } from "@/components/AppStatusBar";
+import { StartupLoading, StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
+import { motion } from "@/lib/theme-v2";
+import { useStartupColors } from "@/lib/use-startup-colors";
+import { OtaUpdatePrompt } from "@/components/OtaUpdatePrompt";
+import { ToastHost } from "@/components/ui/Toast";
 import {
   captureScreen,
   getAnalyticsClient,
@@ -58,6 +66,14 @@ const nativeSplashRegistration = SplashScreen.preventAutoHideAsync()
     return false;
   });
 
+// The splash fades out into the startup screen, which draws the same rabbit in
+// the same place, instead of cutting away. iOS only; Android keeps its own.
+try {
+  SplashScreen.setOptions({ fade: true, duration: motion.duration.slow });
+} catch (err: unknown) {
+  console.warn("[mobile] Native splash fade unavailable:", err instanceof Error ? err.name : "unknown");
+}
+
 const clerkPublishableKey =
   process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ??
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -73,7 +89,6 @@ const tokenCache = {
 
 interface GatewayContextValue {
   client: GatewayClient | null;
-  connectionState: ConnectionState;
   gateway: GatewayConnection | null;
   setGateway: (gw: GatewayConnection) => void;
   unreadCount: number;
@@ -83,7 +98,6 @@ interface GatewayContextValue {
 
 const GatewayContext = createContext<GatewayContextValue>({
   client: null,
-  connectionState: "disconnected",
   gateway: null,
   setGateway: () => {},
   unreadCount: 0,
@@ -96,7 +110,6 @@ export function useGateway() {
 }
 
 export default function RootLayout() {
-  const { theme } = useUnistyles();
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -115,6 +128,14 @@ export default function RootLayout() {
 
   useEffect(() => startMobileThemeController(), []);
 
+  // The last session's chats, models and projects are on screen while this
+  // launch's requests are still in flight. Clerk has to load before any query
+  // can run, which is longer than the read takes.
+  useEffect(() => {
+    void mobileQueryPersistence.restore();
+    return mobileQueryPersistence.start();
+  }, []);
+
   useEffect(() => {
     if (!fontsLoaded) return;
 
@@ -130,13 +151,21 @@ export default function RootLayout() {
     };
   }, [fontsLoaded]);
 
+  return (
+    <>
+      {/* Above every screen, launch screens included, and mounted before them:
+          a screen that mounts its own status bar later takes precedence. */}
+      <AppStatusBar />
+      <RootContent fontsLoaded={fontsLoaded} />
+    </>
+  );
+}
+
+function RootContent({ fontsLoaded }: { fontsLoaded: boolean }) {
   if (!fontsLoaded) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingTitle}>Matrix OS</Text>
-        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
-      </View>
-    );
+    // Still behind the native splash, and drawn to match it -- see StartupScreen
+    // for why the title waits for its font.
+    return <StartupScreen showTitle={false} />;
   }
 
   if (!clerkPublishableKey) {
@@ -160,7 +189,6 @@ export default function RootLayout() {
 // nothing to protect before the user has signed in, so the sign-in screen
 // itself never prompts for biometrics.
 function BiometricGate({ children }: { children: React.ReactNode }) {
-  const { theme } = useUnistyles();
   const { isLoaded, isSignedIn } = useAuth();
   const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
 
@@ -180,24 +208,8 @@ function BiometricGate({ children }: { children: React.ReactNode }) {
     };
   }, [isLoaded, isSignedIn]);
 
-  if (!isLoaded || authenticated === undefined) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingTitle}>Matrix OS</Text>
-        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
-      </View>
-    );
-  }
-
-  if (!authenticated) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingTitle}>Matrix OS</Text>
-        <Text style={styles.loadingSubtitle}>Authenticating…</Text>
-        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
-      </View>
-    );
-  }
+  if (!isLoaded || authenticated === undefined) return <StartupLoading />;
+  if (!authenticated) return <StartupLoading message="Authenticating…" />;
 
   return <>{children}</>;
 }
@@ -227,14 +239,14 @@ function AnalyticsScreenTracker() {
 }
 
 function MissingClerkConfigScreen() {
+  const startupColors = useStartupColors();
   return (
-    <View style={styles.loadingContainer}>
-      <Text style={styles.loadingTitle}>Matrix OS</Text>
-      <Text style={styles.configTitle}>Missing mobile auth config</Text>
-      <Text style={styles.configBody}>
+    <StartupScreen>
+      <Text style={[styles.configTitle, { color: startupColors.text }]}>Missing mobile auth config</Text>
+      <Text style={[styles.configBody, { color: startupColors.textSubtle }]}>
         Set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY before starting Expo.
       </Text>
-    </View>
+    </StartupScreen>
   );
 }
 
@@ -242,12 +254,10 @@ function GatewayShell() {
   const { theme } = useUnistyles();
   const { isLoaded, isSignedIn, getToken, userId } = useAuth();
   const [client, setClient] = useState<GatewayClient | null>(null);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [gateway, setGatewayState] = useState<GatewayConnection | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const getTokenRef = useRef(getToken);
   const connectionKeyRef = useRef<string | null>(null);
-  const clientRef = useRef<GatewayClient | null>(null);
 
   useEffect(() => {
     getTokenRef.current = getToken;
@@ -258,6 +268,15 @@ function GatewayShell() {
     if (isSignedIn && userId) identifyUser(userId);
   }, [isSignedIn, userId]);
 
+  // What was kept on disk for the next launch belongs to one user: signing
+  // out, or signing in as someone else, removes it.
+  useEffect(() => {
+    if (!isLoaded) return;
+    const signedInUserId = isSignedIn && userId ? userId : null;
+    void mobileQueryPersistence.setOwner(signedInUserId);
+    if (signedInUserId === null) void forgetJourneyConnectable();
+  }, [isLoaded, isSignedIn, userId]);
+
   const incrementUnread = useCallback(() => {
     setUnreadCount((c) => c + 1);
   }, []);
@@ -266,35 +285,22 @@ function GatewayShell() {
     setUnreadCount(0);
   }, []);
 
+  // The client is held for its REST helpers and terminal WebSocket URLs only.
+  // Chat runs over the canonical event stream and nothing consumes the legacy
+  // main chat WebSocket, so it is never opened here; the terminal mints its
+  // own ws-token on each attach.
   const setGateway = useCallback((gw: GatewayConnection) => {
     const nextKey = `${gw.url}:${gw.token ?? ""}`;
     if (connectionKeyRef.current === nextKey) return;
     connectionKeyRef.current = nextKey;
-    clientRef.current?.disconnect();
     // Hosted computers carry no stored credential: authenticate with the live
-    // Clerk token provider and a fresh WS upgrade token, mirroring the mount
-    // path. Self-hosted gateways keep their session credential.
+    // Clerk token provider, mirroring the mount path. Self-hosted gateways
+    // keep their session credential.
     const newClient = gw.token
       ? new GatewayClient(gw.url, gw.token)
       : new GatewayClient(gw.url, () => getTokenRef.current());
-    newClient.onStateChange(setConnectionState);
-    clientRef.current = newClient;
     setClient(newClient);
     setGatewayState(gw);
-    setConnectionState("connecting");
-    void (async () => {
-      // A failed token fetch must not strand the switch at "connecting":
-      // fall back to connecting with header auth, mirroring the mount path.
-      try {
-        const wsToken = await newClient.getWsToken();
-        if (clientRef.current !== newClient) return;
-        if (wsToken) newClient.setWebSocketToken(wsToken);
-      } catch (err: unknown) {
-        console.warn("[mobile] ws-token unavailable during switch", err instanceof Error ? err.name : typeof err);
-        if (clientRef.current !== newClient) return;
-      }
-      newClient.connect();
-    })();
   }, []);
 
   useEffect(() => {
@@ -302,7 +308,7 @@ function GatewayShell() {
 
     let cancelled = false;
 
-    async function connectSelectedGateway() {
+    async function selectGatewayClient() {
       const selectedGateway = await getSelectedGatewayConnection();
       if (cancelled) return;
 
@@ -312,27 +318,15 @@ function GatewayShell() {
           if (connectionKeyRef.current === nextKey) return;
           connectionKeyRef.current = nextKey;
 
-          clientRef.current?.disconnect();
-          const nextClient = new GatewayClient(selectedGateway.url, selectedGateway.token);
-          clientRef.current = nextClient;
-          setClient(nextClient);
+          setClient(new GatewayClient(selectedGateway.url, selectedGateway.token));
           setGatewayState(selectedGateway);
-          setConnectionState("connecting");
-          nextClient.onStateChange(setConnectionState);
-          const wsToken = await nextClient.getWsToken();
-          if (cancelled || clientRef.current !== nextClient) return;
-          if (wsToken) nextClient.setWebSocketToken(wsToken);
-          nextClient.connect();
           return;
         }
 
         if (connectionKeyRef.current === null) return;
         connectionKeyRef.current = null;
-        clientRef.current?.disconnect();
-        clientRef.current = null;
         setClient(null);
         setGatewayState(null);
-        setConnectionState("disconnected");
         return;
       }
 
@@ -340,11 +334,8 @@ function GatewayShell() {
       if (cancelled) return;
       if (!token) {
         connectionKeyRef.current = null;
-        clientRef.current?.disconnect();
-        clientRef.current = null;
         setClient(null);
         setGatewayState(null);
-        setConnectionState("disconnected");
         console.warn("[mobile] Clerk is signed in but no session token was available for Matrix OS");
         return;
       }
@@ -357,45 +348,22 @@ function GatewayShell() {
       if (connectionKeyRef.current === nextKey) return;
       connectionKeyRef.current = nextKey;
 
-      clientRef.current?.disconnect();
-      const nextClient = selectedGateway.token
+      setClient(selectedGateway.token
         ? new GatewayClient(authenticatedGateway.url, selectedGateway.token)
-        : new GatewayClient(authenticatedGateway.url, () => getTokenRef.current());
-      clientRef.current = nextClient;
-      setClient(nextClient);
+        : new GatewayClient(authenticatedGateway.url, () => getTokenRef.current()));
       setGatewayState(authenticatedGateway);
-      setConnectionState("connecting");
-
-      nextClient.onStateChange(setConnectionState);
-      const wsToken = await nextClient.getWsToken();
-      if (cancelled || clientRef.current !== nextClient) return;
-      if (!wsToken) {
-        console.warn("[mobile] ws-token unavailable, connecting without upgrade token");
-        nextClient.connect();
-        return;
-      }
-      nextClient.setWebSocketToken(wsToken);
-      nextClient.connect();
     }
 
-    connectSelectedGateway();
+    selectGatewayClient();
 
     return () => {
       cancelled = true;
     };
   }, [isLoaded, isSignedIn]);
 
-  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- intentional: read the latest client on unmount; the client is assigned by a later effect, so capturing clientRef.current at mount (null) would skip disconnect.
-  useEffect(() => {
-    return () => {
-      clientRef.current?.disconnect();
-      clientRef.current = null;
-    };
-  }, []);
-
   const contextValue = useMemo<GatewayContextValue>(
-    () => ({ client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread }),
-    [client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread],
+    () => ({ client, gateway, setGateway, unreadCount, incrementUnread, clearUnread }),
+    [client, gateway, setGateway, unreadCount, incrementUnread, clearUnread],
   );
 
   return (
@@ -410,21 +378,16 @@ function GatewayShell() {
               contentStyle: { backgroundColor: theme.colors.background },
             }}
           >
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-            <Stack.Screen name="file-browser" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="terminal-session" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="app-preview" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="integrations-installed" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="integration-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="settings-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen
-              name="sign-in"
-              options={{
-                headerShown: false,
-                presentation: "modal",
-              }}
-            />
+            {/* How each one comes and goes is in lib/root-screens. */}
+            <Stack.Screen name="index" options={ROOT_SCREEN_OPTIONS.index} />
+            <Stack.Screen name="(drawer)" options={ROOT_SCREEN_OPTIONS["(drawer)"]} />
+            <Stack.Screen name="file-browser" options={ROOT_SCREEN_OPTIONS["file-browser"]} />
+            <Stack.Screen name="terminal-session" options={ROOT_SCREEN_OPTIONS["terminal-session"]} />
+            <Stack.Screen name="app-preview" options={ROOT_SCREEN_OPTIONS["app-preview"]} />
+            <Stack.Screen name="integrations-installed" options={ROOT_SCREEN_OPTIONS["integrations-installed"]} />
+            <Stack.Screen name="integration-detail" options={ROOT_SCREEN_OPTIONS["integration-detail"]} />
+            <Stack.Screen name="settings-detail" options={ROOT_SCREEN_OPTIONS["settings-detail"]} />
+            <Stack.Screen name="sign-in" options={ROOT_SCREEN_OPTIONS["sign-in"]} />
             <Stack.Screen
               name="sign-in-computer"
               options={{
@@ -435,9 +398,10 @@ function GatewayShell() {
               }}
             />
           </Stack>
+          <ToastHost />
           <NotificationRouter />
+          <OtaUpdatePrompt />
           <AnalyticsScreenTracker />
-          <StatusBar style="dark" />
         </CanonicalChatSessionProvider>
       </GatewayContext.Provider>
     </GestureHandlerRootView>
@@ -466,37 +430,14 @@ const styles = StyleSheet.create((theme) => ({
   flex: {
     flex: 1,
   },
-  loadingContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.background,
-  },
-  loadingTitle: {
-    fontFamily: theme.fonts.display,
-    fontSize: 30,
-    color: theme.colors.foreground,
-    letterSpacing: -0.5,
-  },
-  loadingSubtitle: {
-    fontFamily: theme.fonts.sansMedium,
-    fontSize: 14,
-    color: theme.colors.mutedForeground,
-    marginTop: 8,
-  },
-  loadingSpinner: {
-    marginTop: 24,
-  },
   configTitle: {
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 16,
-    color: theme.colors.foreground,
     marginTop: 16,
   },
   configBody: {
     fontFamily: theme.fonts.sans,
     fontSize: 14,
-    color: theme.colors.mutedForeground,
     marginTop: 8,
     maxWidth: 300,
     textAlign: "center",

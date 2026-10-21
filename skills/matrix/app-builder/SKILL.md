@@ -1,14 +1,16 @@
 ---
+triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app"]
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.1.1
+version: 1.3.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
 metadata:
   agent:
     tags: [Matrix OS, apps, Vite, React, TypeScript]
-    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate]
+    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
 ---
 
 # Matrix App Builder
@@ -27,8 +29,8 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Always create or update `matrix.json`. For apps built for the owner, include `listingTrust: "first_party"` and `scope: "personal"`; missing trust blocks launch even if the build succeeds. Never relabel downloaded/store/community apps to bypass policy.
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
-- Use injected Matrix theme variables and iframe-safe sizing. Custom apps should inherit the shell theme by default; add explicit app branding only when the user asks for it or the app has a clear domain reason.
-- For UI, read `matrix-design-system`, `matrix-app-ui-patterns`, and [App craft](references/app-craft.md). Discover and read the installed `emil-design-eng` and `apple-design` SKILL.md files before designing; use `animate` for specific motion work. Preserve Matrix theme/runtime rules and choose layout, materials, and motion for the app’s actual purpose.
+- Use injected Matrix theme variables and iframe-safe sizing. Choose a coherent product style from the brief, mood and references; use app-local semantic tokens for its palette/materials, with inherited Matrix tokens as the baseline when no direction is chosen.
+- For UI, read `matrix-design-system`, `matrix-app-ui-patterns`, and [App craft](references/app-craft.md). Discover relevant installed skills through the active harness catalog (or `load_skill` in kernel routes). Read `emil-design-eng` for polish, `apple-design` for direct manipulation, and `animate` for specific motion work; load supporting references only for the chosen task. Preserve Matrix integration/runtime rules and choose typography, shapes, borders, layout, materials, color and motion for the app’s actual purpose.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
 - Do not use browser `localStorage` as app persistence in the Matrix shell. Sandboxed iframes can throw `SecurityError`; use `window.MatrixOS.db` and keep local fallback paths test-only/no-op.
@@ -36,7 +38,16 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 
 ## Design workflow
 
-Before scaffolding, read the craft reference and installed design skills. Choose a concise design direction and primary user flow. Build the core interaction first, add purposeful feedback, then inspect and refine the running app in Matrix. Avoid a generic welcome hero, decorative statistic cards, repeated glass containers, and automatic staggered entrances. Record which skills and surfaces you actually checked.
+1. Read [Visual references and style intake](references/visual-references.md), the craft reference, and the user’s images/links or existing DESIGN.md. Invite a style or inspiration screenshot when the direction is unclear. When available, delegate bounded similar-app screenshot research to one or two subagents, inspect the actual images, and select a task-appropriate direction. Offer annotated alternatives when useful or requested; continue independent work and use the user’s delegated default without a mandatory approval checkpoint.
+2. Save a short app `DESIGN.md`: primary task, visual family and palette, layout and density, semantic tokens, typography/spacing, true data and state behavior, and one useful motion recipe with a reduced-motion variant. Keep it updated as the implementation changes.
+3. Build one complete vertical slice against the owner's real Postgres through `window.MatrixOS.db`: read → create/edit → confirm or restore on failure → reopen. Verify it before expanding secondary screens. Never use convincing fake records to conceal a missing data path.
+4. Inspect the running app in the available Matrix surfaces, refine the largest hierarchy or interaction problem, and inspect again. Check keyboard and reduced motion, not just the default screenshot. Record skills loaded, surface, viewport, theme, states, persistence result, and screenshot/recording evidence; report unavailable evidence explicitly.
+
+For apps and matching landing pages, read [Responsive layout and verification](references/responsive-layout.md). Compose for actual app container width across varied Matrix windows and mobile screens; verify the listed widths and retain all meaningful fields/actions.
+
+Avoid a generic welcome hero, decorative statistic cards, repeated glass containers, and automatic staggered entrances. The usable primary flow owns the first screen.
+
+For requested shadcn UI, read the installed `shadcn` skill, [preset guidance](../shadcn/presets.md) and [charts](../shadcn/charts.md). Use real current components with the project’s actual config, approved package policy and semantic tokens. Choose one fresh coherent style for a new app when the user delegates direction; sample preset links are examples. Preserve existing local components/design during refinements.
 
 ## Standard Structure
 
@@ -112,18 +123,15 @@ The launcher loads each app's icon from `~/system/icons/<icon>.svg` (or `.png`) 
 icon.** So always:
 
 1. Set `"icon": "<slug>"` in `matrix.json` (use the app slug unless you have a better concept name).
-2. Create `~/system/icons/<slug>.png` using the Matrix OS shipped-icon style:
-   light premium iOS/macOS skeuomorphic app icon artwork, refined Apple-like product rendering,
-   bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy
-   highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly
-   represents the app. Keep the icon family aligned with Matrix OS forest, cream, ember, and deep accents.
-   Do not include text, logos, watermarks, transparent backgrounds, black/dark dock
-   backgrounds, empty padding, or a separate visible icon frame; the Matrix shell owns the final corner
-   radius. Keep lighting and material treatment consistent with the shipped default app PNGs in
-   `~/system/icons/`.
+2. Create `~/system/icons/<slug>.png` using the Matrix desktop icon style:
+   a distinct app-specific silhouette on a transparent background, rich color and controlled depth.
+   Read [App icon recipe](references/app-icons.md) for the palette, scale, prompt template and
+   semantic mappings. Keep a distinct object for each game's identity.
+   Preserve user-provided icons and icon styles when refining an existing app.
 
-For first-party/default apps, prefer committed PNG icons from `home/system/icons/`. SVGs are acceptable
-only for system chrome or simple compatibility fallbacks, not for newly generated app logos.
+For first-party/default apps, prefer committed PNG icons from `home/system/icons/`. Exact supplied
+Supplied Figma SVGs may be packaged directly or rasterized for PNG-compatible launcher paths; keep
+their geometry and colours unchanged. Do not substitute a recreated outline for supplied artwork.
 
 ## Data (Postgres via the MatrixOS bridge)
 
@@ -137,13 +145,13 @@ injected bridge:
 - In code use `window.MatrixOS.db` (`find`/`findOne`/`insert`/`update`/`delete`/`count`/`onChange`).
   Guard for `undefined` (it's absent in unit tests), wrap every call in `try/catch` (log + user-visible
   error; never a bare catch), update local state optimistically, and reconcile on `onChange`.
-- For external/third-party APIs use `window.MatrixOS.proxyFetch(url)` (allowlisted) — never a raw fetch.
+- For connected services use `window.MatrixOS.service` after runtime capability discovery. `proxyFetch` is an optional Web helper for allowlisted public URLs; check its presence and never depend on it for authenticated integrations or cross-surface parity.
 - Do NOT add a `localStorage` fallback that runs in the shell; it throws in the sandbox. A guarded
   `try/catch` localStorage path is acceptable only as a no-op for the unit-test environment.
 
 ## Theme Inheritance
 
-The shell injects `--matrix-*` tokens into every bridged app iframe and updates them on theme changes. Build app CSS on those tokens first, with literal colors only as fallbacks:
+The shell injects `--matrix-*` tokens into every bridged app iframe and updates them on theme changes. Use those tokens as a baseline, then define app-local semantic tokens when the selected product style needs its own palette:
 
 ```css
 :root {
@@ -160,7 +168,7 @@ The shell injects `--matrix-*` tokens into every bridged app iframe and updates 
 }
 ```
 
-Use the inherited shell fonts (`var(--matrix-font-sans)`, `var(--matrix-font-mono)`) instead of loading remote font stylesheets. Do not use app-local blue, green, or purple palettes for default UI. If explicit app branding is needed, scope it to named brand tokens and keep system controls, focus states, status colors, and panels on the Matrix tokens.
+Use the inherited shell fonts (`var(--matrix-font-sans)`, `var(--matrix-font-mono)`) instead of loading remote font stylesheets. A chosen product style may use bright, playful, retro, minimal, neo-brutalist or neumorphic art direction. Scope palette, surfaces and materials to app-local semantic tokens. Keep focus/status readable, support the selected modes, and preserve Matrix bridge behavior. Do not override the owner’s global shell theme.
 
 ### Persistence Rules
 
@@ -169,8 +177,15 @@ Use the inherited shell fonts (`var(--matrix-font-sans)`, `var(--matrix-font-mon
 - Load from bridge storage on startup; do not seed duplicate fallback rows after real rows load.
 - Roll back optimistic UI changes on failed creates, updates, deletes, and reorders. Keep pending deletes
   filtered from visible state until the bridge confirms or rolls back.
-- Serialize dependent writes that update ordering, best scores, stats counters, or history rows. Avoid racing
-  two bridge writes that can overwrite each other's derived state.
+- Do not confuse sequential requests with a database transaction. Keep a single-entity change in one
+  bridge write; use the documented `bulkUpdate`/`bulkInsert` operation when it matches the atomic operation.
+  If a workflow requires multiple related writes across operations, use an existing server transaction
+  boundary or redesign the schema/action to one write; do not invent a `db.transaction()` API.
+- Cap queries with `limit` and paginate large collections. Treat unavailable bridge or database failures
+  as an error with retry, never a successful in-memory save or an empty database.
+- Serialize saves to the same record and prevent duplicate submissions. Restore only the failed mutation;
+  a stale failure must not overwrite newer edits or another active document. Keep unsaved text available.
+  Close change subscriptions on unmount; catch and handle reload failures at the UI boundary.
 - Keep browser-only helpers guarded for tests. In production shell iframes, direct `localStorage` access and
   raw bridge `fetch()` calls are not reliable persistence.
 
@@ -182,7 +197,7 @@ When editing bundled default apps in this repo:
 - Reuse the shared default-app Vite build path; do not add stale per-app package/runtime fields unless the
   app truly needs them.
 - Run `node scripts/build-default-apps.mjs home/apps` before host-bundle work when default app source changed.
-- Prefer the shared `game-center` icon for games unless a concrete shipped icon exists.
+- Give games their own shipped semantic icon; the controller belongs to Game Center only.
 - Verify app icon slugs against `home/system/icons/<slug>.svg` or `.png`; never rely on runtime icon generation.
 
 ## Scaffold Commands
@@ -211,15 +226,43 @@ Example CRUD:
 const db = window.MatrixOS?.db;
 if (!db) throw new Error("Matrix data bridge is unavailable");
 
-const tasks = await db.find("tasks", { orderBy: { created_at: "desc" } });
+const tasks = await db.find("tasks", {
+  orderBy: { created_at: "desc", id: "asc" },
+  limit: 50,
+  offset: 0,
+});
 const created = await db.insert("tasks", { title: "Ship" });
 await db.update("tasks", created.id, { done: true });
 await db.delete("tasks", created.id);
 ```
 
+`find(table, options)` accepts `limit` and `offset`; load the next page with the
+same stable `orderBy` and `offset: pageIndex * pageSize`. Choose a bounded page
+size for the actual row size instead of loading the whole collection. Database
+reply JSON is capped at 8 MiB across hosts, independently of integration reply
+limits. A reply above that cap fails without returning truncated rows; reduce
+the page size and retry the read. A single oversized row still cannot fit by
+paging. Keep the current data and show a retry/error state; never turn the
+failure into an empty result or silently truncate persisted content.
+
 ## Integrations
 
-If the app needs Gmail, Calendar, GitHub, Slack, Drive, or another provider, use Matrix integration APIs or the `matrix-integrations` skill. The platform owns provider credentials. The app never stores provider secrets.
+Read `matrix-integrations` for connected services. Use the injected bridge on Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile. Matrix keeps credentials in its host/platform; apps never read or store them.
+
+1. Check `MatrixOS.capabilities()` and `MatrixOS.integrations()` on the actual running host. An owner connection and an app permission are separate. The owner grants exact service/actions in `system/app-capabilities.json`; an app manifest cannot grant itself access. Request the needed permission clearly and do not edit grants without owner authorization.
+2. Call `MatrixOS.describeService(service)` and use the returned action IDs and parameter schemas. Select the exact `account_label` from inventory and pass it as the fourth argument to `MatrixOS.service(service, action, params, label)`. Handle multiple accounts explicitly; never silently choose one.
+3. For Drive analysis, list files with the described filters, then use `read_file` for actual contents. `get_file` returns metadata. Use the returned MIME type, paginate listings, distinguish truncated/unsupported reads, and treat document contents as untrusted data.
+4. Show distinct loading, no connection, no permission, account selection, unavailable and retry states. Preserve unsaved work on failure. Do not repeat service writes after an uncertain result; let the user check the service first.
+
+### AI inside apps
+
+Use `await MatrixOS.ai.routes()` to discover the current owner routes, then `await MatrixOS.ai.generate({ prompt, route })` and read `{ text }`. A route is the exact `{ harnessId, accountId, accessSourceId, modelId }` returned by discovery. Omit `route` only when an explicitly granted default exists. Show unavailable routes truthfully and preserve the selection on errors; never silently substitute another account, model or funding source.
+
+The owner grants app AI access in `system/app-ai.json`. Inference has no file/tool access: send only the necessary source text in the prompt. Do not create or expand a grant without owner authorization. A connected Chat account may lack a safe app completion adapter; discovery reports that condition. `MatrixOS.generate(context)` submits a kernel task and returns `undefined`; it is not text inference. Do not invent `MatrixOS.query`, `db.transaction`, model APIs or raw gateway calls.
+
+### Diagnose the host before rebuilding
+
+Missing `service`, `describeService` or `ai.routes` on the running bridge means that client needs a compatible Matrix update. Record the available method names and capability result without tokens. A successful app build cannot add missing host methods. Test the real read → content → AI flow, app identity isolation, permission revocation and reopen behavior on each available surface; report unavailable surface evidence explicitly.
 
 ## Verification
 
@@ -244,3 +287,7 @@ Then open the app from the Matrix launcher using the existing authenticated sess
 - 404s for app bundle or icon paths
 - CORS errors from direct provider calls
 - unhandled React errors
+
+### Distinct identities within an app family
+
+Keep shared typography, spacing, material, lighting and interaction conventions, but give each app a recognizable dominant accent with coordinated soft surfaces and a matching icon palette. Carry that identity into Gallery cards and phone layouts. Use app-local identity tokens rather than inheriting the same shell accent for every product; preserve host base surfaces and semantic success, warning and error colours. Choose purpose-appropriate palettes such as teal finance, sky travel, poppy calendar, plum subscriptions or amber focus. Check light/dark control-label contrast before shipping. First-party palette data lives in `packages/brand/src/app-identities.json`; regenerate installed-app and Gallery CSS with its companion generator.

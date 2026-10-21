@@ -7,6 +7,7 @@ import { isSafeMarketingLandingPath } from '../reddit-purchase-attribution.js';
 /** Extracted verbatim from packages/platform/src/billing-routes.ts (S01 / T007): checkout and portal request schemas. */
 
 export const MATRIX_CARD_TRIAL_DAYS = 3;
+export const MATRIX_STARTER_TRIAL_DAYS = 14;
 
 export const MatrixCardTrialDaysSchema = z.string()
   .regex(/^[0-9]+$/)
@@ -44,6 +45,17 @@ export const MarketingAttributionSchema = z.object({
 
 export type MarketingAttribution = z.infer<typeof MarketingAttributionSchema>;
 
+export const GoogleAnalyticsAttributionSchema = z.object({
+  clientId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+  analyticsConsent: z.literal('granted'),
+  adUserData: z.enum(['granted', 'denied']).default('denied'),
+  adPersonalization: z.enum(['granted', 'denied']).default('denied'),
+  expiresAt: z.number().int().positive().refine(
+    value => value > Date.now() && value <= Date.now() + 180 * 86400000,
+  ),
+}).strict();
+export type GoogleAnalyticsAttribution = z.infer<typeof GoogleAnalyticsAttributionSchema>;
+
 export const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.literal('monthly').default('monthly'),
@@ -52,6 +64,7 @@ export const CheckoutRequestSchema = z.object({
   developerTools: DeveloperToolsWithDefaultSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   attribution: MarketingAttributionSchema.optional(),
+  googleAnalytics: GoogleAnalyticsAttributionSchema.optional(),
   returnPath: z.string().min(1).max(2048).optional().refine(
     // Safe iff it is already a same-origin allowlisted path (origins.ts is the
     // single source of truth for redirect-target validation).
@@ -72,4 +85,8 @@ export const PortalRequestSchema = z.object({
 
 export const CheckoutPreparationStatusQuerySchema = z.object({
   attemptId: z.uuid(),
+}).strict();
+
+export const CheckoutAbandonRequestSchema = z.object({
+  runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
 }).strict();

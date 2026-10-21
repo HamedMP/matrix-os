@@ -1,5 +1,8 @@
+import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verifyNativeCodexHumanControl } from "./native-codex-execution-proof.mjs";
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
+import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
+import { codexCommandPreview } from "./codex-command-preview.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
@@ -49,7 +52,6 @@ const MAX_CAPTURED_ARTIFACT_BYTES = 10 * 1024 * 1024;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
 const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
-const CREDENTIAL_DISPLAY_TEXT = /(?:api[_-]?key|authorization|cookie|credential|password|secret|token)\s*(?:=|:|\s)/i;
 const NativeRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int().safe()]);
 const NativeReferenceSchema = z.string().min(1).max(512);
 const ApprovalMethodSchema = z.enum([
@@ -87,6 +89,12 @@ const ProviderModelReferenceSchema = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/)
   .refine((value) => !value.includes(".."));
 const RunnerConfigSchema = z.object({
+  nativeSubscription: z.literal(true).optional(),
+  expectedNativePrincipal: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  expectedNativeConsent: z.object({ revision: z.number().int().nonnegative(),
+    harnessInstanceId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
+    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
   prompt: z.string().trim().min(1).max(64 * 1024),
   providerThreadId: NativeReferenceSchema.optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
@@ -164,7 +172,7 @@ const ToolOutputDeltaSchema = z.object({
     itemId: NativeReferenceSchema,
   }).passthrough(),
 }).passthrough();
-const MessagePhaseSchema = z.enum(["commentary", "final_answer"]);
+const MessagePhaseSchema = z.enum(["commentary", "partial_answer", "final_answer"]);
 const ToolLifecycleTypeSchema = z.enum([
   "commandExecution",
   "fileChange",
@@ -250,10 +258,11 @@ const RpcErrorSchema = z.object({
 }).passthrough();
 
 class ProviderRpcError extends Error {
-  constructor(reason = "rejected") {
+  constructor(reason = "rejected", failureReason) {
     super("provider_request_failed");
     this.name = "ProviderRpcError";
     this.reason = reason;
+    this.failureReason = failureReason;
   }
 }
 
@@ -265,6 +274,7 @@ function providerRpcError(raw) {
       && parsed.data.message === "no active turn to steer"
       ? "turn_not_idle"
       : "rejected",
+    codexTerminalFailureReason(raw),
   );
 }
 const ApprovalControlSchema = z.object({
@@ -386,6 +396,7 @@ let activeTurnOutcome;
 let nativeThreadId;
 let activeNativeTurnId;
 let activeTurnTokenUsage;
+let activeTurnFailureReason;
 let terminalEventCount = 0;
 let stdinClosed = false;
 let wakeTurn;
@@ -427,7 +438,7 @@ const executionWatchdog = createCodexExecutionWatchdog({
       ...(diagnostic.toolCallId ? { toolCallId: diagnostic.toolCallId } : {}),
       remoteOutcome: "unknown",
     })}\n`);
-    rejectExecution?.(new Error("Coding execution deadline exceeded"));
+    rejectExecution?.(new CodexExecutionTimeout());
   },
 });
 
@@ -513,19 +524,11 @@ function safeDisplayPath(value) {
   return undefined;
 }
 
-function safeToolDetails(item) {
+function safeToolDetails(item, toolCallId) {
   if (item.type === "commandExecution") {
-    const command = typeof item.command === "string" ? item.command.trim() : "";
-    const safeCommand = command.length > 0
-      && command.length <= 1_000
-      && !UNSAFE_DISPLAY_TEXT.test(command)
-      && !CREDENTIAL_DISPLAY_TEXT.test(command)
-      && !/[\r\n\u0000]/.test(command)
-      ? command
-      : undefined;
     const cwd = safeDisplayPath(item.cwd);
     return {
-      ...(safeCommand ? { preview: safeCommand, previewKind: "command" } : {}),
+      ...codexCommandPreview(item.command, toolCallId, toolOutputKey),
       ...(cwd ? { detail: `Working directory: ${cwd}` } : {}),
     };
   }
@@ -635,7 +638,7 @@ function request(method, params, timeoutMs = RPC_TIMEOUT_MS, subagentMetadata) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingRpc.delete(id);
-      reject(new Error("provider_request_timeout"));
+      reject(new CodexExecutionTimeout());
     }, timeoutMs);
     timeout.unref();
     pendingRpc.set(id, { resolve, reject, timeout, method, subagentMetadata });
@@ -904,7 +907,7 @@ async function handleItemLifecycle(raw) {
     privateToolItems.add(matrixItemId);
   }
   const presentation = toolPresentation(item);
-  const details = safeToolDetails(item);
+  const details = safeToolDetails(item, matrixItemId);
   if (parsed.data.method === "item/started") {
     assertTrackedItemCapacity(startedToolItems, matrixItemId);
     await persist({
@@ -942,6 +945,7 @@ async function handleItemLifecycle(raw) {
     type: "matrix.codex.tool.completed",
     toolCallId: matrixItemId,
     outcome: toolOutcome(item.status),
+    ...details,
   });
   startedToolItems.delete(matrixItemId);
   privateToolItems.delete(matrixItemId);
@@ -1001,8 +1005,17 @@ async function handleProviderMessage(raw) {
     return;
   }
   const notificationTurnId = raw?.params?.turnId ?? raw?.params?.turn?.id;
+  if (raw?.params?.threadId && raw.params.threadId !== nativeThreadId) return;
   if (activeNativeTurnId && notificationTurnId && notificationTurnId !== activeNativeTurnId) {
     rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
+  // Notifications are diagnostic evidence, not terminal outcomes. A failed
+  // completion must confirm them; retried or unrelated turns cannot leak a reason.
+  if (raw?.method === "error" && raw.params?.willRetry === false
+    && typeof activeNativeTurnId === "string"
+    && raw.params?.threadId === nativeThreadId && notificationTurnId === activeNativeTurnId) {
+    activeTurnFailureReason = codexTerminalFailureReason(raw.params.error);
     return;
   }
   if (await handleApproval(raw)) return;
@@ -1054,7 +1067,9 @@ async function handleProviderMessage(raw) {
   const completed = TurnCompletedSchema.safeParse(raw);
   if (completed.success) {
     const status = completed.data.params.turn.status;
-    await finishTurn(status === "completed" ? "completed" : status === "interrupted" ? "aborted" : "failed");
+    if (status === "inProgress") return;
+    await finishTurn(status === "completed" ? "completed" : status === "interrupted" ? "aborted" : "failed",
+      status === "failed" ? codexTerminalFailureReason(completed.data.params.turn.error) ?? activeTurnFailureReason : undefined);
   }
 }
 
@@ -1083,6 +1098,7 @@ async function steerActiveTurn(control) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) return false;
     try {
+      await verifyNativeSubscription?.(request);
       await request("turn/steer", {
         threadId: expectedThreadId,
         expectedTurnId,
@@ -1116,6 +1132,7 @@ async function applyControl(control) {
     const same = replay.fingerprint === digest([control]);
     return same ? { ok: true, replayed: true } : { ok: false };
   }
+  await verifyNativeCodexHumanControl(control, verifyNativeSubscription, request);
   if (control.type === "turn") {
     if (!enqueuePendingTurn(control)) return { ok: false };
   } else if (control.type === "steer") {
@@ -1314,7 +1331,7 @@ function stop() {
   stopTimer.unref();
 }
 
-async function finishTurn(outcome) {
+async function finishTurn(outcome, failureReason) {
   executionWatchdog.stop();
   await mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
@@ -1323,7 +1340,8 @@ async function finishTurn(outcome) {
     toolItemsWithOutput.size > 0;
   if (!activeTurn && !hasUnsettledItems) {
     if ((outcome === "failed" || outcome === "aborted") && terminalEventCount === 0) {
-      await persist({ type: outcome === "aborted" ? "turn.aborted" : "turn.failed" });
+      await persist({ type: outcome === "aborted" ? "turn.aborted" : "turn.failed",
+        ...(outcome === "failed" && failureReason ? { failureReason } : {}) });
       terminalEventCount += 1;
     }
     return;
@@ -1332,6 +1350,7 @@ async function finishTurn(outcome) {
   activeTurn = false;
   activeNativeTurnId = undefined;
   activeTurnTokenUsage = undefined;
+  activeTurnFailureReason = undefined;
   settleToolBoundaryWaiters(false);
   for (const messageId of assistantItemsWithDelta) {
     await flushAssistantDelta(messageId);
@@ -1353,6 +1372,7 @@ async function finishTurn(outcome) {
   privateToolItems.clear();
   await persist({
     type: outcome === "completed" ? "turn.completed" : outcome === "aborted" ? "turn.aborted" : "turn.failed",
+    ...(outcome === "failed" && failureReason ? { failureReason } : {}),
     ...(outcome === "completed" && tokenUsage ? { usage: tokenUsage } : {}),
   });
   terminalEventCount += 1;
@@ -1369,7 +1389,9 @@ async function runTurn(threadId, turn) {
   subagentRuntime.reset();
   executionExpired = false;
   activeTurnTokenUsage = undefined;
+  activeTurnFailureReason = undefined;
   try {
+    await verifyNativeSubscription?.(request);
     const started = await request("turn/start", turnStartParams(threadId, turn));
     activeNativeTurnId = z.object({
       turn: z.object({ id: NativeReferenceSchema }).passthrough(),
@@ -1413,7 +1435,9 @@ process.once("SIGTERM", () => { userStopped = true; stop(); });
 process.once("SIGINT", () => { userStopped = true; stop(); });
 
 let exitCode = 0;
+let verifyNativeSubscription;
 try {
+  if (config.nativeSubscription) verifyNativeSubscription = await createNativeCodexExecutionProof(config.expectedNativePrincipal, process.env, config.expectedNativeConsent);
   const initialized = await initializeCodexProvider({ command, args: commandArgs,
     cwd: process.cwd(), env: process.env, signal: startupController.signal,
     onRetry: async ({ label }) => {
@@ -1454,11 +1478,13 @@ try {
   }
   startupController.signal.throwIfAborted();
   sendProvider({ method: "initialized", params: {} });
+  await verifyNativeSubscription?.(request);
   const threadMethod = config.providerThreadId ? "thread/resume" : "thread/start";
   const started = await request(threadMethod, {
     // Matrix only needs the identity; Codex retains the complete model context.
     ...(config.providerThreadId ? { threadId: config.providerThreadId, excludeTurns: true } : {}),
     model: config.model,
+    ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
     developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS,
     serviceTier: config.serviceTier,
     cwd: process.cwd(),
@@ -1467,6 +1493,7 @@ try {
     runtimeWorkspaceRoots: config.writableRoots,
     experimentalRawEvents: false,
   });
+  if (config.nativeSubscription) assertNativeCodexThreadProvider(started);
   nativeThreadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
     .passthrough().parse(started).thread.id;
   if (config.providerThreadId && nativeThreadId !== config.providerThreadId) {
@@ -1527,7 +1554,8 @@ try {
     await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect",
       outcome: userStopped ? "cancelled" : "failed" });
   }
-  await finishTurn(userStopped ? "aborted" : "failed").catch((error) => {
+  await finishTurn(userStopped ? "aborted" : "failed", error instanceof ProviderRpcError ? error.failureReason
+    : codexExecutionFailureReason(error)).catch((error) => {
     console.warn("[coding-agents] Terminal startup state could not be persisted:", error instanceof Error ? error.name : "UnknownError");
   });
   stop();

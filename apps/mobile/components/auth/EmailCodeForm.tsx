@@ -99,7 +99,7 @@ export function EmailCodeForm({
           ]}
         >
           {signingIn ? (
-            <ActivityIndicator size="small" color={theme.v2.colors.textInverse} />
+            <ActivityIndicator size="small" color={theme.v2.colors.onControlPrimary} />
           ) : (
             <Text style={styles.buttonPrimaryText}>Sign in</Text>
           )}
@@ -150,7 +150,7 @@ export function EmailCodeForm({
         ]}
       >
         {verifying ? (
-          <ActivityIndicator size="small" color={theme.v2.colors.textInverse} />
+          <ActivityIndicator size="small" color={theme.v2.colors.onControlPrimary} />
         ) : (
           <Text style={styles.buttonPrimaryText}>Verify and sign in</Text>
         )}
@@ -192,7 +192,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    backgroundColor: theme.v2.colors.brand,
+    backgroundColor: theme.v2.colors.controlPrimary,
     borderRadius: theme.v2.radius.control,
     paddingVertical: 16,
   },
@@ -202,7 +202,7 @@ const styles = StyleSheet.create((theme) => ({
   buttonPrimaryText: {
     fontFamily: theme.v2.fonts.semibold,
     fontSize: 16,
-    color: theme.v2.colors.textInverse,
+    color: theme.v2.colors.onControlPrimary,
   },
   buttonPressed: {
     opacity: 0.85,
@@ -222,6 +222,6 @@ const styles = StyleSheet.create((theme) => ({
   linkText: {
     fontFamily: theme.v2.fonts.semibold,
     fontSize: 13,
-    color: theme.v2.colors.brand,
+    color: theme.v2.colors.textDefault,
   },
 }));

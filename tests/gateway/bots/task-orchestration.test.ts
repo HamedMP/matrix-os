@@ -1,0 +1,601 @@
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { runCommandFromSpec } from "../../../packages/bot-runtime/src/worker.js";
+import { runBotTurn } from "../../../packages/bot-runtime/src/loop.js";
+import type { CanonicalChatModelSelection, BotModelRoute } from "@matrix-os/contracts";
+import type { Kysely } from "kysely";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BotAdmissionError } from "../../../packages/gateway/src/bots/admission.js";
+import { MAX_BOT_ACTIVITY_EVENTS, createMatrixBotChatProviderAdapter } from "../../../packages/gateway/src/bots/chat-adapter.js";
+import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
+import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
+import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
+import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
+import { BotRouteError } from "../../../packages/gateway/src/bots/route-resolver.js";
+import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
+import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selection.js";
+import { createBotTaskOrchestrator } from "../../../packages/gateway/src/bots/task-orchestrator.js";
+import { createBotExecutorReadiness } from "../../../packages/gateway/src/bots/executor-readiness.js";
+import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
+import { createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
+import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
+import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
+import type { CanonicalProviderRunEvent } from "../../../packages/gateway/src/chat/provider-adapter.js";
+import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
+
+// Reset must release fixture closures instead of restoring an original implementation.
+const fixtureMock = <T extends (...args: never[]) => unknown>(implementation: T) => vi.fn<T>().mockImplementation(implementation);
+
+const CHAT = "chat_botdirect1";
+const RUNTIME = `runtime_${"f".repeat(32)}`;
+const ROUTE: BotModelRoute = { api: "anthropic-messages", modelId: "claude-sonnet-5", input: ["text"], contextWindow: 200_000, maxOutputTokens: 8_192 };
+const AGENT = {
+  id: BOT, name: "Writing Bot", description: "", instructions: "Help the owner revise essays.", archived: false,
+  selection: MATRIX_BOT_SELECTION, recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" },
+  revision: 1, createdAt: "2026-09-27T12:00:00.000Z", updatedAt: "2026-09-27T12:00:00.000Z",
+};
+
+type RunBotInput = { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string; text?: string } };
+
+let db: Kysely<OwnerBotDatabase>;
+let destroy: () => Promise<void>;
+
+beforeEach(async () => {
+  ({ db, destroy } = await createBotStateDatabase());
+  await insertChat(db, CHAT);
+  await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: "2026-09-27T12:00:00.000Z" });
+});
+afterEach(async () => { vi.unstubAllEnvs(); try { await destroy(); } finally { vi.resetAllMocks(); vi.restoreAllMocks(); } });
+
+function setup(options: {
+  homePath?: string;
+  worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
+  resolveRoute?: (selection?: CanonicalChatModelSelection) => Promise<import("../../../packages/gateway/src/bots/route-resolver.js").ResolvedBotRoute>;
+  admit?: () => Promise<never>;
+  executorReady?: (ownerId: string, botId: string) => Promise<boolean>;
+  cancelDelivered?: boolean;
+  activeDeadlineMs?: number;
+  cancelGraceMs?: number;
+  agent?: Record<string, unknown> | null;
+  resolveProcedure?: Parameters<typeof createBotTaskOrchestrator>[0]["resolveProcedure"];
+  memory?: string[];
+  admitted?: () => Promise<string[]>;
+  answerWithMessage?: () => Promise<void>;
+} = {}) {
+  const registry = new BotRuntimeRegistry();
+  const admission = {
+    admit: fixtureMock(options.admit ?? (async (request: Parameters<typeof registry.bind>[0]) => {
+      registry.bind({ ...request, runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) });
+      return { runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) };
+    }) as never),
+    release: fixtureMock(async (handle: string) => registry.release(handle)),
+  };
+  let orchestrator: ReturnType<typeof createBotTaskOrchestrator>;
+  const commands: RunBotInput["command"][] = [];
+  const runBot = fixtureMock(async (input: RunBotInput) => {
+    commands.push(input.command);
+    if (input.command.kind !== "bot.run") {
+      if (input.command.kind === "bot.cancel") {
+        const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
+        expect(registry.inferenceSignal(binding)?.aborted).toBe(true);
+      }
+      return { ok: options.cancelDelivered !== false, reply: {} };
+    }
+    const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
+    const publish = (seq: number, event: Record<string, unknown>) => orchestrator.eventSink.publish(binding, { seq, event } as never);
+    const reply = options.worker
+      ? await options.worker(input, { publish })
+      : { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    return { ok: true as const, reply };
+  });
+  const transact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
+  const interactions = createBotInteractionService({ transact });
+  orchestrator = createBotTaskOrchestrator({
+    homePath: options.homePath, expectedOwnerId: OWNER,
+    bindings: createBotBindingsRepository(db),
+    transact,
+    interactions: options.answerWithMessage ? { answerWithMessage: options.answerWithMessage } : interactions,
+    memory: { admitted: options.admitted ?? (async () => options.memory ?? []) },
+    agents: { get: fixtureMock(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
+    recipes: createBotRecipeCatalog(),
+    resolveProcedure: options.resolveProcedure,
+    resolveRoute: options.resolveRoute ?? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })),
+    executorReady: options.executorReady,
+    admission,
+    registry,
+    client: { runBot: runBot as never },
+    ...(options.activeDeadlineMs ? { activeDeadlineMs: options.activeDeadlineMs } : {}),
+    ...(options.cancelGraceMs ? { cancelGraceMs: options.cancelGraceMs } : {}),
+  });
+  const stopRuntime = fixtureMock(async () => undefined);
+  const adapter = createMatrixBotChatProviderAdapter({ orchestrator, stopRuntime });
+  return { adapter, orchestrator, admission, registry, commands, stopRuntime, interactions };
+}
+
+function turn(signal = new AbortController().signal, runId = "run_turn1", text = "Tighten my intro.") {
+  return {
+    owner: { type: "personal" as const, ownerId: OWNER }, chatId: CHAT, turnId: "cturn_1", runId, prompt: text,
+    parts: [{ type: "text" as const, text }], selection: MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default", signal,
+  };
+}
+
+async function collect(events: AsyncIterable<CanonicalProviderRunEvent>): Promise<CanonicalProviderRunEvent[]> {
+  const collected: CanonicalProviderRunEvent[] = [];
+  for await (const event of events) collected.push(event);
+  return collected;
+}
+
+async function tasks() {
+  return db.selectFrom("bot_tasks").select(["status", "blocked_reason", "run_id"]).execute();
+}
+
+describe("bot turns through the matrix_bot adapter", () => {
+  it("enforces the trusted runtime generation ceiling through normal canonical Bot admission", async () => {
+    vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", "12");
+    const provider = fauxProvider({ models: [{ id: "faux-budget", input: ["text"], contextWindow: 128_000, maxTokens: 8192 }] });
+    provider.setResponses([
+      ...Array.from({ length: 14 }, (_, index) => fauxAssistantMessage(fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" })),
+      fauxAssistantMessage(fauxText("Must not run.")),
+    ]);
+    const stream = vi.spyOn(provider.provider, "streamSimple");
+    const broker = {
+      loadSession: async () => ({ revision: 1, needsRecompaction: false, messages: [{ role: "user", content: "Remember the first stage.", timestamp: 1 }] }),
+      saveSession: async () => ({ revision: 2 }),
+      tool: async () => ({ ok: true as const, content: [{ type: "text" as const, text: "ok" }] }),
+      event: async () => {},
+    };
+    const context = setup({ worker: async input => {
+      const binding = context.registry.lookupRun({ ...input, runId: input.command.runId })!;
+      const spec = await context.orchestrator.runSource.loadRunSpec(binding);
+      expect(spec.limits).toEqual({ maxToolActions: 60, maxInferenceCalls: 12 });
+      expect(spec.route.maxOutputTokens).toBe(8192);
+      expect(spec.capabilities).toContain("artifact.write");
+      const command = runCommandFromSpec(input.command.runId, spec, []);
+      return runBotTurn({ command, broker, bridgeOrigin: "http://127.0.0.1:41000", route: { provider: provider.provider, model: provider.getModel() } });
+    } });
+    const events = await collect(context.adapter.start(turn()));
+    expect(stream).toHaveBeenCalledTimes(12);
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0 && options?.maxTokens === 8192)).toBe(true);
+  });
+
+  it.each(["", "0", "-1", "1.5", "64", "12oops", " 12", "01"])("refuses invalid trusted inference configuration %j before admitting a run", value => {
+    vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", value);
+    expect(() => setup()).toThrow();
+  });
+
+  it("preserves the owner API binding through recipe task admission and broker inference", async () => {
+    const generation = "e16625fe-cad7-4983-a9db-e808bbf104cc";
+    const selection = { instanceId: "matrix_anthropic_api", model: ROUTE.modelId,
+      options: [{ id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: generation }] };
+    const anthropicApi = { connectionRevision: 3, credentialGeneration: generation };
+    const resolveRoute = fixtureMock(async (selected?: CanonicalChatModelSelection) => {
+      expect(selected).toEqual(selection);
+      return { route: ROUTE, accessSourceId: "owner_anthropic_key" as const, anthropicApi };
+    });
+    const { forwardBotInference } = await import("../../../packages/gateway/src/bots/broker-inference.js");
+    const fetcher = fixtureMock<typeof fetch>(async () => new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }));
+    const authority = { observe: vi.fn(), resolve: vi.fn(), credential: fixtureMock(async () => "synthetic-owner-key"), revalidate: fixtureMock(async () => true) };
+    const { adapter, admission, registry } = setup({ agent: { ...AGENT, selection }, resolveRoute, worker: async input => {
+      const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
+      expect(binding.anthropicApi).toEqual(anthropicApi);
+      for (let frame = 0; frame < 2; frame++) {
+        const result = await forwardBotInference({ version: 1, requestId: crypto.randomUUID(), runtimeHandle: RUNTIME,
+          executionGeneration: "3", action: "inference.messages", path: "/v1/messages", method: "POST", headers: {},
+          body: JSON.stringify({ model: ROUTE.modelId, stream: true, messages: [] }) }, binding,
+          modelId => registry.authorize({ ...binding, modelId, action: "inference.messages" }),
+          { homePath: "/unused", matrixAnthropic: authority, fetchImpl: fetcher, lifetime: new AbortController().signal,
+            resolveCredentials: async () => { throw new Error("No ambient or funded fallback"); } });
+        expect(result.ok).toBe(true);
+      }
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    const events = await collect(adapter.start({ ...turn(), selection: { ...selection, instanceId: "matrix_bot_default" } }));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(admission.admit).toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: "owner_anthropic_key", anthropicApi }));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const call of fetcher.mock.calls) expect(new Headers(call[1]?.headers).get("x-api-key")).toBe("synthetic-owner-key");
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "completed" })]);
+  });
+
+  it("records an ordinary invalid coordinator as a blocked model task", async () => {
+    const resolveRoute = vi.fn();
+    const { orchestrator, admission } = setup({ resolveRoute });
+    const handle = orchestrator.start({ ownerId: OWNER, chatId: CHAT, runId: "run_invalid_coordinator",
+      text: "Hello", selection: { instanceId: "matrix_anthropic_api", model: ROUTE.modelId },
+      signal: new AbortController().signal });
+    expect(await handle.result).toEqual({ status: "blocked", blockedReason: "model_unavailable" });
+    expect(await tasks()).toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "model_unavailable", run_id: "run_invalid_coordinator" })]);
+    expect(resolveRoute).not.toHaveBeenCalled();
+    expect(admission.admit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the normal sixty-tool spec when no runtime generation ceiling is configured", async () => {
+    vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", undefined);
+    const context = setup({ worker: async input => {
+      const binding = context.registry.lookupRun({ ...input, runId: input.command.runId })!;
+      const spec = await context.orchestrator.runSource.loadRunSpec(binding);
+      expect(spec.limits).toEqual({ maxToolActions: 60 });
+      expect(spec.route.maxOutputTokens).toBe(8192);
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    expect((await collect(context.adapter.start(turn()))).at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+  });
+
+  it("keeps legacy Automatic routing when an internal caller omits selection", async () => {
+    const resolveRoute = fixtureMock(async (selection?: unknown) => {
+      if (selection !== undefined) throw new BotRouteError("model_unavailable");
+      return { route: ROUTE, accessSourceId: "matrix_included" as const };
+    });
+    const { orchestrator } = setup({ resolveRoute });
+    const run = orchestrator.start({ ownerId: OWNER, chatId: CHAT, runId: "run_legacy_auto",
+      text: "Hello", signal: new AbortController().signal });
+    expect(await run.result).toMatchObject({ status: "completed" });
+    expect(resolveRoute).toHaveBeenCalledExactlyOnceWith(undefined);
+  });
+
+  it("runs shared Preview coordinator tools without consulting the host owner's native executor", async () => {
+    const execution = fixtureMock(async () => { throw new Error("foreign native owner"); });
+    const admit = fixtureMock(async () => { throw new Error("foreign native owner"); });
+    const executorReady = createBotExecutorReadiness({ runtimeOwnerId: "different_host_owner", computerId: "preview", nativeTasks: true, connections: { execution, admit } });
+    const { adapter, orchestrator } = setup({ executorReady, worker: async (input) => {
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
+      expect(spec.capabilities).not.toContain("agent.task");
+      expect(spec.capabilities).toContain("artifact.write");
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    const events = await collect(adapter.start(turn()));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "completed" })]);
+    expect(execution).not.toHaveBeenCalled();
+    expect(admit).not.toHaveBeenCalled();
+  });
+
+  it("advertises the selected native task executor only after fresh Bot authorization with a Matrix-funded coordinator", async () => {
+    const executorReady = fixtureMock(async () => true);
+    const { adapter, orchestrator, admission } = setup({ executorReady, worker: async (input) => {
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
+      expect(spec.capabilities).toContain("agent.task"); expect(spec.route).toEqual(ROUTE);
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    await collect(adapter.start(turn())); expect(executorReady).toHaveBeenCalledWith(OWNER, BOT);
+    expect(admission.admit).toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: "matrix_included", capabilities: expect.arrayContaining(["agent.task"]) }));
+  });
+
+  it("blocks a saved executor whose authorization is revoked before coordinator admission", async () => {
+    const { adapter, admission, commands } = setup({ executorReady: async () => { throw new Error("Revoked"); } });
+    await collect(adapter.start(turn())); expect(admission.admit).not.toHaveBeenCalled(); expect(commands).toEqual([]);
+    expect(await tasks()).toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "policy_denied" })]);
+  });
+
+  it("runs one turn in the bot workload and projects its events onto Chat", async () => {
+    const { adapter, orchestrator, admission, commands } = setup({
+      worker: async (input, { publish }) => {
+        const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
+        expect(spec).toMatchObject({ route: ROUTE, turn: { kind: "prompt", text: "Tighten my intro." }, limits: { maxToolActions: 60 } });
+        // Only tools the broker serves today reach the worker.
+        expect(spec.capabilities).toEqual(["interaction.create", "memory.search", "memory.propose", "artifact.read", "artifact.write"]);
+        expect(spec.systemPrompt).toContain("Help the owner revise essays.");
+        await publish(0, { type: "activity", label: "Reading your draft", state: "started" });
+        await publish(1, { type: "tool_progress", toolCallId: "toolu 01/weird", capability: "artifact.write", phase: "started" });
+        await publish(2, { type: "tool_progress", toolCallId: "toolu 01/weird", capability: "artifact.write", phase: "completed" });
+        await publish(3, { type: "assistant_delta", text: "x".repeat(9_000) });
+        return { runId: input.command.runId, status: "completed", toolActions: 1, sessionRevision: 2 };
+      },
+    });
+    const events = await collect(adapter.start(turn()));
+    expect(events.filter((event) => event.type === "state.updated")).toEqual([
+      { type: "state.updated", state: { taskId: expect.stringMatching(/^task_/) } },
+      { type: "state.updated", state: { taskId: expect.stringMatching(/^task_/), runtimeHandle: RUNTIME, executionGeneration: "3" } },
+    ]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "agent.activity", kind: "phase", label: "Reading your draft", status: "running" }));
+    const progress = events.filter((event) => event.type === "tool.progress");
+    expect(progress.map((event) => event.type === "tool.progress" && event.status)).toEqual(["running", "completed"]);
+    expect(progress[0]).toMatchObject({ label: "Saving a file", toolCallId: expect.stringMatching(/^tool_[a-f0-9]{32}$/) });
+    expect(events.filter((event) => event.type === "assistant.delta").map((event) => event.type === "assistant.delta" && event.delta.length)).toEqual([4_000, 4_000, 1_000]);
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(commands).toEqual([{ version: 1, kind: "bot.run", runId: "run_turn1" }]);
+    expect(admission.release).toHaveBeenCalledWith(RUNTIME);
+    await expect(tasks()).resolves.toEqual([{ status: "completed", blocked_reason: null, run_id: "run_turn1" }]);
+    // The run is gone once finished: a late frame is stale.
+    await expect(orchestrator.runSource.loadRunSpec({ runId: "run_turn1" } as never)).rejects.toMatchObject({ code: "stale_generation" });
+  });
+
+  it("ends the run when the bot waits for a person, and keeps the task waiting", async () => {
+    const { adapter } = setup({ worker: async (input) => ({ runId: input.command.runId, status: "waiting_person", toolActions: 0, sessionRevision: 1 }) });
+    const events = await collect(adapter.start(turn()));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "waiting_person" })]);
+  });
+
+  it("continues the waiting task with the owner's next message, answering its open question", async () => {
+    const worker = fixtureMock(async (input: RunBotInput) => ({ runId: input.command.runId, status: "waiting_person", toolActions: 0, sessionRevision: 1 }));
+    const { adapter, interactions, orchestrator } = setup({ worker, memory: ["(preference) Keep it short."] });
+    await collect(adapter.start(turn()));
+    const [task] = await db.selectFrom("bot_tasks").selectAll().execute();
+    // The bot asked something before its turn ended.
+    await interactions.createFromTool({
+      runtimeHandle: RUNTIME, executionGeneration: "3", ownerId: OWNER, botId: BOT, chatId: CHAT, taskId: task!.task_id, runId: "run_turn1",
+      rootFingerprint: "f".repeat(64), route: ROUTE, accessSourceId: "matrix_included", capabilities: ["interaction.create"], requestClass: "interactive",
+    }, { blocking: true, payload: { kind: "question", questions: [{ questionId: "q1", header: "Tone", question: "Formal or casual?", allowOther: true, secret: false }] } });
+    worker.mockImplementationOnce(async (input) => {
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId, ownerId: OWNER, chatId: CHAT, runtimeHandle: RUNTIME, executionGeneration: "3" } as never);
+      expect(spec.systemPrompt).toContain("- (preference) Keep it short.");
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 2 };
+    });
+    await collect(adapter.start(turn(undefined, "run_turn2", "Casual, please.")));
+    // Same task, now completed; the question was answered by the reply.
+    await expect(tasks()).resolves.toEqual([{ status: "completed", blocked_reason: null, run_id: "run_turn2" }]);
+    const [question] = await db.selectFrom("bot_interactions").select(["status", "resolution"]).execute();
+    expect(question).toMatchObject({ status: "resolved" });
+    expect(JSON.stringify(question!.resolution)).toContain("Casual, please.");
+    const events = await db.selectFrom("chat_outbox").select(["event_type", "payload"]).where("chat_id", "=", CHAT).orderBy("cursor").execute();
+    expect(events.map((row) => row.event_type)).toEqual([
+      "bot.task.updated", "bot.task.updated", "interaction.requested", "bot.task.updated", "interaction.resolved", "bot.task.updated",
+    ]);
+    // Events carry IDs and allowlisted state only.
+    expect(JSON.stringify(events)).not.toContain("Casual");
+  });
+
+  it("fails the task when loading admitted memory fails after it starts", async () => {
+    const { adapter, admission } = setup({ admitted: async () => { throw new Error("memory unavailable"); } });
+    const events = await collect(adapter.start(turn()));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(admission.admit).not.toHaveBeenCalled();
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed" })]);
+  });
+
+  it("fails a continued task when recording its answer fails", async () => {
+    const { adapter, admission } = setup({
+      worker: async (input) => ({ runId: input.command.runId, status: "waiting_person", toolActions: 0, sessionRevision: 1 }),
+      answerWithMessage: async () => { throw new Error("answer unavailable"); },
+    });
+    await collect(adapter.start(turn()));
+    const events = await collect(adapter.start(turn(undefined, "run_turn2", "My answer.")));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(admission.admit).toHaveBeenCalledTimes(1);
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed", run_id: "run_turn2" })]);
+  });
+
+  it("keeps the task waiting when the run ended with a request to the owner still open", async () => {
+    const { adapter, interactions } = setup({
+      worker: async (input) => {
+        const [task] = await db.selectFrom("bot_tasks").select("task_id").execute();
+        // The gateway asked the owner on the bot's behalf; the worker simply finished its turn.
+        await interactions.createFromTool({
+          runtimeHandle: RUNTIME, executionGeneration: "3", ownerId: OWNER, botId: BOT, chatId: CHAT, taskId: task!.task_id, runId: input.command.runId,
+          rootFingerprint: "f".repeat(64), route: ROUTE, accessSourceId: "matrix_included", capabilities: ["interaction.create"], requestClass: "interactive",
+        }, { blocking: true, payload: { kind: "question", questions: [{ questionId: "q1", header: "Account", question: "Which one?", allowOther: true, secret: false }] } });
+        return { runId: input.command.runId, status: "completed", toolActions: 1, sessionRevision: 1 };
+      },
+    });
+    await collect(adapter.start(turn()));
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "waiting_person" })]);
+  });
+
+  it("blocks without starting a runtime when no model or workspace is available", async () => {
+    const noModel = setup({ resolveRoute: async () => { throw new BotRouteError("model_unavailable"); } });
+    const events = await collect(noModel.adapter.start(turn()));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed", error: { code: "model_unavailable" } });
+    expect(noModel.admission.admit).not.toHaveBeenCalled();
+
+    const noRoot = setup({ admit: async () => { throw new BotAdmissionError("root_changed"); } });
+    const second = await collect(noRoot.adapter.start(turn(undefined, "run_turn2")));
+    expect(second.at(-1)).toMatchObject({ outcome: "failed", error: { code: "resource_unavailable" } });
+    expect((await tasks()).map((task) => task.blocked_reason).sort()).toEqual(["model_unavailable", "root_unavailable"]);
+  });
+
+  it("never runs a chat that is not a live bot's direct chat", async () => {
+    const { adapter, admission } = setup({ agent: null });
+    const events = await collect(adapter.start(turn()));
+    expect(events.at(-1)).toMatchObject({ outcome: "failed", error: { code: "run_failed" } });
+    expect(admission.admit).not.toHaveBeenCalled();
+    await expect(tasks()).resolves.toEqual([]);
+  });
+
+  it("cancels a running turn through the worker, and stops a worker that does not take the cancel", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    const controller = new AbortController();
+    const { adapter, commands, admission } = setup({ worker: (input) => new Promise((resolve) => { finish = () => resolve({ runId: input.command.runId, status: "cancelled", toolActions: 0, sessionRevision: 1 }); }) });
+    const running = collect(adapter.start(turn(controller.signal)));
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    controller.abort();
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run", "bot.cancel"]));
+    finish(undefined);
+    expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled" })]);
+    expect(admission.release).toHaveBeenCalledTimes(1);
+
+    const stubborn = setup({ cancelDelivered: false, worker: () => new Promise(() => undefined) });
+    const aborted = new AbortController();
+    const stuck = collect(stubborn.adapter.start(turn(aborted.signal, "run_turn3")));
+    await vi.waitFor(() => expect(stubborn.commands).toHaveLength(1));
+    aborted.abort();
+    // The worker ignored the cancel, so its runtime is stopped outright.
+    await vi.waitFor(() => expect(stubborn.admission.release).toHaveBeenCalledWith(RUNTIME));
+    void stuck;
+  });
+
+  it("cancels the bot when Chat stops reading the turn early", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    const { adapter, commands } = setup({
+      worker: async (input, { publish }) => {
+        await publish(0, { type: "assistant_delta", text: "Working" });
+        return new Promise((resolve) => { finish = () => resolve({ runId: input.command.runId, status: "cancelled", toolActions: 0, sessionRevision: 1 }); });
+      },
+    });
+    const events = adapter.start(turn())[Symbol.asyncIterator]();
+    await events.next();
+    await events.next();
+    const stopping = events.return!(undefined);
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run", "bot.cancel"]));
+    finish(undefined);
+    await stopping;
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled" })]);
+  });
+
+  it("stops a turn at the active-work deadline and blocks the task", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    const { adapter, commands } = setup({
+      activeDeadlineMs: 30,
+      worker: (input) => new Promise((resolve) => { finish = () => resolve({ runId: input.command.runId, status: "cancelled", toolActions: 3, sessionRevision: 1 }); }),
+    });
+    const running = collect(adapter.start(turn()));
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toContain("bot.cancel"));
+    finish(undefined);
+    expect((await running).at(-1)).toMatchObject({ outcome: "failed", error: { code: "run_failed", safeMessage: expect.stringContaining("time limit") } });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "deadline_reached" })]);
+  });
+
+  it("stops a worker that took the cancel but did not end its run", async () => {
+    const aborted = new AbortController();
+    const { adapter, commands, admission } = setup({ cancelGraceMs: 30, worker: () => new Promise(() => undefined) });
+    const running = collect(adapter.start(turn(aborted.signal)));
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    aborted.abort();
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run", "bot.cancel"]));
+    await vi.waitFor(() => expect(admission.release).toHaveBeenCalledWith(RUNTIME));
+    void running;
+  });
+
+  it("blocks a task whose run needs more time after the deadline, but keeps a reply that finished", async () => {
+    for (const [status, expected] of [["waiting_person", { status: "blocked", blocked_reason: "deadline_reached" }], ["completed", { status: "completed", blocked_reason: null }]] as const) {
+      await db.deleteFrom("bot_tasks").execute();
+      let finish: (value: unknown) => void = () => undefined;
+      const { adapter, commands } = setup({
+        activeDeadlineMs: 30,
+        worker: (input) => new Promise((resolve) => { finish = () => resolve({ runId: input.command.runId, status, toolActions: 1, sessionRevision: 1 }); }),
+      });
+      const running = collect(adapter.start(turn(undefined, `run_late_${status}`)));
+      await vi.waitFor(() => expect(commands.map((command) => command.kind)).toContain("bot.cancel"));
+      finish(undefined);
+      await running;
+      await expect(tasks()).resolves.toEqual([expect.objectContaining(expected)]);
+    }
+  });
+
+  it("keeps a chatty turn within Chat's activity budget while the reply still streams", async () => {
+    const { adapter } = setup({
+      worker: async (input, { publish }) => {
+        let seq = 0;
+        for (let index = 0; index < 250; index += 1) {
+          await publish(seq++, { type: "tool_progress", toolCallId: `call_${index}`, capability: "artifact.read", phase: "started" });
+          await publish(seq++, { type: "tool_progress", toolCallId: `call_${index}`, capability: "artifact.read", phase: "completed" });
+        }
+        await publish(seq++, { type: "assistant_delta", text: "Done." });
+        return { runId: input.command.runId, status: "completed", toolActions: 60, sessionRevision: 1 };
+      },
+    });
+    const events = await collect(adapter.start(turn()));
+    const activities = events.filter((event) => event.type === "tool.progress" || event.type === "agent.activity");
+    expect(activities).toHaveLength(MAX_BOT_ACTIVITY_EVENTS);
+    expect(activities.at(-1)).toMatchObject({ type: "agent.activity", label: "More steps were not shown" });
+    expect(events).toContainEqual({ type: "assistant.delta", delta: "Done." });
+  });
+
+  it("relays steering to the running worker only", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    const { adapter, commands } = setup({ worker: (input) => new Promise((resolve) => { finish = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 }); }) });
+    const running = collect(adapter.start(turn()));
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    await adapter.steer!({ owner: { type: "personal", ownerId: OWNER }, chatId: CHAT, runId: "run_turn1", turnId: "cturn_2", clientRequestId: "req_steer", prompt: "Shorter.", parts: [{ type: "text", text: "Shorter." }] });
+    expect(commands.at(-1)).toEqual({ version: 1, kind: "bot.steer", runId: "run_turn1", text: "Shorter." });
+    finish(undefined);
+    await running;
+    await expect(adapter.steer!({ owner: { type: "personal", ownerId: OWNER }, chatId: CHAT, runId: "run_turn1", turnId: "cturn_3", clientRequestId: "req_late", prompt: "Late", parts: [{ type: "text", text: "Late" }] }))
+      .rejects.toThrow();
+  });
+
+  it("closes a run the previous process lost: stops its runtime, fails its task, replays nothing", async () => {
+    const { adapter, stopRuntime, commands } = setup();
+    const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: "2026-09-27T12:00:00.000Z" });
+    await createBotTasksRepository(db).transition({ ownerId: OWNER, taskId: task.taskId, baseRevision: task.revision, to: "running", runId: "run_lost", now: "2026-09-27T12:00:01.000Z" });
+    const recovered = await adapter.recover!({
+      owner: { type: "personal", ownerId: OWNER }, runId: "run_lost", signal: new AbortController().signal,
+      state: { taskId: task.taskId, runtimeHandle: RUNTIME, executionGeneration: "3" },
+    });
+    expect(recovered).toEqual({ outcome: "failed", messages: [] });
+    expect(stopRuntime).toHaveBeenCalledWith(RUNTIME);
+    expect(commands).toEqual([]);
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed" })]);
+  });
+});
+
+it("runs new custom coordinators through the Bot adapter with exact subscription and revision on fresh/resumed turns", async () => {
+ const selection={instanceId:"matrix_chatgpt_plan",model:"gpt-custom",options:[{id:"accountId",value:"own-account"},{id:"grantRevision",value:"3"}]};
+ const agent={...AGENT,selection,instructions:"Use only confirmed data",recipeRef:{recipeId:"custom-coordinator",version:"1"}};
+ const resolveProcedure=fixtureMock(async()=>({...agent.recipeRef,name:agent.name,description:"",instructions:agent.instructions,
+  capabilities:["artifact.read" as const,"memory.search" as const],integrations:[],output:"A truthful answer"}));
+ const subscription={peerId:"d16576f5-6a86-4768-8f97-06a718efda36",accountId:"own-account",computerId:"own-computer",grantRevision:3};
+ const route={...ROUTE,api:"openai-responses" as const,modelId:selection.model};
+ const resolveRoute=fixtureMock(async(selected?:CanonicalChatModelSelection)=>{expect(selected).toEqual(selection);return {route,accessSourceId:"matrix_chatgpt_plan" as const,subscription};});
+ const x=setup({agent,resolveProcedure,resolveRoute,worker:async(input)=>{
+  const spec=await x.orchestrator.runSource.loadRunSpec({runId:input.command.runId, ownerId:OWNER, chatId:CHAT, runtimeHandle:RUNTIME, executionGeneration:"3"} as never);
+  expect(spec.systemPrompt).toContain(agent.instructions); expect(spec.route).toEqual(route);
+  expect(x.registry.lookupRun({...input,runId:input.command.runId})).toMatchObject({ownerId:OWNER,botId:BOT,managedDefinitionRevision:1,subscription});
+  return {runId:input.command.runId,status:"completed",toolActions:0,sessionRevision:1};
+ }});
+ for(const runId of ["run_custom_fresh","run_custom_resume"]){
+  await collect(x.adapter.start(turn(undefined,runId)));
+  expect(await tasks()).toContainEqual(expect.objectContaining({status:"completed",run_id:runId}));
+ }
+ expect(resolveProcedure).toHaveBeenCalledTimes(2);expect(resolveRoute).toHaveBeenCalledTimes(2);
+ const bad=x.orchestrator.start({ownerId:OWNER,chatId:CHAT,runId:"run_custom_changed",text:"No source changes",selection:{...selection,model:"foreign-model"},signal:new AbortController().signal});
+ expect(await bad.result).toEqual({status:"failed"}); expect(resolveRoute).toHaveBeenCalledTimes(2);
+});
+
+it("forwards image/file-only recipe Bot turns through the real broker and image-hydrating Pi worker", async () => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path"); const { tmpdir } = await import("node:os");
+  const { fauxProvider, fauxAssistantMessage, fauxToolCall, fauxText } = await import("@earendil-works/pi-ai");
+  const { createBotWorker } = await import("../../../packages/bot-runtime/src/worker.js");
+  const { BotBrokerError } = await import("../../../packages/bot-runtime/src/broker-client.js");
+  const { createBotBrokerActions } = await import("../../../packages/gateway/src/bots/broker-actions.js");
+  const { createBotCheckpointsRepository } = await import("../../../packages/gateway/src/bots/repositories/checkpoints.js");
+  const { createBotSessionsRepository } = await import("../../../packages/gateway/src/bots/repositories/sessions.js");
+  const home = await mkdtemp(join(tmpdir(), "recipe-inputs-"));
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==", "base64");
+  const route = { ...ROUTE, input: ["text", "image"] as ("text" | "image")[] };
+  const faux = fauxProvider({ models: [{ id: route.modelId, input: route.input, contextWindow: route.contextWindow, maxTokens: route.maxOutputTokens }] });
+  let observed = 0;
+  for (let index = 0; index < 2; index++) faux.appendResponses([
+    context => {
+      const user = [...context.messages].reverse().find(message => message.role === "user")!;
+      const content = user.content as Array<{ type: string; text?: string }>;
+      expect(content.find(item => item.type === "image")).toMatchObject({ data: png.toString("base64"), mimeType: "image/png" }); observed++;
+      const alias = content.find(item => item.type === "text")!.text!.match(/read_artifact path=(submitted-inputs\/[a-f0-9-]+)/)![1]!;
+      return fauxAssistantMessage(fauxToolCall("read_artifact", { path: alias }, { id: `recipe_read_${index}` }), { stopReason: "toolUse" });
+    },
+    context => { expect(JSON.stringify(context.messages.at(-1))).toContain("RECIPE_FILE_MARKER"); return fauxAssistantMessage(fauxText("RECIPE_FILE_MARKER")); },
+  ]);
+  let actions: ReturnType<typeof createBotBrokerActions>;
+  const x = setup({ homePath: home, resolveRoute: async () => ({ route, accessSourceId: "matrix_included" }), worker: async input => {
+    const call = async (body: Record<string, unknown>) => {
+      const reply = await actions.handleFrame({ version: 1, requestId: crypto.randomUUID(), runtimeHandle: input.runtimeHandle, executionGeneration: input.executionGeneration, runId: input.command.runId, ...body });
+      if (!reply?.ok) throw new BotBrokerError((reply?.code ?? "unavailable") as never); return reply.result;
+    };
+    const worker = createBotWorker({ bridgeOrigin: "http://127.0.0.1:41000", route: { provider: faux.provider, model: faux.getModel() }, brokerFor: () => ({
+      loadRun: () => call({ action: "bot.run.load" }) as never, readImageChunk: image => call({ action: "bot.input.image", image }) as never,
+      loadSession: () => call({ action: "bot.session.load" }) as never, saveSession: session => call({ action: "bot.session.save", session }) as never,
+      event: async event => { await call({ action: "bot.event", event }); }, tool: tool => call({ action: "bot.tool", tool }) as never,
+    }) });
+    return worker.handle({ version: 1, kind: "bot.run", runId: input.command.runId });
+  } });
+  actions = createBotBrokerActions({ db, registry: x.registry, sessions: createBotSessionsRepository(db), checkpoints: createBotCheckpointsRepository(db),
+    runs: x.orchestrator.runSource, events: x.orchestrator.eventSink,
+    tools: { effectClass: () => "read", dispatch: async (binding, request) => {
+      if (request.capability !== "artifact.read") throw new Error("Only submitted reads");
+      const text = await x.orchestrator.readSubmittedArtifact(binding, request.args); expect(text).toBe("RECIPE_FILE_MARKER");
+      return { result: { ok: true, content: [{ type: "text", text: text! }] } };
+    } }, inference: { homePath: home, lifetime: new AbortController().signal } });
+  try {
+    await mkdir(join(home, "temporary/desktop-chat"), { recursive: true }); await writeFile(join(home, "temporary/desktop-chat/photo.png"), png); await writeFile(join(home, "temporary/desktop-chat/marker.txt"), "RECIPE_FILE_MARKER");
+    const parts = [{ type: "attachment_reference" as const, attachmentId: "att_recipe_photo", kind: "image" as const, mimeType: "image/png", label: "photo.png", ownerReference: "temporary/desktop-chat/photo.png" },
+      { type: "attachment_reference" as const, attachmentId: "att_recipe_file", kind: "file" as const, mimeType: "text/plain", label: "marker.txt", ownerReference: "temporary/desktop-chat/marker.txt" }];
+    for (let index = 0; index < 2; index++) {
+      const events = await collect(x.adapter.start({ ...turn(undefined, `run_recipe_input_${index}`, ""), prompt: "Inspect attached files", parts }));
+      expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+      expect(events).toContainEqual({ type: "assistant.delta", delta: "RECIPE_FILE_MARKER" });
+    }
+    expect(observed).toBe(2); expect(faux.state.callCount).toBe(4); expect(x.registry.size).toBe(0);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});

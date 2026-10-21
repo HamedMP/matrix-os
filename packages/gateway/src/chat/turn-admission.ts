@@ -1,3 +1,4 @@
+import { prepareChatSessionContext } from "./session-history.js";
 import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -5,6 +6,7 @@ import {
   CanonicalChatRunSchema, CanonicalChatTurnAdmissionResponseSchema,
   type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
   type CanonicalChatTurnAdmissionResponse,
+  canonicalExecutionRootProjectId,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
@@ -19,7 +21,7 @@ import { loadChatResumeState } from "./resume-checkpoint.js";
 import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 
 export interface TurnAdmissionOptions {
-  repository: Pick<ChatRepository, "get" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
+  repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
@@ -32,9 +34,11 @@ export interface TurnAdmissionOptions {
   releasePendingDispatch(runId: string): void;
   atCapacity(owner: ChatOwner): boolean;
   hasStoppingExecution(owner: ChatOwner, chatId: string, admissionKey?: string): boolean;
+  beforePreviewDispatch?: (input: { actorId: string; chatId: string; turnId: string; runId: string;
+    clientRequestId: string; body: CanonicalCreateChatTurnRequest; proof: string }) => Promise<void | (() => void)>;
   startDispatch(owner: ChatOwner, message: CanonicalChatMessage, run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter, root?: ResolvedChatExecutionRoot, resumeState?: unknown,
-    promptOverride?: string, admissionKey?: string): void;
+    promptOverride?: string, admissionKey?: string): Promise<void>;
 }
 
 const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
@@ -42,6 +46,7 @@ const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
 export async function admitCanonicalTurn(
   deps: TurnAdmissionOptions, principal: RequestPrincipal, owner: ChatOwner,
   chatId: string, inputValue: CanonicalCreateChatTurnRequest,
+  provenance?: { previewTurnProof?: string },
 ): Promise<CanonicalChatTurnAdmissionResponse> {
     deps.assertOpen();
     await deps.assertPersonalExecutionAllowed(owner, chatId);
@@ -63,7 +68,7 @@ export async function admitCanonicalTurn(
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
     const effective = { ...input, ...prepared };
-    const catalog = await deps.catalog.getCatalog(principal);
+    const catalog = await deps.catalog.getCatalog(principal, effective.selection);
     const requirements = requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
       part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
     const validated = validateChatProviderSelection({
@@ -85,9 +90,18 @@ export async function admitCanonicalTurn(
         503,
       );
     }
+    // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
+    // so no ordinary Chat can mount a bot's private files.
+    if (input.executionRoot?.kind === "bot_workspace") {
+      throw new CanonicalChatOrchestrationError(
+        safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
+        400,
+      );
+    }
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
-    if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
+    if (input.executionRoot && record.projectId
+      && canonicalExecutionRootProjectId(input.executionRoot) !== record.projectId) {
       throw new CanonicalChatOrchestrationError(
         safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
         400,
@@ -123,10 +137,13 @@ export async function admitCanonicalTurn(
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
     });
-    if (resumeState !== undefined && prepared?.context?.history) {
-      const { history: _history, ...context } = prepared.context;
-      prepared.context = context;
-    }
+    let sessionContext: CanonicalChatRun["context"];
+    try {
+      sessionContext = await prepareChatSessionContext({
+        repository: deps.repository, owner, chatId, throughSeq: record.chat.messageCount,
+        requestHash, instanceId: validated.instance.id, resumeState, context: prepared?.context,
+      });
+    } catch (error: unknown) { return mapRepositoryError(error); }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),
@@ -165,8 +182,8 @@ export async function admitCanonicalTurn(
       instanceId: validated.instance.id,
       selection: validated.selection,
       interactionMode: effective.interactionMode,
-      ...(prepared?.context ? { context: prepared.context } : {}),
-      permissionMode: input.permissionMode,
+      ...(sessionContext ? { context: sessionContext } : {}),
+      permissionMode: effective.permissionMode,
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
         executionRootFingerprint: resolvedRoot.fingerprint,
@@ -209,6 +226,15 @@ export async function admitCanonicalTurn(
       return mapRepositoryError(error);
     }
 
+    let previewCleanup: void | (() => void) = undefined;
+    const disposePendingPreview = () => {
+      try {
+        if (previewCleanup) previewCleanup();
+      } catch (error: unknown) {
+        console.warn("[chat] Preview Drive admission cleanup failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    };
+    let dispatched = false;
     try {
       if (!admitted.alreadyAccepted) {
         const stopping = deps.hasStoppingExecution(owner, chatId);
@@ -225,7 +251,37 @@ export async function admitCanonicalTurn(
             503,
           );
         }
-        deps.startDispatch(
+        if (adapter.driverKind === "claude_code" && input.permissionMode === "supervised"
+          && input.interactionMode === "default" && provenance?.previewTurnProof
+          && deps.beforePreviewDispatch) {
+          try {
+            previewCleanup = await deps.beforePreviewDispatch({ actorId: principal.userId, chatId, turnId: admitted.turn.id,
+              runId: admitted.run.id, clientRequestId: input.clientRequestId, body: input,
+              proof: provenance.previewTurnProof });
+          } catch (error: unknown) {
+            // The Chat turn remains valid, but the personal integration stays unavailable.
+            console.warn("[chat] Preview Drive turn redemption failed", error instanceof Error ? error.name : "UnknownError");
+          }
+        }
+        // Redemption yields to other admissions and shutdown. Keep this final
+        // check synchronous with startDispatch's active registration.
+        try {
+          deps.assertOpen();
+          if (deps.hasStoppingExecution(owner, chatId)) return mapRepositoryError(new ChatBusyError(chatId));
+          if (deps.atCapacity(owner)) {
+            throw new CanonicalChatOrchestrationError(
+              safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
+              503,
+            );
+          }
+        } catch (error: unknown) {
+          await deps.repository.finishRun(owner, {
+            chatId, runId: admitted.run.id, outcome: "failed",
+            completedAt: (deps.now ?? (() => new Date()))().toISOString(),
+          });
+          throw error;
+        }
+        const completion = deps.startDispatch(
           owner,
           admitted.message,
           admitted.run,
@@ -235,6 +291,10 @@ export async function admitCanonicalTurn(
           undefined,
           admissionKey,
         );
+        // Startup may fail before a provider issues the capability. Disposal
+        // only removes this exact pending entry; issued capabilities own cleanup.
+        if (previewCleanup) void completion.then(disposePendingPreview, disposePendingPreview);
+        dispatched = true;
       }
       return CanonicalChatTurnAdmissionResponseSchema.parse({
         record: admitted.chat,
@@ -244,6 +304,10 @@ export async function admitCanonicalTurn(
         admission: admitted.alreadyAccepted ? "already_accepted" : "accepted",
       });
     } finally {
-      deps.releasePendingDispatch(run.id);
+      try {
+        if (!dispatched) disposePendingPreview();
+      } finally {
+        deps.releasePendingDispatch(run.id);
+      }
     }
 }

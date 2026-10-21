@@ -4,14 +4,11 @@ import { describe, expect, it } from "vitest";
 describe("platform database startup migration", () => {
   it("serializes the full schema migration on one transaction-scoped advisory lock", async () => {
     const source = await readFile("packages/platform/src/db.ts", "utf8");
-    const wrapperStart = source.indexOf("async function migrate(");
-    const schemaStart = source.indexOf("async function migrateSchema(");
-
-    expect(wrapperStart).toBeGreaterThanOrEqual(0);
-    expect(schemaStart).toBeGreaterThan(wrapperStart);
-
-    expect(source.slice(wrapperStart, schemaStart)).toContain('await runPlatformMigration(db, migrateSchema, {');
-    expect(source.slice(wrapperStart, schemaStart)).toContain('revision: PLATFORM_SCHEMA_REVISION');
+    expect(source).toContain('const ready = runPlatformStartupMigrations(kysely)');
+    const composition = await readFile('packages/platform/src/database/run-migrations.ts', 'utf8');
+    expect(composition).toContain('await runPlatformMigration(db, migratePlatformSchema, {');
+    expect(composition).toContain('revision: PLATFORM_SCHEMA_REVISION');
+    expect(composition).toContain('scope: \'whatsapp\', revision: WHATSAPP_SCHEMA_REVISION');
     const wrapper = await readFile('packages/platform/src/migration-runner.ts', 'utf8');
     const transactionStart = wrapper.indexOf("await db.transaction().execute");
     const callbackStart = wrapper.indexOf("=> {", transactionStart);

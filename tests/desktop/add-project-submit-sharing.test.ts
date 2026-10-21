@@ -33,6 +33,27 @@ function context(overrides: Partial<AddProjectSubmitContext> = {}): AddProjectSu
 }
 
 describe("add-project sharing handoff", () => {
+  it("awaits the optional Chat move before closing the existing Project dialog", async () => {
+    let finish!: () => void;
+    const ctx=context({onProjectReady:vi.fn(()=>new Promise<void>(resolve=>{finish=resolve}))});
+    const submission=openExistingProject(ctx,existingProject.slug);
+    await Promise.resolve();
+    expect(ctx.onProjectReady).toHaveBeenCalledWith(existingProject);
+    expect(ctx.close).not.toHaveBeenCalled();
+    finish();
+    await submission;
+    expect(ctx.close).toHaveBeenCalledOnce();
+    expect(ctx.openTab).toHaveBeenCalledWith({kind:"project",projectSlug:existingProject.slug,title:existingProject.name});
+  });
+
+  it("runs completion navigation after the normal Project tab is opened",async()=>{
+    const complete=vi.fn();
+    const ctx=context({onProjectReady:vi.fn(async()=>complete)});
+    await openExistingProject(ctx,existingProject.slug);
+    expect(complete).toHaveBeenCalledOnce();
+    expect(vi.mocked(ctx.openTab).mock.invocationCallOrder[0]).toBeLessThan(complete.mock.invocationCallOrder[0]!);
+  });
+
   it("preserves the canonical project ID returned by clone creation", async () => {
     const api = {
       post: vi.fn(async () => ({

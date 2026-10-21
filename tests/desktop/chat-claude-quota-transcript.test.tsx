@@ -24,7 +24,7 @@ it.each(["assistant", "result"])("renders the %s quota reset safely from live SS
   const client = createCanonicalChatWorkspaceClient();
   const initial = await h.getDetail();
   vi.mocked(client.list).mockResolvedValue({ items: [initial.record] });
-  vi.mocked(client.getDetail).mockResolvedValue(initial);
+  vi.mocked(client.getDetail).mockImplementation(async () => h.getDetail());
   client.acknowledgeCompletion = async (chatId, runId) => h.repository.acknowledgeCompletion(h.owner, chatId, runId);
   try {
     await startCanonicalChatAfterReplay(source);
@@ -48,7 +48,7 @@ it.each(["assistant", "result"])("renders the %s quota reset safely from live SS
       await h.orchestrator.drain();
     });
     const log = within(screen.getByRole("log"));
-    const message = "The agent could not complete its reply. Try again or check Agents & providers.";
+    const message = "Usage limit reached. Resets 2026-09-14 13:00 UTC.";
     await waitFor(() => expect(log.getAllByText(message)).toHaveLength(1));
     expect(log.queryByRole("button", { name: /retry/i })).toBeNull();
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();

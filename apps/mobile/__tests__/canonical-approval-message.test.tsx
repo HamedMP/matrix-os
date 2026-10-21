@@ -29,6 +29,18 @@ it("submits a one-time decision to the selected chat and run, then refreshes", a
   await waitFor(() => expect(refresh).toHaveBeenCalled());
 });
 
+it("forwards the pending approval's action digest for a bounded Drive action", async () => {
+  const actionDigest = "c".repeat(64);
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true,
+    json: async () => ({ approvalId: "approval_test", decision: "approve", submission: "accepted" }) } as Response);
+  render(<CanonicalApprovalMessage {...props} approval={{ ...approval, actionDigest,
+    allowedDecisions: [...approval.allowedDecisions] }} />);
+  fireEvent.press(screen.getByText("Approve"));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  const request = fetchMock.mock.calls[0]?.[1];
+  expect(JSON.parse(String(request?.body))).toMatchObject({ actionDigest, decision: "approve" });
+});
+
 it("does not render action buttons on a settled approval", () => {
   render(<CanonicalApprovalMessage {...props} approval={{ ...approval, pending: false, allowedDecisions: [...approval.allowedDecisions] }} />);
   expect(screen.queryByText("Approve")).toBeNull();

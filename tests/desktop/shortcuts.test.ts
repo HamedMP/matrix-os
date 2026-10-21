@@ -290,6 +290,8 @@ describe("handleNewContextShortcut", () => {
       closable: true,
     });
     expect(useTabs.getState().tabs[1]?.chatId).toBeUndefined();
+    expect(useDesktopSurfaces.getState().surfaces[chatId]?.mode).toBe("window");
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
 
     const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
     useDesktopSurfaces.getState().reconcileTabs([chatId, filesId], { width: 1280, height: 720 });
@@ -300,17 +302,97 @@ describe("handleNewContextShortcut", () => {
     expect(useTabs.getState().tabs).toHaveLength(tabCount);
   });
 
-  it("does not create a chat for a hidden Chat surface", () => {
-    const newChat = vi.fn();
-    useHermesChat.setState({ newChat });
-    const chatId = useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false });
-    useDesktopSurfaces.getState().reconcileTabs([chatId], { width: 1280, height: 720 });
-    useDesktopSurfaces.getState().showDesktop();
+  it.each(["conversation", "draft"] as const)(
+    "opens a focused floating draft without changing the source %s",
+    (chatView) => {
+      const sourceId = useTabs.getState().openTabInstance({
+        kind: "chat", title: "Retained Chat", chatView,
+        ...(chatView === "conversation" ? { chatId: "existing-chat" } : {}),
+        closable: true,
+      });
+      useDesktopSurfaces.getState().reconcileTabs([sourceId], { width: 1280, height: 720 });
+      useDesktopSurfaces.getState().setSurfaceBounds(sourceId,
+        { x: 60, y: 40, width: 900, height: 600 }, { width: 1280, height: 720 });
+      const sourceTab = useTabs.getState().tabs[0];
+      const sourceSurface = useDesktopSurfaces.getState().surfaces[sourceId];
+      const newChat = vi.fn();
+      useHermesChat.setState({ newChat });
+
+      handleNewContextShortcut({ preventDefault: vi.fn() });
+
+      const tabs = useTabs.getState();
+      const surfaces = useDesktopSurfaces.getState();
+      const draft = tabs.tabs[1]!;
+      expect(tabs.tabs[0]).toBe(sourceTab);
+      expect(surfaces.surfaces[sourceId]).toEqual(sourceSurface);
+      expect(draft).toMatchObject({ kind: "chat", chatView: "draft", closable: true });
+      expect(draft.chatId).toBeUndefined();
+      expect(draft.id).not.toBe(sourceId);
+      expect(tabs.activeTabId).toBe(draft.id);
+      expect(surfaces.workspaceView).toBe("desktop");
+      expect(surfaces.surfaces[draft.id]).toMatchObject({ mode: "window", restoreMode: "window" });
+      expect(surfaces.surfaces[draft.id]!.zIndex).toBeGreaterThan(sourceSurface!.zIndex);
+      const bounds = surfaces.surfaces[draft.id]!.bounds;
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.y).toBeGreaterThanOrEqual(0);
+      expect(bounds.width).toBeGreaterThan(0);
+      expect(bounds.height).toBeGreaterThan(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(1280);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(720);
+      expect(newChat).not.toHaveBeenCalled();
+    },
+  );
+
+  it("opens a new tab from a maximized Chat without changing its retained route or bounds", () => {
+    const sourceId = useTabs.getState().openTab({
+      kind: "chat", title: "Retained history", chatId: "existing-chat", closable: false,
+    });
+    useDesktopSurfaces.getState().reconcileTabs([sourceId], { width: 1280, height: 720 });
+    useDesktopSurfaces.getState().maximizeToTab(sourceId);
+    const sourceTab = useTabs.getState().tabs[0];
+    const sourceSurface = useDesktopSurfaces.getState().surfaces[sourceId];
 
     handleNewContextShortcut({ preventDefault: vi.fn() });
 
-    expect(newChat).not.toHaveBeenCalled();
+    const tabs = useTabs.getState();
+    const surfaces = useDesktopSurfaces.getState();
+    const newId = tabs.tabs[1]!.id;
+    expect(tabs.tabs[0]).toBe(sourceTab);
+    expect(surfaces.surfaces[sourceId]).toEqual(sourceSurface);
+    expect(tabs.activeTabId).toBe(newId);
+    expect(tabs.tabs[1]).toMatchObject({ kind: "chat", chatView: "draft" });
+    expect(tabs.tabs[1]!.chatId).toBeUndefined();
+    expect(surfaces.surfaces[newId]).toMatchObject({ mode: "tab", restoreMode: "tab" });
+    expect(surfaces.workspaceView).toBe("tabs");
   });
+
+  it.each(["hidden", "minimized", "closed", "background-window", "background-tab"])(
+    "does not create a draft from a %s Chat",
+    (visibility) => {
+      const sourceId = useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false });
+      useDesktopSurfaces.getState().reconcileTabs([sourceId], { width: 1280, height: 720 });
+      const surfaces = useDesktopSurfaces.getState();
+      if (visibility === "hidden") surfaces.showDesktop();
+      if (visibility === "minimized") surfaces.minimizeSurface(sourceId);
+      if (visibility === "closed") surfaces.closeSurface(sourceId);
+      if (visibility === "background-window") surfaces.setWorkspaceView("tabs");
+      if (visibility === "background-tab") {
+        surfaces.maximizeToTab(sourceId);
+        surfaces.setWorkspaceView("desktop");
+      }
+      const beforeTabs = useTabs.getState().tabs;
+      const beforeSurfaces = useDesktopSurfaces.getState().surfaces;
+      const newChat = vi.fn();
+      useHermesChat.setState({ newChat });
+
+      handleNewContextShortcut({ preventDefault: vi.fn() });
+
+      expect(useTabs.getState().tabs).toBe(beforeTabs);
+      expect(useDesktopSurfaces.getState().surfaces).toBe(beforeSurfaces);
+      expect(newChat).not.toHaveBeenCalled();
+    },
+  );
+
 });
 
 describe("handleCycleTabShortcut", () => {

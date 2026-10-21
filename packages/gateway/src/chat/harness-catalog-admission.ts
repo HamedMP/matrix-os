@@ -29,7 +29,7 @@ export function configuredSystemModel(settings: ProviderSettingsSnapshot | null,
   const harness = enabled[0]!;
   const source = settings?.accessSources.find(candidate => candidate.id === harness.accessSourceId);
   if (!isSupportedGenericHarnessCredentialRoute(harness, source)) return null;
-  const native = source?.kind === "harness_profile" && kind === "hermes"
+  const native = source?.kind === "harness_profile" && (kind === "hermes" || kind === "openclaw")
     ? hermesNativeModelId(harness, source) : undefined;
   return native === null ? null : `${harness.route.providerId}:${native ?? harness.route.modelId}`;
 }
@@ -43,7 +43,7 @@ function configuredSystemInstance(
   if (instance.availability !== "available") {
     return unavailableInstance(instance, unavailableReasonFor(instance));
   }
-  const nativeModel = source?.kind === "harness_profile" && harness.harness === "hermes"
+  const nativeModel = source?.kind === "harness_profile" && (harness.harness === "hermes" || harness.harness === "openclaw")
     ? hermesNativeModelId(harness, source) : undefined;
   if (nativeModel === null) return unavailableInstance(instance, "runtime_not_runnable");
   const modelId = `${harness.route.providerId}:${nativeModel ?? harness.route.modelId}`;
@@ -67,6 +67,7 @@ export function applyHarnessSettings(input: {
   settings: ProviderSettingsSnapshot | null;
   settingsRequired: boolean;
   settingsAvailable: boolean;
+  includeSettingsSetupActions?: boolean;
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
   credentialedDriverKinds?: readonly CanonicalProviderDriverKind[];
   aiSnapshot?: AiProviderSnapshotV3;
@@ -80,10 +81,18 @@ export function applyHarnessSettings(input: {
       if (input.settingsRequired && !input.settingsAvailable && instance.availability !== "setup_required") {
         return unavailableInstance(instance, "settings_unavailable");
       }
-      const saved = input.settings?.harnesses.filter((harness) => harness.harness === harnessKind) ?? [];
+      const saved = input.settings?.harnesses.filter((harness) => harness.harness === harnessKind
+        && !(harnessKind === "claude" && harness.id === "harness_kernel")) ?? [];
       const enabled = saved.filter((harness) => harness.configuredEnabled ?? harness.enabled);
       if (input.settingsAvailable && saved.length > 0 && enabled.length === 0) {
         return unavailableInstance(instance, "disabled_in_settings");
+      }
+      if (instance.driverKind === "claude_code" && saved.length > 0
+        && (enabled.length !== 1 || enabled[0]!.accessSourceId !== "owner_claude_profile"
+          || enabled[0]!.selectedAccountId !== "owner_claude_profile"
+          || (enabled[0]!.configuredAccessSourceId !== undefined
+            && enabled[0]!.configuredAccessSourceId !== "owner_claude_profile"))) {
+        return unavailableInstance(instance, "runtime_not_runnable");
       }
       const selectedSourceMatches = instance.driverKind === "codex" && input.settingsAvailable
         && enabled.length === 1
@@ -130,7 +139,9 @@ export function applyHarnessSettings(input: {
     if (configuredHarnesses.length > 0
       && configuredHarnesses.every((harness) => harness.configuredEnabled === false)
       && instance.availability !== "setup_required") {
-      return { ...unavailableInstance(instance, "disabled_in_settings"), setupActions: [] };
+      return { ...unavailableInstance(instance, "disabled_in_settings"),
+        setupActions: input.includeSettingsSetupActions && executable
+          ? instance.setupActions : [] };
     }
     if (settingsHarness !== null && input.settingsRequired && enabledHarnesses.length === 0) {
       if ((generic === "pi" || generic === "opencode") && configuredHarnesses.length > 0
@@ -251,7 +262,8 @@ export function applyHarnessSettings(input: {
     return unavailableInstance(configuredInstance, "runtime_not_runnable");
   });
   return projected.map(instance => {
-    const kind = instance.driverKind === "claude_code" ? "claude" : instance.driverKind;
+    if (instance.driverKind === "claude_code") return instance;
+    const kind = instance.driverKind;
     const harnesses = input.settings?.harnesses.filter(harness => harness.harness === kind) ?? [];
     if (harnesses.length !== 1) return instance;
     const source = input.settings?.accessSources.find(candidate => candidate.id === harnesses[0]!.accessSourceId);
@@ -259,6 +271,7 @@ export function applyHarnessSettings(input: {
     const fresh = source.readiness.staleAfter === null
       || Date.parse(source.readiness.staleAfter) > input.now.getTime();
     return { ...instance, connectionLabel: "Matrix AI", connectionState: instance.availability === "available"
-      ? "ready" as const : fresh && source.readiness.safeReason === "credit_required" ? "credit_required" as const : "unavailable" as const };
+      ? "ready" as const : fresh && source.readiness.safeReason === "credit_reserved" ? "credit_reserved" as const
+        : fresh && source.readiness.safeReason === "credit_required" ? "credit_required" as const : "unavailable" as const };
   });
 }

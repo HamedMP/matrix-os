@@ -9,6 +9,8 @@ import {
   type ProviderSettingsSnapshot,
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
+import { ManagedCreditRefresh } from "./managed-credit-refresh.js";
+import { useManagedCreditRefresh } from "./use-managed-credit-refresh.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 
 const LOAD_ERROR = "Provider settings are unavailable.";
@@ -19,6 +21,8 @@ const MAX_LISTENERS = 64;
 const MAX_ACTIVE_REQUESTS = 4;
 
 export type ProviderSettingsTransportErrorCode =
+  | "managed_credit_unsupported"
+  | "managed_credit_unauthorized"
   | "idempotency_conflict"
   | "invalid_request"
   | "invalid_response"
@@ -38,6 +42,7 @@ export class ProviderSettingsTransportError extends Error {
 }
 
 export interface ProviderSettingsTransport {
+  getManagedCredit?(signal: AbortSignal): Promise<unknown>;
   getSnapshot(signal: AbortSignal, options?: { refresh?: boolean }): Promise<unknown>;
   mutate(mutation: ProviderSettingsMutation, signal: AbortSignal): Promise<unknown>;
 }
@@ -53,9 +58,10 @@ export interface ProviderSettingsControllerState {
 
 export interface ProviderSettingsControllerOptions {
   identityKey: string;
+  automaticCreditRefreshEnabled?: boolean;
   transport: ProviderSettingsTransport;
   /** Called only after an explicit refresh or mutation snapshot is accepted. */
-  onCatalogChanged?: () => void;
+  onCatalogChanged?: (intent?: ProviderSettingsMutationIntent, previousSnapshot?: ProviderSettingsSnapshot) => void;
 }
 
 export interface ProviderSettingsMutationOptions {
@@ -110,8 +116,15 @@ export class ProviderSettingsController {
   private pendingMutations = 0;
   private mutationTail: Promise<void> = Promise.resolve();
   private disposed = false;
+  private readonly managedCredit: ManagedCreditRefresh;
 
   constructor(private readonly options: ProviderSettingsControllerOptions) {
+    this.managedCredit = new ManagedCreditRefresh({
+      read: options.transport.getManagedCredit?.bind(options.transport),
+      snapshot: () => this.state.snapshot,
+      blocked: () => this.disposed || this.state.busy,
+      apply: snapshot => this.update({ snapshot }),
+    });
     this.state = {
       identityKey: options.identityKey,
       snapshot: null,
@@ -138,6 +151,8 @@ export class ProviderSettingsController {
     this.update({ selectedHarnessId: harnessInstanceId });
   };
 
+  refreshManagedCredit = (signal?: AbortSignal) => this.managedCredit.refresh(signal);
+
   refresh = async (options: { refresh?: boolean } = { refresh: true }): Promise<void> => {
     if (this.disposed) return;
     if (this.pendingMutations > 0) await this.mutationTail;
@@ -153,6 +168,7 @@ export class ProviderSettingsController {
 
   mutate = (intent: ProviderSettingsMutationIntent, options?: ProviderSettingsMutationOptions): Promise<boolean> => {
     if (this.disposed) return Promise.resolve(false);
+    this.managedCredit.invalidate();
     this.pendingMutations += 1;
     this.syncBusy();
 
@@ -173,22 +189,26 @@ export class ProviderSettingsController {
   dispose = (): void => {
     if (this.disposed) return;
     this.disposed = true;
+    this.managedCredit.invalidate();
     for (const request of this.requests) request.abort();
     this.requests.clear();
     this.listeners.clear();
   };
 
   private async runRefresh(refresh = true): Promise<boolean> {
+    this.managedCredit.invalidate();
     const operationId = ++this.operationClock;
     const request = this.beginRequest("refresh");
     try {
       const raw = await this.options.transport.getSnapshot(request.signal, { refresh });
+      request.signal.throwIfAborted();
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
       const applied = this.applySnapshot(parsed.data, { operationId });
       if (applied && refresh) this.options.onCatalogChanged?.();
       return applied;
     } catch (error) {
+      if (request.signal.aborted) return false;
       console.warn("[provider-settings] Provider settings refresh failed:", error instanceof Error ? error.name : typeof error);
       if (!this.disposed && operationId >= this.appliedOperationId) this.update({ error: LOAD_ERROR });
       return false;
@@ -241,7 +261,7 @@ export class ProviderSettingsController {
         operationId,
         connectionAttempt: parsed.data.kind === "login_attempt" ? parsed.data.attempt : null,
       });
-      if (applied) this.options.onCatalogChanged?.();
+      if (applied) this.options.onCatalogChanged?.(intent, current);
       if (applied && !this.disposed && intent.type === "start_login"
         && parsed.data.kind === "login_attempt" && parsed.data.attempt.state === "pending"
         && this.state.connectionAttempt?.id === parsed.data.attempt.id && options?.onLoginAction) {
@@ -250,6 +270,22 @@ export class ProviderSettingsController {
         } catch (error) {
           console.warn("[provider-settings] Sign-in handoff failed:", error instanceof Error ? error.name : typeof error);
           if (!this.disposed) this.update({ error: LOGIN_ACTION_ERROR });
+        }
+      }
+      if (applied && parsed.data.snapshot.accounts.length > 0) {
+        // Mutations keep the historical schema. Re-read negotiated owner details
+        // without a full discovery refresh or replacing a newer operation.
+        try {
+          const enriched = ProviderSettingsSnapshotSchema.safeParse(await this.options.transport.getSnapshot(request.signal, { refresh: false }));
+          if (enriched.success && enriched.data.revision >= parsed.data.snapshot.revision) {
+            const recoveryError = this.state.error;
+            if (this.applySnapshot(enriched.data, { operationId }) && recoveryError !== null) {
+              this.update({ error: recoveryError });
+            }
+          }
+        } catch (error) {
+          console.warn("[provider-settings] Account details refresh failed:", error instanceof Error ? error.name : typeof error);
+          // The mutation is already confirmed; metadata failure is not its failure.
         }
       }
       return applied;
@@ -362,6 +398,8 @@ export function useProviderSettingsController(
   );
   const controller = lifecycle.controller;
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
+
+  useManagedCreditRefresh(controller, options.automaticCreditRefreshEnabled === true && state.snapshot !== null);
 
   useEffect(() => {
     const effectGeneration = ++lifecycle.effectGeneration;

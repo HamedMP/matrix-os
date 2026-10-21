@@ -28,7 +28,7 @@ export default function AccountSection() {
         <div className="flex items-center gap-3">
           <div
             className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-semibold"
-            style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+            style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}
           >
             {imageUrl ? (
               <img
@@ -55,6 +55,13 @@ export default function AccountSection() {
         <div className="flex items-center justify-between border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
           <Button variant="subtle" onClick={() => void invoke("shell:open-external", { url: manageUrl })}>
             Manage account
+          </Button>
+          <Button variant="subtle" onClick={() => {
+            void invoke("shell:open-external", { url: new URL("/account/delete", manageUrl).href }).catch((error: unknown) => {
+              console.warn("[settings] account page could not be opened", error instanceof Error ? error.name : "UnknownError");
+            });
+          }}>
+            Account data and deletion
           </Button>
           <Button
             variant="danger"

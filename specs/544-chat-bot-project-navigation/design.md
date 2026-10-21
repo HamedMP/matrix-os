@@ -1,0 +1,113 @@
+# Technical design
+
+Final UI scope approved; implementation is active on the current Matrix AI dependency stack.
+
+- Reuse spec 536/ENG-49 Bot runtime, binding, authority and memory. Coordinate ENG-107 route/model and ENG-65 Settings. Do not create a parallel runtime.
+- Keep canonical owner Postgres transcripts and stable Bot/Chat/Project IDs. Derive explicit server-authorized conversation classification; do not rely on names or assume driverKind identifies every older Bot. List separation is non-destructive.
+- Route center state as home, ordinary Chat, Project landing, Bot library/setup or Bot conversation. Preserve the current expandable Projects/Chats tree; Project selection differs from expansion. Render the shared rail in the exact user-specified order without a Recent section, and keep New chat in a sticky top region that remains visible while the rail scrolls.
+- Reuse current AgentAvatar -> RecipeRabbit visuals in existing icon slots across applicable surfaces; do not substitute Figma circular letter avatars.
+- @Bot candidate selection resolves stable identity through authenticated directChat API, navigates and pre-fills composed text without auto-send, source-provider switch or grant widening. Preserve any target draft and keep incoming text recoverable in the source on conflict/failure. Guard stale async navigation and active streaming.
+- Reuse shared status and attention helpers, canonical events, Bot detail and approval contracts across renderers. Pending Bot approvals also project a Needs you reminder keyed by stable Bot/Chat/approval identity. Clicking it opens the same bound Bot Chat; deduplicate reminder state and invalidate it when approvals resolve or summaries refresh. This reminder is not an ordinary Chat list entry.
+- Project assignment updates must preserve binding/root semantics, active-run conflicts, optimistic revision and transactional relation writes.
+- Keep @Chat and Company Drive resources separate from Bot navigation. Capability eligibility must come from trusted contracts.
+- Provide a Bot-specific selector at conversation start using existing Automatic and ENG-107 managed model choices. Exclude unsupported recipe runtime choices and explain unavailable reasons. Keep current routing semantics; show resolved source only from authoritative metadata and never label Automatic as exclusively Matrix-funded. Future Hermes/personal-subscription Pi adapters are outside this UI release.
+- Project integration eligibility as the intersection of runtime-served tools, recipe declarations, model tool support, fresh source readiness, connected exact account, Bot grant and approval requirements. Unconnected, unsupported, permission-required and credit-required states are distinct. Do not change backend funding/fallback policy in this release; explain observed selection and failures truthfully. Company Drive remains unavailable on Pi/Hermes until its authorized path exists.
+- Reuse `/api/chat-agents/:agentId/direct-chat`, `/api/chats/:chatId/bot`, canonical Chat and Bot interactions/authority endpoints. Introduce no new endpoint. Preserve current authentication, scoped authority, revision/idempotency checks and safe errors through existing clients.
+- Preserve older multiple Bot histories and existing coding-Agent definitions without migration or consolidation. Restyle supported lifecycle/setup controls only; defer any engine/API behavior missing from the existing backend.
+
+Proposed independent slices: Bot identity/list/@ continuity; unified state rail/Project view; Bot creation/details/approval; provider/context/discovery. Scheduler is deferred to ENG-93. Use these as ordered, independently verifiable slices within this task; no extra Codex chats or duplicate issues have been created. Shared identity/navigation must precede rail/Project changes; existing Bot surface/picker polish follows shared wiring; acceptance depends on the final UI revision; further Mobile/public-docs work is excluded.
+
+Rollout remains additive and reversible, preserving owner records. No production deployment or stack auto-merge. Require exact-head Preview/Electron and applicable surface parity; retain the previously opened public docs PR without additional documentation work.
+
+## Existing surface constraints
+
+- Electron Desktop owns the execution-Project tree and Project center described in R4. Current Web Desktop/Web Canvas Chat is a global canonical Chat host (`createCanonicalShellChatClient.list` requests `scope=global`); its existing Projects navigation is Organization Drive projects, not the execution-Project management surface. Retain that authorized discovery/file behavior rather than relabeling an organization Drive as an execution Project. The new shared Bot navigation/identity/model/attention behavior and canonical lifecycle grouping apply to those Web hosts. A future execution-Project Web host must supply the existing project/context contracts before claiming that center view.
+- Native Mobile already opens direct Bot conversations and supports their model/authority controls. Apply list exclusion and Bot approval attention there, and provide a collapsible Agents section so every known Bot history stays reachable after exclusion. Reuse the current rabbit asset and existing direct Chat opener. It has no @Agent candidate picker; adding one is outside this existing-surface restyle.
+- Shared per-PR Preview intentionally cannot proxy personal integrations. Test truthful unavailable states there; don't enable broader access to satisfy a visual fixture.
+
+
+## Executable client contract
+
+### Scope and signatures
+
+This release changes client projection and navigation only. Reuse `ChatAgentClient.bots.directChat(agentId): Promise<string | null>` and `directBot(chatId): Promise<string | null>`; no route, schema, funding policy or server authorization changes. `useDirectBotBinding(chatId, client, resolvedId?)` returns `agentId`, `status: loading | error | bot | ordinary`, and explicit retry. A pre-resolved value is trusted only when supplied by the authenticated host client.
+
+`useBotMentionNavigation(client, scope, open)` resolves Agent identity before invoking `open(chatId, text): boolean | Promise<boolean>`. A true result means the target accepted prefill; false means an existing target draft remains intact. Selection never sends a turn. The source remains recoverable until its host explicitly clears an unchanged draft. A matching authenticated non-recipe Agent with a null direct binding may use the existing inline path; missing/deleted recipe identities may not.
+
+### Projection and limits
+
+Shared Electron/Web Bot summaries classify the host's loaded history through the authenticated binding APIs. Cover at most 1,000 loaded records with four concurrent reads; overflow and failed reads remain unresolved and never become ordinary Chats. Cache up to 1,000 binding entries for 30 seconds with oldest-entry eviction. Refresh every 15 seconds while visible, on focus and on host refresh events; stop queued I/O when the client/scope changes. Native discovers current recipe bindings independently of the recent Chat window, adds historical loaded bindings, and uses scoped React Query keys with four concurrent reads. Query data becomes stale after 15 seconds and inactive cache entries are collected after 60 seconds; foreground refresh pauses in background.
+
+Draft stores are scoped to the client and bounded to 100 records. Project center selection retains the mounted draft host; expanding the Project tree does not select it. Recipe creation keeps its idempotency key through both instantiate and host-open, then clears it only on complete success.
+
+Conflicting @Bot handoff offers an explicit Return to original draft action. It restores the captured source Chat or unsent draft scope without invoking New chat reset, submitting text, or replacing the target draft. The recovery notice is visible only for its target Chat and current actor/runtime; changing authority clears it. Intentional New chat remains a fresh-draft action.
+
+Local attachments are not retained across the current composer unmount. While a source draft has local attachments, @Bot navigation stays in the source and explains that the attachments must be removed or sent first. This protects draft resources without adding a new attachment persistence layer.
+
+### Validation and error matrix
+
+| Evidence | Required client behavior |
+| --- | --- |
+| Binding loading or failed | Withhold ordinary provider/context actions; retain draft; offer retry on failure |
+| Authenticated Bot binding | Open the same bound Chat; exclude it from ordinary lists; retain a Bot entry |
+| Unknown/deleted mentioned Agent | Safe error, preserved source draft, no inline Agent token or send |
+| Existing target draft | Preserve target and source; do not overwrite or send |
+| Newer navigation before lookup finishes | Ignore old response; accepted host navigation may close its own sidebar |
+| Pending approval with future `expiresAt` | Separate Needs you entry opening the original Bot Chat |
+| Resolved/expired approval | Remove reminder on refreshed authoritative state |
+| Retained catalog during refresh | Display retained choices but disable edit/create until refresh resolves |
+| Older Agent library revision after save | Preserve the newer acknowledged editor/model revision |
+| Failed list or cross-runtime response | Safe generic error; no previous runtime's state or permission projection |
+
+### Cases and assertion points
+
+Good: opening a named Bot and mentioning it both reach the same persisted transcript with no new conversation or autosend. Base: an ordinary Chat with a confirmed null binding keeps the current coding provider controls. Bad: treating an unknown Bot lookup as an ordinary Chat, or injecting an Agent token into the source after a deleted recipe lookup.
+
+Required behavioral tests cover identity failures/retry, history beyond the former classification boundary, scoped cancellation/concurrency, target/source draft conflicts, stale navigation, accepted host close, expiring approvals, catalog refresh and model revision races. Event test fixtures must support multiple subscribers and remove only the disposed subscriber. Live acceptance additionally requires the same committed Electron source and installed Preview version, actual rail/project/Bot interactions and screenshots; unit fixtures cannot establish live admission or integration access.
+
+Wrong: `if (!agentId) showOrdinaryComposer()` while binding is loading/error. Correct: render ordinary controls only for `status === "ordinary"`, Bot controls for `status === "bot"`, and a retry/loading surface for other states.
+
+During binding recovery, only new composer input and admission-dependent Steer/Edit actions are gated. Already-authenticated queue Cancel/Reorder and active Run Stop remain available through their existing revisioned controllers. Identity unavailability must not prevent stopping existing work. Route regression tests cover ordinary, failed, and pending binding using real cancellation request adapters.
+
+A named inline-size Project container inside the horizontal WorkTab flex host must explicitly fill the available width and participate in flex growth (`min-w-0 w-full flex-1`). Otherwise intrinsic-size containment collapses its width, clips the title/composer and prevents responsive card queries. Acceptance must inspect actual Electron pixels at windowed and maximized sizes; accessibility text and jsdom state alone do not establish geometry.
+
+The Gateway dependency omits the owned Pi runtime from Bot headers, editors and cards. Preserve the compact Bot identity and Details action, while displaying the selected model and authoritative routing/funding labels in the composer. The backend remains the existing owned Pi path. An unresolved Automatic route must not invent a resolved provider or billing source.
+
+### Human Review correction contracts (2026-10-03)
+
+The sidebar order is New chat, Search, Shared with me, AGENTS, PINNED, PROJECTS, NEEDS YOU, WORKING, DONE. AGENTS and PROJECTS are uppercase section headers without leading icons with their counts and disclosure controls at the trailing edge. Selecting the Agents label opens existing management; its separate disclosure expands all authenticated Bot entries with + New agent at the end. New chat remains sticky and receives actual pointer input while maximized. A transparent window chrome wrapper must not consume input outside its real drag and control regions.
+
+Keep verified Bot/ordinary classification visible during history refresh within the same authenticated client and authority scope. New unknown records remain withheld until resolved. Authority changes discard retained classification. A successful terminal Chat remains in Done after acknowledgement; reading only removes its attention state.
+
+The Project title, Description/Files cards, ordinary Chat cards, connection guide, and composer share a 720px content column. The composer is anchored in the bottom region; cards scroll within the available center area. Explicit null Project context means detached, including when the current route is a Project. Do not coalesce that null back into the selected route's Project. Persisted ordinary Chat association remains authoritative when opening an existing Chat.
+
+Remove standalone Company Drive Add context controls and unavailable hints from ordinary, Project and Bot composers. Preserve the existing authorized contextual discovery path. Provider search has exactly one separator across loading, unavailable and populated states. Bot composer controls display authenticated identity and existing supported route/model choices; model mutations retain revision checks and safe errors.
+
+Bot conversation has one compact identity header. Details occupies a right panel scoped to the entire Chat content host, not a viewport-fixed overlay or an estimated percentage height. Editing uses the compact modal and existing backend-supported fields/actions. Templates use shared fixed-size actions and a responsive consistent card grid; management uses compact existing Agent entries rather than an invented hero/starter dashboard.
+
+Move to project is additive to the existing ordinary Chat context menu. The submenu lists active authorized Projects plus New project. Existing moves reuse revision-checked canonical Project assignment and refresh shared Chat/Project state only after confirmation. New project reuses the current creation dialog, awaits assignment before completion, and uses one serializable pending move scoped to the authenticated runtime. A stale completion must not clear a newer pending request. A failed move preserves the original assignment and exposes a safe retryable error; creating a Project does not authorize altering unrelated Chats.
+
+All sixteen review items require actual Electron Desktop acceptance at the final committed client and matching immutable Preview bundle, including real pointer hit testing, windowed/maximized geometry, completed Chats, send-time list retention, and existing/new Project submenu actions. Unit tests and accessibility actions alone cannot establish these visual or pointer conditions.
+
+The pre-existing after-inline-reference mention cursor mismatch is tracked separately in [ENG-109](https://linear.app/matrix-os/issue/ENG-109/fix-chat-mention-cursor-offsets-after-inline-reference-tokens). Recovery tests cover supported before-reference mention insertion and do not claim that editor defect is fixed.
+
+
+### Native geometry follow-up
+
+The Project body must continue the flex-column chain into CanonicalChatWorkspace; `flex-1` on a block wrapper does not establish bottom anchoring. Metadata and Chat cards share one scroll area capped at 60% of the available Project height, preserving composer space. Native acceptance must inspect tall/maximized and windowed layouts.
+
+For verified Bots, identity occupies the existing WorkTab toolbar title slot through `BotHeaderContext`, with shared BotChatPanel portaling only its header to the supplied HTMLElement. Ordinary/loading/failed bindings keep generic chrome. Status and Details remain in Chat content; host changes preserve Details open state and clean up old portals/reservations. Shared Web Bot chrome uses the same single-header contract.
+
+### Follow-up executable contracts
+
+1. **Scope/trigger:** presentation sort and failure recovery cross shared UI and Electron/Web canonical Chat renderers; no endpoint or funding behavior changes.
+2. **Signatures:** `parseRailOrderPreference(raw: string | null): RailOrderPreference`, `orderRailItems(items, mode, ids)`, and `moveRailItem(ids, source, target)` are shared pure helpers. `RailSortMode = "lastUpdated" | "manual"`. `BotModelRecoveryProvider` receives the authenticated Bot ID and `ChatAgentClient`; only matching bound canonical `failureCode === "model_unavailable"` replaces a failed notice.
+3. **Contracts:** local sort state is `{mode, chatIds, projectIds}` with at most 1,000 valid unique IDs each, IDs <=256 characters and raw JSON <=600,000 characters. Native storage key includes platform/account/Computer; drag payload includes current authority generation. Web sort is client-scoped in memory, not persisted using resource-owner identity. Canonical UI notice carries optional allowlisted `failureCode`; no new wire route/schema or raw server error is introduced. Recovery requests are scoped to client/Bot and stale callbacks are rejected.
+4. **Validation/error matrix:** malformed/oversize preference -> default Last updated; wrong scope/group drag -> ignored; absent Matrix choices -> creation disabled with availability/setup actions; ordinary or unresolved Chat failure -> existing generic notice; matching Bot model failure -> one recovery notice; missing Automatic source -> Automatic only; stale client callback -> ignored.
+5. **Cases:** Good: ready managed choice displays Matrix AI and its actual model. Base: Automatic remains honest while its resolved route is unknown. Bad: empty Matrix catalog silently creates a Codex Agent, or a retained old Bot callback opens model controls for a new binding.
+6. **Tests:** scoped preference parse/cap/order and drag/keyboard behaviors; no Recent with reachable fallback history; header/shared-row geometry contracts; Matrix-only new creation; host title lifecycle; exact failed-notice replacement and stale binding callbacks. Final native evidence covers idle/active scrollbar, 200ms disclosures, physical New chat, Project rows, recovery actions and real Needs you continuation.
+7. **Wrong/correct:** Wrong: rendering terminal Bot task errors above an existing failed-turn card or labeling Automatic Matrix AI by assumption. Correct: retain history in Details and replace only the matching canonical failure notice; render a concrete source/model only from authoritative saved selection.
+
+### Visible Agent host titles
+
+`SurfaceChromeSpec.showTitle?: boolean` explicitly opts an Agent view into the shared `DesktopSurfaceFrame` toolbar when the ordinary draft sidebar would suppress its title. `hideTitle` retains precedence. WorkTab enables `showTitle` only while Agents content is open; its scoped title is New agent, Your AI team or Edit agent. Content remains hosted with a screen-reader heading and never adds a duplicate visible body header. Closing or navigating releases the Agent title and preserves ordinary draft/title and authenticated Bot portal behavior. Required regression: render the actual Frame, OSWindow, WorkTab and hosted rail in both floating and maximized modes; verify visible toolbar text through Templates -> team -> edit -> creation -> close, rather than merely finding the screen-reader heading. Native pixels must independently confirm both modes.

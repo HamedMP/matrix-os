@@ -8,94 +8,20 @@ import {
   shouldLogIntegrationWarning,
   type ConnectedService,
 } from "./integrations-helpers";
+import { IntegrationMarketplace } from "@matrix-os/ui";
+import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
+import { ConnectedIntegrationAccounts } from "./ConnectedIntegrationAccounts";
 import { CustomMcpServersPanel } from "./CustomMcpServersPanel";
 
 const GATEWAY = getGatewayUrl();
 
-interface ServiceDef {
-  id: string;
-  name: string;
-  category: string;
-  icon: string;
-  logoUrl?: string;
-  actions: Record<string, unknown>;
-}
-
-const CATEGORY_COLORS: Record<string, string> = {
-  google: "bg-blue-500",
-  developer: "bg-gray-700",
-  communication: "bg-indigo-500",
-};
-
-function ServiceLogo({ name, category, logoUrl }: { name: string; category: string; logoUrl?: string }) {
-  const [imgError, setImgError] = useState(false);
-  const bg = CATEGORY_COLORS[category] ?? "bg-primary";
-
-  if (logoUrl && !imgError) {
-    return (
-      // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- remote service logo from arbitrary unconfigured host; next/image would require host allowlisting
-      <img
-        src={logoUrl}
-        alt={name}
-        width={40}
-        height={40}
-        className="size-10 rounded-lg shrink-0 object-contain"
-        onError={() => setImgError(true)}
-      />
-    );
-  }
-
-  return (
-    <div className={`size-10 rounded-lg ${bg} flex items-center justify-center text-white font-semibold text-sm shrink-0`}>
-      {name.charAt(0).toUpperCase()}
-    </div>
-  );
-}
-
-function StatusDot({ status }: { status: string }) {
-  const color =
-    status === "active"
-      ? "bg-green-500"
-      : status === "expired"
-        ? "bg-yellow-500"
-        : "bg-red-500";
-  return <span className={`inline-block size-2 rounded-full ${color}`} />;
-}
-
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  } catch (_err: unknown) {
-    return iso;
-  }
-}
-
-function groupByService(connections: ConnectedService[]): Map<string, ConnectedService[]> {
-  const groups = new Map<string, ConnectedService[]>();
-  for (const conn of connections) {
-    const existing = groups.get(conn.service);
-    if (existing) {
-      existing.push(conn);
-    } else {
-      groups.set(conn.service, [conn]);
-    }
-  }
-  return groups;
-}
-
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the available/connected lists, load/error flags, and the many independent per-action progress flags (connecting, disconnecting, checkingStatus, renaming, etc.) are distinct UI concerns, not a single cohesive state machine; a reducer would not simplify them.
-// react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive integrations panel whose connect/disconnect/rename/check/poll handlers all close over shared local state; splitting would scatter that state and the poll-ref lifecycle across props/context without reducing complexity. Real decomposition is out of scope for this behavior-preserving pass.
 export function IntegrationsSection() {
-  const [available, setAvailable] = useState<ServiceDef[]>([]);
+  const [available, setAvailable] = useState<IntegrationCatalogItem[]>([]);
   const [connected, setConnected] = useState<ConnectedService[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
-  const [connectLabels, setConnectLabels] = useState<Record<string, string>>({});
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
@@ -105,6 +31,7 @@ export function IntegrationsSection() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState<string>("");
   const [savingRename, setSavingRename] = useState<string | null>(null);
+  const connectInFlight = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -112,16 +39,25 @@ export function IntegrationsSection() {
   const loadData = useCallback(async () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `loading` on every path; the code is correct and the finalizer must run whether the loads resolve, reject, or throw.
     try {
-      const [availRes, connRes] = await Promise.all([
-        fetch(`${GATEWAY}/api/integrations/available`, { signal: AbortSignal.timeout(10_000) }),
-        fetch(`${GATEWAY}/api/integrations`, { signal: AbortSignal.timeout(10_000) }),
+      const readJson = async (url: string) => {
+        const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        if (!response.ok) throw new Error("Integrations unavailable");
+        return response.json();
+      };
+      const [availResult, connResult] = await Promise.allSettled([
+        readJson(`${GATEWAY}/api/integrations/available`),
+        readJson(`${GATEWAY}/api/integrations`),
       ]);
-      if (availRes.ok) {
-        const data = await availRes.json();
+      setError(availResult.status === "rejected" || connResult.status === "rejected" ? "Failed to load integrations" : null);
+      for (const result of [availResult, connResult]) {
+        if (result.status === "rejected") console.warn("[integrations] Load failed", { errorName: result.reason instanceof Error ? result.reason.name : "UnknownError" });
+      }
+      if (availResult.status === "fulfilled") {
+        const data = availResult.value;
         setAvailable(data.services ?? data);
       }
-      if (connRes.ok) {
-        const data = await connRes.json();
+      if (connResult.status === "fulfilled") {
+        const data = connResult.value;
         const connections: ConnectedService[] = data.connections ?? data;
         setConnected(connections);
 
@@ -176,11 +112,7 @@ export function IntegrationsSection() {
         const data = await res.json();
         if (data?.services) setConnected(data.services);
       } else {
-        const body = await res.json().catch((err: unknown) => {
-          console.warn("[integrations] failed to parse refresh error body:", err instanceof Error ? err.message : String(err));
-          return {};
-        });
-        setError(body.error ?? "Failed to refresh");
+        setError("Could not refresh connected apps. Try again.");
       }
     } catch (err) {
       if (shouldLogIntegrationWarning(err)) {
@@ -242,9 +174,14 @@ export function IntegrationsSection() {
   }, [loadData]);
 
   const handleConnect = async (serviceId: string, label?: string) => {
+    if (connecting || connectInFlight.current) return;
+    connectInFlight.current = true;
+    let popup: Window | null = null;
     setConnecting(serviceId);
     setError(null);
     try {
+      popup = window.open("about:blank", "_blank", "width=600,height=700");
+      if (!popup) throw new Error("Consent window blocked");
       const payload: Record<string, string> = { service: serviceId };
       if (label?.trim()) payload.label = label.trim();
       const res = await fetch(`${GATEWAY}/api/integrations/connect`, {
@@ -254,16 +191,18 @@ export function IntegrationsSection() {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
-        const body = await res.json().catch((err: unknown) => {
-          console.warn("[integrations] failed to parse connect error body:", err instanceof Error ? err.message : String(err));
-          return {};
-        });
-        setError(body.error ?? "Failed to start connection");
+        setError("Could not start connection. Try again.");
         setConnecting(null);
+        popup?.close();
+        connectInFlight.current = false;
         return;
       }
       const { url } = await res.json();
-      window.open(url, "_blank", "width=600,height=700");
+      const consentUrl = new URL(url);
+      if (consentUrl.protocol !== "https:") throw new Error("Invalid consent URL");
+      if (!popup) throw new Error("Consent window blocked");
+      popup.opener = null;
+      popup.location.href = consentUrl.href;
 
       // Clear any existing poll before starting a new one
       if (pollRef.current) {
@@ -325,8 +264,11 @@ export function IntegrationsSection() {
           err instanceof Error ? err.message : err,
         );
       }
-      setError("Failed to initiate connection");
+      popup?.close();
+      setError("Could not open sign-in. Allow popups and try again.");
       setConnecting(null);
+    } finally {
+      connectInFlight.current = false;
     }
   };
 
@@ -398,11 +340,7 @@ export function IntegrationsSection() {
         setRenamingId(null);
         setRenameDraft("");
       } else {
-        const body = await res.json().catch((err: unknown) => {
-          console.warn("[integrations] failed to parse rename error body:", err instanceof Error ? err.message : String(err));
-          return {};
-        });
-        setError(body.error ?? "Failed to rename account");
+        setError("Could not rename account. Try again.");
       }
     } catch (err) {
       if (shouldLogIntegrationWarning(err)) {
@@ -446,24 +384,23 @@ export function IntegrationsSection() {
     }
   };
 
-  const connectedServiceIds = new Set(connected.map((c) => c.service));
 
   if (loading) {
     return (
-      <div className="max-w-3xl mx-auto p-6">
-        <h2 className="text-lg font-semibold mb-2">Integrations</h2>
+      <div className="max-w-4xl mx-auto p-6">
+        <h2 className="text-lg font-semibold mb-2">Connect Apps</h2>
         <p className="text-sm text-muted-foreground">Loading...</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-8">
+    <div className="max-w-4xl mx-auto p-6 space-y-8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold">Integrations</h2>
+          <h2 className="text-lg font-semibold">Connect Apps</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Connect external services to extend your agent's capabilities.
+            Connect apps to let Matrix work across your tools.
           </p>
         </div>
         <button
@@ -483,234 +420,9 @@ export function IntegrationsSection() {
         </div>
       )}
 
-      {/* Connected Services -- grouped by service */}
-      {connected.length > 0 && (
-        <section className="space-y-3">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-            Connected
-          </h3>
-          <div className="space-y-4">
-            {Array.from(groupByService(connected)).map(([serviceId, accounts]) => {
-              const def = available.find((s) => s.id === serviceId);
-              const serviceName = def?.name ?? serviceId;
-              const category = def?.category ?? "developer";
-              const hasMultiple = accounts.length > 1;
-              return (
-                <div key={serviceId} className="space-y-1">
-                  {hasMultiple && (
-                    <div className="flex items-center gap-2 mb-2">
-                      <ServiceLogo name={serviceName} category={category} logoUrl={def?.logoUrl} />
-                      <span className="text-sm font-medium">{serviceName}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {accounts.length} accounts
-                      </span>
-                    </div>
-                  )}
-                  <div className={`space-y-2 ${hasMultiple ? "ml-12" : ""}`}>
-                    {accounts.map((conn) => (
-                      <div
-                        key={conn.id}
-                        className="flex items-center gap-4 rounded-lg border border-border/60 bg-card/50 px-4 py-3"
-                      >
-                        {!hasMultiple && (
-                          <ServiceLogo name={serviceName} category={category} logoUrl={def?.logoUrl} />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            {renamingId === conn.id ? (
-                              <input
-                                type="text"
-                                aria-label="Account label"
-                                // react-doctor-disable-next-line react-doctor/no-autofocus -- inline rename field rendered only after user clicks rename; focus is essential to the edit affordance
-                                autoFocus
-                                value={renameDraft}
-                                onChange={(e) => setRenameDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") handleRename(conn.id);
-                                  if (e.key === "Escape") {
-                                    setRenamingId(null);
-                                    setRenameDraft("");
-                                  }
-                                }}
-                                disabled={savingRename === conn.id}
-                                placeholder="Label (e.g. Work, Personal)"
-                                maxLength={100}
-                                className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary/40"
-                              />
-                            ) : (
-                              <span className="text-sm font-medium truncate">
-                                {hasMultiple ? conn.account_label : serviceName}
-                              </span>
-                            )}
-                            <StatusDot status={conn.status} />
-                            <span className="text-xs text-muted-foreground capitalize">
-                              {conn.status}
-                            </span>
-                          </div>
-                          {conn.account_email && (
-                            <div className="text-sm text-muted-foreground truncate mt-0.5">
-                              {conn.account_email}
-                            </div>
-                          )}
-                          <div className="text-xs text-muted-foreground/60 mt-0.5">
-                            {!hasMultiple && conn.account_label !== serviceName && conn.account_label}
-                            {!hasMultiple && conn.account_label !== serviceName && " · "}
-                            Connected {formatDate(conn.connected_at)}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {renamingId === conn.id ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => handleRename(conn.id)}
-                                disabled={savingRename === conn.id || !renameDraft.trim()}
-                                className="rounded-md bg-primary text-primary-foreground px-2.5 py-1.5 text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-                              >
-                                {savingRename === conn.id ? "Saving..." : "Save"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setRenamingId(null);
-                                  setRenameDraft("");
-                                }}
-                                disabled={savingRename === conn.id}
-                                className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setRenamingId(conn.id);
-                                setRenameDraft(conn.account_label);
-                              }}
-                              className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors"
-                            >
-                              Rename
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleCheckStatus(conn.id)}
-                            disabled={checkingStatus === conn.id}
-                            className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
-                          >
-                            {checkingStatus === conn.id ? "Checking..." : "Check Status"}
-                          </button>
-                          {confirmDisconnect === conn.id ? (
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => handleDisconnect(conn.id)}
-                                disabled={disconnecting === conn.id}
-                                className="rounded-md bg-red-500/15 border border-red-500/40 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
-                              >
-                                {disconnecting === conn.id ? "Removing..." : "Confirm"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setConfirmDisconnect(null)}
-                                className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDisconnect(conn.id)}
-                              className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-red-400 hover:border-red-500/40 transition-colors"
-                            >
-                              Disconnect
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }} />
 
-      {/* Available Services */}
-      <section className="space-y-3">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Available
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {available.map((service) => {
-            const isConnected = connectedServiceIds.has(service.id);
-            const isConnecting = connecting === service.id;
-            return (
-              <div
-                key={service.id}
-                className="rounded-lg border border-border/60 bg-card/50 p-4 flex flex-col gap-3"
-              >
-                <div className="flex items-center gap-3">
-                  <ServiceLogo name={service.name} category={service.category} logoUrl={service.logoUrl} />
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate">{service.name}</div>
-                    <div className="text-xs text-muted-foreground capitalize">
-                      {service.category}
-                    </div>
-                  </div>
-                </div>
-                {/* UI2 fix: label input is no longer gated on isConnected.
-                    Previously the input only appeared after at least one
-                    account existed for the service ("Add Account" path), so
-                    a user with a single Gmail could never label it. Now the
-                    input is always visible, and the entered label is passed
-                    to /connect on first AND subsequent connects. */}
-                <input
-                  type="text"
-                  aria-label="Account label"
-                  placeholder={isConnected ? "Label for additional account" : "Label (optional, e.g. Work, Personal)"}
-                  value={connecting === service.id ? "" : (connectLabels[service.id] ?? "")}
-                  onChange={(e) => setConnectLabels((prev) => ({ ...prev, [service.id]: e.target.value }))}
-                  disabled={isConnecting}
-                  maxLength={100}
-                  className="w-full rounded-md border border-border/60 bg-background px-2.5 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleConnect(service.id, connectLabels[service.id]);
-                    setConnectLabels((prev) => ({ ...prev, [service.id]: "" }));
-                  }}
-                  disabled={isConnecting}
-                  className={`mt-auto w-full rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    isConnecting
-                      ? "bg-muted text-muted-foreground cursor-wait"
-                      : isConnected
-                        ? "border border-border/60 text-muted-foreground hover:bg-foreground/5"
-                        : "bg-primary text-primary-foreground hover:bg-primary/90"
-                  }`}
-                >
-                  {isConnecting
-                    ? "Connecting..."
-                    : isConnected
-                      ? "Add Account"
-                      : "Connect"}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-        {available.length === 0 && (
-          <div className="rounded-lg border border-border/60 bg-card/50 p-8 text-center">
-            <p className="text-sm text-muted-foreground">
-              No integrations available. Check that the gateway is running.
-            </p>
-          </div>
-        )}
-      </section>
+      <IntegrationMarketplace services={available} connectedIds={connected.map(c => c.service)} connectingId={connecting} onConnect={id => void handleConnect(id)} />
       <CustomMcpServersPanel />
     </div>
   );

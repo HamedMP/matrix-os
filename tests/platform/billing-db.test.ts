@@ -21,7 +21,7 @@ import {
   type NewBillingEntitlementOverride,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 describe('platform billing db', () => {
   let db: PlatformDB;

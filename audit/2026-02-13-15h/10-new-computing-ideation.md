@@ -6,7 +6,7 @@ What new forms of computing can only exist when software is generated in real-ti
 
 ## The Core Challenge
 
-Alan Kay's critique: if Matrix OS just generates **conventional apps faster**, it's Bolt/Lovable/Cursor with a desktop shell. Impressive engineering, incremental improvement, not a new medium.
+Alan Kay's critique: if Matrix OS just generates **conventional apps faster**, it's another AI coding tool with a desktop shell. Impressive engineering, incremental improvement, not a new medium.
 
 The printing press didn't just make books faster to produce. It created **new forms that didn't exist before**: newspapers, pamphlets, scientific journals, novels, encyclopedias. Forms that couldn't exist when books were hand-copied. The medium created the message.
 
@@ -23,7 +23,7 @@ Matrix OS has a property no other system has: **the AI and the software are in t
 | Cursor | Code, then leaves | No | No | No |
 | ChatGPT | Answers, then forgets | No | No | No |
 | macOS | Nothing | N/A | No | No |
-| Bolt/Lovable | Apps, then deploys | No | No | No |
+| AI app builders | Apps, then deploys | No | No | No |
 | **Matrix OS** | **Software** | **Files** | **Everything** | **All channels** |
 
 The kernel can read everything, write everything, remember everything, and be reached from everywhere. That's not a feature -- it's a new computational primitive.
@@ -255,7 +255,5 @@ These ideas are big. To test them without boiling the ocean:
 ### Related Projects
 - [Open Interpreter / 01 OS](https://www.openinterpreter.com/) -- voice-controlled AI OS
 - [Rabbit R1 / Rabbit OS](https://www.rabbit.tech/) -- AI hardware (cautionary tale)
-- [Replit Agent](https://replit.com/) -- AI-generated apps in browser
-- [Lovable](https://lovable.dev/) -- AI app generation
 - [Bolt](https://bolt.new/) -- AI full-stack app generation
 - [Cursor](https://cursor.com/) -- AI-augmented IDE

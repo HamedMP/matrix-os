@@ -67,6 +67,37 @@ const projects: Project[] = [
 ];
 
 describe("buildWorkRailModel", () => {
+  it("excludes authenticated Bot bindings from every ordinary group, including older project histories", () => {
+    const records = [
+      chat("chat_bot_current", "Same title", { pinned: true, updatedAt: "2026-10-02T12:00:00Z" }),
+      chat("chat_bot_old", "Older history", { projectId: "alpha", updatedAt: "2026-10-02T11:00:00Z" }),
+      chat("chat_ordinary", "Same title", { updatedAt: "2026-10-02T10:00:00Z" }),
+    ];
+    const model = buildWorkRailModel(records, projects, ["chat_bot_current", "chat_bot_old"]);
+    expect(model.pinned).toEqual([]);
+    expect(model.projects.flatMap(group => group.chats)).toEqual([]);
+    expect(model.recents.map(record => record.chat.id)).toEqual(["chat_ordinary"]);
+  });
+
+  it("projects real attention, running and unread completion into distinct global sections", () => {
+    const approval = { ...statusRecord({ attention: "approval_required" }), chat: { ...statusRecord({ attention: "approval_required" }).chat, id: "approval" } };
+    const running = { ...statusRecord({ activeRunStatus: "running" }), chat: { ...statusRecord({ activeRunStatus: "running" }).chat, id: "running" } };
+    const done = { ...statusRecord({ unacknowledged: true }), chat: { ...statusRecord({ unacknowledged: true }).chat, id: "done" } };
+    const idle = chat("idle", "Idle", { updatedAt: "2026-10-02T10:00:00Z" });
+    const model = buildWorkRailModel([approval, running, done, idle], []);
+    expect(model.needsYou.map(record => record.chat.id)).toEqual(["approval"]);
+    expect(model.working.map(record => record.chat.id)).toEqual(["running"]);
+    expect(model.done.map(record => record.chat.id)).toEqual(["done"]);
+    expect(model.recents.map(record => record.chat.id)).toEqual(["idle"]);
+  });
+
+  it("keeps acknowledged successful terminal chats in Done while failed or active work wins", () => {
+    const completed = statusRecord({ unacknowledged: false });
+    expect(buildWorkRailModel([completed], []).done).toEqual([completed]);
+    expect(buildWorkRailModel([statusRecord({ unacknowledged: false, attention: "failed" })], []).done).toEqual([]);
+    expect(buildWorkRailModel([statusRecord({ unacknowledged: false, activeRunStatus: "running" })], []).done).toEqual([]);
+  });
+
   it("resolves rail state with attention ahead of running, failed, and unseen completion", () => {
     const cases: Array<[Parameters<typeof statusRecord>[0], string]> = [
       [{ attention: "approval_required", activeRunStatus: "running", unacknowledged: true }, "approval_required"],
@@ -250,4 +281,14 @@ describe("buildWorkRailModel", () => {
       "",
     )).toHaveLength(50);
   });
+});
+
+it("preserves ordered inactive display entries without falsely completing older Chats", () => {
+  const legacy = chat("legacy", "Legacy", {updatedAt:"2026-10-03T00:00:00Z"});
+  const completed = statusRecord({unacknowledged:false});
+  const model = buildWorkRailModel([legacy,completed],[]);
+  expect(model.doneDisplay).toEqual([legacy,completed]);
+  expect(model.done).toEqual([completed]);
+  expect(legacy.chat.attention).toBe("none");
+  expect(legacy.latestSuccessfulCompletion).toBeUndefined();
 });

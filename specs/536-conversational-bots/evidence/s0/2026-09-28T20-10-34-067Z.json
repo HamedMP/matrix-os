@@ -1,0 +1,110 @@
+{
+  "probe": "s0-pi",
+  "recordedAt": "2026-09-28T20:10:34.067Z",
+  "model": "claude-haiku-4-5-20251001",
+  "packages": {
+    "pi-agent-core": "0.86.1",
+    "pi-ai": "0.86.1"
+  },
+  "spendCapUsd": 2,
+  "prices": {
+    "currency": "USD",
+    "perMillionTokens": {
+      "input": 1,
+      "output": 5,
+      "cacheRead": 0.1,
+      "cacheWrite": 1.25
+    }
+  },
+  "spentUsd": 0,
+  "cases": [
+    {
+      "name": "text_tool_call",
+      "passed": false,
+      "durationMs": 158,
+      "usage": {
+        "calls": 1,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0
+      },
+      "status": "failed",
+      "toolActions": 0
+    },
+    {
+      "name": "image_input",
+      "passed": false,
+      "durationMs": 1,
+      "usage": {
+        "calls": 1,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0
+      },
+      "status": "failed",
+      "toolActions": 0
+    },
+    {
+      "name": "denied_call_not_executed",
+      "passed": false,
+      "durationMs": 1,
+      "usage": {
+        "calls": 1,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0
+      },
+      "status": "failed",
+      "toolActions": 0
+    },
+    {
+      "name": "cancellation",
+      "passed": false,
+      "durationMs": 1,
+      "usage": {
+        "calls": 1,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0
+      },
+      "status": "failed",
+      "toolActions": 0
+    },
+    {
+      "name": "context_reconstruction",
+      "passed": false,
+      "durationMs": 1,
+      "usage": {
+        "calls": 2,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0
+      },
+      "status": "failed",
+      "toolActions": 0
+    },
+    {
+      "name": "compaction",
+      "passed": false,
+      "durationMs": 1,
+      "usage": {
+        "calls": 1,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0
+      }
+    }
+  ]
+}

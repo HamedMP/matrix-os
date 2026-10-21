@@ -8,6 +8,12 @@ import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import type { useWindowManager, AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ userId: null }),
+  useOrganization: () => ({ organization: null }),
+  useOrganizationList: () => ({ isLoaded: false, setActive: undefined }),
+}));
+
 const { terminalRender } = vi.hoisted(() => ({
   terminalRender: vi.fn(() => <div>Terminal content</div>),
 }));
@@ -46,6 +52,10 @@ vi.mock("../../shell/src/components/DotGrid.js", () => ({
 
 vi.mock("../../shell/src/components/Settings.js", () => ({
   Settings: () => null,
+}));
+
+vi.mock("../../shell/src/components/organization/OrganizationSwitcher", () => ({
+  OrganizationSwitcher: () => null,
 }));
 
 vi.mock("../../shell/src/components/canvas/CanvasRenderer.js", () => ({
@@ -242,15 +252,29 @@ describe("Desktop terminal fullscreen chrome", () => {
     expect(windowManagerStore.getState().fullscreenWindowId).toBe("win-terminal");
   });
 
-  it("exits fullscreen before the Desktop tab hides the active window", async () => {
+  it("exits fullscreen before Show desktop minimizes the active window", async () => {
     resetStores(appWindow);
     desktopModeStore.setState({ mode: "desktop", previousMode: null, _hydrated: true });
 
     renderDesktop();
 
     await screen.findByText("App content");
-    fireEvent.click(screen.getByRole("tab", { name: "Show desktop" }));
+    fireEvent.pointerDown(screen.getByRole("tab", { name: "Desktop" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Show desktop" }));
 
     expect(windowManagerStore.getState().fullscreenWindowId).toBeNull();
+    await waitFor(() => {
+      const windows = windowManagerStore.getState().windows.filter(win => win.id === appWindow.id);
+      expect(windows).toHaveLength(1);
+      expect(windows[0]).toMatchObject({
+        id: appWindow.id,
+        path: appWindow.path,
+        x: appWindow.x,
+        y: appWindow.y,
+        width: appWindow.width,
+        height: appWindow.height,
+        minimized: true,
+      });
+    });
   });
 });

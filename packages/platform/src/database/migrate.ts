@@ -1,7 +1,9 @@
+import { migrateAccountDeletion } from './migrations/account-deletion.js';
 import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
 import { migrateUserMachines } from './migrations/user-machines.js';
 import { migrateAiFunded } from './migrations/ai-funded.js';
+import { migrateAiCreditHistory } from './migrations/ai-credit-history.js';
 import { migrateSpeech } from './migrations/speech.js';
 import { migrateProvisioningJobs } from './migrations/provisioning-jobs.js';
 import { migrateCheckout } from './migrations/checkout.js';
@@ -11,6 +13,7 @@ import { migrateHostBundles } from './migrations/host-bundles.js';
 import { migrateGoldenSnapshots } from './migrations/golden-snapshots.js';
 import { migrateProviderDeletion } from './migrations/provider-deletion.js';
 import { migrateDirectoryAndSocial } from './migrations/directory-and-social.js';
+import { migratePreviewDrive } from './migrations/preview-drive.js';
 
 export interface PlatformMigrationStep {
   readonly name: string;
@@ -27,6 +30,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'identity', run: migrateIdentity },
   { name: 'user-machines', run: migrateUserMachines },
   { name: 'ai-funded', run: migrateAiFunded },
+  { name: 'ai-credit-history', run: migrateAiCreditHistory },
   { name: 'speech', run: migrateSpeech },
   { name: 'provisioning-jobs', run: migrateProvisioningJobs },
   { name: 'checkout', run: migrateCheckout },
@@ -36,6 +40,8 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'golden-snapshots', run: migrateGoldenSnapshots },
   { name: 'provider-deletion', run: migrateProviderDeletion },
   { name: 'directory-and-social', run: migrateDirectoryAndSocial },
+  { name: 'preview-drive', run: migratePreviewDrive },
+  { name: 'account-deletion', run: migrateAccountDeletion },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

@@ -1,4 +1,6 @@
 :root {
+  --game-accent: #467337;
+  --game-wash: #edf5e6;
   --app-bg: var(--matrix-bg, #fafaf5);
   --app-fg: var(--matrix-fg, #32352e);
   --app-card: var(--matrix-card, #ffffff);
@@ -14,12 +16,12 @@
   --app-radius: var(--matrix-radius, 22px);
   --app-font: var(--matrix-font-sans, "Inter", system-ui, sans-serif);
 
-  /* board palette derived from theme tokens */
-  --snake-board: color-mix(in srgb, var(--app-muted) 70%, var(--app-card));
-  --snake-grid: color-mix(in srgb, var(--app-fg) 6%, transparent);
-  --snake-body: var(--app-primary);
-  --snake-head: var(--app-success);
-  --snake-food: var(--app-accent);
+  /* Fixed playfield ink keeps food distinct from the green snake in any theme. */
+  --snake-board: #edf3e8;
+  --snake-grid: #244f3210;
+  --snake-body: #43702e;
+  --snake-head: #244f32;
+  --snake-food: #af492e;
 
   color-scheme: light;
 }
@@ -433,4 +435,25 @@ button:focus-visible,
     width: min(100%, 72vh);
     height: auto;
   }
+}
+
+.board-panel { min-height: 0; }
+.topbar { flex-wrap: wrap; }
+.scoreboard { margin-left: auto; }
+.stat { border: 1px solid var(--app-border); text-align: left; }
+.stat span { justify-content: flex-start; }
+.stat strong { font-weight: 650; }
+.board { width: min(100%, calc(100dvh - 180px)); height: auto; }
+.overlay-card { max-width: min(320px, calc(100% - 16px)); padding: 22px; }
+@media (max-width: 760px) {
+  .snake-app { grid-template-rows: auto auto; overflow-y: auto; }
+  .board-panel { padding: 14px; }
+  .canvas-wrap { flex: none; }
+  .board { width: 100%; max-width: 480px; height: auto; }
+  .side-panel { overflow: visible; }
+  .overlay { padding: 8px; }
+  .overlay-card { gap: 8px; padding: 16px; }
+  .overlay-icon { width: 40px; height: 40px; border-radius: 14px; }
+  .overlay-card h1 { font-size: 23px; }
+  .overlay-card p { font-size: 13px; }
 }

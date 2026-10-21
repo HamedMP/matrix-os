@@ -34,11 +34,13 @@ const labels: Record<ResizeDirection, string> = {
 
 /** An overlay slot on the window frame, above app chrome and outside inert content. */
 export function WindowResizeControls({
-  bounds, minimum, scale = 1, onBoundsChange, onInteractionChange, onFocus, className,
+  bounds, minimum, scale = 1, placement = "inside", onBoundsChange, onInteractionChange, onFocus, className,
 }: {
   bounds: WindowBounds;
   minimum: { width: number; height: number };
   scale?: number;
+  /** Native content paints above DOM overlays, so its resize targets must sit outside. */
+  placement?: "inside" | "outside";
   onBoundsChange: (bounds: WindowBounds) => void;
   onInteractionChange?: (active: boolean) => void;
   onFocus?: () => void;
@@ -88,8 +90,10 @@ export function WindowResizeControls({
   };
 
   // Keep hit targets usable at canvas zoom levels without covering window controls.
-  const edge = 6 / Math.max(0.5, scale);
-  const corner = 16 / Math.max(0.5, scale);
+  const outside = placement === "outside";
+  const targetScale = Math.max(0.5, scale);
+  const edge = (outside ? 12 : 6) / targetScale;
+  const corner = (outside ? 24 : 16) / targetScale;
   return <div data-window-resize-controls className={className} style={{ position: "absolute", inset: 0, zIndex: 50, pointerEvents: "none" }}>
     {directions.map((direction) => {
       const diagonal = direction.length === 2;
@@ -99,14 +103,14 @@ export function WindowResizeControls({
         userSelect: "none", cursor: `${direction}-resize`,
         ...(diagonal ? {
           width: corner, height: corner,
-          ...(direction.includes("n") ? { top: 0 } : { bottom: 0 }),
-          ...(direction.includes("w") ? { left: 0 } : { right: 0 }),
+          ...(direction.includes("n") ? { top: outside ? -corner : 0 } : { bottom: outside ? -corner : 0 }),
+          ...(direction.includes("w") ? { left: outside ? -corner : 0 } : { right: outside ? -corner : 0 }),
         } : vertical ? {
-          left: corner, right: corner, height: edge,
-          ...(direction === "n" ? { top: 0 } : { bottom: 0 }),
+          left: outside ? 0 : corner, right: outside ? 0 : corner, height: edge,
+          ...(direction === "n" ? { top: outside ? -edge : 0 } : { bottom: outside ? -edge : 0 }),
         } : {
-          top: corner, bottom: corner, width: edge,
-          ...(direction === "w" ? { left: 0 } : { right: 0 }),
+          top: outside ? 0 : corner, bottom: outside ? 0 : corner, width: edge,
+          ...(direction === "w" ? { left: outside ? -edge : 0 } : { right: outside ? -edge : 0 }),
         }),
         WebkitAppRegion: "no-drag",
       };
@@ -114,7 +118,21 @@ export function WindowResizeControls({
         role="separator" aria-label={`Resize ${labels[direction]}`}
         aria-orientation={diagonal ? undefined : vertical ? "horizontal" : "vertical"}
         className={`no-drag cursor-${direction}-resize`} style={style}
-        onPointerDown={(event) => start(event, direction)} />;
+        onPointerDown={(event) => start(event, direction)}>
+        {outside && direction === "se" ? (
+          <span data-window-resize-grip aria-hidden="true" style={{
+            position: "absolute", left: 4 / targetScale, top: 4 / targetScale,
+            width: 16 / targetScale, height: 16 / targetScale,
+            pointerEvents: "none", color: "var(--text-secondary)",
+            background: "color-mix(in srgb, var(--bg-app) 85%, transparent)",
+            borderRadius: 4 / targetScale,
+          }}>
+            <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" focusable="false">
+              <path d="M6 18L18 6M12 18L18 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </span>
+        ) : null}
+      </div>;
     })}
   </div>;
 }

@@ -20,6 +20,7 @@ import {
   MissingRequestPrincipalError,
   SAFE_PRINCIPAL_USER_ID,
   markAuthContextReady,
+  markVerifiedRuntimeBearer,
   requireRequestPrincipal,
   setPlatformVerifiedPrincipal,
 } from "./request-principal.js";
@@ -98,6 +99,7 @@ const HMAC_WEBHOOK_PREFIXES = [
 const ROUTE_SCOPED_BEARER_PATHS = [
   "/api/internal/upgrade",
   "/api/internal/platform-speech/config",
+  "/api/internal/platform-funded-ai/config",
 ];
 const ROUTE_SCOPED_SIGNATURE_PATHS = [
   "/api/internal/terminal-acceptance/run",
@@ -402,6 +404,7 @@ export function authMiddleware(
         // Stash claims on the Hono context so downstream handlers can
         // resolve the authenticated Clerk userId through the request principal.
         c.set(JWT_CLAIMS_CONTEXT_KEY, claims);
+        markVerifiedRuntimeBearer(c);
         setTerminalAccess(claims.sub);
         return nextWithReady(c, next);
       } catch (err) {
@@ -427,6 +430,7 @@ export function authMiddleware(
       token && isWsUpgrade && queryToken && timingSafeCompare(queryToken, token);
 
     if (legacyHeaderOk) {
+      markVerifiedRuntimeBearer(c);
       const platformUserId = readPlatformVerifiedUserId(c, token);
       if (platformUserId) {
         setPlatformVerifiedPrincipal(c, platformUserId);

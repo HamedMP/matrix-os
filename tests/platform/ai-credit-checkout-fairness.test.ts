@@ -1,14 +1,16 @@
 import { Hono } from "hono";
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isAiCreditCheckoutRouteHealthy } from "../../packages/platform/src/ai-credit-checkout-readiness.js";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
-import { createFundedModelProbeService, FUNDED_PROBE_MODELS } from "../../packages/platform/src/ai-funded-model-probes.js";
+import { createFundedModelProbeService, reserveFundedModelProbe } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 import { createBillingRoutes, type StripeBillingClient } from "../../packages/platform/src/billing-routes.js";
 
 const identity = { ownerId: "fair_owner", machineId: "fair_machine", runtimeSlot: "primary" };
-const [glm, sonnet] = FUNDED_PROBE_MODELS;
+const glm = "@cf/zai-org/glm-5.3-flash";
+const sonnet = "anthropic/claude-sonnet-5";
 let db: PlatformDB;
 
 beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
@@ -21,6 +23,8 @@ afterEach(async () => {
 
 async function fixture(responses: Record<string, { delayMs: number; ready: boolean; priceTtlMs?: number }>, limit = 10) {
   const now = () => new Date();
+  // Count assertions describe one SQL admission bucket; fake JS time does not pin statement_timestamp().
+  const admissionBudgetAt = now();
   await insertUserMachine(db, { machineId: identity.machineId, clerkUserId: identity.ownerId,
     handle: "fair-runtime", runtimeSlot: identity.runtimeSlot, status: "running", imageVersion: "fixture",
     activationState: "authorized", provisionedAt: now().toISOString() });
@@ -50,7 +54,8 @@ async function fixture(responses: Record<string, { delayMs: number; ready: boole
     }, { once: true });
   }));
   const probes = createFundedModelProbeService({ db, relayBaseUrl: "https://relay.example.test",
-    relayControlToken: "c".repeat(32), dailyLimit: limit, minuteLimit: limit, fetchFn, now });
+    relayControlToken: "c".repeat(32), dailyLimit: limit, minuteLimit: limit, fetchFn, now,
+    reserveProbe: input => reserveFundedModelProbe({ ...input, now: admissionBudgetAt }) });
   const checkout = () => isAiCreditCheckoutRouteHealthy({ repository, identity, modelProbes: probes });
   return { repository, fetchFn, probes, checkout };
 }
@@ -116,7 +121,7 @@ describe("multi-model credit checkout readiness", () => {
     } };
     const result = isAiCreditCheckoutRouteHealthy({ repository, identity, modelProbes: f.probes });
     await vi.waitFor(() => expect(f.fetchFn).toHaveBeenCalledTimes(2), { interval: 1 });
-    await vi.advanceTimersByTimeAsync(12_000);
+    await vi.advanceTimersByTimeAsync(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs + 1);
     expect(await result).toBe(false);
   });
 
@@ -200,7 +205,7 @@ describe("multi-model credit checkout readiness", () => {
   it("reuses cached model health while rereading owner policy without new admissions", async () => {
     const f = await fixture({ [glm]: { delayMs: 100, ready: true },
       [sonnet]: { delayMs: 200, ready: true } });
-    const warm = Promise.all(FUNDED_PROBE_MODELS.map(model => f.probes.probe(model)));
+    const warm = Promise.all([glm, sonnet].map(model => f.probes.probe(model)));
     await vi.waitFor(() => expect(f.fetchFn).toHaveBeenCalledTimes(2), { interval: 1 });
     await vi.advanceTimersByTimeAsync(200);
     expect((await warm).every(result => result.ready)).toBe(true);

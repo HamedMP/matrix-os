@@ -17,6 +17,7 @@ import {
 import { CanonicalProviderDriverKindSchema } from "#canonical-chat-provider";
 import {
   CanonicalChatExecutionRootRefSchema,
+  canonicalExecutionRootProjectId,
   canonicalReferenceId,
   canonicalSafeLabel,
 } from "#canonical-chat-primitives";
@@ -27,7 +28,7 @@ export {
   CanonicalChatResourceKindSchema,
   CanonicalChatResourceReferenceSchema,
 } from "#canonical-chat";
-export { CanonicalChatExecutionRootRefSchema } from "#canonical-chat-primitives";
+export { CanonicalChatExecutionRootRefSchema, canonicalExecutionRootProjectId } from "#canonical-chat-primitives";
 
 export const CanonicalChatProjectProjectionSchema = z.object({
   projectId: canonicalReferenceId(160),
@@ -126,7 +127,16 @@ export const CanonicalChatInspectorProjectionSchema = z.object({
   changes: CanonicalChatInspectorChangesSchema,
 }).strict().superRefine((inspector, ctx) => {
   const projectId = inspector.context.project?.projectId;
-  const rootProjectId = inspector.context.executionRoot?.projectId;
+  const root = inspector.context.executionRoot;
+  if (projectId !== undefined && root?.kind === "bot_workspace") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["context", "executionRoot", "kind"],
+      message: "Bot workspace roots do not belong to a Project",
+    });
+    return;
+  }
+  const rootProjectId = root === undefined ? undefined : canonicalExecutionRootProjectId(root);
   if (projectId !== undefined && rootProjectId !== undefined && projectId !== rootProjectId) {
     ctx.addIssue({
       code: "custom",

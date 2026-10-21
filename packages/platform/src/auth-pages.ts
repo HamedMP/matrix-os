@@ -1,5 +1,8 @@
 import type { UserMachineRecord } from './db.js';
 import { normalizeDeviceReturnPath } from './request-routing.js';
+import { getAuthPageIndexingTags } from './auth-page-indexing.js';
+import { escapeHtmlAttr, escapeHtml, escapeInlineScriptJson } from './html-escaping.js';
+export { escapeHtmlAttr, escapeHtml, escapeInlineScriptJson } from './html-escaping.js';
 
 export const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS = 10_000;
@@ -22,26 +25,6 @@ export function buildBillingSetupTarget(appShellOrigin: string, redirectTarget: 
   return url.toString();
 }
 
-export function escapeHtmlAttr(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll("'", "&#39;");
-}
-
-export function escapeHtml(value: string): string {
-  return escapeHtmlAttr(value);
-}
-
-export function escapeInlineScriptJson(value: string): string {
-  return JSON.stringify(value)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026');
-}
-
 export function getAuthPage(
   publishableKey: string,
   mode: 'sign-in' | 'sign-up',
@@ -56,13 +39,15 @@ export function getAuthPage(
   const billingSetupTargetJson = escapeInlineScriptJson(buildBillingSetupTarget(appShellOrigin, redirectTarget));
   const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
   const modeDetail = mode === 'sign-up'
-    ? 'Start with a free account. The 3-day hosted Matrix trial begins only when you provision your cloud computer.'
+    ? 'Start with a free account. Choose your cloud computer to see available trial offers and billing details.'
     : 'Sign in to continue to your Matrix computer, provisioning status, or trial checkout.';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  ${getAuthPageIndexingTags(mode, appShellOrigin)}
   <link rel="icon" href="data:,">
   <title>Matrix OS</title>
   <style>
@@ -1266,6 +1251,7 @@ export function getNoContainerPage() {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Matrix OS</title>
@@ -1403,6 +1389,7 @@ export function getRuntimePickerPage(input: {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="/billing/tracking.js"></script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Select Matrix OS Machine</title>

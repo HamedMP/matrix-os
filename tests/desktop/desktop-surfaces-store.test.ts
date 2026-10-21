@@ -42,6 +42,22 @@ describe("desktop surfaces store", () => {
     }
   });
 
+  it("opens a floating sibling in source presentation without changing source geometry", () => {
+    useDesktopSurfaces.getState().reconcileTabs(["chat", "stale"], { width: 1200, height: 760 });
+    const source = useDesktopSurfaces.getState().surfaces.chat;
+
+    useDesktopSurfaces.getState().openSiblingTab("chat", "draft", ["chat", "draft"], "source");
+
+    const state = useDesktopSurfaces.getState();
+    expect(Object.keys(state.surfaces)).toEqual(["chat", "draft"]);
+    expect(state.surfaces.chat).toEqual(source);
+    expect(state.surfaces.draft).toMatchObject({
+      mode: "window", restoreMode: "window", bounds: source!.bounds,
+    });
+    expect(state.surfaces.draft!.zIndex).toBeGreaterThan(source!.zIndex);
+    expect(state.workspaceView).toBe("desktop");
+  });
+
   it("minimizes and restores windows without losing their previous presentation", () => {
     useDesktopSurfaces.getState().reconcileTabs(["chat"], { width: 1200, height: 760 });
     useDesktopSurfaces.getState().maximizeToTab("chat");

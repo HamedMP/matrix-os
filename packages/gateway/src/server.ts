@@ -1,3 +1,15 @@
+import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
+import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
+import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
+import { codexNativeEnvironment } from "./ai-providers/codex-native-environment.js";
+import { createNativeCodexRuntime } from "./server/native-codex-runtime.js";
+import { registerAppIntegrationCapabilities, registerAppAiCapabilities, createAppAiSubscriptionObservation, closeAppAiCapabilities } from "./server/app-capabilities.js";
+import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
+import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
+import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-instance.js";
+import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
+import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from "./agent-launcher.js";
+import { createNativeProviderProfileGuard } from "./ai-providers/native-provider-profile-guard.js";
 import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
@@ -35,7 +47,6 @@ import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
-import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
@@ -44,6 +55,7 @@ import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
+import { managedPiMcpDependencies } from "./startup/managed-pi-tools.js";
 import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
@@ -52,6 +64,8 @@ import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
 import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
 import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
+import { createPreviewDrivePlatformClient } from "./chat/preview-drive-platform-client.js";
+import { createPreviewDriveWiring } from "./chat/preview-drive-wiring.js";
 import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
@@ -117,6 +131,7 @@ import {
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
+import { createFundedAdmissionQueue } from "./funded-ai/admission-queue.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
@@ -152,7 +167,8 @@ import { createHostToolPackInstaller, createToolPackService, InMemoryToolPackRep
 import { createPreviewManager } from "./preview-manager.js";
 import { createProjectManager } from "./project-manager.js";
 import { createProvisioner } from "./provisioner.js";
-import { requireRequestPrincipal } from "./request-principal.js";
+import { getOptionalRequestPrincipal, requireRequestPrincipal } from "./request-principal.js";
+import { createCodexNativeKeyReadinessReader } from "./ai-providers/codex-native-key-readiness.js";
 import { createReviewStore } from "./review-store.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import {
@@ -162,7 +178,15 @@ import {
 import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
+import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
+import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
+import { startBots, type BotServices } from "./startup/bots.js";
+import { withBotProviderInstance } from "./bots/provider-instance.js";
+import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
+import { createBotContinuationAdmitter } from "./bots/continuations.js";
+import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
+import { createRuntimeDataImportRoutes } from "./startup/data-imports.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -195,7 +219,7 @@ import {
   reconcileProviderRuntimeAtStartup,
 } from "./ai-providers/provider-generic-harness-coordinator.js";
 import type { CanonicalProviderSnapshotReader } from "./ai-providers/provider-settings-coordinators.js";
-import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
+import type { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
 import { createProviderTerminalLoginHandoff } from "./ai-providers/provider-terminal-login-handoff.js";
 import { AiProviderService } from "./ai-providers/service.js";
@@ -249,6 +273,9 @@ import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
 import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
+import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
+import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
+import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
@@ -282,11 +309,14 @@ export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   const fundedAiRuntimeConfig = loadFundedAiRuntimeConfig(process.env);
+  const canonicalPhaseDiscovery = createCanonicalPhaseDiscovery(fundedAiRuntimeConfig, process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID);
   const fundedCredentialProvider = fundedAiRuntimeConfig
     ? createFundedAiCredentialManager(fundedAiRuntimeConfig)
     : undefined;
+  // Orders this gateway's own funded retries; the platform enforces owner-wide priority.
+  const fundedAdmission = fundedCredentialProvider ? createFundedAdmissionQueue() : undefined;
   const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
-    ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig)
+    ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig, canonicalPhaseDiscovery.routeOptions)
     : undefined;
   const speechRuntime = createGatewaySpeechRuntime({
     env: process.env,
@@ -320,6 +350,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const terminalLiveOwnership = createTerminalLiveOwnership();
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
+  const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
   const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
@@ -379,6 +410,14 @@ export async function createGateway(config: GatewayConfig) {
   const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
   const internalPlatformToken = process.env.UPGRADE_TOKEN;
   const internalHandle = process.env.MATRIX_HANDLE;
+  const previewDriveClient = process.env.MATRIX_PREVIEW_RUNTIME === "true"
+    && internalPlatformUrl && internalPlatformToken && internalHandle
+    ? createPreviewDrivePlatformClient({ platformUrl: internalPlatformUrl,
+      machineToken: internalPlatformToken, handle: internalHandle }) : undefined;
+  const previewDriveWiring = createPreviewDriveWiring({
+    previewRuntime: process.env.MATRIX_PREVIEW_RUNTIME === "true",
+    registry: matrixMcpCapabilities, ...(previewDriveClient ? { client: previewDriveClient } : {}),
+  });
   let platformDb: PlatformDb | null = null;
   const workspaceProviderRuntime = resolveWorkspaceProviderRuntime(process.env);
   const codingAgentWorkspaceAgents = workspaceProviderRuntime.agents;
@@ -511,6 +550,13 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
   let providerSettingsStore: ProviderSettingsStore | undefined;
+  const nativeCodexRuntime = createNativeCodexRuntime({
+    homePath, executable: codexExecutable, ownerIds: terminalRuntimeOwnerIds,
+    environment: () => codexNativeEnvironment(homePath, buildSettingsAccountEnvironment(homePath), process.env.CODEX_HOME),
+    profileGuard: nativeProviderProfileGuard,
+    getSettings: () => providerSettingsStore,
+    getRuntime: () => codingAgentWorkspaceRuntime,
+  });
   // S08: the owner's Provider V3 snapshot reader is built after the owner database, so the
   // collaboration runtime receives a lazy reader; it is only consulted at policy writes and
   // run admission, never during construction, and reads fail closed until the service exists.
@@ -523,8 +569,28 @@ export async function createGateway(config: GatewayConfig) {
   };
   const backgroundAgentRuntime = createBackgroundAgentRuntime({ homePath });
   const backgroundChatProjection = createBackgroundChatProjection();
+  // Public workspace sessions and coding-agent threads share native admission,
+  // runtime ownership and the single shutdown path, even without installed agents.
+  const codingAgentSessionManager = createAgentSessionManager({
+    homePath,
+    worktreeManager: codingAgentWorktreeManager,
+    agentLauncher: agentCredentialLauncher,
+    resolveNativeCodexSubscription: nativeCodexRuntime.resolveSubscription,
+    beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
+    terminalRuntime: terminalWorkspaceRuntime,
+    backgroundRuntime: backgroundAgentRuntime,
+  });
+  codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+    homePath,
+    projectManager: codingAgentProjectManager,
+    worktreeManager: codingAgentWorktreeManager,
+    agentSessionManager: codingAgentSessionManager,
+    onClose: () => codingAgentSessionManager.shutdown(),
+    agentSandbox: createAgentSandbox({ homePath }),
+    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+    eventPublisher: workspaceEventPublisher,
+  });
   if (codingAgentWorkspaceAgents.length > 0) {
-    const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
       ? createCodexEventBridge({
         homePath,
@@ -537,28 +603,12 @@ export async function createGateway(config: GatewayConfig) {
         },
       })
       : undefined;
-    const codingAgentSessionManager = createAgentSessionManager({
-      homePath,
-      worktreeManager: codingAgentWorktreeManager,
-      agentLauncher: agentCredentialLauncher,
-      terminalRuntime: terminalWorkspaceRuntime,
-      backgroundRuntime: backgroundAgentRuntime,
-    });
-    codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
-      homePath,
-      projectManager: codingAgentProjectManager,
-      worktreeManager: codingAgentWorktreeManager,
-      agentSessionManager: codingAgentSessionManager,
-      onClose: () => codingAgentSessionManager.shutdown(),
-      agentSandbox: createAgentSandbox({ homePath }),
-      sessionRuntimeBridge: workspaceSessionRuntimeBridge,
-      eventPublisher: workspaceEventPublisher,
-    });
     const providerSet = createWorkspaceCodingAgentProviderSet({
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
       homePath,
       codexEvents: codexEventBridge,
+      codexAdmission: nativeCodexRuntime.admission,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
       pi: {
         resolveCredentialLaunch: createCodingHarnessCredentialResolver({
@@ -784,6 +834,8 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
+  let scopeRuntimeHost: ScopeRuntimeHost | undefined;
+  let botServices: BotServices | undefined;
   let messagingRepository: MessagingKyselyRepository | null = null;
   // Collaboration wiring always constructs (S20): there is no release flag.
   // Incomplete configuration or a missing owner database registers the
@@ -844,8 +896,10 @@ export async function createGateway(config: GatewayConfig) {
         }),
       })
     : undefined;
+  const executionAdmissionFence = createExecutionAdmissionFence();
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
+    executionAdmissionFence,
     model: config.model,
     maxTurns: config.maxTurns,
     spawnFn: config.spawnFn,
@@ -1029,7 +1083,7 @@ export async function createGateway(config: GatewayConfig) {
         `Diagnose and fix the issue.`;
 
       try {
-        await dispatcher.dispatch(healPrompt, undefined, () => {});
+        await dispatcher.dispatch(healPrompt, undefined, () => {}, undefined, undefined, { fundedRequestClass: "background" });
 
         const result = await checkModuleHealth(target.port, target.healthPath, 5000);
         if (result.ok) {
@@ -1217,7 +1271,19 @@ export async function createGateway(config: GatewayConfig) {
       })
     : undefined;
   app.route("/api/speech", speechRuntime.routes);
-  app.route("/api/internal/platform-speech", createPlatformSpeechHostConfigRoutes());
+  const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
+    && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
+    && (canonicalChatOrchestrator?.pendingCount ?? 0) === 0;
+  const managedFeatureRestart = createManagedFeatureRestartCoordinator({
+    fence: executionAdmissionFence, isIdle: isManagedFeatureRestartIdle,
+  });
+  app.route("/api/internal/platform-speech", createPlatformSpeechHostConfigRoutes({
+    scheduleRestart: managedFeatureRestart.schedule,
+  }));
+  app.route("/api/internal/platform-funded-ai", createPlatformFundedAiHostConfigRoutes({
+    isIdle: isManagedFeatureRestartIdle,
+    scheduleRestart: managedFeatureRestart.schedule,
+  }));
   const fundedOwnerIds = new Set([
     fundedAiRuntimeConfig?.identity.ownerId,
     process.env.MATRIX_USER_ID?.trim(),
@@ -1259,6 +1325,12 @@ export async function createGateway(config: GatewayConfig) {
     service: integrationCapabilityService,
     audit: agentActionAuditService,
   }));
+  app.route("/api/data-imports", await createRuntimeDataImportRoutes({
+    ownerDatabase: kyselyInstance, homePath, runtimeOwnerIds: terminalRuntimeOwnerIds,
+    transport: internalIntegrationBaseUrl && internalPlatformToken
+      ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
+      : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null,
+  }));
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
@@ -1273,7 +1345,8 @@ export async function createGateway(config: GatewayConfig) {
     app, homePath, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
-      proxyIntegrationRequest(c, { targetBase, machineToken, routePrefix }),
+      proxyIntegrationRequest(c, { targetBase, machineToken, routePrefix,
+        ...(previewDriveClient ? { previewDriveClient } : {}) }),
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
     posthogErrorTracker, ownerTelemetryDistinctId,
   });
@@ -1308,7 +1381,7 @@ export async function createGateway(config: GatewayConfig) {
 
   registerVoiceWebSocketRoutes({
     app, upgradeWebSocket, homePath, geminiLiveConnection, readinessService,
-    captureGatewayProductEvent,
+    captureGatewayProductEvent, nativeProviderProfileGuard,
   });
 
   registerFileRoutes(app, {
@@ -1334,12 +1407,12 @@ export async function createGateway(config: GatewayConfig) {
     logUnexpectedJsonParseFailure,
   });
 
-  app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
-    homePath,
-    ownerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
-      .filter((id): id is string => Boolean(id)),
-    fundedCredentialProvider,
-  }));
+  registerAppIntegrationCapabilities(app, {
+    homePath, ownerIds: codingAgentOwnerIds,
+    integrationTransport: internalIntegrationBaseUrl && internalPlatformToken
+      ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
+      : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null,
+  });
 
   app.route("/api/bridge/service", createIntegrationBridgeRoutes({
     platformDb,
@@ -1395,16 +1468,26 @@ export async function createGateway(config: GatewayConfig) {
       (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
     ),
   });
+  let matrixAnthropicRuntime: ReturnType<typeof createMatrixAnthropicRuntime> | undefined;
+  const appSubscriptionSource = () => terminalRuntimeOwnerId && botServices?.chatgptPlanPeers
+    ? { ownerId: terminalRuntimeOwnerId, authority: botServices.chatgptPlanPeers }
+    : undefined;
   const aiProviderService = new AiProviderService({
+    observationScope: canonicalPhaseDiscovery.observationScope,
+    chatGptPlanObservation: createAppAiSubscriptionObservation(appSubscriptionSource),
+    matrixAnthropicConnection: async () => terminalRuntimeOwnerId ? matrixAnthropicRuntime?.service?.observe(terminalRuntimeOwnerId) : undefined,
+    exposeClaudeProfileAccount: true,
+    codexNativeKeyReadiness: createCodexNativeKeyReadinessReader({ homePath }),
     nativeHarnessCatalogReader: genericHarnessModelCatalog,
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
+    openclawRuntimeSource: agentRuntimeServices.source,
     homePath,
     healthProbe: createOwnerAnthropicKeyPreflight({ homePath }),
     fundedCredentialProvider,
     fundedReadinessReader: fundedAiRuntimeConfig && fundedAiFundingSummaryReader
       ? createFundedAiReadinessReader({
         summary: fundedAiFundingSummaryReader,
-        routes: createFundedAiRouteReadinessClient(fundedAiRuntimeConfig),
+        routes: createFundedAiRouteReadinessClient(fundedAiRuntimeConfig, fetch, canonicalPhaseDiscovery.routeOptions),
       })
       : undefined,
     driverInventory: createProviderDriverInventoryReader({
@@ -1420,13 +1503,16 @@ export async function createGateway(config: GatewayConfig) {
   });
   collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
+    codexExecutable: codexExecutable ?? undefined,
+    profileGuard: nativeProviderProfileGuard,
     homePath,
     registry: providerLoginTerminalRegistry,
     enabledHarnesses: codingAgentWorkspaceAgents.filter(
-      (agent): agent is "codex" | "claude" => agent === "codex" || agent === "claude",
+      (agent): agent is "claude" | "codex" => agent === "claude" || agent === "codex",
     ),
   });
   const providerAccountLifecycle = createDefaultProviderCliAccountLifecycleCoordinator({
+    profileGuard: nativeProviderProfileGuard,
     homePath,
     enabledHarnesses: codingAgentWorkspaceAgents,
   });
@@ -1439,40 +1525,35 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
-  providerSettingsStore = new ProviderSettingsStore({
+  providerSettingsStore = createRuntimeProviderSettings({
+    codexExecutable,
+    observationScope: canonicalPhaseDiscovery.observationScope,
     homePath,
+    codexNativeAccountMetadataReader: nativeCodexRuntime.readAccount,
+    prepareNativeCodexRevocation: () => nativeCodexRuntime.admission.prepareRevocation(),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
   });
-  const canonicalExecutableDriverKinds = [
-    "kernel" as const,
-    "hermes" as const,
-    "openclaw" as const,
-    ...(codingAgentProviders.some((provider) => provider.providerId === "claude")
-      ? ["claude_code" as const]
-      : []),
-    ...(codingAgentThreadStore
-      && codingAgentProviders.some((provider) => provider.providerId === "codex")
-      ? ["codex" as const]
-      : []),
-    ...(codingAgentThreadStore
-      && codingAgentProviders.some((provider) => provider.providerId === "pi")
-      ? ["pi" as const]
-      : []),
-    ...(codingAgentThreadStore
-      && codingAgentProviders.some((provider) => provider.providerId === "opencode")
-      ? ["opencode" as const]
-      : []),
-  ];
+  const appAiRuntime = registerAppAiCapabilities(app, {
+    homePath, ownerIds: codingAgentOwnerIds,
+    fundedCredentialProvider, fundedAdmission,
+    providerSnapshotReader: aiProviderService,
+    providerSettingsReader: providerSettingsStore,
+    nativeProfileGuard: nativeProviderProfileGuard,
+    hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
+    chatGptPlanSource: appSubscriptionSource,
+  });
+  const canonicalExecutableDriverKinds = executableChatDrivers(codingAgentProviders, Boolean(codingAgentThreadStore));
   const chatDriveContext = createProductionChatDriveContext({repository:chatRepository,collaborationReady:gatewayCollaboration !== null});
   app.route("/",chatDriveContext.routes);
   app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
   const {
-    catalog: canonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
+    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
   } = createGatewayChatProviderCatalog({
+    observationScope: canonicalPhaseDiscovery.observationScope,
     homePath,
     codexExecutable,
     fundedCredentialProvider,
@@ -1485,7 +1566,48 @@ export async function createGateway(config: GatewayConfig) {
     credentialedDriverKinds: ["pi", "opencode"],
     driveContextReady: () => chatDriveContext.service !== null,
   });
+  let canonicalChatProviderCatalog = baseCanonicalChatProviderCatalog;
   if (chatRepository && canonicalChatExecutionRoots) {
+    // Extraction plan for this 1,000+ line composition entrypoint:
+    // specs/536-conversational-bots/plan.md#gateway-entrypoint-extraction.
+    // The host starts before the adapters so the bot adapter can bind to it; shared AI
+    // registers on it after the orchestrator exists (below).
+    scopeRuntimeHost = await startScopeRuntimeHost({
+      homePath,
+      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      ...(fundedAdmission ? { fundedAdmission } : {}),
+      onFailure: logBestEffortFailure,
+    });
+    matrixAnthropicRuntime = createMatrixAnthropicRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
+      profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
+      supports: { rootChat: Boolean(scopeRuntimeHost?.available), recipeBots: Boolean(scopeRuntimeHost?.available) },
+      onSourceChanged: () => botServices?.cancelAnthropicInference?.(),
+    });
+    const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
+    await chatAgents.bootstrap();
+    botServices = await startBots({
+      toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
+      runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
+      providers: aiProviderService,
+      ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),
+      ...(jevInboxRuntime ? { jev: jevInboxRuntime.botWorkflow } : {}),
+      managedMcp: managedPiMcpDependencies({ env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
+        ownerId: process.env.MATRIX_USER_ID, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID }),
+      ...(internalIntegrationBaseUrl && internalPlatformToken
+        ? { integrations: createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken }) }
+        : integrationRoutes ? { integrations: createLocalIntegrationTransport(integrationRoutes) } : {}),
+      ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
+      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      ...(fundedAdmission ? { fundedAdmission } : {}),
+    });
+    canonicalChatProviderCatalog = composePhaseCatalog(baseCanonicalChatProviderCatalog, canonicalPhaseDiscovery.canonical, base => {
+      const sourceCatalog = matrixAnthropicRuntime?.service
+        ? withMatrixAnthropicProviderInstances(base, aiProviderService,
+          () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available), terminalRuntimeOwnerId ?? null) : base;
+      return botServices?.chatgptPlanPeers
+        ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
+          () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
+    });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
@@ -1494,8 +1616,10 @@ export async function createGateway(config: GatewayConfig) {
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
         homePath,
+        credentialKey: toolOutputKey,
         resolveCredentialLaunch: resolveClaudeCredentialLaunch,
         matrixMcpCapabilityIssuer: matrixMcpCapabilities,
+        ...(previewDriveClient ? { previewDriveClient } : {}),
         customMcpApprovalClient: internalPlatformUrl && internalPlatformToken && internalHandle
           ? createCustomMcpApprovalClient({ platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle })
           : undefined,
@@ -1530,12 +1654,20 @@ export async function createGateway(config: GatewayConfig) {
         }));
       }
     }
+    if (botServices?.adapter) canonicalAdapters.push(botServices.adapter);
+    if (botServices?.managedAdapter) {
+      canonicalAdapters.push(botServices.managedAdapter);
+      canonicalExecutableDriverKinds.push("matrix_pi");
+    }
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
+      executionAdmissionFence,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
       repository: chatRepository,
-      catalog: canonicalChatProviderCatalog,
+      catalog: botServices?.adapter ? withBotProviderInstance(canonicalChatProviderCatalog) : canonicalChatProviderCatalog,
+      agents: chatAgents,
+      ...(botServices ? { botChats: botServices.botChats } : {}),
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
@@ -1543,9 +1675,11 @@ export async function createGateway(config: GatewayConfig) {
         onSharedEvent: (scopeId: string) => gatewayCollaboration!.eventRegistry.broadcastScope(scopeId),
       } : {}),
       onAiGeneration: recordAiGeneration,
+      ...(previewDriveWiring.beforeDispatch ? { beforePreviewDispatch: previewDriveWiring.beforeDispatch } : {}),
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
+    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
@@ -1555,6 +1689,7 @@ export async function createGateway(config: GatewayConfig) {
     await enableOwnerSharedAi({
       gatewayCollaboration,
       input: {
+        ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
         orchestrator: canonicalChatOrchestrator,
         homePath,
         providerCatalog: canonicalChatProviderCatalog,
@@ -1563,6 +1698,7 @@ export async function createGateway(config: GatewayConfig) {
         // shared AI reports no eligibility instead of launching unmounted runs.
         ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+        ...(fundedAdmission ? { fundedAdmission } : {}),
       },
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
@@ -1591,6 +1727,10 @@ export async function createGateway(config: GatewayConfig) {
     ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
     : async () => { throw new Error("Project chat cleanup unavailable"); };
   app.route("/", createWorkspaceRoutes({
+    agentSessionManager: codingAgentSessionManager,
+    sessionOrchestrator: codingAgentWorkspaceRuntime,
+    startSession: nativeCodexRuntime.startSession,
+    beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
     homePath,
     backgroundRuntime: backgroundAgentRuntime,
     terminalRuntime: terminalWorkspaceRuntime,
@@ -1609,6 +1749,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.route("/api", createShellRoutes(shellRouteDeps));
   const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
+    beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
     deleteProjectChats,
     homePath,
     backgroundRuntime: backgroundAgentRuntime,
@@ -1621,14 +1762,26 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+  const workflowStore = createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity);
+  matrixAnthropicRuntime ??= createMatrixAnthropicRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
+    profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
+    supports: { rootChat: false, recipeBots: false },
+  });
+  const providerWorkflowLifecycle = await createNativeProviderWorkflowRuntime({
+    app, homePath, store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
+    ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
+    getPrincipal: getOptionalRequestPrincipal,
+    inventory: () => aiProviderService.getSnapshot(),
+  });
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+    credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
-    canonicalChatProviderCatalog, aiProviderService,
+    canonicalChatProviderCatalog, aiProviderService, botServices,
     providerSettingsStore: createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity),
     listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });
@@ -1636,6 +1789,7 @@ export async function createGateway(config: GatewayConfig) {
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({
     homePath,
+    nativeProviderProfileGuard,
     channelManager,
     agentRuntimeSource: agentRuntimeServices.source,
     agentRuntimeController: agentRuntimeServices.controller,
@@ -1772,6 +1926,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await managedFeatureRestart.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
@@ -1809,12 +1964,21 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await localChatImportLifecycle.close();
+      await closeAppAiCapabilities(appAiRuntime, (error) => {
+        logBestEffortFailure("App AI adapter shutdown failed", error);
+      });
+      await matrixAnthropicRuntime.close();
+      await providerWorkflowLifecycle.close();
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await botServices?.close();
+      botServices = undefined;
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();
+      // After collaboration unregisters, so no shared run loses its broker mid-shutdown.
+      await scopeRuntimeHost?.close();
       gatewayCollaboration = null;
       await backgroundAgentRuntime.close();
       await codingAgentWorkspaceRuntime?.close();
@@ -1823,6 +1987,7 @@ export async function createGateway(config: GatewayConfig) {
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();
+      fundedAdmission?.close();
       fundedCredentialProvider?.close();
       await jevRuntime?.cleanup.close();
       await codingAgentTurnLifecycle.shutdown();

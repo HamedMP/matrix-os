@@ -8,12 +8,23 @@ import {
   fetchTerminalSessions,
   mobileQueryKeys,
   renameTerminalSession,
+  type TerminalSession,
 } from "@/lib/requests";
 import {
   SHELL_SESSION_CREATE_ATTEMPTS,
   twoWordShellSessionName,
 } from "@/lib/shell-session-names";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+
+/** Tab names may repeat, so a name already in the list is only avoided, never refused. */
+function nextTerminalSessionName(sessions: readonly TerminalSession[]): string {
+  const existingNames = new Set(sessions.map((session) => session.name));
+  let name = twoWordShellSessionName();
+  for (let attempt = 1; attempt < SHELL_SESSION_CREATE_ATTEMPTS && existingNames.has(name); attempt += 1) {
+    name = twoWordShellSessionName();
+  }
+  return name;
+}
 
 export function useComputerTerminals() {
   const queryClient = useQueryClient();
@@ -45,20 +56,10 @@ export function useComputerTerminals() {
     mutationFn: async () => {
       const token = await getToken();
       if (!token || !computer) throw new Error("Could not create terminal. Try again.");
-      const existingNames = new Set((terminals.data ?? []).map((session) => session.name));
-      let name: string | null = null;
-      for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
-        const candidate = twoWordShellSessionName();
-        if (!existingNames.has(candidate)) {
-          name = candidate;
-          break;
-        }
-      }
-      if (!name) throw new Error("Could not create terminal. Try again.");
       return requestTerminalSessionCreation(
         token,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
-        name,
+        nextTerminalSessionName(terminals.data ?? []),
       );
     },
     onSuccess: () => {
@@ -66,25 +67,27 @@ export function useComputerTerminals() {
     },
   });
   const renameMutation = useMutation({
-    mutationFn: async ({ currentName, nextName }: { currentName: string; nextName: string }) => {
+    mutationFn: async ({ session, nextName }: { session: TerminalSession; nextName: string }) => {
       const token = await getToken();
       if (!token || !computer) throw new Error("Could not rename terminal. Try again.");
       await renameTerminalSession(
         token,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
-        currentName,
+        session,
         nextName,
       );
     },
-    onSuccess: async () => {
+    // A refused rename usually means the row's revision is out of date, so the
+    // list is reloaded either way and the next attempt sends the current one.
+    onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: terminalQueryKey });
     },
   });
   const deleteMutation = useMutation({
-    mutationFn: async (name: string) => {
+    mutationFn: async (session: TerminalSession) => {
       const token = await getToken();
       if (!token || !computer) throw new Error("Could not delete terminal. Try again.");
-      await deleteTerminalSession(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, name);
+      await deleteTerminalSession(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, session);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: terminalQueryKey });
@@ -98,12 +101,14 @@ export function useComputerTerminals() {
       activeComputer.isPending
       || (Boolean(computer) && terminals.isPending)
     ),
-    isError: activeComputer.isError || terminals.isError,
+    // A failed background refresh keeps the last list on screen; only a list
+    // that never loaded is reported as unavailable.
+    isError: activeComputer.isLoadingError || terminals.isLoadingError,
     createSession: () => createMutation.mutateAsync(),
-    renameSession: (currentName: string, nextName: string) => (
-      renameMutation.mutateAsync({ currentName, nextName })
+    renameSession: (session: TerminalSession, nextName: string) => (
+      renameMutation.mutateAsync({ session, nextName })
     ),
-    deleteSession: (name: string) => deleteMutation.mutateAsync(name),
+    deleteSession: (session: TerminalSession) => deleteMutation.mutateAsync(session),
     isMutating: createMutation.isPending || renameMutation.isPending || deleteMutation.isPending,
     refresh: async () => {
       await Promise.all([

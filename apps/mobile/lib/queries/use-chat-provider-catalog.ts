@@ -35,6 +35,7 @@ export function useChatProviderCatalog() {
       activeComputer.isPending
       || (Boolean(computer) && catalog.isPending)
     ),
+    isFetching: authEnabled && (activeComputer.isFetching || catalog.isFetching),
     isError: activeComputer.isError || catalog.isError,
   };
 }

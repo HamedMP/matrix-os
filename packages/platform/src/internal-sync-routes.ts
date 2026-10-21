@@ -1,3 +1,4 @@
+import { createStorageDeletionAdmissionMiddleware } from './account-deletion/storage-admission.js';
 import { Hono } from "hono";
 import { Readable } from "node:stream";
 import {
@@ -343,6 +344,8 @@ export function createInternalSyncRoutes(opts: {
     c.set("internalSyncScope", scope);
     return next();
   });
+
+  app.use("*", createStorageDeletionAdmissionMiddleware(opts.db));
 
   function requireAllowedKey(
     c: { get: (key: "internalSyncScope") => SyncScope; json: (body: unknown, status?: number) => Response },

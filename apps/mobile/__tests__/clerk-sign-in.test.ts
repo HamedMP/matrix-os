@@ -5,6 +5,8 @@ import {
   signInWithPassword,
   supportsPassword,
   describeClerkError,
+  describeKnownClerkError,
+  describeKnownSignInFailure,
   describeSignInFailure,
   findEmailCodeFactor,
   isLikelyEmail,
@@ -368,5 +370,76 @@ describe("submitEmailCode", () => {
     await expect(submitEmailCode(attempt as never, "000000")).rejects.toThrow(
       "Incorrect code. Try again.",
     );
+  });
+});
+
+describe("describeKnownClerkError", () => {
+  it.each([
+    ["user_locked", "This account is locked. Try again later or contact support."],
+    ["user_banned", "This account cannot sign in. Contact support."],
+    ["user_deactivated", "This account cannot sign in. Contact support."],
+    ["not_allowed_access", "This account is not allowed to sign in to Matrix OS."],
+    ["not_allowed_to_sign_up", "New accounts cannot be created from the app right now."],
+    ["sign_up_mode_restricted", "New accounts cannot be created from the app right now."],
+    ["sign_up_restricted_waitlist", "New accounts cannot be created from the app right now."],
+    ["signup_rate_limit_exceeded", "Too many attempts. Wait a moment and try again."],
+    ["session_exists", "You are already signed in."],
+    ["identifier_already_signed_in", "You are already signed in."],
+  ])("has this app's own copy for %s", (code, copy) => {
+    const error = { errors: [{ code, longMessage: "Whatever Clerk chose to say about it." }] };
+
+    expect(describeKnownClerkError(error, "fallback")).toBe(copy);
+  });
+
+  it("never passes a provider message through, however it is worded", () => {
+    const error = {
+      errors: [
+        {
+          code: "form_param_format_invalid",
+          longMessage: `pq: connection refused at 10.0.0.4 ${"x".repeat(4000)}`,
+          message: "internal",
+        },
+      ],
+    };
+
+    expect(describeKnownClerkError(error, "fallback")).toBe("fallback");
+  });
+
+  it("finds a known code that is not the first error", () => {
+    const error = { errors: [{ code: "form_param_unknown" }, { code: "user_locked" }] };
+
+    expect(describeKnownClerkError(error, "fallback")).toBe(
+      "This account is locked. Try again later or contact support.",
+    );
+  });
+
+  it("does not mistake an inherited property name for a known code", () => {
+    const error = { errors: [{ code: "constructor" }, { code: "toString" }] };
+
+    expect(describeKnownClerkError(error, "fallback")).toBe("fallback");
+  });
+
+  it.each([null, undefined, "boom", new TypeError("Network request failed"), {}, { errors: [] }])(
+    "falls back for %p",
+    (error) => {
+      expect(describeKnownClerkError(error, "fallback")).toBe("fallback");
+    },
+  );
+});
+
+describe("describeKnownSignInFailure", () => {
+  it("keeps the copy of an error this module raised", () => {
+    expect(describeKnownSignInFailure(new EmailCodeSignInError("Enter your password."), "x")).toBe(
+      "Enter your password.",
+    );
+  });
+
+  it("gives a raw Clerk error this app's copy or the fallback, never Clerk's text", () => {
+    expect(
+      describeKnownSignInFailure({ errors: [{ code: "user_locked", longMessage: "Locked!" }] }, "x"),
+    ).toBe("This account is locked. Try again later or contact support.");
+    expect(
+      describeKnownSignInFailure({ errors: [{ code: "mystery", longMessage: "Leaky detail" }] }, "x"),
+    ).toBe("x");
   });
 });

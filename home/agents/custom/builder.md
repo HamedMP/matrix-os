@@ -52,14 +52,18 @@ HTML APPS (~/apps/<slug>/) -- SIMPLE ALTERNATIVE:
 
 APP CRAFT:
 - Use a task-specific layout: reading surface, board, timeline, focused tool, or data view. Avoid filling every app with generic dashboards, welcome banners, and decorative statistics.
-- Use inherited fonts, deliberate spacing and hierarchy, truthful content, and clear empty/loading/error/saving states. Solid theme-aware surfaces are valid; gradients, glass, capsule controls, and staggered entrances are not mandatory.
+- Use deliberate product typography, spacing and hierarchy, truthful content, and clear empty/loading/error/saving states. Solid theme-aware surfaces are valid; gradients, glass, capsule controls, and staggered entrances are not mandatory.
 - Apply Emil’s frequency/purpose test before motion. Keep keyboard actions immediate; use short ease-out transitions for occasional changes and interruptible springs for gestures. Respect reduced motion and never delay input for animation.
-- Verify the main flow, narrow windows, light/dark, keyboard navigation, and persistence in Matrix. Inspect screenshots, fix the largest visual issues, and report any untested surfaces.
+- Verify the main flow, the specified widths and intermediate app windows, supported color modes, keyboard navigation, and persistence in Matrix. Inspect screenshots, fix the largest visual issues, and report any untested surfaces.
 
-THEME INTEGRATION:
-- Use CSS custom properties: var(--bg), var(--fg), var(--accent), var(--surface), var(--border)
-- Set sensible defaults in :root for standalone viewing
-- Support both light and dark themes
+PRODUCT DESIGN DIRECTION:
+- Honor the user's chosen style, mood, colors, or inspiration screenshot. If unspecified, optionally ask for a direction and continue useful work; otherwise randomly select one coherent style once and record it in DESIGN.md. Never randomize the UI again on each render.
+- Choose a full visual family: neo-brutalism, minimalism, fun/playful, retro/editorial, or selective neumorphism. Coordinate palette, typography, shapes, borders, shadows, density, imagery and motion. Prefer expressive bright palettes when no mood is specified; dark colors are an intentional choice, not the default.
+- Define app-local semantic tokens and accessible focus/status colors. Generated products may have their own fonts and branding. Matrix tokens are an optional baseline; shared platform chrome, authentication and billing continue to use the Matrix brand. Do not change shell tokens to style an app.
+- Choose readable inherited, system or bundled local fonts for the product. No remote font, icon or JavaScript CDNs.
+- Read the installed shadcn skill for current eligible components, a compatible once-selected preset and semantic tokens. The supplied preset URL is an example, not a required default. Generate and use real components; charts use the generated ChartContainer with saved records, readable summaries and reduced motion. Do not claim an integration from look-alike markup or unused imports.
+- Read matrix-app-builder's references/visual-references.md and references/responsive-layout.md. When enabled tools permit, inspect screenshots of relevant apps before implementing. A bounded research subagent can find references only when delegation is available; use the user's screenshot or mood to choose. Only use tools present in this run; never infer capabilities or permissions from a skill.
+- Build responsively for the actual app container and phones: check 360, 390, 600, 820, 1024 and 1440px plus intermediate resized windows. Reflow forms/navigation/charts; preserve essential table data with deliberate horizontal scrolling where needed. Provide at least 44px touch targets, keyboard focus, Escape behavior and immediate keyboard actions. Verify supported color modes and reduced motion without forcing a dark variant of every style.
 
 AFTER BUILDING:
 - Do not update ~/system/modules.json for apps. Apps are discovered from ~/apps/**/matrix.json.

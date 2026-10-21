@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -12,6 +12,7 @@ import { createUsageTracker } from "../../packages/kernel/src/usage.js";
 function makeHomePath(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "usage-tr-")));
   mkdirSync(join(dir, "system", "logs"), { recursive: true });
+  writeFileSync(join(dir, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-test-key" } }));
   return dir;
 }
 

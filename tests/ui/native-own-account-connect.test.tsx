@@ -39,23 +39,23 @@ function mount(kind: "pi" | "opencode", alter?: (source: ProviderAccessSource) =
   if (selected) { value.harness.accessSourceId = value.source.id; value.harness.enabled = true; }
   const onMutate = vi.fn().mockResolvedValue(true);
   // The actual disabled Chat catalog deliberately has no setup actions.
-  const onSetupHarness = vi.fn().mockResolvedValue(false);
+  const onConnectSettings = vi.fn().mockResolvedValue(false);
   render(<ConnectionChoices {...value} gatewaySource={null} gatewaySelected={false}
-    canSetRoute disabled={false} onMutate={onMutate} onSetupHarness={onSetupHarness}
+    canSetRoute disabled={false} onMutate={onMutate} onConnectSettings={onConnectSettings}
     {...{ onRefreshForConnection: refresh }} />);
-  return { ...value, onMutate, onSetupHarness };
+  return { ...value, onMutate, onConnectSettings };
 }
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("native own-account connection", () => {
   it.each(["pi", "opencode"] as const)("atomically connects disabled %s through its exact fresh observed native profile", async (kind) => {
-    const { onMutate, onSetupHarness, source } = mount(kind);
+    const { onMutate, onConnectSettings, source } = mount(kind);
     fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
     await waitFor(() => expect(onMutate).toHaveBeenCalledWith({ type: "set_route", harnessInstanceId: kind,
       route: { kind: "configurable", providerId: "anthropic", modelId: "claude-fable-5" },
       accessSourceId: source.id, accountId: null, enableHarness: true }));
-    expect(onSetupHarness).not.toHaveBeenCalled();
+    expect(onConnectSettings).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -69,21 +69,21 @@ describe("native own-account connection", () => {
     ["future observation", (s: ProviderAccessSource) => { s.localObservation!.checkedAt = new Date(Date.now() + 30_000).toISOString(); }],
     ["absent profile", (s: ProviderAccessSource) => { s.localObservation!.state = "absent"; }],
   ] as const)("does not activate %s native evidence", async (_name, alter) => {
-    const { onMutate, onSetupHarness } = mount("pi", alter);
+    const { onMutate, onConnectSettings } = mount("pi", alter);
     fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
     await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
-    expect(onSetupHarness).not.toHaveBeenCalled();
+    expect(onConnectSettings).not.toHaveBeenCalled();
     expect(onMutate).not.toHaveBeenCalled();
   });
 
   it("expires a mounted native connection option without activating stale evidence", async () => {
     vi.useFakeTimers();
-    const { onMutate, onSetupHarness } = mount("pi", (source) => {
+    const { onMutate, onConnectSettings } = mount("pi", (source) => {
       source.localObservation!.staleAfter = new Date(Date.now() + 50).toISOString();
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(51); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Own account/ })); });
-    expect(onSetupHarness).not.toHaveBeenCalled();
+    expect(onConnectSettings).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toBeVisible();
     expect(onMutate).not.toHaveBeenCalled();
   });
@@ -91,7 +91,7 @@ describe("native own-account connection", () => {
   it.each(["pi", "opencode"] as const)("refreshes stale %s evidence once before the exact atomic connection", async (kind) => {
     const fresh = fixture(kind).snapshot;
     const refresh = vi.fn().mockResolvedValue(fresh);
-    const { onMutate, onSetupHarness } = mount(kind, (s) => {
+    const { onMutate, onConnectSettings } = mount(kind, (s) => {
       s.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString();
     }, refresh);
     fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
@@ -99,7 +99,7 @@ describe("native own-account connection", () => {
       type: "set_route", harnessInstanceId: kind, accessSourceId: `native_${kind}`, enableHarness: true,
     })));
     expect(refresh).toHaveBeenCalledOnce();
-    expect(onSetupHarness).not.toHaveBeenCalled();
+    expect(onConnectSettings).not.toHaveBeenCalled();
   });
 
   it.each(["absent", "wrong harness", "wrong account", "wrong model", "changed source", "expired", "future", "denied", "read only", "no atomic connect", "unavailable"])("denies %s after the refresh without setup or mutation", async (negative) => {
@@ -116,14 +116,14 @@ describe("native own-account connection", () => {
     if (negative === "read only") fresh.access.mode = "read_only";
     if (negative === "no atomic connect") fresh.atomicConnectSupported = false;
     const refresh = vi.fn().mockResolvedValue(negative === "unavailable" ? null : fresh);
-    const { onMutate, onSetupHarness } = mount("pi", (s) => {
+    const { onMutate, onConnectSettings } = mount("pi", (s) => {
       s.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString();
     }, refresh);
     fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
     await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
     expect(onMutate).not.toHaveBeenCalled();
-    expect(onSetupHarness).not.toHaveBeenCalled();
+    expect(onConnectSettings).not.toHaveBeenCalled();
   });
 
   it("keeps the saved own-account selection visible after observation expiry", () => {

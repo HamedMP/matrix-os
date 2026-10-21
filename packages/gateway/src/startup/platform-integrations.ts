@@ -4,6 +4,7 @@ import { createPipedreamClient, type PipedreamConnectClient } from "../integrati
 import { createIntegrationRoutes } from "../integrations/routes.js";
 import { discoverComponentKeys } from "../integrations/registry.js";
 import type { ServerMessage } from "../server/types.js";
+import { getOptionalRequestPrincipal, readPrincipalRuntimeConfig } from "../request-principal.js";
 
 export interface PlatformIntegrationServices {
   db: PlatformDb | null;
@@ -83,16 +84,19 @@ export function createIntegrationUserResolver(
   env: NodeJS.ProcessEnv,
 ): (c: Context) => Promise<string | null> {
   return async (c) => {
-    // ---- Path A: prod / platform header ----
-    const clerkIdFromPlatform = c.req.header("x-platform-user-id");
-    if (clerkIdFromPlatform) {
+    // Identity comes exclusively from authenticated context, including run-scoped
+    // Chat tokens. A caller-supplied platform header is never proof of ownership.
+    const runtime = readPrincipalRuntimeConfig(env);
+    const principal = getOptionalRequestPrincipal(c, runtime);
+    if (principal && principal.source !== "dev-default") {
       try {
-        const user = await db.getUserByClerkId(clerkIdFromPlatform);
+        const user = await db.getUserByClerkId(principal.userId)
+          ?? (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(principal.userId)
+            ? await db.getUserById(principal.userId) : null);
         if (!user) {
-          // Genuine auth failure: header is present but no platform row.
-          // The user signed in via Clerk but their container/platform-db
-          // row hasn't been provisioned yet. Distinct from a DB error.
-          console.warn("[integrations][auth] no_user_for_clerk_id:", clerkIdFromPlatform.slice(0, 32));
+          // A verified owner with no platform row has not been provisioned.
+          // This is distinct from a database connection or query failure.
+          console.warn("[integrations][auth] authenticated_owner_not_provisioned");
           return null;
         }
         return user.id;
@@ -104,16 +108,13 @@ export function createIntegrationUserResolver(
           "[integrations][auth] db_error during getUserByClerkId:",
           err instanceof Error ? err.message : err,
         );
-        return null;
+        throw new Error("Integration service unavailable", { cause: err });
       }
     }
 
-    // ---- Path B: prod with no header = locked out (not an error) ----
-    if (env.NODE_ENV === "production") {
-      // Not console.error -- this is a routine "missing header" outcome,
-      // not a server fault. The proxy is supposed to inject this header;
-      // if it isn't, that's a deployment issue, not a per-request error.
-      console.warn("[integrations][auth] no_platform_header_in_production");
+    // No authenticated owner means no production access. Only an explicitly
+    // local, unauthenticated development gateway may use the legacy dev upsert.
+    if (runtime.isProduction || !runtime.isLocalDevelopment || runtime.authEnabled) {
       return null;
     }
 

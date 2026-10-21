@@ -1,21 +1,28 @@
+import type { NativeObservationReadScope } from "./hermes-observation-renewal.js";
+import type { CanonicalNativeHarnessCatalogReader } from "./native-harness-canonical-projection.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createCanonicalNativeHarnessCatalogReader } from "./native-harness-canonical-projection.js";
 import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 import type { AgentRuntimeSource } from "../agent-config/service.js";
+import { projectChatGptPlanSnapshot } from "../app-ai/chatgpt-plan-projection.js";
 import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   AiProviderDriverViewSchema,
   type AiAccessSourceView,
   type AiProviderAccountView,
   type AiProviderReadiness,
   type AiProviderLocalObservation,
   type AiProviderSnapshotV3,
+  type MatrixAnthropicConnection,
+  type BotProviderConnection,
 } from "@matrix-os/contracts";
 import type { KernelCredentialObservationState } from "../kernel-credentials.js";
 import { KERNEL_DEFAULTS } from "../kernel-settings.js";
 import { ProviderCredentialStore } from "./credential-store.js";
 import { ProviderHealthCache } from "./health.js";
+import { fundedSourceObservation } from "./funded-source-observation.js";
 import {
   AI_PROVIDER_CATALOG_VERSION,
   buildBundledModelCatalog,
@@ -49,8 +56,13 @@ export interface AiProviderSnapshotReader {
 }
 
 interface AiProviderServiceOptions {
+  /** Server phase validation runs before any observation; never renderer input. */
+  observationScope?: () => "canonical_matrix" | undefined;
+  /** Registered native Claude profile uses a separate account from owner API keys. */
+  exposeClaudeProfileAccount?: boolean;
   nativeHarnessCatalogReader?: GenericHarnessModelCatalogReader;
   hermesRuntimeSource?: AgentRuntimeSource;
+  openclawRuntimeSource?: AgentRuntimeSource;
   homePath: string;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
@@ -60,7 +72,12 @@ interface AiProviderServiceOptions {
   driverInventory?: (signal: AbortSignal) => Promise<AiProviderSnapshotV3["drivers"]>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedReadinessReader?: FundedAiReadinessReader;
+  codexNativeKeyReadiness?: () => Promise<AiProviderReadiness | null>;
   codexLocalObservation?: (signal: AbortSignal) => Promise<CodexLocalCredentialObservation>;
+  /** Saved source authority only; this read must not discover or enable a connection. */
+  matrixAnthropicConnection?: () => Promise<MatrixAnthropicConnection | undefined>;
+  /** Fresh configured-owner peer authority only; no credentials or renderer owner IDs. */
+  chatGptPlanObservation?: (signal: AbortSignal) => Promise<BotProviderConnection | undefined>;
 }
 
 function matchedCodexLocalObservation(
@@ -184,16 +201,21 @@ function readinessForDriver(
 }
 
 export class AiProviderService implements AiProviderSnapshotReader {
+  readonly #observationScope?: AiProviderServiceOptions["observationScope"];
   readonly #credentials: ProviderCredentialStore;
+  readonly #exposeClaudeProfileAccount: boolean;
   readonly #now: () => Date;
   readonly #healthProbe?: AiProviderHealthProbe;
   readonly #healthCache: ProviderHealthCache<AiProviderReadiness>;
   readonly #ownsHealthCache: boolean;
   readonly #healthTimeoutMs: number;
-  readonly #nativeHarnessCatalogReader?: (refresh: boolean) => Promise<NonNullable<AiProviderSnapshotV3["nativeHarnessCatalog"]>>;
+  readonly #nativeHarnessCatalogReader?: CanonicalNativeHarnessCatalogReader;
   readonly #driverInventory?: AiProviderServiceOptions["driverInventory"];
   readonly #fundedReadiness?: FundedAiReadinessReader;
+  readonly #codexNativeKeyReadiness?: AiProviderServiceOptions["codexNativeKeyReadiness"];
   readonly #codexLocalObservation?: AiProviderServiceOptions["codexLocalObservation"];
+  readonly #matrixAnthropicConnection?: AiProviderServiceOptions["matrixAnthropicConnection"];
+  readonly #chatGptPlanObservation?: AiProviderServiceOptions["chatGptPlanObservation"];
 
   constructor(options: AiProviderServiceOptions) {
     if (!options.homePath) throw new Error("AI provider home path is required");
@@ -202,6 +224,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
       env: options.env,
       fundedCredentialProvider: options.fundedCredentialProvider,
     });
+    this.#observationScope = options.observationScope;
+    this.#exposeClaudeProfileAccount = options.exposeClaudeProfileAccount === true;
     this.#now = options.now ?? (() => new Date());
     this.#healthProbe = options.healthProbe;
     this.#healthCache = options.healthCache ?? new ProviderHealthCache<AiProviderReadiness>();
@@ -212,30 +236,64 @@ export class AiProviderService implements AiProviderSnapshotReader {
     );
     this.#driverInventory = options.driverInventory;
     this.#nativeHarnessCatalogReader = options.nativeHarnessCatalogReader ? createCanonicalNativeHarnessCatalogReader(options.nativeHarnessCatalogReader,
-      { hermesRuntimeSource: options.hermesRuntimeSource, now: this.#now }) : undefined;
+      { hermesRuntimeSource: options.hermesRuntimeSource, openclawRuntimeSource: options.openclawRuntimeSource, now: this.#now }) : undefined;
     this.#fundedReadiness = options.fundedReadinessReader;
+    this.#codexNativeKeyReadiness = options.codexNativeKeyReadiness;
     this.#codexLocalObservation = options.codexLocalObservation;
+    this.#matrixAnthropicConnection = options.matrixAnthropicConnection;
+    this.#chatGptPlanObservation = options.chatGptPlanObservation;
   }
 
-  async #readCodexLocalObservation(): Promise<AiProviderLocalObservation | undefined> {
+  async #readChatGptPlanObservation(parent?: AbortSignal): Promise<BotProviderConnection | undefined> {
+    if (!this.#chatGptPlanObservation) return undefined;
+    parent?.throwIfAborted();
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), 2000);
+    const signal = parent ? AbortSignal.any([parent, deadline.signal]) : deadline.signal;
+    let abort: (() => void) | undefined;
+    try {
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(new Error("Peer observation unavailable"));
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      });
+      return await Promise.race([this.#chatGptPlanObservation(signal), cancelled]);
+    } catch (error) {
+      parent?.throwIfAborted();
+      console.warn("[ai-providers] connected plan observation unavailable", error instanceof Error ? error.name : "UnknownError");
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+      if (abort) signal.removeEventListener("abort", abort);
+    }
+  }
+
+  async #readCodexLocalObservation(timeoutMs = CODEX_OBSERVATION_TIMEOUT_MS, parent?: AbortSignal): Promise<AiProviderLocalObservation | undefined> {
     if (!this.#codexLocalObservation) return undefined;
-    const signal = AbortSignal.timeout(CODEX_OBSERVATION_TIMEOUT_MS);
+    parent?.throwIfAborted();
+    if (timeoutMs <= 0) return UNKNOWN_LOCAL_OBSERVATION;
+    const timeoutSignal = AbortSignal.timeout(Math.max(1, Math.floor(Math.min(timeoutMs, CODEX_OBSERVATION_TIMEOUT_MS))));
+    const signal = parent ? AbortSignal.any([parent, timeoutSignal]) : timeoutSignal;
+    let onAbort: (() => void) | undefined;
     try {
       const observed = await Promise.race([
         this.#codexLocalObservation(signal),
         new Promise<never>((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("Codex observation timed out")), { once: true });
+          onAbort = () => reject(new Error("Codex observation timed out"));
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) onAbort();
         }),
       ]);
       return matchedCodexLocalObservation(observed, this.#now());
     } catch (error: unknown) {
+      parent?.throwIfAborted();
       // An unavailable local CLI probe is not an authentication verdict.
       console.warn("[ai-providers] Codex local observation unavailable:", error instanceof Error ? error.name : "UnknownError");
       return UNKNOWN_LOCAL_OBSERVATION;
-    }
+    } finally { if (onAbort) signal.removeEventListener("abort", onAbort); }
   }
 
-  async #drivers(): Promise<AiProviderSnapshotV3["drivers"]> {
+  async #drivers(managedMatrixOnly = false): Promise<AiProviderSnapshotV3["drivers"]> {
     const kernel = AiProviderDriverViewSchema.parse({
       id: "kernel",
       displayName: "Claude SDK",
@@ -245,7 +303,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       capabilities: [...KERNEL_CAPABILITIES],
       setupActions: [],
     });
-    if (!this.#driverInventory) return [kernel];
+    if (managedMatrixOnly || !this.#driverInventory) return [kernel];
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -331,70 +389,94 @@ export class AiProviderService implements AiProviderSnapshotReader {
     }
   }
 
+  async renewNativeObservations(snapshot: AiProviderSnapshotV3, scope: NativeObservationReadScope): Promise<AiProviderSnapshotV3> {
+    scope.signal?.throwIfAborted();
+    if (!snapshot.nativeHarnessCatalog || !this.#nativeHarnessCatalogReader) return snapshot;
+    const nativeHarnessCatalog = await this.#nativeHarnessCatalogReader.renewStale(snapshot.nativeHarnessCatalog, scope);
+    return nativeHarnessCatalog === snapshot.nativeHarnessCatalog ? snapshot : { ...snapshot, nativeHarnessCatalog };
+  }
+
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
     options.signal?.throwIfAborted();
+    const canonicalOnly = this.#observationScope?.() === "canonical_matrix" || options.admissionScope === "canonical_matrix";
+    const managedMatrixOnly = canonicalOnly || options.admissionScope === "managed_matrix";
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
+    // Aggregate funding can outlive native evidence. Renew within the outer
+    // observation budget; discovery and each renewal retain their own caps.
+    const nativeScope = {
+      signal: options.signal,
+      deadline: Math.min(+snapshotTime + FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs,
+        Number.isFinite(options.nativeObservationDeadline) ? options.nativeObservationDeadline! : Infinity),
+      deferRenewal: true,
+    };
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
-    const [drivers, funded, apiKeyReadiness, profileReadiness, nativeHarnessCatalog] = await Promise.all([
-      this.#drivers(),
+    const [drivers, funded, apiKeyReadiness, profileReadiness, observedNativeCatalog] = await Promise.all([
+      this.#drivers(managedMatrixOnly),
       !options.suppressFundedProbes && credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
         : undefined,
-      this.#resolveOwnerReadiness(
+      managedMatrixOnly ? readinessForObservation(credentials.ownerApiKey.state, "api_key", now) : this.#resolveOwnerReadiness(
         "owner_anthropic_key", credentials.ownerApiKey.state, "api_key", now, options.refresh === true, options.ownerKeyPreflight, options.signal,
       ),
-      this.#resolveOwnerReadiness(
+      managedMatrixOnly ? readinessForObservation(credentials.ownerProfile.state, "profile", now) : this.#resolveOwnerReadiness(
         "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
       ),
-      this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true) : undefined,
+      !managedMatrixOnly && this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true, nativeScope) : undefined,
     ]);
     options.signal?.throwIfAborted();
     // Native discovery can consume more than the local credential probe's
     // five-second TTL. Collect the bounded observation after metadata settles;
     // preserve its original timestamps rather than extending stale evidence.
-    const codexLocalObservation = await this.#readCodexLocalObservation();
+    const codexNativeKey = managedMatrixOnly ? undefined : await this.#codexNativeKeyReadiness?.();
+    let codexLocalObservation = managedMatrixOnly ? undefined : await this.#readCodexLocalObservation(undefined, options.signal);
     options.signal?.throwIfAborted();
+    const nativeHarnessCatalog = observedNativeCatalog && this.#nativeHarnessCatalogReader
+      ? await this.#nativeHarnessCatalogReader.renewStale(observedNativeCatalog, nativeScope) : observedNativeCatalog;
+    options.signal?.throwIfAborted();
+    // A slow Hermes renewal can consume the already-read Codex observation.
+    // Re-read only that expired exact source within the original remaining budget.
+    if (codexLocalObservation?.staleAfter && Date.parse(codexLocalObservation.staleAfter) <= +this.#now()) {
+      codexLocalObservation = await this.#readCodexLocalObservation(nativeScope.deadline - +this.#now(), options.signal);
+    }
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     // Driver health and CLI login are local observations. Neither proves the
     // selected OpenAI account or model can complete a remote request.
-    const codexReadiness: AiProviderReadiness = codexDriver?.installState === "installed"
+    const codexReadiness: AiProviderReadiness = codexNativeKey ?? (codexDriver?.installState === "installed"
       ? { state: "unknown", checkedAt: now, staleAfter: null, action: "retry", safeReason: "unknown" }
-      : readinessForDriver(codexDriver, now);
+      : readinessForDriver(codexDriver, now));
     const matrixReadiness = funded?.readiness ?? readinessForObservation(
       credentials.matrixIncluded.state === "ready" ? "unverified" : credentials.matrixIncluded.state,
       "matrix",
       now,
     );
-    const fundedSourceReadiness = (modelId: string): AiProviderReadiness =>
-      (matrixReadiness.state === "ready" || matrixReadiness.safeReason === "credit_required")
-        && !funded?.allowedModelIds.includes(modelId)
-        ? { state: "unavailable", checkedAt: matrixReadiness.checkedAt, staleAfter: null,
-          action: "retry", safeReason: "provider_unavailable" }
-        : matrixReadiness;
     const catalog = buildBundledModelCatalog();
+    const observeFundedSource = (sourceId: string) => fundedSourceObservation(
+      eligibleModelsForSource(sourceId, catalog).map(model => model.id), matrixReadiness, funded,
+    );
+    const fundedSources = {
+      matrix_cloudflare: observeFundedSource("matrix_cloudflare"),
+      matrix_included: observeFundedSource("matrix_included"),
+    };
 
     const accessSources: AiAccessSourceView[] = [
       sourceFromReadiness({
         id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
         vendor: "cloudflare", accountLabel: "Included",
-        eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
-          .filter((model) => funded?.allowedModelIds.includes(model.id)).map((model) => model.id),
+        eligibleModelIds: fundedSources.matrix_cloudflare.eligibleModelIds,
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
-      }, fundedSourceReadiness("@cf/zai-org/glm-5.3-flash")),
+      }, fundedSources.matrix_cloudflare.readiness),
       sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",
         fundingKind: "matrix_included",
         vendor: "anthropic",
         accountLabel: "Included",
-        eligibleModelIds: eligibleModelsForSource("matrix_included", catalog)
-          .filter((model) => funded?.allowedModelIds.includes(model.id))
-          .map((model) => model.id),
+        eligibleModelIds: fundedSources.matrix_included.eligibleModelIds,
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
-      }, fundedSourceReadiness("claude-sonnet-5")),
+      }, fundedSources.matrix_included.readiness),
       sourceFromReadiness({
         id: "owner_anthropic_key",
         displayName: "Anthropic API key",
@@ -424,15 +506,15 @@ export class AiProviderService implements AiProviderSnapshotReader {
       }, readinessForObservation("setup_required", "profile", now)),
       sourceFromReadiness({
         id: "owner_openai_profile",
-        displayName: "Codex account",
-        fundingKind: "owner_account",
+        displayName: codexNativeKey ? "OpenAI API key" : "Codex account",
+        fundingKind: codexNativeKey ? "owner_api_key" : "owner_account",
         vendor: "openai",
-        accountLabel: "Codex",
+        accountLabel: codexNativeKey ? "API key" : "Codex",
         eligibleModelIds: [...OWNER_OPENAI_MODEL_IDS],
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, codexReadiness),
     ];
-    if (codexLocalObservation) {
+    if (codexLocalObservation && !codexNativeKey) {
       accessSources[accessSources.length - 1] = {
         ...accessSources[accessSources.length - 1]!, localObservation: codexLocalObservation,
       };
@@ -462,11 +544,16 @@ export class AiProviderService implements AiProviderSnapshotReader {
       {
         id: "owner_codex",
         vendor: "openai",
-        authMethod: codexReadiness.state === "setup_required" ? null : "provider_profile",
-        accountLabel: "Codex",
+        authMethod: codexNativeKey ? "api_key" : codexReadiness.state === "setup_required" ? null : "provider_profile",
+        accountLabel: codexNativeKey ? "OpenAI API key" : "Codex",
         ...codexReadiness,
       },
     ];
+
+    const nativeClaudeProfile = this.#exposeClaudeProfileAccount && !managedMatrixOnly
+      && drivers.some(driver => driver.id === "claude_code" && driver.installState === "installed");
+    if (nativeClaudeProfile) accounts.push({ id: "owner_claude_profile", vendor: "anthropic",
+      authMethod: "provider_profile", accountLabel: "Claude account", ...readinessForObservation("unverified", "profile", now) });
 
     const kernelInstances = accessSources
       .filter((source) => source.vendor === "anthropic")
@@ -516,9 +603,21 @@ export class AiProviderService implements AiProviderSnapshotReader {
       defaultModelId: codexReadiness.state === "ready" ? OWNER_OPENAI_MODEL_IDS[0] : null,
       catalogVersion: AI_PROVIDER_CATALOG_VERSION,
     };
+    if (nativeClaudeProfile) {
+      const original = accessSources.find(source => source.id === "owner_anthropic_profile")!;
+      accessSources.push({ ...original, id: "owner_claude_profile", displayName: "Claude account", accountLabel: "Claude account" });
+      for (const model of catalog) {
+        if (!model.eligibleAccessSourceIds.includes(original.id)) continue;
+        model.eligibleAccessSourceIds.push("owner_claude_profile");
+        model.dataPolicies.push({ accessSourceId: "owner_claude_profile", route: "owner_direct", disclosureKey: "owner-direct-anthropic" });
+      }
+    }
     const instances = [
       ...kernelInstances,
       ...(codexDriver ? [codexInstance] : []),
+      ...(nativeClaudeProfile ? [{ ...kernelInstances.find(instance => instance.accessSourceId === "owner_anthropic_profile")!,
+        id: "claude_code_owner_profile", driverId: "claude_code", accountId: "owner_claude_profile", accessSourceId: "owner_claude_profile",
+        label: "Claude account" }] : []),
     ];
 
     const selectedInstance = instances.find(
@@ -533,8 +632,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
         }
       : { providerInstanceId: null, accessSourceId: null, modelId: null };
 
-    return AiProviderSnapshotV3Schema.parse({
+    const matrixAnthropicConnection = canonicalOnly ? undefined : await this.#matrixAnthropicConnection?.();
+    options.signal?.throwIfAborted();
+    const snapshot = AiProviderSnapshotV3Schema.parse({
       contractVersion: 3,
+      ...(matrixAnthropicConnection ? { matrixAnthropicConnection } : {}),
       ...(nativeHarnessCatalog ? { nativeHarnessCatalog } : {}),
       revision: 0,
       refreshedAt: now,
@@ -545,6 +647,12 @@ export class AiProviderService implements AiProviderSnapshotReader {
       models: catalog,
       active,
     });
+    // Observe after other bounded discovery so those waits do not age peer truth.
+    this.#observationScope?.();
+    if (managedMatrixOnly) return snapshot;
+    const plan = await this.#readChatGptPlanObservation(options.signal);
+    options.signal?.throwIfAborted();
+    return projectChatGptPlanSnapshot(snapshot, plan, this.#now());
   }
 
   close(): void {

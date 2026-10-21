@@ -1,4 +1,4 @@
-import { getAppSlug, encodeAppSlugPath, type MatrixAppEntry } from "../lib/apps";
+import { getAppIdentity, getAppInstallPath, getAppSlug, encodeAppSlugPath, type MatrixAppEntry } from "../lib/apps";
 
 const app = (overrides: Partial<MatrixAppEntry>): MatrixAppEntry => ({
   name: "Notes",
@@ -8,6 +8,13 @@ const app = (overrides: Partial<MatrixAppEntry>): MatrixAppEntry => ({
 });
 
 describe("mobile app helpers", () => {
+  it("retains the installed nested identity when the catalog exposes a migrated leaf runtime slug", () => {
+    const entry = app({ slug: "chess", file: "games/chess/index.html", path: "/files/apps/games/chess/index.html" });
+    expect(getAppSlug(entry)).toBe("chess");
+    expect(getAppIdentity(entry)).toBe("games/chess");
+    expect(getAppIdentity(app({ slug: "chess", file: "chess/index.html" }))).toBe("chess");
+    expect(getAppIdentity(app({ slug: "chess", file: "private/chess/dist/index.html" }))).toBe("private/chess");
+  });
   it("derives slugs from nested directory apps", () => {
     expect(getAppSlug(app({ file: "games/snake/index.html" }))).toBe("games/snake");
   });
@@ -30,6 +37,16 @@ describe("mobile app helpers", () => {
       file: "../system/secrets/index.html",
       path: "/files/apps/../system/secrets/index.html",
     }))).toBe("internal-secrets");
+  });
+
+  it("reports where an app is installed, and nothing when the catalog entry does not say", () => {
+    expect(getAppInstallPath(app({ file: "games/chess/dist/index.html" }))).toBe("games/chess");
+    expect(getAppInstallPath(app({ file: "", path: "/files/apps/notes/index.html" }))).toBe("notes");
+    expect(getAppInstallPath(app({
+      name: "Internal Secrets",
+      file: "../system/secrets/index.html",
+      path: "/files/apps/../system/secrets/index.html",
+    }))).toBeNull();
   });
 
   it("encodes nested runtime slug path segments without escaping separators", () => {

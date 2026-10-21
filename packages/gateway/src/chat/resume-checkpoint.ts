@@ -12,6 +12,7 @@ export async function loadChatResumeState(input: {
   executionRootFingerprint: string | null;
   mode: "follow_up" | "retry";
 }): Promise<unknown> {
+  if (!input.adapter.resume) return undefined;
   const previous = await input.repository.getLatestAdapterStateForChat(input.owner, {
     chatId: input.chatId,
     driverKind: input.adapter.driverKind,

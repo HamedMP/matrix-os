@@ -3,9 +3,16 @@ import { z } from "zod/v4";
 
 export const TerminalCommandStateSchema = z.enum(["running", "exited", "unknown"]);
 export type TerminalCommandState = z.infer<typeof TerminalCommandStateSchema>;
+export const TerminalCommandResultSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('running') }).strict(),
+  z.object({ state: z.literal('unknown') }).strict(),
+  z.object({ state: z.literal('exited'), exitCode: z.number().int().min(0).max(255) }).strict(),
+]);
+export type TerminalCommandResult = z.infer<typeof TerminalCommandResultSchema>;
 export const TerminalCommandStateRefSchema = TerminalRefSchema.extend({
   expectedIncarnation: z.string().regex(/^ti_[a-f0-9]{32}$/).optional(),
 }).strict();
+export const TerminalCommandResultRefSchema = TerminalCommandStateRefSchema.required({ expectedIncarnation: true });
 
 const PaneStateSchema = z.object({
   id: z.number().int().min(0),
@@ -15,6 +22,20 @@ const PaneStateSchema = z.object({
   exit_status: z.number().int().nullable().optional(),
 }).passthrough();
 const PaneStatesSchema = z.array(PaneStateSchema).max(10_000);
+
+/** Explicit command results are separate from the attachment/client process exit. */
+export function terminalCommandResultFromPanes(value: unknown, tabId: number, paneId: string): TerminalCommandResult {
+  const parsed = PaneStatesSchema.safeParse(value);
+  if (!parsed.success) return { state: 'unknown' };
+  const matches = parsed.data.filter(pane => !pane.is_plugin && pane.tab_id === tabId && `terminal_${pane.id}` === paneId);
+  if (matches.length !== 1) return { state: 'unknown' };
+  const pane = matches[0]!;
+  if (pane.is_held === true) {
+    const result = TerminalCommandResultSchema.safeParse({ state: 'exited', exitCode: pane.exit_status });
+    return result.success ? result.data : { state: 'unknown' };
+  }
+  return pane.is_held === false && pane.exit_status === null ? { state: 'running' } : { state: 'unknown' };
+}
 
 /** Infer only from explicit current held/exit evidence for the exact managed pane. */
 export function terminalCommandStateFromPanes(value: unknown, tabId: number, paneId: string): TerminalCommandState {

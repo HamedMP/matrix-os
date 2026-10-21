@@ -1,0 +1,27 @@
+@import "../../_shared/app-foundation.css";
+
+
+/* Time leads; controls follow. */
+:root { --app-bg: var(--matrix-bg, #fcfcfd); --app-fg: var(--matrix-fg, #202936); --app-muted: var(--matrix-muted, #edf1f6); --app-accent: var(--matrix-accent, #456dab); --shadow: none; }
+.clock-app { height: 100dvh; }
+.topbar { background: transparent; padding: max(16px, env(safe-area-inset-top)) 24px 16px; border-bottom: 0; }
+.brand-mark { border-radius: 50%; background: transparent; color: var(--app-fg); border: 1px solid var(--app-border); }
+.tabs { border-radius: 999px; background: var(--app-muted); }
+.tab { min-height: 44px; border-radius: 999px; }
+.panel { padding: 24px max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); }
+.eyebrow { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--app-muted-fg); }
+h1 { font-size: 36px; font-weight: 600; letter-spacing: -.05em; }
+.zone-list { gap: 0; }
+.zone-row { border-radius: 0; background: transparent; box-shadow: none; padding: 24px 0; border-bottom: 1px solid var(--app-border); gap: 20px; }
+.analog { width: 64px; height: 64px; background: var(--app-card); }
+.hand--hour { height: 18px; }.hand--minute { height: 24px; }.hand--second { height: 26px; }
+.zone-meta strong { font-size: 20px; font-weight: 550; }
+.zone-time strong { font-family: inherit; font-weight: 350; font-size: clamp(32px, 6vw, 60px); letter-spacing: -.045em; }
+.primary-btn, .secondary-btn, .ghost-btn, .icon-btn, .chip, .option, .day { min-height: 44px; }.ghost-btn, .icon-btn, .day { min-width: 44px; }
+.alarm-row { background: transparent; box-shadow: none; border-bottom: 1px solid var(--app-border); border-radius: 0; padding: 24px 0; }.alarm-meta strong { font-size: 48px; font-family: inherit; font-weight: 350; }
+.toggle { height: 44px; }.toggle-knob { top: 11px; }
+.sw-readout { font-family: inherit; font-size: clamp(54px, 12vw, 112px); font-weight: 300; letter-spacing: -.05em; max-width: 100%; }
+.timer-card { box-shadow: none; border: 1px solid var(--app-border); }
+@media (max-width: 640px) { .topbar { padding-left: 16px; padding-right: 16px; }.tabs { width: 100%; justify-content: space-between; }.tab { padding: 8px 10px; flex: 1; justify-content: center; }.tab span { display: inline; font-size: 12px; }.panel { padding-left: 16px; padding-right: 16px; }.world-head { flex-wrap: wrap; }.zone-row { gap: 10px; }.analog { width: 48px; height: 48px; }.hand--hour { height: 13px; }.hand--minute { height: 18px; }.hand--second { height: 19px; }.zone-meta strong { font-size: 16px; }.zone-time strong { font-size: 32px; }.day-picker { gap: 2px; }.day { min-width: 36px; }.overlay { padding: 12px; }.field input, .search-field input, .duration-input, .label-input { font-size: 16px; } }
+
+@media (max-width: 430px) { .tab { flex-direction: column; gap: 4px; padding: 8px 4px; } .day-picker { overflow-x: auto; } .day { min-width: 44px; flex-shrink: 0; }.edit-card, .search-card { padding: 12px; } }

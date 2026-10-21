@@ -3,9 +3,12 @@ import { NoResultError, sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
+import { deleteExpiredPriorityClaims } from "./ai-funded-priority-claims.js";
 import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding } from "./ai-funded-metering-helpers.js";
 import { reconcileExpiredPromotionalCredit, reservationDebitSplit, debitAttributedPromotionalGrants, debitPromotionalGrants } from "./ai-funded-reservation-sources.js";
 import { isSpeechMonthlyAuthorization } from "./speech/reservation-policy.js";
+
+const MAX_EXPIRED_CLAIM_DELETES = 500;
 export const CleanupSchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 
 export interface AiFundedReservationCleanupOptions {
@@ -158,7 +161,10 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
             }).where("machine_id", "=", reservation.machine_id)
               .where("owner_id", "=", reservation.owner_id)
               .where("runtime_slot", "=", reservation.runtime_slot)
-              .where(sql<boolean>`period_start <> ${reservation.period_start} OR period_reserved_microusd >= ${reserved}`)
+              .where((eb) => eb.or([
+                eb("period_start", "<>", reservation.period_start),
+                eb("period_reserved_microusd", ">=", reserved),
+              ]))
               .returning("machine_id").executeTakeFirst();
             if (!allowance) throw new Error("Funded AI speech allowance invariant violated");
             const settled = await trx.executor.updateTable("ai_funded_usage_reservations").set({
@@ -222,7 +228,10 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
           }).where("machine_id", "=", reservation.machine_id)
             .where("owner_id", "=", reservation.owner_id)
             .where("runtime_slot", "=", reservation.runtime_slot)
-            .where(sql<boolean>`period_start <> ${reservation.period_start} OR period_reserved_microusd >= ${reserved}`)
+            .where((eb) => eb.or([
+              eb("period_start", "<>", reservation.period_start),
+              eb("period_reserved_microusd", ">=", reserved),
+            ]))
             .returning("machine_id").executeTakeFirst();
           if (!allowance) throw new Error("Funded AI speech allowance invariant violated");
         }
@@ -251,5 +260,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
       });
     }
   }
+  // Expired priority claims hold nothing; remove them in bounded batches.
+  await deleteExpiredPriorityClaims(options.db.executor, checkedAt, MAX_EXPIRED_CLAIM_DELETES);
   return cleaned;
 }

@@ -42,7 +42,9 @@ pnpm --filter '@matrix-os/brand' build
 pnpm --filter '@matrix-os/kernel' build
 pnpm --filter '@matrix-os/integrations-mcp' build
 pnpm --filter '@matrix-os/scope-runtime' build
+pnpm --filter '@matrix-os/bot-runtime' build
 pnpm --filter '@matrix-os/gateway' build
+test -f "$ROOT_DIR/packages/gateway/dist/collaboration/filesystem-identity.node"
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 node --import=tsx "$ROOT_DIR/scripts/smoke-gateway-production-loader.mjs"
@@ -68,6 +70,7 @@ else
 fi
 pnpm --filter '@finnaai/matrix' build
 node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
+node "$ROOT_DIR/scripts/build-app-gallery-template.mjs"
 pnpm exec tsx -e 'import { writeFileSync } from "node:fs"; import { generateTemplateManifest } from "./packages/kernel/src/boot.ts"; writeFileSync("home/.template-manifest.json", JSON.stringify(generateTemplateManifest("home"), null, 2) + "\n");'
 curl --fail --location --max-time 120 "$NODE_URL" -o "$DIST_DIR/$NODE_ARCHIVE"
 curl --fail --location --max-time 30 "$NODE_BASE_URL/SHASUMS256.txt" -o "$DIST_DIR/SHASUMS256.txt"
@@ -121,6 +124,8 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
+node "$ROOT_DIR/scripts/prepare-funded-host-component.mjs" \
+  "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/funded-host-config"
 chmod 0755 "$STAGE_DIR/bin/matrix-postgres-start"
 node "$ROOT_DIR/scripts/inline-sync-agent-recovery.mjs" \
   "$STAGE_DIR/bin/matrix-sync-agent" \
@@ -139,6 +144,7 @@ chmod 0755 "$STAGE_DIR/bin/matrix-support-access"
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
 mkdir -p "$STAGE_DIR/app/scripts"
@@ -162,7 +168,12 @@ fi
 # build-time dependency stores; carrying them to every VPS bloats R2 artifacts
 # and slows upgrades without changing runtime behavior.
 rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"
-find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +
+# Compiler state is local build input, never runtime or incremental release data.
+# Default find traversal does not follow directory symlinks; remove links themselves.
+find "$STAGE_DIR/app/packages" -name .matrix-build-cache -prune -exec rm -rf {} +
+# Portable gallery starters live under app-templates, outside home/apps.
+# Their dependency stores are build-only too; preserve source, lockfiles and dist.
+find "$STAGE_DIR/app/home" -type d -name node_modules -prune -exec rm -rf {} +
 
 # Writes release.json plus the incremental app manifest before packaging, then
 # writes the bundle manifest beside the tarball.
@@ -170,7 +181,7 @@ node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
 HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}" \
   node "$ROOT_DIR/scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"
-tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json
+tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd user-systemd terminal-runtime release.json incremental-manifest.json funded-host-config
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"

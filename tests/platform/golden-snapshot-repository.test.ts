@@ -31,7 +31,7 @@ import {
   updateGoldenSnapshotRolloutControl,
 } from '../../packages/platform/src/golden-snapshot-repository.js';
 import type { GoldenSnapshotCompatibility } from '../../packages/platform/src/golden-snapshot-schema.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const compatibility: GoldenSnapshotCompatibility = {
   provider: 'hetzner',

@@ -10,10 +10,11 @@ const JevScopeSchema = z.object({
   runId: z.string().min(1).max(160),
   agentId: ChatAgentIdSchema,
   revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  authorityStamp: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   account: JevInboxTriageBindingSchema.omit({ version: true, ownerId: true }),
 }).strict();
 export type HermesJevScope = { kind: "jev_inbox_preview"; runId: string; agentId: string;
-  revision: number; account: Omit<JevInboxTriageBinding, "version" | "ownerId"> };
+  revision: number; authorityStamp?: string; account: Omit<JevInboxTriageBinding, "version" | "ownerId"> };
 const active = new Map<string, { actorId: string; expiresAt: number; scope?: HermesJevScope }>();
 
 function digest(token: string): string {

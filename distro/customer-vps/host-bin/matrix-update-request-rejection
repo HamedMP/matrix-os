@@ -113,3 +113,60 @@ reject_unchanged_update_request() {
   sudo rm -f -- "$claimed"
   log "Permanently rejected unchanged update request; channel polling can resume"
 }
+
+requested_update_is_already_current() {
+  local remote_version="$1"
+  [ -f "$UPDATE_VERSION_FILE" ] && [ ! -L "$UPDATE_VERSION_FILE" ] || return 1
+  [ "$remote_version" = "$(current_version)" ] || return 1
+  [ ! -e "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 1
+  [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 1
+  installed_terminal_runtime_is_ready || return 1
+}
+
+consume_idempotent_update_request() {
+  log "Exact requested version is already installed; consuming idempotent request"
+  rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+  consume_update_trigger || log "WARN: failed to consume idempotent update trigger"
+}
+
+restore_funded_retry_claim() {
+  local claimed="$1"
+  if sudo ln -- "$claimed" "$UPDATE_TRIGGER" 2>/dev/null \
+    || [ -e "$UPDATE_TRIGGER" ] || [ -L "$UPDATE_TRIGGER" ]; then
+    sudo rm -f -- "$claimed"
+  else
+    log "ERROR: retained idempotent trigger claim requires recovery"
+    return 1
+  fi
+}
+
+schedule_current_funded_retry() {
+  local expected="$1" claimed actual version version_identity channel_identity record_temp
+  [ -n "$expected" ] && [ -f "$UPDATE_TRIGGER" ] && [ ! -L "$UPDATE_TRIGGER" ] || return 1
+  version="$(head -c 129 "$UPDATE_VERSION_FILE")" || return 1
+  [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] && [ "$version" = "$(current_version)" ] || return 1
+  version_identity="$(update_file_identity "$UPDATE_VERSION_FILE")" || return 1
+  channel_identity="$(update_file_identity "$UPDATE_CHANNEL_FILE")" || return 1
+  claimed="$(mktemp "$APP_DIR/.update-idempotent.XXXXXXXX")" || return 1
+  sudo mv -Tf -- "$UPDATE_TRIGGER" "$claimed" || { rm -f -- "$claimed"; return 1; }
+  actual="$(update_request_identity "$claimed")" || actual=""
+  if [ "$actual" != "$expected" ]; then
+    restore_funded_retry_claim "$claimed" || return 1
+    return 1
+  fi
+  # Retire only these exact consumed target identities, without unlinking paths
+  # that may already hold a newer request. Never retire the prepared marker:
+  # the next trigger-only apply must still see its pending newer release.
+  record_temp="$(mktemp "$APP_DIR/.update-rejected-targets.XXXXXXXX")" || {
+    restore_funded_retry_claim "$claimed" || return 1
+    return 1
+  }
+  if ! printf '%064d\n%s\n%s\n' 0 "$version_identity" "$channel_identity" > "$record_temp" \
+    || ! mv -Tf -- "$record_temp" "$APP_DIR/.update-rejected-targets"; then
+    rm -f -- "$record_temp"
+    restore_funded_retry_claim "$claimed" || return 1
+    return 1
+  fi
+  sudo rm -f -- "$claimed" || return 1
+  funded_host_bootstrap retry "$version" || log "WARN: funded host retry deferred"
+}

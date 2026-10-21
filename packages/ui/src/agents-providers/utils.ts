@@ -2,10 +2,16 @@ import type {
   ProviderAccessSource,
   ProviderAuthenticationState,
   ProviderDependencyCounts,
+  ProviderGatewayPolicy,
   ProviderHarnessInstance,
   ProviderSettingsSnapshot,
   ProviderUsage,
 } from "@matrix-os/contracts";
+
+export function gatewayPolicyAllowsModel(policy: ProviderGatewayPolicy | null, modelId: string): boolean {
+  return policy !== null && policy.allowedModelIds.includes(modelId)
+    && (policy.effectiveAllowedModelIds === undefined || policy.effectiveAllowedModelIds.includes(modelId));
+}
 
 export function money(microusd: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", {
@@ -63,7 +69,7 @@ export function usageLines(usage: ProviderUsage): { primary: string; secondary: 
   }
   if (usage.kind === "subscription_allowance") {
     return {
-      primary: `${Math.round(usage.usedBasisPoints / 100)}% used`,
+      primary: `${Math.round((10000 - usage.usedBasisPoints) / 100)}% left`,
       secondary: usage.resetsAt === null ? null : `Resets ${shortDate(usage.resetsAt)}`,
       stale: usage.state === "stale",
     };
@@ -75,11 +81,38 @@ export function usageLines(usage: ProviderUsage): { primary: string; secondary: 
   };
 }
 
-export function gatewayCreditLines(source: ProviderAccessSource): { primary: string; secondary: string | null; stale: boolean } {
+const GATEWAY_CREDIT_MAX_AGE_MS = 5 * 60_000;
+
+export function gatewayCreditStaleAfter(source: ProviderAccessSource | null): string | null {
+  if (source?.usage.kind !== "managed_credit" || source.usage.state !== "current") return null;
+  const expiry = new Date(Date.parse(source.usage.asOf) + GATEWAY_CREDIT_MAX_AGE_MS);
+  return Number.isFinite(expiry.getTime()) ? expiry.toISOString() : null;
+}
+
+export function gatewayChatAvailableMicrousd(source: ProviderAccessSource | null, now = Date.now()): number | null {
+  if (source?.usage.kind !== "managed_credit") return null;
+  const usage = source.usage;
+  const projection = usage.chatAvailability;
+  const age = now - Date.parse(usage.asOf);
+  if (!projection || projection.asOf !== usage.asOf || usage.state !== "current"
+    || !Number.isFinite(age) || age < 0 || age > GATEWAY_CREDIT_MAX_AGE_MS) return null;
+  return Math.min(projection.availableBalanceMicrousd, usage.budget.remainingBudgetMicrousd);
+}
+
+export function gatewayCreditLines(source: ProviderAccessSource, now = Date.now()): { primary: string; secondary: string | null; stale: boolean } {
   if (source.usage.kind !== "managed_credit") {
-    return { primary: "Credit unavailable", secondary: source.usage.kind === "unavailable" ? titleCase(source.usage.reason) : null, stale: false };
+    return { primary: "Chat credit unavailable", secondary: null, stale: false };
   }
-  return usageLines(source.usage);
+  const age = now - Date.parse(source.usage.asOf);
+  const stale = source.usage.state === "stale" || !Number.isFinite(age) || age < 0 || age > GATEWAY_CREDIT_MAX_AGE_MS;
+  const balance = gatewayChatAvailableMicrousd(source, now);
+  if (balance === null) {
+    return { primary: "Chat credit unavailable", secondary: null, stale };
+  }
+  const display = balance > 0 && balance < 10_000
+    ? new Intl.NumberFormat("en-US", { style: "currency", currency: source.usage.currency, minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(balance / 1_000_000)
+    : money(balance, source.usage.currency);
+  return { primary: display, secondary: null, stale: false };
 }
 
 export function selectedHarness(snapshot: ProviderSettingsSnapshot, id: string | null): ProviderHarnessInstance | null {

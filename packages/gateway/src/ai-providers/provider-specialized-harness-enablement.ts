@@ -1,4 +1,6 @@
-import type { AiProviderSnapshotV3, ProviderSettingsMutation } from "@matrix-os/contracts";
+import { assertCodexNativeLoginSelection } from "./codex-native-login-completion.js";
+import { assertClaudeNativeLoginSelection } from "./claude-native-login-completion.js";
+import type { AiProviderSnapshotV3, ProviderSettingsMutation, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import type { HarnessConfiguration } from "./provider-settings-persistence.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 
@@ -11,8 +13,16 @@ export function assertSpecializedHarnessEnablement(input: {
   harness: HarnessConfiguration;
   mutation: ProviderSettingsMutation;
   canonical: AiProviderSnapshotV3;
+  snapshot?: ProviderSettingsSnapshot;
+  claudeNativeCompletion?: boolean;
+  codexNativeCompletion?: boolean;
 }): void {
-  if (input.mutation.type !== "set_harness_enabled") {
+  const nativeSelection = input.claudeNativeCompletion === true && input.harness.harness === "claude"
+    || input.codexNativeCompletion === true && input.harness.harness === "codex";
+  if (nativeSelection) {
+    if (!input.snapshot) throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    (input.harness.harness === "codex" ? assertCodexNativeLoginSelection : assertClaudeNativeLoginSelection)({ mutation: input.mutation, snapshot: input.snapshot });
+  } else if (input.mutation.type !== "set_harness_enabled") {
     throw new ProviderSettingsStoreError("runtime_unavailable", 503);
   }
   const driverId = input.harness.harness === "claude" ? "claude_code" : "codex";
@@ -21,7 +31,7 @@ export function assertSpecializedHarnessEnablement(input: {
   }
   // Disabling survives runtime loss. Enabling records intent, without asserting
   // remote access, changing native authentication, or acquiring a credential.
-  if (input.mutation.enabled
+  if ((nativeSelection || (input.mutation.type === "set_harness_enabled" && input.mutation.enabled))
     && input.canonical.drivers.find((driver) => driver.id === driverId)?.installState !== "installed") {
     throw new ProviderSettingsStoreError("runtime_unavailable", 503);
   }

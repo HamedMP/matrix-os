@@ -621,6 +621,22 @@ describe("agent-launcher", () => {
     expect(launch.args.at(-1)).toBe("--help");
   });
 
+  it("keeps Preview Drive Claude tools and approvals limited to the read action", () => {
+    const launch = buildAgentLaunch({ agent: "claude", cwd: "/tmp/preview", approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: ["/tmp/preview"] },
+      matrixCustomMcp: true, matrixCustomMcpScope: "preview_drive_call" });
+    const settings = claudeSettings(launch.args) as { permissions: { allow: string[]; ask: string[] } };
+    expect(settings.permissions.allow).toEqual(expect.arrayContaining([
+      "mcp__matrix-integrations__list_integration_inventory",
+      "mcp__matrix-integrations__describe_service",
+    ]));
+    expect(settings.permissions.ask).toEqual(["mcp__matrix-integrations__call_service"]);
+    expect(JSON.stringify(settings)).not.toContain("custom_mcp");
+    expect(JSON.stringify(settings)).not.toContain("connect_service");
+    const config = JSON.parse(launch.args[launch.args.indexOf("--mcp-config") + 1]!);
+    expect(config.mcpServers["matrix-integrations"].args).toContain("--tool-surface=preview-drive-call");
+  });
+
   it("applies explicit Codex approval and read-only sandbox settings", () => {
     const launch = buildAgentLaunch({
       agent: "codex",

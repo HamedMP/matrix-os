@@ -14,7 +14,7 @@ import {
   upsertHostBundleRelease,
 } from '../../packages/platform/src/db.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const owner = 'user_owner';
 const v1 = 'v2026.09.28-pr1907-1-1-abcdef0';

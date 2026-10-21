@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+const resourceArtwork = new URL("../../../system/icons/v3-resource-manager.png", import.meta.url).href;
+
 const ACTIVITY_URL = "/api/system/activity?processLimit=25&includeSuggestions=true";
 const SAFE_ERROR = "Resource data is unavailable.";
 
@@ -161,7 +163,7 @@ export default function App() {
   return (
     <main className="resource-app">
       <header className="topbar">
-        <div className="mark" aria-hidden="true">RM</div>
+        <img className="mark" data-resource-artwork src={resourceArtwork} alt="" width={52} height={52} />
         <div className="title-block">
           <h1>Resource Manager</h1>
           <p>{snapshot ? `${snapshot.machine.hostname} · uptime ${formatDuration(snapshot.machine.uptimeSeconds)}` : "Live system activity"}</p>

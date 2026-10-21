@@ -5,6 +5,8 @@ const electronMock = vi.hoisted(() => {
   type Handler = (...args: unknown[]) => void;
   const handlers = new Map<string, Handler>();
   const viewOptions: unknown[] = [];
+  const nativeBounds = vi.fn();
+  const borderRadius = vi.fn();
   const webContents = {
     id: 42,
     session: {
@@ -28,13 +30,16 @@ const electronMock = vi.hoisted(() => {
   };
   class WebContentsView {
     webContents = webContents;
-    setBounds = vi.fn();
+    setBounds = nativeBounds;
+    setBorderRadius = borderRadius;
     constructor(options: unknown) {
       viewOptions.push(options);
     }
   }
   return {
     handlers,
+    nativeBounds,
+    borderRadius,
     viewOptions,
     webContents,
     shell: { openExternal: vi.fn() },
@@ -47,6 +52,8 @@ vi.mock("electron", () => electronMock);
 beforeEach(() => {
   electronMock.handlers.clear();
   electronMock.viewOptions.length = 0;
+  electronMock.nativeBounds.mockClear();
+  electronMock.borderRadius.mockClear();
   electronMock.shell.openExternal.mockClear();
   electronMock.webContents.setWindowOpenHandler.mockClear();
   electronMock.webContents.loadURL.mockClear();
@@ -59,11 +66,24 @@ beforeEach(() => {
 });
 
 describe("createWebContentsView", () => {
+  it("clips native corners to the window geometry and resets them in a full tab", () => {
+    const view = createWebContentsView({
+      window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
+      partition: "persist:app-notes", allowedOrigins: ["https://gateway.test"], onState: vi.fn(),
+    });
+    const rectangle = { x: 20, y: 48, width: 800, height: 600 };
+    view.setBounds({ ...rectangle, cornerRadius: 12 });
+    expect(electronMock.nativeBounds).toHaveBeenLastCalledWith(rectangle);
+    expect(electronMock.borderRadius).toHaveBeenLastCalledWith(12);
+    view.setBounds(rectangle);
+    expect(electronMock.borderRadius).toHaveBeenLastCalledWith(0);
+  });
+
   it.each([
     ["resource-manager", "resource-manager", true],
     ["custom/resource-manager", "resource-manager", false],
     ["resource-manager", "notes", false],
-    ["notes", "notes", false],
+    ["custom-notes", "custom-notes", false],
   ])("advertises activity only for the authorized app identity %s", (appIdentity, routeSlug, allowed) => {
     createWebContentsView({
       window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
@@ -82,6 +102,20 @@ describe("createWebContentsView", () => {
           : ["--matrix-app-bridge"],
       }),
     }));
+  });
+
+  it.each([
+    ["app-gallery", "app-gallery", ["--matrix-app-bridge", "--matrix-app-gallery-bridge", "--matrix-app-integrations-bridge"]],
+    ["folio", "folio", ["--matrix-app-bridge", "--matrix-app-integrations-bridge"]],
+    ["custom/app-gallery", "app-gallery", ["--matrix-app-bridge"]],
+    ["folio", "other", ["--matrix-app-bridge"]],
+  ])("opts only canonical gallery and starter views into their capabilities: %s", (appIdentity, routeSlug, expected) => {
+    createWebContentsView({
+      window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
+      partition: `persist:app-${routeSlug}`, allowedOrigins: ["https://gateway.test"], onState: vi.fn(),
+      appBridge: { appIdentity, routeSlug, preloadPath: "/app/preload/index.cjs", register: vi.fn(), unregister: vi.fn() },
+    });
+    expect(electronMock.viewOptions[0]).toEqual(expect.objectContaining({ webPreferences: expect.objectContaining({ additionalArguments: expected }) }));
   });
 
   it("captures a bounded JPEG frame for the detached renderer fallback", async () => {
@@ -311,7 +345,7 @@ describe("createWebContentsView", () => {
     expect(electronMock.viewOptions[0]).toEqual(expect.objectContaining({
       webPreferences: expect.objectContaining({
         preload: "/app/preload/app-bridge.cjs",
-        additionalArguments: ["--matrix-app-bridge"],
+        additionalArguments: ["--matrix-app-bridge", "--matrix-app-integrations-bridge"],
       }),
     }));
     expect(register).toHaveBeenCalledWith(42, "notes", "notes");

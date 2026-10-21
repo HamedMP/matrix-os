@@ -199,7 +199,9 @@ export const useTabs = create<TabsState>()((set, get) => ({
           ? normalizedSpec.sharedScopeId
           : existing.sharedScopeId;
         const nextChatTitle = nextChatId || nextSharedScopeId ? normalizedSpec.chatTitle : undefined;
+        const nextIcon = normalizedSpec.icon ?? existing.icon;
         const tabs = existing.title === normalizedSpec.title
+          && existing.icon === nextIcon
           && existing.chatId === nextChatId
           && existing.chatTitle === nextChatTitle
           && existing.chatView === nextChatView
@@ -211,6 +213,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
             ? {
                 ...tab,
                 title: normalizedSpec.title,
+                icon: nextIcon,
                 projectSlug: normalizedSpec.projectSlug,
                 chatId: nextChatId,
                 chatTitle: nextChatTitle,

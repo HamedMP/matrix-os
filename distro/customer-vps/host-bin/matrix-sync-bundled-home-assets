@@ -9,11 +9,16 @@ fi
 "$NODE_BIN" <<'NODE'
 const {
   chmodSync,
+  closeSync,
+  constants,
   copyFileSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   renameSync,
   statSync,
   writeFileSync,
@@ -33,6 +38,8 @@ const skipped = [];
 const logLines = [`[${now}] Template sync started`];
 const logMaxBytes = parsePositiveInt(process.env.TEMPLATE_SYNC_LOG_MAX_BYTES, 256 * 1024);
 const systemOwnedFirstPartyAppCache = new Map();
+const safeIconStem = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const maxIconClassificationBytes = 4 * 1024 * 1024;
 
 const userOwnedFiles = new Set([
   "system/activity.log",
@@ -126,9 +133,102 @@ function isIconPath(relPath) {
   return relPath.startsWith("system/icons/");
 }
 
+function lstatOrMissing(path) {
+  try {
+    return lstatSync(path);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function hasUnsafeAncestor(base, relPath) {
+  let path = base;
+  for (const part of ["", ...relPath.split("/").slice(0, -1)]) {
+    if (part) path = join(path, part);
+    const stat = lstatOrMissing(path);
+    if (!stat) return false;
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return true;
+  }
+  return false;
+}
+
+function readRegularIcon(base, relPath) {
+  if (hasUnsafeAncestor(base, relPath)) return null;
+  const path = join(base, relPath);
+  const stat = lstatOrMissing(path);
+  if (!stat?.isFile() || stat.isSymbolicLink() || stat.size > maxIconClassificationBytes) return null;
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.size > maxIconClassificationBytes || opened.ino !== stat.ino || opened.dev !== stat.dev) return null;
+    // Read one extra byte to detect growth without ever buffering an unbounded image.
+    const bytes = Buffer.alloc(opened.size + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, length);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length !== opened.size || fstatSync(fd).size !== opened.size) return null;
+    return bytes.subarray(0, length);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function isKnownBundledIcon(iconRelPath) {
+  try {
+    const selected = readRegularIcon(homeDir, iconRelPath);
+    const bundled = readRegularIcon(templateDir, iconRelPath);
+    return Boolean(selected && bundled && selected.equals(bundled));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logLines.push(`[${now}] Unable to classify selected artwork for ${iconRelPath}: ${message}`);
+    return false;
+  }
+}
+
+function preserveLegacySvgSelection(relPath) {
+  const match = /^system\/icons\/([a-z0-9][a-z0-9-]{0,63})\.png$/.exec(relPath);
+  if (!match) return false;
+  const svgRelPath = `system/icons/${match[1]}.svg`;
+  return Boolean(lstatOrMissing(join(homeDir, svgRelPath))) && !isKnownBundledIcon(svgRelPath);
+}
+
+function preserveSelectedIcon(relPath, templatePath, homePath) {
+  if (!/^apps\/(?:games\/)?[a-z0-9][a-z0-9-]{0,63}\/matrix\.json$/.test(relPath)) return false;
+  try {
+    if (hasUnsafeAncestor(homeDir, relPath) || hasUnsafeAncestor(templateDir, relPath)) return true;
+    const current = readJson(homePath);
+    const next = readJson(templatePath);
+    if (current.icon === next.icon) return false;
+    if (typeof current.icon !== "string" || !safeIconStem.test(current.icon) || typeof next.icon !== "string" || !safeIconStem.test(next.icon)) return true;
+    // Match launcher selection: an existing PNG takes precedence over an SVG,
+    // including files that are unsafe to read or cannot be classified.
+    for (const extension of ["png", "svg"]) {
+      const iconRelPath = `system/icons/${current.icon}.${extension}`;
+      if (hasUnsafeAncestor(homeDir, iconRelPath)) return true;
+      if (!lstatOrMissing(join(homeDir, iconRelPath))) continue;
+      return !isKnownBundledIcon(iconRelPath);
+    }
+    return true;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logLines.push(`[${now}] Unable to classify selected artwork for ${relPath}: ${message}`);
+    return true;
+  }
+}
+
 function appSlugForRelPath(relPath) {
   const parts = relPath.split("/");
   if (parts[0] !== "apps" || !parts[1]) return null;
+  if (parts[1] === "games" && safeIconStem.test(parts[2] ?? "")) {
+    const nestedManifest = `apps/games/${parts[2]}/matrix.json`;
+    if (!hasUnsafeAncestor(templateDir, nestedManifest) && lstatOrMissing(join(templateDir, nestedManifest))?.isFile()) {
+      return `games/${parts[2]}`;
+    }
+  }
   return parts[1];
 }
 
@@ -204,6 +304,10 @@ if (!existsSync(templateManifestPath)) {
 
     const templatePath = join(templateDir, ...relPath.split("/"));
     const homePath = join(homeDir, ...relPath.split("/"));
+    if (hasUnsafeAncestor(homeDir, relPath) || hasUnsafeAncestor(templateDir, relPath)) {
+      logSkipped(relPath, "unsafe template or owner directory");
+      continue;
+    }
     if (!existsSync(templatePath) || !statSync(templatePath).isFile()) continue;
 
     if (isProtectedUserPath(relPath)) {
@@ -211,9 +315,17 @@ if (!existsSync(templateManifestPath)) {
       continue;
     }
 
-    if (isIconPath(relPath) && existsSync(homePath)) {
-      installedManifest[relPath] = hashFile(homePath);
-      continue;
+    if (isIconPath(relPath)) {
+      const iconStat = lstatOrMissing(homePath);
+      if (iconStat) {
+        if (iconStat.isFile() && !iconStat.isSymbolicLink()) installedManifest[relPath] = hashFile(homePath);
+        else logSkipped(relPath, "customized by user");
+        continue;
+      }
+      if (preserveLegacySvgSelection(relPath)) {
+        logSkipped(relPath, "preserving selected owner artwork");
+        continue;
+      }
     }
 
     if (!existsSync(homePath)) {
@@ -230,13 +342,25 @@ if (!existsSync(templateManifestPath)) {
       continue;
     }
 
+    if (preserveSelectedIcon(relPath, templatePath, homePath)) {
+      // Kernel startup sync must also treat this unchanged manifest as owner-selected.
+      delete installedManifest[relPath];
+      logSkipped(relPath, "preserving selected owner artwork");
+      continue;
+    }
+
     const userHash = hashFile(homePath);
     const installedHash = installedManifest[relPath];
 
     if (installedHash === undefined) {
       if (userHash === templateHash) {
         installedManifest[relPath] = templateHash;
-      } else if (isSystemOwnedFirstPartyApp(appSlugForRelPath(relPath))) {
+      } else if (
+        // Older nested games never tracked source hashes. Ownership labels alone
+        // cannot distinguish bundled code from an owner's edits in those homes.
+        !relPath.startsWith("apps/games/") &&
+        isSystemOwnedFirstPartyApp(appSlugForRelPath(relPath))
+      ) {
         copyTemplateFile(templatePath, homePath);
         installedManifest[relPath] = templateHash;
         updated.push(relPath);

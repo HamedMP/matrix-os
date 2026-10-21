@@ -1,4 +1,5 @@
 ---
+triggers: ["import Chat", "import Codex transcript", "import Claude transcript"]
 name: matrix-chat-import
 description: Discover and import owner-selected local Codex and Claude Code transcripts as private Matrix Chats with original archives.
 version: 2.0.0

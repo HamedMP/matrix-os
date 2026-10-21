@@ -1,7 +1,12 @@
+import { initializeCustomerFundedStarterPolicy, lockCustomerFundedStarterActivation } from '../../packages/platform/src/customer-funded-starter-policy.js';
+import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
+import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
+import { createMockHetznerClient, createMockCustomerVpsSystemStore } from './customer-vps-fixtures.js';
 import { JEV_MODEL_ID } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createPlatformDb, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 
@@ -30,11 +35,12 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     url.searchParams.set("options", `-c search_path=${schema}`);
     db = createPlatformDb(url.toString());
     await db.ready;
+    url.searchParams.set("application_name", `${schema}_second`);
     secondDb = createPlatformDb(url.toString());
     await secondDb.ready;
     clock = new Date("2026-09-10T12:00:00Z");
     const options = { credentialHashSecret: "h".repeat(32), now: () => new Date(clock),
-      reservationTtlMs: 30_000, inFlightTtlMs: 60_000 };
+      reservationTtlMs: 30_000, inFlightTtlMs: 60_000, credentialTtlMs: 3_600_000 };
     first = createAiFundedPolicyRepository({ ...options, db });
     second = createAiFundedPolicyRepository({ ...options, db: secondDb });
     await first.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
@@ -58,10 +64,68 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await secondDb?.destroy();
     await db?.destroy();
     if (schema) await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
     await admin?.end();
+  });
+
+  const starterEnv = { MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'true',
+    MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'true', AI_FUNDED_CREDENTIAL_HASH_SECRET: 'h'.repeat(32) };
+
+  it('starter registration waits for owner admission before taking the machine lock', async () => {
+    for (const [key, value] of Object.entries(starterEnv)) vi.stubEnv(key, value);
+    const machineId = randomUUID();
+    await insertUserMachine(db, { machineId, clerkUserId: 'shared_owner', handle: 'starter-alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', activationState: 'authorized', status: 'provisioning',
+      imageVersion: 'test', provisionedAt: clock.toISOString(), hetznerServerId: 123,
+      registrationTokenHash: hashRegistrationToken('registration'), registrationTokenExpiresAt: '2099-01-01T00:00:00.000Z' });
+    const service = createCustomerVpsService({ db: secondDb,
+      config: loadCustomerVpsConfig({ PLATFORM_SECRET: 'test-platform', HETZNER_API_TOKEN: 'test-hetzner',
+        S3_ACCESS_KEY_ID: 'test-r2', S3_SECRET_ACCESS_KEY: 'test-r2-secret', S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'test' }),
+      hetzner: createMockHetznerClient(), systemStore: createMockCustomerVpsSystemStore(), now: () => new Date(clock) });
+    let registration: ReturnType<typeof service.register> | undefined;
+    try {
+      await db.transaction(async trx => {
+        await lockCustomerFundedStarterActivation(trx, 'shared_owner', starterEnv);
+        registration = service.register('registration', { machineId, hetznerServerId: 123,
+          publicIPv4: '203.0.113.10', imageVersion: 'test' });
+        await vi.waitFor(async () => {
+          const waiting = await admin.query<{ count: number }>(`SELECT count(*)::int AS count
+            FROM pg_locks AS lock JOIN pg_stat_activity AS activity ON activity.pid = lock.pid
+            WHERE lock.locktype = 'advisory' AND NOT lock.granted AND activity.application_name = $1`, [`${schema}_second`]);
+          expect(waiting.rows[0].count).toBeGreaterThan(0);
+        }, { timeout: 3000, interval: 25 });
+        // An inverted caller would already own this row while waiting for our
+        // owner lock; NOWAIT detects that inversion on independent connections.
+        await trx.executor.selectFrom('user_machines').select('machine_id')
+          .where('machine_id', '=', machineId).forUpdate().noWait().executeTakeFirstOrThrow();
+      });
+      await expect(registration).resolves.toMatchObject({ registered: true });
+      expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+        .where('source_reference', '=', 'matrix-ai-lifetime-starter').execute()).toHaveLength(1);
+    } finally {
+      await registration?.catch(() => undefined);
+    }
+  });
+
+  it('starter retries on independent pools mint exactly one permanent owner entitlement', async () => {
+    const machineId = randomUUID();
+    await insertUserMachine(db, { machineId, clerkUserId: 'shared_owner', handle: 'starter-alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', activationState: 'authorized', status: 'running', imageVersion: 'test',
+      provisionedAt: clock.toISOString() });
+    const options = { now: clock.toISOString(), env: starterEnv };
+    await Promise.all([initializeCustomerFundedStarterPolicy(db, machineId, options),
+      initializeCustomerFundedStarterPolicy(secondDb, machineId, options)]);
+    const ledger = await db.executor.selectFrom('ai_funded_credit_ledger').selectAll()
+      .where('source_reference', '=', 'matrix-ai-lifetime-starter').execute();
+    expect(ledger).toHaveLength(1);
+    expect(Number(ledger[0].amount_microusd)).toBe(5000000);
+    expect(ledger[0].expires_at).toBeNull();
+    const balance = await db.executor.selectFrom('ai_funded_runtime_balances').select('credit_balance_microusd')
+      .where('machine_id', '=', machineId).executeTakeFirstOrThrow();
+    expect(Number(balance.credit_balance_microusd)).toBe(5000000);
   });
 
   it.each(["usage", "strict"] as const)("serializes usage against %s across two pools", async (otherMode) => {
@@ -109,6 +173,147 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     await expect(second.authorize({ credential: credentials[1], requestId: "after_exact_settlement",
       modelId, maxCostMicrousd: 100, billingMode: "usage" }))
       .resolves.toMatchObject({ authorized: true });
+  });
+
+  it("serializes audited recovery and preserves one live execution across independent pools", async () => {
+    const authorization = await first.authorize({ credential: credentials[0], requestId: "recover_unknown",
+      modelId, maxCostMicrousd: 100, billingMode: "usage" });
+    const key = { reservationId: authorization.reservation.reservationId, tokenId: tokenIds[0] };
+    await first.startReservation(key);
+    const row = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    clock = new Date(clock.getTime() + 20 * 60_000);
+    const recovery = { ...key, expectedOwnerId: identities[0].ownerId,
+      expectedRequestId: "recover_unknown", expectedStartedAt: row.started_at!, expectedExpiresAt: row.expires_at,
+      maximumLiabilityMicrousd: 100, localRunId: "run_old", localRunState: "failed" as const,
+      localRunEndedAt: new Date(Date.parse(row.started_at!) + 10_000).toISOString(),
+      evidenceRef: "support:observed-terminal-run", reviewer: "operator:qa", acceptUnknownUpstreamLiability: true as const };
+    const recovered = await Promise.all([first.releaseExecutionAdmission(identities[0], recovery),
+      second.releaseExecutionAdmission(identities[0], recovery)]);
+    expect(recovered[0]).toEqual(recovered[1]);
+    expect(await first.getFundingSummary(identities[0])).toMatchObject({ reservedMicrousd: 100, settledThisMonthMicrousd: 0 });
+    const fresh = await Promise.all(identities.map((identity) => first.issueRuntimeCredential(identity)));
+    const attempts = await Promise.allSettled([
+      first.authorize({ credential: fresh[0].credential.token, requestId: "recovered_first", modelId, maxCostMicrousd: 100, billingMode: "usage" }),
+      second.authorize({ credential: fresh[1].credential.token, requestId: "recovered_second", modelId, maxCostMicrousd: 100, billingMode: "usage" }),
+    ]);
+    expect(attempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "rate_limited" } });
+    const live = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("execution_admission_release", "is", null).where("status", "in", ["reserved", "starting", "in_flight", "settling"]).execute();
+    expect(live).toHaveLength(1);
+    // Prove the durable constraints independently of application advisory locks.
+    await expect(secondDb.executor.insertInto("ai_funded_usage_reservations").values({
+      ...live[0], reservation_id: "forbidden_second_execution", request_id: "forbidden_second_execution",
+    }).execute()).rejects.toMatchObject({ code: "23505", constraint: "idx_ai_funded_usage_active_owner" });
+    const audited = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    await expect(secondDb.executor.insertInto("ai_funded_usage_reservations").values({
+      ...audited, reservation_id: "forbidden_second_unknown", request_id: "forbidden_second_unknown",
+    }).execute()).rejects.toMatchObject({ code: "23505", constraint: "idx_ai_funded_unknown_admission_owner" });
+    await first.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 40 });
+    await expect(second.authorize({ credential: fresh[0].credential.token, requestId: "still_live", modelId,
+      maxCostMicrousd: 100, billingMode: "usage" })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select(["status", "actual_microusd"])
+      .where("reservation_id", "=", live[0].reservation_id).executeTakeFirstOrThrow())
+      .toEqual({ status: "reserved", actual_microusd: null });
+    const indexes = await admin.query("SELECT indexname FROM pg_indexes WHERE schemaname=$1 AND tablename='ai_funded_usage_reservations'", [schema]);
+    expect(indexes.rows.map((value: { indexname: string }) => value.indexname)).toContain("idx_ai_funded_usage_active_owner");
+    expect(indexes.rows.map((value: { indexname: string }) => value.indexname)).toContain("idx_ai_funded_unknown_admission_owner");
+  });
+
+  it("keeps two durable unknown slots, concurrent replay and late settlement independent of new work", async () => {
+    const recover = async (requestId: string) => {
+      const auth = await first.authorize({ credential: credentials[0], requestId, modelId,
+        maxCostMicrousd: 100, billingMode: "usage" });
+      const key = { reservationId: auth.reservation.reservationId, tokenId: tokenIds[0] };
+      await first.startReservation(key);
+      const row = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+        .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+      clock = new Date(clock.getTime() + 20 * 60_000);
+      const request = { ...key, expectedOwnerId: identities[0].ownerId, expectedRequestId: requestId,
+        expectedStartedAt: row.started_at!, expectedExpiresAt: row.expires_at,
+        maximumLiabilityMicrousd: 100, localRunId: `run_${requestId}`, localRunState: "failed" as const,
+        localRunEndedAt: new Date(Date.parse(row.started_at!) + 10_000).toISOString(),
+        evidenceRef: "support:observed-run", reviewer: "operator:qa", acceptUnknownUpstreamLiability: true as const };
+      return { key, request };
+    };
+    const firstOld = await recover("first_old");
+    await first.releaseExecutionAdmission(identities[0], firstOld.request);
+    const secondOld = await recover("second_old");
+    const snapshot = async () => ({
+      balances: await db.executor.selectFrom("ai_funded_runtime_balances").selectAll().orderBy("machine_id").execute(),
+      grants: await db.executor.selectFrom("ai_funded_promotional_grant_balances").selectAll().execute(),
+      allocations: await db.executor.selectFrom("ai_funded_reservation_promotional_allocations").selectAll().execute(),
+      ledger: await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().orderBy("entry_id").execute(),
+    });
+    const before = await snapshot();
+    const releases = await Promise.all([first.releaseExecutionAdmission(identities[0], secondOld.request),
+      second.releaseExecutionAdmission(identities[0], secondOld.request)]);
+    expect(releases[0]).toEqual(releases[1]);
+    expect(await snapshot()).toEqual(before);
+    const unknowns = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("execution_admission_release", "is not", null).orderBy("execution_recovery_slot").execute();
+    expect(unknowns.map((row) => row.execution_recovery_slot)).toEqual([0, 1]);
+    for (const row of unknowns) {
+      await expect(secondDb.executor.insertInto("ai_funded_usage_reservations").values({
+        ...row, reservation_id: `duplicate_${row.execution_recovery_slot}`, request_id: `duplicate_${row.execution_recovery_slot}`,
+      }).execute()).rejects.toMatchObject({ code: "23505", constraint: "idx_ai_funded_unknown_admission_owner" });
+    }
+    for (const invalid of [null, -1, 2]) {
+      await expect(admin.query(`INSERT INTO "${schema}".ai_funded_usage_reservations
+        SELECT (jsonb_populate_record(NULL::"${schema}".ai_funded_usage_reservations,
+          to_jsonb(r) || jsonb_build_object('reservation_id', $1::text, 'request_id', $1::text,
+            'execution_recovery_slot', $2::smallint))).* FROM "${schema}".ai_funded_usage_reservations r
+        WHERE reservation_id=$3`, [`invalid_${invalid}`, invalid, firstOld.key.reservationId]))
+        .rejects.toMatchObject({ code: invalid === null ? "23502" : "23514" });
+    }
+    // Recovery and authorization contend across independent clients. Whichever
+    // acquires the owner lock first, exactly one new live generation is admitted.
+    const race = await Promise.allSettled([
+      second.releaseExecutionAdmission(identities[0], secondOld.request),
+      first.authorize({ credential: credentials[1], requestId: "live_after_two", modelId,
+        maxCostMicrousd: 100, billingMode: "usage" }),
+    ]);
+    expect(race.every((result) => result.status === "fulfilled")).toBe(true);
+    const live = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("request_id", "=", "live_after_two").executeTakeFirstOrThrow();
+    await first.startReservation({ reservationId: live.reservation_id, tokenId: live.token_id });
+    const liveBefore = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", live.reservation_id).executeTakeFirstOrThrow();
+    const settlement = { ...firstOld.key, mode: "exact" as const, actualCostMicrousd: 40 };
+    const settled = await Promise.all([first.finalizeReservation(settlement), second.finalizeReservation(settlement)]);
+    expect(settled[0]).toEqual(settled[1]);
+    await second.finalizeReservation({ ...secondOld.key, mode: "exact", actualCostMicrousd: 30 });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", live.reservation_id).executeTakeFirstOrThrow()).toEqual(liveBefore);
+    await expect(first.authorize({ credential: credentials[0], requestId: "still_blocked_by_live", modelId,
+      maxCostMicrousd: 100, billingMode: "usage" })).rejects.toMatchObject({ code: "rate_limited", reason: "slot_busy" });
+    expect(await first.getFundingSummary(identities[0])).toMatchObject({ reservedMicrousd: 0, settledThisMonthMicrousd: 70 });
+    expect(await first.getFundingSummary(identities[1])).toMatchObject({ reservedMicrousd: 100 });
+    expect(await first.releaseExecutionAdmission(identities[0], firstOld.request)).toMatchObject({ usageKnown: false });
+    await expect(first.startReservation(firstOld.key)).rejects.toMatchObject({ code: "reservation_closed" });
+    clock = new Date(clock.getTime() + 20 * 60_000);
+    const nextRecovery = { ...secondOld.request, reservationId: live.reservation_id, tokenId: live.token_id,
+      expectedRequestId: live.request_id, expectedStartedAt: liveBefore.started_at!, expectedExpiresAt: liveBefore.expires_at,
+      localRunEndedAt: new Date(Date.parse(liveBefore.started_at!) + 10_000).toISOString() };
+    const fresh = (await first.issueRuntimeCredential(identities[0])).credential;
+    const reuseRace = await Promise.allSettled([
+      second.releaseExecutionAdmission(identities[1], nextRecovery),
+      first.authorize({ credential: fresh.token, requestId: "after_reused_slot", modelId,
+        maxCostMicrousd: 100, billingMode: "usage" }),
+    ]);
+    expect(reuseRace[0].status).toBe("fulfilled");
+    if (reuseRace[1].status === "rejected") {
+      expect(reuseRace[1].reason).toMatchObject({ code: "rate_limited", reason: "slot_busy" });
+      await first.authorize({ credential: fresh.token, requestId: "after_reused_slot", modelId,
+        maxCostMicrousd: 100, billingMode: "usage" });
+    }
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select("reservation_id")
+      .where("execution_admission_release", "is", null).where("status", "in", ["reserved", "starting", "in_flight", "settling"]).execute()).toHaveLength(1);
+    expect((await db.executor.selectFrom("ai_funded_usage_reservations").select("execution_recovery_slot")
+      .where("reservation_id", "=", live.reservation_id).executeTakeFirstOrThrow()).execution_recovery_slot).toBe(0);
+    expect(await first.releaseExecutionAdmission(identities[0], firstOld.request)).toMatchObject({ usageKnown: false });
   });
 
   it("replays matching no-dispatch zero settlement across independent pools without releasing twice", async () => {

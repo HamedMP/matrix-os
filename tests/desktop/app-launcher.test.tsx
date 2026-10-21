@@ -9,14 +9,6 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { OS_VIEW_FIXED_APP_NAMES } from "../fixtures/os-view-parity";
 import { clearDesktopApps, seedDesktopApps } from "./apps-query-test-utils";
 
-const sharing = vi.hoisted(() => ({ props: [] as Array<{ kind: string; path: string }> }));
-vi.mock("../../desktop/src/renderer/src/features/files/DesktopResourceSharing", () => ({
-  DesktopResourceSharing: (props: { kind: string; path: string }) => {
-    sharing.props.push(props);
-    return React.createElement("span", { "data-testid": "app-sharing" });
-  },
-}));
-
 describe("AppLauncher", () => {
   beforeEach(() => {
     useConnection.setState({
@@ -68,14 +60,12 @@ describe("AppLauncher", () => {
     expect(screen.queryByRole("button", { name: /missing slug/i })).toBeNull();
   });
 
-  it("offers standalone app sharing by registry slug, not by the launch path", async () => {
-    sharing.props.length = 0;
+  it("offers no standalone app share: projects are the only live-shareable resource", async () => {
     render(<AppLauncher />);
 
     await screen.findByRole("button", { name: /Alpha/i });
-    // Alpha's launch path is nested (`apps/utilities/alpha/index.html`); the owner
-    // catalog resolves the registry slug, which is the only identity that exists there.
-    expect(sharing.props.at(-1)).toEqual({ kind: "app", path: "alpha" });
+    fireEvent.keyDown(screen.getByLabelText("Search apps"), { key: "ArrowDown" });
+    expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
   });
 
   it("resets the active app when the search query changes", async () => {
@@ -132,11 +122,14 @@ describe("AppLauncher", () => {
     expect(onSwitchOsView).toHaveBeenCalledWith("canvas");
 
     const canvas = screen.getByRole("button", { name: "Canvas" });
+    const image = canvas.querySelector("img")!;
+    expect(image.getAttribute("src")).toContain("canvas.png");
+    fireEvent.error(image);
     expect(canvas.querySelector("img")).toBeNull();
     expect(canvas.querySelector("svg")).toBeTruthy();
   });
 
-  it("keeps core system vectors while allowing app artwork for Notes", () => {
+  it("uses bundled core artwork for Notes when no custom icon is selected", () => {
     clearDesktopApps();
     seedDesktopApps([
       { slug: "chat", name: "Chat" },
@@ -146,11 +139,28 @@ describe("AppLauncher", () => {
     render(<AppLauncher presentation="launchpad" />);
 
     const chat = screen.getByRole("button", { name: "Chat" });
+    const image = chat.querySelector("img")!;
+    expect(image.getAttribute("src")).toContain("chat.png");
+    expect((image.parentElement as HTMLElement).style.background).toBe("transparent");
+    fireEvent.error(image);
     expect(chat.querySelector("svg")).toBeTruthy();
     expect(chat.querySelector("img")).toBeNull();
 
     const notes = screen.getByRole("button", { name: "Notes" });
-    expect(notes.querySelector("img")?.getAttribute("src")).toContain("/icons/notes.png");
+    expect(notes.querySelector("img")?.getAttribute("src")).toContain("/system-app-icons/v2/notes.png");
+  });
+  it.each(["notes", "whiteboard"])("preserves the owner-selected %s icon even with the default filename", (slug) => {
+    const name = slug === "notes" ? "Notes" : "Whiteboard";
+    clearDesktopApps();
+    seedDesktopApps([{ slug, name, path: `apps/${slug}/index.html`, iconUrl: `/icons/${slug}.png?v=legacy` }]);
+    const view = render(<AppLauncher presentation="launchpad" />);
+    expect(screen.getByRole("button", { name }).querySelector("img")?.getAttribute("src"))
+      .toContain(`/icons/${slug}.png?v=legacy`);
+    view.unmount();
+    seedDesktopApps([{ slug, name, path: `apps/${slug}/index.html`, iconUrl: `/icons/owner-${slug}.svg?v=selected` }]);
+    render(<AppLauncher presentation="launchpad" />);
+    expect(screen.getByRole("button", { name }).querySelector("img")?.getAttribute("src"))
+      .toContain(`/icons/owner-${slug}.svg?v=selected`);
   });
 
   it("offers Desktop from Canvas and keeps the OS-view destination launcher-only", () => {

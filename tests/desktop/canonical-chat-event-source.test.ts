@@ -22,16 +22,15 @@ describe("Electron Desktop canonical Chat event-source adapter", () => {
       'id: 14',
       'data: {"type":"chat.event","event":{"cursor":14,"chatId":"chat_electron","revision":21,"eventType":"run.message","createdAt":"2026-09-04T00:00:00.000Z"}}',
       "",
+      'data: {"type":"chat.replay.end","nextCursor":14}',
+      "",
       "",
     ].join("\n")));
 
     await vi.waitFor(() => expect(source.connectionState()).toBe("open"));
     await vi.waitFor(() => expect(invalidations).toEqual([{
-      type: "chat.changed",
-      chatId: "chat_electron",
+      type: "chat.full_refresh",
       cursor: 14,
-      revision: 21,
-      eventType: "run.message",
     }]));
     expect(openStream).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }));
     source.dispose();

@@ -201,19 +201,19 @@ export function DeveloperToolsSelector({
   const billingLayout = variant === "billing";
   const radioGroupName = useId();
   const detail = singleChoice
-    ? "This computer is designed for lighter workloads, so you can preinstall one coding agent—or none."
+    ? "Preinstall one coding agent, or choose None."
     : "Choose command-line agents to preinstall on this VPS.";
 
   return (
-    <section className="max-w-3xl rounded-2xl border border-border/70 bg-background/55 p-3 sm:p-4">
+    <section className="@container max-w-3xl rounded-2xl border border-border/70 bg-background/55 p-3 sm:p-4">
       <div className="mb-3 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        <h4 className="text-sm font-semibold text-deep">Developer tools</h4>
+        <h4 className="shrink-0 text-sm font-semibold text-deep">Developer tools</h4>
         <p className={`text-xs ${singleChoice ? "text-forest/65" : "text-forest/45"}`}>{detail}</p>
       </div>
       <ol
         aria-label="Coding agents"
         role={singleChoice ? "radiogroup" : undefined}
-        className={billingLayout ? "grid grid-cols-2 gap-2" : "flex flex-col gap-2"}
+        className={billingLayout ? "grid grid-cols-1 gap-2 @md:grid-cols-2" : "flex flex-col gap-2"}
       >
         {developerToolOptions.map((tool, index) => {
           const checked = selectedToolIds.has(tool.id);

@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { createOnboardingHandler } from "../../../packages/gateway/src/onboarding/ws-handler.js";
 import { createGeminiLiveClient } from "../../../packages/gateway/src/onboarding/gemini-live.js";
 import type { GatewayToShell } from "../../../packages/gateway/src/onboarding/types.js";
+import { createNativeProviderProfileGuard } from "../../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
+import { createOwnerAnthropicKeySaver, readOwnerAnthropicKey } from "../../../packages/gateway/src/ai-providers/owner-anthropic-key.js";
 
 const geminiMock = vi.hoisted(() => ({
   clients: [] as Array<{
@@ -100,6 +102,33 @@ describe("onboarding websocket handler", () => {
 
     expect(sent).toContainEqual({ type: "stage", stage: "done" });
     expect(existsSync(join(homePath, "system/onboarding-complete.json"))).toBe(true);
+  });
+
+  it("fences legacy websocket key replacement while a native Claude session is live, then permits retry after drain", async () => {
+    await createOwnerAnthropicKeySaver({ homePath })("sk-ant-current");
+    let running = true;
+    const guard = createNativeProviderProfileGuard({ homePath, registry: {
+      listProfileSessions: async () => [{ name: "existing-native-login", agent: "claude" }],
+      get: async name => ({ name, agent: "claude" }),
+      observeAgentLiveness: async () => running ? "running" : "stopped",
+    } });
+    const deps = { homePath, geminiModel: "test-model", nativeProviderProfileGuard: guard };
+    const h = createOnboardingHandler(deps);
+    await h.onOpen(msg => sent.push(msg));
+    await h.onMessage(JSON.stringify({ type: "start", audioFormat: "text" }));
+    await h.onMessage(JSON.stringify({ type: "choose_activation", path: "api_key" }));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    try {
+      const message = JSON.stringify({ type: "set_api_key", apiKey: "sk-ant-replacement" });
+      await expect(h.onMessage(message)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+      expect(await readOwnerAnthropicKey(homePath)).toMatchObject({ key: "sk-ant-current" });
+      expect(sent).not.toContainEqual({ type: "api_key_result", valid: true });
+      expect(existsSync(join(homePath, "system/onboarding-complete.json"))).toBe(false);
+      running = false;
+      await h.onMessage(message);
+      expect(await readOwnerAnthropicKey(homePath)).toMatchObject({ key: "sk-ant-replacement" });
+      expect(sent).toContainEqual({ type: "api_key_result", valid: true });
+    } finally { vi.unstubAllGlobals(); h.onClose(); }
   });
 
   it("returns goal steps for websocket goal selection", async () => {

@@ -6,6 +6,7 @@ import { createIntegrationRoutes } from "../../packages/gateway/src/integrations
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import { getService, discoverComponentKeys } from "../../packages/gateway/src/integrations/registry.js";
 import { createHmac } from "node:crypto";
+import { DriveContentError } from "../../packages/gateway/src/integrations/drive-content.js";
 
 const WEBHOOK_SECRET = "whsec_e2e_test";
 
@@ -60,6 +61,57 @@ describe("E2E: connect -> call -> disconnect flow", () => {
 
   afterEach(async () => {
     await db.destroy();
+  });
+
+  it("reads Drive contents through authenticated account selection, including scoped reads and safe failures", async () => {
+    const readDriveFile = vi.fn().mockResolvedValue({ fileId: "notes", mimeType: "text/markdown", content: "# Contents", bytes: 10 });
+    pipedream.readDriveFile = readDriveFile;
+    await db.connectService({ userId, service: "google_drive", pipedreamAccountId: "apn_drive", accountLabel: "Work", scopes: [] });
+    const body = { service: "google_drive", action: "read_file", label: "Work", params: { fileId: "notes", mimeType: "text/markdown" } };
+    const call = (path = "/call", data = body) => app.request("/api/integrations" + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+    expect((await (await call()).json()).data.content).toBe("# Contents");
+    expect((await (await call("/read-call")).json()).data.content).toBe("# Contents");
+    expect(readDriveFile).toHaveBeenCalledWith({ externalUserId: "pd_ext_e2e", accountId: "apn_drive", ...body.params });
+    const before = readDriveFile.mock.calls.length;
+    expect((await call("/call", { ...body, params: { fileId: "../notes", mimeType: "text/markdown" } })).status).toBe(400);
+    expect(readDriveFile).toHaveBeenCalledTimes(before);
+    readDriveFile.mockRejectedValueOnce(new DriveContentError("file_access_denied"));
+    const denied = await call(); expect(denied.status).toBe(403); expect((await denied.json()).code).toBe("file_access_denied");
+    const other = await db.createUser({ clerkId: "other_drive", handle: "other-drive", displayName: "Other", email: "other@example.com", containerId: "other", pipedreamExternalId: "pd_other" });
+    userId = other.id;
+    expect((await call("/read-call")).status).toBe(400);
+    expect(readDriveFile).toHaveBeenCalledTimes(before + 1);
+  });
+
+  it("maps the OAuth Airtable slug through connect, sync, call recovery, and webhook", async () => {
+    const connect = await app.request("/api/integrations/connect", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service: "airtable", label: "Work" }),
+    });
+    expect(connect.status).toBe(200);
+    expect(vi.mocked(pipedream.getOAuthUrl).mock.calls[0]?.[1]).toBe("airtable_oauth");
+    vi.mocked(pipedream.listAccounts).mockResolvedValue([{ id: "apn_airtable", app: "airtable_oauth" }]);
+    const sync = await app.request("/api/integrations/sync", { method: "POST" });
+    expect((await sync.json()).services).toEqual(expect.arrayContaining([expect.objectContaining({ service: "airtable", account_label: "Work" })]));
+    const call = await app.request("/api/integrations/call", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service: "airtable", action: "list_bases" }),
+    });
+    expect(call.status).toBe(200);
+    expect(pipedream.proxyGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "apn_airtable", url: "https://api.airtable.com/v0/meta/bases" }));
+    const payload = JSON.stringify({ external_user_id: "pd_ext_e2e", account_id: "apn_airtable_two", app: "airtable_oauth", label: "Personal" });
+    const webhook = await app.request("/api/integrations/webhook/connected", {
+      method: "POST", headers: { "Content-Type": "application/json", "x-pd-signature": createHmac("sha256", WEBHOOK_SECRET).update(payload).digest("hex") }, body: payload,
+    });
+    expect(webhook.status).toBe(200);
+    const list = await db.listConnectedServices(userId);
+    expect(list.map(connection => connection.service)).toEqual(["airtable", "airtable"]);
+    // A previously missed account must also reconcile on the agent call path.
+    await db.disconnectService(list[0]!.id);
+    await db.disconnectService(list[1]!.id);
+    vi.mocked(pipedream.listAccounts).mockResolvedValue([{ id: "apn_airtable_three", app: "airtable_oauth" }]);
+    const recovered = await app.request("/api/integrations/call", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service: "airtable", action: "list_bases" }),
+    });
+    expect(recovered.status).toBe(200);
   });
 
   it("completes the full connect -> call -> disconnect lifecycle", async () => {

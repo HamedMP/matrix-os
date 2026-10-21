@@ -246,3 +246,49 @@ describe("Matrix routes during native model catalog failure", () => {
     });
   });
 });
+
+
+describe("Matrix offered inventory independent of execution health", () => {
+  it("retains policy-authorized models without promoting unavailable execution", async () => {
+    const input = projectionInput("pi");
+    const source = input.canonical.accessSources.find(source => source.id === "matrix_included")!;
+    source.state = "unavailable"; source.action = "retry"; source.eligibleModelIds = [];
+    const snapshot = await projectProviderSettings(input);
+    expect(snapshot.matrixModelInventory).toEqual([expect.objectContaining({
+      id: "claude-sonnet-5", accessSourceId: "matrix_included", providerId: "anthropic",
+    })]);
+    expect(snapshot.accessSources.find(source => source.id === "matrix_included")?.eligibleModelIds).toEqual([]);
+    expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual([]);
+    expect(snapshot.harnesses[0]?.enabled).toBe(false);
+  });
+  it("aggregates authorized Sonnet and GLM while excluding owner-only and generic models", async () => {
+    const input = projectionInput("pi");
+    const source = input.canonical.accessSources[0]!;
+    source.state = "unavailable"; source.action = "retry"; source.eligibleModelIds = [];
+    input.canonical.accessSources.push({ ...source, id: "matrix_cloudflare", vendor: "cloudflare" });
+    input.canonical.models.push({ ...input.canonical.models[0]!, id: "@cf/zai-org/glm-5.3-flash",
+      vendor: "cloudflare", displayName: "GLM 5.3 Flash", eligibleAccessSourceIds: ["matrix_cloudflare"] });
+    input.fundedPolicy.allowedModelIds.push("@cf/zai-org/glm-5.3-flash", "anthropic/claude-opus-5");
+    const snapshot = await projectProviderSettings(input);
+    expect(snapshot.matrixModelInventory?.map(model => model.id)).toEqual(["claude-sonnet-5", "@cf/zai-org/glm-5.3-flash"]);
+    expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual([]);
+    expect(snapshot.harnesses[0]?.enabled).toBe(false);
+  });
+  it("does not turn a Jev-only policy into generic Sonnet or GLM access", async () => {
+    const input = projectionInput("pi");
+    input.fundedPolicy.allowedModelIds = ["typesafe/jev"];
+    const snapshot = await projectProviderSettings(input);
+    expect(snapshot.matrixModelInventory).toEqual([]);
+    expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual([]);
+    expect(snapshot.harnesses[0]?.enabled).toBe(false);
+  });
+  it.each(["revoked", "stale", "untrusted", "owner_only", "retired"])("excludes %s inventory", async failure => {
+    const input = projectionInput("pi");
+    if (failure === "revoked") input.fundedPolicy.enabled = false;
+    if (failure === "stale") input.fundedPolicy.staleAfter = now.toISOString();
+    if (failure === "untrusted") input.fundedPolicyAuthoritative = false;
+    if (failure === "owner_only") input.canonical.models[0]!.eligibleAccessSourceIds = ["owner_anthropic_profile"];
+    if (failure === "retired") input.canonical.models[0]!.status = "retired";
+    expect((await projectProviderSettings(input)).matrixModelInventory).toEqual([]);
+  });
+});

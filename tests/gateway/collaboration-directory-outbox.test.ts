@@ -180,7 +180,75 @@ describe("CollaborationDirectoryOutbox", () => {
     await worker.shutdown();
   });
 
-  it("quarantines malformed rows without blocking valid rows in the same batch", async () => {
+  it("holds a scope's later event while an earlier event is on its final attempt", async () => {
+    // The earlier event is out on its last attempt (attempts at the limit, retry not yet due);
+    // a later event of the same scope must wait until that attempt can no longer land.
+    await fixture.db.updateTable("collaboration_directory_outbox")
+      .set({ attempts: 20, retry_after: new Date(now.getTime() + 60_000).toISOString() })
+      .where("event_id", "=", "60000000-0000-4000-8000-000000000001")
+      .execute();
+    await fixture.db.insertInto("collaboration_events").values({
+      scope_id: collaborationIds.scope, scope_seq: 2, event_id: "60000000-0000-4000-8000-000000000003",
+      resource_kind: "chat", resource_id: collaborationIds.chat, revision: 2, authority_generation: 1,
+      event_type: "member.accepted", payload: JSON.stringify({}), created_at: now.toISOString(),
+    }).execute();
+    await fixture.db.insertInto("collaboration_directory_outbox").values({
+      event_id: "60000000-0000-4000-8000-000000000003", scope_id: collaborationIds.scope,
+      recipient_actor_ids: JSON.stringify([collaborationActors.editor]), authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 1, resource_kind: "chat", discovery_state: "accepted",
+      retry_after: now.toISOString(), delivered_at: null, created_at: now.toISOString(),
+    }).execute();
+    let clock = now.getTime();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const worker = new CollaborationDirectoryOutbox({
+      db: fixture.db, platformBaseUrl: "https://platform.internal", runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef", fetchImpl, now: () => new Date(clock), startTimer: false,
+    });
+    try {
+      expect(await worker.runOnce()).toBe(0);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      // A slow batch can hold that attempt well past its retry time: the scope stays held.
+      clock += 5 * 60_000;
+      expect(await worker.runOnce()).toBe(0);
+      // Only an attempt that could no longer be running (its worker died) stops holding the scope.
+      clock += 15 * 60_000;
+      expect(await worker.runOnce()).toBe(1);
+    } finally {
+      await worker.shutdown();
+    }
+  });
+
+  it("releases a scope's later event as soon as the earlier event's final attempt fails", async () => {
+    await fixture.db.updateTable("collaboration_directory_outbox").set({ attempts: 19 })
+      .where("event_id", "=", "60000000-0000-4000-8000-000000000001").execute();
+    await fixture.db.insertInto("collaboration_events").values({
+      scope_id: collaborationIds.scope, scope_seq: 2, event_id: "60000000-0000-4000-8000-000000000004",
+      resource_kind: "chat", resource_id: collaborationIds.chat, revision: 2, authority_generation: 1,
+      event_type: "member.accepted", payload: JSON.stringify({}), created_at: now.toISOString(),
+    }).execute();
+    await fixture.db.insertInto("collaboration_directory_outbox").values({
+      event_id: "60000000-0000-4000-8000-000000000004", scope_id: collaborationIds.scope,
+      recipient_actor_ids: JSON.stringify([collaborationActors.editor]), authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 1, resource_kind: "chat", discovery_state: "accepted",
+      retry_after: now.toISOString(), delivered_at: null, created_at: now.toISOString(),
+    }).execute();
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => new Response(null, {
+      status: String(init.body).includes("60000000-0000-4000-8000-000000000001") ? 503 : 204,
+    }));
+    const worker = new CollaborationDirectoryOutbox({
+      db: fixture.db, platformBaseUrl: "https://platform.internal", runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef", fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: () => now, startTimer: false,
+    });
+    try {
+      expect(await worker.runOnce()).toBe(0);
+      expect(await worker.runOnce()).toBe(1);
+    } finally {
+      await worker.shutdown();
+    }
+  });
+
+  it("quarantines a malformed row without blocking the valid rows after it", async () => {
     await fixture.db.updateTable("collaboration_directory_outbox")
       .set({ recipient_actor_ids: JSON.stringify([""]) })
       .where("event_id", "=", "60000000-0000-4000-8000-000000000001")
@@ -220,6 +288,9 @@ describe("CollaborationDirectoryOutbox", () => {
       startTimer: false,
     });
 
+    // A scope delivers in order, so the valid later row waits for the cycle after the earlier
+    // malformed row is quarantined; it is never blocked behind it.
+    expect(await worker.runOnce()).toBe(0);
     expect(await worker.runOnce()).toBe(1);
     expect(fetchImpl).toHaveBeenCalledOnce();
     const rows = await fixture.db.selectFrom("collaboration_directory_outbox")

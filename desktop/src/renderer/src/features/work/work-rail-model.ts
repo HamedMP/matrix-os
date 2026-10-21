@@ -1,5 +1,5 @@
-import { compareCanonicalChatActivity, isChatUnread } from "@matrix-os/ui";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import { compareCanonicalChatActivity, resolveCanonicalChatLifecycleGroup, resolveCanonicalChatAttention as resolveWorkRailAgentState } from "@matrix-os/ui";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import type { Project } from "../../stores/board";
 
 export interface WorkRailProjectGroup {
@@ -7,18 +7,23 @@ export interface WorkRailProjectGroup {
   slug: string;
   name: string;
   project: Project;
-  chats: CanonicalChatRecord[];
+  chats: ChatNavigationRecord[];
 }
 
 export interface WorkRailModel {
-  pinned: CanonicalChatRecord[];
+  pinned: ChatNavigationRecord[];
   pinnedProjects: WorkRailProjectGroup[];
   projects: WorkRailProjectGroup[];
-  recents: CanonicalChatRecord[];
+  needsYou: ChatNavigationRecord[];
+  working: ChatNavigationRecord[];
+  done: ChatNavigationRecord[];
+  recents: ChatNavigationRecord[];
+  /** Inactive display entries; does not change canonical completion or attention. */
+  doneDisplay: ChatNavigationRecord[];
 }
 
 export interface WorkRailSearchResult {
-  record: CanonicalChatRecord;
+  record: ChatNavigationRecord;
   project?: Project;
   contextLabel: string;
 }
@@ -33,7 +38,7 @@ function providerLabel(driverKind: string): string {
 }
 
 export function buildWorkRailSearchResults(
-  records: readonly CanonicalChatRecord[],
+  records: readonly ChatNavigationRecord[],
   projects: readonly Project[],
   query: string,
 ): WorkRailSearchResult[] {
@@ -90,39 +95,20 @@ export function buildWorkRailSearchResults(
   });
 }
 
-export type WorkRailAgentState =
-  | "approval_required"
-  | "input_required"
-  | "running"
-  | "failed"
-  | "unseen_completion"
-  | "idle";
-
-export function resolveWorkRailAgentState(record: CanonicalChatRecord): WorkRailAgentState {
-  if (record.chat.attention === "approval_required"
-    || record.activeRun?.status === "waiting_for_approval") {
-    return "approval_required";
-  }
-  if (record.chat.attention === "input_required"
-    || record.activeRun?.status === "waiting_for_input") {
-    return "input_required";
-  }
-  if (record.activeRun) return "running";
-  if (record.chat.attention === "failed") return "failed";
-  if (isChatUnread(record)) return "unseen_completion";
-  return "idle";
-}
+export { resolveWorkRailAgentState };
+export type WorkRailAgentState = import('@matrix-os/ui').CanonicalChatAttentionState;
 
 export function buildWorkRailModel(
-  records: readonly CanonicalChatRecord[],
+  records: readonly ChatNavigationRecord[],
   projects: readonly Project[],
+  excludedChatIds: readonly string[] = [],
 ): WorkRailModel {
   const groups = projects.map((project) => ({
     id: project.id ?? project.slug,
     slug: project.slug,
     name: project.name,
     project,
-    chats: [] as CanonicalChatRecord[],
+    chats: [] as ChatNavigationRecord[],
   }));
   const groupByProjectReference = new Map<string, WorkRailProjectGroup>();
   for (const group of groups) {
@@ -130,11 +116,16 @@ export function buildWorkRailModel(
     groupByProjectReference.set(group.slug, group);
   }
 
-  const pinned: CanonicalChatRecord[] = [];
-  const recents: CanonicalChatRecord[] = [];
+  const pinned: ChatNavigationRecord[] = [];
+  const recents: ChatNavigationRecord[] = [];
+  const excluded = new Set(excludedChatIds);
+  const needsYou: ChatNavigationRecord[] = [];
+  const working: ChatNavigationRecord[] = [];
+  const done: ChatNavigationRecord[] = [];
+  const doneDisplay: ChatNavigationRecord[] = [];
   const placed = new Set<string>();
   for (const record of records) {
-    if (placed.has(record.chat.id)) continue;
+    if (placed.has(record.chat.id) || excluded.has(record.chat.id)) continue;
     placed.add(record.chat.id);
     if (record.chat.userState?.pinned) {
       pinned.push(record);
@@ -144,12 +135,18 @@ export function buildWorkRailModel(
       groupByProjectReference.get(record.projectId)?.chats.push(record);
       continue;
     }
-    recents.push(record);
+    const group = resolveCanonicalChatLifecycleGroup(record);
+    ({needsYou, working, done, recent:recents})[group].push(record);
+    if (group === "done" || group === "recent") doneDisplay.push(record);
   }
   return {
     pinned,
     pinnedProjects: groups.filter((group) => group.project.pinned),
     projects: groups.filter((group) => !group.project.pinned),
+    needsYou,
+    working,
+    done,
     recents,
+    doneDisplay,
   };
 }

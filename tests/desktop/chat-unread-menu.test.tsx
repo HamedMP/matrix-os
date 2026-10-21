@@ -20,17 +20,25 @@ const record: CanonicalChatRecord = {
 
 it("places the action first in Electron and persists it without opening the chat", async () => {
   const marked = { ...record, readState: { ...record.readState!, unread: true, markedUnread: true, version: 1 } };
-  const client = { list: vi.fn(async () => ({ items: [record] })), updateReadState: vi.fn(async () => marked) };
+  const directBot = vi.fn(async (_chatId: string) => null);
+  const client = {
+    list: vi.fn(async () => ({ items: [record] })), updateReadState: vi.fn(async () => marked),
+    agents: { list: vi.fn(async () => ({ enabled: true, agents: [] })), bots: { directBot } },
+  };
   const onSelectChat = vi.fn();
   render(<WorkRail client={client as unknown as CanonicalChatClient} projects={[]} active
     onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()}
     onSelectChat={onSelectChat} onCollapse={vi.fn()} />);
+  const doneHeader = await screen.findByRole("button", { name: "Done" });
+  expect(doneHeader.getAttribute("aria-expanded")).toBe("true");
   fireEvent.contextMenu(await screen.findByRole("button", { name: "My chat" }));
   expect(screen.getAllByRole("menuitem")[0].textContent).toBe("Mark as unread");
   expect(screen.getAllByRole("menuitem").findIndex((item) => item.textContent === "Rename")).toBeGreaterThan(0);
   fireEvent.click(screen.getByRole("menuitem", { name: "Mark as unread" }));
   await waitFor(() => expect(client.updateReadState).toHaveBeenCalledWith("chat_menu", { type: "mark_unread" }));
   expect(onSelectChat).not.toHaveBeenCalled();
+  expect(directBot).toHaveBeenCalledWith("chat_menu");
+  expect(doneHeader.getAttribute("aria-expanded")).toBe("true");
   await screen.findByLabelText("Unread My chat");
   fireEvent.contextMenu(screen.getByRole("button", { name: "My chat" }));
   expect(screen.getAllByRole("menuitem")[0].textContent).toBe("Mark as read");

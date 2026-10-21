@@ -1,3 +1,4 @@
+import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
@@ -8,7 +9,7 @@ import {
   type FundedRelayConfig,
 } from "./funded-relay.js";
 import { FUNDED_SONNET, probeFundedModel } from "./funded-relay-readiness.js";
-import { FUNDED_GLM_FLASH, fundedModelPriceValidThrough, isFundedModelPriceCurrent } from "./funded-relay-model.js";
+import { fundedModelPriceValidThrough, isFundedModelPriceCurrent } from "./funded-relay-model.js";
 
 export interface FundedRelayService {
   app: Hono;
@@ -42,13 +43,16 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
       return c.json({ ready: false }, 401);
     }
     const model = c.req.query("model");
-    if (model !== FUNDED_GLM_FLASH && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
-    const priceValidThrough = fundedModelPriceValidThrough(model);
-    if (!priceValidThrough || !isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))())) {
+    if ((!model || !isManagedWorkersAiModel(model)) && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
+    const priceValidThrough = fundedModelPriceValidThrough(model, config.pricingReviews);
+    if (!priceValidThrough || !isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))(), config.pricingReviews)) {
       return c.json({ ready: false }, 503);
     }
-    const probed = await probeFundedModel(config, model, options.fetchFn);
-    const ready = probed && isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))());
+    const probed = await probeFundedModel(config, model, options.fetchFn, {
+      probeId: c.req.header("x-matrix-readiness-probe-id"),
+      traceId: c.req.header("x-cloud-trace-context")?.split("/")[0],
+    });
+    const ready = probed && isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))(), config.pricingReviews);
     return c.json(ready ? { ready: true, priceValidThrough } : { ready: false }, ready ? 200 : 503);
   });
   relay.register(app);

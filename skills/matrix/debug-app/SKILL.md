@@ -1,10 +1,12 @@
 ---
+triggers: ["fix app", "needs_build", "app launch failure", "broken app", "bridge error"]
 name: matrix-debug-app
 description: Debug Matrix OS app failures including needs_build responses, missing dist bundles, broken matrix.json manifests, icon 404s, console errors, and integration proxy issues.
-version: 1.0.0
+version: 1.1.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-app-builder, matrix-integrations]
 metadata:
   agent:
     tags: [Matrix OS, debugging, apps, Vite, console]
@@ -80,7 +82,7 @@ Avoid stale fields from old app formats such as `type: "html-app"` or `type: "re
   `window.MatrixOS.db`; keep localStorage fallback code test-only/no-op.
 - Missing or undefined saved fields: check `matrix.json` `storage.tables` declares the column and type.
 - `401 /api/auth/ws-token`: user is not authenticated or the route is being called from the wrong shell context.
-- `Clerk failed to load clerk.example.com`: stale environment or image build used placeholder Clerk config.
+- `Clerk failed to load clerk.example.com`: stale environment or host-bundle build used placeholder Clerk config.
 
 ## Icon Fixes
 
@@ -101,6 +103,10 @@ Avoid stale fields from old app formats such as `type: "html-app"` or `type: "re
   bridge path.
 
 ## Integration Errors
+
+First inspect the actual running bridge: `capabilities`, `integrations`, `describeService`, `service` and `ai.routes`. If a method is absent, record the installed client/runtime version and available method names without tokens. Rebuilding app code cannot add a missing host method; use a compatible Matrix update. Check the owner grant separately from the connected service. Discover actual action schemas and select an exact account label. `get_file` is metadata; Drive analysis needs `read_file` contents. AI route unavailability is separate from integration access, and must never trigger fallback to another account or funding source.
+
+For a Chat failure, inspect its actual registered tools and run scope. App access does not prove Chat access. The built-in read integration scope provides inventory, discovery and reads without a separate Custom MCP login; it does not authorize writes or connection management. Do not copy credentials or register duplicate connections to work around missing wiring.
 
 Customer VPSes should proxy integration requests to platform. If `/api/integrations` returns 404:
 

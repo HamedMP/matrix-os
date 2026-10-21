@@ -15,6 +15,7 @@ import { CollaborationAuthorizationError, type AuthorizedCollaborationContext, t
 import type { OwnerCollaborationDatabase } from "./database.js";
 import {
   ProjectAppAdapterError,
+  appMutationChanged,
   createProjectAppAdapter,
   type ProjectAppBridge,
 } from "./project-app-adapter.js";
@@ -36,7 +37,7 @@ const EnvelopeSchema = z.object({
   action: z.unknown(),
 }).strict();
 const READ_ACTIONS: readonly BridgeQueryBody["action"][] = ["find", "findOne", "count", "schema", "appInfo"];
-const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete"];
+const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "compareAndSwap", "bulkUpdate", "delete"];
 
 export interface AppInstanceDescription {
   appId: string;
@@ -247,7 +248,7 @@ export function createAppInstanceAdapter(options: {
           const stored = z.object({ result: z.json(), revision: z.number().int().nonnegative() }).strict()
             .safeParse(typeof existing.result_ref === "string" ? JSON.parse(existing.result_ref) : existing.result_ref);
           if (existing.payload_hash !== payloadHash || existing.status !== "completed" || !stored.success) throw new ProjectAppAdapterError("conflict");
-          return { ...stored.data, replayed: true };
+          return { ...stored.data, replayed: true, changed: false };
         }
         const locked = await options.catalog.lock(trx, root.id);
         if (locked.revision !== envelope.data.expectedRevision) throw new ProjectAppAdapterError("conflict");
@@ -255,36 +256,41 @@ export function createAppInstanceAdapter(options: {
           namespace, appId: appId.data, storageSchema: bridgeAppId, scopeId: current.scopeId, actorId: current.actorId,
           action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
         }));
-        const bumped = await options.catalog.bump(trx, { id: root.id, expectedRevision: locked.revision });
+        const changed = appMutationChanged(parsed.action, result);
+        const revision = changed
+          ? (await options.catalog.bump(trx, { id: root.id, expectedRevision: locked.revision })).revision
+          : locked.revision;
         const timestamp = now();
-        const replay = { result, revision: bumped.revision };
+        const replay = { result, revision };
         await trx.insertInto("collaboration_operations").values({
           scope_id: current.scopeId, actor_id: current.actorId, client_request_id: envelope.data.clientRequestId,
           operation_kind: operationKind, payload_hash: payloadHash, status: "completed", result_ref: jsonb(replay),
           expected_revision: envelope.data.expectedRevision, accepted_auth_epoch: current.authEpoch,
           created_at: timestamp, expires_at: new Date(timestamp.getTime() + OPERATION_RETENTION_MS),
         }).execute();
-        const latest = await trx.selectFrom("collaboration_events").select("scope_seq").where("scope_id", "=", current.scopeId)
-          .orderBy("scope_seq", "desc").limit(1).executeTakeFirst();
-        await trx.insertInto("collaboration_events").values({
-          scope_id: current.scopeId, scope_seq: Number(latest?.scope_seq ?? 0) + 1, event_id: z.uuid().parse(createEventId()),
-          resource_kind: "app", resource_id: root.id, revision: bumped.revision, authority_generation: current.authorityGeneration,
-          event_type: "resource.app.changed", payload: jsonb({ appId: appId.data, action: parsed.action }), created_at: timestamp,
-        }).execute();
+        if (changed) {
+          const latest = await trx.selectFrom("collaboration_events").select("scope_seq").where("scope_id", "=", current.scopeId)
+            .orderBy("scope_seq", "desc").limit(1).executeTakeFirst();
+          await trx.insertInto("collaboration_events").values({
+            scope_id: current.scopeId, scope_seq: Number(latest?.scope_seq ?? 0) + 1, event_id: z.uuid().parse(createEventId()),
+            resource_kind: "app", resource_id: root.id, revision, authority_generation: current.authorityGeneration,
+            event_type: "resource.app.changed", payload: jsonb({ appId: appId.data, action: parsed.action }), created_at: timestamp,
+          }).execute();
+        }
         await trx.insertInto("collaboration_audit").values({
           scope_id: current.scopeId, actor_id: current.actorId, action: operationKind, outcome: "completed",
-          revision: bumped.revision, reason_code: null, created_at: timestamp,
+          revision, reason_code: null, created_at: timestamp,
         }).execute();
-        return { ...replay, replayed: false };
+        return { ...replay, replayed: false, changed };
       });
-      if (!committed.replayed && options.onCommitted) {
+      if (committed.changed && options.onCommitted) {
         try {
           await options.onCommitted(current.scopeId);
         } catch (error: unknown) {
           console.warn("[collaboration-app-instance] event delivery failed", error instanceof Error ? error.name : "UnknownError");
         }
       }
-      return committed;
+      return { result: committed.result, revision: committed.revision, replayed: committed.replayed };
     } catch (error: unknown) {
       throw mapError(error);
     }

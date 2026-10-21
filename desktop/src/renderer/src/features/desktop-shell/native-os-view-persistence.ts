@@ -11,7 +11,7 @@ export function nativeTabOsViewPath(tab: Tab, installedApps: readonly MatrixApp[
       ?? FIXED_DESKTOP_APPS.find((app) => app.slug === tab.slug)?.path
       ?? null;
   }
-  if (tab.kind === "settings" && tab.title === "Plugins") return "__plugins__";
+  if (tab.kind === "settings" && (tab.title === "Plugins" || tab.title === "Connect Apps")) return "__plugins__";
   return FIXED_DESKTOP_APPS.find((app) => app.kind === tab.kind)?.path
     ?? (tab.kind === "terminal" ? "__terminal__" : null);
 }

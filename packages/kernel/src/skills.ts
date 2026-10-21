@@ -22,6 +22,7 @@ const SkillFrontmatterSchema = z.object({
   channel_hints: z.array(z.string()).optional().default(["any"]),
   examples: z.array(z.string()).optional().default([]),
   composable_with: z.array(z.string()).optional().default([]),
+  related_skills: z.array(z.string()).optional().default([]),
 });
 
 export type SkillFormat = "flat" | "directory";
@@ -38,6 +39,7 @@ export interface SkillDefinition {
   channel_hints: string[];
   examples: string[];
   composable_with: string[];
+  related_skills?: string[];
 }
 
 const skillBodyCache = new Map<string, string>();
@@ -109,6 +111,7 @@ function parseSkillFile(
     channel_hints: meta.channel_hints,
     examples: meta.examples,
     composable_with: meta.composable_with,
+    related_skills: meta.related_skills,
   };
 }
 
@@ -402,9 +405,12 @@ export function loadComposableSkills(
 export function buildSkillsToc(skills: SkillDefinition[]): string {
   if (skills.length === 0) return "";
 
-  const lines = skills.map(
-    (s) => `- **${s.name}**: ${s.description} (triggers: ${s.triggers.join(", ")})`,
-  );
+  const lines = skills.map((s) => {
+    const companions = [...new Set([...(s.related_skills ?? []), ...s.composable_with])];
+    return `- **${s.name}**: ${s.description}`
+      + (s.triggers.length ? ` (triggers: ${s.triggers.join(", ")})` : "")
+      + (companions.length ? ` (companions: ${companions.join(", ")})` : "");
+  });
 
   return lines.join("\n");
 }

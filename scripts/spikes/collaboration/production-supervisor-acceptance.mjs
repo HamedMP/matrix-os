@@ -23,6 +23,11 @@ const EXPECTED_PROFILE_DIGEST = "9f4e3e2ad9e63cb300854dfca7bc31370d4cbae6d15fab9
 const EXPECTED_PROFILE_ID = "scope-runtime-chat-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
 const EXPECTED_CODEX_VERSION = "0.154.0";
+const EXPECTED_BOT_PROFILE_ID = "scope-runtime-bot-v1";
+const EXPECTED_BOT_PROFILE_DIGEST = "884f3410867236443e79580ae16425c23909bc15fb79daec11db6c3dc81eebd4";
+const EXPECTED_MANAGED_PI_PROFILE_ID = "scope-runtime-managed-pi-v1";
+const EXPECTED_MANAGED_PI_PROFILE_DIGEST = "5e2e3b9f0785deb28f7b6334f7df8f96f84d9365978d4d459778b78acf31fc37";
+const EXPECTED_BOT_HARNESS_VERSION = "1.0.0";
 const MAX_FRAME_BYTES = 64 * 1024;
 const SUPERVISOR_QUERY_TIMEOUT_MS = 5_000;
 const SUPERVISOR_OPERATION_TIMEOUT_MS = 30_000;
@@ -203,6 +208,35 @@ function validateCapability(response) {
     && profile.adapters[1]?.harnessVersion === EXPECTED_CODEX_VERSION
     && JSON.stringify(profile.adapters[1]?.workloads) === '["chat_ai"]',
   "adapter_capability_invalid");
+  // A catalog-aware supervisor lists every launchable profile; the Chat entry must match the legacy one.
+  if (response.profiles !== undefined) {
+    assert(Array.isArray(response.profiles) && response.profiles.length >= 1 && response.profiles.length <= 3,
+      "profile_catalog_invalid");
+    assert(JSON.stringify(response.profiles[0]) === JSON.stringify(profile), "profile_catalog_chat_invalid");
+    assert(new Set(response.profiles.map((entry) => entry.profileId)).size === response.profiles.length
+      && response.profiles.every((entry) => [EXPECTED_PROFILE_ID, EXPECTED_BOT_PROFILE_ID, EXPECTED_MANAGED_PI_PROFILE_ID].includes(entry.profileId)),
+    "profile_catalog_invalid");
+    const bot = response.profiles.find((entry) => entry.profileId === EXPECTED_BOT_PROFILE_ID);
+    if (bot !== undefined) {
+      assert(bot.profileId === EXPECTED_BOT_PROFILE_ID && bot.profileVersion === 1
+        && bot.profileDigest === EXPECTED_BOT_PROFILE_DIGEST
+        && bot.executionGeneration === profile.executionGeneration, "bot_profile_invalid");
+      assert(bot.adapters?.length === 1
+        && bot.adapters[0]?.adapterId === "matrix-bot"
+        && bot.adapters[0]?.harnessVersion === EXPECTED_BOT_HARNESS_VERSION
+        && JSON.stringify(bot.adapters[0]?.workloads) === '["bot_agent"]'
+        && JSON.stringify(bot.sandbox?.workloads) === '["bot_agent"]', "bot_adapter_capability_invalid");
+    }
+    const managed = response.profiles.find((entry) => entry.profileId === EXPECTED_MANAGED_PI_PROFILE_ID);
+    if (managed !== undefined) {
+      assert(managed.profileVersion === 1 && managed.profileDigest === EXPECTED_MANAGED_PI_PROFILE_DIGEST
+        && managed.executionGeneration === profile.executionGeneration, "managed_pi_profile_invalid");
+      assert(managed.adapters?.length === 1 && managed.adapters[0]?.adapterId === "matrix-bot"
+        && managed.adapters[0]?.harnessVersion === EXPECTED_BOT_HARNESS_VERSION
+        && JSON.stringify(managed.adapters[0]?.workloads) === '["bot_agent"]'
+        && JSON.stringify(managed.sandbox?.workloads) === '["bot_agent"]', "managed_pi_adapter_capability_invalid");
+    }
+  }
   return profile;
 }
 

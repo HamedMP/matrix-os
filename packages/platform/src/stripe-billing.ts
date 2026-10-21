@@ -66,6 +66,17 @@ export function createStripeBillingClient(options: {
           ? { matrix_prebilling_intent_id: input.prebillingIntentId }
           : {}),
         ...stripeAttributionMetadata(input.attribution),
+        ...(input.planSlug && input.interval ? {
+          matrix_plan_slug: input.planSlug, matrix_billing_interval: input.interval,
+          matrix_trial_days: String(input.trialPeriodDays ?? 0),
+        } : {}),
+        ...(input.googleAnalytics ? {
+          matrix_google_client_id: input.googleAnalytics.clientId,
+          matrix_google_analytics_consent: input.googleAnalytics.analyticsConsent,
+          matrix_google_ad_user_data: input.googleAnalytics.adUserData,
+          matrix_google_ad_personalization: input.googleAnalytics.adPersonalization,
+          matrix_google_expires_at: String(input.googleAnalytics.expiresAt),
+        } : {}),
       };
       const session = await stripe.checkout.sessions.create({
         mode: input.mode,
@@ -157,6 +168,39 @@ export function createStripeBillingClient(options: {
       return { url: session.url, id: session.id };
     },
 
+    async expireCheckoutSession(id) {
+      let session: Stripe.Checkout.Session;
+      try {
+        session = await stripe.checkout.sessions.expire(id);
+      } catch (expireError: unknown) {
+        try {
+          session = await stripe.checkout.sessions.retrieve(id);
+        } catch (retrieveError: unknown) {
+          console.warn(
+            '[billing] checkout expiry reconciliation failed:',
+            retrieveError instanceof Error ? retrieveError.name : typeof retrieveError,
+          );
+          throw expireError;
+        }
+      }
+      if (session.status !== 'open' && session.status !== 'complete' && session.status !== 'expired') {
+        throw new Error('Stripe checkout session missing status');
+      }
+      return {
+        status: session.status,
+        url: session.url,
+        clerkUserId: session.client_reference_id,
+        priceId: null,
+        regionSlug: session.metadata?.matrix_region_slug ?? null,
+      };
+    },
+
+    async retrieveTrackingCheckout(id) {
+      return stripe.checkout.sessions.retrieve(id, { expand: ['line_items.data.price', 'subscription'] });
+    },
+    async retrieveTrackingInvoice(id) {
+      return stripe.invoices.retrieve(id, { expand: ['payments.data.payment.payment_intent'] });
+    },
     async retrieveCheckoutSession(id) {
       const session = await stripe.checkout.sessions.retrieve(id, {
         expand: ['line_items.data.price'],
@@ -225,6 +269,7 @@ export function createUnavailableStripeBillingClient(): StripeBillingClient {
     createCheckoutSession: unavailable,
     clearSubscriptionAttribution: unavailable,
     createAiCreditCheckoutSession: unavailable,
+    expireCheckoutSession: unavailable,
     retrieveCheckoutSession: unavailable,
     retrieveRecurringPrice: unavailable,
     createPortalSession: unavailable,

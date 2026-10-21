@@ -1,3 +1,4 @@
+import { validateBotImageInferenceBody } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { RuntimeHandleSchema } from "./protocol.js";
 
@@ -69,6 +70,29 @@ const EgressRequestSchema = z.object({
   url: z.string().min(1).max(2_048).url(),
   accept: z.enum(["application/json", "text/plain"]),
 }).strict();
+
+/**
+ * Inference from a `bot_agent` workload. Pi's providers call the plain API
+ * paths and may send tools; the gateway accepts these frames only from a
+ * runtime the bot registry owns, and checks the route's model there.
+ */
+const BotInferenceBase = {
+  version: z.literal(1),
+  requestId: RequestIdSchema,
+  runtimeHandle: RuntimeHandleSchema,
+  executionGeneration: GenerationSchema,
+  method: z.literal("POST"),
+  body: z.string().refine(body => validateBotImageInferenceBody(body).valid, "Invalid Bot inference body"),
+};
+
+export const ScopeRuntimeBotInferenceRequestSchema = z.discriminatedUnion("action", [
+  // Pi calls the Anthropic beta endpoint, like the Claude SDK.
+  z.object({ ...BotInferenceBase, action: z.literal("inference.messages"), path: z.literal("/v1/messages?beta=true"), headers: InferenceHeadersSchema }).strict(),
+  z.object({ ...BotInferenceBase, action: z.literal("inference.responses"), path: z.literal("/v1/responses"), headers: z.object({}).strict() }).strict(),
+  z.object({ ...BotInferenceBase, action: z.literal("inference.chat_completions"), path: z.literal("/v1/chat/completions"), headers: z.object({}).strict() }).strict(),
+]);
+
+export type ScopeRuntimeBotInferenceRequest = z.infer<typeof ScopeRuntimeBotInferenceRequestSchema>;
 
 export const ScopeRuntimeBrokerRequestSchema = z.union([
   InferenceRequestSchema,

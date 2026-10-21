@@ -1,5 +1,6 @@
 /** Customer VPS registration, split from customer-vps.ts. */
 import { sql } from 'kysely';
+import { initializeCustomerFundedStarterPolicy, lockCustomerFundedStarterActivation } from './customer-funded-starter-policy.js';
 import { completeUserMachineRegistration, getUserMachine, runInPlatformTransaction } from './db.js';
 import { registrationTokenMatches } from './customer-vps-auth.js';
 import { CustomerVpsError, logCustomerVpsError } from './customer-vps-errors.js';
@@ -114,6 +115,7 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
     }
     const lastSeenAt = now().toISOString();
     const updated = await runInPlatformTransaction(deps.db, async (trx) => {
+      await lockCustomerFundedStarterActivation(trx, row.clerkUserId);
       const snapshotLeaseId = provisioningJob?.snapshotLeaseId ?? recoveryTarget?.leaseId;
       if (sourceSnapshotId !== null) {
         if (sourceBaseGeneration === null) {
@@ -217,6 +219,7 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
       await trx.executor.updateTable('provisioning_jobs').set({
         activation_step: 'registered', updated_at: lastSeenAt,
       }).where('machine_id', '=', input.machineId).where('status', '=', 'completed').execute();
+      await initializeCustomerFundedStarterPolicy(trx, input.machineId, { now: lastSeenAt });
       return registered;
     });
 

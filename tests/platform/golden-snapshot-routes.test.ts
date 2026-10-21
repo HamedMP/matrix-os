@@ -8,7 +8,7 @@ import { createApp as createPlatformApp } from '../../packages/platform/src/main
 import type { GoldenSnapshotRuntimeConfig } from '../../packages/platform/src/golden-snapshot-schema.js';
 import { compatibilityKey } from '../../packages/platform/src/golden-snapshot-schema.js';
 import { getGoldenSnapshotRolloutControl } from '../../packages/platform/src/golden-snapshot-repository.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const config: GoldenSnapshotRuntimeConfig = {
   enabled: false,

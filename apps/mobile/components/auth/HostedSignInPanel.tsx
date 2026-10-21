@@ -1,18 +1,20 @@
-import { View, Text, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, Platform, Pressable, ActivityIndicator } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Ionicons } from "@expo/vector-icons";
+import { AppleSignInButton } from "./AppleSignInButton";
 import { EmailCodeForm } from "./EmailCodeForm";
 import { isLikelyEmail } from "@/lib/clerk-sign-in";
 
-/** OAuth routes the hosted Clerk instance accepts. */
-export type HostedAuthProvider = "google" | "github";
+/** Provider routes the hosted Clerk instance accepts. */
+export type HostedAuthProvider = "google" | "github" | "apple";
 
 type HostedSignInPanelProps = {
-  /** Which OAuth route is mid-flight, or null when idle. */
+  /** Which provider route is mid-flight, or null when idle. */
   loadingProvider: HostedAuthProvider | null;
   signingInWithPassword: boolean;
   sendingCode: boolean;
   verifyingCode: boolean;
+  onApple: () => void;
   onGoogle: () => void;
   onGithub: () => void;
   onComputer: () => void;
@@ -35,6 +37,7 @@ export function HostedSignInPanel({
   signingInWithPassword,
   sendingCode,
   verifyingCode,
+  onApple,
   onGoogle,
   onGithub,
   onComputer,
@@ -72,6 +75,16 @@ export function HostedSignInPanel({
         onVerify={onVerify}
         onUseDifferentEmail={onUseDifferentEmail}
       />
+
+      {/* The native Apple flow exists on iOS only; other platforms keep the
+          providers below. */}
+      {codeSentTo === null && Platform.OS === "ios" ? (
+        <AppleSignInButton
+          loading={loadingProvider === "apple"}
+          disabled={busy}
+          onPress={onApple}
+        />
+      ) : null}
 
       {codeSentTo === null ? (
         <View style={styles.iconRow}>

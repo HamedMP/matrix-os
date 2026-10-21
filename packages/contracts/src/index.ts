@@ -1,13 +1,20 @@
+import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
+export { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
+export { APP_CAPABILITY_CHANNEL, APP_CAPABILITY_TIMEOUT_MS, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, appRuntimeSlugFromIdentity, appIntegrationReplyBytes, appCapabilityReplyBytes, AppIdentitySchema, AppCapabilityInputSchema, AppCapabilityRequestSchema, AppConnectedServiceSchema, AppCapabilitiesSchema, AppServiceDescriptionSchema, createAppCapabilityClient } from "#app-capabilities";
+export type { AppCapabilityInput, AppCapabilities, AppServiceDescription } from "#app-capabilities";
 export * from "#chat-drive-project";
 import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
 export * from "#terminal-scroll";
 export * from "#private-preview";
 export { APP_GENERATE_CHANNEL, AppGenerateContextSchema, AppGenerateEventSchema, createAppGenerateClient } from "#app-ai";
 export { APP_AI_TIMEOUT_MS, APP_AI_CHANNEL, AppAiInputSchema, AppAiRequestSchema, AppAiResultSchema, createAppAiClient } from "#app-ai";
-export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
+export type { AppAiInput, AppAiRequest, AppAiResult, AppAiRouteSelection, AppAiRoute, AppAiRoutes } from "#app-ai";
+export { APP_AI_ROUTES_CHANNEL, AppAiRouteSelectionSchema, AppAiRouteSchema, AppAiRoutesSchema, AppAiRoutesRequestSchema } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
+export * from "#chat-event-wire";
+export * from "#bots";
 export * from "#chat-artifacts";
 export * from "#file-preview";
 import { z } from "zod/v4";
@@ -66,15 +73,22 @@ export * from "#collaboration-peer";
 export * from "#collaboration-resources";
 export * from "#organization-billing";
 export * from "#organization-drive";
+export * from "#organization-management";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
 export * from "#jev-hermes-route";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
 export * from "#provider-settings";
+export * from "#provider-managed-credit";
 export * from "#funded-ai";
 export * from "#jev";
+export * from "#jev-inbox";
 export * from "#getting-started";
+export * from "#integration-connections";
+export * from "#onboarding-widget";
+export * from "#onboarding-widget-catalog";
+export * from "#onboarding-widget-view";
 export * from "#safe-client-error";
 export * from "#speech";
 export * from "#support-chat-properties";
@@ -287,10 +301,6 @@ export const MatrixComputerHandleSchema = z.string()
   .min(2)
   .max(63)
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Invalid Matrix computer handle");
-export const MatrixComputerRuntimeSlotSchema = z.string()
-  .min(1)
-  .max(32)
-  .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "Invalid Matrix computer runtime slot");
 export const MatrixComputerAvailabilitySchema = z.enum(["available", "starting", "unavailable"]);
 export const MatrixComputerKindSchema = z.enum(["customer", "preview"]);
 export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer"]);
@@ -1402,6 +1412,9 @@ export {
   legacyDesktopImportFromConfig,
   normalizeOsViewMode,
   osViewFixedAppAppearanceForPath,
+  osViewBundledIconUrlForPath,
+  osViewUsesBundledArtworkForLegacyIcon,
+  osViewIconUrlForApp,
   normalizeOsViewDesktopAppPath,
   normalizeOsViewDesktopIcons,
   otherOsViewMode,
@@ -1449,3 +1462,12 @@ export { normalizeTerminalSnapshot } from "#terminal-snapshot";
 export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type ChatSubagent } from "#chat-subagent";
 
 export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type ImportedChatAssetRef } from "#canonical-chat-import-parts";
+export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryEntry, type AiCreditHistoryResponse } from "#ai-credit-history";
+
+export * from "#provider-workflows";
+export * from '#chatgpt-plan-peer';
+export * from '#chatgpt-plan-wire';
+export * from '#matrix-anthropic-connection';
+
+export * from "#chat-navigation";
+export * from "#funded-host-activation";

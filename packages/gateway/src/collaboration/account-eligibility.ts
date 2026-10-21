@@ -10,6 +10,7 @@
  */
 import type {
   AiProviderSnapshotV3,
+  CollaborationExecutionPolicyOption,
   CollaborationSharedHarness,
   CollaborationSourceKind,
   CollaborationSourceSelection,
@@ -76,6 +77,30 @@ export class OwnerAccountEligibility {
         : modelIds[0] ?? null,
       available: source.state === "ready" && instance.readiness.state === "ready",
     };
+  }
+
+  async listSelections(ownerId: string): Promise<CollaborationExecutionPolicyOption[]> {
+    const snapshot = await this.snapshots.getSnapshotV3(ownerId);
+    const sources = new Map(snapshot.accessSources.map((source) => [source.id, source]));
+    return snapshot.instances.flatMap((instance) => {
+      const source = sources.get(instance.accessSourceId);
+      const harness = sharedHarnessForDriver(instance.driverId);
+      if (!source || !harness) return [];
+      const modelIds = source.eligibleModelIds.length === 0
+        ? instance.modelIds
+        : instance.modelIds.filter((modelId) => source.eligibleModelIds.includes(modelId));
+      if (modelIds.length === 0) return [];
+      return [{
+        source: { accessSourceId: source.id, providerInstanceId: instance.id, harness },
+        sourceLabel: instance.label,
+        sourceKind: source.fundingKind,
+        available: source.state === "ready" && instance.readiness.state === "ready",
+        modelIds,
+        defaultModelId: instance.defaultModelId !== null && modelIds.includes(instance.defaultModelId)
+          ? instance.defaultModelId
+          : modelIds[0] ?? null,
+      }];
+    });
   }
 }
 

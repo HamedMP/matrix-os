@@ -1,0 +1,311 @@
+name: Mobile OTA Update
+
+# Over-the-air (EAS Update) releases for apps/mobile.
+#
+# - Pull requests touching the mobile app run its tests and a bundle dry run.
+# - Pushes to main publish to the `preview` channel.
+# - Production never moves on a push. A manual run promotes an existing preview
+#   update group to `production` unchanged, or rolls production back.
+#
+# Operator guide: docs/dev/mobile-shell.md, "Over-the-Air Updates".
+
+on:
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - "packages/contracts/**"
+      # A lockfile change can alter native code without touching the app.
+      - "pnpm-lock.yaml"
+      - "scripts/ci/mobile-ota-native-guard.mjs"
+      - ".github/workflows/mobile-ota-update.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - "packages/contracts/**"
+      - "!apps/mobile/__tests__/**"
+      - "!apps/mobile/**/*.md"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        required: true
+        default: publish-preview
+        type: choice
+        options:
+          - publish-preview
+          - promote-production
+          - rollback
+      group_id:
+        description: "Update group id. Promote: a preview group. Rollback: the production group to undo. Empty = latest for the current app version."
+        required: false
+        default: ""
+        type: string
+      rollout_percentage:
+        description: "Promote only: share of production users who get the update (1-100)"
+        required: false
+        default: "100"
+        type: string
+      message:
+        description: "Update message (defaults to the commit subject or the action)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# Everything that can publish to preview (pushes to main and manual publishes)
+# shares one queue, so runs publish in the order they started. Only superseded
+# pull request runs are cancelled.
+concurrency:
+  group: mobile-ota-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'push' || inputs.action == 'publish-preview') && 'preview-publish' || inputs.action }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Exact pin. Must satisfy `cli.version` in apps/mobile/eas.json and be older
+  # than the workspace `minimumReleaseAge`, which `pnpm dlx` enforces.
+  EAS_CLI_VERSION: "24.8.0"
+  EAS_PROJECT_URL: https://expo.dev/accounts/finnaai/projects/matrix-os-mobile
+
+jobs:
+  test:
+    name: Mobile tests and bundle check
+    if: github.event_name != 'workflow_dispatch' || inputs.action == 'publish-preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # The native guard walks history to the commit that introduced the
+          # current app version.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # An update reaches every build of the current app version, so native
+      # code must not change within a version. Publishing depends on this job.
+      - name: Native change guard
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+        run: node scripts/ci/mobile-ota-native-guard.mjs
+      - name: Mobile unit tests
+        run: pnpm --dir apps/mobile exec jest --runInBand
+      - name: Bundle dry run (no publish)
+        if: github.event_name == 'pull_request'
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          pnpm exec expo export --platform ios --platform android \
+            --output-dir "$RUNNER_TEMP/mobile-ota-export"
+
+  publish-preview:
+    name: Publish preview update
+    needs: test
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.action == 'publish-preview'))
+    runs-on: ubuntu-latest
+    environment: mobile-ota-preview
+    timeout-minutes: 20
+    concurrency:
+      group: mobile-ota-preview
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # The ordering check compares this commit with the one preview
+          # already carries.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Publish to the preview channel
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          INPUT_MESSAGE: ${{ inputs.message || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is required to publish mobile OTA updates. Add it as a secret on the mobile-ota-preview environment." >&2
+            exit 1
+          fi
+
+          eas() { pnpm dlx "eas-cli@${EAS_CLI_VERSION}" "$@"; }
+          EXPECTED_RUNTIME="$(node -p "require('./app.json').expo.version")"
+
+          # The update is bundled with the production EAS environment. Without
+          # the Clerk key it would publish fine and then render only the
+          # "missing configuration" screen, so check that the key is readable
+          # by an update (Plain text or Sensitive visibility) first.
+          eas env:pull --environment production --path "$RUNNER_TEMP/eas-production.env" --non-interactive
+          CLERK_KEY_SET=false
+          if grep -Eq '^EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=.+' "$RUNNER_TEMP/eas-production.env"; then
+            CLERK_KEY_SET=true
+          fi
+          rm -f "$RUNNER_TEMP/eas-production.env"
+          if [ "$CLERK_KEY_SET" != "true" ]; then
+            echo "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY is not readable from the production EAS environment. Set it there with Plain text or Sensitive visibility." >&2
+            exit 1
+          fi
+
+          # Preview only moves forward. Refuse to publish a commit that is older
+          # than the one preview already carries for this app version, which is
+          # what a re-run of an old job would do. A missing branch means this is
+          # the first publish.
+          if LIST="$(eas update:list --branch preview --runtime-version "$EXPECTED_RUNTIME" --limit 1 --json --non-interactive 2>"$RUNNER_TEMP/update-list.err")"; then
+            LAST_GROUP="$(jq -r '.currentPage[0].group // ""' <<<"$LIST")"
+          elif grep -q 'Could not find branch' "$RUNNER_TEMP/update-list.err"; then
+            LAST_GROUP=""
+          else
+            cat "$RUNNER_TEMP/update-list.err" >&2
+            exit 1
+          fi
+          if [ -n "$LAST_GROUP" ]; then
+            LAST_COMMIT="$(eas update:view "$LAST_GROUP" --json | jq -r '.[0].gitCommitHash // ""')"
+            if [ -n "$LAST_COMMIT" ] && [ "$LAST_COMMIT" != "$GITHUB_SHA" ] \
+              && git cat-file -e "${LAST_COMMIT}^{commit}" 2>/dev/null \
+              && git merge-base --is-ancestor "$GITHUB_SHA" "$LAST_COMMIT"; then
+              echo "Preview already carries a newer commit (${LAST_COMMIT:0:9}); refusing to publish ${GITHUB_SHA:0:9} over it. Run the workflow from the current main instead." >&2
+              exit 1
+            fi
+          fi
+
+          MESSAGE="$INPUT_MESSAGE"
+          if [ -z "$MESSAGE" ]; then
+            MESSAGE="$(git log -1 --pretty=%s | cut -c1-200) (${GITHUB_SHA:0:7})"
+          fi
+
+          # Bundled with the production EAS environment: promotion republishes
+          # this exact bundle, so it must already carry production variables.
+          # The flag is not enforced in CI; without it the bundle would ship
+          # with no EXPO_PUBLIC_* values at all.
+          eas update \
+            --channel preview --environment production --platform all \
+            --message "$MESSAGE" --non-interactive --json > "$RUNNER_TEMP/update.json"
+
+          GROUP="$(jq -r '[.[].group] | unique | if length == 1 then .[0] else "" end' "$RUNNER_TEMP/update.json")"
+          RUNTIME="$(jq -r '[.[].runtimeVersion] | unique | join(",")' "$RUNNER_TEMP/update.json")"
+          BRANCH="$(jq -r '[.[].branch] | unique | join(",")' "$RUNNER_TEMP/update.json")"
+          if [ -z "$GROUP" ] || [ "$RUNTIME" != "$EXPECTED_RUNTIME" ] || [ "$BRANCH" != "preview" ]; then
+            echo "Unexpected publish result: group=$GROUP runtime=$RUNTIME branch=$BRANCH" >&2
+            exit 1
+          fi
+
+          {
+            echo "### Mobile OTA preview update"
+            echo "- Update group: \`$GROUP\`"
+            echo "- Runtime version: \`$RUNTIME\`"
+            echo "- Dashboard: ${EAS_PROJECT_URL}/updates/${GROUP}"
+            echo ""
+            echo "Promote it with this workflow: action \`promote-production\`, group id \`$GROUP\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  production:
+    name: Promote or roll back production
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      (inputs.action == 'promote-production' || inputs.action == 'rollback')
+    runs-on: ubuntu-latest
+    environment: mobile-ota-production
+    timeout-minutes: 15
+    concurrency:
+      group: mobile-ota-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Promote or roll back
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ACTION: ${{ inputs.action }}
+          INPUT_GROUP_ID: ${{ inputs.group_id }}
+          INPUT_ROLLOUT: ${{ inputs.rollout_percentage }}
+          INPUT_MESSAGE: ${{ inputs.message }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is required to change production mobile OTA updates. Add it as a secret on the mobile-ota-production environment." >&2
+            exit 1
+          fi
+
+          eas() { pnpm dlx "eas-cli@${EAS_CLI_VERSION}" "$@"; }
+
+          case "$ACTION" in
+            promote-production) SOURCE_BRANCH=preview ;;
+            rollback) SOURCE_BRANCH=production ;;
+            *) echo "Unsupported action." >&2; exit 1 ;;
+          esac
+
+          # The runtime version is the app version (appVersion policy), so only
+          # groups built for the version on main can be promoted or rolled back.
+          RUNTIME="$(node -p "require('./app.json').expo.version")"
+
+          GROUP="$INPUT_GROUP_ID"
+          if [ -z "$GROUP" ]; then
+            GROUP="$(eas update:list --branch "$SOURCE_BRANCH" --runtime-version "$RUNTIME" \
+              --limit 1 --json --non-interactive | jq -r '.currentPage[0].group // ""')"
+          fi
+          if ! [[ "$GROUP" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "No valid update group to act on for runtime $RUNTIME on $SOURCE_BRANCH." >&2
+            exit 1
+          fi
+
+          eas update:view "$GROUP" --json > "$RUNNER_TEMP/group.json"
+          if ! jq -e --arg branch "$SOURCE_BRANCH" --arg runtime "$RUNTIME" \
+            'length > 0 and all(.[]; .branch == $branch and .runtimeVersion == $runtime)' \
+            "$RUNNER_TEMP/group.json" >/dev/null; then
+            echo "Group $GROUP is not on $SOURCE_BRANCH for runtime $RUNTIME; refusing." >&2
+            exit 1
+          fi
+
+          if [ "$ACTION" = "rollback" ]; then
+            eas update:rollback "$GROUP" --message "${INPUT_MESSAGE:-Roll back $GROUP}" \
+              --non-interactive --json > "$RUNNER_TEMP/result.json"
+          else
+            if ! [[ "$INPUT_ROLLOUT" =~ ^[0-9]{1,3}$ ]] || [ "$INPUT_ROLLOUT" -lt 1 ] || [ "$INPUT_ROLLOUT" -gt 100 ]; then
+              echo "rollout_percentage must be an integer from 1 to 100." >&2
+              exit 1
+            fi
+            if ! jq -e 'all(.[]; .isRollBackToEmbedded == false)' "$RUNNER_TEMP/group.json" >/dev/null; then
+              echo "Refusing to promote a roll-back-to-embedded group." >&2
+              exit 1
+            fi
+            COMMIT="$(jq -r '.[0].gitCommitHash // ""' "$RUNNER_TEMP/group.json")"
+            if [ -z "$COMMIT" ] || ! git merge-base --is-ancestor "$COMMIT" HEAD; then
+              echo "Preview group $GROUP was not published from a commit on main; refusing." >&2
+              exit 1
+            fi
+
+            ARGS=(--group "$GROUP" --destination-channel production
+              --message "${INPUT_MESSAGE:-Promote preview $GROUP}" --non-interactive --json)
+            if [ "$INPUT_ROLLOUT" -lt 100 ]; then
+              ARGS+=(--rollout-percentage "$INPUT_ROLLOUT")
+            fi
+            eas update:republish "${ARGS[@]}" > "$RUNNER_TEMP/result.json"
+          fi
+
+          # Production has already changed here, so reporting must never fail the job.
+          NEW_GROUP="$(jq -r '[.[].group] | unique | join(",")' "$RUNNER_TEMP/result.json" 2>/dev/null || true)"
+          {
+            echo "### Mobile OTA production: $ACTION"
+            echo "- Source group: \`$GROUP\` (runtime \`$RUNTIME\`)"
+            echo "- Production group: \`${NEW_GROUP:-see dashboard}\`"
+            echo "- Dashboard: ${EAS_PROJECT_URL}/updates"
+          } >> "$GITHUB_STEP_SUMMARY"

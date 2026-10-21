@@ -75,6 +75,15 @@ function installMatrixDb(initial: DbRow[] = []): FakeDb {
 }
 
 describe("Notes app", () => {
+  it("shows the same Notes artwork as the launcher on its library and empty state", async () => {
+    installMatrixDb([]);
+    const { container } = render(<App />);
+    await screen.findByText("No notes yet");
+    const icons = container.querySelectorAll<HTMLImageElement>("[data-notes-artwork]");
+    expect(icons.length).toBe(2);
+    for (const icon of icons) expect(icon.getAttribute("src")).toMatch(/notes\.png/);
+  });
+
   beforeEach(() => {
     vi.useRealTimers();
   });

@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "kysely";
-import { KyselyPGlite } from "kysely-pglite";
+import type { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import type {
   CanonicalChatMessage,
   CanonicalChatRecord,
@@ -190,7 +191,7 @@ describe("ChatRepository", () => {
   let repository: ChatRepository;
 
   beforeEach(async () => {
-    pglite = await KyselyPGlite.create();
+    pglite = await createTestPGlite();
     repository = new ChatRepository(pglite.dialect);
     await repository.bootstrap();
   });
@@ -211,6 +212,7 @@ describe("ChatRepository", () => {
     expect(tables.map((row) => row.table_name).sort()).toEqual([
       "chat_approval_outcomes",
       "chat_attachments",
+      "chat_credentials",
       "chat_deletions",
       "chat_drive_projects",
       "chat_import_jobs",

@@ -1,4 +1,5 @@
 import { buildBridgeScript, withCredentialedAssets, type ThemeVars } from "@/lib/os-bridge";
+import { appRuntimeSlugFromIdentity } from "@matrix-os/contracts";
 
 const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "2048",
@@ -10,28 +11,51 @@ const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "tetris",
 ]);
 
-export const APP_IFRAME_SANDBOX = "allow-scripts allow-forms allow-popups";
+export const APP_IFRAME_SANDBOX = "allow-scripts allow-forms allow-popups allow-downloads";
 
 const APP_IFRAME_CSP = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "script-src 'self' 'unsafe-inline'",
+  // Bundled local analysis runs in an opaque-origin Blob worker. The worker
+  // inherits this document policy; external worker URLs remain disallowed.
+  "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
   "connect-src 'self'",
 ].join("; ");
 
+export function appIdentityFromPath(path: string): string {
+  const explicit = path.match(/^matrix-app:([a-z0-9][a-z0-9-]{0,63})$/);
+  if (explicit) return explicit[1];
+  if (path.startsWith("modules/")) return path.split("/")[1];
+  return path.replace(/^apps\//, "").replace(/\/(?:dist\/)?index\.html$/, "").replace(/\.html$/, "").replace(/\/$/, "");
+}
+
+/** The gateway's legacy database namespace strips separators; leaf identities do not match. */
+export function isAppDataChangeForIdentity(identity: string, changedApp: string): boolean {
+  return changedApp === identity || changedApp === identity.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+export function appDataChangeMessageForIdentity(identity: string, changedApp: string, key: string) {
+  return isAppDataChangeForIdentity(identity, changedApp)
+    ? { type: "os:data-change", payload: { app: identity, key } }
+    : null;
+}
+
 export function extractSlug(path: string): string | null {
+  const explicit = path.match(/^matrix-app:([a-z0-9][a-z0-9-]{0,63})$/);
+  if (explicit) return explicit[1];
   const topLevel = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
   if (topLevel) return topLevel[1];
 
   // Older saved layouts used filesystem paths for migrated bundled games. Only
   // rewrite known migrated slugs; other nested paths still load as files.
-  const nestedIndex = path.match(/^apps\/(?:[a-z0-9][a-z0-9-]{0,63}\/)+([a-z0-9][a-z0-9-]{0,63})\/index\.html$/);
+  const nestedIndex = path.match(/^apps\/games\/([a-z0-9][a-z0-9-]{0,63})\/index\.html$/);
   if (nestedIndex && LEGACY_NESTED_RUNTIME_APP_SLUGS.has(nestedIndex[1])) {
-    return nestedIndex[1];
+    return appRuntimeSlugFromIdentity(appIdentityFromPath(path));
   }
   return null;
 }

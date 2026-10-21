@@ -1,4 +1,4 @@
-import { projectChatSubagent, canonicalChatToolDetail } from "@matrix-os/contracts";
+import { projectChatSubagent, canonicalChatToolDetail, canonicalChatToolActivityState, canonicalReviewedAgentFailure } from "@matrix-os/contracts";
 import type { CanonicalChatRun, CanonicalChatRunActivity } from "@matrix-os/contracts";
 import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
 import type {
@@ -54,18 +54,6 @@ function isDuplicateProviderModelStatus(
   return activity.kind === "phase"
     && activity.label === "Working"
     && [activity.summary, activity.preview].some((value) => value?.trim().toLowerCase() === expected);
-}
-
-function activityState(
-  status:
-    | Extract<CanonicalChatRunActivity, { type: "tool.progress" }>["status"]
-    | Extract<CanonicalChatRunActivity, { type: "agent.activity" }>["status"],
-): ConversationActivityPresentation["state"] {
-  if (status === "failed") return "failed";
-  if (status === "cancelled") return "stopped";
-  if (status === "partial") return "partial";
-  if (status === "completed") return "completed";
-  return "running";
 }
 
 function isGenericThinkingPlaceholder(item: ConversationWorkPresentation): boolean {
@@ -171,7 +159,8 @@ export function runPresentation(
       }
       setBounded(agentActivities, activity.activityId, activity, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "tool.output") {
-      const output = toolOutput.get(activity.toolCallId) ?? [];
+      // Managed Pi emits authoritative snapshots; other providers append chunks.
+      const output = run.driverKind === "matrix_pi" || run.driverKind === "matrix_bot" ? [] : toolOutput.get(activity.toolCallId) ?? [];
       output.push(activity.truncated ? `${activity.text}\nOutput was truncated for display.` : activity.text);
       setBounded(toolOutput, activity.toolCallId, output, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "assistant.delta") {
@@ -234,7 +223,7 @@ export function runPresentation(
     if (entry.type === "agent") {
       const activity = agentActivities.get(entry.id);
       if (!activity) continue;
-      const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId));
+      const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId), activity.previewKind === "command" ? activity.preview : undefined);
       activityGroups.push({
         kind: "activity-group",
         id: `${run.id}:activities:${activity.subagent ? activity.activityId : activity.id}`,
@@ -243,7 +232,7 @@ export function runPresentation(
         activities: [{
           id: activity.subagent ? activity.activityId : activity.id,
           kind: activity.kind,
-          state: activityState(activity.status),
+          state: canonicalChatToolActivityState(run, activity.status),
           label: activity.label,
           ...(activity.subagent ? { subagent: projectChatSubagent(activity.subagent, run.status) } : {}),
           ...(activity.preview ? {
@@ -267,7 +256,7 @@ export function runPresentation(
       activities: [{
         id: activity.id,
         kind: "tool",
-        state: activityState(activity.status),
+        state: canonicalChatToolActivityState(run, activity.status),
         label: activity.label,
         ...(detail ? { detail, preview: detail, previewKind: "text" as const } : {}),
       }],
@@ -313,6 +302,7 @@ export function runPresentation(
         phase: "final" as const,
       }
     : undefined;
+  const reviewedFailure = canonicalReviewedAgentFailure(runError?.error.code, runError?.error.safeMessage);
   const terminalNotice = failed || stopped
     ? {
         kind: "notice" as const,
@@ -320,11 +310,13 @@ export function runPresentation(
         phase: "final" as const,
         tone: stopped ? "stopped" as const : "failed" as const,
         label: stopped ? "Agent work stopped" : "Agent work failed",
+        ...(!stopped && runError ? { failureCode: runError.error.code } : {}),
         markdown: stopped ? "Run was cancelled."
-          : canonicalChatSafeFailureReason(runError?.error.code)
+          : canonicalChatSafeFailureReason(runError?.error.code, runError?.error.safeMessage)
             ?? canonicalChatSafeFailureReason("run_failed")!,
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
-        ...(!stopped && allowRetry && runError?.error.retryable && runError.error.recoveryActions?.includes("retry")
+        ...(!stopped && allowRetry && runError?.error.retryable && (reviewedFailure?.retryable ?? true)
+          && runError.error.recoveryActions?.includes("retry")
           ? { actions: [{ kind: "retry" as const, turnId, label: "Retry" }] }
           : {}),
       }
@@ -335,4 +327,3 @@ export function runPresentation(
     ...(terminalNotice ? { failure: terminalNotice } : {}),
   };
 }
-

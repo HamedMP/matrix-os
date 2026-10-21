@@ -15,6 +15,22 @@ function fixture() {
   }] } as unknown as CanonicalChatDetailResponse;
 }
 
+it("preserves the exact action digest from native and legacy approval records", () => {
+  const detail = fixture();
+  const actionDigest = "a".repeat(64);
+  const native = detail.activities[0]!;
+  if (native.type !== "approval.requested") throw new Error("Missing fixture approval");
+  native.actionDigest = actionDigest;
+  expect(canonicalChatApprovals(detail)[0]).toMatchObject({ actionDigest });
+  expect(projectCanonicalTranscript(detail).find(m => m.metadata?.canonicalApproval)?.metadata?.canonicalApproval)
+    .toMatchObject({ actionDigest });
+  detail.messages.push({ ...detail.messages[0]!, id: "msg_with_legacy_approval", seq: 3,
+    role: "assistant", runId: native.runId, parts: [{ type: "approval_request", approvalId: native.approvalId,
+      title: "Use integration", description: "List three files", risk: "high", allowedDecisions: ["approve"],
+    }] });
+  expect(canonicalChatApprovals(detail)[0]).toMatchObject({ actionDigest });
+});
+
 it("renders native approval activities on Web and Native Mobile with the same run-scoped decisions", () => {
   const detail = fixture();
   const expected = { runId: detail.runs[0]!.id, approvalId: "approval_confirm", pending: true,

@@ -20,6 +20,14 @@ const KIND_LABELS: Record<CollaborationProjectInventoryItem["kind"], string> = {
   terminal: "terminal",
 };
 
+/**
+ * A project shares as a whole, so its access exists only once it is shared: before then there
+ * are no grants or readiness to load, only the owner's private setup.
+ */
+export function projectAwaitingShare(scope: Pick<CollaborationScope, "kind" | "lifecycle">): boolean {
+  return scope.kind === "project" && scope.lifecycle !== "shared" && scope.lifecycle !== "archived";
+}
+
 export function deriveProjectPresentation(
   scope: CollaborationScope,
   inventory: CollaborationProjectInventory,

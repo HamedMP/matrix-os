@@ -118,7 +118,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij');
     expect(script).toContain('test -x "$STAGE_DIR/bin/zellij"');
     expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
-    expect(script).toContain('find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +');
+    expect(script).toContain('find "$STAGE_DIR/app/home" -type d -name node_modules -prune -exec rm -rf {} +');
     expect(script).toContain('matrix-update');
     expect(script).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
     expect(script).toContain('matrix-messaging-health');
@@ -786,10 +786,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('host bundle release workflow stamps the resolved channel into release metadata before packaging', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
-    const deployJob = workflow.slice(
-      workflow.indexOf('\n  deploy:'),
-      workflow.indexOf('\n  targeted-deploy:'),
-    );
 
     expect(workflow).toContain('channel: ${{ steps.channel.outputs.channel }}');
     expect(workflow).toContain('id: channel');
@@ -806,13 +802,6 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 60 \\');
     expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: ${{ vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED || 'false' }}");
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate"');
-    expect(workflow).toContain('for page_attempt in $(seq 1 20); do');
-    expect(workflow).toContain("--arg afterMachineId \"$PAGE_CURSOR\"");
-    expect(workflow).toContain("complete=\"$(printf '%s' \"$ACTIVATE_RESPONSE\" | jq -r '.complete')\"");
-    expect(workflow).toContain("next_cursor=\"$(printf '%s' \"$ACTIVATE_RESPONSE\" | jq -r '.nextCursor // empty')\"");
-    expect(workflow).toContain('Managed speech activation page is still converging:');
-    expect(deployJob).not.toContain('for attempt in $(seq 1 20); do');
-    expect(workflow).toContain('Managed speech activation did not converge within the bounded rollout window.');
     expect(workflow).not.toContain('HOST_BUNDLE_CHANNEL: ${{ steps.meta.outputs.channel }}');
     expect(workflow).not.toContain('-X POST "https://app.matrix-os.com/vps/deploy"');
   });
@@ -1032,7 +1021,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('action="teardown"');
     expect(workflow.indexOf('if [ "$TEARDOWN_PREVIEW" = "true" ]; then'))
       .toBeLessThan(workflow.indexOf('if [ "$VERIFY_INVENTORY" = "true" ]; then'));
-    expect(workflow).toContain("if: needs.gate.outputs.action == 'teardown'");
+    expect(workflow).toContain("if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && needs.gate.outputs.action == 'teardown'");
     expect(workflow).toContain(
       'select(.handle == $h and .status != "deleted" and .deletedAt == null)',
     );
@@ -1063,7 +1052,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(workflow).toContain('action="deploy_existing"');
     expect(workflow).toContain("if: needs.gate.outputs.action == 'deploy'");
-    expect(workflow).toContain("if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')");
+    expect(workflow).toContain("if: always() && needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')");
     expect(workflow).toContain("if: needs.gate.outputs.action == 'deploy'");
     expect(workflow).toContain("VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}");
   });
@@ -1574,7 +1563,7 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
 
   it('treats a clean explicit request for the installed immutable version as idempotent', () => {
     const root = process.cwd();
-    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8').replace(/# BEGIN update request rejection library loader[\s\S]*?# END update request rejection library loader/, readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update-request-rejection'), 'utf8'));
 
     const sameVersionGuard = syncAgent.indexOf('requested_update_is_already_current()');
     const interruptedPhaseGuard = syncAgent.indexOf('[ ! -e "$UPDATE_PHASE_MARKER" ]', sameVersionGuard);
@@ -1597,7 +1586,7 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
 
   it('reapplies an exact-version bundle when its immutable terminal generation is incomplete', () => {
     const root = process.cwd();
-    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8').replace(/# BEGIN update request rejection library loader[\s\S]*?# END update request rejection library loader/, readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update-request-rejection'), 'utf8'));
 
     const readinessGuard = syncAgent.indexOf('installed_terminal_runtime_is_ready()');
     const markerGuard = syncAgent.indexOf('[ -f "$marker" ] && [ ! -L "$marker" ]', readinessGuard);

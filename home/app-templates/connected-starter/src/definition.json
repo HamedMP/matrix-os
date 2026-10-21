@@ -1,0 +1,70 @@
+{
+  "id": "folio",
+  "name": "Folio",
+  "collection": "personal",
+  "category": "Money",
+  "description": "Your receipts and invoices, organized into a clear picture of spending.",
+  "tagline": "A calmer relationship with money.",
+  "icon": "folio",
+  "accent": "forest",
+  "view": "finance",
+  "entity": "expense",
+  "fields": [
+    {
+      "key": "title",
+      "label": "Title",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "key": "provider",
+      "label": "Provider",
+      "kind": "text"
+    },
+    {
+      "key": "date",
+      "label": "Date",
+      "kind": "date"
+    },
+    {
+      "key": "amount",
+      "label": "Amount",
+      "kind": "money"
+    },
+    {
+      "key": "currency",
+      "label": "Currency",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "key": "category",
+      "label": "Category",
+      "kind": "text"
+    },
+    {
+      "key": "status",
+      "label": "Status",
+      "kind": "select",
+      "options": ["Paid", "Unpaid", "Refund", "Needs review"]
+    },
+    {
+      "key": "notes",
+      "label": "Notes",
+      "kind": "longtext"
+    }
+  ],
+  "services": [
+    {
+      "id": "gmail",
+      "name": "Gmail",
+      "actions": ["search", "get_message"]
+    }
+  ],
+  "importGoal": "Find receipts, paid purchases, refunds and unpaid invoice notices from email. Separate unpaid invoices and uncertain amounts from actual spending. Preserve source evidence and currencies. Exclude newsletters and promotional offers.",
+  "highlights": [
+    "Weekly and monthly spending",
+    "Receipts with source evidence",
+    "Separate work and personal"
+  ]
+}

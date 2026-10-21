@@ -20,8 +20,21 @@ describe("FloatingActionButton", () => {
       width: 48,
       height: 48,
       borderRadius: 999,
-      backgroundColor: "#2B3715",
+      backgroundColor: "#171717",
     });
+  });
+
+  it("is the primary control: near-black with a near-white icon, and no green", () => {
+    render(
+      <FloatingActionButton
+        accessibilityLabel="Create"
+        icon={Add01Icon}
+        iconTestID="create-icon"
+      />,
+    );
+
+    expect(NativeStyleSheet.flatten(screen.getByLabelText("Create").props.style).backgroundColor).toBe("#171717");
+    expect(screen.getByTestId("create-icon").props.color).toBe("#FAFAFA");
   });
 
   it("accepts surface, size, and position overrides", () => {

@@ -6,6 +6,8 @@ const MAX_FRAME_BYTES = 128 * 1024;
 const MAX_CONNECTIONS = 64;
 const MAX_REQUEST_TIMEOUT_MS = 90_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
+/** A bot turn holds its relay connection until the workload's 900 second lifetime ends. */
+const BOT_RUN_OPERATION_TIMEOUT_MS = 940_000;
 
 interface ScopeRuntimeController {
   handle(request: ScopeRuntimeRequest): Promise<ScopeRuntimeResponse>;
@@ -88,6 +90,9 @@ export function createScopeRuntimeServer(options: {
             return;
           }
           const request = ScopeRuntimeRequestSchema.parse(JSON.parse(frames[0]!));
+          if (request.type === "runtime.bot" && request.command.kind === "bot.run") {
+            socket.setTimeout(BOT_RUN_OPERATION_TIMEOUT_MS, () => socket.destroy());
+          }
           const response = await options.controller.handle(request);
           if (!closed && !socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
           else socket.destroy();
@@ -137,8 +142,10 @@ export function createScopeRuntimeServer(options: {
         : Promise.resolve();
       for (const socket of sockets) socket.destroy();
       await serverClosed;
-      await Promise.allSettled([...operations]);
+      // In-flight replies can no longer be delivered. Closing the controller first stops the
+      // runtimes, so a bot relay waiting on a long turn ends now instead of at its timeout.
       await options.controller.close();
+      await Promise.allSettled([...operations]);
       try {
         const entry = await lstat(options.socketPath);
         if (entry.isSocket()) await unlink(options.socketPath);

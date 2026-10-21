@@ -12,7 +12,7 @@ export const OS_VIEW_FIXED_APP_NAMES = [
   "Editor",
   "VS Code",
   "Settings",
-  "Plugins",
+  "Connect Apps",
   "Browser",
   "Notes",
   "Whiteboard",

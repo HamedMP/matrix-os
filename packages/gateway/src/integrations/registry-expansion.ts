@@ -1,3 +1,5 @@
+import { JIRA_ACTIONS, POSTHOG_ACTIONS } from "./missing-managed-actions.js";
+import { NOTION_DEPTH_ACTIONS, STRIPE_DEPTH_ACTIONS, NOTION_SEARCH_SCHEMA, NOTION_DATABASE_QUERY_SCHEMA } from "./finance-notion-depth.js";
 import type { IntegrationActionRisk, ServiceAction, ServiceDefinition } from "./types.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
@@ -67,10 +69,12 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
     icon: "notebook",
     logoUrl: `${LOGO_BASE}/notion/logo/48`,
     actions: {
+      ...NOTION_DEPTH_ACTIONS,
       search: {
         description: "Search pages and databases",
         risk: "read",
-        params: { query: { type: "string" }, filter: { type: "object" }, pageSize: { type: "number" } },
+        params: { query: { type: "string" }, filter: { type: "object" }, pageSize: { type: "number" }, startCursor: { type: "string" } },
+        paramsSchema: NOTION_SEARCH_SCHEMA,
         directApi: {
           method: "POST",
           url: "https://api.notion.com/v1/search",
@@ -78,7 +82,8 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
           mapBody: (p) => ({
             ...(p.query ? { query: String(p.query) } : {}),
             ...(p.filter && typeof p.filter === "object" ? { filter: p.filter } : {}),
-            ...(p.pageSize ? { page_size: cappedPositiveInt(p.pageSize, 20, 100) } : {}),
+            page_size: p.pageSize ?? 25,
+            ...(p.startCursor ? { start_cursor: String(p.startCursor) } : {}),
           }),
         },
       },
@@ -95,7 +100,8 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
       query_database: {
         description: "Query a Notion database",
         risk: "read",
-        params: { databaseId: { type: "string", required: true }, filter: { type: "object" }, sorts: { type: "array" } },
+        params: { databaseId: { type: "string", required: true }, filter: { type: "object" }, sorts: { type: "array" }, pageSize: { type: "number" }, startCursor: { type: "string" } },
+        paramsSchema: NOTION_DATABASE_QUERY_SCHEMA,
         directApi: {
           method: "POST",
           url: (p) => `https://api.notion.com/v1/databases/${encodeURIComponent(String(p.databaseId))}/query`,
@@ -103,6 +109,8 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
           mapBody: (p) => ({
             ...(p.filter && typeof p.filter === "object" ? { filter: p.filter } : {}),
             ...(Array.isArray(p.sorts) ? { sorts: p.sorts } : {}),
+            page_size: p.pageSize ?? 25,
+            ...(p.startCursor ? { start_cursor: String(p.startCursor) } : {}),
           }),
         },
       },
@@ -200,17 +208,12 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
 
   posthog: {
     id: "posthog",
-    name: "PostHog",
+    name: "PostHog (API key)",
     category: "analytics",
     pipedreamApp: "posthog",
     icon: "chart",
     logoUrl: `${LOGO_BASE}/posthog/logo/48`,
-    actions: {
-      list_projects: { description: "List PostHog projects", risk: "read", params: {} },
-      list_insights: { description: "List insights in a PostHog project", risk: "read", params: { projectId: { type: "number", required: true }, limit: { type: "number" } } },
-      get_insight: { description: "Get a PostHog insight", risk: "read", params: { projectId: { type: "number", required: true }, insightId: { type: "number", required: true } } },
-      query: { description: "Run a read-only PostHog query", risk: "read", params: { projectId: { type: "number", required: true }, query: { type: "object", required: true } } },
-    },
+    actions: POSTHOG_ACTIONS,
   },
 
   jira: {
@@ -220,14 +223,7 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
     pipedreamApp: "jira",
     icon: "check-list",
     logoUrl: `${LOGO_BASE}/jira/logo/48`,
-    actions: {
-      list_projects: { description: "List Jira projects", risk: "read", params: { maxResults: { type: "number" } } },
-      search_issues: { description: "Search Jira issues with JQL", risk: "read", params: { jql: { type: "string", required: true }, maxResults: { type: "number" } } },
-      get_issue: { description: "Get a Jira issue", risk: "read", params: { issueKey: { type: "string", required: true } } },
-      create_issue: { description: "Create a Jira issue", risk: "write", params: { projectKey: { type: "string", required: true }, issueType: { type: "string", required: true }, summary: { type: "string", required: true }, description: { type: "object" } } },
-      update_issue: { description: "Update a Jira issue", risk: "write", params: { issueKey: { type: "string", required: true }, fields: { type: "object", required: true } } },
-      add_comment: { description: "Add a comment to a Jira issue", risk: "write", params: { issueKey: { type: "string", required: true }, body: { type: "object", required: true } } },
-    },
+    actions: JIRA_ACTIONS,
   },
 
   stripe: {
@@ -238,6 +234,7 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
     icon: "credit-card",
     logoUrl: `${LOGO_BASE}/stripe/logo/48`,
     actions: {
+      ...STRIPE_DEPTH_ACTIONS,
       list_customers: { description: "List Stripe customers using a restricted read-only key", risk: "read", params: { limit: { type: "number" } }, directApi: { method: "GET", url: "https://api.stripe.com/v1/customers", mapParams: (p) => ({ limit: String(cappedPositiveInt(p.limit, 10, 100)) }) } },
       get_customer: { description: "Get a Stripe customer", risk: "read", params: { customerId: { type: "string", required: true } }, directApi: { method: "GET", url: (p) => `https://api.stripe.com/v1/customers/${encodeURIComponent(String(p.customerId))}` } },
       list_subscriptions: { description: "List Stripe subscriptions", risk: "read", params: { customerId: { type: "string" }, limit: { type: "number" } }, directApi: { method: "GET", url: "https://api.stripe.com/v1/subscriptions", mapParams: (p) => ({ ...(p.customerId ? { customer: String(p.customerId) } : {}), limit: String(cappedPositiveInt(p.limit, 10, 100)) }) } },

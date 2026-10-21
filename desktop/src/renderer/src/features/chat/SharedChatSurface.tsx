@@ -1,4 +1,4 @@
-import type { HTMLAttributes, ReactNode } from "react";
+import type { HTMLAttributes, ReactNode, Ref } from "react";
 
 export function SharedChatSurface({
   ariaLabel,
@@ -8,6 +8,7 @@ export function SharedChatSurface({
   ...sectionProps
 }: Omit<HTMLAttributes<HTMLElement>, "aria-label"> & {
   ariaLabel: string;
+  ref?: Ref<HTMLElement>;
   project?: { projectId: string; label: string };
   children: ReactNode;
 }) {

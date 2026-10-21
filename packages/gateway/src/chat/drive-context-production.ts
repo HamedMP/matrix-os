@@ -18,8 +18,8 @@ export function createProductionChatDriveContext(options: {
     let service: ReturnType<typeof createChatDriveContext> | null = null;
     if (config?.ownerId && options.repository && options.collaborationReady) {
         try {
-            const relayOrigin = env.COLLABORATION_RELAY_ORIGIN?.trim() || "https://app.matrix-os.com";
-            if (!config.clientOrigins.includes(relayOrigin))
+            const relayOrigin = config.relayOrigin;
+            if (!relayOrigin || !config.clientOrigins.includes(relayOrigin))
                 throw new Error("DriveRelayOriginUnavailable");
             client = createDriveContextRuntimeClient({ platformOrigin: config.platformBaseUrl, relayOrigin, runtimeId: config.runtimeId, ownerId: config.ownerId, serviceToken: config.serviceToken });
             service = createChatDriveContext({ ownerId: config.ownerId, repository: options.repository, client, loadRun: createAdmittedDriveRunLoader(options.repository) });

@@ -1,3 +1,4 @@
+import type { CollaborationProjectOverview } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import type { CollaborationProjectGitSetup } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -8,6 +9,7 @@ import type {
   ProjectInventoryReference,
 } from "./project-inventory.js";
 import type { ProjectTransitionRecord } from "./project-transition.js";
+import { ProjectOverviewError, readProjectOverview } from "./project-chat-routes.js";
 
 const MAX_MEMBERSHIP_EFFECTS = 1_000;
 const ScopeIdSchema = z.uuid();
@@ -82,6 +84,8 @@ export function createProjectSharingService(options: {
     authorityGeneration: number;
   }>;
   onPrepared?(transition: ProjectTransitionRecord): boolean;
+  /** The owner's name for a project; without it the overview is unavailable, never a guess. */
+  projectName?(ownerId: string, projectId: string): Promise<string | null>;
 }) {
   async function preparePreview(scopeId: string, actorId: string) {
     const scope = await loadPreparationScope(options.db, scopeId, actorId);
@@ -130,6 +134,19 @@ export function createProjectSharingService(options: {
       } catch (error: unknown) {
         if (error instanceof ProjectSharingError) throw error;
         console.warn("[collaboration-project] shared project projection failed", error instanceof Error ? error.name : "UnknownError");
+        throw new ProjectSharingError("unavailable");
+      }
+    },
+
+    /** The shared project as members see it: its name and the Chats they can open. */
+    async overview(input: { scopeId: string }): Promise<CollaborationProjectOverview> {
+      const projectName = options.projectName;
+      if (!projectName) throw new ProjectSharingError("unavailable");
+      try {
+        return await readProjectOverview(options.db, { scopeId: ScopeIdSchema.parse(input.scopeId), projectName });
+      } catch (error: unknown) {
+        if (error instanceof ProjectOverviewError) throw new ProjectSharingError(error.code);
+        console.warn("[collaboration-project] shared project overview failed", error instanceof Error ? error.name : "UnknownError");
         throw new ProjectSharingError("unavailable");
       }
     },

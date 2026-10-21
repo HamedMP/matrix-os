@@ -1,9 +1,12 @@
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+
+import { StartupLoading } from "@/components/StartupScreen";
 import {
   PROVISIONING_STAGE_LABEL,
   type JourneyFetchResult,
 } from "@/lib/journey";
+import { allowsExternalPurchaseLinks } from "@/lib/store-policy";
 
 const SUPPORT_URL = "mailto:support@matrix-os.com";
 
@@ -19,7 +22,14 @@ interface JourneyGateProps {
   working?: boolean;
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
+function Centered({ children, scrollable = false }: { children: React.ReactNode; scrollable?: boolean }) {
+  if (scrollable) {
+    return (
+      <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent} testID="journey-gate">
+        <View style={styles.card}>{children}</View>
+      </ScrollView>
+    );
+  }
   return (
     <View style={styles.container} testID="journey-gate">
       <View style={styles.card}>{children}</View>
@@ -47,6 +57,42 @@ function PrimaryButton({ label, onPress, testID }: { label: string; onPress: () 
   );
 }
 
+interface PlanRequiredProps {
+  detail: string;
+  plansUrl?: string;
+  onOpenUrl: (url: string) => void;
+  onRefresh: () => void;
+  onSignOut: () => void;
+}
+
+function PlanRequired({ detail, plansUrl, onOpenUrl, onRefresh, onSignOut }: PlanRequiredProps) {
+  if (!allowsExternalPurchaseLinks()) {
+    // Store builds: local, neutral copy only. The server detail and plans URL
+    // point at purchasing outside the app, so neither is shown here.
+    return (
+      <Centered scrollable>
+        <Title>No active plan</Title>
+        <Body>This account doesn’t have an active Matrix computer plan. If you expected access, check again or sign in with another account.</Body>
+        <PrimaryButton label="Check again" testID="journey-refresh" onPress={onRefresh} />
+        <PrimaryButton label="Sign out" testID="journey-sign-out" onPress={onSignOut} />
+        <PrimaryButton label="Contact support" testID="journey-support" onPress={() => onOpenUrl(SUPPORT_URL)} />
+      </Centered>
+    );
+  }
+  return (
+    <Centered>
+      <Title>Choose your plan</Title>
+      <Body>{detail}</Body>
+      {plansUrl ? (
+        <PrimaryButton label="View plans" testID="journey-open-plans" onPress={() => onOpenUrl(plansUrl)} />
+      ) : null}
+      {/* Always offer a way forward — the user picks a plan elsewhere (web),
+          then taps to re-check, even when the server omits a URL. */}
+      <PrimaryButton label="Check again" testID="journey-refresh" onPress={onRefresh} />
+    </Centered>
+  );
+}
+
 /**
  * Renders the user's onboarding phase on mobile (spec 092). Phase-appropriate
  * screens for plan selection, payment settling, machine build, and retry —
@@ -54,14 +100,9 @@ function PrimaryButton({ label, onPress, testID }: { label: string; onPress: () 
  */
 export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, onSignOut = () => {}, working = false }: JourneyGateProps) {
   const { theme } = useUnistyles();
-  if (!result) {
-    return (
-      <Centered>
-        <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />
-        <Body>Loading your Matrix computer…</Body>
-      </Centered>
-    );
-  }
+  // The first answer is still on its way: hold the startup screen rather than
+  // switching to a loading layout of its own for a moment.
+  if (!result) return <StartupLoading testID="journey-loading" />;
 
   if (result.status === "unauthorized") {
     return (
@@ -96,22 +137,11 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
         </Centered>
       );
     case "plan_required":
-      return (
-        <Centered>
-          <Title>Choose your plan</Title>
-          <Body>{journey.detail}</Body>
-          {journey.nextAction.url ? (
-            <PrimaryButton label="View plans" testID="journey-open-plans" onPress={() => onOpenUrl(journey.nextAction.url as string)} />
-          ) : null}
-          {/* Always offer a way forward — the user picks a plan elsewhere (web),
-              then taps to re-check, even when the server omits a URL. */}
-          <PrimaryButton label="Check again" testID="journey-refresh" onPress={onRefresh} />
-        </Centered>
-      );
+      return <PlanRequired detail={journey.detail} plansUrl={journey.nextAction.url} onOpenUrl={onOpenUrl} onRefresh={onRefresh} onSignOut={onSignOut} />;
     case "payment_settling":
       return (
         <Centered>
-          {journey.settling?.delayed ? null : <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />}
+          {journey.settling?.delayed ? null : <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />}
           <Title>{journey.settling?.delayed ? "Taking longer than expected" : "Activating your subscription"}</Title>
           <Body>{journey.detail}</Body>
           {journey.settling?.delayed ? (
@@ -122,7 +152,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
     case "provisioning":
       return (
         <Centered>
-          <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />
+          <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />
           <Title>Building your Matrix computer</Title>
           <Body>{journey.progress ? (PROVISIONING_STAGE_LABEL[journey.progress.stage] ?? journey.detail) : journey.detail}</Body>
         </Centered>
@@ -146,7 +176,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
       // first_run / ready — the caller redirects.
       return (
         <Centered>
-          <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />
+          <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />
           <Body>Opening your Matrix computer…</Body>
         </Centered>
       );
@@ -155,10 +185,12 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
 
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.background, padding: theme.spacing.lg },
+  scrollContainer: { flex: 1, backgroundColor: theme.colors.background },
+  scrollContent: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: theme.spacing.lg },
   card: { alignItems: "center", gap: theme.spacing.md, maxWidth: 360 },
-  title: { fontFamily: theme.fonts.sansSemiBold, fontSize: 20, color: theme.colors.forest, textAlign: "center" },
-  body: { fontFamily: theme.fonts.sans, fontSize: 14, color: theme.colors.forest, opacity: 0.8, textAlign: "center" },
-  button: { backgroundColor: theme.colors.primary, paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.lg, borderRadius: theme.radius.md },
+  title: { fontFamily: theme.fonts.sansSemiBold, fontSize: 20, color: theme.v2.colors.textDefault, textAlign: "center" },
+  body: { fontFamily: theme.fonts.sans, fontSize: 14, color: theme.v2.colors.textDefault, opacity: 0.8, textAlign: "center" },
+  button: { backgroundColor: theme.v2.colors.controlPrimary, paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.lg, borderRadius: theme.radius.md },
   buttonPressed: { opacity: 0.85 },
-  buttonLabel: { fontFamily: theme.fonts.sansSemiBold, fontSize: 15, color: theme.colors.primaryForeground },
+  buttonLabel: { fontFamily: theme.fonts.sansSemiBold, fontSize: 15, color: theme.v2.colors.onControlPrimary },
 }));

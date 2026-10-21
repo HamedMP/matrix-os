@@ -31,7 +31,7 @@ function baseEnvironment(overrides: Record<string, string> = {}) {
     CLOUD_RUN_PREVIEW_SERVICE: "matrix-platform-preview",
     CLOUD_RUN_SERVICE_ACCOUNT: RUNNER,
     MATRIX_CARD_TRIALS_ENABLED: "true",
-    MATRIX_CARD_TRIAL_DAYS: "3",
+    MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
     MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "false",
     MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false",
     MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ACTIVE_KEY_ID,
@@ -69,7 +69,7 @@ function deployedArguments(overrides: Record<string, string> = {}) {
 
 function revisionContract(revision: unknown) {
   const functionEnd = deployment.indexOf("\nservice_base_url=");
-  const script = `${deployment.slice(0, functionEnd)}\nverify_collaboration_revision <<< "$REVISION_JSON"`;
+  const script = `date() { printf '%s\\n' '2026-09-28T00:00:00.000Z'; }\n${deployment.slice(0, functionEnd)}\nverify_collaboration_revision <<< "$REVISION_JSON"`;
   return spawnSync("bash", ["-euc", script], { encoding: "utf8", timeout: 5_000, env: {
     ...baseEnvironment(), REVISION_JSON: JSON.stringify(revision),
   } });

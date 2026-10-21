@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AccountSection from "../../desktop/src/renderer/src/features/settings/sections/AccountSection";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -26,6 +26,12 @@ describe("AccountSection", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("opens the same deletion and export page in the system browser", () => {
+    render(<AccountSection />);
+    fireEvent.click(screen.getByRole("button", { name: "Account data and deletion" }));
+    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", { url: "https://app.matrix-os.com/account/delete" });
   });
 
   it("renders the native device-flow display profile", () => {

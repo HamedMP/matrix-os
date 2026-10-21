@@ -61,6 +61,19 @@ describe("EmbedHost", () => {
     vi.unstubAllGlobals();
   });
 
+  it("sends the actual window radius at canvas scale and clears clipping in tab mode", async () => {
+    const view = render(<section data-os-window data-surface-mode="window" style={{ borderBottomLeftRadius: "12px" }}>
+      <EmbedHost kind="app" slug="notes" layoutRevision="window" visualScale={0.5} />
+    </section>);
+    expect(invoke).toHaveBeenCalledWith("embed:open", expect.objectContaining({ bounds: { x: 10, y: 20, width: 300, height: 200, cornerRadius: 6 } }));
+    await act(async () => { openResolve?.({ embedId: "app-1", state: "loading" }); });
+    expect(invoke).toHaveBeenCalledWith("embed:set-bounds", { embedId: "app-1", bounds: { x: 10, y: 20, width: 300, height: 200, cornerRadius: 6 } });
+    view.rerender(<section data-os-window data-surface-mode="tab" style={{ borderBottomLeftRadius: "0px" }}>
+      <EmbedHost kind="app" slug="notes" layoutRevision="tab" visualScale={1} />
+    </section>);
+    expect(invoke).toHaveBeenLastCalledWith("embed:set-bounds", { embedId: "app-1", bounds: { x: 10, y: 20, width: 300, height: 200 } });
+  });
+
   it("reports fresh bounds when the embed opens after a pending layout change", async () => {
     render(<EmbedHost kind="hosted-shell" />);
 

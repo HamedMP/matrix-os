@@ -1,3 +1,4 @@
+import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { z } from "zod/v4";
 import type { AiFundedPolicyRepository } from "./ai-funded-policy-repository.js";
 import {
@@ -5,6 +6,7 @@ import {
   isAiCreditCheckoutObject,
   parseAiCreditCheckoutSession,
   readAiCreditCheckoutRequestId,
+  readAiCreditCheckoutOwnerId,
   type AiCreditCheckoutClaimExpectation,
 } from "./ai-credit-checkout.js";
 import {
@@ -72,6 +74,10 @@ async function processSessionEvent(options: {
 }): Promise<AiWebhookResult | null> {
   if (!AI_SESSION_EVENTS.includes(options.event.type as typeof AI_SESSION_EVENTS[number])
     || !isAiCreditCheckoutObject(options.event.data.object)) return null;
+  const ownerId = readAiCreditCheckoutOwnerId(options.event.data.object);
+  if (!ownerId) throw new Error("Funded AI checkout owner is invalid");
+  const blocked = await withAccountDeletionOwnerLock(options.trx, ownerId, async (_locked, admission) => !admission.newWorkAllowed);
+  if (blocked) return { received: true, ignored: true };
   const requestId = readAiCreditCheckoutRequestId(options.event.data.object);
   if (!requestId) throw new Error("Funded AI checkout claim is invalid");
   const claim = await getClaimByRequestId(options.trx, requestId, true);

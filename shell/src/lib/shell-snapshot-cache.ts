@@ -1,5 +1,6 @@
 "use client";
 
+import { normalizeAppearance } from "@matrix-os/brand/themes/preferences";
 import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 import type { Theme } from "@/hooks/useTheme";
 import type { DesktopConfig } from "@/hooks/useDesktopConfig";
@@ -11,6 +12,7 @@ const MAX_SNAPSHOT_BYTES = 128_000;
 const MAX_SNAPSHOT_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const SAFE_SLUG = /^[A-Za-z0-9_-]{1,64}$/;
 const SAFE_APP_PATH = /^(?:apps\/[A-Za-z0-9._~/-]{1,240}|__[-A-Za-z0-9_]+__)(?::[-A-Za-z0-9_]+)?$/;
+const SAFE_MANIFEST_APP_PATH = /^matrix-app:[a-z0-9][a-z0-9-]{0,63}$/;
 
 export interface ShellSnapshotScope {
   userId: string;
@@ -138,6 +140,7 @@ function normalizeThemeSnapshot(value: unknown): Theme | undefined {
   if (Object.keys(colors).length === 0 || Object.keys(fonts).length === 0) return undefined;
   return {
     name: safeString(value.name, 80) ?? "cached",
+    ...(isRecord(value.appearance) ? { appearance: normalizeAppearance(value.appearance) } : {}),
     ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
     ...(value.style === "flat" ||
       value.style === "neumorphic" ||
@@ -181,7 +184,7 @@ function normalizeDesktopIconsSnapshot(value: unknown): DesktopConfig["desktopIc
   for (const entry of value.slice(0, 512)) {
     if (!isRecord(entry) || typeof entry.path !== "string") continue;
     const path = normalizeOsViewDesktopAppPath(entry.path.trim());
-    if (!SAFE_APP_PATH.test(path) || path.includes("..") || seen.has(path)) continue;
+    if (!isSafeShortcutPath(path) || seen.has(path)) continue;
     if (!Number.isInteger(entry.x) || !Number.isInteger(entry.y)) continue;
     const x = entry.x as number;
     const y = entry.y as number;
@@ -281,7 +284,7 @@ function normalizeAppPaths(value: unknown, fallback: readonly string[]): string[
   for (const item of value) {
     if (typeof item !== "string") continue;
     const path = item.trim();
-    if (!SAFE_APP_PATH.test(path) || path.includes("..") || seen.has(path)) continue;
+    if (!isSafeShortcutPath(path) || seen.has(path)) continue;
     seen.add(path);
     paths.push(path);
   }
@@ -324,7 +327,11 @@ function safeSlug(value: unknown): string | undefined {
 
 function safeBootstrapAppPath(value: unknown): string | undefined {
   if (typeof value !== "string" || value.includes("..") || value.length > 260) return undefined;
-  return value.startsWith("/files/apps/") || value.startsWith("apps/") || value.startsWith("__") ? value : undefined;
+  return SAFE_MANIFEST_APP_PATH.test(value) || value.startsWith("/files/apps/") || value.startsWith("apps/") || value.startsWith("__") ? value : undefined;
+}
+
+function isSafeShortcutPath(path: string): boolean {
+  return !path.includes("..") && (SAFE_MANIFEST_APP_PATH.test(path) || SAFE_APP_PATH.test(path));
 }
 
 function safeStaticPath(value: unknown, prefix: string): string | undefined {
