@@ -1,3 +1,4 @@
+import { isNativeGmailAccount } from "./native-gmail/request.js";
 import { createNativeGmailConnectionRoutes } from "./native-gmail/connection-routes.js";
 import { createNativeGmailDisconnectRoutes } from "./native-gmail/disconnect-routes.js";
 import { createNativeGmailRoutes, type NativeGmailLifecycle } from "./native-gmail/routes.js";
@@ -878,6 +879,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
     if (result.status === "revoked") return c.json({ error: "Not found" }, 404);
+
+    // Enabled native refresh is handled above; rollback must not report a fake refresh.
+    if (isNativeGmailAccount(result.pipedream_account_id)) return c.json({ error: "Connection unavailable" }, 503);
 
     // Pipedream handles token refresh automatically.
     // We update status to active in case it was marked expired.

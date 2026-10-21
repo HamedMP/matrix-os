@@ -69,6 +69,22 @@ describe('native Gmail consent through real integration actions', () => {
     expect(legacy.proxyGet).not.toHaveBeenCalled(); expect(legacy.proxyPost).not.toHaveBeenCalled(); expect(legacy.runAction).not.toHaveBeenCalled();
     expect(fetcher.mock.calls.every(([url]) => !String(url).includes('pipedream'))).toBe(true);
   });
+  it('saves a native draft through the advertised action without sending it', async () => {
+    await connect();
+    const params = { subject: 'Review this draft', body: 'Synthetic content' };
+    const denied = await post(app, '/api/integrations/read-call', owner,
+      { service: 'gmail', label: 'Work Gmail', action: 'create_draft', params });
+    expect(denied.status).toBe(403);
+    const drafted = await post(app, '/api/integrations/call', owner,
+      { service: 'gmail', label: 'Work Gmail', action: 'create_draft', params });
+    expect(drafted.status).toBe(200);
+    const drafts = fetcher.mock.calls.filter(([url]) => String(url).endsWith('/drafts'));
+    expect(drafts).toHaveLength(1);
+    const request = drafts[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(request[1].body))).toEqual({ message: { raw: expect.any(String) } });
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/messages/send'))).toBe(false);
+    expect(legacy.proxyPost).not.toHaveBeenCalled();
+  });
   it('rejects consent URL sharing, callback replay and cross-owner reads', async () => {
     const { state, cookie } = await connect();
     expect((await app.request(`/auth/gmail?state=${state}`, { headers: { 'x-owner': other } })).status).toBe(403);

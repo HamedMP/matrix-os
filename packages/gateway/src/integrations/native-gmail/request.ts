@@ -22,7 +22,7 @@ export interface NativeGmailRequest {
 }
 const identity = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 const readPath = /^\/gmail\/v1\/users\/me\/(?:profile|labels|history|messages|threads|messages\/[A-Za-z0-9_-]{1,128}|threads\/[A-Za-z0-9_-]{1,128}|messages\/[A-Za-z0-9_-]{1,128}\/attachments\/[A-Za-z0-9_-]{1,2048})$/;
-const writePath = /^\/gmail\/v1\/users\/me\/(?:labels|messages\/send|messages\/[A-Za-z0-9_-]{1,128}\/modify)$/;
+const writePath = /^\/gmail\/v1\/users\/me\/(?:labels|drafts|messages\/send|messages\/[A-Za-z0-9_-]{1,128}\/modify)$/;
 const queryKeys = new Set(['q', 'maxResults', 'pageToken', 'labelIds', 'startHistoryId', 'format', 'fields']);
 const Attachment = z.object({ size: z.number().int().min(0).max(1024 * 1024), data: z.string().max(1398104).regex(/^[A-Za-z0-9_-]*={0,2}$/) });
 
