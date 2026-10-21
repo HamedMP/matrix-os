@@ -14,6 +14,7 @@ describe("Gmail Pipedream attempt receipts", () => {
   let app: ReturnType<typeof createIntegrationRoutes>;
   let pipedream: PipedreamConnectClient;
   let issued: Array<{ token: string; webhookUri: string }>;
+  let eligible: boolean;
   const inspectAccount = vi.fn();
   let admit = vi.fn(async (_input: unknown, persist: () => Promise<void>) => persist());
   const metadata = { id: "apn_work", externalUserId: "pd_owner", app: "gmail", healthy: true, dead: false };
@@ -29,7 +30,7 @@ describe("Gmail Pipedream attempt receipts", () => {
       await db.migrate();
     }
     owner = (await db.createUser({ clerkId: "attempt-owner", handle: "attemptowner", displayName: "Owner", email: "owner@example.invalid", containerId: "attempt-owner", pipedreamExternalId: "pd_owner" })).id;
-    issued = []; inspectAccount.mockReset(); inspectAccount.mockResolvedValue(metadata);
+    issued = []; eligible = true; inspectAccount.mockReset(); inspectAccount.mockResolvedValue(metadata);
     admit = vi.fn(async (_input, persist) => persist());
     pipedream = { inspectAccount,
       createConnectToken: vi.fn(async (_id, options) => {
@@ -40,7 +41,8 @@ describe("Gmail Pipedream attempt receipts", () => {
       listAccounts: vi.fn(async () => []), getAppInfo: vi.fn(async () => null), discoverActions: vi.fn(async () => []),
     } as unknown as PipedreamConnectClient;
     app = createIntegrationRoutes({ db, pipedream, webhookSecret: "legacy-test-secret", resolveUserId: async () => owner,
-      verifiedConnectedWebhook: (input, persist) => admit(input, persist), pipedreamGmailAttempts: { callbackUrl, environment: "production" } });
+      verifiedConnectedWebhook: (input, persist) => admit(input, persist), nativeGmailEligible: async () => eligible,
+      pipedreamGmailAttempts: { callbackUrl, environment: "production" } });
   });
   afterEach(async () => { await db.destroy(); vi.restoreAllMocks(); });
   async function start(label?: string) {
@@ -158,6 +160,16 @@ describe("Gmail Pipedream attempt receipts", () => {
     await db.raw("UPDATE gmail_pipedream_attempts SET expires_at=now()-interval '1 second'", []);
     await db.migrate(); // Store cleanup runs even when receipt routes are disabled.
     expect((await db.raw('SELECT id FROM gmail_pipedream_attempts', [])).rows).toEqual([]);
+  });
+  it('keeps non-pilot Gmail on legacy consent while a stored pilot attempt remains isolated', async () => {
+    const pilot = await start();
+    eligible = false;
+    const response = await app.request('/connect', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ service: 'gmail', connectionMethod: 'pipedream' }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).not.toHaveProperty('attemptId');
+    expect(issued[1]!.webhookUri).toBe('');
+    expect(await db.pipedreamGmailAttempts!.status(pilot.attemptId, owner!)).toEqual({ status: 'pending' });
+    expect((await db.raw('SELECT id FROM gmail_pipedream_attempts', [])).rows).toHaveLength(1);
   });
   it("authenticates status, validates IDs and expires callbacks without projection", async () => {
     const attempt = await start();
