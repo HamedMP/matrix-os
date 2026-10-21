@@ -17,6 +17,10 @@ Managed Matrix AI keeps its existing 10-minute absolute deadline. An execution t
 
 User Stop and subsystem shutdown remain cancellation outcomes. The first abort cause wins, including when the worker responds late or another abort source fires afterward. Cancellation must still revoke local approvals, cancel inference and drain/release the owned runtime.
 
+Recipe Bot also preserves explicit user cancellation when its worker later reports completion: both the adapter outcome and durable task stay cancelled. Its existing active-deadline behavior remains distinct and may accept a valid completed worker result when the deadline was the first stop cause.
+
+Managed Pi integration approvals keep their existing ten-minute human-response lifetime. Submission checks that lifetime again after asynchronous ownership/authority checks. At or after expiry, it cancels and cleans the pending wait without executing the mutation, even when the expiry timer has not run. An expired response cannot be replayed as approval.
+
 No source, spending or output limit is increased by this change. Native coding harnesses retain their own transport and approval constraints; a Matrix Chat label is not evidence that the same underlying executor is in use.
 
 ## Native Mobile preflight
