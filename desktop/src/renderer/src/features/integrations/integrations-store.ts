@@ -41,6 +41,9 @@ interface IntegrationsState {
   // the runtime does not expose integrations, so the store goes "unavailable"
   // instead of "error". Omit the argument to use the active runtime client.
   refresh: (apiOverride?: ApiClient | null) => Promise<void>;
+  // Connection settlement runs after the catalog loaded. Invalidate earlier
+  // reads and restore that catalog without clearing its data or error message.
+  cancelPendingRefresh: () => void;
   // Pulls the authoritative account list (POST /sync). "superseded" means the
   // account/computer changed mid-flight -- not a failure, and callers must not
   // show an error for it. Failures leave errorMessage alone; callers decide.
@@ -81,6 +84,11 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
   connectionsSource: null,
   status: "idle",
   errorMessage: null,
+
+  cancelPendingRefresh: () => {
+    refreshSequence += 1;
+    set(state => state.status === "loading" ? { status: "ready" } : {});
+  },
 
   refresh: async (apiOverride) => {
     const api = resolveApi(apiOverride);

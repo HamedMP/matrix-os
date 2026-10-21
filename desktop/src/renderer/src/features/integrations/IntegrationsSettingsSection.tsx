@@ -102,6 +102,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
   useEffect(() => {
     return () => {
       connectAttemptRef.current += 1;
+      if (receiptRef.current) useIntegrations.getState().cancelPendingRefresh();
       receiptRef.current = null;
       connectInFlight.current = false;
       cancelPollRef.current?.();
@@ -116,6 +117,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
 
   const settleConnect = (): void => {
     connectAttemptRef.current += 1;
+    useIntegrations.getState().cancelPendingRefresh();
     receiptRef.current = null;
     previousConnectionsRef.current = null;
     connectInFlight.current = false;

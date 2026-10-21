@@ -87,3 +87,32 @@ it('keeps a terminal poll success when an older manual check fails later', async
   await act(async () => failManual(new Error('Delayed manual failure')));
   expect(useIntegrations.getState().errorMessage).toBeNull();
 });
+it('keeps terminal failure when an older receipt inventory refresh resolves later', async () => {
+  const attemptId = '123e4567-e89b-42d3-a456-426614174000';
+  let failManual!: (error: Error) => void; let finishInventory!: (rows: unknown) => void;
+  const manual = new Promise<unknown>((_resolve, reject) => { failManual = reject; });
+  const inventory = new Promise(resolve => { finishInventory = resolve; });
+  let receipts = 0; let inventories = 0;
+  const api = {
+    get: vi.fn(async (path: string) => path.endsWith('/available') ? [{ id: 'gmail', name: 'Gmail', category: 'google' }]
+      : path.endsWith('/connection-options') ? { methods: ['pipedream'], defaultMethod: 'pipedream' }
+      : path.includes('/attempts/') ? ++receipts === 1 ? manual : { status: 'succeeded', accountId: account.id }
+      : ++inventories === 1 ? [account] : inventory),
+    post: vi.fn(async () => ({ url: 'https://pipedream.com/connect', service: 'gmail', attemptId })),
+  } as unknown as ApiClient;
+  useConnection.setState({ status: 'signed-in', handle: 'operator', api: api as never });
+  render(<IntegrationsSettingsSection pollIntervals={[100]} />);
+  fireEvent.click(await screen.findByTestId('integration-connect-gmail'));
+  await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole('button', { name: /I've connected/i }));
+  await waitFor(() => expect(inventories).toBe(2));
+  expect(useIntegrations.getState().status).toBe('loading');
+  await act(async () => failManual(new Error('Delayed terminal failure')));
+  const terminalError = useIntegrations.getState().errorMessage;
+  expect(terminalError).toBeTruthy();
+  expect(useIntegrations.getState().status).toBe('ready');
+  await act(async () => { finishInventory([{ ...account, account_label: 'Stale inventory' }]); });
+  expect(useIntegrations.getState().errorMessage).toBe(terminalError);
+  expect(useIntegrations.getState().status).toBe('ready');
+  expect(useIntegrations.getState().connections[0]?.accountLabel).toBe('Work');
+});
