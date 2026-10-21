@@ -18,7 +18,7 @@ import {
   type MatrixBillingPlanSlug,
   type StripeSubscriptionProjection,
 } from '../billing.js';
-import { MATRIX_CARD_TRIAL_DAYS, MatrixCardTrialDaysSchema, type CheckoutRequest } from './checkout-schemas.js';
+import { MATRIX_CARD_TRIAL_DAYS, MATRIX_STARTER_TRIAL_DAYS, MatrixCardTrialDaysSchema, type CheckoutRequest } from './checkout-schemas.js';
 import { MAX_STRIPE_API_TIMEOUT_MS, type StripeBillingClient } from './stripe-client.js';
 
 /** Extracted verbatim from packages/platform/src/billing-routes.ts (S01 / T007): checkout telemetry, price and return-URL helpers. */
@@ -29,6 +29,16 @@ export function resolveCardTrialDays(env: NodeJS.ProcessEnv): number {
   const parsed = MatrixCardTrialDaysSchema.safeParse(configured);
   if (!parsed.success) {
     throw new Error('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30');
+  }
+  return parsed.data;
+}
+
+export function resolveStarterTrialDays(env: NodeJS.ProcessEnv): number {
+  const configured = env.MATRIX_STARTER_TRIAL_DAYS;
+  if (configured === undefined) return MATRIX_STARTER_TRIAL_DAYS;
+  const parsed = MatrixCardTrialDaysSchema.safeParse(configured);
+  if (!parsed.success) {
+    throw new Error('MATRIX_STARTER_TRIAL_DAYS must be an integer from 1 to 30');
   }
   return parsed.data;
 }

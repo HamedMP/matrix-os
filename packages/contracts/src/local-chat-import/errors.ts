@@ -7,11 +7,11 @@ export function localChatImportErrorText(error: unknown): string {
     if (error.code === "source_mismatch") return "The selected file does not identify one supported session. Choose a different transcript.";
     if (error.code === "projection_limit") return "The selected transcript exceeds the supported import limits.";
     if (error.code === "no_readable_history") return "No readable conversation was found in this transcript.";
-    if (error.code === "source_changed") return "The selected transcript changed. Preview it again before importing.";
+    if (error.code === "source_changed") return "The selected transcript changed. Refresh the list or choose the transcript again to start a new import.";
     return "Choose a regular Codex or Claude Code JSONL transcript smaller than 20 GiB.";
   }
   if (error instanceof LocalChatTransferError) {
-    if (error.code === "source_changed") return "The selected transcript changed. It was not published. Preview it again.";
+    if (error.code === "source_changed") return "The selected transcript changed. Refresh the list or choose the transcript again to start a new import.";
     if (error.code === "cancelled") return "Stopped waiting. Retry the same file to check its import status.";
     if (error.code === "expired") return "This upload expired. Select the same file to begin again.";
     if (error.code === "failed") return "The transcript could not be verified. Your local file was not changed.";
@@ -25,15 +25,17 @@ const SAFE_DISPLAY_MESSAGES = new Set([
   "The selected file does not identify one supported session. Choose a different transcript.",
   "The selected transcript exceeds the supported import limits.",
   "No readable conversation was found in this transcript.",
-  "The selected transcript changed. Preview it again before importing.",
+  "The selected transcript changed. Refresh the list or choose the transcript again to start a new import.",
   "Choose a regular Codex or Claude Code JSONL transcript smaller than 20 GiB.",
-  "The selected transcript changed. It was not published. Preview it again.",
   "Stopped waiting. Retry the same file to check its import status.",
   "This upload expired. Select the same file to begin again.",
   "The transcript could not be verified. Your local file was not changed.",
   "Chat import unavailable. Check your connection and Matrix version, then retry. Your local file was not changed.",
   "Another import is in progress. Try again when it finishes.",
   "Choose a supported transcript.",
+  "Local conversations changed. Refresh the list and select them again.",
+  "Choose up to 32 transcripts at a time.",
+  "Too many transcript previews are open. Reopen Settings and select your files again.",
 ]); // Fixed allowlist: no runtime inserts or eviction needed.
 /** Only known recovery copy crosses the native error projection boundary. */
 export class LocalChatImportDisplayError extends Error {

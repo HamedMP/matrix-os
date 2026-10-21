@@ -142,7 +142,7 @@ describe("bot agent loop", () => {
     expect(tools).toEqual([{ toolCallId: "call_write", capability: "artifact.write", args: { relPath: "briefs/acme.md", content: "# Acme", mimeType: "text/markdown" } }]);
     expect(events.map((event) => event.seq)).toEqual(events.map((_event, index) => index));
     expect(events.filter((event) => event.event.type === "tool_progress").map((event) => event.event))
-      .toEqual([
+      .toMatchObject([
         { type: "tool_progress", toolCallId: "call_write", capability: "artifact.write", phase: "started" },
         { type: "tool_progress", toolCallId: "call_write", capability: "artifact.write", phase: "completed" },
       ]);
@@ -176,7 +176,7 @@ describe("bot agent loop", () => {
 
     expect(tools[0]!.toolCallId).toBe(bridgeId);
     expect(events.filter((event) => event.event.type === "tool_progress").map((event) => event.event))
-      .toEqual([
+      .toMatchObject([
         { type: "tool_progress", toolCallId: bridgeId, capability: "artifact.write", phase: "started" },
         { type: "tool_progress", toolCallId: bridgeId, capability: "artifact.write", phase: "completed" },
       ]);

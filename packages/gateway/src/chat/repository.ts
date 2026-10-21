@@ -1,3 +1,4 @@
+import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import { ownerSharedProjection, sharedBindingScopeId } from "./owner-shared-projection.js";
 import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
@@ -9,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
 import { captureChatFailureMetadata } from "./failure-telemetry.js";
 import { redactAssistantCredentials, redactSharedAssistantText } from "./safe-activity-projection.js";
-import { createOwnerToolOutputProjection } from "./owner-tool-output.js";
+import { createOwnerToolOutputProjection, stripProtectedCommandPreviews } from "./owner-tool-output.js";
 import type { ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
   CanonicalChatRunActivitySchema,
@@ -318,7 +319,9 @@ async function toPrincipalRecord(
   owner: ChatOwner,
   row: Selectable<ChatsTable>,
   collaborationProjection?: CanonicalChatCollaboration,
+  knownImportSource?: ChatRecord["importSource"] | null,
 ): Promise<ChatRecord> {
+  const importSource = knownImportSource === undefined ? await readChatImportSource(executor, owner, row.id) : knownImportSource;
   const internalScopeId = collaborationProjection ? undefined : sharedBindingScopeId(row.collaboration);
   const [activeRun, userState, latestSuccessfulCompletion, internalProjection] = await Promise.all([
     activeRunQuery(executor, row.id),
@@ -338,6 +341,7 @@ async function toPrincipalRecord(
     userState?.attention_acknowledged_at,
   );
   return { ...record,
+    ...(importSource ? { importSource } : {}),
     ...(record.chat.lastMessagePreview
       ? { chat: { ...record.chat, lastMessagePreview: effectiveProjection?.mode === "shared"
         ? redactSharedAssistantText(record.chat.lastMessagePreview)
@@ -1575,7 +1579,7 @@ export class ChatRepository {
       messages: projected.messages,
       turns: turns.map(toTurn),
       runs: runs.map(toRun),
-      activities: projected.activities,
+      activities: stripProtectedCommandPreviews(projected.activities),
       attachments: attachments.map((row) => ({
         id: row.id,
         messageId: row.message_id,

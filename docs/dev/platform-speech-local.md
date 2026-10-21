@@ -161,7 +161,11 @@ Generate `MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN` with the speech-domain runtime i
 
 Production `existing_wallet` rollout automatically reconciles a speech-only monthly allowance for each running, authorized customer computer. `PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD` caps speech usage; `PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD` creates one idempotent UTC-month promotional grant per computer. The shared monetary ledger remains authoritative, while `ai_funded_runtime_policies` and their text-model monthly counters remain untouched. `MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED` and the text relay's `MATRIX_FUNDED_AI_RUNTIME_ENABLED` are separate rollout flags. Never seed preview no-charge grants in production.
 
-Fleet host activation is deliberately request-bounded. The operator route configures and verifies at most 16 computers per call, returning a UUID continuation cursor until the eligible fleet is complete. Release automation retries only its current page, then follows the cursor rather than holding one request open across the fleet or repeatedly restarting at the first page. The release job remains bounded to 90 minutes.
+New customer provisioning includes both speech and funded-AI runtime configuration when their independent runtime flags are enabled. Clean images, golden snapshots, and replacement recovery bind separate credentials to the current machine, runtime slot, and token epoch. Host flags alone do not establish policy eligibility or available funding.
+
+Platform background reconciliation repairs eligible customer speech and funded-AI configuration independently of deployments. Unavailable computers and busy gateways are retried in bounded, nonoverlapping passes. Reconciliation preserves disabled policies, existing balances, reservations, and the owner's provider choices; it does not issue credit. A failed release cannot permanently skip activation for a new eligible computer. Release-triggered verification provides an additional check after requested deployments even when deployment fails.
+
+Fleet host activation is deliberately request-bounded. The speech operator route configures and verifies at most 16 computers per call, returning a UUID continuation cursor until the eligible fleet is complete. Release automation retries only its current page, then follows the cursor rather than holding one request open across the fleet or repeatedly restarting at the first page. See [VPS deployment](./vps-deployment.md) for managed-feature rollout and verification boundaries.
 
 ## Device and format gates
 

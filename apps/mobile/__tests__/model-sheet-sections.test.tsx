@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, screen, within } from "@testing-library/react-native";
+import * as Haptics from "expo-haptics";
 import { Platform } from "react-native";
 
 import { chip, claude, codex, reasoning, renderSheet } from "./model-sheet-test-utils";
@@ -38,13 +39,15 @@ describe("the selected model's option", () => {
       .toEqual([["Low", false], ["Medium", true]]);
   });
 
-  it("reports the value that is tapped", () => {
+  it("reports the value that is tapped, with the selection tick", () => {
+    jest.mocked(Haptics.selectionAsync).mockClear();
     const { onSelectOption, onSelectModel } = renderSheet({ options: [reasoning] });
 
     fireEvent.press(screen.getByRole("button", { name: "Low" }));
 
     expect(onSelectOption).toHaveBeenCalledWith("effort", "low");
     expect(onSelectModel).not.toHaveBeenCalled();
+    expect(Haptics.selectionAsync).toHaveBeenCalledTimes(1);
   });
 
   it("has no such section when the model has no option", () => {

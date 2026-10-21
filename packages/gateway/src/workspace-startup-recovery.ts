@@ -231,6 +231,7 @@ export async function runWorkspaceStartupRecovery(
 }
 
 export function createWorkspaceStartupRecovery(options: {
+  beforeProjectSessionRemove?: Parameters<typeof createAgentSessionManager>[0]["beforeProjectSessionRemove"];
   backgroundRuntime?: BackgroundAgentRuntime;
   homePath: string;
   eventPublisher?: WorkspaceStartupRecoveryDeps["eventPublisher"];
@@ -252,6 +253,7 @@ export function createWorkspaceStartupRecovery(options: {
     agentLauncher,
     terminalRuntime,
     backgroundRuntime: options.backgroundRuntime,
+    beforeProjectSessionRemove: options.beforeProjectSessionRemove,
   });
   const reviewStore = createReviewStore({ homePath });
   const projectLifecycleRecovery = createProjectLifecycleService({

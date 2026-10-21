@@ -191,6 +191,7 @@ function textResult(text: string): BotToolResult {
 
 export function createBotToolDispatcher(deps: {
   homePath: string;
+  submittedArtifact?(binding: PiRuntimeBinding, args: Extract<BotToolRequest, { capability: "artifact.read" }>["args"]): Promise<string | undefined>;
   jev?: Pick<import("./jev-tools.js").BotJevTools, "call">;
   managedTools?: import("../chat/managed-pi-owner-tools.js").ManagedPiOwnerTools;
   managedWorkspace?: (binding: import("./runtime-registry.js").ManagedPiRuntimeBinding) => Promise<string>;
@@ -332,7 +333,14 @@ export function createBotToolDispatcher(deps: {
         const outcomeRef = `artifact:${createHash("sha256").update(request.args.relPath).digest("hex").slice(0, 32)}`;
         return { result: await write(binding, request, signal), outcomeRef };
       }
-      if (request.capability === "artifact.read") return { result: await read(binding, request) };
+      if (request.capability === "artifact.read") {
+        if (request.args.relPath.startsWith("submitted-inputs/")) {
+          await workspace(binding);
+          const submitted = await deps.submittedArtifact?.(binding, request.args);
+          if (submitted !== undefined) return { result: textResult(submitted) };
+        }
+        return { result: await read(binding, request) };
+      }
       if (isManagedPiBinding(binding)) {
         if (!deps.managedTools) throw new BotBrokerActionError("not_granted");
         return { result: await deps.managedTools.dispatch(binding, request, signal) };

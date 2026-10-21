@@ -230,6 +230,7 @@ async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
 }
 
 export function createWorkspaceRoutes(options: {
+  beforeProjectSessionRemove?: Parameters<typeof createAgentSessionManager>[0]["beforeProjectSessionRemove"];
   backgroundRuntime?: BackgroundAgentRuntime;
   homePath: string;
   projectManager?: ProjectManager;
@@ -247,6 +248,7 @@ export function createWorkspaceRoutes(options: {
   eventStore?: WorkspaceEventStore;
   eventPublisher?: WorkspaceEventPublisher;
   sessionOrchestrator?: WorkspaceSessionOrchestrator;
+  startSession?: WorkspaceSessionOrchestrator["startSession"];
   projectLifecycleService?: ProjectLifecycleService;
   projectOperationAdmission?: LegacyProjectOperationAdmission;
   configureSharedProjectDeletion?: (input: OwnerProjectDeletionDependencies) => OwnerProjectDeletion;
@@ -273,6 +275,7 @@ export function createWorkspaceRoutes(options: {
     agentLauncher,
     terminalRuntime,
     backgroundRuntime: options.backgroundRuntime,
+    beforeProjectSessionRemove: options.beforeProjectSessionRemove,
   });
   const agentSandbox = options.agentSandbox ?? createAgentSandbox({ homePath: options.homePath });
   const sessionRuntimeBridge = options.sessionRuntimeBridge ?? createSessionRuntimeBridge();
@@ -289,6 +292,7 @@ export function createWorkspaceRoutes(options: {
     sessionRuntimeBridge,
     eventPublisher,
   });
+  const startSession = options.startSession ?? ((input) => sessionOrchestrator.startSession(input));
   const stateOps = createStateOps({ homePath: options.homePath });
   const limited = bodyLimit({ maxSize: WORKSPACE_BODY_LIMIT });
   const getOwnerScope = options.getOwnerScope ?? ((c: Context) => ownerScopeFromPrincipal(requireRequestPrincipal(c, {
@@ -838,9 +842,9 @@ export function createWorkspaceRoutes(options: {
           ownerScope,
           projectSlug: body.value.projectSlug,
           kind: "run",
-          operation: () => sessionOrchestrator.startSession({ ownerScope, request: body.value }),
+          operation: () => startSession({ ownerScope, request: body.value }),
         })
-      : { ok: true as const, value: await sessionOrchestrator.startSession({ ownerScope, request: body.value }) };
+      : { ok: true as const, value: await startSession({ ownerScope, request: body.value }) };
     if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
     const result = admitted.value;
     if (!result.ok) {

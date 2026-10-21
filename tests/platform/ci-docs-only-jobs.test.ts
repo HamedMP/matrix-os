@@ -8,7 +8,7 @@ import { parse } from 'yaml';
 const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
 const sourceJobs = [
   'typecheck', 'shell-production-build', 'patterns', 'react-doctor',
-  'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'funded-host-root', 'e2e',
+  'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'e2e',
 ];
 
 interface GitHubFixture {
@@ -20,8 +20,8 @@ const mainPush: GitHubFixture = { event_name: 'push', ref: 'refs/heads/main', ev
 function evaluateJobExpression(value: string, needs: unknown, github: GitHubFixture) {
   const body = value.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.ci-backend', 'needs["ci-backend"]');
   // Evaluate the actual trusted workflow expression with explicit GHA contexts.
-  return Function('needs', 'github', 'inputs', 'vars', 'success', 'always', `return (${body});`)(
-    needs, github, {}, {}, () => true, () => true,
+  return Function('needs', 'github', 'inputs', 'vars', 'success', 'always', 'cancelled', `return (${body});`)(
+    needs, github, {}, {}, () => true, () => true, () => false,
   );
 }
 function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, parityChanges = false, github = mainPush) {
@@ -42,8 +42,9 @@ function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, p
 
 function aggregateStatus(docsResult: string) {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-ci-docs-'));
-  const step = workflow.jobs['ci-results'].steps.find((value: { run?: string }) => value.run);
+  const step = workflow.jobs['ci-results'].steps.find((value: { name?: string }) => value.name === 'Summarize required CI jobs');
   try {
+    if (!step?.run) throw new Error('Missing required CI aggregate script');
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       CI_TRIGGER_REQUESTED: 'true',
@@ -55,7 +56,7 @@ function aggregateStatus(docsResult: string) {
     };
     for (const name of [
       'TYPECHECK', 'SHELL_PRODUCTION_BUILD', 'PATTERNS', 'REACT_DOCTOR',
-      'SYNC_CLIENT', 'AGENT_SDK_COMPATIBILITY', 'UNIT', 'FUNDED_POSTGRES', 'FUNDED_HOST_ROOT', 'E2E',
+      'SYNC_CLIENT', 'AGENT_SDK_COMPATIBILITY', 'UNIT', 'FUNDED_POSTGRES', 'COLLABORATION_POSTGRES', 'FUNDED_HOST_ROOT', 'E2E',
     ]) env[`${name}_RESULT`] = 'skipped';
     execFileSync('bash', ['-c', step.run], { env, stdio: 'pipe' });
   } finally {

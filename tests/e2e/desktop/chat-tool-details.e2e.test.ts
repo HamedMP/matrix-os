@@ -9,6 +9,7 @@ import { _electron, type ElectronApplication, type Page } from "playwright";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { closeElectronApp } from "./fixtures/close-electron";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 const root = resolve(__dirname, "../../..");
 const built = existsSync(join(root, "desktop/out/main/index.js"));
@@ -18,7 +19,7 @@ const fixture = createCanonicalChatFixture("completed").snapshot;
 const run = fixture.runs[0]!;
 const record = { chat: { id: fixture.chat.id, title: "Tool details review", ownerScope: { type: "personal", ownerId: "user-1" },
   lifecycle: "active", attention: "none", revision: 1, messageCount: 2, createdAt: run.createdAt, updatedAt: run.createdAt } };
-const command = `bun run test ${"tests/regression.test.ts ".repeat(8)}`.trim();
+const command = `cd /home/matrix/home/projects/demo\n${"bun run test /opt/matrix/app/tests/regression.test.ts\n".repeat(25)}`.trim();
 const detail = { record, turns: fixture.turns, runs: fixture.runs, queuedTurns: [], messages: [
   ...fixture.messages,
   { id: "msg_tool_final", chatId: fixture.chat.id, runId: run.id, turnId: run.turnId, seq: 2, role: "assistant", state: "committed", parts: [{ type: "text", text: "The command finished successfully." }], createdAt: run.createdAt },
@@ -31,6 +32,8 @@ const server = createServer((req, res) => {
   const path = new URL(req.url!, "http://localhost").pathname;
   const json = (value: unknown) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
   if (path === "/api/chats") return json({ items: [record] });
+  if (path === "/api/chat-agents") return json({ enabled: true, agents: [] });
+  if (path === `/api/chats/${fixture.chat.id}/bot`) return json({ agentId: null });
   if (path === `/api/chats/${fixture.chat.id}`) return json(detail);
   if (path === `/api/chats/${fixture.chat.id}/read-state`) { req.resume(); return json(record); }
   const upstream = request(new URL(req.url!, base.url), { method: req.method, headers: req.headers, timeout: 10_000 }, response => {
@@ -57,6 +60,7 @@ suite("tool details in built Electron Desktop", () => {
     await writeFile(join(profile, "credential.bin"), Buffer.from(encrypted, "base64"));
     await closeElectronApp(app); app = await launch(); page = await app.firstWindow();
     page.setDefaultTimeout(10_000);
+    await dismissGettingStartedOnInteraction(page);
   }, 60_000);
   afterAll(async () => {
     if (page && !page.isClosed()) { await mkdir(join(root, "output/chat-tool-details"), { recursive: true }); await page.screenshot({ path: join(root, "output/chat-tool-details/last-state.png") }); }
@@ -72,11 +76,13 @@ suite("tool details in built Electron Desktop", () => {
       const worked = page.getByRole("button", { name: /Worked for/ });
       await worked.waitFor();
       if (await worked.getAttribute("aria-expanded") !== "true") await worked.click();
-      await page.getByRole("button", { name: `Run command: ${command}`, exact: true }).click();
+      await page.getByRole("button", { name: /Run command:/ }).click();
+      const copy = page.getByRole("button", { name: "Copy command", exact: true });
+      await copy.click();
+      expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(command);
       await page.getByText("12 tests passed", { exact: false }).waitFor();
       expect(await page.getByText("Working directory: projects/demo", { exact: false }).count()).toBeGreaterThan(0);
     }
-    if (await page.getByRole("dialog", { name: "Getting started", exact: true }).isVisible()) await page.getByRole("button", { name: /Getting started/ }).click();
     const output = join(root, "output/chat-tool-details"); await mkdir(output, { recursive: true });
     await page.screenshot({ path: join(output, "electron-tool-details.png") });
   });

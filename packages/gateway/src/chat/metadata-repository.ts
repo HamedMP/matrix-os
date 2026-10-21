@@ -1,3 +1,4 @@
+import { chatImportHarnessSql, chatImportSource } from "./import-source.js";
 import { CanonicalChatIdSchema, CanonicalChatModelSelectionSchema, CanonicalOwnerScopeSchema, CanonicalUpdateChatTitleRequestSchema, type CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { sql, type Kysely, type Transaction, type Selectable } from "kysely";
 import { z } from "zod/v4";
@@ -11,7 +12,7 @@ interface MetadataDependencies {
   kysely: Kysely<ChatDatabase>;
   transact<T>(fn: (trx: Executor) => Promise<T>): Promise<T>;
   selectOwnedChat(executor: Executor, owner: ChatOwner, chatId: string, lock?: boolean): Promise<Selectable<ChatsTable> | undefined>;
-  toPrincipalRecord(executor: Executor, owner: ChatOwner, row: Selectable<ChatsTable>): Promise<ChatRecord>;
+  toPrincipalRecord(executor: Executor, owner: ChatOwner, row: Selectable<ChatsTable>, collaborationProjection?: undefined, knownImportSource?: ChatRecord["importSource"] | null): Promise<ChatRecord>;
   activeRunQuery(executor: Executor, chatId: string): Promise<Selectable<ChatRunsTable> | undefined>;
   appendOutbox(executor: Executor, owner: ChatOwner, chatId: string, revision: number, type: ChatOutboxEventType): Promise<void>;
 }
@@ -28,6 +29,7 @@ export async function listChats(deps: MetadataDependencies, ownerInput: ChatOwne
     const owner = validateOwner(ownerInput);
     const limit = Math.max(1, Math.min(100, Math.trunc(input.limit)));
     let query = deps.kysely.selectFrom("chats").selectAll()
+      .select(chatImportHarnessSql(owner, sql.ref<string>("chats.id")).as("import_harness"))
       .select(sql<string>`to_char(activity_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
         .as("cursor_activity_at"))
       .where("owner_type", "=", owner.type)
@@ -48,7 +50,7 @@ export async function listChats(deps: MetadataDependencies, ownerInput: ChatOwne
     }
     const rows = await query.orderBy("activity_at", "desc").orderBy("id").limit(limit + 1).execute();
     const pageRows = rows.slice(0, limit);
-    const items = await Promise.all(pageRows.map((row) => deps.toPrincipalRecord(deps.kysely, owner, row)));
+    const items = await Promise.all(pageRows.map((row) => deps.toPrincipalRecord(deps.kysely, owner, row, undefined, chatImportSource(row.import_harness) ?? null)));
     const last = rows.length > limit ? pageRows.at(-1) : undefined;
     return {
       items,

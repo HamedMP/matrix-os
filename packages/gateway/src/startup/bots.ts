@@ -1,3 +1,4 @@
+import { createBotInputHistoryReader } from "../bots/historical-input.js";
 import { createHash } from "node:crypto";
 import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
 import { readReleaseInfo } from "../system-info.js";
@@ -140,12 +141,13 @@ export interface BotServices {
 }
 
 export async function startBots(options: {
+  toolOutputKey?: Buffer;
   runtimeOwnerId?: string | null;
   computerId?: string | null;
   nativeProfileGuard?: NativeProviderProfileGuard;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
-  repository: Pick<ChatRepository, "kysely" | "withTransaction">;
+  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "get" | "getTurnRunContext" | "getDetailPage">;
   agents: ChatAgentStore;
   executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
   providers: { getSnapshot(): Promise<AiProviderSnapshotV3> };
@@ -334,11 +336,14 @@ export async function startBots(options: {
     ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
   ];
   const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots, toolCapabilities: managedCapabilities });
-  const ownerTools = createManagedPiOwnerTools({ authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
+  const ownerTools = createManagedPiOwnerTools({ toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
     ...(integrationClient ? { integrations: integrationClient } : {}),
     ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });
   let forgetRun: (runId: string) => void = () => undefined;
+  const inputHistory = createBotInputHistoryReader(options.repository);
   const orchestrator = createBotTaskOrchestrator({
+    inputHistory,
+    homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
     personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId },
     bindings,
@@ -370,11 +375,12 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
-  const managed = createManagedPiRuntime({ personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
     homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
+    submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
   });
   const qualifiedTools: BotToolDispatcher = {

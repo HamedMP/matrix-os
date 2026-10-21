@@ -1,20 +1,40 @@
+import { validateBotImageInferenceBody } from "@matrix-os/contracts";
 import { CHATGPT_PLAN_RESPONSE_BYTE_LIMIT, ChatGptPlanWireSchema } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 import { PlanFailure, logPlanFailure, safePlanResponseDiagnostic, type PlanResponseDiagnostic } from './diagnostics';
 import { PLAN_RESOURCE } from './oauth';
 const DIAGNOSTIC_BYTE_LIMIT = 16 * 1024;
-function sseCompletion(text: string): boolean {
-    return text.replace(/\r\n/g, '\n').split('\n\n').some(frame => {
-        const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
-        if (!data || data === '[DONE]') return false;
-        try {
-            const event: unknown = JSON.parse(data);
-            return !!event && typeof event === 'object' && 'type' in event && event.type === 'response.completed';
-        } catch (error: unknown) {
-            if (error instanceof SyntaxError) return false;
-            throw error;
+/** Only complete JSON objects from bounded SSE samples are inspected. */
+function sseDiagnostic(segments: readonly string[]): PlanResponseDiagnostic {
+    let sseFraming = false, sseCompleted = false, failureSeen = false;
+    let projection: PlanResponseDiagnostic = {};
+    for (const segment of segments) {
+        const normalized = segment.replace(/\r\n?/g, '\n');
+        sseFraming ||= /^(?:data|event):/m.test(normalized);
+        for (const frame of normalized.split('\n\n')) {
+            const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+            if (!data || data === '[DONE]') continue;
+            let event: unknown;
+            try { event = JSON.parse(data); }
+            catch (error: unknown) { if (error instanceof SyntaxError) continue; throw error; }
+            if (!event || typeof event !== 'object' || Array.isArray(event)) continue;
+            const value = event as Record<string, unknown>;
+            sseCompleted ||= value.type === 'response.completed';
+            if (failureSeen || typeof value.type !== 'string' || !['response.completed', 'response.failed', 'response.incomplete', 'error'].includes(value.type)) continue;
+            const response = value.response && typeof value.response === 'object' && !Array.isArray(value.response)
+                ? value.response as Record<string, unknown> : {};
+            const error = response.error && typeof response.error === 'object' && !Array.isArray(response.error)
+                ? response.error as Record<string, unknown>
+                : value.error && typeof value.error === 'object' && !Array.isArray(value.error) ? value.error as Record<string, unknown> : {};
+            const incomplete = response.incomplete_details && typeof response.incomplete_details === 'object' && !Array.isArray(response.incomplete_details)
+                ? response.incomplete_details as Record<string, unknown> : {};
+            projection = safePlanResponseDiagnostic({ responseType: value.type, responseStatus: response.status ?? value.status,
+                errorCode: error.code ?? value.code, incompleteReason: incomplete.reason,
+                responseObject: Object.hasOwn(value, 'response'), hasError: Object.hasOwn(value, 'error') || Object.hasOwn(response, 'error') });
+            failureSeen = value.type !== 'response.completed';
         }
-    });
+    }
+    return { ...projection, sseFraming, sseCompleted };
 }
 type BodyRead = { text: string; outcome: NonNullable<PlanResponseDiagnostic['bodyRead']> };
 /** The body deadline also covers custom streams that do not observe fetch abort. */
@@ -67,11 +87,15 @@ async function readResponseBody(response: Response, parentSignal: AbortSignal, l
 function responseDiagnostic(response: Response, read: BodyRead): PlanResponseDiagnostic {
     const mime = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
     const truncated = Buffer.byteLength(read.text) > DIAGNOSTIC_BYTE_LIMIT;
-    const text = truncated ? Buffer.from(read.text).subarray(0, DIAGNOSTIC_BYTE_LIMIT).toString('utf8') : read.text;
+    const encoded = truncated ? Buffer.from(read.text) : undefined;
+    const text = encoded ? encoded.subarray(0, DIAGNOSTIC_BYTE_LIMIT).toString('utf8') : read.text;
     const result: Record<string, unknown> = { mime: mime === 'application/json' || mime?.endsWith('+json') ? 'json'
         : mime === 'text/html' ? 'html' : mime === 'text/plain' ? 'plain' : 'other', bodyRead: read.outcome === 'complete' && truncated ? 'oversize' : read.outcome };
-    result.sseFraming = /^(?:data|event):/m.test(text);
-    result.sseCompleted = sseCompletion(text);
+    // Keep one fixed 16KiB diagnostic budget. Separate head/tail samples retain
+    // small terminal events after long deltas without joining across omitted bytes.
+    const segments = encoded ? [encoded.subarray(0, DIAGNOSTIC_BYTE_LIMIT / 2).toString('utf8'),
+        encoded.subarray(-DIAGNOSTIC_BYTE_LIMIT / 2).toString('utf8')] : [text];
+    Object.assign(result, sseDiagnostic(segments));
     if (result.bodyRead === 'complete') {
         if (!text.trim()) result.bodyShape = 'empty';
         else {
@@ -105,7 +129,7 @@ export async function requestPlanResponse(input: {
     accessToken(): Promise<string>;
     validate(): void;
 }): Promise<string> {
-    if (Buffer.byteLength(input.body) > 512000)
+    if (!validateBotImageInferenceBody(input.body, 512000).valid)
         throw new Error('invalid inference');
     const body = ChatGptPlanWireSchema.parse(JSON.parse(input.body));
     if (body.model !== input.model)

@@ -41,6 +41,8 @@ export interface BoundedReadOptions {
 }
 
 export interface RequestTimeoutOptions {
+  /** Status-only callers do not consume or buffer untrusted error bodies. */
+  omitErrorBody?: boolean;
   /** Internal operation-specific timeout. Every request remains bounded. */
   timeoutMs?: number;
   /** Caller lifecycle cancellation, always composed with the internal timeout. */
@@ -48,6 +50,9 @@ export interface RequestTimeoutOptions {
 }
 
 export interface JsonRequestOptions extends RequestTimeoutOptions {
+  cache?: RequestCache;
+  /** Internal request headers, including opt-in response projections. */
+  headers?: Record<string, string>;
   /** Hard cap on JSON response bytes before parsing. */
   maxBytes?: number;
 }
@@ -110,6 +115,11 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     }
     if (!response.ok) {
       if (response.status === 401) options.onUnauthorized?.();
+      if (requestOptions?.omitErrorBody) {
+        try { await response.body?.cancel(); }
+        catch (error) { console.warn("[api] Failed to cancel error response:", error instanceof Error ? error.name : typeof error); }
+        throw new AppError(classifyHttpStatus(response.status), { httpStatus: response.status });
+      }
       // Extract the gateway's safe error CODE (e.g. invalid_session_request) so
       // callers can surface a specific reason instead of only the generic copy.
       let detail: string | undefined;
@@ -120,13 +130,19 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       } catch {
         // Non-JSON / empty body — no detail to surface.
       }
-      throw new AppError(classifyHttpStatus(response.status), detail ? { detail } : undefined);
+      throw new AppError(classifyHttpStatus(response.status), { detail, httpStatus: response.status });
     }
     return response;
   }
 
   async function request<T>(path: string, init: RequestInit, options?: JsonRequestOptions): Promise<T> {
-    const response = await send(path, init, options);
+    let requestInit = init;
+    if (options?.headers) {
+      const headers = new Headers(init.headers);
+      for (const [name, value] of Object.entries(options.headers)) headers.set(name, value);
+      requestInit = { ...init, headers };
+    }
+    const response = await send(path, requestInit, options);
     // Successful bodyless mutations (including Terminal DELETE) are not JSON.
     if (response.status === 204) return undefined as T;
     try {
@@ -206,7 +222,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       ...options,
       getRuntimeSlot: () => runtimeSlot,
     }),
-    get: (path, requestOptions) => request(path, { method: "GET" }, requestOptions),
+    get: (path, requestOptions) => request(path, { method: "GET", ...(requestOptions?.cache ? { cache: requestOptions.cache } : {}) }, requestOptions),
     getText: (path, boundedOptions) => requestText(path, { method: "GET", ...(boundedOptions?.headers ? { headers: boundedOptions.headers } : {}) }, boundedOptions),
     getBlob: (path, boundedOptions) => requestBlob(path, { method: "GET", ...(boundedOptions?.headers ? { headers: boundedOptions.headers } : {}) }, boundedOptions),
     openStream: (path, streamOptions) => send(path, {
