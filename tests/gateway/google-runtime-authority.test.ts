@@ -160,6 +160,33 @@ suite('composed runtime Google context inference authority', () => {
     vi.spyOn(contexts, 'inspect').mockResolvedValue(null);
     expect(await gate.authorize(request('release'))).toEqual({ allowed: false });
   });
+  it('classifies expected denial and logs only unexpected error names', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(contexts, 'inspect').mockRejectedValueOnce(new Error('private content and credential diagnostic'));
+    expect(await authority().authorize(request())).toEqual({ allowed: false });
+    expect(warning).toHaveBeenCalledWith('[google-data] Runtime authority unavailable:', 'Error');
+    expect(JSON.stringify(warning.mock.calls)).not.toMatch(/private|credential diagnostic/);
+    warning.mockClear();
+    await mark(); await contexts.beginPurge('owner-one', accountId);
+    expect(await authority().authorize(request())).toEqual({ allowed: false });
+    expect(warning).not.toHaveBeenCalled();
+  });
+  it('drains accepted SQL after runtime cancellation returns before the database operation', async () => {
+    const entered = defer<void>(); const actual = pins.get.bind(pins); const controller = new AbortController();
+    vi.spyOn(pins, 'get').mockImplementationOnce(key => { const pending = actual(key); entered.resolve(); return pending; });
+    let closing: Promise<void> | undefined; let closed = false;
+    try {
+      await db.transaction().execute(async held => {
+        await sql`LOCK TABLE google_runtime_policy_pins IN ACCESS EXCLUSIVE MODE`.execute(held);
+        const pending = authority().authorize({ ...request(), signal: controller.signal });
+        await entered.promise; controller.abort();
+        expect(await pending).toEqual({ allowed: false });
+        closing = pins.close().then(() => { closed = true; });
+        await new Promise(resolve => setTimeout(resolve, 30)); expect(closed).toBe(false);
+      });
+    } finally { await closing; }
+    expect(closed).toBe(true);
+  });
   it('aborts a stalled injected context dependency without waiting for its completion', async () => {
     vi.spyOn(contexts, 'inspect').mockImplementationOnce(() => new Promise(() => {}));
     const controller = new AbortController(); const pending = authority().authorize({ ...request(), signal: controller.signal });

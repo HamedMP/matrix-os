@@ -66,6 +66,33 @@ suite('durable immutable Google run pins', () => {
     const duplicate = input(); duplicate.stamps.push(duplicate.stamps[0]!); await expect(pins.latch(duplicate)).rejects.toThrow();
     const wrongKind = input(); wrongKind.stamps[0]!.dataKinds = ['gmail-content']; await expect(pins.latch(wrongKind)).rejects.toThrow();
   });
+  it.each(['get', 'latch', 'migrate', 'cleanup'] as const)('close drains accepted %s work before the host may destroy its pool', async method => {
+    let pending: Promise<unknown> | undefined; let closing: Promise<void> | undefined; let closed = false;
+    try {
+      await db.transaction().execute(async held => {
+        if (method === 'latch' || method === 'migrate') await sql`SELECT pg_advisory_xact_lock(551035505)`.execute(held);
+        else await sql`LOCK TABLE google_runtime_policy_pins IN ACCESS EXCLUSIVE MODE`.execute(held);
+        pending = method === 'get' ? pins.get(key) : method === 'latch' ? pins.latch(input()) : pins[method]();
+        await new Promise(resolve => setTimeout(resolve, 30));
+        closing = pins.close().then(() => { closed = true; });
+        await new Promise(resolve => setTimeout(resolve, 30));
+        expect(closed).toBe(false);
+        await expect(pins.get(key)).rejects.toThrow();
+      });
+    } finally { await pending; await closing; }
+    expect(closed).toBe(true);
+    expect((await sql`SELECT 1`.execute(db)).rows).toHaveLength(1);
+  });
+  it('bounds accepted in-flight work and releases capacity when actual SQL settles', async () => {
+    let pending: Promise<unknown>[] = [];
+    await db.transaction().execute(async held => {
+      await sql`LOCK TABLE google_runtime_policy_pins IN ACCESS EXCLUSIVE MODE`.execute(held);
+      pending = Array.from({ length: 64 }, () => pins.get(key));
+      await expect(pins.get(key)).rejects.toThrow('Google run policy unavailable');
+    });
+    await Promise.all(pending);
+    expect(await pins.get(key)).toBeNull();
+  });
   it('drains its own sweep and closes without destroying the injected host pool', async () => {
     pins.startCleanup(); await pins.close(); await pins.close();
     expect((await sql`SELECT 1`.execute(db)).rows).toHaveLength(1);
