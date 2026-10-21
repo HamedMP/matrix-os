@@ -32,7 +32,7 @@ describe("Gmail Pipedream attempt receipts", () => {
     owner = (await db.createUser({ clerkId: "attempt-owner", handle: "attemptowner", displayName: "Owner", email: "owner@example.invalid", containerId: "attempt-owner", pipedreamExternalId: "pd_owner" })).id;
     issued = []; eligible = true; inspectAccount.mockReset(); inspectAccount.mockResolvedValue(metadata);
     admit = vi.fn(async (_input, persist) => persist());
-    pipedream = { inspectAccount,
+    pipedream = { inspectAccount, revokeAccount: vi.fn(async () => { inspectAccount.mockResolvedValue({ ...metadata, healthy: false, dead: true }); }),
       createConnectToken: vi.fn(async (_id, options) => {
         const token = "ctok_" + randomBytes(16).toString("hex");
         issued.push({ token, webhookUri: options?.webhookUri ?? "" });
@@ -123,6 +123,22 @@ describe("Gmail Pipedream attempt receipts", () => {
     expect(await db.listConnectedServices(owner!)).toHaveLength(1);
     expect((await (await status(attempt.attemptId)).json()).status).toBe("succeeded");
   });
+  it('checks provider availability after owner admission so a queued callback cannot undo disconnect', async () => {
+    const original = await db.connectService({ userId: owner!, service: 'gmail', pipedreamAccountId: 'apn_work', accountLabel: 'Work', scopes: [] });
+    const attempt = await start();
+    let enter!: () => void; let release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const released = new Promise<void>(resolve => { release = resolve; });
+    admit.mockImplementationOnce(async (_input, persist) => { enter(); await released; await persist(); });
+    const queued = callback(0);
+    await entered;
+    const removed = await app.request('/' + original.id, { method: 'DELETE' });
+    expect(removed.status).toBe(200);
+    release();
+    expect((await queued).status).toBe(403);
+    expect(await db.listConnectedServices(owner!)).toEqual([]);
+    expect(await (await status(attempt.attemptId)).json()).toEqual({ status: 'pending' });
+  });
   it("caps simultaneous owner starts and cleans expired records without exposing secrets", async () => {
     const request = () => app.request("/connect", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ service: "gmail", connectionMethod: "pipedream" }) });
     // PGlite has one connection and cannot model concurrent transactions.
@@ -170,6 +186,10 @@ describe("Gmail Pipedream attempt receipts", () => {
     expect(issued[1]!.webhookUri).toBe('');
     expect(await db.pipedreamGmailAttempts!.status(pilot.attemptId, owner!)).toEqual({ status: 'pending' });
     expect((await db.raw('SELECT id FROM gmail_pipedream_attempts', [])).rows).toHaveLength(1);
+  });
+  it('fails closed when platform owner admission is absent', () => {
+    expect(() => createIntegrationRoutes({ db, pipedream, webhookSecret: 'legacy-test-secret', resolveUserId: async () => owner,
+      nativeGmailEligible: async () => true, pipedreamGmailAttempts: { callbackUrl, environment: 'production' } })).toThrow('Gmail connection receipts unavailable');
   });
   it("authenticates status, validates IDs and expires callbacks without projection", async () => {
     const attempt = await start();

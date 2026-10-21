@@ -20,6 +20,7 @@ const connectSchema = z.object({ service: z.string(), label: z.string().trim().m
 const hash = (secret: string) => createHash("sha256").update(secret).digest("hex");
 const matches = (secret: string, expected: string) => timingSafeEqual(Buffer.from(hash(secret), "hex"), Buffer.from(expected, "hex"));
 const unavailable = { error: "Connection unavailable" };
+class InvalidReceiptAccount extends Error {}
 
 export function createPipedreamGmailAttemptRoutes(options: {
   db: PlatformDb; pipedream: PipedreamConnectClient; config: PipedreamGmailAttemptConfig;
@@ -27,7 +28,7 @@ export function createPipedreamGmailAttemptRoutes(options: {
   isEligible(userId: string): Promise<boolean>;
 }) {
   const app = new Hono(); const store = options.db.pipedreamGmailAttempts;
-  if (!store || !options.pipedream.inspectAccount) throw new Error("Gmail connection receipts unavailable");
+  if (!store || !options.pipedream.inspectAccount || !options.admit) throw new Error("Gmail connection receipts unavailable");
   // The shared native/legacy connect router applies bodyLimit before selecting either transport.
   app.post("/connect", async (c, next) => {
     let input: z.infer<typeof connectSchema>;
@@ -88,22 +89,24 @@ export function createPipedreamGmailAttemptRoutes(options: {
       if (body.data.event === "CONNECTION_ERROR") { await store.fail(row.id); return c.json({ ok: true }); }
       const account = body.data.account;
       if (account.dead || account.external_id !== row.externalUserId) return c.json(unavailable, 403);
-      const metadata = await options.pipedream.inspectAccount!(account.id);
-      if (metadata.id !== account.id || metadata.externalUserId !== row.externalUserId || metadata.app !== "gmail" || !metadata.healthy || metadata.dead) return c.json(unavailable, 403);
       const user = row.userId ? await options.db.getUserById(row.userId) : null;
       if (user && user.pipedream_external_id !== row.externalUserId) return c.json(unavailable, 403);
       let persisted = false;
       const persist = async () => {
+        // Platform admission holds the same owner lock as disconnect through
+        // provider verification and the atomic receipt/projection commit.
+        const metadata = await options.pipedream.inspectAccount!(account.id);
+        if (metadata.id !== account.id || metadata.externalUserId !== row.externalUserId || metadata.app !== 'gmail' || !metadata.healthy || metadata.dead) throw new InvalidReceiptAccount();
         const connected = await store.complete(row, account.id, metadata.email);
         persisted = Boolean(connected);
         if (connected?.inserted) options.emit({ type: "integration:connected", service: "gmail", accountLabel: connected.account_label });
       };
-      if (options.admit) await options.admit({ externalUserId: row.externalUserId, accountId: account.id,
+      await options.admit!({ externalUserId: row.externalUserId, accountId: account.id,
         user: user ? { id: user.id, clerkId: user.clerk_id } : null }, persist);
-      else if (user) await persist();
       if (!persisted) await store.fail(row.id);
       return c.json({ ok: true });
     } catch (error) {
+      if (error instanceof InvalidReceiptAccount) return c.json(unavailable, 403);
       console.warn("[gmail-attempt] Callback unavailable:", error instanceof Error ? error.name : "UnknownError"); return c.json(unavailable, 503);
     }
   });
