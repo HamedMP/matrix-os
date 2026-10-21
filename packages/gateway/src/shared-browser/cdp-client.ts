@@ -121,6 +121,11 @@ export class BrowserCdpClient {
         && packet.error?.code === -32602 && packet.error?.message === 'No target with given id found';
       const missingObject = method === 'Runtime.callFunctionOn' && packet.error?.code === -32000
         && packet.error?.message === 'Could not find object with given id';
+      if (packet.error && !missing && !missingObject) {
+        const safeMethod = method && /^[A-Z][A-Za-z]*\.[A-Za-z][A-Za-z0-9]{0,80}$/.test(method) ? method : 'unknown';
+        console.warn('[shared-browser] CDP protocol unavailable', safeMethod,
+          Number.isSafeInteger(packet.error.code) ? packet.error.code : 'unknown');
+      }
       this.finish(packet.id, packet.error ? missing ? new BrowserCdpMissingTargetError()
         : missingObject ? new BrowserCdpMissingObjectError() : unavailable() : undefined,
       packet.result ?? {});
