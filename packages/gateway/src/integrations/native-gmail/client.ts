@@ -13,6 +13,8 @@ export function createNativeGmailClient(options: { legacy: PipedreamConnectClien
   const coalesce = createReadCoalescer(128, 10_000);
   const get = (input: NativeGmailRequest, limit?: number, signal?: AbortSignal, beforeSend?: BeforeGmailSend) => signal || beforeSend ? request(input, 'GET', limit, signal, beforeSend)
     : coalesce(JSON.stringify([proxyReadKey(input), limit ?? 2 * 1024 * 1024]), () => request(input, 'GET', limit));
+  const control = (beforeSend?: BeforeGmailSend, signal?: AbortSignal): [BeforeGmailSend?, AbortSignal?] =>
+    signal ? [beforeSend, signal] : beforeSend ? [beforeSend] : [];
   return {
     ...legacy,
     boundedFinanceAction: async (input, signal) => {
@@ -30,12 +32,12 @@ export function createNativeGmailClient(options: { legacy: PipedreamConnectClien
       if (!legacy.readDriveFile) throw new Error('Integration unavailable');
       return legacy.readDriveFile(input);
     },
-    proxyGet: (input, beforeSend) => isNativeGmailAccount(input.accountId) ? get(input, undefined, undefined, beforeSend) : legacy.proxyGet(input, ...(beforeSend ? [beforeSend] : [])),
-    proxyPost: (input, beforeSend) => isNativeGmailAccount(input.accountId) ? request(input, 'POST', undefined, undefined, beforeSend) : legacy.proxyPost(input, ...(beforeSend ? [beforeSend] : [])),
-    proxyPut: (input, beforeSend) => isNativeGmailAccount(input.accountId) ? request(input, 'PUT', undefined, undefined, beforeSend) : legacy.proxyPut(input, ...(beforeSend ? [beforeSend] : [])),
-    proxyPatch: (input, beforeSend) => isNativeGmailAccount(input.accountId) ? request(input, 'PATCH', undefined, undefined, beforeSend) : legacy.proxyPatch(input, ...(beforeSend ? [beforeSend] : [])),
-    proxyDelete: (input, beforeSend) => isNativeGmailAccount(input.accountId) ? request(input, 'DELETE', undefined, undefined, beforeSend) : legacy.proxyDelete(input, ...(beforeSend ? [beforeSend] : [])),
-    callAction: (input, beforeSend) => isNativeGmailAccount(input.accountId) ? request(input, 'POST', undefined, undefined, beforeSend) : legacy.callAction(input, ...(beforeSend ? [beforeSend] : [])),
+    proxyGet: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? get(input, undefined, signal, beforeSend) : legacy.proxyGet(input, ...control(beforeSend, signal)),
+    proxyPost: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'POST', undefined, signal, beforeSend) : legacy.proxyPost(input, ...control(beforeSend, signal)),
+    proxyPut: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'PUT', undefined, signal, beforeSend) : legacy.proxyPut(input, ...control(beforeSend, signal)),
+    proxyPatch: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'PATCH', undefined, signal, beforeSend) : legacy.proxyPatch(input, ...control(beforeSend, signal)),
+    proxyDelete: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'DELETE', undefined, signal, beforeSend) : legacy.proxyDelete(input, ...control(beforeSend, signal)),
+    callAction: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'POST', undefined, signal, beforeSend) : legacy.callAction(input, ...control(beforeSend, signal)),
     boundedGmailGet: async (raw, signal, beforeSend) => {
       const input = BoundedGmailReadSchema.parse(raw);
       if (!isNativeGmailAccount(input.accountId)) {
