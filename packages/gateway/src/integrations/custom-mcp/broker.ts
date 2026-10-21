@@ -7,6 +7,7 @@ import {
 } from "./crypto.js";
 import { MAX_CUSTOM_MCP_TOOLS, RemoteMcpClient } from "./client.js";
 import { customMcpArgumentsDigest } from "./approval-digest.js";
+import type { McpProgressListener } from "./tool-progress.js";
 import { validateCustomMcpUrl } from "./security.js";
 import { hasManagedSettingsClaim } from "./managed-settings-claim.js";
 import type {
@@ -413,6 +414,8 @@ export class CustomMcpBroker {
   }
 
   async callTool(input: {
+    onProgress?: McpProgressListener;
+    signal?: AbortSignal;
     userId: string;
     serverId: string;
     toolName: string;
@@ -427,6 +430,7 @@ export class CustomMcpBroker {
   }
 
   private async executeTool(input: {
+    onProgress?: McpProgressListener; signal?: AbortSignal;
     userId: string; serverId: string; toolName: string;
     arguments?: Record<string, unknown>; localProjection: CustomMcpServerProjection | null;
     approvalGranted?: boolean; approvalReceipt?: string; actorId?: string; runId?: string;
@@ -480,16 +484,21 @@ export class CustomMcpBroker {
       throw new CustomMcpBrokerError("forbidden");
     }
     enforceWriteGrant(current);
+    input.signal?.throwIfAborted();
     return this.client.callTool({
       serverId: row.id,
       url: row.url,
       authorization,
       toolName: input.toolName,
       arguments: input.arguments,
+      ...(input.onProgress ? { onProgress: input.onProgress } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
     });
   }
 
   async callSelectedTool(input: {
+    onProgress?: McpProgressListener;
+    signal?: AbortSignal;
     userId: string;
     serverId: string;
     toolName: string;
