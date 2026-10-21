@@ -1,4 +1,5 @@
 import { projectManagedCreditUsage } from "./provider-managed-credit-usage.js";
+import { nativeAccountPrincipalFingerprint } from "./native-account-metadata-binding.js";
 import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
 import { projectClaudeNativeAccount } from "./claude-native-account-projection.js";
 import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
@@ -358,6 +359,7 @@ function projectHarness(input: {
     displayName: input.stored.displayName,
     accentColor: input.stored.accentColor,
     enabled: Boolean(executionRouteAvailable
+      && !(nativeCredentialAuthenticated && source?.readiness.state === "auth_required")
       && input.stored.enabled && driver?.installState === "installed"),
     configuredEnabled: generatedNative ? true : input.stored.enabled,
     configuredAccessSourceId: input.stored.accessSourceId,
@@ -457,10 +459,22 @@ export async function projectProviderSettings(input: {
       delete nativeAccount.connectionDetails;
     } else if (metadata.connectionDetails) nativeAccount.connectionDetails = metadata.connectionDetails;
     if (metadata.authMethod === "terminal") {
+      nativeAccount.authMethod = "terminal";
       nativeAccount.authState = "authenticated";
       nativeAccount.lastCheckedAt = metadata.checkedAt;
     }
     if (metadata.authMethod === "terminal" && metadata.usage) nativeSource.usage = metadata.usage;
+  }
+  if (nativeAuthenticatedAccountId && nativeSource?.kind === "provider_account" && nativeSource.fundingKind === "owner_account") {
+    const saved = input.config.harnesses.find(row => row.harness === "codex" && row.accessSourceId === nativeSource.id);
+    const fingerprint = metadataFresh && metadata?.authMethod === "terminal" ? nativeAccountPrincipalFingerprint(metadata) : null;
+    const missingConsent = !saved?.nativeAccountGeneration || saved.nativeAccountConsentRevision === undefined;
+    const changedPrincipal = fingerprint !== null && saved?.nativeAccountGeneration !== fingerprint;
+    if (missingConsent || changedPrincipal) {
+      nativeSource.readiness = { state: "auth_required", action: "connect", safeReason: "auth", checkedAt: metadata?.checkedAt ?? null, staleAfter: metadata?.staleAfter ?? null };
+    } else if (fingerprint !== null && nativeAuthenticatedAccountId) {
+      nativeSource.readiness = { state: "ready", action: "none", safeReason: null, checkedAt: metadata!.checkedAt, staleAfter: metadata!.staleAfter };
+    }
   }
   const hermesMetadata = input.hermesNativeAccountMetadata;
   const hermesSource = sources.find(source => source.kind === "harness_profile" && source.harness === "hermes" && source.providerId === "openai-codex");

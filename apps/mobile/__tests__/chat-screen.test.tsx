@@ -2,12 +2,17 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
 import { TextInput } from "react-native";
 
-import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
+import ChatScreenRoute from "../app/(drawer)/(tabs)/(chats)/index";
+import { ActiveChatProvider } from "../components/chat/active-chat";
+import { ActiveChatScreen } from "../components/chat/ActiveChatScreen";
 import { CHAT_SUGGESTIONS } from "../components/chat/chat-suggestions";
 import { Icon } from "../components/ui/Icon";
 import { MicIcon } from "../components/ui/icons";
 
 import { flat } from "./ui-test-utils";
+
+// The Chats stack's layout holds the open chat's state above its screens.
+const ChatScreen = () => <ActiveChatProvider><ChatScreenRoute /></ActiveChatProvider>;
 
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: mockBotError }) }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => jest.fn() }));
@@ -362,6 +367,70 @@ describe("chat screen: new chat", () => {
     mockKeyboardVisible = true;
     view.rerender(<ChatScreen />);
     expect(flat(screen.getByTestId("composer")).paddingBottom).toBe(8);
+  });
+});
+
+describe("chat screen: chat opened from a project", () => {
+  const projectChat = (handlers: { onBack?: () => void; onNewChat?: () => void } = {}) => (
+    <ActiveChatScreen onBack={handlers.onBack ?? jest.fn()} onNewChat={handlers.onNewChat ?? jest.fn()} />
+  );
+
+  it("goes back to the project in place of opening the side panel, and starts new chats there", () => {
+    openChat();
+    const onBack = jest.fn();
+    const onNewChat = jest.fn();
+    render(<ActiveChatProvider>{projectChat({ onBack, onNewChat })}</ActiveChatProvider>);
+
+    expect(screen.getByRole("header", { name: "Habit tracker app" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open chats and projects" })).toBeNull();
+
+    fireEvent.press(screen.getByRole("button", { name: "Back" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(screen.getByRole("button", { name: "New chat" }));
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+    expect(mockStartDraftChat).not.toHaveBeenCalled();
+  });
+
+  it("keeps a half-typed reply and a message that was not sent once it has gone back and is opened again", () => {
+    openChat();
+    const view = render(<ActiveChatProvider>{projectChat()}</ActiveChatProvider>);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+    const options = mockSendMessage.mock.calls.at(-1)![1] as { onError: (error: Error) => void };
+    act(() => options.onError(new Error("Could not send message. Try again.")));
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Half a reply");
+
+    // Back leaves the project's chat; the Chats stack, and what it holds, stays.
+    view.rerender(<ActiveChatProvider>{null}</ActiveChatProvider>);
+    expect(screen.queryByLabelText("Message Matrix")).toBeNull();
+    view.rerender(<ActiveChatProvider>{projectChat()}</ActiveChatProvider>);
+
+    expect(screen.getByLabelText("Message Matrix").props.value).toBe("Half a reply");
+    expect(screen.getByText("Ship it")).toBeTruthy();
+    expect(screen.getByRole("alert", { name: "Not sent" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry sending" })).toBeTruthy();
+  });
+
+  it("shares one composer with the Chats tab's own chat screen beneath it", () => {
+    openChat();
+    render(<ActiveChatProvider><ChatScreenRoute />{projectChat()}</ActiveChatProvider>);
+    const [beneath, onTop] = screen.getAllByLabelText("Message Matrix");
+
+    fireEvent.changeText(onTop, "Half a reply");
+
+    expect(beneath.props.value).toBe("Half a reply");
+  });
+
+  it("leaves new-chat requests to the Chats tab's own chat screen", () => {
+    openChat();
+    const view = render(<ActiveChatProvider>{projectChat()}</ActiveChatProvider>);
+
+    mockDraftChatRequests = 1;
+    view.rerender(<ActiveChatProvider>{projectChat()}</ActiveChatProvider>);
+    act(() => jest.runOnlyPendingTimers());
+
+    expect(focus).not.toHaveBeenCalled();
   });
 });
 

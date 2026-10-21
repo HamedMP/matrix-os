@@ -96,14 +96,16 @@ stripe listen --forward-to "localhost:${PLATFORM_PORT:-9000}/billing/webhooks/st
 bun run dev:platform
 ```
 
-Set `MATRIX_CARD_TRIALS_ENABLED=true` and `MATRIX_CARD_TRIAL_DAYS=3` for the
-canonical test slice. The duration accepts integers from `1` through `30`; a
+Set `MATRIX_CARD_TRIALS_ENABLED=true`, `MATRIX_CARD_TRIAL_DAYS=3`, and
+`MATRIX_STARTER_TRIAL_DAYS=14` for the canonical test slice. Both duration
+settings accept integers from `1` through `30`; a
 shorter value compresses conversion testing but does not reproduce the normal
 three-day reminder transition. Drive a checkout for a first primary computer
-with `4242 4242 4242 4242`, and confirm:
+on each plan with `4242 4242 4242 4242`, and confirm:
 
 - Stripe collects the card, creates a `trialing` subscription with an
-  authoritative three-day `trial_end`, and charges `$0` initially;
+  authoritative 14-day Starter or three-day Builder/Max `trial_end`, and
+  charges `$0` initially;
 - the checkout attempt is recorded `open`, then flips to `paid` on
   `checkout.session.completed`;
 - a success redirect that **beats** the webhook lands the journey in
@@ -234,8 +236,9 @@ account and production platform env:
 11. Set the GitHub environment variable `MATRIX_CARD_TRIALS_ENABLED=true` only
     when the offer is ready to roll out. Returning it to `false` stops new
     offers without changing subscriptions already in trial. Set
-    `MATRIX_CARD_TRIAL_DAYS` to an integer from `1` through `30` (`3` is the
-    product default); duration changes affect only new offers and preserve
+    `MATRIX_CARD_TRIAL_DAYS` for Builder/Max (`3` by default) and
+    `MATRIX_STARTER_TRIAL_DAYS` for Starter (`14` by default). Both accept
+    integers from `1` through `30`; duration changes affect only new offers and preserve
     existing Stripe trials and reserved Checkout attempts. Pre-Checkout billing
     copy must continue to use a reserved attempt's duration after a redeploy.
 12. Rebuild the host bundle after changing any `NEXT_PUBLIC_*` value; build a

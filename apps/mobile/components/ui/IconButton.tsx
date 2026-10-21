@@ -8,7 +8,10 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
+import { size } from "@/lib/theme-v2";
+
 import { Icon, type IconData } from "./Icon";
+import { PRESSED_OPACITY } from "./pressable-state";
 
 export interface IconButtonProps
   extends Omit<ComponentProps<typeof Pressable>, "children" | "style"> {
@@ -38,16 +41,19 @@ export function IconButton({
   backgroundColor = "transparent",
   buttonSize = 40,
   borderRadius = 15,
-  pressedOpacity = 0.65,
+  pressedOpacity = PRESSED_OPACITY,
   style,
   ...pressableProps
 }: IconButtonProps) {
   const { theme } = useUnistyles();
   const resolvedIconColor = iconColor ?? theme.v2.colors.textDefault;
   const disabled = Boolean(pressableProps.disabled || loading);
+  // A button drawn smaller than a fingertip still answers a press on its whole 44pt square.
+  const reach = buttonSize < size.tapTarget ? (size.tapTarget - buttonSize) / 2 : undefined;
 
   return (
     <Pressable
+      hitSlop={reach}
       {...pressableProps}
       accessibilityRole={pressableProps.accessibilityRole ?? "button"}
       accessibilityState={{

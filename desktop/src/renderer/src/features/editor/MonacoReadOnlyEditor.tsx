@@ -1,3 +1,5 @@
+import { getThemeVariant, MONO_FONT_OPTIONS } from "@matrix-os/brand/themes";
+import { monacoTheme } from "@matrix-os/brand/themes/editor";
 import { useEffect, useRef } from "react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
@@ -41,8 +43,15 @@ export function monacoThemeForDocument(root: HTMLElement): "vs" | "vs-dark" {
 
 export function MonacoReadOnlyEditor({ path, content }: { path: string; content: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const appearanceMode = useAppearance((state) => state.mode);
+  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const appearanceMode = useAppearance((state) => state.resolvedMode);
   const appearanceThemeId = useAppearance((state) => state.themeId);
+  const customTheme = useAppearance((state) => state.customTheme);
+  const monoFontId = useAppearance((state) => state.monoFontId);
+  const appearanceRef = useRef({ appearanceMode, appearanceThemeId, customTheme, monoFontId });
+  useEffect(() => {
+    appearanceRef.current = { appearanceMode, appearanceThemeId, customTheme, monoFontId };
+  }, [appearanceMode, appearanceThemeId, customTheme, monoFontId]);
   const supportsMonaco = typeof Worker === "function"
     && typeof navigator !== "undefined"
     && !navigator.userAgent.includes("jsdom");
@@ -54,6 +63,8 @@ export function MonacoReadOnlyEditor({ path, content }: { path: string; content:
     let editor: MonacoEditor.IStandaloneCodeEditor | null = null;
     void import("monaco-editor").then((monaco) => {
       if (!current) return;
+      const { appearanceMode, appearanceThemeId, customTheme, monoFontId } = appearanceRef.current;
+      monaco.editor.defineTheme("matrix-appearance", monacoTheme(getThemeVariant(appearanceThemeId, appearanceMode, customTheme), appearanceMode === "dark"));
       editor = monaco.editor.create(host, {
         value: content,
         language: languageForPath(path),
@@ -61,7 +72,7 @@ export function MonacoReadOnlyEditor({ path, content }: { path: string; content:
         domReadOnly: true,
         automaticLayout: true,
         minimap: { enabled: false },
-        fontFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontFamily: MONO_FONT_OPTIONS.find(font => font.id === monoFontId)?.family ?? MONO_FONT_OPTIONS[0].family,
         fontSize: 13,
         lineHeight: 20,
         lineNumbersMinChars: 3,
@@ -72,15 +83,34 @@ export function MonacoReadOnlyEditor({ path, content }: { path: string; content:
         smoothScrolling: true,
         wordWrap: "off",
         padding: { top: 12, bottom: 12 },
-        theme: monacoThemeForDocument(document.documentElement),
+        theme: "matrix-appearance",
         ariaLabel: `Preview ${path}`,
       });
+      editorRef.current = editor;
+    }).catch((error: unknown) => {
+      if (current) console.warn("[desktop-preview] Monaco initialization failed:", error instanceof Error ? error.name : typeof error);
     });
     return () => {
       current = false;
       editor?.dispose();
+      editorRef.current = null;
     };
-  }, [appearanceMode, appearanceThemeId, content, path, supportsMonaco]);
+  }, [content, path, supportsMonaco]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    let current = true;
+    editor.updateOptions({ fontFamily: MONO_FONT_OPTIONS.find(font => font.id === monoFontId)?.family ?? MONO_FONT_OPTIONS[0].family });
+    void import("monaco-editor").then((monaco) => {
+      if (!current || editorRef.current !== editor) return;
+      monaco.editor.defineTheme("matrix-appearance", monacoTheme(getThemeVariant(appearanceThemeId, appearanceMode, customTheme), appearanceMode === "dark"));
+      monaco.editor.setTheme("matrix-appearance");
+    }).catch((error: unknown) => {
+      if (current) console.warn("[desktop-preview] Theme update failed:", error instanceof Error ? error.name : typeof error);
+    });
+    return () => { current = false; };
+  }, [appearanceMode, appearanceThemeId, customTheme, monoFontId]);
 
   if (!supportsMonaco) {
     return <pre className="min-h-0 flex-1 overflow-auto p-4 font-mono text-xs" data-monaco-fallback>{content}</pre>;

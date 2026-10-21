@@ -1,7 +1,9 @@
-import { FlatList, Text, View } from "react-native";
+import { Text, View } from "react-native";
+import Animated from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { ListRowSkeletonStack, SearchField } from "@/components/shell/Controls";
+import { ItemContextMenu, type ItemMenuAction } from "@/components/ItemContextMenu";
+import { SearchField } from "@/components/shell/Controls";
 import { TabScreen } from "@/components/shell/TabScreen";
 import {
   AddIcon,
@@ -13,9 +15,14 @@ import {
   Icon,
   IconTile,
   ItemRow,
+  ItemRowSkeletons,
+  SettleIn,
   TopBar,
   TopBarButton,
+  listItemExit,
+  listItemLayout,
 } from "@/components/ui";
+import { withRefreshTap } from "@/lib/haptics";
 
 import type { ProjectRow } from "./project-rows";
 
@@ -35,6 +42,10 @@ export interface ProjectsListScreenProps {
   onBack: () => void;
   onNewProject: () => void;
   onOpenProject: (projectId: string) => void;
+  /** Rename from a long press on the project's row. */
+  onRenameProject?: (projectId: string) => void;
+  /** Archive from a long press on the project's row. */
+  onArchiveProject?: (projectId: string) => void;
 }
 
 /** Every project, opened from the side panel of the Chats tab. */
@@ -49,8 +60,19 @@ export function ProjectsListScreen({
   onBack,
   onNewProject,
   onOpenProject,
+  onRenameProject,
+  onArchiveProject,
 }: ProjectsListScreenProps) {
   const { theme } = useUnistyles();
+  // What the project's own menu offers, from a long press on its row.
+  const rowActions = (projectId: string): ItemMenuAction[] => [
+    ...(onRenameProject
+      ? [{ id: "item" as const, key: "rename", label: "Rename", systemImage: "pencil" as const, onSelect: () => onRenameProject(projectId) }]
+      : []),
+    ...(onArchiveProject
+      ? [{ id: "item" as const, key: "archive", label: "Archive", systemImage: "archivebox" as const, onSelect: () => onArchiveProject(projectId) }]
+      : []),
+  ];
 
   return (
     <TabScreen testID="projects-screen">
@@ -65,44 +87,57 @@ export function ProjectsListScreen({
         <Text accessibilityRole="header" style={styles.title}>Projects</Text>
         <SearchField placeholder="Search projects" value={query} onChangeText={onChangeQuery} />
         {state === "loading" ? (
-          <ListRowSkeletonStack testID="project-skeleton-row" />
+          // Shaped like the project rows that replace it: a folder tile and two lines.
+          <ItemRowSkeletons testID="project-skeleton-row" leadingSize={44} leadingShape="tile" density="comfortable" gap={14} />
         ) : state === "error" ? (
           <View testID="projects-error" style={styles.notice}>
             <Text accessibilityRole="alert" style={styles.noticeText}>Projects could not be loaded.</Text>
             <Button variant="text" label="Try again" onPress={onRetry} />
           </View>
         ) : (
-          <FlatList
-            testID="projects-list"
-            data={rows}
-            keyExtractor={(row) => row.id}
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-            contentContainerStyle={styles.list}
-            renderItem={({ item: row }) => (
-              <ItemRow
-                testID={`project-row-${row.id}`}
-                accessibilityLabel={[row.name, row.updated].filter(Boolean).join(", ")}
-                density="comfortable"
-                gap={14}
-                leading={<IconTile icon={FolderIcon} size={44} />}
-                title={row.name}
-                subtitle={row.updated}
-                trailing={<Icon icon={ChevronRightIcon} size={CHEVRON_SIZE} color={theme.v2.colors.textSubtle} />}
-                onPress={() => onOpenProject(row.id)}
-              />
-            )}
-            ListEmptyComponent={query.trim() ? (
-              <Text style={styles.noticeText}>No projects match that search.</Text>
-            ) : (
-              <View testID="projects-empty" style={styles.empty}>
-                <EmptyState icon={FolderIcon} message="No projects yet" />
-                <Button fullWidth icon={AddIcon} label="New project" onPress={onNewProject} />
-              </View>
-            )}
-          />
+          <SettleIn style={styles.fill}>
+            <Animated.FlatList
+              testID="projects-list"
+              data={rows}
+              keyExtractor={(row) => row.id}
+              refreshing={refreshing}
+              onRefresh={withRefreshTap(onRefresh)}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              contentContainerStyle={styles.list}
+              itemLayoutAnimation={listItemLayout}
+              renderItem={({ item: row }) => (
+                <Animated.View exiting={listItemExit}>
+                  <ItemContextMenu
+                    title={row.name}
+                    actions={rowActions(row.id)}
+                    backgroundColor={theme.v2.colors.background}
+                    cornerRadius={theme.v2.radius.card}
+                  >
+                    <ItemRow
+                      testID={`project-row-${row.id}`}
+                      accessibilityLabel={[row.name, row.updated].filter(Boolean).join(", ")}
+                      density="comfortable"
+                      gap={14}
+                      leading={<IconTile icon={FolderIcon} size={44} />}
+                      title={row.name}
+                      subtitle={row.updated}
+                      trailing={<Icon icon={ChevronRightIcon} size={CHEVRON_SIZE} color={theme.v2.colors.textSubtle} />}
+                      onPress={() => onOpenProject(row.id)}
+                    />
+                  </ItemContextMenu>
+                </Animated.View>
+              )}
+              ListEmptyComponent={query.trim() ? (
+                <Text style={styles.noticeText}>No projects match that search.</Text>
+              ) : (
+                <View testID="projects-empty" style={styles.empty}>
+                  <EmptyState icon={FolderIcon} message="No projects yet" />
+                  <Button fullWidth icon={AddIcon} label="New project" onPress={onNewProject} />
+                </View>
+              )}
+            />
+          </SettleIn>
         )}
       </View>
     </TabScreen>
@@ -119,6 +154,9 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     ...theme.v2.text.title,
     color: theme.v2.colors.textDefault,
+  },
+  fill: {
+    flex: 1,
   },
   notice: {
     alignItems: "center",

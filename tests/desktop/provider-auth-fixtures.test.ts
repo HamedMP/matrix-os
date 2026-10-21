@@ -133,3 +133,31 @@ it("inline Claude bounds start receipts and retains the live receipt under capac
     expect((await (await post("", start(0))).json()).id).not.toBe(firstId);
   } finally { await gateway.close(); }
 });
+
+it("Figma fixture logs out only the selected Codex account with current revision", async () => {
+  const gateway = await startAgentsProvidersWorkflowGateway();
+  const post = (path: string, body: object) => fetch(`${gateway.url}${path}`, {
+    method: "POST", signal: AbortSignal.timeout(5000), headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const read = async () => ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(5000) })).json());
+  try {
+    expect((await post("/api/ai/provider-settings/workflows/keys", {
+      harnessInstanceId: "codex_harness", providerId: "openai", apiKey: "sk-safe-fixture-valid",
+    })).status).toBe(200);
+    const before = await read();
+    const logout = { type: "logout_account", accountId: "codex_account", expectedRevision: before.revision, idempotencyKey: "fixture-codex-logout" };
+    expect((await post("/api/ai/provider-settings/actions", { ...logout, accountId: before.accounts[0]!.id })).status).toBe(400);
+    expect((await post("/api/ai/provider-settings/actions", { ...logout, expectedRevision: before.revision - 1 })).status).toBe(409);
+    expect(gateway.events).not.toContain("logout");
+    expect((await read()).accounts.find(account => account.id === "codex_account")?.authState).toBe("authenticated");
+    expect((await post("/api/ai/provider-settings/actions", logout)).status).toBe(200);
+    const after = await read();
+    expect(after.accounts.find(account => account.id === "codex_account")?.authState).toBe("unauthenticated");
+    expect(after.harnesses.find(harness => harness.id === "codex_harness")?.enabled).toBe(false);
+    expect(after.accounts.find(account => account.id !== "codex_account")).toEqual(before.accounts.find(account => account.id !== "codex_account"));
+    expect(after.harnesses.find(harness => harness.id === "claude_harness")).toEqual(before.harnesses.find(harness => harness.id === "claude_harness"));
+    expect(after.revision).toBe(before.revision + 1);
+    expect(gateway.events.filter(event => event === "logout")).toHaveLength(1);
+    expect(gateway.events).not.toContain("disconnect");
+  } finally { await gateway.close(); }
+});
