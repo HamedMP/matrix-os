@@ -396,7 +396,8 @@ export function createApp(deps: {
     verify:async(token)=>{const result=await clerkAuth?.verify(token);return result?.authenticated?result.userId??null:null;},
     webhookSecret:appEnv.CLERK_USER_WEBHOOK_SIGNING_SECRET, publishableKey:appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
     exportData:deps.accountDeletion?.exportData,exportPlatformData:deps.accountDeletion?.exportPlatformData,
-    registerAppleAuthorization:deps.accountDeletion?.registerAppleAuthorization}));
+    registerAppleAuthorization:deps.accountDeletion?.registerAppleAuthorization,
+    newRequestsEnabled:appEnv.ACCOUNT_DELETION_ENABLED==='true'}));
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
