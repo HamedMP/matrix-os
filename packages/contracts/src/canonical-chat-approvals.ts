@@ -22,6 +22,7 @@ export interface CanonicalChatApprovalView {
   allowedDecisions: CanonicalChatApprovalDecision[];
   pending: boolean;
   decision?: CanonicalChatApprovalDecision;
+  reason?: "expired";
   timestamp: number;
   beforeMessageId?: string;
 }
@@ -32,12 +33,12 @@ export interface CanonicalChatApprovalView {
  */
 export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse, "runs" | "turns" | "messages" | "activities">): CanonicalChatApprovalView[] {
   const approvals = new Map<string, CanonicalChatApprovalView>();
-  const resolved = new Map<string, CanonicalChatApprovalDecision>();
+  const resolved = new Map<string, { decision: CanonicalChatApprovalDecision; reason?: "expired" }>();
   const key = (runId: string, approvalId: string) => `${runId}\0${approvalId}`;
   for (const message of detail.messages) {
     if (!message.runId) continue;
     for (const part of message.parts) {
-      if (part.type === "approval_result") resolved.set(key(message.runId, part.approvalId), part.decision);
+      if (part.type === "approval_result") resolved.set(key(message.runId, part.approvalId), { decision: part.decision });
       if (part.type !== "approval_request") continue;
       approvals.set(key(message.runId, part.approvalId), {
         ...part, ...canonicalChatApprovalDisplay(part.title, part.description), id: message.id, runId: message.runId,
@@ -46,7 +47,9 @@ export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse,
     }
   }
   for (const activity of detail.activities) {
-    if (activity.type === "approval.resolved") resolved.set(key(activity.runId, activity.approvalId), activity.decision);
+    if (activity.type === "approval.resolved") resolved.set(key(activity.runId, activity.approvalId), {
+      decision: activity.decision, ...(activity.reason ? { reason: activity.reason } : {}),
+    });
     if (activity.type !== "approval.requested") continue;
     const identity = key(activity.runId, activity.approvalId);
     const existing = approvals.get(identity);
@@ -68,10 +71,11 @@ export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse,
     const turn = detail.turns.find(t => t.id === run.turnId);
     const input = detail.messages.find(m => m.id === turn?.inputMessageId);
     const next = input && detail.messages.find(m => m.role === "user" && m.seq > input.seq && m.turnId !== run.turnId);
+    const outcome = resolved.get(identity);
+    const runActive = ["accepted", "running", "waiting_for_approval", "waiting_for_input"].includes(run.status);
     return [{ ...approval,
-      ...(resolved.has(identity) ? { decision: resolved.get(identity) } : {}),
-      pending: ["accepted", "running", "waiting_for_approval", "waiting_for_input"].includes(run.status)
-        && !resolved.has(identity),
+      ...(outcome ? { decision: outcome.decision, ...(outcome.reason ? { reason: outcome.reason } : {}) } : {}),
+      pending: runActive && !resolved.has(identity),
       ...(next ? { beforeMessageId: next.id } : {}),
     }];
   });

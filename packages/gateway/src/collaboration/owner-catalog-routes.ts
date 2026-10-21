@@ -6,6 +6,7 @@ import {
   CollaborationRuntimeIdSchema,
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
+import { registerOwnerResourceReauthorizationRoutes } from "./owner-resource-reauthorization-routes.js";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import {
   handle, ownerRuntimeIdentity, readJson,
@@ -13,6 +14,7 @@ import {
 } from "./route-support.js";
 
 export function registerOwnerCatalogRoutes(routes: Hono, options: CollaborationRouteOptions): void {
+  registerOwnerResourceReauthorizationRoutes(routes, options);
   routes.post("/api/collaboration/runtimes/:runtimeId/catalog/lookup", async (c) => handle(c, async () => {
     const { value, bytes } = await readJson(c);
     const input = CollaborationOwnerCatalogResolveRequestSchema.parse(value);

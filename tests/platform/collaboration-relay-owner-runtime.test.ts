@@ -21,10 +21,13 @@ import { createOrganizationPrecondition } from "../../packages/gateway/src/colla
 import { OwnerRuntimeSessionService } from "../../packages/gateway/src/collaboration/owner-runtime-sessions.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { createCollaborationRoutes, type CollaborationRouteOptions } from "../../packages/gateway/src/collaboration/routes.js";
+import { CollaborationResourceCatalog } from "../../packages/gateway/src/collaboration/resource-catalog.js";
 import { CollaborationRelay } from "../../packages/platform/src/collaboration/relay.js";
 import {
   ed25519PrivateKeyFromSeed, ed25519PublicKeyRaw, possessionPayload, proofKeyThumbprint, signEd25519, ticketSigningPayload,
 } from "../../packages/platform/src/collaboration/ticket-crypto.js";
+import { createCliCollaborationTransport } from "../../packages/sync-client/src/cli/collaboration-direct-transport.js";
+import { createCollaborationDirectApi } from "../../packages/ui/src/collaboration/direct-api.js";
 import { createCollaborationDirectClient } from "../../packages/ui/src/collaboration/direct-client.js";
 import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "../gateway/collaboration-test-support.js";
 
@@ -54,6 +57,8 @@ describe("relaying a private project owner's setup requests", () => {
   let home: Hono;
   let relay: CollaborationRelay;
   let forwarded: Headers[];
+  let catalog: CollaborationResourceCatalog;
+  let fileId: string;
   let projectSharing: { preview: ReturnType<typeof vi.fn>; confirm: ReturnType<typeof vi.fn> };
   let warn: ReturnType<typeof vi.spyOn>;
 
@@ -109,12 +114,15 @@ describe("relaying a private project owner's setup requests", () => {
         createdAt: now.toISOString(), updatedAt: now.toISOString(),
       })),
     };
+    catalog = new CollaborationResourceCatalog(fixture.db);
+    fileId = (await catalog.register({ ownerId, projectId: "project_shared", kind: "file", path: "notes.txt", incarnation: "a".repeat(64) })).id;
     home = new Hono();
     home.route("/", createDirectSessionRoutes({ sessions: directSessions, ownerRuntimeSessions }));
     home.route("/", createCollaborationRoutes({
       runtimeId, repository, authority, directSessions, ownerRuntimeSessions, projectSharing,
       verifier: new CollaborationActorProofVerifier({ runtimeId, keys: { "legacy-1": "x".repeat(32) }, now: () => now, authority }),
       executionPolicies: { resolve: async () => null },
+      resources: { catalog, driver: { inspect: async () => ({ incarnation: "b".repeat(64) }) } },
       resolveParticipant: async (actorId: string) => ({ actorId, displayName: actorId }),
     } as unknown as CollaborationRouteOptions));
     forwarded = [];
@@ -124,7 +132,7 @@ describe("relaying a private project owner's setup requests", () => {
       // Stubbing a route for the private scope here is what hid the owner-setup 404 in production.
       resolveScopeHome: async (id) => (id === sharedScopeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       resolveInvitationHome: async () => null,
-      resolveRuntimeHome: async () => null,
+      resolveRuntimeHome: async (actorId, id) => actorId === ownerId && id === runtimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null,
       resolveSessionHome: async (id) => (id === logicalRuntimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       // Only the runtime's own owner may be routed to it by runtime id.
       resolveOwnerRuntimeHome: async (actorId, id) => (actorId === ownerId && id === logicalRuntimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
@@ -184,6 +192,83 @@ describe("relaying a private project owner's setup requests", () => {
     const signed = forwarded.filter((headers) => headers.has("x-matrix-collaboration-session"));
     expect(signed).toHaveLength(4);
     for (const headers of signed) expect(headers.get(OWNER_RUNTIME_HEADER)).toBe("1");
+  });
+
+  it("carries exact owner resource inspection and explicit confirmation through client, relay and real home authentication", async () => {
+    const direct = ownerClient();
+    const base = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/${fileId}/reauthorization`;
+    const request = { scopeId: sharedScopeId, organizationId, kind: "file" };
+    await expect(direct.requestOwnerRuntime(runtimeId, organizationId, `${base}/inspect`, request))
+      .resolves.toMatchObject({ resourceId: fileId, projectId: "project_shared", expectedRevision: "0", currentIncarnation: "b".repeat(64) });
+    await expect(direct.requestOwnerRuntime(runtimeId, organizationId, `${base}/confirm`, {
+      ...request, projectId: "project_shared", expectedRevision: "0", currentIncarnation: "b".repeat(64), confirmCurrentObject: true,
+    })).resolves.toMatchObject({ scopeId: sharedScopeId, entry: { id: fileId, revision: "1" } });
+    expect(await catalog.get(fileId)).toMatchObject({ id: fileId, incarnation: "b".repeat(64), revision: 1 });
+    for (const invalid of [`${base}/delete`, `${base}/confirm/extra`, base.replace(fileId, "any") + "/confirm"]) {
+      await expect(direct.requestOwnerRuntime(runtimeId, organizationId, invalid, request)).rejects.toMatchObject({ code: "invalid_request" });
+    }
+  });
+
+  it("routes the shared API facade through the signed owner-runtime transport for recovery", async () => {
+    const api = createCollaborationDirectApi({ platformBaseUrl: PLATFORM, fetchImpl: platformFetch(ownerId), clientOrigin: PLATFORM, now: () => now });
+    const path = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/${fileId}/reauthorization/inspect`;
+    await expect(api.post(path, { scopeId: sharedScopeId, organizationId, kind: "file" }))
+      .resolves.toMatchObject({ resourceId: fileId, currentIncarnation: "b".repeat(64) });
+  });
+
+  it("uses the existing CLI signer for explicit owner recovery through the real relay and home", async () => {
+    const fetchImpl = platformFetch(ownerId);
+    const transport = createCliCollaborationTransport({ platformUrl: PLATFORM, token: "owner-token", fetchImpl, clientOrigin: PLATFORM, now: () => now });
+    const body = { scopeId: sharedScopeId, organizationId, kind: "file" };
+    await expect(transport.requestOwnerResourceReauthorization({ runtimeId, resourceId: fileId, action: "inspect", body }))
+      .resolves.toMatchObject({ resourceId: fileId, expectedRevision: "0", currentIncarnation: "b".repeat(64) });
+    expect((await catalog.get(fileId))?.incarnation).toBe("a".repeat(64));
+    await expect(transport.requestOwnerResourceReauthorization({ runtimeId, resourceId: fileId, action: "confirm", body: {
+      ...body, projectId: "project_shared", expectedRevision: "0", currentIncarnation: "b".repeat(64), confirmCurrentObject: true,
+    } })).resolves.toMatchObject({ scopeId: sharedScopeId, entry: { id: fileId, revision: "1" } });
+    const count = fetchImpl.mock.calls.length;
+    await expect(transport.requestOwnerResourceReauthorization({ runtimeId, resourceId: fileId, action: "confirm", body })).rejects.toThrow();
+    expect(fetchImpl.mock.calls).toHaveLength(count);
+  });
+
+  it("keeps the CLI bearer on the platform origin while signing a different owner endpoint", async () => {
+    const base = platformFetch(ownerId);
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await base(input, init);
+      if (!String(input).endsWith("/owner-runtime/connections")) return response;
+      const issued = await response.json(); issued.endpoint.origin = HOME; return Response.json(issued);
+    });
+    const transport = createCliCollaborationTransport({ platformUrl: PLATFORM, token: "owner-token", fetchImpl, clientOrigin: PLATFORM, now: () => now });
+    await transport.requestOwnerResourceReauthorization({ runtimeId, resourceId: fileId, action: "inspect",
+      body: { scopeId: sharedScopeId, organizationId, kind: "file" } });
+    const calls = fetchImpl.mock.calls.filter(([url]) => new URL(String(url)).origin === new URL(HOME).origin);
+    expect(calls).toHaveLength(2);
+    for (const [, init] of calls) expect(new Headers(init?.headers).has("authorization")).toBe(false);
+    expect(new Headers(fetchImpl.mock.calls[0]![1]?.headers).get("authorization")).toBe("Bearer owner-token");
+  });
+
+  it("rejects mismatched owner tickets, unsafe endpoints and platform sign-in rejection before any owner operation", async () => {
+    for (const change of ["organization", "runtime", "proof-key", "plaintext"]) {
+      const base = platformFetch(ownerId);
+      const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const response = await base(input, init);
+        const issued = await response.json();
+        if (change === "organization") issued.signedTicket.ticket.organizationId = "org_other";
+        if (change === "runtime") issued.signedTicket.ticket.runtime.runtimeId = "runtime_other";
+        if (change === "proof-key") issued.signedTicket.ticket.proofKeyThumbprint = "z".repeat(43);
+        if (change === "plaintext") issued.endpoint.origin = "http://203.0.113.10";
+        return Response.json(issued);
+      });
+      const transport = createCliCollaborationTransport({ platformUrl: PLATFORM, token: "owner-token", fetchImpl, clientOrigin: PLATFORM, now: () => now });
+      await expect(transport.requestOwnerResourceReauthorization({ runtimeId, resourceId: fileId, action: "inspect",
+        body: { scopeId: sharedScopeId, organizationId, kind: "file" } })).rejects.toThrow();
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    }
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 401 }));
+    const transport = createCliCollaborationTransport({ platformUrl: PLATFORM, token: "owner-token", fetchImpl, now: () => now });
+    await expect(transport.requestOwnerResourceReauthorization({ runtimeId, resourceId: fileId, action: "inspect",
+      body: { scopeId: sharedScopeId, organizationId, kind: "file" } })).rejects.toMatchObject({ code: "auth_rejected" });
+    expect(fetchImpl).toHaveBeenCalledOnce(); expect(forwarded).toHaveLength(0);
   });
 
   function signedHeaders(sessionId: string, key: ReturnType<typeof generateKeyPairSync>, method: string, path: string) {

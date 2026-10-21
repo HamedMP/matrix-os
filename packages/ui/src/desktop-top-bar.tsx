@@ -36,9 +36,11 @@ export function DesktopTopBarActions({ onSearch, inbox, help, computer, update, 
   </nav>;
 }
 
-export function DesktopHelpMenu({ gettingStarted, gettingStartedOpen = false, onGettingStartedClose, triggerRef, incomplete, onSupport, discordIcon, overlay }: {
+export function DesktopHelpMenu({ gettingStarted, gettingStartedOpen = false, onGettingStartedClose, triggerRef, anchorTrigger, incomplete, onSupport, discordIcon, overlay }: {
   gettingStarted: ReactNode | ((closeHelp: () => void) => ReactNode);
   gettingStartedOpen?: boolean; onGettingStartedClose?(): void; triggerRef?: Ref<HTMLButtonElement>;
+  /** The checklist owner supplies its Anchor so it shares that owner's Radix context. */
+  anchorTrigger?: (trigger: ReactNode) => ReactNode;
   incomplete: boolean; onSupport(): void; discordIcon: ReactNode; overlay?: MenuOverlay;
 }) {
   const helpScope = useHelpPopoverScope(undefined);
@@ -53,8 +55,7 @@ export function DesktopHelpMenu({ gettingStarted, gettingStartedOpen = false, on
     if (nextOpen) onGettingStartedClose?.();
     setOpen(nextOpen);
   }}>
-    {/* Keep the checklist anchored to the title bar when its Help row is hidden. */}
-    {triggerRef ? <Popover.Anchor asChild>{trigger}</Popover.Anchor> : trigger}
+    {anchorTrigger ? anchorTrigger(trigger) : trigger}
     <Popover.Portal {...helpScope} forceMount><Popover.Content {...helpScope} hidden={!helpOpen} aria-label="Help" side="bottom" align="end" sideOffset={6} collisionPadding={8}
       onCloseAutoFocus={(event) => { if (gettingStartedOpen) event.preventDefault(); }}
       forceMount className="data-[state=closed]:hidden no-drag w-[240px] rounded-xl border p-1.5 shadow-lg outline-none" style={{ ...colors, zIndex: "var(--desktop-menu-z, 11000)" }}>

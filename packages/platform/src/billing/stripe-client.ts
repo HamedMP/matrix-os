@@ -78,6 +78,7 @@ export interface StripeBillingClient {
     url: string;
     id: string;
   }>;
+  expireCheckoutSession?(id: string): Promise<StripeCheckoutSessionProjection>;
   retrieveTrackingCheckout?(id: string): Promise<unknown>;
   retrieveTrackingInvoice?(id: string): Promise<unknown>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;

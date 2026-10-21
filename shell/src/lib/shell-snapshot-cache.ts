@@ -1,5 +1,6 @@
 "use client";
 
+import { normalizeAppearance } from "@matrix-os/brand/themes/preferences";
 import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 import type { Theme } from "@/hooks/useTheme";
 import type { DesktopConfig } from "@/hooks/useDesktopConfig";
@@ -139,6 +140,7 @@ function normalizeThemeSnapshot(value: unknown): Theme | undefined {
   if (Object.keys(colors).length === 0 || Object.keys(fonts).length === 0) return undefined;
   return {
     name: safeString(value.name, 80) ?? "cached",
+    ...(isRecord(value.appearance) ? { appearance: normalizeAppearance(value.appearance) } : {}),
     ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
     ...(value.style === "flat" ||
       value.style === "neumorphic" ||

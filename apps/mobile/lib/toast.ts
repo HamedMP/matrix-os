@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 
+import { successHaptic, warningHaptic } from "@/lib/haptics";
+
 export type ToastTone = "success" | "error";
 
 /** A short note at the top of the screen that goes away by itself. */
@@ -40,11 +42,16 @@ function subscribe(listener: () => void) {
 
 const currentToast = () => current;
 
-/** Shows `message` in the toast host mounted at the root of the app. Without a host, nothing is shown. */
+/**
+ * Shows `message` in the toast host mounted at the root of the app, with the
+ * haptic that matches its tone. Without a host, nothing is shown or played.
+ */
 export function showToast(message: string, tone: ToastTone = "success"): void {
   if (listeners.length === 0) return;
   lastId += 1;
   publish({ id: lastId, message, tone });
+  if (tone === "success") successHaptic();
+  else warningHaptic();
 }
 
 /** Hides the toast named `id`, unless a later one has replaced it. */
