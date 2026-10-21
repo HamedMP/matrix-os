@@ -3,6 +3,7 @@
 // enforced by the parsers). All user-facing error strings go through the
 // shared display boundary — upstream provider/platform text never renders.
 import { create } from "zustand";
+import { GmailConnectionMethodSchema, type GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
 import { AppError, categoryMessage } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import { toUserMessage } from "../../lib/errors";
@@ -41,7 +42,7 @@ interface IntegrationsState {
   syncNow: (apiOverride?: ApiClient | null) => Promise<"ok" | "failed" | "superseded">;
   // Starts the OAuth flow: returns the HTTPS consent URL to open externally,
   // or null after setting a generic errorMessage.
-  startConnect: (serviceId: string, apiOverride?: ApiClient | null) => Promise<string | null>;
+  startConnect: (serviceId: string, apiOverride?: ApiClient | null, connectionMethod?: GmailConnectionMethod) => Promise<string | null>;
   // Disconnects one account. On failure the connection stays in the list and
   // errorMessage holds generic copy (partial-failure safe).
   disconnect: (connectionId: string, apiOverride?: ApiClient | null) => Promise<boolean>;
@@ -145,9 +146,9 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     }
   },
 
-  startConnect: async (serviceId, apiOverride) => {
+  startConnect: async (serviceId, apiOverride, connectionMethod) => {
     const api = resolveApi(apiOverride);
-    if (!isValidServiceId(serviceId)) {
+    if (!isValidServiceId(serviceId) || (connectionMethod && (serviceId !== "gmail" || !GmailConnectionMethodSchema.safeParse(connectionMethod).success))) {
       set({ errorMessage: categoryMessage("server") });
       return null;
     }
@@ -160,7 +161,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     // through linking a third-party account to a runtime they have left.
     const runtimeGeneration = captureRuntimeGeneration();
     try {
-      const raw = await api.post<unknown>(CONNECT_PATH, { service: serviceId });
+      const raw = await api.post<unknown>(CONNECT_PATH, { service: serviceId, ...(connectionMethod ? { connectionMethod } : {}) });
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       const url = parseConnectUrl(raw);
       if (!url) {

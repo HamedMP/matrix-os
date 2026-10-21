@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const customDiscovery = ["list_custom_mcp_servers", "describe_custom_mcp_server"];
 const fullBaseline = [
   "list_integration_inventory", "list_connected_services", "describe_service",
-  "connect_service", "sync_services", "call_service", "disconnect_service",
+  "get_gmail_connection_options", "connect_service", "sync_services", "call_service", "disconnect_service",
   ...customDiscovery, "call_custom_mcp_tool", "jev_evaluate",
   "list_chat_agent_options", "create_chat_agent",
 ];

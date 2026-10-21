@@ -289,3 +289,6 @@ export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./c
 export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
 
 export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";
+
+export { GmailConnectionChoice } from "./integrations/GmailConnectionChoice.js";
+export { useGmailConnectionChoice } from "./integrations/use-gmail-connection-choice.js";

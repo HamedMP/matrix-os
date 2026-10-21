@@ -61,6 +61,8 @@ export {
   deleteIntegrationConnection,
   fetchAvailableIntegrations,
   fetchConnectedIntegrations,
+  fetchGmailConnectionOptions,
+  type IntegrationConnectOptions,
   refreshIntegrationConnection,
   syncIntegrationConnections,
   MOBILE_INTEGRATIONS_REDIRECT_URI,
