@@ -17,10 +17,11 @@ it("negotiates content explicitly while preserving the strict old SSE wire forma
   const modern = (await app.request("/api/chats/events", { headers: {
     accept: "text/event-stream", "x-matrix-chat-protocol": "2",
   } })).body!.getReader();
+  const aware = (await app.request("/api/chats/events?importSourceVersion=1", { headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" } })).body!.getReader();
   try {
-    for (const reader of [old, modern]) { await reader.read(); await reader.read(); }
+    for (const reader of [old, modern, aware]) { await reader.read(); await reader.read(); }
     const event = { cursor: 1, chatId: "chat_test", revision: 0, eventType: "chat.created" as const,
-      createdAt: "2026-09-06T00:00:00.000Z", payload: { streamContent: { record: { chat: {
+      createdAt: "2026-09-06T00:00:00.000Z", payload: { streamContent: { record: { importSource: { harness: "claude" as const }, chat: {
         id: "chat_test", ownerScope: { type: "personal", ownerId: "owner_a" }, title: "Test",
         lifecycle: "active", attention: "none", revision: 0, messageCount: 0,
         createdAt: "2026-09-06T00:00:00.000Z", updatedAt: "2026-09-06T00:00:00.000Z",
@@ -30,7 +31,10 @@ it("negotiates content explicitly while preserving the strict old SSE wire forma
     const legacyFrame = decode((await old.read()).value!);
     expect(CanonicalChatStreamServerFrameSchema.parse(legacyFrame).type).toBe("chat.event");
     expect(JSON.stringify(legacyFrame)).not.toContain("streamContent");
-    expect(decode((await modern.read()).value!)).toMatchObject({ type: "chat.content", content: event.payload.streamContent });
+    const legacyContent = decode((await modern.read()).value!);
+    expect(legacyContent.type).toBe("chat.content");
+    expect(legacyContent.content.record).not.toHaveProperty("importSource");
+    expect(decode((await aware.read()).value!)).toMatchObject({ type: "chat.content", content: event.payload.streamContent });
     publish({ owner: { type: "personal", ownerId: "owner_a" }, event: { ...event, cursor: 2, payload: {
       streamContent: { record: { chat: { ...event.payload.streamContent.record.chat,
         ownerScope: { type: "personal", ownerId: "owner_b" },
@@ -41,5 +45,5 @@ it("negotiates content explicitly while preserving the strict old SSE wire forma
     expect(JSON.stringify(isolated)).not.toContain("owner_b");
     const invalid = await app.request("/api/chats/events", { headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "999" } });
     expect(invalid.status).toBe(400);
-  } finally { await old.cancel(); await modern.cancel(); stream.shutdown(); }
+  } finally { await old.cancel(); await modern.cancel(); await aware.cancel(); stream.shutdown(); }
 });

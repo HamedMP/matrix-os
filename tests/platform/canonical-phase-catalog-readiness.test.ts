@@ -23,10 +23,13 @@ import { createCanonicalPhaseReadiness } from "../../packages/gateway/src/chat/c
 import { composePhaseCatalog } from "../../packages/gateway/src/chat/phase-catalog-composition.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
-afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.resetAllMocks(); vi.restoreAllMocks(); });
 const model = "@cf/zai-org/glm-5.3-flash";
 const identity = { ownerId: "catalog_owner", machineId: "catalog_machine", runtimeSlot: "primary" };
 const at = new Date("2026-10-11T00:00:00.000Z");
+
+// Keep fixture closures out of the original implementation restored by mockReset.
+const fixtureMock = <T extends (...args: never[]) => unknown>(implementation: T) => vi.fn<T>().mockImplementation(implementation);
 
 async function fixture(canonical = true, promotion = false) {
   const { db, close } = await createCanonicalPlatformTestDb(); cleanup.push(close);
@@ -43,11 +46,11 @@ async function fixture(canonical = true, promotion = false) {
   await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [model] });
   await repository.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true, allowedModelIds: [model], monthlyBudgetMicrousd: 1000, expiresAt: null });
   await repository.grantCredit({ identity, entryId: "catalog_fixture_credit", kind: "promotional_grant", amountMicrousd: 1000, sourceReference: "fixture" });
-  const readCached = vi.fn(async () => ({ ready: true, checkedAt: at.toISOString(), staleAfter: "2026-10-11T00:10:00.000Z" }));
-  const probe = vi.fn(async (): Promise<{ ready: boolean; checkedAt: string; staleAfter: string }> => { throw new Error("Unreviewed warming forbidden"); });
+  const readCached = fixtureMock(async () => ({ ready: true, checkedAt: at.toISOString(), staleAfter: "2026-10-11T00:10:00.000Z" }));
+  const probe = fixtureMock(async (): Promise<{ ready: boolean; checkedAt: string; staleAfter: string }> => { throw new Error("Unreviewed warming forbidden"); });
   const platform = new Hono().route("/internal/containers/:handle/ai", createAiFundedRuntimeRoutes({ db, repository, platformSecret: secret,
     isolatedChat: phase, promotionalGrant: promotion ? { enabled: true, campaignId: "fixture-campaign", amountMicrousd: 1000, expiresAt: "2026-10-12T00:00:00.000Z" } : undefined, routeProbes: { readCached, probe }, now: () => at }));
-  const transport = vi.fn<typeof fetch>(async (url, init) => platform.request(String(url), init));
+  const transport = fixtureMock<typeof fetch>(async (url, init) => platform.request(String(url), init));
   const config = { identity, isolatedChat: phase, runtimeAuthToken: token, maxRunMs: 600000, requestTimeoutMs: 5000,
     issueUrl: "https://platform.test/internal/containers/catalog/ai/funded-credential?runtimeSlot=primary", relayBaseUrl: "https://relay.test",
     fundingSummaryUrl: "https://platform.test/internal/containers/catalog/ai/funding-summary?runtimeSlot=primary",
@@ -58,12 +61,12 @@ async function fixture(canonical = true, promotion = false) {
   const scope = createCanonicalPhaseReadiness(config.isolatedChat, routeOptions);
   const summary = createFundedAiFundingSummaryClient(config, { fetchFn: transport, ...routeOptions });
   const routes = createFundedAiRouteReadinessClient(config, transport, routeOptions);
-  const native = vi.fn(async () => ({ providers: [], accessSources: [], failures: [] }));
-  const driver = vi.fn(async () => []);
-  const health = vi.fn(async () => null);
-  const api = vi.fn(async () => undefined);
-  const plan = vi.fn(async () => undefined);
-  const local = vi.fn(async () => undefined);
+  const native = fixtureMock(async () => ({ providers: [], accessSources: [], failures: [] }));
+  const driver = fixtureMock(async () => []);
+  const health = fixtureMock(async () => null);
+  const api = fixtureMock(async () => undefined);
+  const plan = fixtureMock(async () => undefined);
+  const local = fixtureMock(async () => undefined);
   const providers = new AiProviderService({ homePath, env: { MATRIX_FUNDED_AI_ENABLED: "true", ANTHROPIC_API_KEY: "fixture-owner-key" }, observationScope: scope.observationScope, now: () => at,
     fundedCredentialProvider: { enabled: true, maxRunMs: 600000, getCredential: async () => { throw new Error("No issuance"); }, invalidate: () => {}, close: () => {} },
     fundedReadinessReader: createFundedAiReadinessReader({ summary, routes, now: () => at }),
@@ -71,11 +74,11 @@ async function fixture(canonical = true, promotion = false) {
     matrixAnthropicConnection: api, chatGptPlanObservation: plan, codexNativeKeyReadiness: local as never });
   cleanup.push(async () => providers.close());
   const settings = new ProviderSettingsStore({ homePath, observationScope: scope.observationScope, providerSnapshotReader: providers, fundingSummaryReader: summary, now: () => at });
-  const coding = vi.fn(async () => []), runtime = vi.fn(async () => { throw new Error("No native observation"); });
+  const coding = fixtureMock(async () => []), runtime = fixtureMock(async () => { throw new Error("No native observation"); });
   const base = createChatProviderCatalogService({ codingProviders: { listProviders: coding, invalidate: vi.fn() },
     agentRuntimeSource: runtime, aiProviderSource: providers, harnessSettingsSource: settings, now: () => at,
     observationScope: scope.observationScope });
-  const decorator = vi.fn((catalog: typeof base) => catalog);
+  const decorator = fixtureMock((catalog: typeof base) => catalog);
   const catalog = composePhaseCatalog(base, scope.canonical, decorator);
   const ui = new Hono().route("/", createChatProviderRoutes({ catalog, getPrincipal: () => ({ userId: principal, source: "jwt" }) }));
   return { db, phase, config, platform, token, repository, secret, ui, routes, providers, settings, decorator, routeOptions, scope,

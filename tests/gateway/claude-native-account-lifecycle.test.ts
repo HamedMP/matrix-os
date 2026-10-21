@@ -14,6 +14,7 @@ const homes: string[] = [], services: AiProviderService[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); services.splice(0).forEach(service => service.close()); await Promise.all(homes.splice(0).flatMap(home => [rm(home, { recursive: true, force: true }), rm(join(dirname(home), ".matrix-private", basename(home)), { recursive: true, force: true })])); });
 async function fixture(key = false, legacyProfile = false) {
   const homePath = await mkdtemp(join(tmpdir(), "claude-native-lifecycle-")); homes.push(homePath);
+  vi.stubEnv("MATRIX_NODE_PREFIX", homePath); // Keep native CLI discovery inside the fixture.
   let legacyInUse = false, unknownWriter = false;
   let loggedIn = true, email = "synthetic@example.invalid", org = "synthetic-org", fail = false;
   const runStatus = vi.fn(async () => {

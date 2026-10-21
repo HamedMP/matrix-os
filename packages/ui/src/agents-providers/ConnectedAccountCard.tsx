@@ -4,11 +4,12 @@ import { AllowanceMeter } from "./AllowanceMeter.js";
 import { shortDate, usageLines } from "./utils.js";
 
 /** Connected presentation consumes observed identity and usage, never inferred plan limits. */
-export function ConnectedAccountCard({ harness, account, source, action, disabled, onRefresh }: {
+export function ConnectedAccountCard({ harness, account, source, action, disabled, onRefresh, saved = false }: {
   harness: ProviderHarnessInstance;
   account?: ProviderAccount;
   source?: ProviderAccessSource;
   action?: ReactNode;
+  saved?: boolean;
   disabled: boolean;
   onRefresh: () => void;
 }) {
@@ -16,8 +17,8 @@ export function ConnectedAccountCard({ harness, account, source, action, disable
   const label = account?.authMethod === "api_key" ? "API key"
     : harness.harness === "codex" ? "ChatGPT account"
     : harness.harness === "claude" ? "Claude account" : "Provider account";
-  return <section className="matrix-ap-connected" aria-label={`${harness.displayName} connection`}>
-    <h3>Connection</h3>
+  return <section className="matrix-ap-connected" aria-label={`${harness.displayName} ${saved ? "saved account" : "connection"}`}>
+    <h3>{saved ? "Saved account" : "Connection"}</h3>
     <div className="matrix-ap-account">
       <div className="matrix-ap-account-main"><div>
         <strong>{account?.connectionDetails?.planName ?? label}</strong>

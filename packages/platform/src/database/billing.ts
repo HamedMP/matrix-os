@@ -250,6 +250,20 @@ export async function projectTrialInvoiceEvent(
   },
 ): Promise<TrialInvoiceEventProjectionResult | undefined> {
   await db.ready;
+  const identity = await db.executor.selectFrom('billing_subscriptions').select('clerk_user_id')
+    .where('stripe_subscription_id', '=', input.stripeSubscriptionId).executeTakeFirst();
+  if (!identity) return undefined;
+  return withAccountDeletionOwnerLock(db, identity.clerk_user_id, async (trx, admission) => {
+    if (!admission.newWorkAllowed) return undefined;
+    return projectTrialInvoiceEventLocked(trx, input);
+  });
+}
+
+async function projectTrialInvoiceEventLocked(
+  db: PlatformDB,
+  input: Parameters<typeof projectTrialInvoiceEvent>[1],
+): Promise<TrialInvoiceEventProjectionResult | undefined> {
+  await db.ready;
   const currentRow = await db.executor
     .selectFrom('billing_subscriptions')
     .selectAll()

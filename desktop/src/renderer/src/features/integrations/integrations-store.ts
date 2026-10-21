@@ -173,6 +173,10 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     } catch (err: unknown) {
       logWarn("connect failed", err);
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
+      if (err instanceof AppError && err.category === "notFound") {
+        set({ status: "unavailable", available: [], connections: [], errorMessage: null });
+        return null;
+      }
       set({ errorMessage: toUserMessage(err) });
       return null;
     }

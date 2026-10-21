@@ -9,7 +9,7 @@ import { initializeJevRuntime } from "../../packages/gateway/src/jev/runtime.js"
 import { JevEvaluationRepository } from "../../packages/gateway/src/jev/repository.js";
 
 describe("Jev-owned maintenance database", () => {
-  it("logs an idle pool error without exposing its message or crashing", async () => {
+  it("logs idle and checked-out errors without exposing their messages or crashing", async () => {
     const pool = Object.assign(new EventEmitter(), {
       connect: vi.fn(async () => { throw new Error("unused"); }),
       end: vi.fn(async () => undefined),
@@ -21,7 +21,12 @@ describe("Jev-owned maintenance database", () => {
         poolFactory: () => pool,
       });
       expect(() => pool.emit("error", new Error("private database host and token"))).not.toThrow();
-      expect(log).toHaveBeenCalledWith("[jev] Idle maintenance pool error:", "Error");
+      const client = new EventEmitter();
+      pool.emit("connect", client);
+      expect(() => client.emit("error", new Error("private database host and token"))).not.toThrow();
+      expect(log).toHaveBeenCalledTimes(2);
+      expect(log).toHaveBeenCalledWith("[jev] Maintenance Postgres connection error:", "Error");
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private database host and token");
       await maintenance.close();
     } finally {
       log.mockRestore();

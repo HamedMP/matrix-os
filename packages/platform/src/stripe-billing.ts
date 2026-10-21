@@ -168,6 +168,33 @@ export function createStripeBillingClient(options: {
       return { url: session.url, id: session.id };
     },
 
+    async expireCheckoutSession(id) {
+      let session: Stripe.Checkout.Session;
+      try {
+        session = await stripe.checkout.sessions.expire(id);
+      } catch (expireError: unknown) {
+        try {
+          session = await stripe.checkout.sessions.retrieve(id);
+        } catch (retrieveError: unknown) {
+          console.warn(
+            '[billing] checkout expiry reconciliation failed:',
+            retrieveError instanceof Error ? retrieveError.name : typeof retrieveError,
+          );
+          throw expireError;
+        }
+      }
+      if (session.status !== 'open' && session.status !== 'complete' && session.status !== 'expired') {
+        throw new Error('Stripe checkout session missing status');
+      }
+      return {
+        status: session.status,
+        url: session.url,
+        clerkUserId: session.client_reference_id,
+        priceId: null,
+        regionSlug: session.metadata?.matrix_region_slug ?? null,
+      };
+    },
+
     async retrieveTrackingCheckout(id) {
       return stripe.checkout.sessions.retrieve(id, { expand: ['line_items.data.price', 'subscription'] });
     },
@@ -242,6 +269,7 @@ export function createUnavailableStripeBillingClient(): StripeBillingClient {
     createCheckoutSession: unavailable,
     clearSubscriptionAttribution: unavailable,
     createAiCreditCheckoutSession: unavailable,
+    expireCheckoutSession: unavailable,
     retrieveCheckoutSession: unavailable,
     retrieveRecurringPrice: unavailable,
     createPortalSession: unavailable,

@@ -7,6 +7,10 @@ import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign, type Ke
 import {
   COLLABORATION_DIRECT_LIMITS, COLLABORATION_DIRECT_PROTOCOL_VERSION,
   CollaborationDirectSessionSchema, CollaborationSignedConnectionTicketSchema,
+  CollaborationCatalogIdSchema, CollaborationRuntimeIdSchema, CollaborationOwnerRuntimeConnectionRequestSchema,
+  CollaborationSignedOwnerRuntimeTicketSchema, CollaborationOwnerRuntimeSessionSchema,
+  CollaborationOwnerResourceReauthorizationInspectRequestSchema, CollaborationOwnerResourceReauthorizationConfirmRequestSchema,
+  toLogicalRuntimeId,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
@@ -24,6 +28,10 @@ const TicketResponse = z.object({
 type Method = "GET" | "POST" | "PATCH";
 type TicketPurpose = "direct_session" | "terminal";
 type Key = { privateKey: KeyObject; publicKeyRaw: string };
+export interface CliOwnerResourceReauthorizationRequest {
+  runtimeId: string; resourceId: string; action: "inspect" | "confirm"; body: unknown;
+}
+type SigningConnection = { session: { id: string }; origin: string; key: Key };
 type Connected = { session: z.infer<typeof CollaborationDirectSessionSchema>; origin: string; key: Key };
 type Entry = { connected: Connected | null; pending: Promise<Connected> | null; key: Key };
 
@@ -188,7 +196,7 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
     return state.pending;
   };
 
-  const signedRequest = async (connected: Connected, method: Method, path: string, query: string, body: string | undefined) => {
+  const signedRequest = async (connected: SigningConnection, method: Method, path: string, query: string, body: string | undefined) => {
     const signature = {
       protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, sessionId: connected.session.id,
       method, path, query, bodyDigest: digest(body ?? ""), conditionalHeadersDigest: digest(new Uint8Array()),
@@ -226,6 +234,45 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
     return boundedJson(response);
   };
 
+  /** One explicit operation, one fresh ephemeral owner session; no implicit inspection or confirmation. */
+  const requestOwnerResourceReauthorization = async (input: CliOwnerResourceReauthorizationRequest): Promise<unknown> => {
+    if (input.action !== "inspect" && input.action !== "confirm") throw unavailable();
+    const runtimeId = CollaborationRuntimeIdSchema.parse(input.runtimeId);
+    const resourceId = CollaborationCatalogIdSchema.parse(input.resourceId);
+    const body = input.action === "inspect" ? CollaborationOwnerResourceReauthorizationInspectRequestSchema.parse(input.body)
+      : CollaborationOwnerResourceReauthorizationConfirmRequestSchema.parse(input.body);
+    const serialized = JSON.stringify(body);
+    if (Buffer.byteLength(serialized) > COLLABORATION_DIRECT_LIMITS.httpJsonBytes) throw unavailable();
+    const key = keyPair();
+    const ticketRequest = CollaborationOwnerRuntimeConnectionRequestSchema.parse({ clientRequestId: randomUUID(),
+      runtimeId, organizationId: body.organizationId, proofPublicKey: key.publicKeyRaw });
+    const response = await fetchImpl(`${platform}/api/collaboration/owner-runtime/connections`, {
+      method: "POST", headers: { ...credentialFor(platform), accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(ticketRequest), redirect: "error", signal: AbortSignal.timeout(COLLABORATION_DIRECT_LIMITS.externalApiTimeoutMs),
+    });
+    if (rejectedByPlatform(response, platform, true)) { await response.body?.cancel(); throw collaborationAuthRejected(); }
+    const issued = z.object({ signedTicket: CollaborationSignedOwnerRuntimeTicketSchema,
+      endpoint: z.object({ origin: z.url(), protocolVersion: z.literal(COLLABORATION_DIRECT_PROTOCOL_VERSION) }).strict(),
+    }).strict().parse(await boundedJson(response));
+    const ticket = issued.signedTicket.ticket;
+    const logicalRuntimeId = toLogicalRuntimeId(runtimeId);
+    const thumbprint = createHash("sha256").update(Buffer.from(key.publicKeyRaw, "base64url")).digest("base64url");
+    if (ticket.organizationId !== body.organizationId || ticket.runtime.runtimeId !== logicalRuntimeId
+      || ticket.proofKeyThumbprint !== thumbprint || Date.parse(ticket.expiresAt) <= now().getTime()) throw unavailable();
+    const target = origin(issued.endpoint.origin);
+    const session = CollaborationOwnerRuntimeSessionSchema.parse(await homePost(target, "/api/collaboration/owner-runtime/sessions", {
+      clientRequestId: randomUUID(), signedTicket: issued.signedTicket, proofPublicKey: key.publicKeyRaw, clientOrigin,
+      possession: proof(key, `matrix-collaboration-possession-v2\n${ticket.nonce}\nowner_runtime\n`),
+    }, logicalRuntimeId));
+    if (session.runtimeId !== logicalRuntimeId || session.organizationId !== body.organizationId || session.actorId !== ticket.actorId
+      || session.authorityGeneration !== ticket.runtime.authorityGeneration || session.proofKeyThumbprint !== thumbprint
+      || Date.parse(session.expiresAt) <= now().getTime()) throw unavailable();
+    const path = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/${resourceId}/reauthorization/${input.action}`;
+    const result = await signedRequest({ session, origin: target, key }, "POST", path, "", serialized);
+    if (rejectedByPlatform(result, target)) { await result.body?.cancel(); throw collaborationAuthRejected(); }
+    return boundedJson(result);
+  };
+
   /** `headers` goes on the upgrade: the relay names the actor from it, and only the platform origin gets it. */
   const terminal = async (scopeId: string): Promise<{ url: string; actorId: string; handshake: string; headers: Record<string, string> }> => {
     const connected = await ensure(scopeId);
@@ -244,7 +291,7 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
     };
   };
 
-  return { request, terminal };
+  return { request, terminal, requestOwnerResourceReauthorization };
 }
 
 export type CliCollaborationTransport = ReturnType<typeof createCliCollaborationTransport>;
