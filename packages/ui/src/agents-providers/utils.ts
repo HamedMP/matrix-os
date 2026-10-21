@@ -39,6 +39,13 @@ export function relativeCheckedAt(value: string, now = Date.now()): string {
   return new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-Math.round(elapsedHours / 24), "day");
 }
 
+const PROVIDER_NAMES: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI", "openai-codex": "OpenAI", openrouter: "OpenRouter" };
+
+/** A provider's proper name for owner-facing copy; null for one we do not name. */
+export function providerName(providerId: string | null | undefined): string | null {
+  return providerId ? PROVIDER_NAMES[providerId] ?? null : null;
+}
+
 export function titleCase(value: string): string {
   return value.split("_").map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(" ");
 }
