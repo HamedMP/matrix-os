@@ -20,6 +20,8 @@ const connectSchema = z.object({ service: z.string(), label: z.string().trim().m
 const hash = (secret: string) => createHash("sha256").update(secret).digest("hex");
 const matches = (secret: string, expected: string) => timingSafeEqual(Buffer.from(hash(secret), "hex"), Buffer.from(expected, "hex"));
 const unavailable = { error: "Connection unavailable" };
+// Provider connection management only; never let a browser token bypass Matrix action approvals.
+const GMAIL_CONNECT_SCOPE = "connect:accounts:read connect:accounts:write";
 class InvalidReceiptAccount extends Error {}
 
 export function createPipedreamGmailAttemptRoutes(options: {
@@ -47,7 +49,7 @@ export function createPipedreamGmailAttemptRoutes(options: {
       await store.prepare({ id: attemptId, userId, externalUserId, environment: options.config.environment,
         nonceHash: hash(proof), label: input.label, now, expiresAt: new Date(now.getTime() + 600_000) });
       const callback = new URL(options.config.callbackUrl); callback.searchParams.set("attempt", attemptId); callback.searchParams.set("proof", proof);
-      const issued = await options.pipedream.createConnectToken(externalUserId, { webhookUri: callback.href, expiresIn: 600,
+      const issued = await options.pipedream.createConnectToken(externalUserId, { webhookUri: callback.href, expiresIn: 600, scope: GMAIL_CONNECT_SCOPE,
         ...(input.redirectUri ? { successRedirectUri: input.redirectUri, errorRedirectUri: input.redirectUri } : {}) });
       if (!/^ctok_[a-f0-9]{32}$/.test(issued.token) || !Number.isFinite(Date.parse(issued.expiresAt)) || Date.parse(issued.expiresAt) <= Date.now()) throw new Error("Invalid connection response");
       const url = options.pipedream.getOAuthUrl(issued.connectLinkUrl, "gmail"); const target = new URL(url);

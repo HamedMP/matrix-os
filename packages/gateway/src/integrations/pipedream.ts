@@ -38,6 +38,7 @@ export interface PipedreamConnectClient {
       errorRedirectUri?: string;
       webhookUri?: string;
       expiresIn?: number;
+      scope?: string;
     },
   ): Promise<{ token: string; expiresAt: string; connectLinkUrl: string }>;
 

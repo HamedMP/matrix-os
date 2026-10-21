@@ -13,7 +13,7 @@ describe("Gmail Pipedream attempt receipts", () => {
   let owner: string | null;
   let app: ReturnType<typeof createIntegrationRoutes>;
   let pipedream: PipedreamConnectClient;
-  let issued: Array<{ token: string; webhookUri: string }>;
+  let issued: Array<{ token: string; webhookUri: string; scope?: string }>;
   let eligible: boolean;
   const inspectAccount = vi.fn();
   let admit = vi.fn(async (_input: unknown, persist: () => Promise<void>) => persist());
@@ -35,7 +35,7 @@ describe("Gmail Pipedream attempt receipts", () => {
     pipedream = { inspectAccount, revokeAccount: vi.fn(async () => { inspectAccount.mockResolvedValue({ ...metadata, healthy: false, dead: true }); }),
       createConnectToken: vi.fn(async (_id, options) => {
         const token = "ctok_" + randomBytes(16).toString("hex");
-        issued.push({ token, webhookUri: options?.webhookUri ?? "" });
+        issued.push({ token, webhookUri: options?.webhookUri ?? "", ...(options?.scope ? { scope: options.scope } : {}) });
         return { token, expiresAt: new Date(Date.now() + 600_000).toISOString(), connectLinkUrl: "https://pipedream.com/connect?token=" + token };
       }), getOAuthUrl: (url: string) => url,
       listAccounts: vi.fn(async () => []), getAppInfo: vi.fn(async () => null), discoverActions: vi.fn(async () => []),
@@ -66,6 +66,12 @@ describe("Gmail Pipedream attempt receipts", () => {
     }) });
   }
   const status = async (id: string) => (await app.request("/gmail/pipedream/attempts/" + id));
+  it('fixes receipt token scope server-side and ignores browser-requested capabilities', async () => {
+    const response = await app.request('/connect', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ service: 'gmail', connectionMethod: 'pipedream', scope: 'connect:*' }) });
+    expect(response.status).toBe(200);
+    expect(issued[0]!.scope).toBe('connect:accounts:read connect:accounts:write');
+    expect(pipedream.createConnectToken).toHaveBeenCalledWith('pd_owner', expect.objectContaining({ scope: 'connect:accounts:read connect:accounts:write', expiresIn: 600 }));
+  });
   it("completes exactly one receipt and preserves a same-ID account and its renamed label", async () => {
     const original = await db.connectService({ userId: owner!, service: "gmail", pipedreamAccountId: "apn_work", accountLabel: "Finance", scopes: ["read"] });
     const attempt = await start();
@@ -169,6 +175,7 @@ describe("Gmail Pipedream attempt receipts", () => {
     const other = await app.request('/connect', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ service: 'slack' }) });
     expect(other.status).toBe(200); expect(await other.json()).not.toHaveProperty('attemptId');
     expect(issued[1]!.webhookUri).toBe('');
+    expect(issued[1]!.scope).toBeUndefined();
     app = createIntegrationRoutes({ db, pipedream, webhookSecret: 'legacy-test-secret', resolveUserId: async () => owner });
     expect((await status(attempt.attemptId)).status).toBe(404);
     expect((await callback(0)).status).toBe(404);
@@ -184,6 +191,7 @@ describe("Gmail Pipedream attempt receipts", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).not.toHaveProperty('attemptId');
     expect(issued[1]!.webhookUri).toBe('');
+    expect(issued[1]!.scope).toBeUndefined();
     expect(await db.pipedreamGmailAttempts!.status(pilot.attemptId, owner!)).toEqual({ status: 'pending' });
     expect((await db.raw('SELECT id FROM gmail_pipedream_attempts', [])).rows).toHaveLength(1);
   });

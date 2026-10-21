@@ -14,6 +14,14 @@ Official sources:
 
 Installed `@pipedream/sdk` 2.4.3 exposes `webhookUri`; `tokens.validate()` proves validity, not completion. Account metadata has no consent revision. An intercepted SDK serialization spike passed on 2026-10-21 without network or real credentials before implementation (permanent regression: `tests/integrations/pipedream-sdk-webhook-serialization.test.ts`). This is wire serialization evidence, not live Pipedream delivery evidence. Ignore `connect_session_id`; its documented numeric example exceeds JavaScript integer precision and is not an identity source.
 
+## Browser token permissions
+
+The Gmail receipt path requests exactly `connect:accounts:read connect:accounts:write`, fixed on the server. These are Pipedream Connect API permissions, separate from Google's Gmail OAuth scopes. The browser cannot select them. [Pipedream's authentication reference](https://pipedream.com/docs/connect/api-reference/authentication#connect-token-scopes) documents that omitting `scope` defaults to `connect:*`, including action execution and proxy access. The receipt token explicitly excludes actions, proxy, triggers and other capabilities. No registry scope is guessed and no failure may fall back to `connect:*`; if the hosted Connect Link requires registry access, hold activation for a separately reviewed minimal change. Legacy consent for other services/non-pilot users keeps its existing token defaults.
+
+Installed SDK serialization verifies the exact `scope` wire field with intercepted synthetic HTTP and no provider call. It does not establish provider authorization enforcement or hosted Connect Link compatibility. Both remain live activation gates: complete scoped Gmail consent/reconnect and prove the resulting browser token cannot invoke actions, proxy or triggers. Account permissions are external-user/environment scoped rather than an app-specific security boundary; selecting Gmail in the hosted link does not narrow the token's provider authorization to Gmail alone.
+
+The [Retrieve account reference](https://pipedream.com/docs/connect/api-reference/retrieve-account) limits OAuth credential retrieval to accounts using the project's own OAuth client (BYOA). This unit neither enables BYOA nor retrieves credentials. For the pilot's non-BYOA Gmail account, provider-side credential retrieval with the browser Connect token must be denied or return no credentials, including `include_credentials=true` on both account retrieval and inventory. Record only denial/field-presence evidence, never credentials. Do not infer that credential retrieval is impossible merely from requesting account-read scope, SDK typings, or the Gmail app query. The operator must verify the pilot's actual project/account configuration and absence of any browser-readable credential path before enabling receipts; configuration changes or BYOA require a new security review.
+
 ## Auth and route design
 
 | Route | Authority | Public |
