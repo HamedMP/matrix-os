@@ -25,6 +25,7 @@ export interface AccountDeletionAdapterOptions {
   credentialSecret?: string;
   matrixHomeserverUrl?: string;
   apple?: AppleDeletionConfig;
+  nativeGmail?: { revoke(input: { userId: string; connectionId: string }): Promise<boolean> };
   pipedream?: { listAccounts(externalUserId: string): Promise<Array<{ id: string }>>; revokeAccount(id: string): Promise<void> };
   customMcp?: { remove(userId: string, serverId: string): Promise<void> };
   twilio?: { accountSid: string; authToken: string; publicBaseUrl: string };
@@ -235,10 +236,15 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       if(!servicesPresent && users.some((user)=>user.pipedream_external_id)) throw new Error('Integration inventory unavailable');
       if (servicesPresent) {
         for (const user of users) {
-          const services = await sql<{ pipedream_account_id: string }>`SELECT pipedream_account_id FROM connected_services
-            WHERE user_id = ${user.id} AND status <> 'revoked' LIMIT 1001`.execute(db.executor);
+          const services = await sql<{ id: string; pipedream_account_id: string }>`SELECT id, pipedream_account_id FROM connected_services
+            WHERE user_id = ${user.id} AND (status <> 'revoked' OR left(pipedream_account_id,6) = 'gmail_') LIMIT 1001`.execute(db.executor);
           if (services.rows.length > 1000) throw new Error('Integration cleanup capacity exceeded');
-          if ((services.rows.length || user.pipedream_external_id) && !options.pipedream) throw new Error('Integration cleanup configuration unavailable');
+          const native = services.rows.filter(row => row.pipedream_account_id.startsWith('gmail_'));
+          if (native.length && !options.nativeGmail) throw new Error('Gmail cleanup configuration unavailable');
+          for (const row of native) {
+            if (!await options.nativeGmail!.revoke({ userId: user.id, connectionId: row.id })) throw new Error('Gmail cleanup unavailable');
+          }
+          if ((services.rows.length !== native.length || user.pipedream_external_id) && !options.pipedream) throw new Error('Integration cleanup configuration unavailable');
           if (options.pipedream) {
             const accounts = await options.pipedream.listAccounts(user.pipedream_external_id ?? user.id);
             if (accounts.length > 1000) throw new Error('Integration cleanup capacity exceeded');
