@@ -1,6 +1,7 @@
 import { useAuth, useOrganizationList } from "@clerk/clerk-expo";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard } from "react-native";
+import type { PanGesture } from "react-native-gesture-handler";
 import { useUnistyles } from "react-native-unistyles";
 import { useSegments } from "expo-router";
 import {
@@ -8,7 +9,9 @@ import {
   getDrawerStatusFromState,
   useDrawerStatus,
   type DrawerContentComponentProps,
+  type DrawerOptionsArgs,
 } from "expo-router/drawer";
+import type { ParamListBase } from "expo-router/react-navigation";
 
 import { SidePanel } from "@/components/shell/SidePanel";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
@@ -47,6 +50,17 @@ function DismissKeyboardOnClose() {
     }
   }, [status]);
   return null;
+}
+
+/**
+ * Lets only a rightward swipe move the closed panel. The navigator's pan starts
+ * on 5pt of movement either way, and it shifts a panel of this type by how far
+ * past the panel's edge the touch began, which pulled the closed panel out for a
+ * leftward swipe from the right edge. RNGH checks fail offsets first, so that
+ * swipe now fails the pan instead.
+ */
+function rightwardSwipeOnly(pan: PanGesture) {
+  return pan.failOffsetX(-5);
 }
 
 export default function DrawerLayout() {
@@ -169,7 +183,7 @@ export default function DrawerLayout() {
           </>
         );
       }}
-      screenOptions={{
+      screenOptions={({ navigation }: DrawerOptionsArgs<ParamListBase>) => ({
         headerShown: false,
         drawerPosition: "left",
         // The panel slides over the screen, which stays where it is under the scrim.
@@ -186,8 +200,11 @@ export default function DrawerLayout() {
         overlayAccessibilityLabel: "Close side panel",
         swipeEnabled: chatScreenFocused,
         swipeEdgeWidth: 800,
+        // An open panel keeps the leftward swipe that closes it.
+        configureGestureHandler:
+          getDrawerStatusFromState(navigation.getState()) === "open" ? undefined : rightwardSwipeOnly,
         sceneStyle: { backgroundColor: theme.v2.colors.background },
-      }}
+      })}
     >
       <Drawer.Screen name={TABS_ROUTE} />
     </Drawer>
