@@ -12,6 +12,9 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
  const store=createDraftStore(options.homePath);const generalizer=options.generalizer??createStoreGeneralizer(options.homePath);
  const jobs=new Map<string,Promise<void>>(); // Cap2, removed on settlement; drafts separately cap16/TTL7days.
  const stop=new AbortController();
+ const submitting=new Map<string,Promise<unknown>>(); // Cap2, drained before close.
+ const sweepTimer=setInterval(()=>{if(!stop.signal.aborted)void store.list().catch((error:unknown)=>console.warn('[app-store] Draft cleanup failed',error instanceof Error?error.name:'UnknownError'));},3600_000);sweepTimer.unref();
+ async function exclusiveSubmit<T>(id:string,action:()=>Promise<T>):Promise<T>{if(submitting.has(id)||submitting.size>=2||stop.signal.aborted)throw new StoreError('conflict');const pending=action();submitting.set(id,pending);try{return await pending;}finally{submitting.delete(id);}}
  async function run(draft:AppStoreDraftDetail,aiConsent?:{accessSourceId:string},instructions?:string){
   try{
    const original=await store.files(draft.id,'original');
@@ -45,16 +48,16 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
    });
   },
   async revise(id:string,input:{instructions:string;aiConsent?:{accessSourceId:string}}){
-   if(jobs.has(id))throw new StoreError('conflict');const current=await store.read(id);if(current.status==='submitted')throw new StoreError('conflict');
+   if(jobs.has(id)||submitting.has(id))throw new StoreError('conflict');const current=await store.read(id);if(current.status==='submitted')throw new StoreError('conflict');
    const draft={...current,status:'preparing' as const,stage:'generalize' as const,updatedAt:new Date().toISOString()};await store.write(draft);start(draft,input.aiConsent,input.instructions);return AppStoreDraftSummarySchema.strip().parse(draft);
   },
-  async listing(id:string,patch:unknown){if(jobs.has(id))throw new StoreError('conflict');const draft=await store.read(id);if(draft.status==='submitted'||!draft.listing)throw new StoreError('conflict');const result={...draft,listing:{...draft.listing,...AppStoreListingDraftPatchSchema.parse(patch)},updatedAt:new Date().toISOString()};await store.write(result);return result;},
+  async listing(id:string,patch:unknown){if(jobs.has(id)||submitting.has(id))throw new StoreError('conflict');const draft=await store.read(id);if(draft.status==='submitted'||!draft.listing)throw new StoreError('conflict');const result={...draft,listing:{...draft.listing,...AppStoreListingDraftPatchSchema.parse(patch)},updatedAt:new Date().toISOString()};await store.write(result);return result;},
   async diff(id:string,path:string):Promise<AppStoreDraftDiff>{
    const [beforeFiles,afterFiles]=await Promise.all([store.files(id,'original'),store.files(id,'prepared')]);const before=beforeFiles.get(path),after=afterFiles.get(path);if(!before&&!after)throw new StoreError('not_found');
    const binary=Boolean(before?.includes(0)||after?.includes(0));const limit=256*1024;
    return {path,change:before?after?before.equals(after)?'unchanged':'modified':'removed':'added',binary,truncated:Boolean((before?.length??0)>limit||(after?.length??0)>limit),...(!binary&&before?{before:before.subarray(0,limit).toString('utf8')}:{}),...(!binary&&after?{after:after.subarray(0,limit).toString('utf8')}:{})};
   },
-  async submit(id:string,input:z.infer<typeof AppStoreSubmitDraftSchema>){
+  async submit(id:string,input:z.infer<typeof AppStoreSubmitDraftSchema>){return exclusiveSubmit(id,async()=>{
    if(jobs.has(id))throw new StoreError('conflict');const draft=await store.read(id);if(draft.status==='submitted')return AppStoreDraftSummarySchema.strip().parse(draft);
    if(!input.consent||draft.status!=='ready'||!draft.listing||!draft.report||draft.findingsAfter?.blocking)throw new StoreError('invalid');
    const files=await store.files(id,'prepared');const source=encodeAppBundle('source',files);const manifest=AppStoreManifestSchema.parse(JSON.parse(files.get('matrix.json')!.toString('utf8')));
@@ -66,9 +69,9 @@ export function createStorePublishService(options:{homePath:string;platform:AppS
     const finalized=await options.platform.finalize(created.versionId);
     const result={...draft,status:'submitted' as const,stage:'upload' as const,submission:{listingSlug:listing.slug,version,versionId:created.versionId,status:finalized.status},updatedAt:new Date().toISOString()};await store.write(result);return AppStoreDraftSummarySchema.strip().parse(result);
    }catch(error:unknown){await store.write({...draft,status:'ready',failureCode:'upload_failed',updatedAt:new Date().toISOString()});throw error;}
-  },
-  async delete(id:string){if(jobs.has(id))throw new StoreError('conflict');await store.delete(id);return {deleted:true as const};},
-  async close(){stop.abort();await Promise.allSettled([...jobs.values()]);},
+  });},
+  async delete(id:string){if(jobs.has(id)||submitting.has(id))throw new StoreError('conflict');await store.delete(id);return {deleted:true as const};},
+  async close(){clearInterval(sweepTimer);stop.abort();await Promise.allSettled([...jobs.values(),...submitting.values()]);},
  };
 }
 export type StorePublishService=ReturnType<typeof createStorePublishService>;

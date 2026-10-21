@@ -1,3 +1,5 @@
+import {communityRecord} from '../app-store/provenance.js';
+import {dirname} from 'node:path';
 import { spawn } from "node:child_process";
 import { readFile, writeFile, stat, truncate, open } from "node:fs/promises";
 import { join } from "node:path";
@@ -67,6 +69,8 @@ export class BuildOrchestrator {
     appDir: string,
     opts?: { timeoutMs?: number },
   ): Promise<BuildResult> {
+    // Community sources may never enter this host command runner, even after a manifest edit.
+    if(await communityRecord(dirname(dirname(appDir)),slug))return {ok:false,error:new BuildError('build_failed','prepare',null,'Use the App Store isolated installer to rebuild this app')};
     // Read manifest to get build config
     let manifest: AppManifest;
     try {
@@ -92,6 +96,7 @@ export class BuildOrchestrator {
       };
     }
 
+    if (manifest.listingTrust==='community')return {ok:false,error:new BuildError('build_failed','prepare',null,'Community builds require isolation')};
     if (!manifest.build) {
       return {
         ok: false,

@@ -1,3 +1,4 @@
+import {communityRecord} from '../app-store/provenance.js';
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
@@ -44,7 +45,9 @@ async function readPolicy(homePath: string) {
     return PolicySchema.parse(document.value);
 }
 export async function isAppAiAllowed(homePath: string, app: string): Promise<boolean> {
-    return (await readPolicy(homePath))?.apps.includes(app) ?? false;
+    const community=await communityRecord(homePath,app);
+    const policy=await readPolicy(homePath);
+    return Boolean((policy?.apps.includes(app)||(community&&policy?.apps.includes(`apps/${community.appSlug}`)))&&(!community||community.capabilities.permissions.includes('ai')));
 }
 interface RuntimeOptions {
     lifecycle?: NonNullable<Parameters<typeof createAppAiRoutes>[0]>['lifecycle'];
@@ -98,7 +101,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
     async function catalog(app: string, signal: AbortSignal, intent?: { route?: AppAiRouteSelection; verify?: boolean }) {
         signal.throwIfAborted();
         const policy = await readPolicy(options.homePath);
-        if (!policy?.apps.includes(app))
+        if (!policy||!await isAppAiAllowed(options.homePath,app))
             throw new Error("App AI access denied");
         if (policy.model && !policy.route) return {settings:undefined,canonical:undefined,policy,routes:{routes:[],defaultRoute:null},allRoutes:[],sdkRoutes:[] as AppAiRouteSelection[]};
         let [settings, canonical] = await Promise.all([
