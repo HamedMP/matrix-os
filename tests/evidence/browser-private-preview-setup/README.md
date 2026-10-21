@@ -12,7 +12,11 @@ viewer navigated the fresh Chrome profile to example.com; the CDP target URL
 independently confirmed the navigation. The three Browser service ports remain
 bound to loopback. Configuration was backed up on the target before installation.
 
-The screenshot and recording show the actual Chrome/Kasm viewer on that server.
+The historical screenshot and recording show the actual Chrome/Kasm viewer on
+that server. Capture binaries are excluded from the source tree, as required by
+`CLAUDE.md`. PR #2781 records their attachment links or any outstanding upload
+requirement; the files are preserved separately for that handoff. They are not
+new evidence for subsequent source changes.
 The operator used the platform-derived per-machine credential retrieved through
 Google Secret Manager, with HTTPS and the existing server certificate. Playwright
 mapped app.matrix-os.com directly to this preview for viewer verification.
@@ -22,5 +26,6 @@ surfaces, agent takeover/resume, signed authority, passkeys, or managed Pi.
 
 `live-before.json`, `live-after.json` and `viewer-check.json` contain only the
 filtered checks. Credentials, cookies, tickets and private page content are
-excluded. Full repository CI remains blocked by stale GitHub native-stack merge
-metadata; this evidence does not waive that source gate.
+excluded. The original validation was blocked by stale GitHub native-stack merge
+metadata. Subsequent stack repair has refreshed that source, but this historical
+evidence does not qualify later commits or waive current CI and live-review gates.
