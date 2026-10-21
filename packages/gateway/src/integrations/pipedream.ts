@@ -34,8 +34,10 @@ export interface PipedreamConnectClient {
   createConnectToken(
     externalUserId: string,
     redirects?: {
-      successRedirectUri: string;
-      errorRedirectUri: string;
+      successRedirectUri?: string;
+      errorRedirectUri?: string;
+      webhookUri?: string;
+      expiresIn?: number;
     },
   ): Promise<{ token: string; expiresAt: string; connectLinkUrl: string }>;
 
@@ -104,6 +106,8 @@ export interface PipedreamConnectClient {
     app: string;
     email?: string;
   }>>;
+
+  inspectAccount?(accountId: string): Promise<{ id: string; externalUserId?: string; app?: string; healthy: boolean; dead: boolean; email?: string }>;
 
   getAppInfo(slug: string): Promise<{ name: string; imgSrc: string; description?: string } | null>;
 }
@@ -188,7 +192,7 @@ export async function createPipedreamClient(
     async createConnectToken(externalUserId: string, redirects) {
       const response = await sdk.tokens.create(
         { externalUserId, ...redirects },
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        executionOptions(API_TIMEOUT_SECONDS),
       );
       // The SDK exposes connectLinkUrl on the response but the published
       // typings don't include it yet, hence the cast. If it's ever missing
@@ -377,6 +381,15 @@ export async function createPipedreamClient(
         console.error("[pipedream] getAppInfo failed for", slug, ":", err instanceof Error ? err.message : err);
         return null;
       }
+    },
+
+    async inspectAccount(accountId) {
+      assertLegacyAccountId(accountId);
+      if (!/^apn_[A-Za-z0-9_-]{1,240}$/.test(accountId)) throw new Error("Integration unavailable");
+      const account = await sdk.accounts.retrieve(accountId, { includeCredentials: false }, executionOptions(API_TIMEOUT_SECONDS));
+      const email = typeof account.name === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account.name) && account.name.length <= 320 ? account.name : undefined;
+      return { id: account.id, externalUserId: account.externalId, app: account.app?.nameSlug,
+        healthy: account.healthy === true, dead: account.dead === true, ...(email ? { email } : {}) };
     },
 
     async listAccounts(externalUserId: string) {
