@@ -4,6 +4,7 @@ import { AccountDeletionOwnershipError } from './types.js';
 import { lockAccountDeletionOwner } from './repository.js';
 import { ownerHandlesQuery } from './owner-handles.js';
 import type { PlatformDB } from '../db.js';
+import { eraseAppStoreOwnerData } from '../app-store/account-data.js';
 import { readUsageWaiverAudit } from '../ai-funded-usage-waiver-audit.js';
 
 export async function hasTable(db: PlatformDB, name: string): Promise<boolean> {
@@ -94,6 +95,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
       (SELECT id FROM apps_registry WHERE author_id IN (${ids}) AND is_public = false)`.execute(trx.executor);
     await sql`DELETE FROM apps_registry WHERE author_id IN (${ids}) AND is_public = false`.execute(trx.executor);
     const anonymous = `deleted:${createHash('sha256').update(owner).digest('hex')}`;
+    await eraseAppStoreOwnerData(trx, owner, anonymous);
     if(await hasTable(trx,'ats_applications')) {
       await sql`UPDATE ats_applications SET owner_id=NULL WHERE owner_id=${owner}`.execute(trx.executor);
       await sql`UPDATE ats_application_events SET actor_id=NULL WHERE actor_id=${owner}`.execute(trx.executor);

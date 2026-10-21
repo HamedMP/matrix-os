@@ -19,6 +19,7 @@ export function ownerStoragePrefixes(owner: string, root: string): string[] {
   return [...new Set([
     `matrixos-sync/${owner}/`, `${root}/${owner}/`,
     `matrixos-sync/v2/owners/${owner}/runtimes/`,
+    `app-store/owners/${owner}/`,
   ])];
 }
 /** Delete bounded batches from the start. A crash safely restarts without an in-memory inventory. */
