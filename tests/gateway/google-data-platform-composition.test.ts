@@ -3,6 +3,7 @@ import { createTestIntegrationDb } from '../integrations/native-integration-db-t
 import { createIntegrationRoutes } from '../../packages/gateway/src/integrations/routes.js';
 import type { PlatformDb } from '../../packages/gateway/src/platform-db.js';
 import { profileInput } from './google-data/fixtures.js';
+import { signGoogleProcessingEnvelope, verifyGoogleProcessingEnvelope } from '../../packages/gateway/src/google-data/runtime/envelope.js';
 
 let db: PlatformDb | undefined;
 afterEach(async () => { await db?.destroy(); db = undefined; });
@@ -10,6 +11,17 @@ describe('platform-owned Google policy composition', () => {
   it('migrates the registry, mounts owner consent routes and preserves exact Gmail ownership', async () => {
     ({ db } = await createTestIntegrationDb());
     expect(db.googleData).toBeDefined();
+    expect(db.googleData!.requestLedger).toBeDefined();
+    const machineToken = 'synthetic-machine-token';
+    const signedRequest = { method: 'POST', path: '/read-call', body: '{}', machineToken };
+    const claim = { ownerId: 'owner-one', runId: 'run_policy', runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1',
+      profileId: '123e4567-e89b-42d3-a456-426614174001', profileRevision: 1,
+      consentId: '123e4567-e89b-42d3-a456-426614174002', consentRevision: 1,
+      googleAccountId: '123e4567-e89b-42d3-a456-426614174000', purposeId: 'mail-assistance',
+      routeDigest: 'a'.repeat(64), policyExpiresAt: new Date(Date.now() + 3600_000).toISOString() };
+    const envelope = verifyGoogleProcessingEnvelope(signGoogleProcessingEnvelope(claim, signedRequest), { ...signedRequest, ownerId: claim.ownerId });
+    await db.googleData!.requestLedger.consume(envelope);
+    await expect(db.googleData!.requestLedger.consume(envelope)).rejects.toMatchObject({ code: 'replay' });
     const owner = await db.createUser({ clerkId: 'owner-one', handle: 'owner-one', displayName: 'Owner', email: 'owner@example.test', containerId: 'owner-container' });
     const foreign = await db.createUser({ clerkId: 'owner-two', handle: 'owner-two', displayName: 'Other', email: 'other@example.test', containerId: 'other-container' });
     const native = await db.connectService({ userId: owner.id, service: 'gmail', pipedreamAccountId: 'gmail_123e4567-e89b-42d3-a456-426614174000', accountLabel: 'Direct', scopes: [] });
