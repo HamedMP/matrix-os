@@ -127,6 +127,20 @@ describe('production account deletion deployment contract', () => {
     }
   });
 
+  it('rejects Apple identifiers with trailing newlines', () => {
+    for (const name of [
+      'apple-team-id',
+      'apple-sign-in-key-id',
+      'apple-services-id',
+      'apple-native-client-id',
+    ] as const) {
+      const rejected = run('preflight-secrets', {
+        MOCK_VALUES: JSON.stringify({ ...validSecretValues, [name]: `${validSecretValues[name]}\n` }),
+      });
+      expect(rejected.status, `${name}: ${rejected.stderr}`).not.toBe(0);
+    }
+  });
+
   it('preflights every configured secret without printing its value', () => {
     const result = run('preflight-secrets');
     expect(result.status, result.stderr).toBe(0);

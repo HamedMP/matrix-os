@@ -74,7 +74,6 @@ secret_bindings() {
 validate_secret_value() {
   local name="$1"
   local path="$2"
-  local value
   case "$name" in
     account-deletion-secret)
       node -e '
@@ -86,8 +85,10 @@ validate_secret_value() {
       jq -Rse 'test("\\Awhsec_[A-Za-z0-9+/=]{16,}\\z") and ((((ltrimstr("whsec_") | gsub("="; "") | length) * 3 / 4) | floor) >= 16)' "$path" >/dev/null
       ;;
     apple-team-id|apple-sign-in-key-id)
-      value="$(<"$path")"
-      [[ "$value" =~ ^[A-Z0-9]{10}$ ]]
+      node -e '
+        const value = require("node:fs").readFileSync(process.argv[1], "utf8");
+        if (value.length !== 10 || /[^A-Z0-9]/.test(value)) process.exit(1);
+      ' "$path"
       ;;
     apple-sign-in-private-key)
       node -e '
@@ -107,12 +108,16 @@ validate_secret_value() {
       ' "$path"
       ;;
     apple-services-id)
-      value="$(<"$path")"
-      [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{2,254}$ ]]
+      node -e '
+        const value = require("node:fs").readFileSync(process.argv[1], "utf8");
+        if (value.length < 3 || value.length > 255 || !/^[A-Za-z0-9]/.test(value) || /[^A-Za-z0-9.-]/.test(value)) process.exit(1);
+      ' "$path"
       ;;
     apple-native-client-id)
-      value="$(<"$path")"
-      [ "$value" = "com.matrixos.mobile" ]
+      node -e '
+        const value = require("node:fs").readFileSync(process.argv[1], "utf8");
+        if (value !== "com.matrixos.mobile") process.exit(1);
+      ' "$path"
       ;;
   esac
 }
