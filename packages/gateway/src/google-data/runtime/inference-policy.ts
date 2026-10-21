@@ -55,16 +55,21 @@ export async function authorizeGoogleInference(authority: GoogleDataInferenceAut
 const Text = z.string();
 const Name = z.string().min(1).max(256);
 const TextBlock = z.strictObject({ type: z.literal("text"), text: Text });
+// The pinned SDK emits these known cache directives by default. Disable them
+// only at typed configuration positions, preserving tool arguments as data.
+const disabledCache = { cache_control: z.strictObject({ type: z.literal('ephemeral'),
+  ttl: z.enum(['5m', '1h']).optional() }).optional().transform(() => undefined) };
+const AnthropicTextBlock = TextBlock.extend(disabledCache);
 const Base64Image = z.strictObject({ type: z.literal("image"), source: z.strictObject({ type: z.literal("base64"),
   media_type: z.enum(["image/png", "image/jpeg", "image/webp"]), data: z.string() }) });
 const InlineUrl = z.string().regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/);
 const Detail = z.enum(["auto", "high", "low"]).optional();
 const CompletionImage = z.strictObject({ type: z.literal("image_url"), image_url: z.strictObject({ url: InlineUrl, detail: Detail }) });
-const AnthropicContent = z.union([TextBlock, Base64Image,
-  z.strictObject({ type: z.literal("tool_use"), id: Name, name: Name, input: z.record(z.string(), z.unknown()) }),
+const AnthropicContent = z.union([AnthropicTextBlock, Base64Image.extend(disabledCache),
+  z.strictObject({ type: z.literal("tool_use"), id: Name, name: Name, input: z.record(z.string(), z.unknown()), ...disabledCache }),
   z.strictObject({ type: z.literal("tool_result"), tool_use_id: Name,
-    content: z.union([Text, z.array(z.union([TextBlock, Base64Image])).max(256)]), is_error: z.boolean().optional() }),
-  z.strictObject({ type: z.literal("thinking"), thinking: Text, signature: Text }),
+    content: z.union([Text, z.array(z.union([AnthropicTextBlock, Base64Image.extend(disabledCache)])).max(256)]), is_error: z.boolean().optional(), ...disabledCache }),
+  z.strictObject({ type: z.literal("thinking"), thinking: Text, signature: Text, ...disabledCache }),
 ]);
 const AnthropicMessage = z.strictObject({ role: z.enum(["user", "assistant"]), content: z.union([Text, z.array(AnthropicContent).max(256)]) });
 
@@ -93,7 +98,8 @@ function localSchema(value: unknown, depth = 0): boolean {
   return true;
 }
 const JsonSchema = z.record(z.string(), z.unknown()).refine(value => localSchema(value));
-const AnthropicTool = z.strictObject({ name: Name, description: Text.optional(), input_schema: JsonSchema });
+const AnthropicTool = z.strictObject({ name: Name, description: Text.optional(), input_schema: JsonSchema,
+  eager_input_streaming: z.boolean().optional(), ...disabledCache });
 const FunctionDefinition = z.strictObject({ name: Name, description: Text.optional(), parameters: JsonSchema, strict: z.boolean().optional() });
 const FunctionCall = z.strictObject({ id: Name, type: z.literal("function"), function: z.strictObject({ name: Name, arguments: Text }) });
 const CompletionMessage = z.union([
@@ -105,7 +111,7 @@ const CompletionMessage = z.union([
 const Sampling = { temperature: z.number().min(0).max(2).optional(), top_p: z.number().min(0).max(1).optional() };
 const ToolChoice = z.union([z.enum(["none", "auto", "required"]), z.strictObject({ type: z.literal("function"), function: z.strictObject({ name: Name }) })]);
 const Anthropic = z.strictObject({ model: Name, stream: z.literal(true), max_tokens: z.number().int().positive(),
-  messages: z.array(AnthropicMessage).min(1).max(4096), system: z.union([Text, z.array(TextBlock).max(256)]).optional(),
+  messages: z.array(AnthropicMessage).min(1).max(4096), system: z.union([Text, z.array(AnthropicTextBlock).max(256)]).optional(),
   tools: z.array(AnthropicTool).max(64).optional(), tool_choice: z.union([
     z.strictObject({ type: z.enum(["auto", "any", "none"]), disable_parallel_tool_use: z.boolean().optional() }),
     z.strictObject({ type: z.literal("tool"), name: Name, disable_parallel_tool_use: z.boolean().optional() }),

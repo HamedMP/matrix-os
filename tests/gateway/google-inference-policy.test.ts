@@ -53,10 +53,10 @@ describe("Google inference typed wire policy", () => {
   it.each([{ type: "web_search" }, { type: "file_search", vector_store_ids: ["remote"] }, { type: "computer_use_preview" }, { type: "mcp", server_url: "https://remote.invalid" }])("rejects hosted tools %j", tool => {
     expect(() => prepareGoogleInferenceBody("openai-responses", JSON.stringify({ ...responses(), tools: [tool] }))).toThrow();
   });
-  it("rejects Anthropic Files, cache directives and request metadata", () => {
+  it("rejects Anthropic Files, unknown cache directives and request metadata", () => {
     for (const changed of [
       { ...messages(), metadata: { user_id: "private" } },
-      { ...messages(), system: [{ type: "text", text: "private", cache_control: { type: "ephemeral" } }] },
+      { ...messages(), system: [{ type: "text", text: "private", cache_control: { type: "unknown" } }] },
       { ...messages(), messages: [{ role: "user", content: [{ type: "document", source: { type: "file", file_id: "file_remote" } }] }] },
       { ...messages(), tools: [{ type: "web_search_20250305", name: "web_search" }] },
     ]) expect(() => prepareGoogleInferenceBody("anthropic-messages", JSON.stringify(changed))).toThrow();
