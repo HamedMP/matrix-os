@@ -1,5 +1,6 @@
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 import { fetchActiveComputer, mobileQueryKeys } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
@@ -27,6 +28,11 @@ export function useActiveGateway() {
   });
   const computer = activeComputer.data ?? null;
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
+  // The same function while the computer stays, so what is built on it can be kept.
+  const session = useCallback(async (): Promise<GatewaySession | null> => {
+    const token = await getToken();
+    return token && gatewayUrl ? { token, gatewayUrl } : null;
+  }, [getToken, gatewayUrl]);
 
   return {
     authEnabled,
@@ -39,9 +45,6 @@ export function useActiveGateway() {
     isComputerPending: authEnabled && activeComputer.isPending,
     isComputerError: activeComputer.isError,
     /** A fresh token for the computer on screen, or null when either is missing. */
-    session: async (): Promise<GatewaySession | null> => {
-      const token = await getToken();
-      return token && gatewayUrl ? { token, gatewayUrl } : null;
-    },
+    session,
   };
 }

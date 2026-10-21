@@ -2,7 +2,7 @@
   "expo": {
     "name": "Matrix OS",
     "slug": "matrix-os-mobile",
-    "version": "0.2.7",
+    "version": "0.2.8",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
@@ -79,6 +79,15 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#9AA48C"
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Voice input for chat messages",
+          "recordAudioAndroid": true,
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
         }
       ],
       "expo-web-browser",
