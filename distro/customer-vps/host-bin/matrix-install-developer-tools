@@ -15,7 +15,7 @@ TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"
 STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
 FAILED_FILE="$STATE_DIR/failed-tools"
 INSTALLED_FILE="$STATE_DIR/installed-tools"
-CODEX_VERSION="0.156.1"
+CODEX_VERSION="0.162.1"
 CLAUDE_CODE_VERSION="2.1.280"
 NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
 
@@ -108,10 +108,16 @@ tool_bin_name() {
 }
 
 codex_version_is_current() {
-  local output escaped_version
+  local output required_major required_minor required_patch current_major current_minor current_patch
   output="$("$NODE_PREFIX/bin/codex" --version 2>/dev/null)" || return 1
-  escaped_version="${CODEX_VERSION//./\\.}"
-  printf '%s\n' "$output" | grep -Eq "(^|[[:space:]])${escaped_version}([[:space:]]|$)"
+  [[ "$output" =~ ^codex-cli[[:space:]]+([0-9]+)\.([0-9]+)\.([0-9]+)([[:space:]]|$) ]] || return 1
+  current_major="${BASH_REMATCH[1]}"
+  current_minor="${BASH_REMATCH[2]}"
+  current_patch="${BASH_REMATCH[3]}"
+  IFS=. read -r required_major required_minor required_patch <<< "$CODEX_VERSION"
+  (( 10#$current_major > 10#$required_major ||
+     (10#$current_major == 10#$required_major && 10#$current_minor > 10#$required_minor) ||
+     (10#$current_major == 10#$required_major && 10#$current_minor == 10#$required_minor && 10#$current_patch >= 10#$required_patch) ))
 }
 
 claude_version_is_current() {
@@ -137,10 +143,11 @@ is_tool_installed() {
     [ -x "$NODE_PREFIX/bin/claude" ] && claude_version_is_current
     return
   fi
-  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "$NODE_PREFIX/bin/${bin_name}" ] || return 1
   if [ "$tool" = "codex" ]; then
-    codex_version_is_current
+    [ -x "$NODE_PREFIX/bin/codex" ] && codex_version_is_current
+    return
   fi
+  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "$NODE_PREFIX/bin/${bin_name}" ]
 }
 
 if [ "$MODE" != "--sandbox-only" ]; then
@@ -173,7 +180,7 @@ for tool in $TOOLS; do
   esac
 
   if is_tool_installed "$tool"; then
-    if [ "$tool" = "claude-code" ] && ! grep -qxF "$tool" "$INSTALLED_FILE"; then
+    if { [ "$tool" = "claude-code" ] || [ "$tool" = "codex" ]; } && ! grep -qxF "$tool" "$INSTALLED_FILE"; then
       printf '%s\n' "$tool" >>"$INSTALLED_FILE"
     fi
     log "optional developer tool ${tool} already installed; skipping"
@@ -185,6 +192,8 @@ for tool in $TOOLS; do
   if /opt/matrix/bin/matrix-install-tool-pack "$tool" >>"$STATE_DIR/${tool}.log" 2>&1; then
     if [ "$tool" = "claude-code" ] && ! claude_version_is_current; then
       log "installed Claude Code did not meet the required version"
+    elif [ "$tool" = "codex" ] && ! codex_version_is_current; then
+      log "installed Codex did not meet the required version"
     else
       install_succeeded=1
     fi

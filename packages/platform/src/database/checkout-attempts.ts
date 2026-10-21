@@ -22,6 +22,17 @@ const CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 const CHECKOUT_SESSION_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
+function isExpiredLegacyCheckoutAttempt(
+  attempt: BillingCheckoutAttemptRecord,
+  now: string,
+): boolean {
+  const ageMs = Date.parse(now) - Date.parse(attempt.createdAt);
+  return attempt.status === 'open'
+    && (attempt.planSlug === null || attempt.billingInterval === null || attempt.regionSlug === null)
+    && Number.isFinite(ageMs)
+    && ageMs >= CHECKOUT_SESSION_MAX_LIFETIME_MS;
+}
+
 export async function insertCheckoutAttempt(
   db: PlatformDB,
   record: {
@@ -120,15 +131,7 @@ export async function claimCheckoutAttempt(
   if (inserted) return { attempt: mapCheckoutAttempt(inserted), claimed: true, selectionMatches: true };
   let activeRow = await getActiveAttempt();
   if (!activeRow) throw new Error('active checkout claim conflict could not be reconciled');
-  const activeAgeMs = Date.parse(record.createdAt) - Date.parse(activeRow.created_at);
-  const isExpiredLegacyAttempt = activeRow.status === 'open'
-    && (
-      activeRow.plan_slug === null
-      || activeRow.billing_interval === null
-      || activeRow.region_slug === null
-    )
-    && Number.isFinite(activeAgeMs)
-    && activeAgeMs >= CHECKOUT_SESSION_MAX_LIFETIME_MS;
+  const isExpiredLegacyAttempt = isExpiredLegacyCheckoutAttempt(mapCheckoutAttempt(activeRow), record.createdAt);
   if (isExpiredLegacyAttempt) {
     // Stripe Checkout Sessions cannot remain payable beyond 24 hours. Legacy
     // rows predate persisted selection fields, so retiring only after that
@@ -195,7 +198,7 @@ export async function claimCheckoutAttempt(
 export async function claimCardTrialCheckoutAttempt(
   db: PlatformDB,
   record: Omit<BillingCheckoutClaimInput, 'trialPeriodDays'>,
-  durationDays: number,
+  durationDays: number | null,
 ): Promise<{ attempt: BillingCheckoutAttemptRecord; claimed: boolean; selectionMatches: boolean }> {
   await db.ready;
   return withAccountDeletionAdmission(db, record.clerkUserId, async (trx) => {
@@ -222,7 +225,8 @@ export async function claimCardTrialCheckoutAttempt(
         .selectAll()
         .where('id', '=', account.trial_checkout_attempt_id)
         .executeTakeFirst();
-      if (!reservedAttempt || !['creating', 'open'].includes(reservedAttempt.status)) {
+      if (!reservedAttempt || !['creating', 'open'].includes(reservedAttempt.status)
+        || isExpiredLegacyCheckoutAttempt(mapCheckoutAttempt(reservedAttempt), record.createdAt)) {
         await trx.executor
           .updateTable('billing_trial_accounts')
           .set({ trial_checkout_attempt_id: null, updated_at: record.createdAt })
@@ -238,8 +242,17 @@ export async function claimCardTrialCheckoutAttempt(
       .where('clerk_user_id', '=', record.clerkUserId)
       .limit(1)
       .executeTakeFirst();
-    const trialPeriodDays = reservedAttempt?.trial_period_days
-      ?? (!account.consumed_at && !historicalSubscription ? durationDays : null);
+    // The payable attempt governs retries even without a trial-ledger pointer.
+    // In particular NULL is an immediate-payment promise, not a missing value
+    // to replace when the rollout flag or plan durations change.
+    const activeAttempt = await getActiveCheckoutAttempt(trx, record.clerkUserId, record.runtimeSlot);
+    const reusableAttempt = activeAttempt && !isExpiredLegacyCheckoutAttempt(activeAttempt, record.createdAt)
+      ? activeAttempt
+      : undefined;
+    const trialPeriodDays = reusableAttempt
+      ? reusableAttempt.trialPeriodDays
+      : reservedAttempt?.trial_period_days
+        ?? (!account.consumed_at && !historicalSubscription ? durationDays : null);
     const result = await claimCheckoutAttempt(trx, { ...record, trialPeriodDays }, true);
     if (result.attempt.trialPeriodDays) {
       await trx.executor

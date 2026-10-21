@@ -65,6 +65,8 @@ export interface AgentLaunchInput {
   runtimeHome?: string;
   providerEventPath?: string;
   providerThreadId?: string;
+  /** Credential-free bootstrap nonce, supplied only by internal Chat admission. */
+  codexBrowserAttemptId?: string;
   codexExecutable?: string;
   /** Server-owned exact native admission only; never accepted from renderer DTOs. */
   nativeCodexSubscription?: NativeCodexSubscriptionLaunch;
@@ -113,6 +115,7 @@ const CodexAppServerConfigSchema = z.object({
   }).strict().optional(),
   prompt: z.string().trim().min(1).max(64 * 1024),
   providerThreadId: z.string().trim().min(1).max(512).optional(),
+  browserAttemptId: z.uuid().optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
@@ -450,6 +453,7 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
         configurationFingerprint: input.nativeCodexSubscription.expectedConfigurationFingerprint } } : {}),
     prompt: codexPrompt(input.prompt, input.mode),
     ...(input.providerThreadId ? { providerThreadId: input.providerThreadId } : {}),
+    ...(input.codexBrowserAttemptId ? { browserAttemptId: input.codexBrowserAttemptId } : {}),
     approvalPolicy: input.approvalPolicy === "on-failure"
       ? "on-request"
       : input.approvalPolicy ?? "never",

@@ -24,6 +24,6 @@ function openCanvasApp(name: string, requestedPath: string): void {
 }
 
 /** Keep app bridge launches connected to the Canvas window and viewport stores. */
-export function CanvasAppViewer({ path }: { path: string }) {
-  return <AppViewer path={path} onOpenApp={openCanvasApp} />;
+export function CanvasAppViewer({ path, active = true }: { path: string; active?: boolean }) {
+  return <AppViewer path={path} active={active} onOpenApp={openCanvasApp} />;
 }

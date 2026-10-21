@@ -4,6 +4,8 @@ import { useAuth } from "@clerk/nextjs";
 import {
   MatrixBillingActiveCheckoutSchema,
   MatrixBillingPublicEntitlementSchema,
+  MatrixBillingTrialOfferSchema,
+  type MatrixBillingStatus,
   type MatrixBillingActiveCheckout,
   type MatrixBillingPublicEntitlement,
 } from "@matrix-os/contracts";
@@ -48,10 +50,7 @@ type BillingAccessState = {
 
 export type BillingAccessIssue = "auth" | "status" | null;
 
-export type BillingTrialOffer = {
-  eligible: boolean;
-  durationDays: number;
-};
+export type BillingTrialOffer = MatrixBillingStatus["trialOffer"];
 
 export type BillingEntitlementSummary = MatrixBillingPublicEntitlement;
 
@@ -229,8 +228,13 @@ export function useMatrixBillingAccess(runtimeSlot?: string): BillingAccessState
     checking: false,
     entitlement: null,
     // Keep browser screenshots deterministic while exercising the same
-    // three-day offer shown to eligible first-time hosted customers.
-    trialOffer: { eligible: true, durationDays: 3 },
+    // current Starter offer shown to eligible first-time hosted customers.
+    trialOffer: {
+      eligible: true,
+      durationDays: 3,
+      eligiblePlanSlugs: ["matrix_starter", "matrix_builder", "matrix_max"],
+      durationDaysByPlan: { matrix_starter: 14, matrix_builder: 3, matrix_max: 3 },
+    },
     accessReason: "e2e_test_bypass",
     accessIssue: null,
     retry: state.retry,
@@ -417,9 +421,10 @@ function readRemoteBillingStatus(
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), BILLING_STATUS_TIMEOUT_MS);
-  const statusPath = options.runtimeSlot
-    ? `/billing/status?runtimeSlot=${encodeURIComponent(options.runtimeSlot)}`
-    : "/billing/status";
+  const statusQuery = new URLSearchParams();
+  if (options.runtimeSlot) statusQuery.set("runtimeSlot", options.runtimeSlot);
+  statusQuery.set("trialOfferVersion", "2");
+  const statusPath = `/billing/status?${statusQuery.toString()}`;
   const promise = fetch(statusPath, {
     method: "GET",
     credentials: "include",
@@ -449,7 +454,7 @@ function readRemoteBillingStatus(
       const body = (await response.json()) as {
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
         entitlement?: unknown;
-        trialOffer?: { eligible?: unknown; durationDays?: unknown };
+        trialOffer?: unknown;
         activeCheckout?: unknown;
       };
       const parsedEntitlement = body.entitlement === null || body.entitlement === undefined
@@ -482,18 +487,7 @@ function readRemoteBillingStatus(
   return promise;
 }
 
-function parseBillingTrialOffer(value: {
-  eligible?: unknown;
-  durationDays?: unknown;
-} | undefined): BillingTrialOffer | null {
-  if (
-    typeof value?.eligible !== "boolean"
-    || typeof value.durationDays !== "number"
-    || !Number.isInteger(value.durationDays)
-    || value.durationDays <= 0
-    || value.durationDays > 30
-  ) {
-    return null;
-  }
-  return { eligible: value.eligible, durationDays: value.durationDays };
+function parseBillingTrialOffer(value: unknown): BillingTrialOffer | null {
+  const parsed = MatrixBillingTrialOfferSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }

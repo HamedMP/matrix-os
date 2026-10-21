@@ -1,3 +1,4 @@
+import { CodexBrowserLeaseSchema, CodexBrowserBindSchema, CodexBrowserStartSchema } from "./codex-browser-bootstrap.mjs";
 import { lstat } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { extname, resolve } from "node:path";
@@ -42,6 +43,7 @@ const TurnFrameSchema = z.object({
     .refine((value) => Buffer.byteLength(value, "utf8") <= 64 * 1024),
   model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32),
+  browser: CodexBrowserLeaseSchema.nullable().optional(),
   clientRequestId: RequestIdSchema,
 }).strict();
 const InterruptFrameSchema = z.object({
@@ -55,6 +57,8 @@ const SteerFrameSchema = z.object({
 }).strict();
 const ControlFrameSchema = z.discriminatedUnion("type", [
   CodexHibernateControlSchema,
+  CodexBrowserBindSchema,
+  CodexBrowserStartSchema,
   TurnFrameSchema,
   SteerFrameSchema,
   InterruptFrameSchema,
@@ -77,6 +81,7 @@ const MAX_CONTROL_FRAME_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;
 
 export interface CodexControlClient {
+  prepareBrowser?(input: { sessionId: string; browser: z.infer<typeof CodexBrowserLeaseSchema>; signal: AbortSignal }): Promise<void>;
   deferInput(input: { sessionId: string; inputRequestId: string; clientRequestId: string }): Promise<void>;
   hibernate?(input: { sessionId: string; providerThreadId: string; clientRequestId: string }): Promise<void>;
   submitTurn(input: {
@@ -85,6 +90,7 @@ export interface CodexControlClient {
     prompt: string;
     model?: string;
     modelOptions: z.infer<typeof AgentModelOptionSchema>[];
+    browser?: z.infer<typeof CodexBrowserLeaseSchema> | null;
   }): Promise<void>;
   interruptTurn(input: {
     sessionId: string;
@@ -188,6 +194,20 @@ export function createCodexControlClient(options: {
   }
 
   return {
+    async prepareBrowser(input) {
+      const browser = CodexBrowserLeaseSchema.parse(input.browser);
+      const deadline = Date.now() + 5_000;
+      for (;;) {
+        input.signal.throwIfAborted();
+        try { await send(input.sessionId, { type: "browser_bind", ...browser, clientRequestId: `req_bind_${browser.attemptId}` }, 30_000); break; }
+        catch (error: unknown) {
+          if (!(error instanceof Error && error.name === "CodexControlUnavailableError") || Date.now() >= deadline) throw error;
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      }
+      input.signal.throwIfAborted();
+      await send(input.sessionId, { type: "browser_start", attemptId: browser.attemptId, clientRequestId: `req_start_${browser.attemptId}` });
+    },
     hibernate(input) {
       return send(input.sessionId, { type: "hibernate", providerThreadId: input.providerThreadId,
         clientRequestId: input.clientRequestId }, Math.min(timeoutMs, 2_000));
@@ -198,6 +218,7 @@ export function createCodexControlClient(options: {
         prompt: input.prompt,
         ...(input.model ? { model: input.model } : {}),
         modelOptions: input.modelOptions,
+        ...(input.browser !== undefined ? { browser: input.browser } : {}),
         clientRequestId: `req_${input.turnId.slice("turn_".length)}`,
       });
     },

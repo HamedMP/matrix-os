@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { MiddlewareHandler } from "hono";
-import { timingSafeStringEquals } from "../security/timing-safe.js";
+import { hasPlatformAssetAuthorization } from "./platform-asset-authorization.js";
 import { verifyAppSession, type AppSessionPayloadType } from "./app-session.js";
 import { SAFE_SLUG } from "./manifest-schema.js";
 
@@ -17,21 +17,6 @@ const SECURITY_HEADERS = {
   "Content-Security-Policy":
     "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'",
 };
-
-function isReadOnlyViteAssetRequest(method: string, path: string, slug: string): boolean {
-  return (
-    (method === "GET" || method === "HEAD") &&
-    path.startsWith(`/apps/${slug}/assets/`)
-  );
-}
-
-function hasPlatformAssetAuthorization(authHeader: string | undefined): boolean {
-  const matrixAuthToken = process.env.MATRIX_AUTH_TOKEN;
-  if (!matrixAuthToken || !authHeader?.startsWith("Bearer ")) {
-    return false;
-  }
-  return timingSafeStringEquals(authHeader.slice("Bearer ".length), matrixAuthToken);
-}
 
 function sessionExpiredResponse(
   slug: string,
@@ -77,8 +62,7 @@ export function appSessionMiddleware(
     }
 
     if (
-      isReadOnlyViteAssetRequest(c.req.method, c.req.path, slug) &&
-      hasPlatformAssetAuthorization(c.req.header("authorization"))
+      hasPlatformAssetAuthorization(c.req.method, c.req.path, slug, c.req.header("authorization"))
     ) {
       await next();
       return;

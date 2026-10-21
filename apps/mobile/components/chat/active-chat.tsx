@@ -1,4 +1,4 @@
-import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
+import { canonicalChatExecutionControls, MATRIX_BOT_SELECTION, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { createContext, use, useEffect, type ReactNode } from "react";
 import { useAuth } from "@clerk/clerk-expo";
 
@@ -14,6 +14,13 @@ import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useChatComposer } from "@/lib/use-chat-composer";
 
 import { activeChatRun } from "./chat-screen-state";
+
+function savedChatExecutionControls(detail: CanonicalChatDetailResponse | null, chatId: string | null) {
+  if (!detail || detail.record.chat.id !== chatId) return undefined;
+  return canonicalChatExecutionControls({
+    chatId: detail.record.chat.id, currentSelection: detail.record.chat.currentSelection, runs: detail.runs,
+  });
+}
 
 function useActiveChatState() {
   const { isSignedIn, userId } = useAuth();
@@ -45,7 +52,8 @@ function useActiveChatState() {
   const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
-  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
+  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection,
+    savedChatExecutionControls(detail, activeChatId));
 
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
 

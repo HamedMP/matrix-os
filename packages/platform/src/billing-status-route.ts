@@ -17,8 +17,12 @@ import {
 } from './billing.js';
 import type { StripeBillingClient } from './billing-routes.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
+import { projectCardTrialOffer } from './billing/trial-policy.js';
 
-const BillingStatusQuerySchema = z.object({ runtimeSlot: RuntimeSlotSchema.optional() }).strict();
+const BillingStatusQuerySchema = z.object({
+  runtimeSlot: RuntimeSlotSchema.optional(),
+  trialOfferVersion: z.enum(['1', '2']).optional(),
+}).strict();
 const BILLING_UNAVAILABLE_RESPONSE = { error: 'Billing unavailable', code: 'billing_unavailable' } as const;
 
 export function createBillingStatusHandler(options: {
@@ -27,6 +31,7 @@ export function createBillingStatusHandler(options: {
   env: NodeJS.ProcessEnv;
   now: () => Date;
   cardTrialDays: number;
+  starterTrialDays: number;
   resolveClerkUserId: (c: Context) => Promise<string | null>;
   resolvePublicRecurringPrice: (db: PlatformDB, stripe: StripeBillingClient, subscription: BillingSubscriptionRecord, now: Date) => Promise<MatrixBillingPublicEntitlement['recurringPrice']>;
   resolveRuntimePlacement: (location: string | null | undefined) => (typeof MATRIX_HOSTED_BILLING_REGIONS)[number] | null;
@@ -81,13 +86,13 @@ export function createBillingStatusHandler(options: {
       const offerEligible = trialsEnabledForSlot
         ? await isCardTrialOfferEligible(options.db, clerkUserId)
         : false;
-      const reservedTrialDays = runtimeSlot === 'primary'
-        ? activeAttempt?.trialPeriodDays ?? null
-        : null;
-      const trialOffer = {
-        eligible: reservedTrialDays !== null || (offerEligible && !activeAttempt),
-        durationDays: reservedTrialDays ?? cardTrialDays,
-      };
+      const trialOffer = projectCardTrialOffer({
+        enabled: trialsEnabledForSlot,
+        eligible: offerEligible,
+        durationDays: cardTrialDays,
+        starterDurationDays: options.starterTrialDays,
+        activeAttempt: runtimeSlot === 'primary' ? activeAttempt : undefined,
+      });
       const activeCheckout = activeAttempt?.planSlug
         && activeAttempt.billingInterval
         && activeAttempt.regionSlug
@@ -129,7 +134,11 @@ export function createBillingStatusHandler(options: {
           })
           : null,
         access,
-        trialOffer,
+        // Released native clients validate the legacy object strictly. Only
+        // upgraded clients explicitly requesting v2 receive plan-aware fields.
+        trialOffer: query.data.trialOfferVersion === '2'
+          ? trialOffer
+          : { eligible: trialOffer.eligible, durationDays: trialOffer.durationDays },
         activeCheckout,
       });
       if (!response.success) {

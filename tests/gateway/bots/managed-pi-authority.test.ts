@@ -20,7 +20,7 @@ import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runti
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 
-async function setup(permissionMode = "full_access") {
+async function setup(permissionMode = "full_access", supervisedBrowser = false) {
   const { db, destroy } = await createBotStateDatabase(); cleanup.push(destroy);
   const home = await mkdtemp(join(tmpdir(), "matrix-pi-authority-")); cleanup.push(() => rm(home, { force: true, recursive: true }));
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
@@ -45,7 +45,7 @@ async function setup(permissionMode = "full_access") {
   }));
   const stopRuntime = vi.fn(async () => undefined);
   const host = { available: true, client: { createRuntime, stopRuntime } } as unknown as ScopeRuntimeHost;
-  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, roots: { resolve: async () => { throw new Error("Unexpected project" ); } } });
+  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, supervisedBrowser, toolCapabilities: ["browser.action", "mcp.call"], roots: { resolve: async () => { throw new Error("Unexpected project" ); } } });
   const input = { ownerId: OWNER, chatId: "chat_authority", runId: result.run.id, resolved: resolveManagedPiRoute(snapshot, selection) };
   return { db, admission, registry, input, createRuntime, home };
 }
@@ -108,4 +108,11 @@ it('fences edited persisted source/options before a previously bound owner run c
   await expect(admission.toolAuthority(binding)).rejects.toEqual(new BotAdmissionError('not_found'));
   await expect(admission.workspace(binding)).rejects.toEqual(new BotAdmissionError('not_found'));
   await admission.release(binding.runtimeHandle);
+});
+
+it.each([false, true])("projects supervised browser capability only with wired authority: %s", async enabled => {
+ const { admission, input } = await setup("supervised", enabled); const binding = await admission.admit(input);
+ expect(binding.capabilities.includes("browser.action")).toBe(enabled);
+ expect(binding.capabilities).not.toContain("mcp.call");
+ await admission.release(binding.runtimeHandle);
 });

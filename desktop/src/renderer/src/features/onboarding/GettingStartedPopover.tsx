@@ -189,7 +189,8 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   return (
     <Popover.Root open={open} onOpenChange={handleRadixOpenChange}>
       {helpMenu ? <DesktopHelpMenu overlay={menuOverlay} {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger}
-        gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef} /> : trigger()}
+        gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef}
+        anchorTrigger={(helpTrigger) => <Popover.Anchor asChild>{helpTrigger}</Popover.Anchor>} /> : trigger()}
       <Popover.Portal>
         <Popover.Content
           role="dialog"

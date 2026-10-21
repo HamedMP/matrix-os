@@ -7,6 +7,7 @@ import { isSafeMarketingLandingPath } from '../reddit-purchase-attribution.js';
 /** Extracted verbatim from packages/platform/src/billing-routes.ts (S01 / T007): checkout and portal request schemas. */
 
 export const MATRIX_CARD_TRIAL_DAYS = 3;
+export const MATRIX_STARTER_TRIAL_DAYS = 14;
 
 export const MatrixCardTrialDaysSchema = z.string()
   .regex(/^[0-9]+$/)

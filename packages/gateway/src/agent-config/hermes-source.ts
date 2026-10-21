@@ -9,6 +9,8 @@ import type {
   AgentRuntimeSource,
 } from "./service.js";
 
+import type { HermesNativeCredentialKind } from "./hermes-native-credential-kind.js";
+
 export type HermesJsonReader = (
   path: string,
   signal: AbortSignal,
@@ -295,6 +297,7 @@ export function createHermesRuntimeSource(
     cacheTtlMs?: number;
     now?: () => number;
     logWarning?: (errorName: string) => void;
+    readNativeCredentialKind?: (signal: AbortSignal) => Promise<HermesNativeCredentialKind | null>;
   } = {},
 ) {
   const cacheTtlMs = options.cacheTtlMs ?? 5_000;
@@ -323,7 +326,7 @@ export function createHermesRuntimeSource(
       const promise = Promise.allSettled([
         readJson("/api/status", signal),
         readJson("/api/model/options", signal).then(value => { observedAt = now(); return value; }),
-      ]).then(([statusResult, modelOptionsResult]) => {
+      ]).then(async ([statusResult, modelOptionsResult]) => {
         signal.throwIfAborted();
         if (statusResult.status === "rejected") throw statusResult.reason;
         let modelOptions: unknown = { providers: [] };
@@ -335,6 +338,24 @@ export function createHermesRuntimeSource(
               ? modelOptionsResult.reason.name
               : "UnknownError",
           );
+        }
+        const raw = HermesOptionsSchema.safeParse(modelOptions);
+        const candidates = raw.success ? raw.data.providers.filter(value => {
+          const row = HermesProviderSchema.safeParse(value);
+          return row.success && row.data.slug === "anthropic";
+        }) : [];
+        const candidate = candidates.length === 1 ? HermesProviderSchema.safeParse(candidates[0]) : undefined;
+        if (raw.success && raw.data.provider === "anthropic" && candidate?.success
+          && candidate.data.authenticated === true && candidate.data.is_user_defined === false
+          && candidate.data.auth_type === undefined && options.readNativeCredentialKind) {
+          const proof = await options.readNativeCredentialKind(signal);
+          signal.throwIfAborted();
+          if (proof?.providerId === "anthropic" && proof.credentialKind === "api_key" && proof.modelId === raw.data.model
+            && candidate.data.models?.includes(proof.modelId)) {
+            modelOptions = { ...raw.data, providers: raw.data.providers.map(value => value === candidates[0]
+              ? { ...(value as Record<string, unknown>), auth_type: "api_key" } : value) };
+            observedAt = now();
+          }
         }
         return normalizeHermesRuntimeSnapshot({
           status: statusResult.value,

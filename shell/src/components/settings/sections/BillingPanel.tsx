@@ -2,6 +2,8 @@
 
 import {
   getMatrixDeveloperToolPreinstallLimit,
+  getMatrixBillingDefaultPlanSlug,
+  getMatrixBillingTrialDurationDays,
 } from "@matrix-os/contracts";
 import type { MatrixBillingActiveCheckout } from "@matrix-os/contracts";
 import {
@@ -578,13 +580,8 @@ function BillingPanelInner({
   checkoutRuntimeSlot?: string;
   selectedPlan?: unknown;
 }) {
-  const [selectedProfileSlug, setSelectedProfileSlug] = useState<string>(
-    () =>
-      preselectedFeatureSlug(selectedPlan) ??
-      MATRIX_BILLING_SERVER_PROFILES[1]?.featureSlug ??
-      MATRIX_BILLING_SERVER_PROFILES[0]?.featureSlug ??
-      "",
-  );
+  const [selectedProfileOverride, setSelectedProfileOverride] = useState<string | null>(null);
+  const selectedProfileSlug = selectedProfileOverride ?? preselectedFeatureSlug(selectedPlan);
   const automaticRegionSlug = useSyncExternalStore(
     subscribeToBrowserTimeZone,
     getDefaultRegionSlug,
@@ -596,12 +593,6 @@ function BillingPanelInner({
   const [developerTools, setDeveloperTools] = useState<DeveloperToolId[]>(defaultDeveloperTools);
   const [openPicker, setOpenPicker] = useState<PickerKey>(null);
   const checkoutBypassed = mode === "add-computer" && entitlement?.source === "override";
-  const trialDurationDays = trialOffer?.eligible === true
-    && mode !== "add-computer"
-    && (checkoutRuntimeSlot === undefined || checkoutRuntimeSlot === "primary")
-    && !checkoutBypassed
-    ? trialOffer.durationDays
-    : null;
   const allowedProfiles = checkoutBypassed
     ? MATRIX_BILLING_SERVER_PROFILES.filter((profile) =>
         entitlement.allowedPlanSlugs.includes(profile.planSlug),
@@ -613,7 +604,9 @@ function BillingPanelInner({
       ?? allowedProfiles[0]
       ?? MATRIX_BILLING_SERVER_PROFILES[0]!
     : allowedProfiles.find(
-      (profile) => profile.featureSlug === selectedProfileSlug,
+      (profile) => selectedProfileSlug !== null
+        ? profile.featureSlug === selectedProfileSlug
+        : profile.planSlug === getMatrixBillingDefaultPlanSlug(trialOffer),
     ) ?? allowedProfiles[0] ?? MATRIX_BILLING_SERVER_PROFILES[0]!;
   const allowedRegions = checkoutBypassed
     ? MATRIX_BILLING_REGIONS.filter((region) =>
@@ -632,6 +625,11 @@ function BillingPanelInner({
     () => resolveMatrixServerProfile(selectedPlanProfile, selectedRegion),
     [selectedPlanProfile, selectedRegion],
   );
+  const trialDurationDays = mode !== "add-computer"
+    && (checkoutRuntimeSlot === undefined || checkoutRuntimeSlot === "primary")
+    && !checkoutBypassed
+    ? getMatrixBillingTrialDurationDays(trialOffer, selectedProfile.planSlug)
+    : null;
   const developerToolLimit = getMatrixDeveloperToolPreinstallLimit(selectedProfile.hetznerType);
   const effectiveDeveloperTools = activeCheckout?.developerTools
     ?? constrainDeveloperToolsSelection(developerTools, developerToolLimit);
@@ -706,7 +704,7 @@ function BillingPanelInner({
       (region) => region.featureSlug === selectedRegion.featureSlug,
     ) ? selectedRegion : nextAllowedRegions[0] ?? selectedRegion;
     const nextProfile = resolveMatrixServerProfile(nextPlanProfile, nextRegion);
-    setSelectedProfileSlug(nextPlanProfile.featureSlug);
+    setSelectedProfileOverride(nextPlanProfile.featureSlug);
     if (nextRegion.featureSlug !== selectedRegion.featureSlug) {
       setSelectedRegionOverride(nextRegion.featureSlug);
     }

@@ -124,6 +124,11 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
+# The Browser spike requires native services outside app/. Ship an explicit,
+# guarded operator setup command and prebuilt viewer, without enabling it on customers.
+pnpm exec vite build "$ROOT_DIR/scripts/spikes/browser-vps/lab" --config "$ROOT_DIR/scripts/spikes/browser-vps/lab/vite.config.ts"
+node "$ROOT_DIR/scripts/stage-browser-preview.mjs" "$ROOT_DIR/scripts/spikes/browser-vps" "$STAGE_DIR/bin"
+chmod 0755 "$STAGE_DIR/bin/matrix-install-browser-preview"
 node "$ROOT_DIR/scripts/prepare-funded-host-component.mjs" \
   "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/funded-host-config"
 chmod 0755 "$STAGE_DIR/bin/matrix-postgres-start"

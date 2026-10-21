@@ -1,5 +1,6 @@
 /** Gateway-only owner tools. No recipe identity or bearer reaches the Pi worker. */
 import { randomUUID } from "node:crypto";
+import { SharedBrowserError, type SharedBrowserBroker, type SharedBrowserBinding } from "../shared-browser/broker.js";
 import type { BotToolCapability, BotToolRequest, BotToolResult, CanonicalChatApprovalDecision, CanonicalOwnerScope } from "@matrix-os/contracts";
 import type { BotIntegrationClient, BotIntegrationConnection } from "../bots/integration-client.js";
 import { BotBrokerActionError } from "../bots/broker-actions.js";
@@ -10,6 +11,9 @@ import { CanonicalProviderRunEventSchema, type CanonicalProviderRunEvent } from 
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import type { ManagedPiMcpClient } from "./managed-pi-mcp-client.js";
+import { botToolDisplayInput, botToolDisplayOutput } from "@matrix-os/contracts";
+import { mapBotEvent } from "../bots/chat-adapter.js";
+import type { McpProgressListener } from "../integrations/custom-mcp/tool-progress.js";
 
 const MAX_RUNS = 64;
 const MAX_ACTIONS = 60;
@@ -29,6 +33,8 @@ interface Run {
   mcpInitialization?: Promise<McpControl>;
   revoking?: Promise<boolean>;
   generation?: number;
+  browserRegistered?: boolean;
+  browserPermissionMode?: string;
 }
 function text(value: unknown): BotToolResult {
   const encoded = JSON.stringify(value);
@@ -38,17 +44,21 @@ function text(value: unknown): BotToolResult {
   return { ok: true, content };
 }
 export function createManagedPiOwnerTools(deps: {
+  toolOutputKey?: Buffer;
   authority(binding: ManagedPiRuntimeBinding): Promise<{ permissionMode: string }>;
   signalFor(binding: ManagedPiRuntimeBinding): AbortSignal | null;
   integrations?: Pick<BotIntegrationClient, "inventory" | "describe" | "call">;
   mcp?: ManagedPiMcpClient;
   approvals?: CustomMcpApprovalClient;
+  sharedBrowser?: SharedBrowserBroker;
 }) {
   const runs = new Map<string, Run>(); // capacity64, close on terminal/cancel; run deadline bounds lifetime.
   const capabilities: BotToolCapability[] = [
+    ...(deps.sharedBrowser ? ["browser.action"] as const : []),
     ...(deps.integrations ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(deps.mcp && deps.approvals ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
   ];
+  const browserBinding = (binding: ManagedPiRuntimeBinding): SharedBrowserBinding => ({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, harness: "pi" });
   function revoke(run: Run): Promise<boolean> {
     if (!run.generation) return Promise.resolve(false);
     return run.revoking ??= deps.approvals!.revokeRun(run.binding.runId);
@@ -129,7 +139,9 @@ export function createManagedPiOwnerTools(deps: {
     if (run.seen.has(request.toolCallId) || run.seen.size >= MAX_ACTIONS) throw new BotBrokerActionError("denied");
     run.seen.add(request.toolCallId);
     const prepared: Prepared = { args: JSON.stringify(request.args) };
-    if (request.capability === "integration.call") {
+    if (request.capability === "browser.action") {
+      if (permissionMode !== run.browserPermissionMode || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
+    } else if (request.capability === "integration.call") {
       const action = await actionFor(binding, request.args, permissionMode, signal);
       if (action.risk !== "read" && permissionMode !== "full_access") throw new BotBrokerActionError("denied");
       prepared.account = await account(binding, request.args, signal);
@@ -159,6 +171,24 @@ export function createManagedPiOwnerTools(deps: {
       if (runs.has(binding.runId) || runs.size >= MAX_RUNS) throw new BotBrokerActionError("unavailable");
       const run: Run = { binding, emit, controller: new AbortController(), prepared: new Map(), seen: new Set() };
       runs.set(binding.runId, run);
+      if (binding.capabilities.includes("browser.action")) {
+        try {
+          const current = await live(binding, run.controller.signal);
+          if (!deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
+          if (current.permissionMode === "supervised") {
+            if (!deps.sharedBrowser.authorizeAction) throw new BotBrokerActionError("not_granted");
+            deps.sharedBrowser.openRun(browserBinding(binding), current.signal, { mode: "supervised", authorizeAction: deps.sharedBrowser.authorizeAction });
+          } else {
+            deps.sharedBrowser.openRun(browserBinding(binding), current.signal);
+          }
+          run.browserPermissionMode = current.permissionMode;
+          run.browserRegistered = true;
+        } catch (error: unknown) {
+          if (runs.get(binding.runId) === run) runs.delete(binding.runId);
+          run.controller.abort();
+          throw error;
+        }
+      }
 
     },
     prepare,
@@ -170,6 +200,17 @@ export function createManagedPiOwnerTools(deps: {
       const prepared = run.prepared.get(request.toolCallId);
       run.prepared.delete(request.toolCallId);
       if (!prepared || prepared.args !== JSON.stringify(request.args)) throw new BotBrokerActionError("denied");
+      if (request.capability === "browser.action") {
+        if (permissionMode !== run.browserPermissionMode || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
+        try { return text(await deps.sharedBrowser.execute(browserBinding(binding), request.args, signal)); }
+        catch (error: unknown) {
+          if (error instanceof SharedBrowserError && !error.dispatched && ["observe_again", "browser_changed", "browser_busy"].includes(error.code)) {
+            return text({ success: false, content: "Browser control changed. Wait for the owner to resume, then take a fresh snapshot; never replay the refused action.", automation: deps.sharedBrowser.status() });
+          }
+          if (error instanceof SharedBrowserError && error.code === "run_unavailable" && !error.dispatched) throw new BotBrokerActionError("stale_generation");
+          throw error;
+        }
+      }
       if (request.capability === "integration.inventory") {
         const rows = await deps.integrations!.inventory(binding.ownerId, signal);
         return text(rows.filter(row => !request.args.service || row.service === request.args.service));
@@ -189,8 +230,19 @@ export function createManagedPiOwnerTools(deps: {
       if (request.capability === "mcp.describe") return text(await deps.mcp!.describe(binding.ownerId, request.args.serverId, signal));
       if (request.capability === "mcp.call") {
         if (permissionMode !== "full_access" || !run.generation) throw new BotBrokerActionError("denied");
+        const evidence = botToolDisplayInput("mcp_call", request.args);
+        let updates = 0;
+        const onProgress: McpProgressListener | undefined = deps.toolOutputKey ? progress => {
+          if (signal.aborted || runs.get(binding.runId) !== run || updates >= 3) return;
+          updates++;
+          const text = `Progress: ${progress.progress}${progress.total !== undefined ? ` of ${progress.total}` : ""}${progress.message ? `\n${progress.message}` : ""}`;
+          const output = botToolDisplayOutput({ content: [{ type: "text", text }] }, evidence.privateContext);
+          if (updates === 3) { output.output = `${output.output?.slice(0, 2900)}\n\nLive updates paused until this tool finishes.`; output.truncated = true; }
+          for (const event of mapBotEvent({ type: "tool_progress", toolCallId: request.toolCallId, capability: request.capability,
+            phase: "updated", display: { ...evidence.display, ...output } }, { toolOutputKey: deps.toolOutputKey })) run.emit(event);
+        } : undefined;
         return text(await deps.mcp!.call(binding.ownerId, { ...request.args, runId: binding.runId,
-          ...(prepared.receipt ? { approvalReceipt: prepared.receipt } : {}) }, signal));
+          ...(prepared.receipt ? { approvalReceipt: prepared.receipt } : {}) }, signal, ...(onProgress ? [onProgress] as const : [] as const)));
       }
       throw new BotBrokerActionError("not_granted");
     },
@@ -206,6 +258,10 @@ export function createManagedPiOwnerTools(deps: {
     async closeRun(runId: string): Promise<void> {
       const run = runs.get(runId); if (!run) return;
       runs.delete(runId); run.controller.abort(); run.mcp?.close(); run.prepared.clear();
+      if (run.browserRegistered) {
+        try { await deps.sharedBrowser!.closeRun(runId); }
+        catch (error: unknown) { console.warn("[managed-pi] Browser cleanup unavailable", error instanceof Error ? error.name : "UnknownError"); }
+      }
       if (run.mcpInitialization) {
         try { await run.mcpInitialization; }
         catch (error: unknown) { console.warn("[managed-pi] MCP initialization closed", error instanceof Error ? error.name : "UnknownError"); }

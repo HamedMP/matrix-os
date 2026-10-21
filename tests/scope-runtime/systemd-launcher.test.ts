@@ -102,18 +102,18 @@ describe("scope runtime systemd launcher", () => {
     const verified = createSystemdScopeRuntimeLauncher({
       ...paths,
       runCommand: vi.fn(async (command) => ({
-        stdout: command === paths.codexBinary ? "codex-cli 0.154.0\n" : "",
+        stdout: command === paths.codexBinary ? "codex-cli 0.162.1\n" : "",
       })),
     });
     await expect(verified.supportedAdapters?.()).resolves.toEqual([
       { adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] },
-      { adapterId: "codex", harnessVersion: "0.154.0", workloads: ["chat_ai"] },
+      { adapterId: "codex", harnessVersion: "0.162.1", workloads: ["chat_ai"] },
     ]);
 
     const changed = createSystemdScopeRuntimeLauncher({
       ...paths,
       runCommand: vi.fn(async (command) => ({
-        stdout: command === paths.codexBinary ? "codex-cli 0.155.0\n" : "",
+        stdout: command === paths.codexBinary ? "codex-cli 0.162.2\n" : "",
       })),
     });
     await expect(changed.supportedAdapters?.()).resolves.toEqual([

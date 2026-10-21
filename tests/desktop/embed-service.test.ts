@@ -5,6 +5,7 @@ import { EmbedService } from "@desktop/main/embeds/embed-service";
 import type { Bounds } from "@desktop/main/embeds/embed-manager";
 import type { HandoffResult } from "@desktop/main/embeds/app-session";
 import type { PortForwardHandle } from "@finnaai/matrix/port-forward";
+import * as viewAdapter from "@desktop/main/embeds/web-contents-view";
 
 vi.mock("electron", () => ({
   net: { request: vi.fn() },
@@ -17,6 +18,28 @@ describe("EmbedService", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it.each(["browser-lab", "notes"])("wires viewer-only transport admission exclusively for reserved route %s", routeSlug => {
+    const create = vi.spyOn(viewAdapter, "createWebContentsView").mockReturnValue({
+      setBounds: vi.fn(), setScale: vi.fn(), loadUrl: vi.fn(), attach: vi.fn(), detach: vi.fn(), destroy: vi.fn(),
+    });
+    const service = new EmbedService({
+      getWindow: () => ({}) as never, getGatewayOrigin: () => "https://gateway.test", getToken: () => "synthetic",
+      emitState: vi.fn(), browserLabViewerAuth: {
+        getGatewayOrigin: () => "https://gateway.test", getToken: () => "synthetic", getAuthGeneration: () => 1,
+      },
+    });
+    const internals = service as unknown as {
+      manager: { createView: (options: unknown) => unknown };
+      viewerAdmission: { close(): void };
+    };
+    internals.manager.createView({ partition: `persist:app-${routeSlug}`, kind: "app", slug: routeSlug,
+      routeSlug, allowedOrigins: ["https://gateway.test"], onState: vi.fn() });
+    expect(typeof create.mock.calls[0]?.[0].registerViewerTransport).toBe(routeSlug === "browser-lab" ? "function" : "undefined");
+    const close = vi.spyOn(internals.viewerAdmission, "close");
+    service.closeAll();
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("reloads a live embed through the existing bounded manager", async () => {

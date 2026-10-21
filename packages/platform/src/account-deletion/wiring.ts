@@ -28,7 +28,7 @@ export async function createConfiguredAccountDeletionRuntime(input:{
  customMcp?:AccountDeletionAdapterOptions['customMcp'];
 }):Promise<AccountDeletionRuntime|undefined> {
  const env=input.env;
- if(env.ACCOUNT_DELETION_ENABLED!=='true')return undefined;
+ if(env.ACCOUNT_DELETION_CONFIGURED!=='true')return undefined;
  const secret=env.ACCOUNT_DELETION_SECRET;
  const clerkSecretKey=env.CLERK_SECRET_KEY;
  if(!secret||secret.length<32||!clerkSecretKey)throw Error('Account deletion configuration unavailable');

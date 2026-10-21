@@ -1,6 +1,7 @@
 import { rememberGoogleAttribution } from './billing/google-attribution-store.js';
 import { createStripeWebhookHandler } from './billing/webhook-handler.js';
 import { createBillingTrackingRoutes } from './billing/tracking-routes.js';
+import { resolveNewCardTrialDays } from './billing/trial-policy.js';
 import { Hono, type Context } from 'hono';
 import { createBillingStatusHandler } from './billing-status-route.js';
 import { bodyLimit } from 'hono/body-limit';
@@ -60,6 +61,7 @@ import {
   buildCheckoutTelemetryProperties,
   resolveBillingReturnUrl,
   resolveCardTrialDays,
+  resolveStarterTrialDays,
   resolvePriceId,
   resolvePublicRecurringPrice,
   resolveRuntimePlacement,
@@ -158,6 +160,7 @@ export function createBillingRoutes(options: {
   const app = new Hono();
   const env = options.env ?? process.env;
   const cardTrialDays = resolveCardTrialDays(env);
+  const starterTrialDays = resolveStarterTrialDays(env);
   const primaryPrebillingRequired = env.CUSTOMER_VPS_ENABLED === 'true'
     && env.MATRIX_BILLING_PROVIDER === 'stripe';
   const now = options.now ?? (() => new Date());
@@ -339,12 +342,13 @@ export function createBillingRoutes(options: {
         regionSlug: parsed.data.regionSlug,
         ...(serverType ? { serverType } : {}),
       };
-      const claimAttempt = () => env.MATRIX_CARD_TRIALS_ENABLED === 'true'
-        && parsed.data.runtimeSlot === 'primary'
+      const claimAttempt = () => parsed.data.runtimeSlot === 'primary'
         ? claimCardTrialCheckoutAttempt(options.db, {
             id: randomUUID(),
             ...checkoutClaim,
-          }, cardTrialDays)
+          }, env.MATRIX_CARD_TRIALS_ENABLED === 'true'
+            ? resolveNewCardTrialDays(parsed.data.planSlug, starterTrialDays, cardTrialDays)
+            : null)
         : claimCheckoutAttempt(options.db, {
             id: randomUUID(),
             ...checkoutClaim,
@@ -677,6 +681,7 @@ export function createBillingRoutes(options: {
     env,
     now,
     cardTrialDays,
+    starterTrialDays,
     resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'status'),
     resolvePublicRecurringPrice,
     resolveRuntimePlacement,

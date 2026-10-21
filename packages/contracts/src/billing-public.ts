@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import {
   MATRIX_HOSTED_BILLING_PLAN_SLUGS,
   MATRIX_HOSTED_BILLING_REGION_SLUGS,
+  type MatrixHostedBillingPlanSlug,
 } from "#billing-catalog";
 import { IsoTimestampSchema } from "#contract-primitives";
 
@@ -58,6 +59,43 @@ export const MatrixBillingPublicEntitlementSchema = z.object({
   updatedAt: IsoTimestampSchema,
 }).strict();
 
+export const MatrixBillingTrialOfferSchema = z.object({
+  eligible: z.boolean(),
+  durationDays: z.number().int().min(1).max(30),
+  // Omission preserves offers from older servers; an empty list offers no plans.
+  eligiblePlanSlugs: z.array(z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS))
+    .max(MATRIX_HOSTED_BILLING_PLAN_SLUGS.length).optional(),
+  durationDaysByPlan: z.strictObject({
+    matrix_starter: z.number().int().min(1).max(30).optional(),
+    matrix_builder: z.number().int().min(1).max(30).optional(),
+    matrix_max: z.number().int().min(1).max(30).optional(),
+  }).optional(),
+}).strict();
+
+export const MATRIX_HOSTED_TRIAL_RETENTION_NOTICE =
+  "If you do not continue with a paid subscription, your trial computer and its local data may be permanently deleted 7 days after your trial ends. Export your data before then.";
+
+type BillingTrialOfferProjection = {
+  eligible: boolean;
+  durationDays: number;
+  eligiblePlanSlugs?: readonly MatrixHostedBillingPlanSlug[];
+  durationDaysByPlan?: Partial<Record<MatrixHostedBillingPlanSlug, number>>;
+};
+
+export function getMatrixBillingTrialDurationDays(
+  offer: BillingTrialOfferProjection | null | undefined,
+  planSlug: MatrixHostedBillingPlanSlug,
+): number | null {
+  if (!offer?.eligible || (offer.eligiblePlanSlugs && !offer.eligiblePlanSlugs.includes(planSlug))) return null;
+  return offer.durationDaysByPlan ? offer.durationDaysByPlan[planSlug] ?? null : offer.durationDays;
+}
+
+export function getMatrixBillingDefaultPlanSlug(
+  offer: { eligible: boolean; eligiblePlanSlugs?: readonly MatrixHostedBillingPlanSlug[] } | null | undefined,
+): MatrixHostedBillingPlanSlug {
+  return (offer?.eligible ? offer.eligiblePlanSlugs?.[0] : undefined) ?? "matrix_builder";
+}
+
 export const MatrixBillingActiveCheckoutSchema = z.strictObject({
   status: z.enum(["creating", "open"]),
   planSlug: z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS),
@@ -75,10 +113,7 @@ export const MatrixBillingStatusSchema = z.object({
     reason: z.enum(["active", "grace_period", "payment_required", "no_entitlement"]),
     gracePeriodEndsAt: IsoTimestampSchema.nullable().optional(),
   }).strict(),
-  trialOffer: z.object({
-    eligible: z.boolean(),
-    durationDays: z.number().int().min(1).max(30),
-  }).strict(),
+  trialOffer: MatrixBillingTrialOfferSchema,
   activeCheckout: MatrixBillingActiveCheckoutSchema.nullable().default(null),
 }).strict();
 

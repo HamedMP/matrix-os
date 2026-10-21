@@ -1,3 +1,5 @@
+import { createCodexBrowserRunScope } from "./codex-browser-run-scope.js";
+import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 import { sealToolOutput } from "../coding-agents/protected-tool-output.mjs";
 import { coarseToolOutputText } from "../coding-agents/codex-tool-output.mjs";
 import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
@@ -418,8 +420,11 @@ export function createCanonicalCodingChatProviderAdapter(options: {
   homePath?: string;
   toolOutputKey?: Buffer;
   nativeInputProvider?: Pick<CodingAgentProviderAdapter, "deferInput">;
+  sharedBrowser?: SharedBrowserBroker;
+  gatewayPort?: number;
 }): CanonicalChatProviderAdapter<CodingState> {
   const kind = driverKind(options.providerId);
+  const browsers = createCodexBrowserRunScope(options.providerId === "codex" && options.sharedBrowser ? { broker: options.sharedBrowser, gatewayPort: options.gatewayPort ?? 4000 } : undefined);
   const activeSteerRuns = new Map<string, {
     ownerId: string;
     chatId: string;
@@ -496,29 +501,31 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let targetThreadId: string | undefined;
       let terminalObserved = false;
       let releaseSteerRun: (() => void) | undefined;
-      const sink = options.threads.registerEventSink((published) => {
-        if (published.ownerId !== input.owner.ownerId) return;
-        if (targetThreadId === undefined) {
-          const incomingBytes = Buffer.byteLength(JSON.stringify(published.events), "utf8");
-          if (bufferedEventCount + published.events.length > MAX_BUFFERED_EVENTS
-            || bufferedEventBytes + incomingBytes > MAX_BUFFERED_EVENT_BYTES) {
-            inbox.fail(new Error("Canonical coding Provider event buffer exceeded"));
-            return;
-          }
-          bufferedEventCount += published.events.length;
-          bufferedEventBytes += incomingBytes;
-          buffered.push({
-            threadId: published.threadId,
-            events: published.events,
-            ...(published.tokenUsage ? { tokenUsage: published.tokenUsage } : {}),
-          });
-        } else if (published.threadId === targetThreadId) {
-          inbox.push(published.events, published.tokenUsage);
-        }
-      });
+      const browserAttempt = browsers.open(input);
+      let sink: { dispose(): void } | undefined;
       try {
+        sink = options.threads.registerEventSink((published) => {
+          if (published.ownerId !== input.owner.ownerId) return;
+          if (targetThreadId === undefined) {
+            const incomingBytes = Buffer.byteLength(JSON.stringify(published.events), "utf8");
+            if (bufferedEventCount + published.events.length > MAX_BUFFERED_EVENTS
+              || bufferedEventBytes + incomingBytes > MAX_BUFFERED_EVENT_BYTES) {
+              inbox.fail(new Error("Canonical coding Provider event buffer exceeded"));
+              return;
+            }
+            bufferedEventCount += published.events.length;
+            bufferedEventBytes += incomingBytes;
+            buffered.push({
+              threadId: published.threadId,
+              events: published.events,
+              ...(published.tokenUsage ? { tokenUsage: published.tokenUsage } : {}),
+            });
+          } else if (published.threadId === targetThreadId) {
+            inbox.push(published.events, published.tokenUsage);
+          }
+        });
         const requestId = legacyRequestId(input.continuationId ?? input.runId);
-        const created = await options.threads.createThread(principal(input.owner.ownerId), {
+        const created = await browserAttempt.withContext(() => options.threads.createThread(principal(input.owner.ownerId), {
           providerId: options.providerId,
           prompt: input.prompt,
           ...(input.projectSlug ? { projectId: input.projectSlug } : {}),
@@ -529,7 +536,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           ...permissions(input.permissionMode, options.providerId),
           attachments: attachments(input),
           clientRequestId: requestId,
-        });
+        }));
         targetThreadId = created.snapshot.thread.id;
         releaseSteerRun = registerSteerRun(input.runId, {
           ownerId: input.owner.ownerId,
@@ -554,12 +561,14 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         }
       } finally {
         releaseSteerRun?.();
-        sink.dispose();
+        sink?.dispose();
         // for-await consumer failures call return(), not throw(). Settle the
         // accepted native run before returning control to Chat's failure path.
-        if (options.providerId === "codex" && targetThreadId && !terminalObserved && !(input.signal.reason instanceof BackgroundProjectionDetached)) {
-          await stopUnprojectedRun(input, targetThreadId, { initialRequestId: legacyRequestId(input.runId) });
-        }
+        try {
+          if (options.providerId === "codex" && targetThreadId && !terminalObserved && !(input.signal.reason instanceof BackgroundProjectionDetached)) {
+            await stopUnprojectedRun(input, targetThreadId, { initialRequestId: legacyRequestId(input.runId) });
+          }
+        } finally { await browserAttempt.close(); }
       }
     },
     async *resume(inputValue) {
@@ -571,21 +580,23 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let admittedTurnId: string | undefined;
       let terminalObserved = false;
       let restartFresh = false;
-      const sink = options.threads.registerEventSink((published) => {
-        if (published.ownerId === input.owner.ownerId && published.threadId === targetThreadId) {
-          inbox.push(published.events, published.tokenUsage);
-        }
-      });
+      const browserAttempt = browsers.open(input);
+      let sink: { dispose(): void } | undefined;
       try {
+        sink = options.threads.registerEventSink((published) => {
+          if (published.ownerId === input.owner.ownerId && published.threadId === targetThreadId) {
+            inbox.push(published.events, published.tokenUsage);
+          }
+        });
         const requestId = legacyRequestId(input.continuationId ?? input.runId);
-        const accepted = await options.threads.acceptTurn(principal(input.owner.ownerId), targetThreadId, {
+        const accepted = await browserAttempt.withContext(() => options.threads.acceptTurn(principal(input.owner.ownerId), targetThreadId, {
           message: input.prompt,
           attachments: attachments(input),
           model: input.selection.model,
           modelOptions: input.selection.options ?? [],
           ...permissions(input.permissionMode, options.providerId),
           clientRequestId: requestId,
-        });
+        }));
         admittedTurnId = accepted.turnId;
         releaseSteerRun = registerSteerRun(input.runId, {
           ownerId: input.owner.ownerId,
@@ -619,10 +630,12 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         }
       } finally {
         releaseSteerRun?.();
-        sink.dispose();
-        if (options.providerId === "codex" && admittedTurnId && !terminalObserved && !(input.signal.reason instanceof BackgroundProjectionDetached)) {
-          await stopUnprojectedRun(input, targetThreadId, { turnId: admittedTurnId });
-        }
+        sink?.dispose();
+        try {
+          if (options.providerId === "codex" && admittedTurnId && !terminalObserved && !(input.signal.reason instanceof BackgroundProjectionDetached)) {
+            await stopUnprojectedRun(input, targetThreadId, { turnId: admittedTurnId });
+          }
+        } finally { await browserAttempt.close(); }
       }
       if (restartFresh) yield* adapter.start(inputValue);
     },
@@ -642,14 +655,15 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       );
     },
     async cancel(input) {
-      if (!input.state) return;
+      const browserCancellation = browsers.cancel({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId });
+      if (!input.state) return await browserCancellation;
       const state = CodingChatStateSchema.parse(input.state);
-      await options.threads.abortThread(
+      await Promise.all([browserCancellation, options.threads.abortThread(
         principal(input.owner.ownerId),
         state.conversationId,
         legacyRequestId(input.runId),
         ...(options.providerId === "codex" ? [{ runRequestId: legacyRequestId(state.runId ?? input.runId) }] : []),
-      );
+      )]);
     },
     ...(options.nativeInputProvider?.deferInput ? { deferInput: async (input: { owner: CanonicalProviderRunInput["owner"]; chatId: string; runId: string; requestId: string }) => {
       const active = activeSteerRuns.get(input.runId);

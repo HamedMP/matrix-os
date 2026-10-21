@@ -1,11 +1,14 @@
 "use client";
+import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
 import { WebChatRailControls } from "./chat/WebChatRailControls";
-import { ChatRailOrderContext, ChatRailOrderItem } from "@matrix-os/ui";
+import { ChatRailOrderContext, ChatRailOrderItem, ChatImportSourceFilter, filterChatsByImportSource, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { WebChatLifecycleGroups, webChatLifecycleGroup } from "./chat/WebChatLifecycleGroups";
 import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigation";
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
+import type { BrowserPermissionClient } from "@matrix-os/ui";
+import type { BrowserPermissionChoice } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
 import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar } from "@matrix-os/ui";
@@ -158,6 +161,7 @@ interface ChatAppProps {
     options?: ChatSubmitOptions,
   ) => void | Promise<boolean>;
   agentClient?: ChatAgentClient;
+  browserPermissions?: BrowserPermissionClient;
   agentSummaryClient?: ChatAgentClient;
   authorityKey?: string;
   composerIdentity?: object;
@@ -168,12 +172,14 @@ interface ChatAppProps {
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
   providerSelection?: CanonicalChatModelSelection;
+  executionControls?: import("@matrix-os/contracts").CanonicalChatExecutionControls;
   boundProviderInstanceId?: string;
   onSubmitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   onSubmitApproval?: (
     runId: string,
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
+    browserChoice?: BrowserPermissionChoice,
   ) => Promise<boolean>;
   composerDraftRequest?: ChatAgentDraftRequest | null;
   onComposerDraftConsumed?: (id: number) => void;
@@ -185,7 +191,7 @@ interface ChatAppProps {
 }
 
 export function ChatApp(props: ChatAppProps) {
-  return <ChatAgentsWorkspace><ChatAppContent {...props} /></ChatAgentsWorkspace>;
+  return <ChatAgentsWorkspace><BrowserPermissionReviewProvider><ChatAppContent {...props} /></BrowserPermissionReviewProvider></ChatAgentsWorkspace>;
 }
 
 function ChatAppContent({
@@ -205,8 +211,9 @@ function ChatAppContent({
   onRenameConversation,
   onSubmit,
   providerSelection,
+  executionControls,
   boundProviderInstanceId,
-  agentClient, agentSummaryClient, authorityKey, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -265,6 +272,7 @@ function ChatAppContent({
     setPreviewFile({ chatId: sessionId, path: target.path });
     return true;
   };
+  const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
@@ -294,7 +302,7 @@ function ChatAppContent({
   };
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
-  const providerState = useChatProviderState(providerSelection, boundProviderInstanceId);
+  const providerState = useChatProviderState(providerSelection, boundProviderInstanceId, { chatId: sessionId, scopeKey: authorityKey, executionControls });
   const botBinding = useDirectBotBinding(collaborationView ? undefined : sessionId, summaryClient);
   const directBotId = botBinding.agentId;
   const [botModelRevision, setBotModelRevision] = useState(0);
@@ -314,7 +322,7 @@ function ChatAppContent({
   const waitingTool = grouped.flatMap((group) => {
     if (group.type !== "message") return [];
     const approval = canonicalApproval(group.message);
-    if (!approval) return [];
+    if (!approval || approval.browserApproval) return [];
     const view = supervisedToolApproval(approval);
     return view?.kind === "waiting" ? [{ id: approval.approvalId, bar: view.bar }] : [];
   })[0] ?? null;
@@ -368,7 +376,8 @@ function ChatAppContent({
         `${c.title ?? ""}\n${c.preview ?? ""}`.toLowerCase().includes(searchQuery.toLowerCase()),
       );
 
-  const listedConversations = unreadOnly ? filteredConversations.filter((item) => item.readState?.unread) : filteredConversations;
+  const sourceConversations = filterChatsByImportSource(filteredConversations, sourceFilter, item => item.canonicalRecord?.importSource);
+  const listedConversations = unreadOnly ? sourceConversations.filter((item) => item.readState?.unread) : sourceConversations;
 
   const suggestions = getMessageSuggestions(messages);
 
@@ -459,6 +468,8 @@ function ChatAppContent({
         </div>
 
         }
+        <div className="px-3 pb-2"><ChatImportSourceFilter value={sourceFilter} onChange={setSourceFilter}/></div>
+        {sourceFilter !== "all" && listedConversations.length === 0 ? <p className="px-3 pb-2 text-xs text-muted-foreground">No chats match this source.</p> : null}
         <ScrollArea className="min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
@@ -475,7 +486,7 @@ function ChatAppContent({
 
           <div className="px-2 pb-3">
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
-              projects={<OrganizationDrivesNav chats={ordinaryConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/>}
+              projects={<OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={conv => (
                 <ChatRailOrderItem key={conv.id} id={conv.id} kind="chat" group={webChatLifecycleGroup(conv)}><RenameableConversationRow
@@ -713,7 +724,10 @@ function ChatAppContent({
                         />
                       ) : directBotId && msg.role === "system" && msg.metadata?.canonicalFailureCode === "model_unavailable" ? <BotModelFailureNotice/> : msg.role === "system" ? (
                         <CanonicalApprovalMessage
+                          chatId={sessionId}
                           message={msg}
+                          browserPermissions={browserPermissions}
+                          onOpenPermissionMode={!directBotId && !collaborationView ? () => setSetupOpen(true) : undefined}
                           submitting={(() => {
                             const approval = canonicalApproval(msg);
                             return approval !== null
@@ -722,10 +736,10 @@ function ChatAppContent({
                           permissionMode={approvalPermissionMode}
                           onPermissionMode={onApprovalPermissionMode}
                           onTryAgain={(prompt) => { composer.setText(supervisedToolRetryDraft(composer.text, prompt)); document.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
-                          onSubmit={onSubmitApproval ? async (runId, approvalId, decision) => {
+                          onSubmit={onSubmitApproval ? async (runId, approvalId, decision, browserChoice) => {
                             const submissionId = `${runId}\0${approvalId}`;
                             setSubmittingApprovalId(submissionId);
-                            try { await onSubmitApproval(runId, approvalId, decision); }
+                            try { if (!await onSubmitApproval(runId, approvalId, decision, browserChoice)) throw new Error("ApprovalUnavailable"); }
                             finally { setSubmittingApprovalId(null); }
                           } : undefined}
                         />
@@ -770,6 +784,7 @@ function ChatAppContent({
                   />
                 </div>
               )}
+              <BrowserPermissionReminder/>
               {waitingTool ? (
                 <SupervisedToolApprovalBar
                   label={`Waiting for you · ${waitingTool.bar}`}

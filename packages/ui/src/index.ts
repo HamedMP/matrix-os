@@ -196,7 +196,7 @@ export { copyFileImage, savePreviewBlob } from "./files/file-image-actions.js";
 export { resolveRecipeHandoff } from "./chat-agents/recipe-handoff.js";
 export { generatedChatTitle } from "./generated-chat-title";
 
-export { mergeCanonicalChatRecord, compareCanonicalChatActivity } from "./canonical-chat-record";
+export { mergeCanonicalChatRecord, compareCanonicalChatActivity, chatImportSourceVersionUrl } from "./canonical-chat-record";
 export { useChatReadState } from "./chat/use-chat-read-state.js";
 export { isChatUnread, chatReadAction, mergeChatReadState } from "./chat/read-state.js";
 
@@ -266,6 +266,9 @@ export { SupervisedToolApprovalBar, SupervisedToolApprovalCard } from "./chat/Su
 
 export { OverflowingChatTitle } from "./chat/OverflowingChatTitle.js";
 
+export { ChatImportSourceIcon, ChatImportSourceFilter } from "./chat/ChatImportSource.js";
+export { filterChatsByImportSource, type ChatImportSourceFilterValue } from "./chat/import-source.js";
+
 export * from "./chat-navigation/store.js";
 export * from "./chat-navigation/use-chat-navigation.js";
 export * from "./chat-navigation/browser-cache.js";
@@ -275,6 +278,11 @@ export * from "./chat-navigation/metrics.js";
 export * from "./onboarding-widget/index.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
+export { BrowserSurface, createHostedBrowserSession } from "./browser/index.js";
+export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus } from "./browser/index.js";
+export { BrowserPermissionCard } from "./browser-permission/BrowserPermissionCard.js";
+export { createBrowserPermissionClient, type BrowserPermissionClient } from "./browser-permission/client.js";
+export { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "./browser-permission/BrowserPermissionReview.js";
 
 export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./chat/attachment-input.js";
 

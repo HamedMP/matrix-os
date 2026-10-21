@@ -1,6 +1,9 @@
 import { CreditCard, ExternalLink } from "@renderer/lib/hugeicons";
 import {
   MatrixBillingStatusSchema,
+  getMatrixBillingDefaultPlanSlug,
+  getMatrixBillingTrialDurationDays,
+  MATRIX_HOSTED_TRIAL_RETENTION_NOTICE,
   closestMatrixRegionSlug,
   type MatrixBillingPublicEntitlement,
   type MatrixBillingStatus,
@@ -27,7 +30,7 @@ type BillingRegion = "region_fsn1" | "region_nbg1" | "region_ash" | "region_hil"
 type BillingAction = "checkout" | "portal" | "abandon";
 
 interface BillingUiState {
-  plan: BillingPlan;
+  plan: BillingPlan | null;
   interval: BillingInterval;
   region: BillingRegion;
   actionError: string | null;
@@ -42,7 +45,7 @@ type BillingUiAction =
   | { type: "fail-action"; message: string };
 
 const INITIAL_BILLING_UI_STATE: BillingUiState = {
-  plan: "matrix_builder",
+  plan: null,
   interval: "monthly",
   region: "region_fsn1",
   actionError: null,
@@ -140,7 +143,7 @@ function useBillingStatus() {
     setLoading(true);
     setError(false);
     try {
-      const raw = await api.get<unknown>("/billing/status");
+      const raw = await api.get<unknown>("/billing/status?trialOfferVersion=2");
       const parsed = MatrixBillingStatusSchema.parse(raw);
       if (refreshSequence !== refreshSequenceRef.current) return;
       setStatus(parsed);
@@ -180,7 +183,8 @@ export default function BillingSection() {
   const active = status?.access.runtimeProxyAllowed === true;
   const entitlement = status?.entitlement ?? null;
   const activeCheckout = status?.activeCheckout ?? null;
-  const selectedPlan = activeCheckout?.planSlug ?? ui.plan;
+  const selectedPlan = activeCheckout?.planSlug ?? ui.plan ?? getMatrixBillingDefaultPlanSlug(status?.trialOffer);
+  const trialDurationDays = getMatrixBillingTrialDurationDays(status?.trialOffer, selectedPlan);
   const selectedRegion = activeCheckout?.regionSlug ?? ui.region;
   const portalAvailable = entitlement?.portalAvailable === true;
   const settingsUrl = useMemo(() => {
@@ -362,18 +366,27 @@ export default function BillingSection() {
                 </div>
               ) : null}
             </div>
+            {trialDurationDays !== null ? (
+              <div className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                <p className="font-semibold" style={{ color: "var(--text-primary)" }}>$0 today</p>
+                <p>{trialDurationDays}-day free trial. Your selected plan is billed after the trial unless you cancel.</p>
+                <p className="mt-2 text-xs">{MATRIX_HOSTED_TRIAL_RETENTION_NOTICE}</p>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
                 {activeCheckout
                   ? `Your ${planLabel(activeCheckout.planSlug)} checkout is still open. Resume it or release it before changing options.`
-                  : "Checkout opens in your browser and returns to Matrix OS after Stripe confirms payment."}
+                  : "Checkout opens in your browser and returns to Matrix OS after billing is confirmed."}
               </p>
               <Button variant="primary" onClick={() => void startCheckout()} disabled={!api || ui.actionLoading !== null}>
                 {ui.actionLoading === "checkout"
                   ? "Opening..."
                   : activeCheckout
                     ? "Resume checkout"
-                    : "Continue to checkout"}
+                    : trialDurationDays !== null
+                      ? `Start ${trialDurationDays}-day trial`
+                      : "Continue to checkout"}
                 <ExternalLink size={14} />
               </Button>
             </div>

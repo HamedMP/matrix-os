@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { MATRIX_HOSTED_TRIAL_RETENTION_NOTICE } from "@matrix-os/contracts";
+import { desktopPalette } from "@matrix-os/brand/tokens";
 import {
   CreditCardIcon,
   Loader2Icon,
@@ -298,6 +300,11 @@ export function BillingCheckoutPanel({
           Secure Stripe checkout
         </span>
       </div>}
+      {trialDurationDays !== null && (
+        <p className="mt-3 text-xs leading-5 opacity-80" style={{ color: desktopPalette.paper }}>
+          {MATRIX_HOSTED_TRIAL_RETENTION_NOTICE}
+        </p>
+      )}
       {checkoutError && (
         <p className="mt-2 text-center text-xs text-red-300" role="alert">{checkoutError}</p>
       )}
