@@ -33,7 +33,7 @@ describe("canonical shell Chat client", () => {
     expect(opened).toBe(response);
     expect(opened.bodyUsed).toBe(false);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1",
+      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1",
       expect.objectContaining({
         method: "GET",
         headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "1" },
@@ -99,12 +99,12 @@ describe("canonical shell Chat client", () => {
     })).resolves.toEqual(record);
     expect(fetchFn).toHaveBeenNthCalledWith(
       1,
-      "https://matrix.test/api/chats?limit=100&scope=global&readStateVersion=1&fundingVersion=1",
+      "https://matrix.test/api/chats?limit=100&scope=global&readStateVersion=1&fundingVersion=1&importSourceVersion=1",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(fetchFn).toHaveBeenNthCalledWith(
       2,
-      "https://matrix.test/api/chats?readStateVersion=1&fundingVersion=1",
+      "https://matrix.test/api/chats?readStateVersion=1&fundingVersion=1&importSourceVersion=1",
       expect.objectContaining({ method: "POST", headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "1" } }),
     );
   });
@@ -119,7 +119,7 @@ describe("canonical shell Chat client", () => {
       title: "Release plan",
     })).resolves.toEqual(renamed);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/chat_shell_test/title?readStateVersion=1&fundingVersion=1",
+      "https://matrix.test/api/chats/chat_shell_test/title?readStateVersion=1&fundingVersion=1&importSourceVersion=1",
       expect.objectContaining({
         method: "PATCH",
         headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "1" },
@@ -183,7 +183,7 @@ describe("canonical shell Chat client", () => {
     });
     await client.submitApproval("chat_shell_test", "run_shell", "approval_1", "approve", "req_shell_approval");
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/chat_shell_test/runs/run_shell/approvals/approval_1?readStateVersion=1&fundingVersion=1",
+      "https://matrix.test/api/chats/chat_shell_test/runs/run_shell/approvals/approval_1?readStateVersion=1&fundingVersion=1&importSourceVersion=1",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ clientRequestId: "req_shell_approval", decision: "approve" }) }),
     );
   });
@@ -279,6 +279,21 @@ describe("canonical shell Chat client", () => {
     await expect(client.deleteAttachment("projects/private.txt")).rejects.toThrow("InvalidAttachmentReference");
     expect(fetchFn).toHaveBeenCalledOnce();
   });
+
+  it("reads an older detail page only with a well-formed cursor", async () => {
+    const fetchFn = vi.fn(async () => Response.json({}));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+    await expect(client.detail("chat_shell_test", "chatcur_older")).rejects.toThrow();
+    expect(new URL(String(fetchFn.mock.calls[0]?.[0])).searchParams.get("cursor")).toBe("chatcur_older");
+    await expect(client.detail("chat_shell_test", "x&limit=9999")).rejects.toThrow();
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+});
+
+it("opts navigation into immutable import source projection", async () => {
+  const fetchFn = vi.fn(async () => Response.json({ version: 1, items: [], truncated: false }));
+  await createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn }).navigation!();
+  expect(fetchFn).toHaveBeenCalledWith("https://matrix.test/api/chat-navigation?version=1&limit=1000", expect.objectContaining({ headers: { "X-Matrix-Chat-Import-Source": "1" } }));
 });
 
 it("preserves the separate owner browser intent in canonical approval submissions", async () => {

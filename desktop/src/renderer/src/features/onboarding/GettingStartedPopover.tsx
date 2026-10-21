@@ -76,7 +76,9 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   const authGeneration = useConnection((state) => state.authGeneration);
   const openTab = useTabs((state) => state.openTab);
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
-  const { visible: open, requestedOpen, blocked, isBlocked, setRequestedOpen: setOpen } = useGettingStartedVisibility();
+  const {
+    visible: open, requestedOpen, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setRequestedOpen: setOpen,
+  } = useGettingStartedVisibility();
   const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
   const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
@@ -116,11 +118,13 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
       || !snapshot.loaded
       || blocked
       || isBlocked()
+      || autoOpenSuppressed
+      || isAutoOpenSuppressed()
       || snapshot.completedCount === TOTAL_STEPS
       || hasAutoOpened(autoOpenKey)
     ) return;
     setOpen(true);
-  }, [autoOpenKey, connectionStatus, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, setOpen]);
+  }, [autoOpenKey, connectionStatus, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
 
   const openSettings = useCallback((section: "services" | "providers" | "billing") => {
     requestSettingsSection(section);
@@ -185,7 +189,8 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   return (
     <Popover.Root open={open} onOpenChange={handleRadixOpenChange}>
       {helpMenu ? <DesktopHelpMenu overlay={menuOverlay} {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger}
-        gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef} /> : trigger()}
+        gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef}
+        anchorTrigger={(helpTrigger) => <Popover.Anchor asChild>{helpTrigger}</Popover.Anchor>} /> : trigger()}
       <Popover.Portal>
         <Popover.Content
           role="dialog"

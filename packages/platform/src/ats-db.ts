@@ -1,5 +1,6 @@
 import { Kysely, PostgresDialect, type Transaction } from 'kysely';
-import pg from 'pg';
+import type pg from 'pg';
+import { createPostgresPool } from './database/postgres-connections.js';
 import { migrateAts, type AtsDatabaseTables } from './ats-schema.js';
 
 type AtsExecutor = Kysely<AtsDatabaseTables> | Transaction<AtsDatabaseTables>;
@@ -51,8 +52,7 @@ export function createAtsDb(opts: string | { dialect: unknown }): AtsDB {
   let pool: pg.Pool | null = null;
   const kysely = typeof opts === 'string'
     ? (() => {
-        pool = new pg.Pool({ connectionString: opts, max: 5 });
-        pool.on('error', (err) => console.error('[ats-db] Idle pool client error:', err.message));
+        pool = createPostgresPool({ connectionString: opts, max: 5 }, 'ats-db');
         return new Kysely<AtsDatabaseTables>({ dialect: new PostgresDialect({ pool }) });
       })()
     : new Kysely<AtsDatabaseTables>({ dialect: opts.dialect as never });

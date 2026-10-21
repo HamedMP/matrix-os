@@ -43,3 +43,42 @@ it.each(["missing", "malformed", "oversize", "api-key", "no-credential"])("fails
   else await writeFile(f.file, state === "malformed" ? "not-json" : state === "oversize" ? "x".repeat(256 * 1024 + 1) : state === "api-key" ? JSON.stringify({ OPENAI_API_KEY: "private-api-key" }) : "{}");
   expect(await f.read()).toBeNull();
 });
+it("reconstructs the same nonsecret generation after reader recreation", async () => {
+  const f = await fixture();
+  const original = await f.read();
+  expect(original).not.toBeNull();
+  expect(await createCodexCredentialFileProofReader({ homePath: f.home })()).toBe(original);
+  const other = await fixture();
+  expect(await other.read()).not.toBe(original);
+});
+
+// Official AuthDotJson: API-key credentials may omit auth_mode/tokens or use
+// auth_mode=apikey with tokens=null. The digest stays server-private.
+it.each([false, true])("binds a file-backed API key (explicit mode=%s) and detects replacement", async explicit => {
+  const f = await fixture();
+  const key = (value: string) => JSON.stringify({ ...(explicit ? { auth_mode: "apikey", tokens: null } : {}), OPENAI_API_KEY: value });
+  await writeFile(f.file, key("synthetic-key-first"));
+  expect(await f.read()).toBeNull(); // Subscription consumers retain their default denial.
+  const read = createCodexCredentialFileProofReader({ homePath: f.home, allowApiKey: true });
+  const before = await read();
+  expect(typeof before).toBe("string");
+  expect(before).toMatch(/^[a-f0-9]{64}$/);
+  expect(await read()).toBe(before);
+  expect(before).not.toContain("synthetic-key");
+  const replacement = `${f.file}.new`;
+  await writeFile(replacement, key("synthetic-key-replacement"), { mode: 0o600 });
+  await rename(replacement, f.file);
+  const after = await read();
+  expect(after).toMatch(/^[a-f0-9]{64}$/);
+  expect(after).not.toBe(before);
+});
+it.each([
+  { OPENAI_API_KEY: "" }, { OPENAI_API_KEY: "        " }, { OPENAI_API_KEY: 42 },
+  { auth_mode: "chatgpt", OPENAI_API_KEY: "synthetic-key" },
+  { auth_mode: "unknown", OPENAI_API_KEY: "synthetic-key" },
+  { auth_mode: "apikey", OPENAI_API_KEY: "synthetic-key", tokens: { access_token: "synthetic-access", refresh_token: "synthetic-refresh" } },
+])("rejects invalid or conflicting API-key credentials %#", async value => {
+  const f = await fixture(); await writeFile(f.file, JSON.stringify(value));
+  const read = createCodexCredentialFileProofReader({ homePath: f.home, allowApiKey: true });
+  expect(await read()).toBeNull();
+});

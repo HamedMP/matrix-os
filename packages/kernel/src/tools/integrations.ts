@@ -109,6 +109,7 @@ export interface DescribeServiceInput {
 
 interface DiscoveredActionParam {
   type?: string;
+  description?: string;
   required?: boolean;
   minLength?: number;
   maxLength?: number;
@@ -137,7 +138,11 @@ function formatDiscoveredParam(name: string, definition: DiscoveredActionParam):
   if (definition.pattern !== undefined) {
     constraints.push(`format: ${definition.patternMessage ?? "restricted format"}`);
   }
-  return `${name}${definition.required ? " (required)" : ""}${definition.type ? `: ${definition.type}` : ""}${constraints.length > 0 ? ` [${constraints.join(", ")}]` : ""}`;
+  // Parameter descriptions come from Matrix's reviewed action catalog. Keep
+  // this one-line agent view bounded and discard malformed metadata entirely.
+  const description = typeof definition.description === "string" && definition.description.length <= 2048
+    && !/[\x00-\x1f\x7f]/.test(definition.description) ? definition.description.trim() : "";
+  return `${name}${definition.required ? " (required)" : ""}${definition.type ? `: ${definition.type}` : ""}${constraints.length > 0 ? ` [${constraints.join(", ")}]` : ""}${description ? ` — ${description}` : ""}`;
 }
 
 /** Lists Matrix-approved actions and parameter names for one service. */

@@ -80,7 +80,7 @@ describe("agent chat route", () => {
 
       expect(shell.ensure).toHaveBeenCalledTimes(1);
       expect(shell.ensure).toHaveBeenCalledWith("bot_research1");
-      expect(screen.getAllByTestId("agent-chat-skeleton-row").length).toBeGreaterThan(0);
+      expect(screen.getAllByTestId("chat-loading-row").length).toBeGreaterThan(0);
       expect(screen.queryByTestId("composer")).toBeNull();
       expect(state.detailChatIds.every((chatId) => chatId === null)).toBe(true);
 
@@ -110,7 +110,7 @@ describe("agent chat route", () => {
       state.detail = null;
       render(<AgentChatRoute />);
 
-      expect(screen.getAllByTestId("agent-chat-skeleton-row").length).toBeGreaterThan(0);
+      expect(screen.getAllByTestId("chat-loading-row").length).toBeGreaterThan(0);
       expect(screen.queryByTestId("composer")).toBeNull();
     });
 

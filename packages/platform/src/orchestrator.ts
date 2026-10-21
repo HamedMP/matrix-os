@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import type Dockerode from 'dockerode';
-import pg from 'pg';
+import { createPostgresClient } from './database/postgres-connections.js';
 import {
   type PlatformDB,
   type ContainerRecord,
@@ -161,10 +161,10 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     const password = createTenantDbPassword(handle);
     assertSafeDbIdentifier(dbName);
     assertSafeDbIdentifier(roleName);
-    const client = new pg.Client({
+    const client = createPostgresClient({
       connectionString: `${postgresUrl}/matrixos`,
       connectionTimeoutMillis: POSTGRES_CONNECT_TIMEOUT_MS,
-    });
+    }, 'tenant-db');
     try {
       await client.connect();
       const exists = await client.query(
@@ -199,10 +199,10 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     const roleName = dbRoleForHandle(handle);
     assertSafeDbIdentifier(dbName);
     assertSafeDbIdentifier(roleName);
-    const client = new pg.Client({
+    const client = createPostgresClient({
       connectionString: `${postgresUrl}/matrixos`,
       connectionTimeoutMillis: POSTGRES_CONNECT_TIMEOUT_MS,
-    });
+    }, 'tenant-db');
     try {
       await client.connect();
       await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);

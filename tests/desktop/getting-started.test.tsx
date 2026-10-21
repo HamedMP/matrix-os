@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { GettingStartedVisibilityProvider } from "../../packages/ui/src/getting-started-visibility";
+import { GettingStartedVisibilityProvider, useGettingStartedAutoOpenSuppression } from "../../packages/ui/src/getting-started-visibility";
 import React from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -167,6 +167,28 @@ describe("GettingStartedPopover", () => {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("auto-opens once while setup is incomplete", async () => {
+    localStorage.removeItem(gettingStartedAutoOpenKey("neo", "primary"));
+    render(<GettingStartedPopover />);
+    expect(await screen.findByRole("dialog", { name: "Getting started" })).not.toBeNull();
+    expect(localStorage.getItem(gettingStartedAutoOpenKey("neo", "primary"))).toBe("1");
+  });
+
+  it("stays closed while the onboarding widget is showing, but still opens from its button", async () => {
+    localStorage.removeItem(gettingStartedAutoOpenKey("neo", "primary"));
+    function WidgetShowing() {
+      useGettingStartedAutoOpenSuppression();
+      return null;
+    }
+    render(<><WidgetShowing /><GettingStartedPopover /></>);
+    const trigger = await screen.findByRole("button", { name: "Getting started — 3 of 5" });
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull();
+    expect(localStorage.getItem(gettingStartedAutoOpenKey("neo", "primary"))).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
   });
 
   it("replaces Help with the checklist and lets Help reopen without overlapping", async () => {

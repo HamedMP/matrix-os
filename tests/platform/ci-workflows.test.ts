@@ -80,6 +80,7 @@ function runCiResults(ciResultsRun: string, triggerRequested: boolean): number |
         DOCS_CONTRACT_RESULT: 'success',
         E2E_RESULT: 'success',
         FUNDED_POSTGRES_RESULT: 'success',
+        COLLABORATION_POSTGRES_RESULT: 'success',
         FUNDED_HOST_ROOT_RESULT: 'success',
         GITHUB_STEP_SUMMARY: summary,
         OS_VIEW_PARITY_RESULT: 'success',
@@ -343,7 +344,7 @@ describe('CI workflows', () => {
     const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
     expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]');
+    expect(aggregate.needs).toEqual(['redirect', 'changes', 'isolated-ci-backend', 'ci-backend', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'docs-contract', 'os-view-parity', 'e2e', 'dedicated-linux', 'completion-handoff']);
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -357,7 +358,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
 
     const ciResultsRun = readCiResultsRun(root);
     expect(ciResultsRun).toBeDefined();
@@ -428,7 +429,7 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('docs-contract:');
     expect(workflow).toContain('name: Docs Contract Tests');
-    expect(workflow).toContain("docs_contract_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests }}");
+    expect(workflow).toContain("docs_contract_tests: ${{ needs.redirect.outputs.routed == 'true' && 'false' || (steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests) }}");
     expect(workflow).toContain("if: needs.changes.outputs.docs_contract_tests == 'true'");
     expect(workflow).toContain('pnpm exec vitest run tests/repository/site-extraction.test.ts');
     expect(workflow).toContain('| Docs Contract Tests | $DOCS_CONTRACT_RESULT |');
@@ -563,8 +564,8 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('name: Upload Docker image artifact');
     expect(workflow).toContain('name: Download Docker image artifact');
-    expect(workflow).toContain('uses: actions/download-artifact@v7');
-    expect(workflow).not.toContain('uses: actions/download-artifact@v8');
+    expect(workflow).toMatch(/^\s+uses: actions\/download-artifact@v[78]\s*$/m);
+    expect(workflow).not.toMatch(/uses: actions\/download-artifact@v[123](?:\s|$)/);
     expect(workflow).toContain('outputs: type=docker,dest=/tmp/matrix-os-dev-ci.tar');
     expect(workflow).toContain('gzip -1 < /tmp/matrix-os-dev-ci.tar > /tmp/matrix-os-dev-ci.tar.gz');
     expect(workflow).toContain('rm /tmp/matrix-os-dev-ci.tar');
@@ -667,7 +668,7 @@ describe('CI workflows', () => {
     expect(packageJob).toContain('uses: actions/upload-artifact@v7');
     expect(packageJob).toContain('path: ${{ steps.pack.outputs.tarball }}');
     expect(publishJob).toContain('permissions:\n      contents: read\n      id-token: write');
-    expect(publishJob).toContain('uses: actions/download-artifact@v7');
+    expect(publishJob).toMatch(/^\s+uses: actions\/download-artifact@v[78]\s*$/m);
     expect(publishJob).toContain('uses: actions/setup-node@v7');
     expect(publishJob).toContain('node-version: 24');
     expect(publishJob).toContain('package-manager-cache: false');
@@ -717,9 +718,9 @@ describe('CI workflows', () => {
 
     for (const workflow of [cliReleaseWorkflow, releaseWorkflow]) {
       expect(workflow).toContain('uses: actions/upload-artifact@v7');
-      expect(workflow).toContain('uses: actions/download-artifact@v7');
+      expect(workflow).toMatch(/^\s+uses: actions\/download-artifact@v[78]\s*$/m);
       expect(workflow).not.toContain('uses: actions/upload-artifact@v4');
-      expect(workflow).not.toContain('uses: actions/download-artifact@v8');
+      expect(workflow).not.toMatch(/uses: actions\/download-artifact@v[123](?:\s|$)/);
     }
   });
 
@@ -1124,7 +1125,7 @@ describe('CI workflows', () => {
     expect(targetedJob).toContain('inputs.skip_dev_bundle && inputs.target_unhealthy_customer');
     expect(targetedJob).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+$');
     expect(targetedJob).toContain(".version == $version");
-    expect(targetedJob).toContain('uses: actions/checkout@v4');
+    expect(targetedJob).toMatch(/^\s+- uses: actions\/checkout@v[47]\s*$/m);
     expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs select-target');
     expect(targetedJob).toContain('for attempt in $(seq 1 5); do');
     expect(targetedJob).toContain('for attempt in $(seq 1 30); do');
@@ -1133,7 +1134,7 @@ describe('CI workflows', () => {
     expect(targetedJob).toContain('.healthy == true and .runtimeVersion == $version');
     expect(targetedJob).toContain('{handle: $handle}');
     expect(targetedJob).toContain('.activated == 1 and .failed == 0 and .complete == true');
-    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-fleet');
+    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-managed-features');
     expect(targetedJob).toContain('::add-mask::$TARGET_HANDLE');
     expect(targetedJob).not.toContain('printf \'%s\\n\' "$FLEET_RESPONSE"');
   });

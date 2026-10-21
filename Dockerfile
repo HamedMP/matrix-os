@@ -41,6 +41,7 @@ RUN pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false
 
 # Copy source
 COPY packages/ packages/
+RUN node packages/gateway/native/build.mjs
 COPY shell/ shell/
 COPY home/ home/
 COPY skills/ skills/

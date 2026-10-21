@@ -2,7 +2,7 @@ import { act, cleanup, render, screen } from "@testing-library/react-native";
 import { AccessibilityInfo, Animated, Text } from "react-native";
 
 import { Spinner } from "../components/chat/Spinner";
-import { useReduceMotion } from "../components/chat/use-reduce-motion";
+import { useReduceMotion } from "../lib/use-reduce-motion";
 import { Icon } from "../components/ui/Icon";
 import { LoadingIcon } from "../components/ui/icons";
 
