@@ -60,6 +60,10 @@ export interface OnboardingWidgetProps {
   followUpAi?: OnboardingAiChoice | null;
   matrixAvailable: boolean;
   connectedProviders: readonly OnboardingAiProvider[];
+  /** How each connected provider is reached, as Chat's picker names it. Missing keeps the plan wording. */
+  connectionLabels?: Partial<Record<OnboardingAiProvider, string>>;
+  /** The model and connection the active AI runs on, e.g. "Claude Opus 5.5 · Anthropic API key". Null keeps the AI's name. */
+  aiDetail?: string | null;
   creditsExhausted: boolean;
   /** Device code to type on the provider's sign-in page, when the provider uses one. */
   aiSignInCode?: string | null;

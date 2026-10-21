@@ -55,8 +55,9 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
         || account.accessSourceId !== "owner_anthropic_key") {
         throw new Error("Selected AI access is unavailable");
       }
+      // No funded provider: the owner key route can never reach Matrix AI funding.
       return buildKernelCredentialLaunch(
-        homePath, buildAgentRuntimeEnvironment(homePath), "owner_anthropic_key", fundedCredentialProvider,
+        homePath, buildAgentRuntimeEnvironment(homePath), "owner_anthropic_key", undefined,
         { requestClass: "interactive", ...(context ? { claimKey: context.runId } : {}) },
       );
     }

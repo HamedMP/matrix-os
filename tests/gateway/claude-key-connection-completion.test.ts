@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { createProviderGenericHarnessCoordinator } from "../../packages/gateway/src/ai-providers/provider-generic-harness-coordinator.js";
-import { createOwnerAnthropicKeySaver, readOwnerAnthropicKey } from "../../packages/gateway/src/ai-providers/owner-anthropic-key.js";
+import { createOwnerAnthropicKeySaver, readOwnerAnthropicKey, revokeOwnerAnthropicKey } from "../../packages/gateway/src/ai-providers/owner-anthropic-key.js";
 import { NativeProviderWriteRestoredError } from "../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
 
 const roots: string[] = [], services: AiProviderService[] = [];
@@ -68,4 +68,14 @@ it("rolls the staged key back and keeps Claude Off when the driver is missing", 
   const after = await f.store.getSnapshot();
   expect(after.revision).toBe(f.input.expectedRevision);
   expect(after.harnesses.find(row => row.id === f.input.harnessInstanceId)?.configuredEnabled).toBe(false);
+});
+
+it("reports fixed Claude as signed in on the saved owner key, and signed out once the key is removed", async () => {
+  const f = await fixture();
+  await f.connect();
+  const connected = (await f.store.getSnapshot({ refresh: true })).harnesses.find(row => row.id === f.input.harnessInstanceId)!;
+  expect(connected).toMatchObject({ accessSourceId: "owner_anthropic_key", authState: "authenticated" });
+  await revokeOwnerAnthropicKey(f.home);
+  const removed = (await f.store.getSnapshot({ refresh: true })).harnesses.find(row => row.id === f.input.harnessInstanceId)!;
+  expect(removed.authState).not.toBe("authenticated");
 });

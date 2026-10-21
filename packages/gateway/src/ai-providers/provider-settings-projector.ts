@@ -350,6 +350,15 @@ function projectHarness(input: {
     && routeSourceEligible && source?.id === "owner_claude_profile" && source.kind === "provider_account"
     && source.accountId === input.claudeAuthenticatedAccountId
     && input.stored.selectedAccountId === input.claudeAuthenticatedAccountId;
+  // The owner's explicitly selected, saved Anthropic key is a connection for
+  // fixed Claude, under the same strict binding Chat uses to launch with it.
+  const claudeKeyAuthenticated = input.stored.harness === "claude" && driverId === "claude_code"
+    && driver?.installState === "installed" && routeSourceEligible
+    && source?.id === "owner_anthropic_key" && source.kind === "provider_account" && source.fundingKind === "owner_api_key"
+    && source.accountId !== null && input.stored.selectedAccountId === source.accountId
+    && ["ready", "unknown", "stale"].includes(source.readiness.state)
+    && input.accounts.some(account => account.id === source.accountId && account.providerId === "anthropic"
+      && account.authMethod === "api_key" && account.accessSourceId === source.id);
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)
     : input.loginMethods(input.stored);
@@ -367,7 +376,7 @@ function projectHarness(input: {
     version: null,
     installState: driver?.installState ?? "missing",
     ...projectHermesNativeRouteObservation({ driver, stored: input.stored, source, accounts: input.accounts, now: input.now }),
-    authState: nativeCredentialAuthenticated || claudeCredentialAuthenticated ? "authenticated"
+    authState: nativeCredentialAuthenticated || claudeCredentialAuthenticated || claudeKeyAuthenticated ? "authenticated"
       : projectMissingCredentialAuth({ canonical: input.canonical, stored: input.stored, source, driver, now: input.now }) ?? authState(readiness),
     loginMethods: [...visibleMethods],
     recommendedLoginMethod: visibleMethods[0] ?? null,

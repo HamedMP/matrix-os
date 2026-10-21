@@ -21,12 +21,16 @@ function ProviderLogo({ provider }: { provider: OnboardingAiChoice }) {
   );
 }
 
-export function AiMenu({ choice, matrixAvailable, connected, actions }: {
+export function AiMenu({ choice, matrixAvailable, connected, connectionLabels, actions }: {
   choice: OnboardingAiChoice;
   matrixAvailable: boolean;
   connected: readonly OnboardingAiProvider[];
+  /** How each connected provider is reached; a missing entry keeps the plan wording. */
+  connectionLabels?: Partial<Record<OnboardingAiProvider, string>>;
   actions: OnboardingWidgetActions;
 }) {
+  const providerLine = (provider: OnboardingAiProvider) =>
+    (connected.includes(provider) ? connectionLabels?.[provider] : undefined) ?? PROVIDER_COPY[provider].menuLine;
   const row = (provider: OnboardingAiChoice, name: string, line: string) => {
     const isConnected = provider === "matrix" || connected.includes(provider);
     const selected = choice === provider;
@@ -51,8 +55,8 @@ export function AiMenu({ choice, matrixAvailable, connected, actions }: {
   return (
     <div className="mxo-popover mxo-ai-menu" role="menu" aria-label="Change AI" data-mxo-menu="ai">
       {row("matrix", "Matrix AI", matrixAvailable ? "Free to start" : "Not available on this computer")}
-      {row("claude", PROVIDER_COPY.claude.menuName, PROVIDER_COPY.claude.menuLine)}
-      {row("codex", PROVIDER_COPY.codex.menuName, PROVIDER_COPY.codex.menuLine)}
+      {row("claude", PROVIDER_COPY.claude.menuName, providerLine("claude"))}
+      {row("codex", PROVIDER_COPY.codex.menuName, providerLine("codex"))}
       <div className="mxo-menu__sep" />
       <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--plain" onClick={actions.openSettings}>More in Settings</button>
     </div>

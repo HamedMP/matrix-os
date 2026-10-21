@@ -10,7 +10,7 @@ import {
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { OnboardingWidgetActions, OnboardingWidgetPrefs, OnboardingWidgetProps, OnboardingWidgetRepo } from "../types.js";
-import { onboardingActiveAi, onboardingAiForInstance, onboardingApps, onboardingConnectedProviders, onboardingCreditsExhausted, onboardingSelection } from "./catalog.js";
+import { onboardingActiveAi, onboardingAiDetail, onboardingAiForInstance, onboardingApps, onboardingConnectedProviders, onboardingConnectionLabels, onboardingCreditsExhausted, onboardingSelection } from "./catalog.js";
 import type { OnboardingChatPort } from "./chat-port.js";
 import { onboardingSessionInit, writeOnboardingPrefs, type OnboardingStoredPrefs } from "./prefs.js";
 import { loadOnboardingRepos, type OnboardingRepoSource } from "./repos.js";
@@ -67,6 +67,8 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
   const matrixAvailable = useMemo(() => loading || onboardingSelection(catalog, "matrix") !== null, [catalog, loading]);
   const selection = useMemo(() => onboardingSelection(catalog, activeAi), [catalog, activeAi]);
   const connectedProviders = useMemo(() => onboardingConnectedProviders(catalog), [catalog]);
+  const connectionLabels = useMemo(() => onboardingConnectionLabels(catalog), [catalog]);
+  const aiDetail = useMemo(() => (loading ? null : onboardingAiDetail(catalog, activeAi)), [catalog, loading, activeAi]);
   const creditsExhausted = useMemo(() => onboardingCreditsExhausted(catalog, selection), [catalog, selection]);
 
   const [runInstanceId, setRunInstanceId] = useState<string | null>(null);
@@ -143,6 +145,8 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     followUpAi,
     matrixAvailable,
     connectedProviders,
+    connectionLabels,
+    aiDetail,
     creditsExhausted,
     aiSignInCode: ai.signInCode,
     aiSignInNeedsCode: ai.signInNeedsCode,
