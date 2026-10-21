@@ -159,6 +159,15 @@ describe("desktop shared agents and providers adapter", () => {
     expect(useConnection.getState().api?.forRuntime).toHaveBeenCalledWith("vm-2");
   });
 
+  it("revalidates Chat once when Settings first observes provider state changed outside Electron", () => {
+    const view = render(<AgentsProvidersAdapter />);
+
+    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+
+    view.rerender(<AgentsProvidersAdapter />);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+  });
+
   it.each(["runtime", "owner", "credential"])("passes the real Matrix connection client and rejects stale calls after %s changes", async change => {
     const observation = { connectionId: "matrix_anthropic_api", providerId: "anthropic", executionKind: "direct_pi", billingKind: "api_key",
       revision: 0, enabled: false, credentialGeneration: null, sourceCredentialGeneration: null,
@@ -186,25 +195,28 @@ describe("desktop shared agents and providers adapter", () => {
   it("invalidates Chat only from accepted Settings callbacks for the current scope", () => {
     render(<AgentsProvidersAdapter />);
     const accepted = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
-    expect(useConnection.getState().providerCatalogGeneration).toBe(0);
-    act(() => accepted());
     expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+    act(() => accepted());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
     act(() => useConnection.setState({ authGeneration: 8 }));
+    expect(useConnection.getState().providerCatalogGeneration).toBe(3);
     act(() => accepted());
-    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(3);
     const current = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
     act(() => current());
-    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(4);
     act(() => useConnection.setState({ runtimeSlot: "other" }));
+    expect(useConnection.getState().providerCatalogGeneration).toBe(5);
     act(() => current());
-    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(5);
     const previousUser = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
     act(() => useConnection.setState({ userId: "user_other" }));
+    expect(useConnection.getState().providerCatalogGeneration).toBe(6);
     act(() => previousUser());
-    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(6);
     const currentUser = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
     act(() => currentUser());
-    expect(useConnection.getState().providerCatalogGeneration).toBe(3);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(7);
   });
 
   it.each([
