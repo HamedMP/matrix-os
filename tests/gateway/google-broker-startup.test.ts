@@ -13,6 +13,22 @@ const binding: ManagedPiRuntimeBinding = { kind: 'managed_chat', runtimeHandle: 
   accessSourceId: 'owner_anthropic_key', anthropicApi: { connectionRevision: 1, credentialGeneration: '523e4567-e89b-42d3-a456-426614174000' },
   capabilities: ['artifact.read'], requestClass: 'interactive' };
 describe('Google policy broker composition', () => {
+  it('keeps an observed route private and binds it to the live execution generation', async () => {
+    ({ db } = await createAuthorityFixture()); registry.bind(binding);
+    runtime = await createGoogleBrokerRuntime({ database: db.sql, registry });
+    const identity = { endpoint: 'https://api.example.invalid/v1/messages?beta=true', api: 'anthropic-messages' as const,
+      modelId: binding.route.modelId, harnessVersion: 'test-harness', credential: { kind: 'api_key' as const,
+        fingerprint: 'a'.repeat(64), generation: binding.anthropicApi!.credentialGeneration } };
+    expect(runtime.observedIdentity(binding)).toBeNull();
+    expect(await runtime.inference.authorize({ phase: 'dispatch', binding, identity, signal: new AbortController().signal })).toEqual({ allowed: true, googleOrigin: false });
+    const observed = runtime.observedIdentity(binding);
+    expect(observed).toEqual(identity);
+    identity.endpoint = 'https://changed.example.invalid/v1/messages';
+    expect(runtime.observedIdentity(binding)?.endpoint).toBe('https://api.example.invalid/v1/messages?beta=true');
+    expect(runtime.observedIdentity({ ...binding, executionGeneration: '2' })).toBeNull();
+    registry.cancelInference(binding);
+    expect(runtime.observedIdentity(binding)).toBeNull();
+  });
   it('installs durable classification and refuses Google transfers when transport is unavailable', async () => {
     ({ db } = await createAuthorityFixture()); registry.bind(binding);
     runtime = await createGoogleBrokerRuntime({ database: db.sql, registry });
