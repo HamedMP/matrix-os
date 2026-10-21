@@ -2222,7 +2222,7 @@ describe("ChatRepository", () => {
     expect(Number(count.count)).toBe(500);
   });
 
-  it("evicts the oldest expendable activity before a non-terminal append reaches the Run limit", async () => {
+  it("keeps earlier activity when a Run grows beyond the detail window", async () => {
     const created = await repository.create(owner, {
       id: "chat_nonterminal_activity_retention",
       clientRequestId: "req_create_nonterminal_activity_retention",
@@ -2283,10 +2283,38 @@ describe("ChatRepository", () => {
       .where("run_id", "=", acceptedRun.id)
       .orderBy("run_seq")
       .execute();
-    expect(events).toHaveLength(500);
+    expect(events).toHaveLength(501);
     expect(events.map((event) => event.id)).toContain(approval.id);
-    expect(events.map((event) => event.id)).not.toContain("activity_nonterminal_filler_2");
+    expect(events.map((event) => event.id)).toContain("activity_nonterminal_filler_2");
     expect(events.map((event) => event.id)).toContain("activity_nonterminal_latest");
+
+    await repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [{
+      id: "activity_nonterminal_approval_resolved",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: "2026-08-25T00:00:02.000Z",
+      type: "approval.resolved",
+      approvalId: approval.approvalId,
+      decision: "approve",
+    }]);
+    const settled = await repository.kysely.selectFrom("chat_runs")
+      .select("status").where("id", "=", acceptedRun.id).executeTakeFirstOrThrow();
+    expect(settled.status).toBe("running");
+    expect((await repository.exportChat(owner, created.chat.id))?.activities).toHaveLength(502);
+    await expect(repository.bindTerminalSession(owner, {
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      sessionId: "terminal_after_500_activities",
+      sessionCreatedAt: now,
+    })).resolves.toBe(true);
+    expect((await repository.exportChat(owner, created.chat.id))?.activities).toHaveLength(503);
+    await repository.kysely.deleteFrom("chat_run_events")
+      .where("id", "=", "activity_nonterminal_approval_resolved").execute();
+    await expect(repository.getPendingApproval(owner, {
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      approvalId: approval.approvalId,
+    })).resolves.toBeNull();
   });
 
   it("preserves a pending input request while compacting non-terminal activity", async () => {
@@ -2327,12 +2355,13 @@ describe("ChatRepository", () => {
         secret: false,
       }],
     };
-    const filler = Array.from({ length: 499 }, (_, index) => ({
+    const filler = Array.from({ length: 500 }, (_, index) => ({
       ...activity(created.chat.id, acceptedRun.id, index + 1),
       id: `activity_nonterminal_input_filler_${index + 2}`,
-      sequence: index + 2,
+      sequence: index + 1,
     }));
-    await repository.kysely.insertInto("chat_run_events").values([request, ...filler].map((event) => ({
+    const lateRequest = { ...request, sequence: 501 };
+    await repository.kysely.insertInto("chat_run_events").values([...filler, lateRequest].map((event) => ({
       id: event.id,
       chat_id: created.chat.id,
       run_id: acceptedRun.id,
@@ -2357,7 +2386,7 @@ describe("ChatRepository", () => {
     })).resolves.toMatchObject({ request: { id: request.id }, resolved: false });
   });
 
-  it("retains an input resolution when the same overflowing batch drops expendable status", async () => {
+  it("retains input resolution and status beyond the detail window", async () => {
     const created = await repository.create(owner, {
       id: "chat_nonterminal_input_resolution",
       clientRequestId: "req_create_nonterminal_input_resolution",
@@ -2418,16 +2447,16 @@ describe("ChatRepository", () => {
     await expect(repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
       resolution,
       expendableStatus,
-    ])).resolves.toBe(1);
+    ])).resolves.toBe(2);
 
     const events = await repository.kysely.selectFrom("chat_run_events")
       .select("id")
       .where("run_id", "=", acceptedRun.id)
       .execute();
-    expect(events).toHaveLength(500);
+    expect(events).toHaveLength(502);
     expect(events.map((event) => event.id)).toContain(resolution.id);
-    expect(events.map((event) => event.id)).not.toContain(requests[0]!.id);
-    expect(events.map((event) => event.id)).not.toContain(expendableStatus.id);
+    expect(events.map((event) => event.id)).toContain(requests[0]!.id);
+    expect(events.map((event) => event.id)).toContain(expendableStatus.id);
     await expect(repository.getInputState(owner, {
       chatId: created.chat.id,
       runId: acceptedRun.id,
@@ -2435,7 +2464,7 @@ describe("ChatRepository", () => {
     })).resolves.toMatchObject({ resolved: true });
   });
 
-  it("evicts resolved approval activities so terminal events cannot exhaust retention", async () => {
+  it("retains resolved approvals when terminal events exceed the detail window", async () => {
     const created = await repository.create(owner, {
       id: "chat_approval_retention",
       clientRequestId: "req_create_approval_retention",
@@ -2501,12 +2530,12 @@ describe("ChatRepository", () => {
       .where("run_id", "=", acceptedRun.id)
       .orderBy("run_seq")
       .execute();
-    expect(events).toHaveLength(500);
-    expect(events.map((event) => event.id)).not.toContain("activity_approval_retention_1");
+    expect(events).toHaveLength(501);
+    expect(events.map((event) => event.id)).toContain("activity_approval_retention_1");
     expect(events.map((event) => event.id)).toContain("activity_approval_retention_terminal");
   });
 
-  it("preserves unresolved approval requests while evicting terminal-event overflow", async () => {
+  it("preserves unresolved approval requests after terminal-event overflow", async () => {
     const created = await repository.create(owner, {
       id: "chat_pending_approval_retention",
       clientRequestId: "req_create_pending_approval_retention",
@@ -2571,7 +2600,7 @@ describe("ChatRepository", () => {
       .select("id")
       .where("run_id", "=", acceptedRun.id)
       .execute();
-    expect(events).toHaveLength(500);
+    expect(events).toHaveLength(501);
     expect(events.map((event) => event.id)).toContain(approval.id);
   });
 

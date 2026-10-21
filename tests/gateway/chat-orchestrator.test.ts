@@ -1921,7 +1921,7 @@ describe("CanonicalChatOrchestrator", () => {
     expect(await restarted.reconcileActiveRuns(owner)).toBe(1);
     const snapshot = await repository.exportChat(owner, "chat_reconcile_overflow");
     expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
-    expect(snapshot?.activities).toHaveLength(500);
+    expect(snapshot?.activities).toHaveLength(501);
     expect(snapshot?.activities).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "run.error" }),
     ]));
@@ -2009,7 +2009,7 @@ describe("CanonicalChatOrchestrator", () => {
     expect(snapshot?.activities).toHaveLength(3);
   });
 
-  it("compacts semantic activity beyond the persisted limit without failing the Run", async () => {
+  it("persists semantic activity beyond the detail window without failing the Run", async () => {
     await repository.create(owner, {
       id: "chat_activity_overflow",
       clientRequestId: "req_create_activity_overflow",
@@ -2045,8 +2045,13 @@ describe("CanonicalChatOrchestrator", () => {
 
     const snapshot = await repository.exportChat(owner, "chat_activity_overflow");
     expect(snapshot?.runs[0]).toMatchObject({ status: "completed", outcome: "completed" });
-    expect(snapshot?.activities.length).toBeLessThanOrEqual(500);
+    expect(snapshot?.activities.length).toBeGreaterThan(500);
     expect(snapshot?.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run.status", status: "completed" }),
+    ]));
+    const detail = await repository.getDetailPage(owner, "chat_activity_overflow", { limit: 50 });
+    expect(detail?.activities).toHaveLength(500);
+    expect(detail?.activities).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "run.status", status: "completed" }),
     ]));
     expect(orchestrator.activeCount).toBe(0);
