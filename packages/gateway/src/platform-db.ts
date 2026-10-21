@@ -561,6 +561,10 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
       // text -- `xmax::text::bigint = 0` -- bypasses the freeze bookkeeping
       // because the text representation of a frozen row's xmax is "0" for
       // visibility purposes, matching the expected insert-vs-update semantics.
+      // An admitted repeat connection retains its ID. Persist a strictly newer
+      // JS-visible timestamp so clients can observe reauthorization completion.
+      // This is metadata, not another action grant; unchanged /sync inventory
+      // skips this upsert and must not advance the connection time.
       const result = await sql<ConnectedServicesTable & { inserted: boolean }>`
         INSERT INTO connected_services
           (user_id, service, pipedream_account_id, account_label, account_email, scopes)
@@ -570,7 +574,8 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
         ON CONFLICT (user_id, pipedream_account_id) DO UPDATE SET
           account_email = EXCLUDED.account_email,
           scopes        = EXCLUDED.scopes,
-          status        = 'active'
+          status        = 'active',
+          connected_at  = GREATEST(clock_timestamp(), connected_services.connected_at + INTERVAL '1 millisecond')
         RETURNING *, (xmax::text::bigint = 0) AS inserted
       `.execute(kysely);
       const row = result.rows[0];
