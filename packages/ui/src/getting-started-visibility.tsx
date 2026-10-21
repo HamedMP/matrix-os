@@ -7,45 +7,59 @@ interface Visibility {
   requestedOpen: boolean;
   visible: boolean;
   blocked: boolean;
+  /** Another onboarding surface is showing; the checklist must not open by itself. */
+  autoOpenSuppressed: boolean;
   setRequestedOpen: (open: boolean) => void;
   isBlocked: () => boolean;
+  isAutoOpenSuppressed: () => boolean;
 }
 type AcquireBlocker = () => () => void;
 const VisibilityContext = createContext<Visibility | null>(null);
 const BlockerContext = createContext<AcquireBlocker | null>(null);
+const AutoOpenSuppressionContext = createContext<AcquireBlocker | null>(null);
 
-/** One owner per authenticated computer session; presentation switches keep intent. */
-export function GettingStartedVisibilityProvider({ scope, children }: { scope: string; children: ReactNode }) {
-  const [intent, setIntent] = useState({ scope, open: false });
-  const [blockerCount, setBlockerCount] = useState(0);
-  const liveBlockerCount = useRef(0);
-  if (intent.scope !== scope) setIntent({ scope, open: false });
-  const requestedOpen = intent.scope === scope && intent.open;
+function useCountedHolds() {
+  const [count, setCount] = useState(0);
+  const live = useRef(0);
   const acquire = useCallback(() => {
-    liveBlockerCount.current += 1;
-    setBlockerCount(liveBlockerCount.current);
+    live.current += 1;
+    setCount(live.current);
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      liveBlockerCount.current -= 1;
-      setBlockerCount(liveBlockerCount.current);
+      live.current -= 1;
+      setCount(live.current);
     };
   }, []);
-  const isBlocked = useCallback(() => liveBlockerCount.current > 0, []);
+  const isHeld = useCallback(() => live.current > 0, []);
+  return { held: count > 0, acquire, isHeld };
+}
+
+/** One owner per authenticated computer session; presentation switches keep intent. */
+export function GettingStartedVisibilityProvider({ scope, children }: { scope: string; children: ReactNode }) {
+  const [intent, setIntent] = useState({ scope, open: false });
+  const blockers = useCountedHolds();
+  const suppressions = useCountedHolds();
+  if (intent.scope !== scope) setIntent({ scope, open: false });
+  const requestedOpen = intent.scope === scope && intent.open;
   const setRequestedOpen = useCallback((open: boolean) => setIntent({ scope, open }), [scope]);
-  const blocked = blockerCount > 0;
+  const blocked = blockers.held;
   const value = useMemo(() => ({
     scope,
     requestedOpen,
     visible: requestedOpen && !blocked,
     blocked,
+    autoOpenSuppressed: suppressions.held,
     setRequestedOpen,
-    isBlocked,
-  }), [scope, requestedOpen, blocked, setRequestedOpen, isBlocked]);
+    isBlocked: blockers.isHeld,
+    isAutoOpenSuppressed: suppressions.isHeld,
+  }), [scope, requestedOpen, blocked, suppressions.held, setRequestedOpen, blockers.isHeld, suppressions.isHeld]);
   return (
-    <BlockerContext value={acquire}>
-      <VisibilityContext value={value}>{children}</VisibilityContext>
+    <BlockerContext value={blockers.acquire}>
+      <AutoOpenSuppressionContext value={suppressions.acquire}>
+        <VisibilityContext value={value}>{children}</VisibilityContext>
+      </AutoOpenSuppressionContext>
     </BlockerContext>
   );
 }
@@ -59,6 +73,14 @@ export function useGettingStartedVisibility(): Visibility {
 /** Registration belongs to overlay presence, including its exit animation. */
 export function useGettingStartedBlocker(active: boolean): void {
   const acquire = useContext(BlockerContext);
+  useLayoutEffect(() => {
+    if (active && acquire) return acquire();
+  }, [acquire, active]);
+}
+
+/** Holds back automatic opening only; the checklist's own button still opens it. Safe without a provider. */
+export function useGettingStartedAutoOpenSuppression(active = true): void {
+  const acquire = useContext(AutoOpenSuppressionContext);
   useLayoutEffect(() => {
     if (active && acquire) return acquire();
   }, [acquire, active]);

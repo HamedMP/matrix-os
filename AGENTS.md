@@ -63,6 +63,10 @@ file so the rules have one source of truth.
   the ENG ticket and PR links in the tech channel, and link its Slack permalink
   back to the PR. State the exact commit/build, scenario, and any test bypass or
   fixture limitations; redact credentials and private customer content.
+- **Keep evidence out of the repo.** Attach screenshots and recordings to the
+  PR body or a PR comment; never commit them. `docs/pr-evidence/` is a legacy
+  archive and takes no new files. When an agent cannot upload, it keeps the
+  captures outside the repo and gives the developer their paths to attach.
 - **Do not claim visual qualification without evidence.** Mockups, automated
   test results, or another surface's capture do not prove the affected running
   surface. Missing runtime/device access is an explicit blocker to review and
@@ -391,6 +395,7 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 - Capture every affected surface separately: **Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile**. When a change touches both Web Desktop and Electron Desktop, include evidence from both; apply the same rule to Web Mobile and Native Mobile. A feature affecting all five needs screenshots and recordings from all five. Use the surface matrix above; any `N/A` needs an architectural rationale and reviewer approval.
 - Compare equivalent states and actions across surfaces. Aim for the same visuals and user journey across Web Desktop/Electron Desktop and Web Mobile/Native Mobile, with only justified platform adaptations. Resolve unintended differences before review-readiness.
 - Share one concise message in the Slack **tech channel** with the Linear ticket, PR/preview links, and screenshots/recordings labeled by surface. Link its Slack permalink back to the PR. Verify the channel identity; if Slack access or the destination is unclear, ask the developer to identify the channel or post the prepared message. Missing live evidence or the Slack update must be reported as a review-readiness blocker.
+- Attach captures to the PR body or comments, or link the Slack upload. Do not commit them under `docs/pr-evidence/` or anywhere else in the repo: git keeps every image in history for every clone, and a squash-merged PR still lands them on `main`.
 - If a required surface or live preview cannot be accessed, ask the developer to run it or provide the missing evidence. Local/browser tooling may help prepare validation, but the required live captures must be attached before treating the PR as review-ready.
 
 **Mobile shell gates**: if a PR touches `apps/mobile/` or shared terminal/mobile shell behavior, follow `docs/dev/mobile-shell.md`. Minimum local gates: `pnpm --dir apps/mobile exec jest --runInBand`, `pnpm --dir apps/mobile exec tsc --noEmit`, the relevant `bun run test` shell/gateway suites listed in that doc, and real-device validation before treating the change as review-ready.

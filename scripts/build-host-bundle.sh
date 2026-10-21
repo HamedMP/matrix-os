@@ -44,6 +44,7 @@ pnpm --filter '@matrix-os/integrations-mcp' build
 pnpm --filter '@matrix-os/scope-runtime' build
 pnpm --filter '@matrix-os/bot-runtime' build
 pnpm --filter '@matrix-os/gateway' build
+test -f "$ROOT_DIR/packages/gateway/dist/collaboration/filesystem-identity.node"
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 node --import=tsx "$ROOT_DIR/scripts/smoke-gateway-production-loader.mjs"
@@ -143,6 +144,7 @@ chmod 0755 "$STAGE_DIR/bin/matrix-support-access"
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
 mkdir -p "$STAGE_DIR/app/scripts"

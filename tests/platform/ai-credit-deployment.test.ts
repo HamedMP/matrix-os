@@ -16,7 +16,7 @@ const env = {
   MATRIX_APP_URL: "https://app.example.com", MATRIX_APP_DOMAIN_HOSTS: "app.example.com",
   MATRIX_CODE_DOMAIN_HOSTS: "code.example.com", DEPLOY_ENVIRONMENT: "staging",
   GOLDEN_SNAPSHOT_BUILDS_ENABLED: "false", MATRIX_CARD_TRIALS_ENABLED: "true",
-  MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: "4",
+  MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14", MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: "4",
   CUSTOM_MCP_ENABLED: "false", MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: "1",
   PLATFORM_SPEECH_ENABLED: "false", MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: "false",
   MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "false", MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false",
@@ -65,6 +65,7 @@ describe("Matrix AI credit Cloud Run deployment", () => {
       printf '%s\\n' "$deploy_json"
     `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map((key) => [key, "fixture"])),
+      MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
       GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
       GOOGLE_ANALYTICS_API_SECRET_VERSION: "1",
       WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
@@ -147,6 +148,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
       printf '%s\\n' "$deploy_json"
     `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map(name => [name, "fixture"])),
+      MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
       GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
       GOOGLE_ANALYTICS_API_SECRET_VERSION: "1",
       WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
@@ -174,6 +176,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
         printf '%s\\n' "$deploy_json"
       `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
         Object.keys(workflow.jobs.deploy.env).map((name) => [name, "fixture"])),
+        MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
         GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
         GOOGLE_ANALYTICS_API_SECRET_VERSION: "1",
         WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",

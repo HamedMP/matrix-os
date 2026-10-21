@@ -1,12 +1,14 @@
 import { MANAGED_INTEGRATIONS, availableManagedActions, planManagedOAuthAction, managedActionCapabilities } from "./managed-oauth-presets.js";
+import type { ManagedWriteAuthorization } from "@matrix-os/contracts/managed-integrations";
 import type { ManagedMcpPresetBroker, GranolaPresetRuntime } from "./granola-preset-broker.js";
 
 interface Runtime extends Omit<GranolaPresetRuntime, "callSelectedTool"> {
+  getPresetWriteAuthorization?(userId: string, presetId: string): Promise<ManagedWriteAuthorization>;
   callManagedPresetTool(input: { userId: string; serverId: string; presetId: string; toolName: string; arguments: Record<string, unknown> }): Promise<unknown>;
 }
 export function createManagedOAuthPresetBroker(deps: {
   broker: Runtime;
-  oauth: { start(userId: string, serverId: string, options?: { scopes?: readonly string[] }): Promise<string> };
+  oauth: { start(userId: string, serverId: string, options?: { scopes?: readonly string[]; managedWriteAccess?: boolean }): Promise<string> };
 }): ManagedMcpPresetBroker {
   const preset = (service: unknown) => {
     const id = service && typeof service === "object" ? (service as { id?: unknown }).id : undefined;
@@ -19,37 +21,40 @@ export function createManagedOAuthPresetBroker(deps: {
     let row = await deps.broker.getPreset(userId, p.id);
     return row;
   };
+  const authorization = async (userId: string, serviceId: string): Promise<ManagedWriteAuthorization> =>
+    deps.broker.getPresetWriteAuthorization ? deps.broker.getPresetWriteAuthorization(userId, serviceId) : { enabled: false, scopes: [] };
   return {
     listConnections: async userId => {
       const rows = await Promise.all(Object.values(MANAGED_INTEGRATIONS).map(async p => {
         const row = await ready(userId, p.id);
-        return row ? { id: row.id, service: p.id, account_label: p.name, account_email: null, scopes: [...(p.scopes ?? [])], status: row.status === "ready" && availableManagedActions(p.id, row.tools).length ? "active" : row.status === "ready" ? "action_required" : row.status, connected_at: row.created_at, last_used_at: null } : null;
+        const grant = await authorization(userId, p.id);
+        return row ? { id: row.id, service: p.id, account_label: p.name, account_email: null, scopes: [...grant.scopes], status: row.status === "ready" && availableManagedActions(p.id, row.tools, grant).length ? "active" : row.status === "ready" ? "action_required" : row.status, connected_at: row.created_at, last_used_at: null } : null;
       }));
       return rows.filter((row): row is NonNullable<typeof row> => row !== null);
     },
     listActionCapabilities: async (userId, serviceId) => {
       const row = await ready(userId, serviceId);
-      return row?.status === "ready" ? managedActionCapabilities(serviceId, row.tools) : {};
+      return row?.status === "ready" ? managedActionCapabilities(serviceId, row.tools, await authorization(userId, serviceId)) : {};
     },
     listAvailableActions: async (userId, serviceId) => {
       if (!MANAGED_INTEGRATIONS[serviceId]) return null;
       const row = await ready(userId, serviceId);
-      return row?.status === "ready" ? availableManagedActions(serviceId, row.tools) : [];
+      return row?.status === "ready" ? availableManagedActions(serviceId, row.tools, await authorization(userId, serviceId)) : [];
     },
     listAvailableActionParams: async (userId, serviceId) => {
       const row = await ready(userId, serviceId);
       if (row?.status !== "ready") return null;
-      return managedActionCapabilities(serviceId, row.tools);
+      return managedActionCapabilities(serviceId, row.tools, await authorization(userId, serviceId));
     },
     connect: async (userId, service) => {
       const p = preset(service);
       const row = await deps.broker.ensurePreset({ userId, presetId: p.id, name: p.name, url: p.url });
-      return { url: await deps.oauth.start(userId, row.id, { scopes: p.scopes }) };
+      return { url: await deps.oauth.start(userId, row.id, { scopes: [...new Set([...(p.scopes ?? []), ...(p.writeScopes ?? [])])], managedWriteAccess: true }) };
     },
     call: async ({ userId, service, actionId, params, connectionId }) => {
       const p = preset(service); const row = await ready(userId, p.id);
       if (!row || row.status !== "ready" || (connectionId && row.id !== connectionId)) throw new Error("Integration account unavailable");
-      const plan = planManagedOAuthAction(p.id, actionId, params, row.tools);
+      const plan = planManagedOAuthAction(p.id, actionId, params, row.tools, await authorization(userId, p.id));
       return deps.broker.callManagedPresetTool({ userId, serverId: row.id, presetId: p.id, ...plan });
     },
     disconnect: async (userId, connectionId) => {

@@ -10,8 +10,9 @@ import {
 } from "@matrix-os/contracts";
 import type { AuthorizedCollaborationContext } from "./authority.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
-import type { CollaborationResourceDriver } from "./resource-actions.js";
+import { requireCreatedIncarnation, type CollaborationResourceDriver } from "./resource-actions.js";
 import { CollaborationResourceCatalog, ResourceCatalogError, uploadExpiry, type CatalogEntryRecord } from "./resource-catalog.js";
+import { assertResourceIdentity } from "./resource-identity-admission.js";
 
 export type CollaborationUploadAction = Extract<
   CollaborationFileActionRequest,
@@ -130,15 +131,19 @@ export function createCollaborationUploadStager(options: {
         .where("state", "=", "staging").where("expires_at", ">", now()).executeTakeFirstOrThrow();
       if (Number(count.count) >= MAX_ACTIVE_PER_ACTOR_SCOPE) throw new ResourceCatalogError("unavailable");
       const namespace = await options.catalog.namespaceForScope(context, trx);
+      await options.catalog.lockNamespace(trx, namespace, "shared");
+      await assertResourceIdentity(options.catalog, options.driver, namespace, null, trx);
       let path: string;
       if (action.fileId) {
         const file = await options.catalog.resolveForScope(context, action.fileId, trx);
         if (file.kind !== "file") throw new ResourceCatalogError("invalid");
+        await assertResourceIdentity(options.catalog, options.driver, namespace, file, trx);
         path = file.path;
       } else {
         if (!action.path || namespace.root?.kind === "file") throw new ResourceCatalogError("forbidden");
         const parent = action.parentId ? await options.catalog.resolveForScope(context, action.parentId, trx) : null;
         if (parent && parent.kind !== "folder") throw new ResourceCatalogError("invalid");
+        await assertResourceIdentity(options.catalog, options.driver, namespace, parent, trx);
         if (namespace.root && !parent) throw new ResourceCatalogError("not_found");
         if (parentPath(action.path) !== (parent?.path ?? null)) throw new ResourceCatalogError("invalid");
         path = action.path;
@@ -208,26 +213,30 @@ export function createCollaborationUploadStager(options: {
         // A commit creates or rewrites a catalog path, so it shares the namespace
         // with other creates and writes and waits behind a folder delete or rename.
         await options.catalog.lockNamespace(trx, namespace, "shared");
+        await assertResourceIdentity(options.catalog, options.driver, namespace, null, trx);
         let entry: CatalogEntryRecord;
         if (row.catalog_id) {
           const file = await options.catalog.resolveForScope(context, row.catalog_id, trx);
           if (file.kind !== "file" || file.path !== row.path || file.revision !== Number(action.expectedRevision)) throw new ResourceCatalogError("conflict");
           entry = await options.catalog.lock(trx, file.id);
+          await assertResourceIdentity(options.catalog, options.driver, namespace, entry, trx);
         } else {
           if (Number(action.expectedRevision) !== 0) throw new ResourceCatalogError("conflict");
+          const parent = row.parent_id ? await options.catalog.resolveForScope(context, row.parent_id, trx) : null;
+          await assertResourceIdentity(options.catalog, options.driver, namespace, parent, trx);
           entry = await options.catalog.createWithin(context, {
             kind: "file", parentId: row.parent_id, path: row.path, incarnation: "pending",
           }, trx);
         }
         // The driver hashes the stream and only then renames the file into place,
         // so a contiguous buffer of the whole upload is never built here.
-        await options.driver.writeChunks({
+        const incarnation = requireCreatedIncarnation(await options.driver.writeChunks({
           ownerId: namespace.ownerId, projectId: namespace.projectId, path: row.path,
           size: Number(row.size), sha256: row.sha256, chunks: readParts(trx, row.id, expectedParts),
-        });
+        }));
         entry = await options.catalog.bump(trx, {
           id: entry.id, expectedRevision: Number(action.expectedRevision),
-          incarnation: await options.driver.fingerprint({ ownerId: namespace.ownerId, projectId: namespace.projectId, path: row.path }),
+          incarnation,
         });
         await trx.updateTable("collaboration_upload_stages").set({
           state: "committed", catalog_id: entry.id, commit_request_id: action.clientRequestId,

@@ -52,6 +52,32 @@ export const CollaborationOwnerCatalogLookupResponseSchema = z.object({
   entry: CollaborationOwnerCatalogResolveResponseSchema.nullable(),
 }).strict();
 
+/** Existing-share recovery is owner-only and never creates scopes or changes grants. */
+export const CollaborationOwnerResourceReauthorizationInspectRequestSchema = z.object({
+  scopeId: CollaborationCatalogIdSchema,
+  organizationId: CollaborationOrganizationIdSchema,
+  kind: z.enum(["file", "folder"]),
+}).strict();
+export const CollaborationOwnerResourceReauthorizationConfirmRequestSchema =
+  CollaborationOwnerResourceReauthorizationInspectRequestSchema.extend({
+    projectId: z.string().min(1).max(256).nullable(),
+    expectedRevision: CollaborationRevisionSchema.refine((value) => Number(value) < Number.MAX_SAFE_INTEGER),
+    currentIncarnation: Sha256Schema,
+    confirmCurrentObject: z.literal(true),
+  }).strict();
+export const CollaborationOwnerResourceReauthorizationInspectionResponseSchema =
+  CollaborationOwnerResourceReauthorizationInspectRequestSchema.extend({
+    resourceId: CollaborationCatalogIdSchema,
+    path: CollaborationResourcePathSchema,
+    projectId: z.string().min(1).max(256).nullable(),
+    expectedRevision: CollaborationRevisionSchema,
+    currentIncarnation: Sha256Schema,
+  }).strict();
+export const CollaborationOwnerResourceReauthorizationResponseSchema = z.object({
+  scopeId: CollaborationCatalogIdSchema,
+  entry: CollaborationOwnerCatalogResolveResponseSchema,
+}).strict();
+
 export const CollaborationCatalogEntrySchema = z.object({
   id: CollaborationCatalogIdSchema,
   kind: CollaborationCatalogKindSchema,

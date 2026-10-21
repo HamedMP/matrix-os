@@ -1,3 +1,4 @@
+import {isolatedRunPin,verifyRunExecution} from './dedicated-isolated.mjs';
 // A PR targeting main qualifies its immutable tested merge, not every later
 // main tip. Stack parents retain the stricter live-source policy.
 import {logGateEvent} from './gate-log.mjs';
@@ -20,7 +21,7 @@ export function mainPrRequest(run,repo,snapshot,workflow,options={}){
   const title=run.display_title?.match(/^CI coverage-v1 · ([a-f0-9]{40})$/);
   return title&&(association||fork)?{...snapshot,sourceSha:title[1]}:null;
  }
- if(run.event!=='workflow_dispatch'||!same(headRepository,fullName)||run.head_branch!=='main'||!sha.test(run.head_sha||''))return null;
+ if(run.event!=='workflow_dispatch'||!same(headRepository,fullName)||(run.head_branch!=='main'&&!isolatedRunPin(run))||!sha.test(run.head_sha||''))return null;
  const title=run.display_title?.match(/^CI (hosted-refresh-v1|refresh-v1) pr=([1-9][0-9]{0,5}) head=([a-f0-9]{40}) base=([a-f0-9]{40}) merge=([a-f0-9]{40})$/);
  if(!title||Number(title[2])!==snapshot.prNumber||title[3]!==snapshot.headSha||(!options.allModes&&(title[1]==='hosted-refresh-v1')!==(options.executionMode==='hosted-only')))return null;
  return {...snapshot,baseSha:title[4],sourceSha:title[5],...(title[1]==='hosted-refresh-v1'?{executionMode:'hosted-only'}:{})};
@@ -29,10 +30,11 @@ export function mainPrRequest(run,repo,snapshot,workflow,options={}){
 export async function mainPrCoverage(github,repo,snapshot,options={}){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected main PR CI workflow');
- const run=await newestWorkflowRun(github,repo,workflow,candidate=>{
+ const run=await newestWorkflowRun(github,repo,workflow,async candidate=>{
   if(candidate.id===options.excludeRunId||!mainPrRequest(candidate,repo,snapshot,workflow,options))return false;
+  await verifyRunExecution(github,repo,candidate,'.github/workflows/ci.yml');
   return options.afterId===undefined||(candidate.id>options.afterId&&Number.isFinite(Date.parse(candidate.created_at))&&Date.parse(candidate.created_at)>=Date.parse(options.notBefore));
- },{kind:'requester',headSha:snapshot.headSha,headRef:snapshot.headRef});
+ },{kind:'requester',headSha:snapshot.headSha,headRef:snapshot.headRef,controllerSha:options.controllerSha??snapshot.executionControllerSha});
  if(!run)return null;
  return mainPrRunSource(github,repo,run,snapshot,workflow,options);
 }
@@ -40,6 +42,7 @@ export async function mainPrCoverage(github,repo,snapshot,options={}){
 export async function mainPrRunSource(github,repo,run,snapshot,workflow,options={}){
  const value=mainPrRequest(run,repo,snapshot,workflow,options);
  if(!value)throw new Error('Main PR requester is not authenticated');
+ await verifyRunExecution(github,repo,run,'.github/workflows/ci.yml');
  const {data:merge}=await github.rest.repos.getCommit({...repo,ref:value.sourceSha,request});
  const parents=merge.parents?.map(parent=>parent.sha);
  if(merge.sha!==value.sourceSha||!Array.isArray(parents)||parents.length!==2||!parents.every(parent=>sha.test(parent||''))||parents[0]===parents[1]||parents[1]!==snapshot.headSha||(run.event==='workflow_dispatch'&&value.baseSha!==parents[0]))throw new Error('Main PR coverage merge is not bound to its tested source');

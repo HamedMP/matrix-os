@@ -25,7 +25,7 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     expect(version.stdout.trim()).toBe("zellij 0.44.3");
     homePath = await mkdtemp(join(tmpdir(), "matrix-zellij-real-"));
     sessionName = `matrix-w-${randomBytes(16).toString("hex")}`;
-    runtimeEnv = createTerminalRuntimeEnvironment({ homePath, uid: process.getuid?.() ?? 0 });
+    runtimeEnv = createTerminalRuntimeEnvironment({ homePath, uid: process.getuid?.() ?? 0, runtimeDir: homePath });
     adapter = new ZellijCliRuntimeAdapter({ homePath, binaryPath, env: runtimeEnv });
     await adapter.ensureSession(sessionName, { cols: 100, rows: 30 });
   }, 20_000);

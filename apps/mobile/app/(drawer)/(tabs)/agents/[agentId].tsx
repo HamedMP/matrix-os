@@ -1,16 +1,16 @@
 import { useState } from "react";
-import { Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { AgentChatScreen } from "@/components/agents/AgentChatScreen";
 import { AgentDetailsSheet } from "@/components/agents/AgentDetailsSheet";
+import { confirmArchiveAgent, reportArchiveAgentFailure } from "@/components/agents/agent-archive";
 import { agentRunsOn } from "@/components/agents/agent-copy";
 import { AGENTS_LIST_ROUTE } from "@/components/agents/agent-routes";
 import { useAgentChatId } from "@/components/agents/use-agent-chat-id";
 import { useAgentThread } from "@/components/agents/use-agent-thread";
 import { useAgentStatuses } from "@/lib/queries/use-agent-statuses";
 import { useAgents, useArchiveAgent } from "@/lib/queries/use-agents";
-import { AgentRequestError } from "@/lib/requests/bots";
+import { showToast } from "@/lib/toast";
 
 const NO_TASKS: never[] = [];
 
@@ -59,20 +59,16 @@ export default function AgentChatRoute() {
       // The list is read again whatever the answer, so a retry carries the current revision.
       await archive.mutateAsync({ agentId: target.id, baseRevision: target.revision });
     } catch (error: unknown) {
-      console.warn("[mobile] agent archive failed", error instanceof Error ? error.name : "unknown");
-      if (error instanceof AgentRequestError && error.reason === "conflict") Alert.alert("This agent changed. Try again.");
-      else Alert.alert("Agent could not be archived", "Try again.");
+      reportArchiveAgentFailure(error);
       return;
     }
     setDetailsOpen(false);
     leaveToList();
+    showToast("Agent archived");
   };
 
   const confirmArchive = (target: { id: string; name: string; revision: number }) => {
-    Alert.alert(`Archive ${target.name}?`, "It leaves your agents list. This cannot be undone from the app.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Archive", style: "destructive", onPress: () => void archiveAgent(target) },
-    ]);
+    confirmArchiveAgent(target.name, () => void archiveAgent(target));
   };
 
   return (
