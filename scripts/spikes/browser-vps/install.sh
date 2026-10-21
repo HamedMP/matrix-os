@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Test host only. Run from the reviewed payload as root with its exact pr-* or pv-* handle.
+# Test host only. Private previews additionally require their machine and owner IDs.
 LAB_SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAB_PREFIX=/opt/matrix-browser-lab
 LAB_NODE=/opt/matrix/runtime/node/bin/node
-if [ "$(id -u)" != 0 ] || [ $# != 1 ]; then
-  echo 'Usage: sudo ./install.sh <exact-pr-or-pv-preview-handle>' >&2
+if [ "$(id -u)" != 0 ] || { [ $# != 1 ] && [ $# != 3 ]; }; then
+  echo 'Usage: sudo ./install.sh preview [machine-id owner-id]' >&2
   exit 64
 fi
-/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" guard "$1"
+/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" guard "$@"
 . /etc/os-release
 if [ "$ID" != ubuntu ] || [ "$VERSION_ID" != 24.04 ] || [ "$(uname -m)" != x86_64 ]; then
   echo 'This pinned lab installer requires Ubuntu 24.04 x86_64' >&2
@@ -99,7 +99,7 @@ NoNewPrivileges=true
 [Install]
 WantedBy=multi-user.target
 UNIT
-/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" install "$1"
+/usr/bin/python3 -I "$LAB_SOURCE/native-experience.py" install "$@"
 cat > /etc/systemd/system/matrix-browser-lab.service <<'UNIT'
 [Unit]
 Description=Matrix test browser automation supervisor

@@ -286,11 +286,16 @@ with the [Browser setup fix](../../specs/627-browser-vps-comparison/private-prev
 include an explicit operator command, run **on the selected preview computer**:
 
 ```bash
-sudo /opt/matrix/bin/matrix-install-browser-preview <exact-preview-handle>
+# Private Preview: all three values must match its host metadata.
+sudo /opt/matrix/bin/matrix-install-browser-preview <exact-pv-handle> <machine-uuid> <owner-user-id>
+# Legacy shared PR preview:
+sudo /opt/matrix/bin/matrix-install-browser-preview <exact-pr-handle>
 ```
 
-It accepts canonical `pr-*` and `pv-*` handles only when host metadata matches,
-installs the bundled viewer/runtime, and enables Browser on that computer.
+Private `pv-*` previews require the exact handle, machine UUID and Clerk owner
+ID; legacy `pr-*` previews retain the single-handle form. Missing, mismatched or
+duplicate identity metadata is rejected before locks, temporary files or service
+changes. The command installs the bundled viewer/runtime, and enables Browser on that computer.
 Rerunning it on an existing installation updates the viewer without replacing
 the signed-in Chrome profile or restarting Chrome/VNC. An authorized operator
 must run this command; the preview owner's normal terminal has no new sudo grant.

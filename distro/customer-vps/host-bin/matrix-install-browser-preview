@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Operator-only, explicit opt-in. Ordinary bundle installation never enables Chrome.
-if [ "$(id -u)" != 0 ] || [ "$#" != 1 ]; then
-  echo 'Usage: sudo matrix-install-browser-preview <exact-pr-or-pv-preview-handle>' >&2
+if [ "$(id -u)" != 0 ] || { [ "$#" != 1 ] && [ "$#" != 3 ]; }; then
+  echo 'Usage: sudo matrix-install-browser-preview <exact-preview-handle> [machine-id owner-id]' >&2
   exit 64
 fi
 bin=/opt/matrix/bin
@@ -22,7 +22,7 @@ for file in "$archive" "$guard"; do
   fi
 done
 # Read classification as data, before creating temporary files or changing services.
-/usr/bin/python3 -I "$guard" guard "$1"
+/usr/bin/python3 -I "$guard" guard "$@"
 # /run is root-writable only; /run/lock can permit unprivileged symlink creation.
 exec 9>/run/matrix-browser-preview.lock
 flock -w 30 9
@@ -39,9 +39,9 @@ legacy_setup_complete() {
 }
 if [ -f /opt/matrix-browser-lab/.setup-complete ] || legacy_setup_complete; then
   # Preserve Chrome/VNC PIDs, the profile, and existing viewer credentials.
-  timeout --kill-after=30 1800 bash "$temporary/update-experience.sh" "$1"
+  timeout --kill-after=30 1800 bash "$temporary/update-experience.sh" "$@"
 else
-  timeout --kill-after=30 1800 bash "$temporary/install.sh" "$1"
+  timeout --kill-after=30 1800 bash "$temporary/install.sh" "$@"
 fi
 touch /opt/matrix-browser-lab/.setup-complete
 echo 'Browser preview setup finished. Reopen Browser on this preview computer.'
