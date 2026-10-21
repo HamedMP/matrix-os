@@ -231,7 +231,7 @@ function sanitizeDesignId(design: string | undefined): string {
   return design && DESIGN_ID_PATTERN.test(design) ? design : DEFAULT_DESIGN_ID;
 }
 
-export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design?: string): string {
+export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design?: string, bridgeToken?:string): string {
   const inventoryIdentity = appName.replace(/^apps\//, "");
   const useOwnerInventory = isAppGalleryInventoryIdentity(inventoryIdentity);
   const designId = sanitizeDesignId(design);
@@ -243,6 +243,8 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
   return `
 (function() {
   var app = ${JSON.stringify(appName)};
+  var bridgeToken = ${JSON.stringify(bridgeToken??null)};
+  function postFrame(frame, origin, ports) { if(bridgeToken)frame.bridgeToken=bridgeToken; window.parent.postMessage(frame, origin, ports); }
   var currentTheme = ${themeJson};
   var currentDesign = ${JSON.stringify(designId)};
   var storedValuePrefix = ${JSON.stringify(BRIDGE_STORED_VALUE_PREFIX)};
@@ -274,7 +276,7 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
   document.documentElement.dataset.matrixDesign = currentDesign;
 
 	  function post(type, payload) {
-	    window.parent.postMessage({ type: type, app: app, payload: payload }, "*");
+	    postFrame({ type: type, app: app, payload: payload }, "*");
 	  }
 
 	  function parentFetch(url, init, timeoutMs) {
@@ -301,10 +303,11 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 	            json: function() { return Promise.resolve(e.data.body); }
 	          });
 	        } else {
-	          reject(new Error("MatrixOS bridge fetch failed"));
+	          var code = url.indexOf('/api/app-store/')===0 && e.data && e.data.body && ['invalid','unauthorized','forbidden','not_found','conflict','limit','unavailable'].indexOf(e.data.body.error)>=0 ? e.data.body.error : 'MatrixOS bridge fetch failed';
+	          reject(new Error(code));
 	        }
 	      };
-	      window.parent.postMessage(
+	      postFrame(
 	        { type: "os:bridge-fetch", app: app, payload: { url: url, init: init || {} } },
 	        "*",
 	        [channel.port2]
@@ -374,7 +377,7 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
           if (e.data && e.data.ok) resolve(decodeStoredValue(e.data.value));
           else reject(new Error("MatrixOS bridge data request failed"));
         };
-        window.parent.postMessage(
+        postFrame(
           { type: "os:read-data", app: app, payload: { key: key } },
           "*",
           [channel.port2]
@@ -394,7 +397,7 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
           if (e.data && e.data.ok) resolve();
           else reject(new Error("MatrixOS bridge data request failed"));
         };
-        window.parent.postMessage(
+        postFrame(
           {
             type: "os:write-data",
             app: app,

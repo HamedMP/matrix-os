@@ -1,0 +1,6 @@
+import {describe,it,expect} from 'vitest';import {isAllowedBridgeFetchUrl} from '../../shell/src/components/app-viewer-bridge-policy';import {prepareBridgeFetchRequest} from '../../shell/src/components/app-viewer-bridge-request';
+describe('App Store bridge policy',()=>{
+ it('permits Gallery store routes and denies other apps',()=>{expect(isAllowedBridgeFetchUrl('apps/app-gallery','/api/app-store/status')).toBe(true);expect(isAllowedBridgeFetchUrl('apps/sample','/api/app-store/status')).toBe(false);});
+ it('denies community proxy and privileged bridge routes',()=>{expect(isAllowedBridgeFetchUrl('apps/sample','/api/bridge/proxy?url=x','GET',true)).toBe(false);expect(isAllowedBridgeFetchUrl('apps/sample','/api/bridge/query','POST',true)).toBe(true);});
+ it('stamps caller identity and refuses community catalog reads',()=>{const result=prepareBridgeFetchRequest('apps/sample',{url:'/api/bridge/query',init:{method:'POST',headers:{'x-matrix-app-identity':'apps/other'},body:JSON.stringify({app:'other',action:'find',table:'records'})}},true);expect(JSON.parse(String(result.init.body)).app).toBe('apps/sample');expect(new Headers(result.init.headers).get('x-matrix-app-identity')).toBe('apps/sample');expect(()=>prepareBridgeFetchRequest('apps/sample',{url:'/api/bridge/query',init:{method:'POST',body:JSON.stringify({action:'listApps'})}},true)).toThrow();});
+});

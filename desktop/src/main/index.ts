@@ -1,3 +1,4 @@
+import {createNativeAppTrustResolver} from './embeds/native-app-trust';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
 import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
@@ -319,6 +320,7 @@ if (!gotLock) {
       );
 
       const nativeAppBridge = new NativeAppBridge({
+        allowUnscopedActions:createNativeAppTrustResolver({getGatewayOrigin:()=>auth.getGatewayOrigin(),getToken:()=>auth.getToken()}),
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
         openApp: (app) => {
