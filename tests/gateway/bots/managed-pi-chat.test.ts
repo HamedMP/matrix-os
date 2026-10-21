@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createOwnerToolOutputProjection } from "../../../packages/gateway/src/chat/owner-tool-output.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -205,7 +206,8 @@ it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered 
   } } } as unknown as ScopeRuntimeHost;
   const admission = createManagedPiAdmission({ db, homePath: home, host, registry, roots: { resolve: async () => { throw new Error("No project" ); } } });
   const lifetime = new AbortController();
-  const runtime = createManagedPiRuntime({ admission, host, providers, lifetime: lifetime.signal,
+  const toolOutputKey = Buffer.alloc(32, 21);
+  const runtime = createManagedPiRuntime({ toolOutputKey, admission, host, providers, lifetime: lifetime.signal,
     forgetRun: (runId) => actions.forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const actions: ReturnType<typeof createBotBrokerActions> = createBotBrokerActions({ db, registry, sessions: createBotSessionsRepository(db), checkpoints: createBotCheckpointsRepository(db),
     managedSessions: createManagedPiSessionsRepository(db), managedCheckpoints: createManagedPiCheckpointsRepository(db),
@@ -232,6 +234,17 @@ it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered 
   expect(await db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
   expect(await db.selectFrom("bot_chat_bindings").selectAll().execute()).toEqual([]);
   expect(await db.selectFrom("managed_pi_tool_checkpoints").select(["phase", "effect_class"]).execute()).toEqual([{ phase: "observed_complete", effect_class: "write" }, { phase: "observed_complete", effect_class: "read" }]);
+  const detail = await repository.getDetailPage(owner, chat.chat.id, { limit: 20 });
+  expect(detail).not.toBeNull();
+  const protectedResults = detail!.activities.filter(activity => activity.type === "tool.output");
+  expect(protectedResults).toHaveLength(4);
+  expect(protectedResults.every(activity => activity.type === "tool.output" && activity.protectedOutput)).toBe(true);
+  expect(JSON.stringify(protectedResults)).not.toContain("PI_MANAGED_PROOF");
+  const restored = createOwnerToolOutputProjection(toolOutputKey, [OWNER])(owner, JSON.parse(JSON.stringify(detail)));
+  expect(restored.activities.some(activity => activity.type === "tool.output" && activity.text.includes("PI_MANAGED_PROOF"))).toBe(true);
+  const toolCards = restored.activities.filter(activity => activity.type === "agent.activity");
+  expect(toolCards).toHaveLength(2);
+  expect(toolCards.every(activity => activity.type === "agent.activity" && activity.status === "completed")).toBe(true);
   expect(registry.size).toBe(0); expect(stopRuntime).toHaveBeenCalledTimes(2);
 });
 
@@ -356,4 +369,45 @@ it.each([false, true])("preserves root admission/capabilities while composing is
     runId: binding.runId, resolved: expect.objectContaining({ route: expect.objectContaining({ maxOutputTokens: enabled ? 256 : 8192 }) }) }));
   expect(claim).toHaveBeenCalledTimes(enabled ? 1 : 0); expect(open).toHaveBeenCalledTimes(enabled ? 0 : 1);
   expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle);
+});
+
+it("replays a stopped managed tool as stopped after canonical cancellation without accepting late provider output", async () => {
+  const { db, destroy } = await createBotStateDatabase(); cleanup.push(destroy);
+  const snapshot = makeAiProviderSnapshot(); const toolOutputKey = Buffer.alloc(32, 21);
+  const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+  const resolved = resolveManagedPiRoute(snapshot, selection);
+  let binding: ManagedPiRuntimeBinding;
+  let finishWorker!: () => void;
+  const workerFinished = new Promise<void>(resolve => { finishWorker = resolve; });
+  const host = { client: { runBot: async (request: { command: { kind: string } }) => {
+    if (request.command.kind === "bot.cancel") { finishWorker(); return { ok: true, reply: { acknowledged: true } }; }
+    await runtime.events.publish(binding, { seq: 0, event: { type: "tool_progress", toolCallId: "call_cancel", capability: "mcp.call", phase: "started",
+      display: { name: "mcp_call", command: "printf cancel-proof", parameters: "tool: run_command" } } });
+    await workerFinished;
+    return { ok: true, reply: { runId: binding.runId, status: "cancelled", toolActions: 1 } };
+  } } } as unknown as ScopeRuntimeHost;
+  const runtime = createManagedPiRuntime({ toolOutputKey, admission: {
+    admit: async input => binding = { kind: "managed_chat", ownerId: input.ownerId, chatId: input.chatId, runId: input.runId,
+      runtimeHandle: `runtime_${"a".repeat(32)}`, executionGeneration: "1", workspace: { kind: "chat_workspace" }, rootFingerprint: "a".repeat(64),
+      ...resolved, capabilities: ["mcp.call"], requestClass: "interactive" }, release: async () => undefined,
+    toolAuthority: async () => ({ permissionMode: "full_access" }), workspace: async () => "/owned/chat",
+  }, host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal, forgetRun: () => undefined, cancelInference: () => undefined });
+  const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
+  const catalog = { getCatalog: async () => ({ revision: "cancel_test", drivers: [{ kind: "matrix_pi" as const, displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" as const }],
+    instances: managedPiChatInstances(snapshot).map(instance => ({ ...instance, catalogRevision: "cancel_test" })) }) };
+  const orchestrator = new CanonicalChatOrchestrator({ repository, catalog, adapters: new CanonicalChatProviderRegistry([runtime.adapter]) });
+  cleanup.push(async () => { finishWorker(); await orchestrator.close(); await runtime.close(); });
+  const owner = { type: "personal" as const, ownerId: OWNER };
+  const chat = await repository.create(owner, { id: "chat_canceltool", clientRequestId: "req_canceltool", title: "Stop tool" });
+  await orchestrator.admitTurn({ userId: OWNER, source: "jwt" }, owner, chat.chat.id, { clientRequestId: "req_cancelturn", baseRevision: chat.chat.revision,
+    parts: [{ type: "text", text: "Run a tool" }], selection, interactionMode: "default", permissionMode: "full_access" });
+  await vi.waitFor(async () => expect((await repository.getDetailPage(owner, chat.chat.id, { limit: 20 }))?.activities.some(activity => activity.type === "agent.activity" && activity.activityId === "call_cancel")).toBe(true));
+  const active = (await repository.get(owner, chat.chat.id))!.activeRun!;
+  await orchestrator.cancelRun(owner, chat.chat.id, active.runId);
+  const detail = (await repository.getDetailPage(owner, chat.chat.id, { limit: 20 }))!;
+  expect(detail.runs[0]?.status).toBe("aborted");
+  const restored = createOwnerToolOutputProjection(toolOutputKey, [OWNER])(owner, JSON.parse(JSON.stringify(detail)));
+  const { canonicalChatToolActivities } = await import("@matrix-os/contracts");
+  expect(canonicalChatToolActivities(restored.runs[0]!, restored.activities).find(activity => activity.id === "call_cancel"))
+    .toMatchObject({ state: "stopped", preview: "printf cancel-proof" });
 });
