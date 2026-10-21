@@ -11,7 +11,7 @@ describe("platform schema revision", () => {
   });
   it("changes whenever the ordered schema migrations change", async () => {
     const base = "packages/platform/src/database";
-    const files = ["migrate.ts", "../ai-funded-reservation-indexes.ts", "../ai-funded-recovery-audit.ts", "../ai-funded-usage-waiver-audit.ts", ...(await readdir(`${base}/migrations`))
+    const files = ["migrate.ts", "../ai-funded-reservation-indexes.ts", "../ai-funded-recovery-audit.ts", "../ai-funded-terminal-outcome.ts", "../ai-funded-usage-waiver-audit.ts", ...(await readdir(`${base}/migrations`))
       .filter((name) => name.endsWith(".ts") && name !== "whatsapp.ts")
       .map((name) => `migrations/${name}`)].sort();
     const digest = createHash("sha256");

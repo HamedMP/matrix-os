@@ -254,6 +254,7 @@ export function createSpeechOperationsRepository(options: {
     const expiresAt = new Date(checked.getTime() + metadataRetentionMs).toISOString();
     await options.db.ready;
     return options.db.transaction(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${admission.identity.ownerId}`}, 0))`.execute(trx.executor);
       const existing = await scopedRow(trx.executor, admission.identity, admission.requestId);
       if (existing) {
         if (existing.tombstone) return operationRecord(existing);
@@ -363,6 +364,7 @@ export function createSpeechOperationsRepository(options: {
     const checkedAt = now().toISOString();
     await options.db.ready;
     const result = await options.db.transaction(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
       const current = await scopedRow(trx.executor, identity, requestId, true);
       if (!current) throw new SpeechOperationStateError();
       if (current.execution_state !== "reserved" || current.cancellation_requested) {
@@ -410,6 +412,7 @@ export function createSpeechOperationsRepository(options: {
     const expiresAt = new Date(checked.getTime() + metadataRetentionMs).toISOString();
     await options.db.ready;
     return options.db.transaction(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
       const row = await scopedRow(trx.executor, identity, requestId, true);
       if (!row) throw new SpeechOperationStateError();
       if (["succeeded", "failed", "uncertain"].includes(row.execution_state)) return operationRecord(row);
@@ -455,6 +458,7 @@ export function createSpeechOperationsRepository(options: {
     const expiresAt = new Date(checked.getTime() + metadataRetentionMs).toISOString();
     await options.db.ready;
     return options.db.transaction(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
       await trx.executor.insertInto("speech_operations").values({
         owner_id: identity.ownerId,
         machine_id: identity.machineId,

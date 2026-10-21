@@ -1,3 +1,4 @@
+import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { settleWaivedUsage } from './ai-funded-usage-waiver-settlement.js';
 import { readUnknownUsageWaivers } from './ai-funded-usage-waiver-admission.js';
@@ -474,6 +475,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const checkedAt = checked.toISOString();
     await options.db.ready;
     return options.db.transaction(async (trx) => {
+      const locator = await trx.executor.selectFrom("ai_funded_usage_reservations").select("owner_id")
+        .where("reservation_id", "=", request.reservationId).where("token_id", "=", request.tokenId).executeTakeFirst();
+      if (!locator) throw new AiFundedPolicyError("unauthorized");
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx.executor);
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirst();
@@ -565,6 +570,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirstOrThrow();
+      if (reservation.execution_admission_release !== null) readFundedRecoveryAudit(reservation);
       const reserved = exactInteger(reservation.reserved_microusd);
       const usageLimit = usageReservationLimit(reservation.authorization_response);
       const storedJevPricingVersion = reservation.model_id === JEV_MODEL_ID

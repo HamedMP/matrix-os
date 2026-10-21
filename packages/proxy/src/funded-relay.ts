@@ -1,3 +1,4 @@
+import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js";
 import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
 import {
@@ -279,6 +280,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     retryIntervalMs: config.settlementRetryIntervalMs,
     now: () => now().getTime(),
     finalize: (task) => platform.finalize(task, AbortSignal.timeout(config.platformTimeoutMs)),
+    terminal: (task) => platform.terminal(task, AbortSignal.timeout(config.platformTimeoutMs)),
   });
   const activeRequests = new Set<AbortController>();
   const requestStates = new WeakMap<Context, ActiveRequestState>();
@@ -495,8 +497,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       reservationId: reservation.reservationId,
       tokenId: authorization.identity.tokenId,
     };
-    const enqueueFinalization = (result: FundedFinalization): void => {
-      if (result.mode === "exact" && (reservation.billingMode === "usage" || result.actualCostMicrousd <= reservation.reservedMicrousd)) {
+    const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
+      requestId, now, queue: settlementQueue });
+    const enqueueFinalization = (result: FundedFinalization, terminalState: "completed" | "failed" | "cancelled" = "completed"): void => {
+      if (result.mode === "conservative" && reservation.billingMode === "usage") {
+        terminal.unknown(terminalState);
+      } else if (result.mode === "exact" && (reservation.billingMode === "usage" || result.actualCostMicrousd <= reservation.reservedMicrousd)) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
         settlementQueue.enqueue({ ...finalizationLocator, mode: "conservative" });
@@ -533,8 +539,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         || started.requestId !== requestId || started.tokenId !== authorization.identity.tokenId) {
         throw new Error("Funded AI start response did not match its reservation");
       }
+      terminal.started(started);
       dispatched = true;
-      const fetched = await fetchImpl(generationUrl, generationInit);
+      const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
       const upstream = isOpenAi && fetched.ok
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
@@ -580,7 +587,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           return {
             push: (chunk: Uint8Array) => tracker.push(chunk),
             complete: () => enqueueFinalization(tracker.complete()),
-            ambiguous: () => enqueueFinalization({ mode: "conservative" }),
+            ambiguous: () => enqueueFinalization({ mode: "conservative" }, "cancelled"),
           };
         })(),
       );
@@ -596,7 +603,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         refundFundedCapacityAttempt(runtimeAttempt, error);
         return controlPlaneError(c, error);
       }
-      enqueueFinalization({ mode: "conservative" });
+      enqueueFinalization({ mode: "conservative" }, "failed");
       resourceLease.release();
       state.resourceLease = null;
       const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -690,6 +697,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       reservationId: reservation.reservationId,
       tokenId: authorization.identity.tokenId,
     };
+    const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
+      requestId, now, queue: settlementQueue });
     const enqueueFinalization = (result: FundedFinalization | {
       mode: "exact";
       actualCostMicrousd: number;
@@ -698,14 +707,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (result.mode === "exact" && result.actualCostMicrousd <= config.jevMaxCostMicrousd) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
-        // Platform deliberately refuses conservative settlement for usage
-        // billing. Keep the durable in-flight hold for operator review rather
-        // than retrying a request that can never succeed or charging without
-        // verified provider usage.
-        console.warn("[proxy] Jev usage requires manual reconciliation", {
-          reservationId: reservation.reservationId,
-          requestId,
-        });
+        terminal.unknown("failed");
       }
     };
 
@@ -725,6 +727,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         || startResult.requestId !== requestId || startResult.tokenId !== authorization.identity.tokenId) {
         throw new Error("Funded AI start response did not match its reservation");
       }
+      terminal.started(startResult);
       started = true;
       // A successful platform start is not evidence of an upstream call.
       reviewedJevPricing(now(), pricing);
@@ -743,7 +746,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         redirect: "error",
         signal: evaluationSignal,
       });
-      const text = await readBoundedText(upstream, config.maxControlResponseBytes);
+      const text = await readBoundedText(terminal.response(upstream), config.maxControlResponseBytes);
       if (!upstream.ok) {
         enqueueFinalization({ mode: "conservative" });
         resourceLease.release();

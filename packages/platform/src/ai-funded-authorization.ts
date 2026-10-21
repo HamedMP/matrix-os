@@ -6,6 +6,7 @@ import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
  * hold with its funding sources, all in one transaction. Extracted from the
  * metering repository so that file stays under the large-file limit.
  */
+import { recoverTerminalOutcomes } from "./ai-funded-recovery-lifecycle.js";
 import { createHash } from "node:crypto";
 import {
   FUNDED_AI_AUDIENCE,
@@ -74,6 +75,9 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       // Serialize admission across every runtime/replica for this owner. The
       // namespaced transaction lock is acquired before runtime and balance locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${credential.owner_id}`}, 0))`.execute(trx.executor);
+      // Recovery acquires machine rows; take those before any runtime/balance
+      // locks to match policy updates. Later validation rolls this back on refusal.
+      await recoverTerminalOutcomes(trx.executor, credential.owner_id, checked);
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
       const machine = await trx.executor.selectFrom("user_machines").select([

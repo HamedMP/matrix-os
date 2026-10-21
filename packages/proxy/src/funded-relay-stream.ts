@@ -29,6 +29,8 @@ export function boundedBody(
   let seen = 0;
   let settled = false;
   let terminalReported = false;
+  let cancelling = false;
+  let cancellation: Promise<void> | undefined;
   const reportComplete = (): void => {
     if (terminalReported) return;
     terminalReported = true;
@@ -45,13 +47,16 @@ export function boundedBody(
     lifetimeSignal.removeEventListener("abort", onLifetimeAbort);
     lease.release();
   };
+  const cancelSource = (reason?: unknown): Promise<void> => {
+    cancelling = true;
+    cancellation ??= reader.cancel(reason).then(reportAmbiguous).finally(settle);
+    return cancellation;
+  };
   const onLifetimeAbort = (): void => {
-    reportAmbiguous();
-    void reader.cancel("request lifetime ended").catch((error: unknown) => {
+    void cancelSource("request lifetime ended").catch((error: unknown) => {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI response cancellation failed", { errorName });
     });
-    settle();
   };
   if (lifetimeSignal.aborted) {
     onLifetimeAbort();
@@ -61,20 +66,21 @@ export function boundedBody(
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
+      let sourceFailed = false;
       try {
-        const result = await reader.read();
+        const result = await reader.read().catch((error: unknown) => { sourceFailed = true; throw error; });
         if (result.done) {
-          reportComplete();
-          settle();
+          if (!cancelling) reportComplete();
+          if (!cancelling) settle();
           reader.releaseLock();
           controller.close();
           return;
         }
         seen += result.value.byteLength;
         if (seen > maxBytes) {
-          reportAmbiguous();
+          const ended = cancelSource("response limit exceeded");
           abortUpstream("response limit exceeded");
-          await reader.cancel("response limit exceeded");
+          await ended;
           settle();
           controller.error(new Error("AI response exceeded the configured limit"));
           return;
@@ -82,7 +88,10 @@ export function boundedBody(
         observer?.push(result.value);
         controller.enqueue(result.value);
       } catch (error) {
-        reportAmbiguous();
+        if (sourceFailed && !cancelling) reportAmbiguous();
+        else if (!cancelling) await cancelSource("response processing failed").catch((cancelError: unknown) => {
+          console.warn("[proxy] Funded AI response cancellation failed", { errorName: cancelError instanceof Error ? cancelError.name : "UnknownError" });
+        });
         settle();
         if (!lifetimeSignal.aborted) {
           const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -92,10 +101,10 @@ export function boundedBody(
       }
     },
     async cancel(reason) {
-      reportAmbiguous();
+      const ended = cancelSource(reason);
       abortUpstream(reason);
       try {
-        await reader.cancel(reason);
+        await ended;
       } finally {
         settle();
       }

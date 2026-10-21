@@ -32,7 +32,7 @@ Inside the existing transaction and owner advisory lock:
 
 1. Idempotent replay check (unchanged).
 2. Load live claims for the owner: `expires_at > now()`, ordered by `created_at`.
-3. Conflict test: usage-mode conflicts with any execution-active reservation, and other modes conflict with an execution-active usage-mode reservation. An explicit audited operator execution recovery may exclude one expired unresolved obligation from execution conflict checks; its complete financial hold remains protected. Neither timeouts nor expiry automatically exclude it.
+3. Conflict test: usage-mode conflicts with any execution-active reservation, and other modes conflict with an execution-active usage-mode reservation. A bounded audited execution recovery may exclude an expired unresolved obligation from execution conflict checks while protecting its complete financial hold. Automatic recovery additionally requires a durable authenticated Relay terminal receipt; timeout or expiry alone cannot exclude work.
 4. Class rules:
    - `background` and any live claim that would conflict with this request exists: reject with `rate_limited` and reason `priority_hold`.
    - `interactive` and a conflicting active reservation exists: upsert the claim for this runtime slot and claim key. On conflict, keep the existing `created_at` and `expires_at`, so a claim is never extended or moved back in line. Reject with `rate_limited` and reason `slot_busy`.
@@ -70,7 +70,7 @@ The existing reservation cleanup worker deletes claims whose `expires_at < now()
 | Bot runs | background, except a turn that directly answers a waiting person's message in the bot's direct chat (interactive) |
 
 
-## Audited support recovery of unresolved execution
+## Audited recovery of unresolved execution
 
 `POST /api/operator/ai/funded/runtimes/:handle/policy-execution-release` is private
 operator support, authenticated solely with the Platform operator secret. It is
@@ -147,3 +147,68 @@ or mismatched release returns temporary unavailability and preserves the attempt
 charge; it cannot advertise the capacity retry header. The dispatch fence is set
 before calling the upstream transport, so later provider/control-plane failures
 cannot be misclassified as refundable admission waits.
+
+
+### ENG-205: durable terminal outcomes and bounded automatic recovery
+
+The approved policy permits automatic **execution admission** recovery under the
+same two-obligation / 500,000 microusd owner bounds. It never clears financial
+holds. Before runtime or balance locks, ordinary authorization takes the funded
+owner lock, validates existing waiver/recovery audits, and checks durable Relay
+terminal evidence. The reservation must be expired, at least sixteen minutes old,
+and at least one minute past confirmed local termination. The current owner,
+machine and runtime binding must remain running and authorized. Other live work
+outside the reviewed set prevents recovery. Distinct recovery slots remain unique.
+
+`POST /internal/ai/funded/terminal` uses the existing Relay control Bearer token,
+constant-time authentication and a strict 4 KiB JSON body. The receipt pins the
+reservation, credential, request, owner, machine, runtime, start and expiry, plus
+a real Relay execution ID and terminal state/time. It contains no prompts,
+provider content or credentials. A receipt confirms that local execution ended;
+it makes no claim that the remote provider stopped or that usage is zero. Relay
+waits for the original response body beneath parsing/normalization to end or for
+its cancellation to be acknowledged. Failed/hanging cancellation cannot create
+terminal proof. Accepted outcomes persist separately in `terminal_outcome` and
+replay idempotently. Unknown outcomes never replace exact settlement; later exact
+usage settles once. Only transient transport failures use the existing bounded
+retry queue. Relay death before durable acceptance remains fail-closed.
+
+`POST /api/operator/ai/funded/execution-recovery/batch` uses the existing operator
+secret and a strict 16 KiB body, with no query overrides. It atomically reviews
+one or two exact unknown records owned by one owner, including two machines. Each
+item pins identity, reservation/token/request, start/expiry, authorization SHA256,
+funding kind and saved maximum liability, plus terminal operator evidence. Usage
+liability comes from its saved authorization maximum. Speech liability is exactly
+its saved `reserved_microusd`, the captured `maximumCostMicrousd`; speech receives
+no fabricated usage authorization. The owner lock covers validation of the whole
+batch, all other live work, the aggregate bound and every execution audit write.
+A failure rolls back the entire batch. All admission, speech create/start/complete/
+cancel, settlement and cleanup paths use the owner lock before their row locks.
+Previously recovered identity-bound speech operations do not block a later
+eligible recovery merely because their operation metadata still says dispatching.
+
+Both transitions leave status `in_flight`, actual cost null, settlement null,
+financial balances, monthly reserves, speech allowance reserves, source
+allocations and the credit ledger unchanged. Cleanup rechecks under the owner
+lock and cannot conservatively charge an execution-recovered unknown speech
+reservation. Late exact settlement touches only that reservation's financial
+obligation and cannot unlock newer work. Existing single-row operator recovery
+and immutable version1 audits remain supported. New typed audits are
+`relay_terminal_v2` and `operator_batch_v2`; malformed history fails closed.
+
+| Route | Authentication source | Public |
+| --- | --- | --- |
+| `POST /internal/ai/funded/terminal` | Existing Relay control Bearer token | No |
+| `POST /api/operator/ai/funded/execution-recovery/batch` | Existing Platform operator secret | No |
+| `POST /api/operator/ai/funded/runtimes/:handle/policy-execution-release` | Existing Platform operator secret | No |
+
+Core schema generation 20 adds bounded nullable terminal-outcome bytes and
+validates saved receipts during upgrade. Deploy the same recovery-aware version
+to Platform **and every cleanup worker before the first version2 audit write**.
+Old version1-only readers cannot validate version2 audits, and old cleanup code
+may charge recovered speech holds. Do not roll either service back while these
+unknown obligations remain. Deploy Platform terminal support before enabling the
+new Relay writer; an old Platform returns404 and retains admission rather than
+inventing a charge. Deployment and live qualification remain separately approved.
+A separate documentation PR in the private site repository is required before
+public release; it is outside this local backend implementation.
