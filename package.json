@@ -77,9 +77,9 @@
       }
     },
     "packageExtensions": {
-      "eslint-config-next@16.2.3": {
+      "eslint-config-next@16.3.8": {
         "dependencies": {
-          "next": "16.2.6"
+          "next": "16.3.8"
         }
       },
       "electron-vite@*": {
@@ -125,7 +125,14 @@
       "@earendil-works/pi-ai": "1.0.0",
       "@earendil-works/chord": "1.0.0",
       "@earendil-works/pi-telemetry": "1.0.0",
-      "electron-vite>vite": "npm:rolldown-vite@7.3.1"
+      "electron-vite>vite": "npm:rolldown-vite@7.3.1",
+      "@clerk/shared@>=3.0.0 <3.47.7": "3.47.7",
+      "form-data@>=2.0.0 <2.5.6": "2.5.6",
+      "form-data@>=4.0.0 <4.0.6": "4.0.6",
+      "proxy-addr@>=2.0.0 <2.0.8": "2.0.8",
+      "protobufjs@>=7.0.0 <7.6.6": "7.6.6",
+      "tar@>=7.0.0 <7.5.22": "7.5.22",
+      "shell-quote@>=1.0.0 <1.9.0": "1.9.0"
     }
   },
   "devDependencies": {
