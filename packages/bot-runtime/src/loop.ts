@@ -139,7 +139,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   });
   input.onAgent?.(agent);
 
-  const project = createEventProjector({ send: (event) => broker.event(event), capabilityForTool: capabilityForToolName });
+  const project = createEventProjector({ send: (event) => broker.event(event), capabilityForTool: capabilityForToolName, signal: input.signal });
   const unsubscribe = agent.subscribe(async (event) => {
     if (event.type === "tool_execution_start") toolInFlight = true;
     if (event.type === "tool_execution_end") toolInFlight = false;
