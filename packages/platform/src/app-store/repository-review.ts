@@ -21,7 +21,6 @@ export function createReviewRepository(db: PlatformDB, options: StoreRepositoryO
       const listing = await trx.executor.selectFrom('app_store_listings').selectAll().where('id', '=', candidate.listing_id).forUpdate().executeTakeFirstOrThrow();
       const version = await getStoreVersion(trx, versionId);
       if (version.status !== 'in_review') throw new AppStoreError('conflict');
-      if (listing.publisher_clerk_user_id === reviewer) throw new AppStoreError('forbidden');
       const time = now();
       let approval: { keyId: string; signature: string } | undefined;
       if (decision.type === 'approve') {
@@ -49,7 +48,7 @@ export function createReviewRepository(db: PlatformDB, options: StoreRepositoryO
     return db.transaction(async trx => {
       const listing = await trx.executor.selectFrom('app_store_listings').selectAll().where('id', '=', listingId).forUpdate().executeTakeFirst();
       if (!listing) throw new AppStoreError('not_found');
-      if (listing.publisher_clerk_user_id === reviewer) throw new AppStoreError('forbidden');
+      if (action.type === 'reinstate' && listing.publisher_clerk_user_id.startsWith('deleted:')) throw new AppStoreError('forbidden');
       if (!listing.current_version_id || (action.type === 'reinstate' && !['suspended', 'delisted'].includes(listing.status))) throw new AppStoreError('conflict');
       const status = action.type === 'reinstate' ? 'live' : action.type === 'delist' ? 'delisted' : 'suspended';
       if (status === listing.status) throw new AppStoreError('conflict');
