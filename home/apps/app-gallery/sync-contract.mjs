@@ -1,6 +1,8 @@
 // Repository builds refresh canonical contracts. Owner copies retain portable snapshots.
 import { readFile, writeFile } from "node:fs/promises";
 for (const [name, target, header] of [
+  ["app-store.ts", "generated-store.ts", "// Generated store contract. Do not edit.\n"],
+  ["app-store-gateway.ts", "generated-store-gateway.ts", "// Generated gateway store contract. Do not edit.\n"],
   [
     "app-gallery.ts",
     "generated-contract.ts",
@@ -19,7 +21,7 @@ for (const [name, target, header] of [
   const snapshot = new URL(`./src/${target}`, import.meta.url);
   try {
     const source = await readFile(canonical, "utf8");
-    await writeFile(snapshot, header + source);
+    await writeFile(snapshot, header + source.replaceAll('"./app-store.js"', '"./generated-store"'));
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
     const existing = await readFile(snapshot, "utf8");
