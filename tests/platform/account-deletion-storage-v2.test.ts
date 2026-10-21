@@ -31,9 +31,9 @@ function memoryStore(initial: string[]) {
 describe('account deletion secondary runtime storage', () => {
   it('covers legacy, configured and canonical secondary runtime namespaces with exact owner boundaries', () => {
     expect(ownerStoragePrefixes(owner, 'custom/sync')).toEqual([
-      primary, 'custom/sync/user_a/', secondaryOwner,
+      primary, 'custom/sync/user_a/', secondaryOwner, 'app-store/owners/user_a/',
     ]);
-    expect(ownerStoragePrefixes(owner, 'matrixos-sync')).toEqual([primary, secondaryOwner]);
+    expect(ownerStoragePrefixes(owner, 'matrixos-sync')).toEqual([primary, secondaryOwner, 'app-store/owners/user_a/']);
   });
 
   it('aborts multipart uploads and erases every runtime in bounded restartable pages', async () => {
@@ -52,7 +52,7 @@ describe('account deletion secondary runtime storage', () => {
     await eraseOwnerStorage(fixture.store, owner, 'custom/sync');
 
     expect([...fixture.keys]).toEqual(keep);
-    expect(fixture.aborted).toEqual([primary, 'custom/sync/user_a/', secondaryOwner]);
+    expect(fixture.aborted).toEqual([primary, 'custom/sync/user_a/', secondaryOwner, 'app-store/owners/user_a/']);
     expect(fixture.store.deleteObject).toHaveBeenCalledTimes(erased.length);
     expect(fixture.listed.every((entry) => entry.cursor === undefined)).toBe(true);
     await eraseOwnerStorage(fixture.store, owner, 'custom/sync');
