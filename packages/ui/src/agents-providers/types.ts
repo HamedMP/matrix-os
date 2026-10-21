@@ -31,6 +31,7 @@ export type ProviderSettingsMutationIntent =
     }
   | { type: "select_account"; harnessInstanceId: string; accountId: string }
   | { type: "select_access_source"; harnessInstanceId: string; accessSourceId: string }
+  | { type: "complete_native_codex"; harnessInstanceId: string }
   | { type: "start_login"; harnessInstanceId: string; accountId: string | null; method: ProviderLoginMethod }
   | { type: "logout_account"; accountId: string }
   | {

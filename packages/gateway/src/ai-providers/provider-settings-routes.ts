@@ -246,6 +246,9 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (!capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse(await readJson(context));
     if (!mutation.success) return invalidRequest(context);
+    if (mutation.data.type === "complete_native_codex" && options.canReadNativeAccountMetadata?.(context) !== true) {
+      return context.json({ error: { code: "forbidden", message: "Access is denied." } }, 403);
+    }
     try {
       const result = await options.store.mutate(mutation.data);
       return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true", matrixConnection.data === "true" && options.canReadNativeAccountMetadata?.(context) === true) });

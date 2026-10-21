@@ -35,6 +35,18 @@ describe("connection refresh snapshot handoff", () => {
   });
 });
 
+it("probes native state on Web Settings mount and foreground return when enabled", async () => {
+  const gateway = { getSnapshot: vi.fn(async () => snapshot(1)), mutate: vi.fn() };
+  renderHook(() => useProviderSettingsController({
+    identityKey: "web-owner", transport: gateway, initialRefresh: true, foregroundRefresh: true,
+  }));
+  await waitFor(() => expect(gateway.getSnapshot).toHaveBeenCalledOnce());
+  expect(gateway.getSnapshot).toHaveBeenLastCalledWith(expect.any(AbortSignal), { refresh: true });
+  act(() => window.dispatchEvent(new Event("focus")));
+  await waitFor(() => expect(gateway.getSnapshot).toHaveBeenCalledTimes(2));
+  expect(gateway.getSnapshot).toHaveBeenLastCalledWith(expect.any(AbortSignal), { refresh: true });
+});
+
 function snapshot(revision: number, harnessIds = ["harness_one"]): ProviderSettingsSnapshot {
   return {
     contractVersion: 1,
@@ -127,6 +139,17 @@ function transport(options: {
 afterEach(() => vi.restoreAllMocks());
 
 describe("ProviderSettingsController", () => {
+  it("rechecks account identity after failed Settings logout and retains a safe recovery message", async () => {
+    const before = snapshot(1); before.supportedActions.push("logout_account");
+    const gateway = transport({ getSnapshot: async () => before,
+      mutate: async () => { throw new ProviderSettingsTransportError("provider_settings_unavailable"); } });
+    const controller = new ProviderSettingsController({ identityKey: "owner:codex", transport: gateway });
+    await controller.refresh({ refresh: false });
+    expect(await controller.mutate({ type: "logout_account", accountId: "owner_codex" })).toBe(false);
+    expect(gateway.getSnapshot).toHaveBeenCalledTimes(2);
+    expect(gateway.getSnapshot).toHaveBeenLastCalledWith(expect.any(AbortSignal), { refresh: true });
+    expect(controller.getState().error).toMatch(/sign-out.*check account status/i);
+  });
   it("notifies catalog consumers only after accepting explicit Settings changes", async () => {
     const onCatalogChanged = vi.fn();
     const gateway = transport();

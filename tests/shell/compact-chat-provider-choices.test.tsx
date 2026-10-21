@@ -56,6 +56,29 @@ const catalog: CanonicalProviderCatalog = {
 };
 
 describe("compact shared Chat choices", () => {
+  it("lets every unavailable provider rail entry reveal its own recovery", () => {
+    const kinds = ["claude_code", "codex", "pi", "opencode", "hermes"] as const;
+    const instances = kinds.map((kind) => ({
+      ...catalog.instances[1]!, id: `${kind}_default`, driverKind: kind, displayName: kind,
+      availability: "auth_required" as const, unavailabilityReason: "authentication_required" as const,
+      models: [], setupActions: [],
+    }));
+    const ownCatalog: CanonicalProviderCatalog = {
+      ...catalog,
+      drivers: [{ kind: "matrix_pi", displayName: "Matrix AI", adapterVersion: "1", capabilityClass: "system_agent" },
+        ...kinds.map(kind => ({ kind, displayName: kind, adapterVersion: "1", capabilityClass: "coding_agent" as const }))],
+      instances: [{ ...catalog.instances[0]!, availability: "auth_required", models: [], setupActions: [] }, ...instances],
+    };
+    render(<CompactChatProviderChoices catalog={ownCatalog} choices={[]} selected={null} onSelect={vi.fn()} />);
+    for (const label of ["Matrix AI", ...kinds]) {
+      const entry = screen.getByRole("button", { name: `${label} agent, Authentication required` });
+      expect(entry).toBeEnabled();
+      fireEvent.click(entry);
+      expect(entry).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText("Authentication required")).toBeVisible();
+    }
+    expect(screen.getByText(/Hermes needs its own provider/)).toBeVisible();
+  });
   it("omits an empty unavailable plan placeholder while keeping real unavailable setup and selected models", () => {
     const placeholder = { ...catalog.instances[0]!, id: "matrix_chatgpt_plan", driverKind: "matrix_bot" as const,
       displayName: "Matrix_bot", availability: "unavailable" as const, models: [], setupActions: [] };

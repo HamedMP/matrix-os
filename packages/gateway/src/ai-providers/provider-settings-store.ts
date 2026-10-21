@@ -555,6 +555,12 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   }
 
   async mutate(input: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse> {
+    if (input.type === "complete_native_codex") {
+      const parsed = ProviderSettingsMutationSchema.safeParse(input);
+      if (!parsed.success || parsed.data.type !== "complete_native_codex") throw new ProviderSettingsStoreError("invalid_request", 400);
+      return this.completeCodexNativeLogin({ harnessInstanceId: parsed.data.harnessInstanceId,
+        expectedRevision: parsed.data.expectedRevision, idempotencyKey: parsed.data.idempotencyKey });
+    }
     return this.#mutate(input, false);
   }
 

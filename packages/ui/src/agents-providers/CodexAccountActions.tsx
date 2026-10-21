@@ -52,7 +52,7 @@ export function CodexAccountActions({ account, harnessId, scopeOwner, disabled, 
       <h3>{change ? "Change Codex account?" : "Log out of Codex?"}</h3>
       <p>This logs out {account.displayName} from Codex on this Computer and stops its active Codex work. Your chats and projects stay. The separate ChatGPT connection for Matrix Chat and Bots stays unchanged.</p>
       {change ? <p>After signing out, choose how to sign in with your new account. If you cancel that sign-in, Codex stays signed out.</p> : null}
-      {state.error ? <p className="matrix-ap-help" role="alert">Could not confirm sign-out. Check the account before trying again.</p> : null}
+      {state.error ? <p className="matrix-ap-help" role="alert">Could not confirm sign-out. The account may have changed in Terminal. Check account status before trying again.</p> : null}
       <div className="matrix-ap-dialog-actions">
         <button className="matrix-ap-button" type="button" disabled={state.pending} onClick={close}>Cancel</button>
         <button className="matrix-ap-button matrix-ap-button-danger" type="button" disabled={blocked} onClick={() => void confirm()}>{change ? "Log out and change account" : "Log out"}</button>

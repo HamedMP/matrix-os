@@ -18,6 +18,30 @@ describe("Chat connection state", () => {
     expect(deriveChatProviderConnectionState(snapshot)).toBe("connected");
     expect(deriveChatProviderConnectionState(snapshot, true)).toBe("connected");
   });
+  it("does not treat Codex CLI credentials awaiting Matrix consent as a ready chat connection", () => {
+    const snapshot = disconnectedSnapshot();
+    snapshot.harnesses[1]!.authState = "authenticated";
+    snapshot.harnesses[1]!.accessSourceId = "owner_openai_profile";
+    snapshot.harnesses[1]!.selectedAccountId = "owner_codex";
+    snapshot.accounts.push({ id: "owner_codex", providerId: "openai", accessSourceId: "owner_openai_profile",
+      displayName: "Codex CLI", authMethod: "terminal", authState: "authenticated",
+      dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } });
+    snapshot.accessSources.push({ id: "owner_openai_profile", kind: "provider_account", fundingKind: "owner_account",
+      providerId: "openai", accountId: "owner_codex", displayName: "Codex CLI", eligibleModelIds: [],
+      readiness: { state: "auth_required", action: "connect", safeReason: "auth", checkedAt: null, staleAfter: null },
+      usage: { kind: "unavailable", authority: "unavailable", state: "not_applicable", scope: "account", reason: "not_authenticated", asOf: null } });
+    expect(deriveChatProviderConnectionState(snapshot)).toBe("disconnected");
+  });
+  it("keeps unrelated provider credential evidence independent of route readiness", () => {
+    const snapshot = disconnectedSnapshot();
+    snapshot.harnesses[0]!.authState = "authenticated";
+    snapshot.harnesses[0]!.accessSourceId = "owner_claude_profile";
+    snapshot.accessSources.push({ id: "owner_claude_profile", kind: "harness_profile", fundingKind: "owner_account",
+      providerId: "anthropic", harness: "claude", accountId: null, displayName: "Claude Code", eligibleModelIds: [],
+      readiness: { state: "auth_required", action: "connect", safeReason: "auth", checkedAt: null, staleAfter: null },
+      usage: { kind: "unavailable", authority: "unavailable", state: "not_applicable", scope: "account", reason: "not_authenticated", asOf: null } });
+    expect(deriveChatProviderConnectionState(snapshot)).toBe("connected");
+  });
   it.each(["present_unverified", "unknown"] as const)("never advertises disconnected from %s local login evidence", (state) => {
     const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.localObservation = { state, checkedAt: "2026-01-01T00:00:00Z", staleAfter: "2026-01-01T00:10:00Z" };
     if (state === "unknown") snapshot.harnesses[0]!.authState = "unknown";
