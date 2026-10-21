@@ -18,7 +18,7 @@ function environment(enabled: boolean, limits: Record<string, string> = {}) {
     GITHUB_OUTPUT: "/dev/null",
     CLOUD_RUN_PREVIEW_SERVICE: "matrix-platform-preview",
     CLOUD_RUN_SERVICE_ACCOUNT: "synthetic-preview-runner",
-    MATRIX_CARD_TRIALS_ENABLED: "false", MATRIX_CARD_TRIAL_DAYS: "3",
+    MATRIX_CARD_TRIALS_ENABLED: "false", MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
     MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: String(enabled),
     MATRIX_FUNDED_AI_RUNTIME_ENABLED: String(enabled),
     MATRIX_FUNDED_AI_RELAY_URL: "https://synthetic-relay.example.test",

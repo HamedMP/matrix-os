@@ -538,7 +538,9 @@
 .matrix-ap-agent-logo img.matrix-ap-claude-logo { width: 22px; height: 22px; }
 /* Keep the exact monochrome SVG readable on the shared dark presentation. */
 [data-theme="dark"] .matrix-ap-agent-logo img.matrix-ap-openai-logo,
-.dark .matrix-ap-agent-logo img.matrix-ap-openai-logo { filter: invert(1); }
+.dark .matrix-ap-agent-logo img.matrix-ap-openai-logo,
+[data-theme="dark"] .matrix-chat-import-source-icon[data-harness="codex"],
+.dark .matrix-chat-import-source-icon[data-harness="codex"] { filter: invert(1); }
 
 .matrix-ap-agent-logo img.matrix-ap-upstream-logo { width: 24px; height: 24px; }
 @media (prefers-reduced-motion: reduce) {

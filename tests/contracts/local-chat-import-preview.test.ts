@@ -9,6 +9,27 @@ function input(records: unknown[]) {
   return { chunks: chunks(), rawSize: raw.length, sourceHash: () => hash.digest("hex") };
 }
 describe("bounded local Chat preview", () => {
+  it("skips Claude command metadata only for the title while preserving original preview bytes and counts",async()=>{
+    const command="<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>";
+    const records=[
+      {type:"user",sessionId:sourceId,uuid:"command",message:{content:command}},
+      {type:"assistant",sessionId:sourceId,uuid:"reply",message:{id:"reply",content:"Synthetic compacted reply"}},
+      {type:"user",sessionId:sourceId,uuid:"human",message:{content:[{type:"text",text:"Fix the import progress"}]}},
+    ];
+    const raw=records.map(value=>JSON.stringify(value)).join("\n")+"\n";
+    const preview=await previewLocalChatSource("claude",input(records));
+    expect(preview.title).toBe("Fix the import progress");
+    expect(preview.firstVisibleText).toBe(command);
+    expect(preview.sourceHash).toBe(createHash("sha256").update(raw).digest("hex"));
+    expect(preview.counts).toMatchObject({humanInputs:2,assistantResponses:1});
+  });
+  it("uses the existing command-only fallback and preserves human prose discussing Claude tags",async()=>{
+    const command=await previewLocalChatSource("claude",input([{type:"user",sessionId:sourceId,uuid:"command",message:{content:"<command-name>/compact</command-name><command-message>compact</command-message>"}}]));
+    expect(command.title).toBe("Imported Claude Code Chat");
+    const prose="Explain <command-name> tags in Claude transcripts";
+    const normal=await previewLocalChatSource("claude",input([{type:"user",sessionId:sourceId,uuid:"human",message:{content:prose}}]));
+    expect(normal.title).toBe(prose);expect(normal.firstVisibleText).toBe(prose);
+  });
   it("counts Claude fragments as one response and keeps tools, thinking, and nested media distinct", async () => {
     const preview = await previewLocalChatSource("claude", input([
       { type: "user", sessionId: sourceId, uuid: "u", cwd: "/synthetic/repo", message: { content: "Synthetic input" } },

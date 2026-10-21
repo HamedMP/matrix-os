@@ -1,12 +1,16 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, renderHook } from "@testing-library/react-native";
 
-import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
+import ChatScreenRoute from "../app/(drawer)/(tabs)/(chats)/index";
+import { ActiveChatProvider } from "../components/chat/active-chat";
 import {
   consumeChatDraftRequest,
   requestChatDraft,
   useChatDraftRequest,
 } from "../components/agents/chat-draft-request";
+
+// The Chats stack's layout holds the open chat's state above its screens.
+const ChatScreen = () => <ActiveChatProvider><ChatScreenRoute /></ActiveChatProvider>;
 
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: null, isError: false }) }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => jest.fn() }));

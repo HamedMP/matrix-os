@@ -269,3 +269,11 @@ describe("provider Terminal login handoff", () => {
     expect(() => handoff({} as never, vi.fn())).toThrow("store is required");
   });
 });
+
+
+it('preserves private Codex completion and original store receiver through the production facade', async () => {
+  const expected = { kind: 'snapshot' };
+  const store = { marker: expected, getSnapshot: vi.fn(), mutate: vi.fn(), async completeCodexNativeLogin() { return this.marker; } };
+  const facade = handoff(store as never, vi.fn());
+  await expect(facade.completeCodexNativeLogin!({ harnessInstanceId: 'harness_codex', expectedRevision: 0, idempotencyKey: 'codex-complete' })).resolves.toBe(expected);
+});

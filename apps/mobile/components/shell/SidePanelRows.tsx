@@ -1,12 +1,5 @@
-import { useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import Animated, {
-  cancelAnimation,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
@@ -17,6 +10,7 @@ import {
   Icon,
   IconTile,
   ItemRow,
+  Skeleton,
   StatusDot,
   type IconData,
   type IconTileSize,
@@ -96,32 +90,22 @@ export function SidePanelNavCount({ children }: { children: number }) {
   return <Text style={styles.navCount}>{children}</Text>;
 }
 
-/** Stand-ins for chat rows while chats or search results load. */
+/** Stand-ins for chat rows while chats or search results load, drawn like every other placeholder. */
 export function SidePanelSkeletonRows() {
-  const opacity = useSharedValue(0.45);
-
-  useEffect(() => {
-    opacity.set(withRepeat(withTiming(0.9, { duration: 700 }), -1, true));
-    return () => cancelAnimation(opacity);
-  }, [opacity]);
-
-  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.get() }));
-
   return (
-    <Animated.View
+    <View
+      testID="recent-chat-skeleton"
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      style={animatedStyle}
+      style={styles.skeletonRows}
     >
-      <View testID="recent-chat-skeleton" style={styles.skeletonRows}>
-        {SKELETON_TEXT_WIDTHS.map((width) => (
-          <View key={width} testID="recent-chat-skeleton-row" style={styles.skeletonRow}>
-            <View style={styles.skeletonIcon} />
-            <View style={[styles.skeletonText, { width }]} />
-          </View>
-        ))}
-      </View>
-    </Animated.View>
+      {SKELETON_TEXT_WIDTHS.map((width) => (
+        <View key={width} testID="recent-chat-skeleton-row" style={styles.skeletonRow}>
+          <Skeleton testID="recent-chat-skeleton-icon" style={styles.skeletonIcon} />
+          <Skeleton testID="recent-chat-skeleton-text" style={[styles.skeletonText, { width }]} />
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -159,11 +143,9 @@ const styles = StyleSheet.create((theme) => ({
     width: CHAT_TILE_SIZE,
     height: CHAT_TILE_SIZE,
     borderRadius: theme.v2.radius.full,
-    backgroundColor: theme.v2.colors.skeleton,
   },
   skeletonText: {
     height: theme.v2.text.label.fontSize,
     borderRadius: theme.v2.radius.full,
-    backgroundColor: theme.v2.colors.skeleton,
   },
 }));

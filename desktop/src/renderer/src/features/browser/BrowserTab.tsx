@@ -363,7 +363,7 @@ export default function BrowserTab({
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
           <span
             className="flex size-14 items-center justify-center rounded-2xl"
-            style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+            style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}
           >
             <Globe2 size={26} aria-hidden="true" />
           </span>

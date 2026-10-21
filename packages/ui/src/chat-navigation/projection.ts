@@ -1,12 +1,12 @@
 import type { CanonicalChatNavigationItem, CanonicalChatRecord } from "@matrix-os/contracts";
 import { mergeChatReadState } from "../chat/read-state.js";
 /** Both detail records and list summaries satisfy this display-only projection. */
-export type ChatNavigationRecord = Pick<CanonicalChatNavigationItem, "chat" | "projectId" | "providerBinding" | "activeRun" | "latestSuccessfulCompletion"> & {
+export type ChatNavigationRecord = Pick<CanonicalChatNavigationItem, "chat" | "importSource" | "projectId" | "providerBinding" | "activeRun" | "latestSuccessfulCompletion"> & {
   readState?: CanonicalChatNavigationItem["readState"];
 };
 export function mergeChatNavigationRecord<T extends ChatNavigationRecord>(current: T, incoming: ChatNavigationRecord): T {
   const { id, title, titleVersion, activityAt, lifecycle, attention, revision, messageCount, userState, createdAt, updatedAt } = incoming.chat;
-  const snapshot = incoming.chat.revision >= current.chat.revision ? { ...current, projectId: incoming.projectId,
+  const snapshot = incoming.chat.revision >= current.chat.revision ? { ...current, importSource: incoming.importSource ?? current.importSource, projectId: incoming.projectId,
     providerBinding: incoming.providerBinding ? { ...current.providerBinding, driverKind: incoming.providerBinding.driverKind } : undefined,
     activeRun: incoming.activeRun, latestSuccessfulCompletion: incoming.latestSuccessfulCompletion,
     chat: { ...current.chat, id, title, titleVersion, activityAt, lifecycle, attention, revision, messageCount, userState, createdAt, updatedAt } } : current;
@@ -25,6 +25,6 @@ export function mergeChatNavigationRecord<T extends ChatNavigationRecord>(curren
   return { ...read, chat: { ...read.chat, title: source.chat.title, titleVersion: source.chat.titleVersion } };
 }
 export function projectDetailNavigation(record: CanonicalChatRecord, current: CanonicalChatNavigationItem): CanonicalChatNavigationItem {
-  const { chat, projectId, providerBinding, activeRun, latestSuccessfulCompletion, readState } = record;
-  return mergeChatNavigationRecord(current, { chat, projectId, providerBinding: providerBinding ? { driverKind: providerBinding.driverKind } : undefined, activeRun, latestSuccessfulCompletion, readState });
+  const { chat, importSource, projectId, providerBinding, activeRun, latestSuccessfulCompletion, readState } = record;
+  return mergeChatNavigationRecord(current, { chat, importSource, projectId, providerBinding: providerBinding ? { driverKind: providerBinding.driverKind } : undefined, activeRun, latestSuccessfulCompletion, readState });
 }
