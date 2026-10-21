@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Chip, ProviderLogo, SectionLabel, SheetGrabber, Skeleton } from "@/components/ui";
+import { selectHaptic } from "@/lib/haptics";
 
 import { MATRIX_ENGINE_ID, openingEngineId, type ModelEngine } from "./model-choices";
 import type { ModelOptionGroup } from "./model-options";
@@ -102,7 +103,15 @@ export function ModelSheet({
         contentContainerStyle={styles.models}
       >
         {engine?.models.map((model) => (
-          <ModelSheetRow key={model.key} model={model} disabled={loading} onPress={() => onSelectModel(model.key)} />
+          <ModelSheetRow
+            key={model.key}
+            model={model}
+            disabled={loading}
+            onPress={() => {
+              selectHaptic();
+              onSelectModel(model.key);
+            }}
+          />
         ))}
         {engine && engine.models.length === 0 && engine.note ? <Text style={styles.note}>{engine.note}</Text> : null}
       </ScrollView>
@@ -120,7 +129,10 @@ export function ModelSheet({
                   label={label}
                   selected={selected}
                   disabled={loading}
-                  onPress={() => onSelectOption(group.id, value)}
+                  onPress={() => {
+                    selectHaptic();
+                    onSelectOption(group.id, value);
+                  }}
                 />
               ),
             }))}

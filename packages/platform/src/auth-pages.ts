@@ -39,7 +39,7 @@ export function getAuthPage(
   const billingSetupTargetJson = escapeInlineScriptJson(buildBillingSetupTarget(appShellOrigin, redirectTarget));
   const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
   const modeDetail = mode === 'sign-up'
-    ? 'Start with a free account. The 3-day hosted Matrix trial begins only when you provision your cloud computer.'
+    ? 'Start with a free account. Choose your cloud computer to see available trial offers and billing details.'
     : 'Sign in to continue to your Matrix computer, provisioning status, or trial checkout.';
   return `<!DOCTYPE html>
 <html lang="en">

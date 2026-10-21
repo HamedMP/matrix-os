@@ -1,3 +1,4 @@
+import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
 import {
   Kysely,
   PostgresDialect,
@@ -139,8 +140,8 @@ export class OsViewStateRepository {
 
   static fromConnectionString(connectionString: string): OsViewStateRepository {
     const pool = new pg.Pool({ connectionString, max: 10 });
-    pool.on("error", (error) => {
-      console.error("[os-view-state] Idle pool client error:", error.message);
+    observePostgresPoolErrors(pool, (error) => {
+      console.error("[os-view-state] Postgres connection error:", error.message);
     });
     return new OsViewStateRepository(new PostgresDialect({ pool }));
   }

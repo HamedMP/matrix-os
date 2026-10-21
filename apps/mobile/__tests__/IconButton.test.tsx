@@ -4,6 +4,8 @@ import { StyleSheet as NativeStyleSheet } from "react-native";
 
 import { IconButton } from "../components/ui/IconButton";
 
+import { pressedStyle } from "./ui-test-utils";
+
 describe("IconButton", () => {
   it("is transparent by default", () => {
     render(<IconButton accessibilityLabel="Add" icon={Add01Icon} />);
@@ -46,4 +48,23 @@ describe("IconButton", () => {
     });
   });
 
+  it("reaches a 44pt touch target when it is drawn smaller", () => {
+    render(<IconButton accessibilityLabel="Close" icon={Add01Icon} buttonSize={32} onPress={jest.fn()} />);
+
+    expect(32 + 2 * (screen.getByLabelText("Close").props.hitSlop as number)).toBe(44);
+  });
+
+  it("needs no extra reach at full size, and keeps one it is given", () => {
+    render(<IconButton accessibilityLabel="Add" icon={Add01Icon} buttonSize={44} onPress={jest.fn()} />);
+    expect(screen.getByLabelText("Add").props.hitSlop).toBeUndefined();
+
+    render(<IconButton accessibilityLabel="Clear" icon={Add01Icon} buttonSize={32} hitSlop={10} onPress={jest.fn()} />);
+    expect(screen.getByLabelText("Clear").props.hitSlop).toBe(10);
+  });
+
+  it("dims while pressed", () => {
+    render(<IconButton accessibilityLabel="Close" icon={Add01Icon} buttonSize={32} onPress={jest.fn()} />);
+
+    expect(pressedStyle({ accessibilityLabel: "Close" }).opacity).toBe(0.65);
+  });
 });

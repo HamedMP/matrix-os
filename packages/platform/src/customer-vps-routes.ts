@@ -47,6 +47,7 @@ export function meetsMessagingResourceFloor(
 }
 
 export interface CustomerVpsRoutesDeps {
+  activateManagedFeatures?: import('./managed-feature-activation.js').ManagedFeatureActivator;
   service: CustomerVpsService;
   platformSecret: string;
   goldenSnapshotOperatorSecret?: string;
@@ -366,6 +367,24 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/deploy');
     }
+  });
+
+  app.post('/managed-features/activate', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    try {
+      let body: unknown;
+      try { body = await c.req.json(); }
+      catch (error: unknown) {
+        if (error instanceof Error && error.name === 'BodyLimitError') return c.json({ error: 'Request too large' }, 413);
+        if (!(error instanceof SyntaxError)) logCustomerVpsError('managed activation request parse failed', error);
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+      const parsed = SpeechActivationRequestSchema.safeParse(body);
+      if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
+      if (!deps.activateManagedFeatures) return c.json({ error: 'Service unavailable' }, 503);
+      return c.json(await deps.activateManagedFeatures(parsed.data));
+    } catch (err: unknown) { return jsonError(c, err, '/vps/managed-features/activate'); }
   });
 
   app.post('/speech/activate', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {

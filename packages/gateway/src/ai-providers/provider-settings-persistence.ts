@@ -28,6 +28,8 @@ export const HarnessConfigurationSchema = z.object({
   displayName: z.string().min(1).max(120),
   accentColor: ProviderAccentColorSchema.nullable(),
   enabled: z.boolean(),
+  nativeAccountGeneration: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  nativeAccountConsentRevision: z.number().int().nonnegative().optional(),
   enablementOrigin: z.enum(["generated_default", "owner_configuration"]).optional(),
   selectedAccountId: SafeRefSchema.nullable(),
   accessSourceId: SafeRefSchema.nullable(),

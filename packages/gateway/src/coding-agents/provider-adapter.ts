@@ -17,6 +17,7 @@ import { AiTokenUsageSchema } from "../ai-analytics.js";
 const MAX_PROVIDER_EVENTS = 500;
 
 export const CodingAgentProviderResumeStateSchema = z.object({
+  nativeAccountBinding: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   conversationId: z.string().trim().min(1).max(512),
   backgroundRef: BackgroundAgentRefSchema.optional(),
   eventOffset: z.number().int().min(0).max(16 * 1024 * 1024).optional(),
@@ -121,6 +122,7 @@ export interface CodingAgentProviderAdapter {
     nextEventId: () => string;
   }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
   submitApproval?(input: {
+    resumeState?: CodingAgentProviderResumeState;
     principal: RequestPrincipal;
     thread: AgentThreadSummary;
     approvalId: string;
@@ -129,6 +131,7 @@ export interface CodingAgentProviderAdapter {
     nextEventId: () => string;
   }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
   submitInput?(input: {
+    resumeState?: CodingAgentProviderResumeState;
     principal: RequestPrincipal;
     thread: AgentThreadSummary;
     inputRequestId: string;

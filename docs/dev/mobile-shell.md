@@ -73,8 +73,15 @@ app/(drawer)/(tabs)/settings.tsx                /settings
   the sign-in gate. `__tests__/route-tree.test.ts` pins this.
 - **The tab bar is hidden on screens that take the whole display.** Add the
   route to `TAB_BAR_HIDDEN_ROUTES` in `lib/tab-bar-visibility.ts` (today: the
-  new-agent screen and an agent's chat). On Android it also hides while the
-  keyboard is open; on iOS the keyboard covers it.
+  new-agent screen and an agent's chat). While the keyboard is open it stays
+  put and the keyboard covers it, on Android too.
+- **Android does not shrink the window for the keyboard.** The app is edge to
+  edge, so the keyboard is drawn over the screen on both platforms. A screen
+  with a text field near the bottom makes room for it itself: the chat, project
+  and agent chat screens use `KeyboardAvoidingView` with `behavior="padding"`
+  on iOS and Android alike. On Android React Native reports the keyboard on
+  its next layout pass, a moment after it appears, so the composer moves up
+  just after the keyboard rather than with it.
 - **Moving between tabs from code** goes through the helpers in
   `lib/shell-routes.ts`. They build new params on every call because the
   navigator ignores params it has already used.

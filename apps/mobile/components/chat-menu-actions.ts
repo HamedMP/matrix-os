@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactElement } from "react";
+import { useEffect, useRef, type ComponentProps, type ReactElement } from "react";
+import type { Button as SwiftUIButton } from "@expo/ui/swift-ui";
 import { Share, type PressableProps } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
@@ -8,7 +9,21 @@ import { showToast } from "@/lib/toast";
 export type ChatMenuAction =
   | { id: "copy-text" | "copy-chat-id"; label: string; onSelect: () => void }
   // iOS hands `text` to the system's own Share row; Android's `onSelect` opens the share sheet.
-  | { id: "share"; label: string; text: string; onSelect: () => void };
+  | { id: "share"; label: string; text: string; onSelect: () => void }
+  | ItemMenuAction;
+
+/** One of an item's own actions, such as Rename or Delete, in the menu a long press on its row opens. */
+export interface ItemMenuAction {
+  id: "item";
+  /** Tells the item's actions apart. */
+  key: string;
+  label: string;
+  /** Its SF Symbol in the iOS menu. */
+  systemImage: NonNullable<ComponentProps<typeof SwiftUIButton>["systemImage"]>;
+  /** Drawn in red, as an action that removes something. */
+  destructive?: boolean;
+  onSelect: () => void;
+}
 
 export type ChatMenuActionId = ChatMenuAction["id"];
 

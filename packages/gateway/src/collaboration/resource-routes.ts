@@ -28,6 +28,7 @@ import { authorize, exactQuery, handle, readJson, type CollaborationRouteOptions
 import { createFileActionExecutor, type CollaborationResourceDriver } from "./resource-actions.js";
 import { CollaborationResourceCatalog, ResourceCatalogError, type CatalogEntryRecord } from "./resource-catalog.js";
 import type { CollaborationUploadStager } from "./upload-stages.js";
+import { assertResourceIdentity } from "./resource-identity-admission.js";
 
 export type { CollaborationResourceDriver } from "./resource-actions.js";
 
@@ -152,6 +153,8 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     const resources = requireResources(options);
     const query = CollaborationFileListQuerySchema.parse(exactQuery(c, ["cursor", "limit", "query"]));
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    const namespace = await resources.catalog.namespaceForScope(context);
+    await assertResourceIdentity(resources.catalog, resources.driver, namespace, null);
     const page = await resources.catalog.listForScope(context, query);
     return c.json(CollaborationFileListResponseSchema.parse({
       entries: page.entries.map(entryProjection),
@@ -167,6 +170,7 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     const entry = await resources.catalog.resolveForScope(context, fileId);
     if (entry.kind !== "file") throw new ResourceCatalogError("not_found");
     const namespace = await resources.catalog.namespaceForScope(context);
+    await assertResourceIdentity(resources.catalog, resources.driver, namespace, entry);
     const content = await resources.driver.read({ ownerId: namespace.ownerId, projectId: namespace.projectId, path: entry.path, expectedIncarnation: entry.incarnation });
     return streamResponse(c, content, entry.path.split("/").at(-1) ?? "file", options);
   }));

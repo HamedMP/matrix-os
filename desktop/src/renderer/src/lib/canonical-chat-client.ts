@@ -1,4 +1,4 @@
-import { markChatNavigation } from "@matrix-os/ui";
+import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
@@ -221,10 +221,10 @@ export function createCanonicalChatClient(
   } = {},
 ): CanonicalChatClient {
   const api: Pick<ApiClient, "get" | "post" | "patch" | "delete"> = {
-    get: (path, ...args) => transport.get(chatReadStateVersionUrl(path), ...args),
-    post: (path, body, requestOptions) => postWithProviderCatalogRecovery(transport, chatReadStateVersionUrl(path), body, requestOptions),
-    patch: (path, ...args) => transport.patch(chatReadStateVersionUrl(path), ...args),
-    delete: (path, ...args) => transport.delete(chatReadStateVersionUrl(path), ...args),
+    get: (path, ...args) => transport.get(chatImportSourceVersionUrl(chatReadStateVersionUrl(path)), ...args),
+    post: (path, body, requestOptions) => postWithProviderCatalogRecovery(transport, chatImportSourceVersionUrl(chatReadStateVersionUrl(path)), body, requestOptions),
+    patch: (path, ...args) => transport.patch(chatImportSourceVersionUrl(chatReadStateVersionUrl(path)), ...args),
+    delete: (path, ...args) => transport.delete(chatImportSourceVersionUrl(chatReadStateVersionUrl(path)), ...args),
   };
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
@@ -234,7 +234,7 @@ export function createCanonicalChatClient(
           : transport.patch(path, body)),
     async navigation() {
       markChatNavigation("request");
-      return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chat-navigation?version=1&limit=1000", {maxBytes:2*1024*1024}));
+      return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chat-navigation?version=1&limit=1000", {maxBytes:2*1024*1024, headers:{"X-Matrix-Chat-Import-Source":"1"}}));
     },
     async list(input = {}) {
       markChatNavigation("legacy-request");

@@ -15,7 +15,15 @@ it("bundles one React runtime for Electron and shared Chat components", () => {
   const config = await loadConfigFromFile({ command: "build", mode: "production" }, resolve("desktop/electron.vite.config.ts"));
   const entry = resolve("desktop/src/renderer/src/react-runtime-fixture.tsx");
   const runtimes = [];
-  await build({ ...config.config.renderer, configFile: false, root: resolve("desktop"), logLevel: "silent", plugins: [...config.config.renderer.plugins, {
+  // Desktop builds compile @matrix-os/brand first; this in-memory build reads its sources instead, as vitest.config.ts does.
+  const renderer = config.config.renderer;
+  const brand = resolve("packages/brand/src");
+  const alias = [
+    { find: /^@matrix-os\\/brand$/, replacement: brand + "/index.ts" },
+    { find: /^@matrix-os\\/brand\\/(.+)$/, replacement: brand + "/$1" },
+    ...Object.entries(renderer.resolve?.alias ?? {}).map(([find, replacement]) => ({ find, replacement })),
+  ];
+  await build({ ...renderer, resolve: { ...renderer.resolve, alias }, configFile: false, root: resolve("desktop"), logLevel: "silent", plugins: [...renderer.plugins, {
     name: "chat-runtime-fixture",
     resolveId(id) { if (id === entry) return entry; },
     load(id) { if (id === entry) return 'export { useState } from "react"; export { ChatSharingButton } from "@matrix-os/ui";'; },

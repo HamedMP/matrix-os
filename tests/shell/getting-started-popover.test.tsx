@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { GettingStartedVisibilityProvider } from "../../packages/ui/src/getting-started-visibility";
+import { GettingStartedVisibilityProvider, useGettingStartedAutoOpenSuppression } from "../../packages/ui/src/getting-started-visibility";
 import React from "react";
 import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -210,6 +210,32 @@ describe("web getting started status", () => {
 
     expect(await screen.findByRole("dialog", { name: "Getting started" })).toBeTruthy();
     expect(window.localStorage.getItem(webGettingStartedAutoOpenKey("/"))).toBe("1");
+  });
+
+  it("stays closed while the onboarding widget is showing, but still opens from its button", async () => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const body = url.endsWith("/api/integrations") ? []
+        : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
+          : url.endsWith("/api/workspace/projects") ? { projects: [] }
+            : url.endsWith("/api/chats?limit=1") ? { items: [] }
+              : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
+                : { authenticated: false };
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    function WidgetShowing() {
+      useGettingStartedAutoOpenSuppression();
+      return null;
+    }
+
+    render(<><WidgetShowing /><GettingStartedPopover onOpenSettings={() => {}} onOpenFirstWork={() => {}} /></>);
+    const trigger = await screen.findByRole("button", { name: "Getting started — 0 of 5" });
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull();
+    expect(window.localStorage.getItem(webGettingStartedAutoOpenKey("/"))).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
   });
 
   it("refreshes completion while the persistent popover remains open", async () => {

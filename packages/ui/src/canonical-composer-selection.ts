@@ -1,0 +1,149 @@
+import { isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
+import type {
+  CanonicalChatSummary,
+  CanonicalProviderCatalog,
+  CanonicalProviderInstanceDescriptor,
+  CanonicalProviderOptionDescriptor,
+} from "@matrix-os/contracts";
+import {
+  canonicalChatSubscriptionSelectionMatches,
+  canonicalProviderChoiceCanBeDefault,
+  orderCanonicalProviderInstancesForDefault,
+} from "./canonical-provider-choice.js";
+
+export interface CanonicalComposerSelection {
+  instanceId: string;
+  model: string;
+  options: Array<{ id: string; value: string | boolean }>;
+  interactionMode: string;
+  permissionMode: string;
+}
+
+export interface CanonicalComposerPreference {
+  model?: string;
+  options: Array<{ id: string; value: string | boolean }>;
+  permissionMode: string;
+}
+
+function defaultOptionValue(
+  option: CanonicalProviderOptionDescriptor,
+): string | boolean | undefined {
+  if (option.defaultValue !== undefined) return option.defaultValue;
+  if (option.kind === "boolean") return false;
+  return option.values?.[0]?.value;
+}
+
+function optionsForInstance(
+  instance: CanonicalProviderInstanceDescriptor,
+  selected: ReadonlyArray<{ id: string; value: string | boolean }> = [],
+): CanonicalComposerSelection["options"] {
+  return instance.options.flatMap((descriptor) => {
+    const existing = selected.find((option) => option.id === descriptor.id)?.value;
+    const value = existing ?? defaultOptionValue(descriptor);
+    return value === undefined ? [] : [{ id: descriptor.id, value }];
+  });
+}
+
+function selectionForInstance(
+  instance: CanonicalProviderInstanceDescriptor,
+): CanonicalComposerSelection | null {
+  if (isLegacyMatrixSdkProvider(instance) || instance.availability !== "available") return null;
+  const availableModel = instance.defaultSelection
+    ? instance.models.find((model) => (
+        model.id === instance.defaultSelection?.model && model.availability === "available"
+      ))
+    : instance.models.find((model) => model.availability === "available");
+  if (!availableModel || !instance.supports.rootChat
+    || !canonicalChatSubscriptionSelectionMatches(instance, optionsForInstance(instance, instance.defaultSelection?.options))) return null;
+  return {
+    instanceId: instance.id,
+    model: availableModel.id,
+    options: optionsForInstance(instance, instance.defaultSelection?.options),
+    interactionMode: instance.supports.interactionModes[0] ?? "default",
+    permissionMode: instance.supports.permissionModes[0] ?? "supervised",
+  };
+}
+
+export function canonicalComposerSelectionIsAvailable(
+  catalog: CanonicalProviderCatalog,
+  selection: CanonicalComposerSelection | null,
+): boolean {
+  const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
+  return instance?.availability === "available" && !isLegacyMatrixSdkProvider(instance)
+    && canonicalChatSubscriptionSelectionMatches(instance, selection?.options)
+    && instance.models.some((model) => model.id === selection?.model && model.availability === "available");
+}
+
+export function createCanonicalComposerSelection(
+  catalog: CanonicalProviderCatalog,
+  preferredInstanceId?: string,
+): CanonicalComposerSelection | null {
+  const preferred = preferredInstanceId
+    ? catalog.instances.find((instance) => instance.id === preferredInstanceId)
+    : undefined;
+  const preferredSelection = preferred ? selectionForInstance(preferred) : null;
+  if (preferredSelection) return preferredSelection;
+  if (preferredInstanceId && !canonicalProviderChoiceCanBeDefault({ instanceId: preferredInstanceId })) return null;
+  for (const instance of orderCanonicalProviderInstancesForDefault(catalog.instances)) {
+    if (!canonicalProviderChoiceCanBeDefault({ instanceId: instance.id })) continue;
+    const selection = selectionForInstance(instance);
+    if (selection) return selection;
+  }
+  return null;
+}
+
+export function changeCanonicalComposerInstance(
+  catalog: CanonicalProviderCatalog,
+  current: CanonicalComposerSelection,
+  instanceId: string,
+): CanonicalComposerSelection {
+  const instance = catalog.instances.find((candidate) => candidate.id === instanceId);
+  return (instance ? selectionForInstance(instance) : null) ?? current;
+}
+
+export function updateCanonicalComposerOption(
+  catalog: CanonicalProviderCatalog,
+  current: CanonicalComposerSelection,
+  optionId: string,
+  value: string | boolean,
+): CanonicalComposerSelection {
+  const instance = catalog.instances.find((candidate) => candidate.id === current.instanceId);
+  const descriptor = instance?.options.find((option) => option.id === optionId);
+  if (!descriptor) return current;
+  const valid = descriptor.kind === "boolean"
+    ? typeof value === "boolean"
+    : typeof value === "string" && descriptor.values?.some((candidate) => candidate.value === value);
+  if (!valid) return current;
+  return {
+    ...current,
+    options: current.options.map((option) => (
+      option.id === optionId ? { id: option.id, value } : option
+    )),
+  };
+}
+
+export function applyCanonicalComposerPreference(
+  catalog: CanonicalProviderCatalog,
+  current: CanonicalComposerSelection,
+  preference: CanonicalComposerPreference | undefined,
+): CanonicalComposerSelection {
+  if (!preference) return current;
+  const instance = catalog.instances.find((candidate) => candidate.id === current.instanceId);
+  if (!instance) return current;
+  const preferredModel = preference.model
+    ? instance.models.find((model) => (
+        model.id === preference.model && model.availability === "available"
+      ))
+    : undefined;
+  let next = preferredModel ? { ...current, model: preferredModel.id } : current;
+  for (const option of preference.options) {
+    next = updateCanonicalComposerOption(catalog, next, option.id, option.value);
+  }
+  return instance.supports.permissionModes.includes(preference.permissionMode)
+    ? { ...next, permissionMode: preference.permissionMode }
+    : next;
+}
+
+export function providerInstanceIsLocked(chat: CanonicalChatSummary | undefined): boolean {
+  return chat?.providerBinding !== undefined;
+}

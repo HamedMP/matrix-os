@@ -25,7 +25,9 @@ if name=='python3' and any(a.endswith('/prepared.py') for a in args):
  print(os.environ['MOCK_CACHE'])
  if os.environ.get('MOCK_FAIL')=='prepared':sys.exit(1)
 if name=='python3' and '--prepare' in args:
- for lane in ('unit','mechanical','web','e2e'):(work/lane).mkdir()
+ for lane in ('unit','mechanical','web','e2e'):
+  (work/lane).mkdir()
+  native=work/lane/'packages/gateway/native/build.mjs';native.parent.mkdir(parents=True);native.write_text('')
 if name=='python3' and '--source-check' in args:
  lane,stage=args[-2:];(work/'results'/('source-'+lane+'-'+stage+'.json')).write_text(json.dumps(dict(clean=not os.environ.get('MOCK_FAIL')==stage,lane=lane,stage=stage)))
  if os.environ.get('MOCK_FAIL')==stage:sys.exit(1)
@@ -37,6 +39,8 @@ if fail=='install' and name=='pnpm' and args==['install','--frozen-lockfile']:sy
 if fail=='unit' and name=='pnpm' and 'unit.json' in ' '.join(args):sys.exit(1)
 if fail=='typecheck' and name=='bun' and args==['run','typecheck:run']:sys.exit(1)
 if fail=='brand' and name=='pnpm' and args==['--filter','@matrix-os/brand','build']:sys.exit(1)
+if fail=='native' and name=='node' and args==['packages/gateway/native/build.mjs']:sys.exit(1)
+if fail=='prerequisites' and name=='pnpm' and args==['--filter','@matrix-os/observability','--filter','@matrix-os/kernel','--filter','@matrix-os/integrations-mcp','build']:sys.exit(1)
 if fail=='immutability' and name=='python3' and '--prepare-unit-source' in args:sys.exit(1)
 if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
 '''.replace('#!PYTHON','#!'+sys.executable+' -I')
@@ -110,6 +114,24 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
   result,calls,times=self.invoke('brand');self.assertNotEqual(result.returncode,0)
   self.assertEqual(times['timing-setup.tsv']['brand-build-unit'],1)
   self.assertFalse(any(c['cmd']=='pnpm' and 'vitest' in c['args'] for c in calls))
+ def test_native_identity_build_precedes_direct_test_lanes_and_fails_closed(self):
+  result,calls,times=self.invoke();self.assertEqual(result.returncode,0,result.stderr)
+  builds=[(i,Path(c['cwd']).name) for i,c in enumerate(calls) if c['cmd']=='node' and c['args']==['packages/gateway/native/build.mjs']]
+  self.assertEqual([lane for _,lane in builds],['unit','mechanical','web','e2e'])
+  for index,lane in builds:
+   test=next(i for i,c in enumerate(calls) if Path(c['cwd']).name==lane and (
+    (lane=='unit' and c['cmd']=='pnpm' and 'unit.json' in ' '.join(c['args'])) or
+    (lane=='mechanical' and c['cmd']=='bun' and c['args']==['run','typecheck:run']) or
+    (lane=='web' and c['cmd']=='bun' and c['args']==['run','build:shell:production']) or
+    (lane=='e2e' and c['cmd']=='pnpm' and 'general.json' in ' '.join(c['args']))))
+   self.assertLess(index,test)
+  self.assertEqual(list(times['timing-setup.tsv']),list(PHASES['setup']))
+  result,calls,times=self.invoke('native');self.assertNotEqual(result.returncode,0)
+  self.assertEqual(times['timing-setup.tsv']['prerequisites-unit'],1)
+  self.assertFalse(any(c['cmd']=='pnpm' and 'vitest' in c['args'] for c in calls))
+  result,calls,times=self.invoke('prerequisites');self.assertNotEqual(result.returncode,0)
+  self.assertEqual(times['timing-setup.tsv']['prerequisites-unit'],1)
+  self.assertFalse(any(c['cmd']=='node' and c['args']==['packages/gateway/native/build.mjs'] for c in calls))
  def test_unverified_source_prevents_install_and_app_execution(self):
   result,calls,_=self.invoke('source');self.assertNotEqual(result.returncode,0);self.assertFalse(any(c['cmd'] in ('pnpm','bun') for c in calls))
  def test_lane_roots_and_external_caches_are_exact_and_disjoint(self):
