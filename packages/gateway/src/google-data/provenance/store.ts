@@ -27,14 +27,18 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
     return row ? safeCopy(row) : null;
   }
   async function enqueue<DBT>(tx: Transaction<DBT>, rows: CopyRow[]) {
+    if (!rows.length) return;
+    // One bounded array parameter and constant round trips, including the 10k-copy owner limit.
+    const ids = rows.map(row => row.id);
     const count = (await sql<{ count: number }>`SELECT count(*)::int AS count FROM google_copy_purge_jobs`.execute(tx)).rows[0]!.count;
-    const existing = rows.length ? (await sql<{ copy_id: string }>`SELECT copy_id FROM google_copy_purge_jobs WHERE copy_id IN (${sql.join(rows.map(r => r.id))})`.execute(tx)).rows : [];
-    if (count + rows.length - existing.length > cap.maxJobs) unavailable();
-    for (const row of rows) {
-      await sql`INSERT INTO google_copy_purge_jobs(id,copy_id,owner_id,state)
-        VALUES(${randomUUID()},${row.id},${row.owner_id},${row.state === "deleted" ? "deleted" : "pending"}) ON CONFLICT(copy_id) DO NOTHING`.execute(tx);
-      await sql`UPDATE google_copy_registry SET state='purging',revision=revision+1,updated_at=now() WHERE id=${row.id} AND state='active'`.execute(tx);
-    }
+    const existing = (await sql<{ count: number }>`SELECT count(*)::int AS count FROM google_copy_purge_jobs
+      WHERE copy_id=ANY(${ids}::uuid[])`.execute(tx)).rows[0]!.count;
+    if (count + rows.length - existing > cap.maxJobs) unavailable();
+    await sql`INSERT INTO google_copy_purge_jobs(id,copy_id,owner_id,state)
+      SELECT gen_random_uuid(),id,owner_id,CASE WHEN state='deleted' THEN 'deleted' ELSE 'pending' END
+      FROM google_copy_registry WHERE id=ANY(${ids}::uuid[]) ON CONFLICT(copy_id) DO NOTHING`.execute(tx);
+    await sql`UPDATE google_copy_registry SET state='purging',revision=revision+1,updated_at=now()
+      WHERE id=ANY(${ids}::uuid[]) AND state='active'`.execute(tx);
   }
   return {
     migrate: () => migrateGoogleProvenance(db),

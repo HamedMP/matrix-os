@@ -27,14 +27,23 @@ export async function executePurgeClaim<DB>(db: Kysely<DB>, cap: ProvenanceLimit
   validateOpaque(claim.ownerId);
   if (![claim.jobId, claim.leaseToken].every(value => /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value)) || !Number.isSafeInteger(claim.revision) || claim.revision < 1) throw new GoogleProvenanceUnavailable();
   return boundedProvenanceTransaction(db, async tx => {
+    // Discovery cannot authorize deletion. All paths lock copy before job, including mixed-account purge admission.
+    const source = (await sql<{ copy_id: string }>`SELECT copy_id FROM google_copy_purge_jobs
+      WHERE id=${claim.jobId} AND owner_id=${claim.ownerId}`.execute(tx)).rows[0];
+    if (!source) return "stale";
+    const entity = (await sql<{ kind: GoogleEntityKind; entity_ref: string; content_hash: string }>`SELECT kind,entity_ref,content_hash FROM google_copy_registry
+      WHERE id=${source.copy_id} AND owner_id=${claim.ownerId} AND state='purging' FOR UPDATE`.execute(tx)).rows[0];
+    if (!entity) return "stale";
+    const locked = (await sql`SELECT id FROM google_copy_purge_jobs
+      WHERE id=${claim.jobId} AND owner_id=${claim.ownerId} AND lease_token=${claim.leaseToken}
+      AND copy_id=${source.copy_id} AND revision=${claim.revision} AND state='leased' FOR UPDATE`.execute(tx)).rows[0];
+    if (!locked) return "stale";
+    // A row-lock wait can outlive its lease without changing the row. Read the live DB clock after both locks.
     const job = (await sql<{ copy_id: string; attempts: number; remaining_ms: number }>`SELECT copy_id,attempts,
       (extract(epoch FROM lease_until-clock_timestamp())*1000)::int AS remaining_ms FROM google_copy_purge_jobs
-      WHERE id=${claim.jobId} AND owner_id=${claim.ownerId} AND lease_token=${claim.leaseToken}
-      AND revision=${claim.revision} AND state='leased' AND lease_until > clock_timestamp() FOR UPDATE`.execute(tx)).rows[0];
+      WHERE id=${claim.jobId} AND owner_id=${claim.ownerId} AND copy_id=${source.copy_id} AND lease_token=${claim.leaseToken}
+      AND revision=${claim.revision} AND state='leased' AND lease_until > clock_timestamp()`.execute(tx)).rows[0];
     if (!job) return "stale";
-    const entity = (await sql<{ kind: GoogleEntityKind; entity_ref: string; content_hash: string }>`SELECT kind,entity_ref,content_hash FROM google_copy_registry
-      WHERE id=${job.copy_id} AND owner_id=${claim.ownerId} AND state='purging' FOR UPDATE`.execute(tx)).rows[0];
-    if (!entity) return "stale";
     const handler = handlers[entity.kind];
     let result: PurgeOutcome | undefined;
     let reason: "missing_handler" | "modified" | "unavailable" | "retry_exhausted" | "timeout" | null = handler ? null : "missing_handler";

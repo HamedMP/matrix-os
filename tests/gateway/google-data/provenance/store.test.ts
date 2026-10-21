@@ -22,13 +22,16 @@ suite("durable Google provenance and conservative purge", () => {
   let admin: Kysely<Record<string, never>>;
   let schema: string;
   let store: ReturnType<typeof createGoogleProvenanceStore>;
+  let queryCount: number;
   beforeEach(async () => {
     const connectionString = process.env.MATRIX_TEST_POSTGRES_URL!;
     if (!new URL(connectionString).pathname.includes("test")) throw new Error("Dedicated test database required");
     schema = `provenance_${randomUUID().replaceAll("-", "")}`;
     admin = new Kysely({ dialect: new PostgresDialect({ pool: new Pool({ connectionString, max: 1 }) }) });
     await sql`CREATE SCHEMA ${sql.id(schema)}`.execute(admin);
-    db = new Kysely({ dialect: new PostgresDialect({ pool: new Pool({ connectionString, max: 10, options: `-c search_path=${schema} -c statement_timeout=5000` }) }) });
+    queryCount = 0;
+    db = new Kysely({ dialect: new PostgresDialect({ pool: new Pool({ connectionString, max: 10, options: `-c search_path=${schema} -c application_name=${schema} -c statement_timeout=5000` }) }),
+      log: event => { if (event.level === "query") queryCount++; } });
     store = createGoogleProvenanceStore(db);
     await store.migrate();
   });
@@ -36,6 +39,15 @@ suite("durable Google provenance and conservative purge", () => {
     if (db) await db.destroy();
     if (admin) { await sql`DROP SCHEMA ${sql.id(schema)} CASCADE`.execute(admin); await admin.destroy(); }
   });
+  async function waiting(queryFragment: string) {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const rows = (await sql`SELECT 1 FROM pg_stat_activity WHERE application_name=${schema}
+        AND wait_event_type='Lock' AND position(${queryFragment} in query)>0`.execute(admin)).rows;
+      if (rows.length) return;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    throw new Error("Expected competing row lock");
+  }
   it("persists exact owner lineage and requires every mixed-origin binding", async () => {
     await store.record(copy());
     await store.record(copy({ origins: [{ connectionId: "gmail_two", profileId: "byo_profile", profileRevision: 2, purpose: "assistant" }] }));
@@ -139,6 +151,65 @@ suite("durable Google provenance and conservative purge", () => {
     await store.executeClaim((await store.claimPurge("worker"))!, { chat: async () => ({ status: "deleted" }) });
     expect(await store.status(owner, a.id)).toMatchObject({ deleted: 1, complete: true });
     expect(await store.status(owner, b.id)).toMatchObject({ deleted: 1, complete: true });
+  });
+  it("settles an account-A worker competing with account-B purge of the same mixed copy", async () => {
+    await store.record(copy({ origins: [{ connectionId: connection, ...binding }, { connectionId: "gmail_two", ...binding }] }));
+    const a = await store.requestPurge(owner, connection, "request_a");
+    const claim = (await store.claimPurge("worker_a"))!;
+    let b!: ReturnType<typeof store.requestPurge>;
+    let execution!: ReturnType<typeof store.executeClaim>;
+    let outcomes!: Promise<PromiseSettledResult<unknown>[]>;
+    let calls = 0;
+    await db.transaction().execute(async held => {
+      await sql`SELECT id FROM google_copy_registry FOR UPDATE`.execute(held);
+      b = store.requestPurge(owner, "gmail_two", "request_b");
+      const observedPurge = Promise.allSettled([b]);
+      await waiting("origins @>");
+      execution = store.executeClaim(claim, { chat: async () => { calls++; return { status: "deleted" }; } });
+      outcomes = Promise.all([observedPurge, Promise.allSettled([execution])]).then(results => results.flat());
+      await waiting("state='purging'");
+      expect(calls).toBe(0);
+    });
+    expect((await outcomes).map(result => result.status === "fulfilled" ? result.status : result.reason.code)).toEqual(["fulfilled", "fulfilled"]);
+    expect(await execution).toBe("deleted");
+    expect(calls).toBe(1);
+    expect(await store.status(owner, a.id)).toMatchObject({ deleted: 1, complete: true });
+    expect(await store.status(owner, (await b).id)).toMatchObject({ deleted: 1, complete: true });
+  });
+  it.each(["copy", "job"] as const)("never invokes a handler for a lease that expires while waiting for its %s lock", async lockKind => {
+    await store.record(copy());
+    await store.requestPurge(owner, connection, "request");
+    const claim = (await store.claimPurge("worker", { leaseMs: 100 }))!;
+    let execution!: ReturnType<typeof store.executeClaim>;
+    let calls = 0;
+    await db.transaction().execute(async held => {
+      await sql`SELECT id FROM ${sql.id(lockKind === "copy" ? "google_copy_registry" : "google_copy_purge_jobs")} FOR UPDATE`.execute(held);
+      execution = store.executeClaim(claim, { chat: async () => { calls++; return { status: "deleted" }; } });
+      await waiting(lockKind === "copy" ? "state='purging'" : "state='leased' FOR UPDATE");
+      await new Promise(resolve => setTimeout(resolve, 120));
+    });
+    expect(await execution).toBe("stale");
+    expect(calls).toBe(0);
+    expect((await store.inspect(owner, "chat", "chat_one"))?.state).toBe("purging");
+  });
+  it("queues 10k copies in a constant SQL budget and admits the following owner", async () => {
+    await store.record(copy({ origins: [{ connectionId: connection, ...binding }, { connectionId: "gmail_two", ...binding }] }));
+    const first = await store.requestPurge(owner, "gmail_two", "first_request");
+    await store.executeClaim((await store.claimPurge("worker"))!, { chat: async () => ({ status: "deleted" }) });
+    await sql`INSERT INTO google_copy_registry(id,owner_id,kind,entity_ref,content_hash,origins,revision,retention_deadline,retention_decision_id,state)
+      SELECT gen_random_uuid(),owner_id,kind,'bulk_'||n,content_hash,${JSON.stringify([{ connectionId: connection, ...binding }])}::jsonb,1,retention_deadline,retention_decision_id,'active'
+      FROM google_copy_registry CROSS JOIN generate_series(1,9999) n`.execute(db);
+    const before = queryCount;
+    const receipt = await store.requestPurge(owner, connection, "bulk_request");
+    expect(queryCount - before).toBeLessThanOrEqual(18);
+    await store.record(copy({ ownerId: "following_owner" }));
+    const following = await store.requestPurge("following_owner", connection, "following_request");
+    expect(await store.status(owner, receipt.id)).toMatchObject({ pending: 9999, deleted: 1, complete: false });
+    expect(await store.status(owner, first.id)).toMatchObject({ deleted: 1, complete: true });
+    expect(await store.status("following_owner", following.id)).toMatchObject({ pending: 1, deleted: 0 });
+    expect((await sql<{ count: number }>`SELECT count(*)::int AS count FROM google_copy_registry
+      WHERE owner_id=${owner} AND state='active'`.execute(db)).rows[0]!.count).toBe(0);
+    await expect(store.record(copy({ entityRef: "late_copy" }))).rejects.toThrow("Google data unavailable");
   });
   it("serializes per-owner caps, never silently evicts unresolved data", async () => {
     store = createGoogleProvenanceStore(db, { maxEntitiesPerOwner: 2 });
