@@ -1,8 +1,9 @@
+import { boundedProvenanceTransaction } from "./transaction.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
 import {
   copySchema, entityKind, GoogleProvenanceUnavailable, limits, originKey, originSchema, validateOpaque,
-  type GoogleCopy, type GoogleOrigin, type ProvenanceLimits, type PurgeClaim, type PurgeHandlers, type RecordGoogleCopy,
+  type GoogleCopy, type GoogleOrigin, type ProvenanceLimits, type ProvenanceLifecycleAuthority, type PurgeClaim, type PurgeHandlers, type RecordGoogleCopy,
 } from "./contracts.js";
 import { migrateGoogleProvenance } from "./schema.js";
 import { executePurgeClaim, claimPurgeJob } from "./worker.js";
@@ -17,11 +18,12 @@ const safeCopy = (row: CopyRow): GoogleCopy => ({ id: row.id, ownerId: row.owner
 const unavailable = () => { throw new GoogleProvenanceUnavailable(); };
 const lock = async <DB>(tx: Transaction<DB>) => { await sql`SELECT pg_advisory_xact_lock(551035503)`.execute(tx); };
 
-export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial<ProvenanceLimits> = {}) {
+export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial<ProvenanceLimits> = {}, lifecycle?: ProvenanceLifecycleAuthority) {
   const cap = limits(options);
   async function inspect(ownerId: string, kind: GoogleCopy["kind"], entityRef: string) {
     validateOpaque(ownerId); entityKind.parse(kind); validateOpaque(entityRef);
-    const row = (await sql<CopyRow>`SELECT * FROM google_copy_registry WHERE owner_id=${ownerId} AND kind=${kind} AND entity_ref=${entityRef}`.execute(db)).rows[0];
+    const row = await boundedProvenanceTransaction(db, async tx => (await sql<CopyRow>`SELECT * FROM google_copy_registry
+      WHERE owner_id=${ownerId} AND kind=${kind} AND entity_ref=${entityRef}`.execute(tx)).rows[0]);
     return row ? safeCopy(row) : null;
   }
   async function enqueue<DBT>(tx: Transaction<DBT>, rows: CopyRow[]) {
@@ -52,8 +54,10 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
       const input = copySchema.parse(value);
       const deadline = new Date(input.retention.deadline);
       if (deadline <= new Date() || deadline.getTime() > Date.now() + 30 * 86_400_000) unavailable();
-      return db.transaction().execute(async tx => {
+      return boundedProvenanceTransaction(db, async tx => {
         await lock(tx);
+        // Admission can outlive a short retention choice while waiting for a lock.
+        if (deadline <= new Date()) unavailable();
         const blocked = await sql`SELECT id FROM google_copy_purge_requests WHERE owner_id=${input.ownerId}
           AND connection_id IN (${sql.join(input.origins.map(o => o.connectionId))}) LIMIT 1`.execute(tx);
         if (blocked.rows.length) unavailable();
@@ -68,7 +72,8 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
           const updated = await sql<CopyRow>`UPDATE google_copy_registry SET content_hash=${input.contentHash},origins=${JSON.stringify(origins)}::jsonb,
             revision=revision+1,retention_deadline=LEAST(retention_deadline,${deadline}),
             retention_decision_id=${keepOldDeadline ? current.retention_decision_id : input.retention.decisionId},updated_at=now()
-            WHERE id=${current.id} AND revision=${current.revision} RETURNING *`.execute(tx);
+            WHERE id=${current.id} AND revision=${current.revision} AND retention_deadline > clock_timestamp()
+            AND ${deadline}::timestamptz > clock_timestamp() RETURNING *`.execute(tx);
           if (!updated.rows[0]) unavailable();
           return safeCopy(updated.rows[0]!);
         }
@@ -78,7 +83,9 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
         if (count.total >= cap.maxEntities || count.owned >= cap.maxEntitiesPerOwner) unavailable();
         const origins = [...new Map(input.origins.map(o => [originKey(o), o])).values()];
         const result = await sql<CopyRow>`INSERT INTO google_copy_registry(id,owner_id,kind,entity_ref,content_hash,origins,revision,retention_deadline,retention_decision_id,state)
-          VALUES(${randomUUID()},${input.ownerId},${input.kind},${input.entityRef},${input.contentHash},${JSON.stringify(origins)}::jsonb,1,${deadline},${input.retention.decisionId},'active') RETURNING *`.execute(tx);
+          SELECT ${randomUUID()},${input.ownerId},${input.kind},${input.entityRef},${input.contentHash},${JSON.stringify(origins)}::jsonb,1,${deadline},${input.retention.decisionId},'active'
+          WHERE ${deadline}::timestamptz > clock_timestamp() RETURNING *`.execute(tx);
+        if (!result.rows[0]) unavailable();
         return safeCopy(result.rows[0]!);
       });
     },
@@ -86,7 +93,7 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
      * All managed mixed-origin copies are purged conservatively; unrelated accounts and owners are untouched. */
     async requestPurge(ownerId: string, connectionId: string, requestKey: string) {
       validateOpaque(ownerId); validateOpaque(connectionId); validateOpaque(requestKey);
-      return db.transaction().execute(async tx => {
+      return boundedProvenanceTransaction(db, async tx => {
         await lock(tx);
         const previous = (await sql<{ id: string; connection_id: string }>`SELECT r.id,r.connection_id FROM google_copy_purge_keys k
           JOIN google_copy_purge_requests r ON r.id=k.request_id AND r.owner_id=k.owner_id WHERE k.owner_id=${ownerId} AND k.request_key=${requestKey}`.execute(tx)).rows[0];
@@ -115,13 +122,13 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
       validateOpaque(ownerId);
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(requestId)) unavailable();
       // One database snapshot prevents cleanup from splitting archived and live counts between reads.
-      const result = (await sql<{ pending: number; unresolved: number; deleted: number }>`SELECT
+      const result = await boundedProvenanceTransaction(db, async tx => (await sql<{ pending: number; unresolved: number; deleted: number }>`SELECT
         count(j.id) FILTER(WHERE j.state IN ('pending','leased'))::int AS pending,
         count(j.id) FILTER(WHERE j.state='unresolved')::int AS unresolved,
         count(j.id) FILTER(WHERE j.state='deleted')::int + r.archived_deleted AS deleted
         FROM google_copy_purge_requests r LEFT JOIN google_copy_purge_links l ON l.request_id=r.id
         LEFT JOIN google_copy_purge_jobs j ON j.id=l.job_id AND j.owner_id=r.owner_id
-        WHERE r.id=${requestId} AND r.owner_id=${ownerId} GROUP BY r.id`.execute(db)).rows[0];
+        WHERE r.id=${requestId} AND r.owner_id=${ownerId} GROUP BY r.id`.execute(tx)).rows[0]);
       if (!result) return null;
       return { id: requestId, ...result, complete: result.pending === 0 && result.unresolved === 0,
         coverage: "registered-copies-only" as const };
@@ -129,7 +136,7 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
     /** Host must call on a recurring bounded schedule. Expired data is unreadable even before scheduling. */
     async queueExpired(batchSize = 100) {
       if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 500) unavailable();
-      return db.transaction().execute(async tx => {
+      return boundedProvenanceTransaction(db, async tx => {
         await lock(tx);
         const rows = (await sql<CopyRow>`SELECT * FROM google_copy_registry WHERE state='active' AND retention_deadline <= now()
           ORDER BY retention_deadline LIMIT ${batchSize} FOR UPDATE`.execute(tx)).rows;
@@ -141,7 +148,7 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
      * Never evict active/unresolved entities to satisfy a cap; exhausted storage fails closed. */
     async cleanupDeleted(batchSize = 100) {
       if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 500) unavailable();
-      return db.transaction().execute(async tx => {
+      return boundedProvenanceTransaction(db, async tx => {
         await lock(tx);
         const rows = (await sql<{ id: string; job_id: string }>`SELECT c.id,j.id AS job_id FROM google_copy_registry c
           JOIN google_copy_purge_jobs j ON j.copy_id=c.id WHERE c.state='deleted' AND j.state='deleted'
@@ -155,6 +162,33 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
         }
         return rows.length;
       });
+    },
+    /** Trusted host account-deletion composition only. Admission holds through this complete transaction.
+     * Host must permanently revoke owner access before releasing admission: metadata pruning alone cannot stop future writes. */
+    async finalizeOwnerDeletion(ownerId: string) {
+      validateOpaque(ownerId);
+      if (!lifecycle) unavailable();
+      let completed: { finalized: true; coverage: "registered-copies-only" } | undefined;
+      const admitted = await lifecycle!.withOwnerDeletionAdmission(ownerId, async () => {
+        completed = await boundedProvenanceTransaction(db, async tx => {
+          await lock(tx);
+          const copies = (await sql<{ state: GoogleCopy["state"] }>`SELECT state FROM google_copy_registry WHERE owner_id=${ownerId} FOR UPDATE`.execute(tx)).rows;
+          if (copies.some(row => row.state !== "deleted")) unavailable();
+          const jobs = (await sql<{ state: string; lease_token: string | null; lease_until: Date | null }>`SELECT state,lease_token,lease_until
+            FROM google_copy_purge_jobs WHERE owner_id=${ownerId} FOR UPDATE`.execute(tx)).rows;
+          if (jobs.some(row => row.state !== "deleted" || row.lease_token !== null || row.lease_until !== null)) unavailable();
+          await sql`DELETE FROM google_copy_purge_links WHERE request_id IN (SELECT id FROM google_copy_purge_requests WHERE owner_id=${ownerId})
+            OR job_id IN (SELECT id FROM google_copy_purge_jobs WHERE owner_id=${ownerId})`.execute(tx);
+          await sql`DELETE FROM google_copy_purge_keys WHERE owner_id=${ownerId}`.execute(tx);
+          await sql`DELETE FROM google_copy_purge_jobs WHERE owner_id=${ownerId}`.execute(tx);
+          await sql`DELETE FROM google_copy_registry WHERE owner_id=${ownerId}`.execute(tx);
+          await sql`DELETE FROM google_copy_purge_requests WHERE owner_id=${ownerId}`.execute(tx);
+          return { finalized: true as const, coverage: "registered-copies-only" as const };
+        });
+        return completed;
+      });
+      if (!admitted || admitted !== completed) unavailable();
+      return completed!;
     },
     claimPurge: (workerId: string, input?: { leaseMs?: number }) => claimPurgeJob(db, cap, workerId, input),
     executeClaim: (claim: PurgeClaim, handlers: PurgeHandlers) => executePurgeClaim(db, cap, claim, handlers),

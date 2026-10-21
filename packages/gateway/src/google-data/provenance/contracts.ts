@@ -53,3 +53,9 @@ export function limits(input: Partial<ProvenanceLimits>): ProvenanceLimits {
   return value;
 }
 export const originKey = (origin: GoogleOrigin) => JSON.stringify([origin.connectionId, origin.profileId, origin.profileRevision, origin.purpose]);
+
+/** Host account-deletion admission must revoke/quiesce owner access and hold its guard until work settles.
+ * Null means admission declined. Never accept a client-supplied boolean as this authority. */
+export interface ProvenanceLifecycleAuthority {
+  withOwnerDeletionAdmission<T>(ownerId: string, work: () => Promise<T>): Promise<T | null>;
+}
