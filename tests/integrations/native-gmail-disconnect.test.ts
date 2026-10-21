@@ -86,6 +86,17 @@ describe('feature-off native Gmail user disconnect', () => {
     expect(paid).not.toHaveBeenCalled();
   });
 
+  it('does not reactivate an expired native connection while Gmail is disabled', async () => {
+    await db.updateServiceStatus(connectionId, 'expired');
+    const response = await app.request(`/api/integrations/${connectionId}/refresh`,
+      { method: 'POST', headers: { 'x-owner': owner } });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Connection unavailable' });
+    expect((await db.getConnectedService(connectionId))?.status).toBe('expired');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(paid).not.toHaveBeenCalled();
+  });
+
   it('does not expose OAuth callback or launcher through the cleanup capability', async () => {
     expect((await app.request('/api/integrations/gmail/oauth/callback?state=x&code=x')).status).toBe(404);
     expect((await app.request('/auth/gmail?state=x')).status).toBe(404);
