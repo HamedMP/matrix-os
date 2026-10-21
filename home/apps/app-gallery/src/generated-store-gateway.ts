@@ -156,6 +156,10 @@ export const AppStoreInstallRecordSchema = z.strictObject({
   versionId: AppStoreIdSchema,
   version: AppStoreSemverSchema,
   sourceSha256: AppStoreSha256Schema,
+  installedSourceSha256: AppStoreSha256Schema,
+  toolchain: z.strictObject({
+    nodeVersion: z.string().min(1).max(40), pnpmVersion: z.string().min(1).max(40), policyDigest: AppStoreSha256Schema,
+  }),
   distSha256: AppStoreSha256Schema,
   capabilities: AppStoreCapabilitiesSchema,
   installedAt: Timestamp,
