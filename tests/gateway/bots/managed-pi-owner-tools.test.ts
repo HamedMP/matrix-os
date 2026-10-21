@@ -26,7 +26,7 @@ it("declares only actually wired capabilities and validates bounded MCP/describe
 it("uses exact owner/account and read-only transport; exposes actual registry schema", async () => {
   const { tools, call } = setup("supervised");
   await tools.dispatch(binding, request("list_issues", { repo: "matrix/qa", per_page: 1 }), new AbortController().signal);
-  expect(call).toHaveBeenCalledWith("owner_qa", { service: "github", action: "list_issues", label: "QA", params: { repo: "matrix/qa", per_page: 1 }, read: true }, expect.any(AbortSignal));
+  expect(call).toHaveBeenCalledWith("owner_qa", { service: "github", action: "list_issues", label: "QA", connectionId: "conn_qa", params: { repo: "matrix/qa", per_page: 1 }, read: true }, expect.any(AbortSignal));
   const result = await tools.dispatch(binding, BotToolRequestSchema.parse({ toolCallId: "describe_qa", capability: "integration.describe", args: { service: "github" } }), new AbortController().signal);
   expect(JSON.stringify(result)).toContain("list_issues"); expect(JSON.stringify(result)).not.toContain("create_issue");
 });

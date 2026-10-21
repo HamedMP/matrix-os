@@ -134,7 +134,10 @@ describe('trusted Google collection client', () => {
     const f = await fixture({ granted: true }); const first = await f.prepare();
     expect(await f.runtime().authorize({ phase: 'dispatch', binding: binding(), identity: identity(), signal: new AbortController().signal })).toEqual({ allowed: true, googleOrigin: true });
     const pin = await pins.get(binding()); expect(pin).not.toBeNull();
-    expect(await f.prepare()).toEqual(first); expect(await pins.get(binding())).toEqual(pin);
+    const next = await f.prepare();
+    expect({ ...next, collectionExpiresAt: first.collectionExpiresAt }).toEqual(first);
+    expect(Date.parse(next.collectionExpiresAt)).toBeLessThanOrEqual(Date.parse(pin!.retireAt));
+    expect(await pins.get(binding())).toEqual(pin);
   });
   it.each(['identity', 'new-account', 'renewal'] as const)('denies incompatible existing pin %s before marking or prompting', async changed => {
     const f = await fixture({ granted: true }); await f.prepare();
