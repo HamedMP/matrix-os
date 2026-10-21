@@ -150,10 +150,16 @@ export function createGoogleCollectionClient(deps: GoogleCollectionClientDepende
         await freshIdentity(); await revalidate();
         const currentContext = await inspect();
         if (!isDeepStrictEqual(currentContext, marked)) deny();
-        pinValid(await getPin(), currentContext, stamp);
+        const finalPin = await getPin();
+        pinValid(finalPin, currentContext, stamp);
         await freshIdentity(); await revalidate();
+        // Recheck retained-context and immutable-pin deadlines after the last await.
+        pinValid(finalPin, currentContext, stamp);
         live(); if (Date.parse(stamp.expiresAt) <= now().getTime()) deny();
-        return { ownerId: binding.ownerId, googleAccountId, runId: binding.runId, runtimeHandle: binding.runtimeHandle,
+        const collectionExpiresAt = new Date(Math.min(Date.parse(stamp.expiresAt), Date.parse(currentContext!.retentionDeadline),
+          ...currentContext!.sources.map(source => Date.parse(source.expiresAt)),
+          ...(finalPin ? [Date.parse(finalPin.expiresAt), Date.parse(finalPin.retireAt), ...finalPin.stamps.map(value => Date.parse(value.expiresAt))] : []))).toISOString();
+        return { ownerId: binding.ownerId, googleAccountId, collectionExpiresAt, runId: binding.runId, runtimeHandle: binding.runtimeHandle,
           executionGeneration: binding.executionGeneration, profileId: stamp.profileId, profileRevision: stamp.profileRevision,
           consentId: stamp.consentId, consentRevision: stamp.consentRevision, purposeId, routeDigest: stamp.routeDigest, policyExpiresAt: stamp.expiresAt };
       } catch (_error) { throw new GoogleCollectionClientError(); }
