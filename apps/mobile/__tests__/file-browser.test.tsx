@@ -61,6 +61,7 @@ jest.mock("@/lib/queries/use-computer-file-preview", () => ({
 }));
 
 import React from "react";
+import * as Haptics from "expo-haptics";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { RefreshControl, ScrollView, StyleSheet as NativeStyleSheet } from "react-native";
 import FileBrowserScreen from "../app/file-browser/index";
@@ -105,6 +106,7 @@ describe("file browser modal stack", () => {
     React.act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
 
     expect(mockRefreshDirectory).toHaveBeenCalledTimes(1);
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
     expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 
     await React.act(async () => resolveRefresh?.());
@@ -123,6 +125,7 @@ describe("file browser modal stack", () => {
     React.act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
 
     expect(mockRefreshFilePreview).toHaveBeenCalledTimes(1);
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
     expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 
     await React.act(async () => resolveRefresh?.());

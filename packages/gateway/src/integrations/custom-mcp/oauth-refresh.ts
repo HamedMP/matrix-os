@@ -3,11 +3,11 @@ import { decryptCustomMcpCredential, encryptCustomMcpCredential } from "./crypto
 import { CustomMcpBrokerError, CustomMcpRefreshPendingError, isCustomMcpRefreshClaimActive, type CustomMcpCredential } from "./broker.js";
 export { CustomMcpRefreshPendingError } from "./broker.js";
 const validToken = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 8192 && !/[\s\x00-\x1f\x7f]/.test(value);
-interface Token { access_token: string; refresh_token?: string; expires_in?: number; token_type: string }
+interface Token { access_token: string; refresh_token?: string; expires_in?: number; token_type: string; scope?: string }
 
 export async function resolveCustomMcpOAuthAuthorization(options: {
   db: PlatformDb; encryptionKey: Buffer; userId: string; row: CustomMcpServerBrokerRow; now: Date; configuredClientId?: string;
-  exchangeToken(endpoint: string, fields: Record<string, string>): Promise<Token>;
+  exchangeToken(endpoint: string, fields: Record<string, string>, oauth?: CustomMcpCredential["oauth"]): Promise<Token>;
 }): Promise<string | undefined> {
   const { db, encryptionKey, userId, row: selected, now } = options;
   if (selected.user_id !== userId) throw new CustomMcpBrokerError("forbidden");
@@ -42,8 +42,9 @@ export async function resolveCustomMcpOAuthAuthorization(options: {
   const claim = encrypt({ ...credential, oauth: { ...oauth, refreshing: true, refreshStartedAt: now.toISOString() } });
   if (!await cas(row.encrypted_credentials, claim)) throw new CustomMcpRefreshPendingError();
   try {
-    const token = await options.exchangeToken(oauth.tokenEndpoint, { grant_type: "refresh_token", refresh_token: oauth.refreshToken, client_id: clientId, resource: oauth.resource });
+    const token = await options.exchangeToken(oauth.tokenEndpoint, { grant_type: "refresh_token", refresh_token: oauth.refreshToken, client_id: clientId, resource: oauth.resource }, oauth);
     const next = encrypt({ ...credential, oauth: { ...oauth, accessToken: token.access_token, refreshToken: token.refresh_token ?? oauth.refreshToken,
+      grantedScopes: token.scope === undefined ? oauth.grantedScopes : token.scope.split(" ").filter(Boolean),
       expiresAt: token.expires_in ? new Date(now.getTime() + token.expires_in * 1000).toISOString() : undefined,
       refreshing: undefined, refreshStartedAt: undefined } });
     if (!await settle(claim, next)) throw new CustomMcpBrokerError("conflict");

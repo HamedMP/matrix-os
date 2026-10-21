@@ -467,7 +467,10 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
     }
     const prefix = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}`;
-    if (![`${prefix}/catalog/lookup`, `${prefix}/catalog/resolve`, `${prefix}/scopes/preflight`, `${prefix}/scopes`].includes(path)) {
+    const recovery = path.startsWith(`${prefix}/catalog/`) ? path.slice(`${prefix}/catalog/`.length).split("/") : [];
+    const recoveryAllowed = recovery.length === 3 && UUID.test(recovery[0]!) && recovery[1] === "reauthorization"
+      && (recovery[2] === "inspect" || recovery[2] === "confirm");
+    if (!recoveryAllowed && ![`${prefix}/catalog/lookup`, `${prefix}/catalog/resolve`, `${prefix}/scopes/preflight`, `${prefix}/scopes`].includes(path)) {
       throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
     }
     const serialized = JSON.stringify(body);

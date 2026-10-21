@@ -51,6 +51,7 @@ jest.mock("@/components/TerminalSurface", () => {
     TerminalSurface: React.forwardRef((props: {
       onInput: (data: string) => void;
       onBinary: (data: string) => void;
+      onKeys?: (data: string) => void;
       onResize: (cols: number, rows: number) => void;
     }, ref: React.Ref<unknown>) => {
       React.useImperativeHandle(ref, () => ({
@@ -70,6 +71,18 @@ jest.mock("@/components/TerminalSurface", () => {
           onPress: () => props.onInput("a"),
         }, React.createElement(Text, null, "terminal")),
         React.createElement(Pressable, {
+          accessibilityLabel: "Type return",
+          onPress: () => props.onInput("\r"),
+        }, React.createElement(Text, null, "return")),
+        React.createElement(Pressable, {
+          accessibilityLabel: "Tap to move the cursor",
+          onPress: () => props.onKeys?.("\x1b[C\x1b[C"),
+        }, React.createElement(Text, null, "tap")),
+        React.createElement(Pressable, {
+          accessibilityLabel: "Reply with cursor position",
+          onPress: () => props.onInput("\x1b[12;5R"),
+        }, React.createElement(Text, null, "cursor report")),
+        React.createElement(Pressable, {
           accessibilityLabel: "Send terminal protocol reply",
           onPress: () => props.onBinary("\x1b]10;?\x07"),
         }, React.createElement(Text, null, "protocol")),
@@ -82,13 +95,28 @@ jest.mock("@/components/TerminalSurface", () => {
   };
 });
 
+interface MockBarProps {
+  onSend: (data: string) => void;
+  onShowKeyboard: () => void;
+  onDismissKeyboard: () => void;
+  keyboardVisible: boolean;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  ctrlArmed: boolean;
+  onToggleCtrl: () => void;
+}
+let mockBarProps: MockBarProps | undefined;
+
 jest.mock("@/components/TerminalControlBar", () => ({
-  TerminalControlBar: () => null,
+  TerminalControlBar: (props: MockBarProps) => {
+    mockBarProps = props;
+    return null;
+  },
 }));
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { KeyboardAvoidingView } from "react-native";
+import { Keyboard, KeyboardAvoidingView } from "react-native";
 
 import TerminalSessionScreen from "../app/terminal-session/[session]";
 
@@ -290,6 +318,138 @@ describe("live terminal session modal", () => {
     expect(mockSendBinary).not.toHaveBeenCalled();
     expect(mockSurfaceBlur).toHaveBeenCalled();
     rendered.unmount();
+  });
+
+  async function openAttached() {
+    const rendered = render(<TerminalSessionScreen />);
+    await waitFor(() => expect(mockConnect).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    const options = mockConnect.mock.calls[0]?.[0] as {
+      onMessage: (frame: { type: string; canonicalSize?: { cols: number; rows: number } }) => void;
+    };
+    act(() => options.onMessage({ type: "attached", canonicalSize: { cols: 49, rows: 36 } }));
+    return rendered;
+  }
+
+  it("turns the next letter typed into a control key while ctrl is armed", async () => {
+    const rendered = await openAttached();
+    mockSurfaceFocus.mockClear();
+
+    act(() => mockBarProps!.onToggleCtrl());
+    expect(mockBarProps!.ctrlArmed).toBe(true);
+    // The letter comes from the keyboard, so arming ctrl brings it up.
+    expect(mockSurfaceFocus).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(screen.getByLabelText("Type terminal input"));
+    expect(mockSendInput).toHaveBeenLastCalledWith("\x01");
+    expect(mockBarProps!.ctrlArmed).toBe(false);
+
+    fireEvent.press(screen.getByLabelText("Type terminal input"));
+    expect(mockSendInput).toHaveBeenLastCalledWith("a");
+
+    act(() => mockBarProps!.onToggleCtrl());
+    act(() => mockBarProps!.onToggleCtrl());
+    expect(mockBarProps!.ctrlArmed).toBe(false);
+    rendered.unmount();
+  });
+
+  it("keeps ctrl armed and the keys open across a reply the emulator sends to the program", async () => {
+    const rendered = await openAttached();
+
+    act(() => mockBarProps!.onExpandedChange(true));
+    act(() => mockBarProps!.onToggleCtrl());
+    fireEvent.press(screen.getByLabelText("Reply with cursor position"));
+
+    expect(mockSendInput).toHaveBeenLastCalledWith("\x1b[12;5R");
+    expect(mockBarProps!.ctrlArmed).toBe(true);
+    expect(mockBarProps!.expanded).toBe(true);
+
+    fireEvent.press(screen.getByLabelText("Type terminal input"));
+    expect(mockSendInput).toHaveBeenLastCalledWith("\x01");
+    rendered.unmount();
+  });
+
+  it("uses up an armed ctrl when a tap moves the cursor", async () => {
+    const rendered = await openAttached();
+
+    act(() => mockBarProps!.onToggleCtrl());
+    fireEvent.press(screen.getByLabelText("Tap to move the cursor"));
+    expect(mockSendInput).toHaveBeenLastCalledWith("\x1b[C\x1b[C");
+    expect(mockBarProps!.ctrlArmed).toBe(false);
+
+    fireEvent.press(screen.getByLabelText("Type terminal input"));
+    expect(mockSendInput).toHaveBeenLastCalledWith("a");
+    rendered.unmount();
+  });
+
+  it("sends a key from the bar as it is and drops an armed ctrl", async () => {
+    const rendered = await openAttached();
+
+    act(() => mockBarProps!.onToggleCtrl());
+    act(() => mockBarProps!.onSend("\x1b[A"));
+
+    expect(mockSendInput).toHaveBeenLastCalledWith("\x1b[A");
+    expect(mockBarProps!.ctrlArmed).toBe(false);
+    rendered.unmount();
+  });
+
+  it("folds the extra keys away when Return is typed on the keyboard", async () => {
+    const rendered = await openAttached();
+
+    act(() => mockBarProps!.onExpandedChange(true));
+    expect(mockBarProps!.expanded).toBe(true);
+
+    fireEvent.press(screen.getByLabelText("Type return"));
+    expect(mockSendInput).toHaveBeenLastCalledWith("\r");
+    expect(mockBarProps!.expanded).toBe(false);
+    rendered.unmount();
+  });
+
+  it("folds the extra keys away when the keyboard goes down and tells the rows where it is", async () => {
+    let listeners: Record<string, (() => void)[]> = {};
+    jest.spyOn(Keyboard, "isVisible").mockReturnValue(true);
+    jest.spyOn(Keyboard, "addListener").mockImplementation(((event: string, listener: () => void) => {
+      (listeners[event] ??= []).push(listener);
+      return { remove: () => { listeners[event] = (listeners[event] ?? []).filter((item) => item !== listener); } };
+    }) as never);
+    const emit = (event: string) => act(() => { for (const listener of listeners[event] ?? []) listener(); });
+
+    try {
+      const rendered = await openAttached();
+      expect(mockBarProps!.keyboardVisible).toBe(true);
+      act(() => mockBarProps!.onExpandedChange(true));
+
+      emit("keyboardWillHide");
+      expect(mockBarProps!.keyboardVisible).toBe(false);
+      expect(mockBarProps!.expanded).toBe(false);
+
+      // Opening the extra keys again with the keyboard down keeps them open.
+      act(() => mockBarProps!.onExpandedChange(true));
+      emit("keyboardWillShow");
+      expect(mockBarProps!.keyboardVisible).toBe(true);
+      expect(mockBarProps!.expanded).toBe(true);
+
+      rendered.unmount();
+      expect(Object.values(listeners).flat()).toHaveLength(0);
+    } finally {
+      listeners = {};
+      jest.restoreAllMocks();
+    }
+  });
+
+  it("brings the keyboard up and puts it away from the key rows", async () => {
+    const dismiss = jest.spyOn(Keyboard, "dismiss").mockImplementation(() => undefined);
+    const rendered = await openAttached();
+    mockSurfaceFocus.mockClear();
+
+    act(() => mockBarProps!.onShowKeyboard());
+    expect(mockSurfaceFocus).toHaveBeenCalledTimes(1);
+
+    act(() => mockBarProps!.onDismissKeyboard());
+    expect(mockSurfaceBlur).toHaveBeenCalled();
+    expect(dismiss).toHaveBeenCalled();
+    rendered.unmount();
+    dismiss.mockRestore();
   });
 
   it("offers Continue here while following a terminal owned by another device", async () => {

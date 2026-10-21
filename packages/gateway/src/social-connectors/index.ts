@@ -207,6 +207,21 @@ interface MastodonConnectorOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+/** Plain text only: consume each complete tag once; preserve an unmatched suffix. */
+function stripHtmlTags(html: string): string {
+  let output = '';
+  let copiedUntil = 0;
+  let opening = html.indexOf('<');
+  while (opening !== -1) {
+    const closing = html.indexOf('>', opening + 1);
+    if (closing === -1) break;
+    output += html.slice(copiedUntil, opening);
+    copiedUntil = closing + 1;
+    opening = html.indexOf('<', copiedUntil);
+  }
+  return output + html.slice(copiedUntil);
+}
+
 export function createMastodonConnector(options?: MastodonConnectorOptions): SocialConnector {
   const fetchFn = options?.fetch ?? globalThis.fetch;
 
@@ -248,7 +263,7 @@ export function createMastodonConnector(options?: MastodonConnectorOptions): Soc
         return statuses.map((status) => ({
           id: status.id,
           source: 'mastodon',
-          content: status.content.replace(/<[^>]*>/g, ''),
+          content: stripHtmlTags(status.content),
           externalUrl: status.url,
           timestamp: status.created_at,
           metadata: { author: status.account.acct },

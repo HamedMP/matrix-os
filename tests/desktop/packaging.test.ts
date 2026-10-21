@@ -13,7 +13,9 @@ async function expectSameArtwork(actual: Buffer, expected: Buffer): Promise<void
     sharp(expected).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
   ]);
   expect(actualPixels.info).toEqual(expectedPixels.info);
-  expect(actualPixels.data).toEqual(expectedPixels.data);
+  // Compare every decoded byte without recursively walking millions of
+  // Buffer entries in the assertion library under parallel CI load.
+  expect(actualPixels.data.equals(expectedPixels.data)).toBe(true);
 }
 
 function readPngDimensions(path: string): { width: number; height: number } {
@@ -43,6 +45,16 @@ describe("desktop packaging", () => {
       create: { width: 2, height: 2, channels: 4, background: "#103426" },
     }).png().toBuffer();
     await expect(expectSameArtwork(changed, compressed)).rejects.toThrow();
+    const lastByteChanged = await sharp(compressed).ensureAlpha().raw().toBuffer();
+    lastByteChanged[lastByteChanged.length - 1] ^= 1;
+    const changedAlpha = await sharp(lastByteChanged, {
+      raw: { width: 2, height: 2, channels: 4 },
+    }).png().toBuffer();
+    await expect(expectSameArtwork(changedAlpha, compressed)).rejects.toThrow();
+    const differentDimensions = await sharp({
+      create: { width: 1, height: 2, channels: 4, background: "#103425" },
+    }).png().toBuffer();
+    await expect(expectSameArtwork(differentDimensions, compressed)).rejects.toThrow();
   });
 
   it("uses an electron-builder version that preserves branded DMG backgrounds", () => {
